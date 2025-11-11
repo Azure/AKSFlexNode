@@ -64,7 +64,6 @@ func NewVersionCommand() *cobra.Command {
 // runBootstrap executes the bootstrap process
 func runBootstrap(ctx context.Context) error {
 	logger := logger.GetLoggerFromContext(ctx)
-	logger.Info("Starting AKS node bootstrap")
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -84,7 +83,6 @@ func runBootstrap(ctx context.Context) error {
 // runUnbootstrap executes the unbootstrap process
 func runUnbootstrap(ctx context.Context) error {
 	logger := logger.GetLoggerFromContext(ctx)
-	logger.Info("Starting AKS node unbootstrap")
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {

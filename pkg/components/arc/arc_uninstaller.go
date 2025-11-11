@@ -36,10 +36,15 @@ func (u *UnInstaller) GetName() string {
 func (u *UnInstaller) Execute(ctx context.Context) error {
 	u.logger.Info("Starting Arc cleanup for unbootstrap process")
 
+	// Ensure authentication
+	if err := u.ensureAuthentication(ctx); err != nil {
+		return fmt.Errorf("Arc bootstrap setup failed at authentication: %w", err)
+	}
+
 	// Track cleanup operations that failed
 	var failedOperations []string
 
-	arcMachine, err := u.GetArcMachine(ctx)
+	arcMachine, err := u.getArcMachine(ctx)
 	if err != nil {
 		u.logger.Infof("Arc machine not found or already unregistered: %v", err)
 	}
@@ -64,7 +69,7 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 
 	// Step 3: Execute Arc agent from local system
 	u.logger.Info("Step 3: Executeing Arc agent from local system")
-	if err := u.ExecuteArcAgent(ctx); err != nil {
+	if err := u.UninstallArcAgent(ctx); err != nil {
 		u.logger.Warnf("Failed to Execute Arc agent (continuing cleanup): %v", err)
 		failedOperations = append(failedOperations, "Arc agent Executeation")
 	} else {
@@ -83,8 +88,8 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 	return nil
 }
 
-// ExecuteArcAgent removes the Azure Arc agent from the system
-func (u *UnInstaller) ExecuteArcAgent(ctx context.Context) error {
+// UninstallArcAgent removes the Azure Arc agent from the system
+func (u *UnInstaller) UninstallArcAgent(ctx context.Context) error {
 	u.logger.Info("Executeing Azure Arc agent")
 
 	// Check if azcmagent is Executeed
@@ -93,30 +98,19 @@ func (u *UnInstaller) ExecuteArcAgent(ctx context.Context) error {
 		return nil
 	}
 
-	// Stop Arc agent services first
-	if err := u.stopArcServices(); err != nil {
-		u.logger.Warnf("Failed to stop Arc services (continuing with Execute): %v", err)
-	}
-
 	// Try to disconnect the machine first (if connected)
 	if err := u.disconnectArcMachine(ctx); err != nil {
 		u.logger.Errorf("Failed to disconnect Arc machine (continuing with Execute): %v", err)
 	}
 
-	// Remove Arc agent using the standard Execute method
-	u.logger.Info("Removing Azure Arc agent")
-	cmd := exec.CommandContext(ctx, "sudo", "azcmagent", "remove", "--force")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		u.logger.Warnf("Failed to remove Arc agent using azcmagent remove: %v, output: %s", err, string(output))
+	// Stop Arc agent services
+	if err := u.stopArcServices(); err != nil {
+		u.logger.Warnf("Failed to stop Arc services (continuing with Execute): %v", err)
+	}
 
-		// Fallback to manual cleanup
-		if cleanupErr := u.manualArcCleanup(); cleanupErr != nil {
-			return fmt.Errorf("failed to remove Arc agent and manual cleanup failed: remove error: %w, cleanup error: %v", err, cleanupErr)
-		}
-		u.logger.Info("Manual Arc agent cleanup completed")
-	} else {
-		u.logger.Infof("Azure Arc agent removed successfully: %s", string(output))
+	// Remove Arc agent
+	if err := u.cleanUpARCAgent(); err != nil {
+		u.logger.Debugf("No existing azcmagent package to remove (or removal failed): %v", err)
 	}
 
 	u.logger.Info("Azure Arc agent Executeation completed")
@@ -128,7 +122,7 @@ func (u *UnInstaller) unregisterArcMachine(ctx context.Context) error {
 	u.logger.Info("Unregistering Arc machine from Azure")
 
 	// Create hybrid compute machines client
-	client, err := u.CreateHybridComputeClient(ctx)
+	client, err := u.createHybridComputeClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create hybrid compute client: %w", err)
 	}
@@ -163,7 +157,7 @@ func (u *UnInstaller) removeRBACRoles(ctx context.Context, arcMachine *armhybrid
 	u.logger.Infof("Removing role assignments for managed identity: %s", managedIdentityID)
 
 	// Create role assignments client
-	client, err := u.CreateRoleAssignmentsClient(ctx)
+	client, err := u.createRoleAssignmentsClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create role assignments client: %w", err)
 	}
@@ -243,92 +237,6 @@ func (u *UnInstaller) disconnectArcMachine(ctx context.Context) error {
 
 	u.logger.Infof("Arc machine disconnected: %s", string(output))
 	return nil
-}
-
-// manualArcCleanup performs manual cleanup when automatic removal fails
-func (u *UnInstaller) manualArcCleanup() error {
-	u.logger.Info("Performing manual Arc agent cleanup")
-
-	// Stop services manually
-	if err := u.stopArcServices(); err != nil {
-		u.logger.Warnf("Failed to stop Arc services during manual cleanup: %v", err)
-	}
-
-	// Remove Arc agent files and directories
-	arcDirectories := []string{
-		"/opt/azcmagent",
-		"/var/opt/azcmagent",
-		"/etc/opt/azcmagent",
-	}
-
-	// Only include user-manageable files, not system service files
-	arcFiles := []string{
-		"/usr/local/bin/azcmagent",
-		"/usr/bin/azcmagent",
-	}
-
-	// System service files that should be handled by systemd, not direct removal
-	systemServices := []string{
-		"himdsd.service",
-		"gcarcservice.service",
-		"extd.service",
-	}
-
-	// Remove directories
-	if dirErrors := utils.RemoveDirectories(arcDirectories, u.logger); len(dirErrors) > 0 {
-		for _, err := range dirErrors {
-			u.logger.Warnf("Directory removal error: %v", err)
-		}
-	}
-
-	// Remove user-manageable files
-	if fileErrors := utils.RemoveFiles(arcFiles, u.logger); len(fileErrors) > 0 {
-		for _, err := range fileErrors {
-			u.logger.Warnf("File removal error: %v", err)
-		}
-	}
-
-	// Handle system service files properly through systemd
-	u.cleanupSystemServices(systemServices)
-
-	// Reload systemd after service cleanup
-	if err := utils.ReloadSystemd(); err != nil {
-		u.logger.Warnf("Failed to reload systemd: %v", err)
-	}
-
-	u.logger.Info("Manual Arc agent cleanup completed")
-	return nil
-}
-
-// cleanupSystemServices properly handles system service files through systemd
-func (u *UnInstaller) cleanupSystemServices(services []string) {
-	u.logger.Info("Cleaning up system service files through systemd")
-
-	for _, service := range services {
-		u.logger.Debugf("Processing system service: %s", service)
-
-		// Check if service file exists
-		serviceFile := fmt.Sprintf("/lib/systemd/system/%s", service)
-		if !utils.FileExists(serviceFile) {
-			u.logger.Debugf("Service file does not exist: %s", serviceFile)
-			continue
-		}
-
-		// Stop and disable the service if it's active
-		if err := utils.StopService(service); err != nil {
-			u.logger.Debugf("Service %s may not be running: %v", service, err)
-		}
-
-		if err := utils.DisableService(service); err != nil {
-			u.logger.Debugf("Failed to disable service %s: %v", service, err)
-		}
-
-		// For Arc services installed by the Arc agent package, we should not
-		// manually remove the service files as they are managed by the system.
-		// The Arc agent's own removal process should handle these files.
-		// If they remain, it's likely because they're part of a system package.
-		u.logger.Debugf("System service %s handled by systemd (file managed by system)", service)
-	}
 }
 
 // removeRoleAssignments removes role assignments for a specific principal, role, and scope

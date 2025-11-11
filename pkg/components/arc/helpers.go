@@ -31,7 +31,9 @@ func isArcServicesRunning() bool {
 }
 
 func getArcMachineIdentityID(arcMachine *armhybridcompute.Machine) string {
-	if arcMachine != nil && arcMachine.Identity != nil && arcMachine.Identity.PrincipalID != nil {
+	if arcMachine != nil &&
+		arcMachine.Identity != nil &&
+		arcMachine.Identity.PrincipalID != nil {
 		return *arcMachine.Identity.PrincipalID
 	}
 	return ""

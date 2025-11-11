@@ -2,7 +2,7 @@ package arc
 
 const (
 	arcAgentScriptURL     = "https://gbl.his.arc.azure.com/azcmagent-linux"
-	arcAgentTmpScriptPath = "/tmp/install_linux_azcmagent_%d.sh"
+	arcAgentTmpScriptPath = "/tmp/install_linux_azcmagent.sh"
 	arcBinaryPath         = "/usr/local/bin/azcmagent"
 )
 

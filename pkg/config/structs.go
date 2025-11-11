@@ -28,6 +28,7 @@ type AzureConfig struct {
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
 // When provided, service principal authentication will be used instead of Azure CLI.
 type ServicePrincipalConfig struct {
+	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
 	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
 	ClientSecret string `json:"clientSecret"` // Azure AD application client secret
 }
@@ -117,7 +118,8 @@ type CNIPathsConfig struct {
 func (cfg *Config) IsSPConfigured() bool {
 	return cfg.Azure.ServicePrincipal != nil &&
 		cfg.Azure.ServicePrincipal.ClientID != "" &&
-		cfg.Azure.ServicePrincipal.ClientSecret != ""
+		cfg.Azure.ServicePrincipal.ClientSecret != "" &&
+		cfg.Azure.ServicePrincipal.TenantID != ""
 }
 
 // GetArcMachineName returns the Arc machine name from configuration or defaults to the system hostname

@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -38,7 +40,7 @@ func (a *AuthProvider) UserCredential(ctx context.Context, cfg *config.Config) (
 // serviceCredential creates service principal credential from config
 func (a *AuthProvider) serviceCredential(cfg *config.Config) (azcore.TokenCredential, error) {
 	cred, err := azidentity.NewClientSecretCredential(
-		cfg.Azure.TenantID,
+		cfg.Azure.ServicePrincipal.TenantID,
 		cfg.Azure.ServicePrincipal.ClientID,
 		cfg.Azure.ServicePrincipal.ClientSecret,
 		nil,
@@ -75,4 +77,53 @@ func (a *AuthProvider) GetAccessTokenForResource(ctx context.Context, cred azcor
 	}
 
 	return accessToken.Token, nil
+}
+
+// CheckCLIAuthStatus checks if user is logged in to Azure CLI and if the token is valid
+func (a *AuthProvider) CheckCLIAuthStatus(ctx context.Context) error {
+	// Try to get account information - this will fail if not logged in or token expired
+	cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Azure CLI authentication check failed: %w", err)
+	}
+
+	// Try to get an access token to verify it's not expired
+	cmd = exec.CommandContext(ctx, "az", "account", "get-access-token", "--output", "json")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Azure CLI token validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// InteractiveAzLogin performs interactive Azure CLI login with tenant ID and proper console tunneling
+func (a *AuthProvider) InteractiveAzLogin(ctx context.Context, tenantID string) error {
+	// Build az login command with tenant ID
+	args := []string{"login", "--tenant", tenantID}
+
+	// Create command with proper console I/O tunneling
+	cmd := exec.CommandContext(ctx, "az", args...)
+
+	// Connect stdin, stdout, stderr to allow interactive prompts
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Run the interactive login command
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("interactive Azure CLI login failed: %w", err)
+	}
+
+	return nil
+}
+
+// EnsureAuthenticated checks if user is authenticated and prompts for login if needed
+func (a *AuthProvider) EnsureAuthenticated(ctx context.Context, tenantID string) error {
+	// Check if already authenticated with valid token
+	if err := a.CheckCLIAuthStatus(ctx); err == nil {
+		return nil // Already authenticated and token is valid
+	}
+
+	// Not authenticated or token expired, prompt for interactive login
+	return a.InteractiveAzLogin(ctx, tenantID)
 }

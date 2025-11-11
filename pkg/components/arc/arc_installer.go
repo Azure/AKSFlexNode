@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -44,6 +43,11 @@ func (i *Installer) GetName() string {
 // It stops on the first error to prevent partial setups
 func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Starting Arc setup for bootstrap process")
+
+	// Ensure authentication
+	if err := i.ensureAuthentication(ctx); err != nil {
+		return fmt.Errorf("Arc bootstrap setup failed at authentication: %w", err)
+	}
 
 	// Step 1: Install Arc agent
 	i.logger.Info("Step 1: Installing Arc agent")
@@ -111,7 +115,7 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 	}
 
 	// Check if machine is registered with Arc
-	if _, err := i.GetArcMachine(ctx); err != nil {
+	if _, err := i.getArcMachine(ctx); err != nil {
 		i.logger.Debugf("Arc machine not registered or not accessible: %v", err)
 		return false
 	}
@@ -130,13 +134,15 @@ func (i *Installer) installArcAgent(ctx context.Context) error {
 		return nil
 	}
 
-	// Check for filesystem corruption: package installed but files missing
-	if i.isArcPackageCorrupted() {
-		i.logger.Warn("Arc agent package corruption detected - forcing reinstall")
-		if err := i.forceReinstallArcAgent(ctx); err != nil {
-			return fmt.Errorf("failed to reinstall corrupted Arc agent: %w", err)
-		}
-		return nil
+	// Remove any existing broken azcmagent package to start fresh
+	i.logger.Info("Removing any existing broken Arc agent package...")
+	if err := i.cleanUpARCAgent(); err != nil {
+		i.logger.Debugf("No existing azcmagent package to remove (or removal failed): %v", err)
+	}
+
+	// Install prerequisites and Arc agent
+	if err := i.installPrerequisites(); err != nil {
+		return fmt.Errorf("failed to install prerequisites: %w", err)
 	}
 
 	// Download and prepare installation script
@@ -144,20 +150,14 @@ func (i *Installer) installArcAgent(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to download Arc agent script: %w", err)
 	}
-
-	// Clean up script after installation
+	// Clean up tmp script after installation
 	defer func() {
 		if err := utils.RunCleanupCommand(scriptPath); err != nil {
 			logrus.Warnf("Failed to clean up temp file %s: %v", scriptPath, err)
 		}
 	}()
 
-	// Install prerequisites and Arc agent
-	if err := i.installPrerequisites(); err != nil {
-		return fmt.Errorf("failed to install prerequisites: %w", err)
-	}
-
-	if err := i.runArcAgentInstallation(ctx, scriptPath); err != nil {
+	if err := i.runArcAgentInstallation(scriptPath); err != nil {
 		return fmt.Errorf("failed to run Arc agent installation: %w", err)
 	}
 
@@ -167,91 +167,55 @@ func (i *Installer) installArcAgent(ctx context.Context) error {
 
 // downloadArcAgentScript downloads and prepares the Arc agent installation script
 func (i *Installer) downloadArcAgentScript() (string, error) {
-	i.logger.Infof("Downloading Arc agent installation script from %s", arcAgentScriptURL)
-
-	// Create unique temporary file path using process ID
-	scriptPath := fmt.Sprintf(arcAgentTmpScriptPath, os.Getpid())
-	i.logger.Debugf("Using temporary script path: %s", scriptPath)
-
-	// Clean up any existing file first - use more aggressive cleanup with sudo
-	if utils.FileExists(scriptPath) {
-		i.logger.Debug("Removing existing Arc agent script file...")
-		// Try multiple cleanup methods to handle permission issues
-		if err := utils.RunSystemCommand("rm", "-f", scriptPath); err != nil {
-			i.logger.Debugf("Standard rm failed: %v, trying with chmod first", err)
-			// Try to make file writable first, then remove
-			_ = utils.RunSystemCommand("chmod", "777", scriptPath)
-			if err := utils.RunSystemCommand("rm", "-f", scriptPath); err != nil {
-				i.logger.Warnf("Failed to clean up existing script file even after chmod: %v", err)
-			}
-		}
+	if utils.FileExists(arcAgentTmpScriptPath) {
+		i.logger.Infof("Arc agent installation script already exists at %s, skipping download", arcAgentTmpScriptPath)
+		return arcAgentTmpScriptPath, nil
 	}
 
-	// Try wget with robust options - timeout, retries, and better error handling
+	i.logger.Infof("Downloading Arc agent installation script from %s into tmp path %q",
+		arcAgentScriptURL, arcAgentTmpScriptPath)
+
 	wgetArgs := []string{
 		"--timeout=30",           // 30 second timeout
 		"--tries=3",              // Try up to 3 times
 		"--waitretry=2",          // Wait 2 seconds between retries
 		"--no-check-certificate", // Skip certificate validation (common in bootstrap environments)
 		arcAgentScriptURL,
-		"-O", scriptPath,
+		"-O", arcAgentTmpScriptPath,
 	}
 
 	if err := utils.RunSystemCommand("wget", wgetArgs...); err != nil {
-		i.logger.Errorf("wget failed to download Arc agent script: %v", err)
-
-		// Try curl as fallback
-		i.logger.Info("Trying curl as fallback download method...")
-		curlArgs := []string{
-			"--fail",           // Fail silently on HTTP errors
-			"--location",       // Follow redirects
-			"--max-time", "30", // 30 second timeout
-			"--retry", "3", // Try up to 3 times
-			"--retry-delay", "2", // Wait 2 seconds between retries
-			"--insecure", // Skip certificate validation
-			"--output", scriptPath,
-			arcAgentScriptURL,
-		}
-
-		if err := utils.RunSystemCommand("curl", curlArgs...); err != nil {
-			return "", fmt.Errorf("failed to download Arc agent installation script with both wget and curl: wget_error=%w", err)
-		}
-		i.logger.Info("Successfully downloaded Arc agent script using curl fallback")
-	} else {
-		i.logger.Info("Successfully downloaded Arc agent script using wget")
+		return "", fmt.Errorf("failed to download Arc agent script with wget: %w", err)
 	}
+
+	// Add a small delay to ensure file system operations are completed
+	time.Sleep(100 * time.Millisecond)
 
 	// Verify the downloaded file exists and has content
-	if !utils.FileExists(scriptPath) {
-		return "", fmt.Errorf("Arc agent script file was not created at %s", scriptPath)
-	}
-
-	// Check file size to ensure it's not empty
-	if fileInfo, err := os.Stat(scriptPath); err != nil {
-		return "", fmt.Errorf("failed to stat downloaded script file: %w", err)
-	} else if fileInfo.Size() == 0 {
-		return "", fmt.Errorf("downloaded Arc agent script file is empty")
-	} else {
-		i.logger.Infof("Downloaded Arc agent script file size: %d bytes", fileInfo.Size())
+	if !utils.FileExists(arcAgentTmpScriptPath) {
+		return "", fmt.Errorf("Arc agent script file was not created at %s", arcAgentTmpScriptPath)
 	}
 
 	// Make script executable
-	if err := utils.RunSystemCommand("chmod", "755", scriptPath); err != nil {
+	if err := utils.RunSystemCommand("chmod", "755", arcAgentTmpScriptPath); err != nil {
 		return "", fmt.Errorf("failed to make script executable: %w", err)
 	}
 
 	i.logger.Info("Arc agent installation script downloaded and prepared successfully")
-	return scriptPath, nil
+	return arcAgentTmpScriptPath, nil
 }
 
 // runArcAgentInstallation executes the Arc agent installation script with proper verification
-func (i *Installer) runArcAgentInstallation(ctx context.Context, scriptPath string) error {
-	i.logger.Info("Running Arc agent installation script...")
+func (i *Installer) runArcAgentInstallation(scriptPath string) error {
+	i.logger.Infof("Running Arc agent installation script from %s", scriptPath)
 
-	// Run the installation script without parameters to install the agent
-	if err := utils.RunSystemCommand("bash", scriptPath); err != nil {
+	// Run the installation script and capture output for debugging
+	output, err := utils.RunCommandWithOutput("bash", scriptPath)
+	if err != nil {
+		i.logger.Errorf("Arc agent installation script failed with output: %s", output)
 		return fmt.Errorf("Arc agent installation script failed: %w", err)
 	}
+	i.logger.Info("Arc agent installation script completed successfully")
 
 	// Verify installation was successful by checking if azcmagent is now available
 	i.logger.Info("Verifying Arc agent binary is accessible...")
@@ -301,7 +265,8 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 	i.logger.Info("Registering machine with Azure Arc using Arc agent")
 
 	// Check if already registered
-	if machine, err := i.GetArcMachine(ctx); err == nil && machine != nil {
+	machine, err := i.getArcMachine(ctx)
+	if err == nil && machine != nil {
 		i.logger.Infof("Machine already registered as Arc machine: %s", *machine.Name)
 		return machine, nil
 	}
@@ -316,7 +281,7 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 	time.Sleep(10 * time.Second)
 
 	// Verify registration by retrieving the machine
-	machine, err := i.GetArcMachine(ctx)
+	machine, err = i.getArcMachine(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("Arc agent registration completed but failed to retrieve machine info: %w", err)
 	}
@@ -336,13 +301,6 @@ func (i *Installer) runArcAgentConnect(ctx context.Context) error {
 	subscriptionID := i.config.GetSubscriptionID()
 	tenantID := i.config.GetTenantID()
 
-	// Get Arc tags
-	tags := i.config.GetArcTags()
-	tagArgs := []string{}
-	for key, value := range tags {
-		tagArgs = append(tagArgs, "--tags", fmt.Sprintf("%s=%s", key, value))
-	}
-
 	// Build azcmagent connect command
 	args := []string{
 		"connect",
@@ -353,27 +311,22 @@ func (i *Installer) runArcAgentConnect(ctx context.Context) error {
 		"--resource-name", arcMachineName,
 	}
 
-	// Add tags if any
+	// Add Arc tags if any
+	tags := i.config.GetArcTags()
+	tagArgs := []string{}
+	for key, value := range tags {
+		tagArgs = append(tagArgs, "--tags", fmt.Sprintf("%s=%s", key, value))
+	}
 	args = append(args, tagArgs...)
 
-	// Add authentication parameters based on available credentials
+	// Add authentication parameters
+	// For CLI authentication, we need to preserve the user's environment
 	if err := i.addAuthenticationArgs(ctx, &args); err != nil {
 		return fmt.Errorf("failed to configure authentication for Arc agent: %w", err)
 	}
 
-	// For CLI authentication, we need to preserve the user's environment
-	if !i.config.IsSPConfigured() {
-		i.logger.Info("Running azcmagent with preserved user environment for CLI authentication")
-		// Use sudo -E to preserve environment variables for Azure CLI
-		sudoArgs := []string{"-E", "azcmagent"}
-		sudoArgs = append(sudoArgs, args...)
-		if err := utils.RunSystemCommand("sudo", sudoArgs...); err != nil {
-			return fmt.Errorf("failed to connect to Azure Arc with preserved environment: %w", err)
-		}
-	} else {
-		if err := utils.RunSystemCommand("azcmagent", args...); err != nil {
-			return fmt.Errorf("failed to connect to Azure Arc: %w", err)
-		}
+	if err := utils.RunSystemCommand("azcmagent", args...); err != nil {
+		return fmt.Errorf("failed to connect to Azure Arc: %w", err)
 	}
 
 	i.logger.Infof("Arc agent connect completed")
@@ -396,7 +349,7 @@ func (i *Installer) assignRBACRoles(ctx context.Context, arcMachine *armhybridco
 	i.logger.Infof("Target AKS cluster resource ID: %s", i.config.Azure.TargetCluster.ResourceID)
 
 	// Create role assignments client
-	client, err := i.CreateRoleAssignmentsClient(ctx)
+	client, err := i.createRoleAssignmentsClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create role assignments client: %w", err)
 	}
@@ -588,102 +541,8 @@ func (i *Installer) installPrerequisites() error {
 	return fmt.Errorf("unable to install prerequisites - no supported package manager found")
 }
 
-// isArcPackageCorrupted checks if the Arc agent package is corrupted (installed but files missing)
-func (i *Installer) isArcPackageCorrupted() bool {
-	// Check if package is installed according to dpkg
-	cmd := exec.Command("dpkg", "-l", "azcmagent")
-	if err := cmd.Run(); err != nil {
-		// Package not installed according to dpkg
-		return false
-	}
-
-	i.logger.Debug("Arc agent package is installed according to dpkg, checking file integrity")
-
-	// Package is installed, but check if files actually exist
-	for _, path := range arcPaths {
-		if _, err := os.Stat(path); err == nil {
-			i.logger.Debugf("Found Arc agent binary at %s", path)
-			return false // Files exist, not corrupted
-		}
-	}
-
-	i.logger.Warn("Arc agent package is installed but no binary files found - package corruption detected")
-	return true // Package installed but files missing = corruption
-}
-
-// forceReinstallArcAgent removes and reinstalls the corrupted Arc agent package
-func (i *Installer) forceReinstallArcAgent(ctx context.Context) error {
-	i.logger.Info("Forcing Arc agent package reinstallation due to corruption")
-
-	// Step 1: Remove the corrupted package
-	i.logger.Info("Removing corrupted Arc agent package...")
-	if err := utils.RunSystemCommand("dpkg", "--remove", "--force-remove-reinstreq", "azcmagent"); err != nil {
-		i.logger.Warnf("Failed to remove package via dpkg: %v", err)
-		// Try apt-get remove as fallback
-		if err := utils.RunSystemCommand("apt-get", "remove", "-y", "--purge", "azcmagent"); err != nil {
-			i.logger.Warnf("Failed to remove package via apt-get: %v", err)
-		}
-	}
-
-	// Step 3: Download and install fresh package
-	i.logger.Info("Downloading and installing fresh Arc agent...")
-	scriptPath, err := i.downloadArcAgentScript()
-	if err != nil {
-		return fmt.Errorf("failed to download Arc agent script for reinstall: %w", err)
-	}
-
-	// Clean up script after installation
-	defer func() {
-		if err := utils.RunCleanupCommand(scriptPath); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", scriptPath, err)
-		}
-	}()
-
-	// Run installation script
-	if err := i.runArcAgentInstallation(ctx, scriptPath); err != nil {
-		return fmt.Errorf("failed to run Arc agent installation for reinstall: %w", err)
-	}
-
-	i.logger.Info("Arc agent package successfully reinstalled")
-	return nil
-}
-
-// cleanupArcTokens removes old Arc token files to prevent authentication conflicts
-func (i *Installer) cleanupArcTokens() error {
-	i.logger.Info("Cleaning up old Arc tokens to prevent authentication conflicts")
-
-	// Check if tokens directory exists
-	if err := utils.RunSystemCommand("test", "-d", "/var/opt/azcmagent/tokens"); err != nil {
-		i.logger.Debug("Arc tokens directory does not exist, skipping cleanup")
-		return nil
-	}
-
-	// Remove all old token files using shell expansion
-	if err := utils.RunSystemCommand("bash", "-c", "sudo rm -f /var/opt/azcmagent/tokens/*.key"); err != nil {
-		i.logger.Warnf("Failed to clean up Arc tokens: %v", err)
-		return nil // Don't fail the installation if cleanup fails
-	}
-
-	i.logger.Info("Successfully cleaned up old Arc tokens")
-	return nil
-}
-
 // addAuthenticationArgs adds appropriate authentication parameters to the azcmagent command
 func (i *Installer) addAuthenticationArgs(ctx context.Context, args *[]string) error {
-	// Clean up old tokens first to prevent conflicts
-	if err := i.cleanupArcTokens(); err != nil {
-		i.logger.Warnf("Token cleanup failed: %v", err)
-	}
-
-	// For Azure CLI credentials, we need to preserve the user environment
-	// Check if this is a CLI credential scenario
-	if !i.config.IsSPConfigured() {
-		i.logger.Info("Using Azure CLI authentication - preserving user environment")
-		// Don't add access token for CLI auth - let azcmagent use CLI directly
-		return nil
-	}
-
-	// For service principal, get access token
 	cred, err := i.authProvider.UserCredential(ctx, i.config)
 	if err != nil {
 		return fmt.Errorf("failed to get Azure credentials: %w", err)

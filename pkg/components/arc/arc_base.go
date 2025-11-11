@@ -11,6 +11,7 @@ import (
 
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // RoleAssignment represents a role assignment configuration
@@ -36,8 +37,8 @@ func NewBase(logger *logrus.Logger) *Base {
 	}
 }
 
-// GetArcMachine retrieves Arc machine using Azure SDK
-func (ab *Base) GetArcMachine(ctx context.Context) (*armhybridcompute.Machine, error) {
+// getArcMachine retrieves Arc machine using Azure SDK
+func (ab *Base) getArcMachine(ctx context.Context) (*armhybridcompute.Machine, error) {
 	arcMachineName := ab.config.GetArcMachineName()
 	arcResourceGroup := ab.config.GetArcResourceGroup()
 
@@ -67,7 +68,7 @@ func (ab *Base) GetArcMachine(ctx context.Context) (*armhybridcompute.Machine, e
 // checkRequiredPermissions verifies if the Arc managed identity has all required permissions by querying role assignments using user credentials
 func (ab *Base) checkRequiredPermissions(ctx context.Context, principalID string) (bool, error) {
 	// Get Arc machine info to get the Arc machine resource ID
-	arcMachine, err := ab.GetArcMachine(ctx)
+	arcMachine, err := ab.getArcMachine(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to get Arc machine info for permission checking: %w", err)
 	}
@@ -141,8 +142,8 @@ func (ab *Base) checkRoleAssignment(ctx context.Context, client *armauthorizatio
 	return false, nil
 }
 
-// CreateHybridComputeClient creates an authenticated Azure hybrid compute client
-func (ab *Base) CreateHybridComputeClient(ctx context.Context) (*armhybridcompute.MachinesClient, error) {
+// createHybridComputeClient creates an authenticated Azure hybrid compute client
+func (ab *Base) createHybridComputeClient(ctx context.Context) (*armhybridcompute.MachinesClient, error) {
 	cred, err := ab.authProvider.UserCredential(ctx, ab.config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get authentication credential: %w", err)
@@ -156,8 +157,8 @@ func (ab *Base) CreateHybridComputeClient(ctx context.Context) (*armhybridcomput
 	return client, nil
 }
 
-// CreateRoleAssignmentsClient creates an Azure role assignments client with proper authentication
-func (ab *Base) CreateRoleAssignmentsClient(ctx context.Context) (*armauthorization.RoleAssignmentsClient, error) {
+// createRoleAssignmentsClient creates an Azure role assignments client with proper authentication
+func (ab *Base) createRoleAssignmentsClient(ctx context.Context) (*armauthorization.RoleAssignmentsClient, error) {
 	cred, err := ab.authProvider.UserCredential(ctx, ab.config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get credentials for role assignment: %w", err)
@@ -169,4 +170,29 @@ func (ab *Base) CreateRoleAssignmentsClient(ctx context.Context) (*armauthorizat
 	}
 
 	return client, nil
+}
+
+func (ab *Base) cleanUpARCAgent() error {
+	if err := utils.RunSystemCommand("dpkg", "--remove", "--force-remove-reinstreq", "azcmagent"); err != nil {
+		ab.logger.Warnf("Failed to remove broken azcmagent package: %v", err)
+		return err
+	}
+	ab.logger.Info("Successfully removed broken Arc agent package (if any existed).")
+	return nil
+}
+
+func (ab *Base) ensureAuthentication(ctx context.Context) error {
+	if ab.config.IsSPConfigured() {
+		ab.logger.Info("🔐 Using service principal authentication")
+		return nil
+	}
+
+	ab.logger.Info("🔐 Checking Azure CLI authentication status...")
+	tenantID := ab.config.GetTenantID()
+	if err := ab.authProvider.EnsureAuthenticated(ctx, tenantID); err != nil {
+		ab.logger.Errorf("Failed to ensure Azure CLI authentication: %v", err)
+		return err
+	}
+	ab.logger.Info("✅ Azure CLI authentication verified")
+	return nil
 }

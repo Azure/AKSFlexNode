@@ -91,7 +91,7 @@ func SetupLogger(ctx context.Context, level, logDir string) context.Context {
 		// For systemd services, use a simpler formatter optimized for journald
 		logger.SetFormatter(&logrus.TextFormatter{
 			DisableTimestamp: true, // systemd journal adds timestamps
-			DisableColors:    true, // no colors for journal
+			DisableColors:    false,
 			CallerPrettyfier: func(f *runtime.Frame) (string, string) {
 				filename := filepath.Base(f.File)
 				return fmt.Sprintf("[%s:%d]", filename, f.Line), ""
