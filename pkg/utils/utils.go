@@ -183,18 +183,21 @@ func shouldIgnoreCleanupError(err error) bool {
 	return false
 }
 
-// RunCleanupCommand executes a system command with sudo when needed, ignoring common "not found" errors
-// This is specifically designed for cleanup operations where missing files/services should not be treated as errors
-func RunCleanupCommand(name string, args ...string) {
-	cmd := createCommand(name, args)
+// RunCleanupCommand removes a file or directory using rm -f, ignoring "not found" errors
+// This is specifically designed for cleanup operations where missing files should not be treated as errors
+func RunCleanupCommand(path string) error {
+	cmd := createCommand("rm", []string{"-f", path})
 	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 
 	// For cleanup operations, ignore common "not found" type errors
 	if err != nil && !shouldIgnoreCleanupError(err) {
-		// Only show stderr for actual errors, not "not found" cases
-		cmd.Stderr = os.Stderr
+		// Log the error for actual failures (stderr was already shown during execution)
+		fmt.Fprintf(os.Stderr, "Cleanup command failed: rm -f %s - %v\n", path, err)
+		return err
 	}
+	return nil
 }
 
 // CreateTempFile creates a temporary file with given pattern and content

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/google/uuid"
@@ -74,7 +73,15 @@ func (i *Installer) Execute(ctx context.Context) error {
 		}
 		i.logger.Info("Successfully assigned RBAC roles")
 	} else {
-		i.logger.Info("Step 3: Skipping RBAC role assignment (autoRoleAssignment is disabled in config)")
+		i.logger.Warn("Step 3: Skipping RBAC role assignment (autoRoleAssignment is disabled in config)")
+		i.logger.Warn("⚠️  IMPORTANT: You must manually assign the following RBAC roles to the Arc managed identity:")
+		managedIdentityID := getArcMachineIdentityID(machine)
+		if managedIdentityID != "" {
+			i.logger.Warnf("   Arc Managed Identity ID: %s", managedIdentityID)
+			i.logger.Warnf("   Required roles on AKS cluster '%s':", i.config.Azure.TargetCluster.Name)
+			i.logger.Warn("   - Azure Kubernetes Service RBAC Cluster Admin")
+			i.logger.Warn("   - Azure Kubernetes Service Cluster Admin Role")
+		}
 	}
 
 	// Step 4: Wait for permissions to become effective
@@ -133,19 +140,24 @@ func (i *Installer) installArcAgent(ctx context.Context) error {
 	}
 
 	// Download and prepare installation script
-	if err := i.downloadArcAgentScript(ctx); err != nil {
+	scriptPath, err := i.downloadArcAgentScript()
+	if err != nil {
 		return fmt.Errorf("failed to download Arc agent script: %w", err)
 	}
 
 	// Clean up script after installation
-	defer i.cleanupInstallationScript()
+	defer func() {
+		if err := utils.RunCleanupCommand(scriptPath); err != nil {
+			logrus.Warnf("Failed to clean up temp file %s: %v", scriptPath, err)
+		}
+	}()
 
 	// Install prerequisites and Arc agent
 	if err := i.installPrerequisites(); err != nil {
 		return fmt.Errorf("failed to install prerequisites: %w", err)
 	}
 
-	if err := i.runArcAgentInstallation(ctx); err != nil {
+	if err := i.runArcAgentInstallation(ctx, scriptPath); err != nil {
 		return fmt.Errorf("failed to run Arc agent installation: %w", err)
 	}
 
@@ -154,35 +166,90 @@ func (i *Installer) installArcAgent(ctx context.Context) error {
 }
 
 // downloadArcAgentScript downloads and prepares the Arc agent installation script
-func (i *Installer) downloadArcAgentScript(ctx context.Context) error {
-	// Use wget to download (more reliable than custom download function) - needs sudo for temp file access
-	cmd := exec.CommandContext(ctx, "sudo", "wget", arcAgentScriptURL, "-O", arcAgentTmpScriptPath)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to download Arc agent installation script: %w", err)
+func (i *Installer) downloadArcAgentScript() (string, error) {
+	i.logger.Infof("Downloading Arc agent installation script from %s", arcAgentScriptURL)
+
+	// Create unique temporary file path using process ID
+	scriptPath := fmt.Sprintf(arcAgentTmpScriptPath, os.Getpid())
+	i.logger.Debugf("Using temporary script path: %s", scriptPath)
+
+	// Clean up any existing file first - use more aggressive cleanup with sudo
+	if utils.FileExists(scriptPath) {
+		i.logger.Debug("Removing existing Arc agent script file...")
+		// Try multiple cleanup methods to handle permission issues
+		if err := utils.RunSystemCommand("rm", "-f", scriptPath); err != nil {
+			i.logger.Debugf("Standard rm failed: %v, trying with chmod first", err)
+			// Try to make file writable first, then remove
+			_ = utils.RunSystemCommand("chmod", "777", scriptPath)
+			if err := utils.RunSystemCommand("rm", "-f", scriptPath); err != nil {
+				i.logger.Warnf("Failed to clean up existing script file even after chmod: %v", err)
+			}
+		}
 	}
 
-	// Make script executable using sudo (since file was downloaded with sudo)
-	cmd = exec.CommandContext(ctx, "sudo", "chmod", "755", arcAgentTmpScriptPath)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to make script executable: %w", err)
+	// Try wget with robust options - timeout, retries, and better error handling
+	wgetArgs := []string{
+		"--timeout=30",           // 30 second timeout
+		"--tries=3",              // Try up to 3 times
+		"--waitretry=2",          // Wait 2 seconds between retries
+		"--no-check-certificate", // Skip certificate validation (common in bootstrap environments)
+		arcAgentScriptURL,
+		"-O", scriptPath,
 	}
 
-	return nil
-}
+	if err := utils.RunSystemCommand("wget", wgetArgs...); err != nil {
+		i.logger.Errorf("wget failed to download Arc agent script: %v", err)
 
-// cleanupInstallationScript removes the temporary installation script
-func (i *Installer) cleanupInstallationScript() {
-	utils.RunCleanupCommand("rm", "-f", arcAgentTmpScriptPath)
+		// Try curl as fallback
+		i.logger.Info("Trying curl as fallback download method...")
+		curlArgs := []string{
+			"--fail",           // Fail silently on HTTP errors
+			"--location",       // Follow redirects
+			"--max-time", "30", // 30 second timeout
+			"--retry", "3", // Try up to 3 times
+			"--retry-delay", "2", // Wait 2 seconds between retries
+			"--insecure", // Skip certificate validation
+			"--output", scriptPath,
+			arcAgentScriptURL,
+		}
+
+		if err := utils.RunSystemCommand("curl", curlArgs...); err != nil {
+			return "", fmt.Errorf("failed to download Arc agent installation script with both wget and curl: wget_error=%w", err)
+		}
+		i.logger.Info("Successfully downloaded Arc agent script using curl fallback")
+	} else {
+		i.logger.Info("Successfully downloaded Arc agent script using wget")
+	}
+
+	// Verify the downloaded file exists and has content
+	if !utils.FileExists(scriptPath) {
+		return "", fmt.Errorf("Arc agent script file was not created at %s", scriptPath)
+	}
+
+	// Check file size to ensure it's not empty
+	if fileInfo, err := os.Stat(scriptPath); err != nil {
+		return "", fmt.Errorf("failed to stat downloaded script file: %w", err)
+	} else if fileInfo.Size() == 0 {
+		return "", fmt.Errorf("downloaded Arc agent script file is empty")
+	} else {
+		i.logger.Infof("Downloaded Arc agent script file size: %d bytes", fileInfo.Size())
+	}
+
+	// Make script executable
+	if err := utils.RunSystemCommand("chmod", "755", scriptPath); err != nil {
+		return "", fmt.Errorf("failed to make script executable: %w", err)
+	}
+
+	i.logger.Info("Arc agent installation script downloaded and prepared successfully")
+	return scriptPath, nil
 }
 
 // runArcAgentInstallation executes the Arc agent installation script with proper verification
-func (i *Installer) runArcAgentInstallation(ctx context.Context) error {
+func (i *Installer) runArcAgentInstallation(ctx context.Context, scriptPath string) error {
 	i.logger.Info("Running Arc agent installation script...")
 
 	// Run the installation script without parameters to install the agent
-	cmd := exec.CommandContext(ctx, "sudo", "bash", arcAgentTmpScriptPath)
-	_, err := cmd.CombinedOutput()
-	if err != nil {
+	if err := utils.RunSystemCommand("bash", scriptPath); err != nil {
 		return fmt.Errorf("Arc agent installation script failed: %w", err)
 	}
 
@@ -221,9 +288,8 @@ func (i *Installer) runArcAgentInstallation(ctx context.Context) error {
 
 // createArcAgentSymlink creates a symlink for azcmagent to make it available in PATH
 func (i *Installer) createArcAgentSymlink(sourcePath string) error {
-	i.logger.Infof("Arc agent found at %s, creating symlink to /usr/local/bin/azcmagent", sourcePath)
-	cmd := exec.Command("sudo", "ln", "-sf", sourcePath, "/usr/local/bin/azcmagent")
-	if err := cmd.Run(); err != nil {
+	i.logger.Infof("Arc agent found at %s, creating symlink to %s", sourcePath, arcBinaryPath)
+	if err := utils.RunSystemCommand("ln", "-sf", sourcePath, arcBinaryPath); err != nil {
 		return fmt.Errorf("Arc agent installed at %s but not in PATH. Failed to create symlink: %v. Please manually run: sudo ln -sf %s /usr/local/bin/azcmagent", sourcePath, err, sourcePath)
 	}
 	i.logger.Info("Successfully created symlink for azcmagent")
@@ -267,8 +333,8 @@ func (i *Installer) runArcAgentConnect(ctx context.Context) error {
 	arcLocation := i.config.GetArcLocation()
 	arcMachineName := i.config.GetArcMachineName()
 	arcResourceGroup := i.config.GetArcResourceGroup()
-	subscriptionID := i.config.Azure.SubscriptionID
-	tenantID := i.config.Azure.TenantID
+	subscriptionID := i.config.GetSubscriptionID()
+	tenantID := i.config.GetTenantID()
 
 	// Get Arc tags
 	tags := i.config.GetArcTags()
@@ -279,7 +345,7 @@ func (i *Installer) runArcAgentConnect(ctx context.Context) error {
 
 	// Build azcmagent connect command
 	args := []string{
-		"azcmagent", "connect",
+		"connect",
 		"--resource-group", arcResourceGroup,
 		"--tenant-id", tenantID,
 		"--location", arcLocation,
@@ -295,25 +361,39 @@ func (i *Installer) runArcAgentConnect(ctx context.Context) error {
 		return fmt.Errorf("failed to configure authentication for Arc agent: %w", err)
 	}
 
-	// Execute the command
-	cmd := exec.CommandContext(ctx, "sudo", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to connect to Azure Arc: %w, output: %s", err, string(output))
+	// For CLI authentication, we need to preserve the user's environment
+	if !i.config.IsSPConfigured() {
+		i.logger.Info("Running azcmagent with preserved user environment for CLI authentication")
+		// Use sudo -E to preserve environment variables for Azure CLI
+		sudoArgs := []string{"-E", "azcmagent"}
+		sudoArgs = append(sudoArgs, args...)
+		if err := utils.RunSystemCommand("sudo", sudoArgs...); err != nil {
+			return fmt.Errorf("failed to connect to Azure Arc with preserved environment: %w", err)
+		}
+	} else {
+		if err := utils.RunSystemCommand("azcmagent", args...); err != nil {
+			return fmt.Errorf("failed to connect to Azure Arc: %w", err)
+		}
 	}
 
-	i.logger.Infof("Arc agent connect completed: %s", string(output))
+	i.logger.Infof("Arc agent connect completed")
 	return nil
 }
 
-// AssignRBACRoles assigns required RBAC roles to the Arc machine's managed identity
+// assignRBACRoles assigns required RBAC roles to the Arc machine's managed identity
 func (i *Installer) assignRBACRoles(ctx context.Context, arcMachine *armhybridcompute.Machine) error {
 	managedIdentityID := getArcMachineIdentityID(arcMachine)
 	if managedIdentityID == "" {
 		return fmt.Errorf("managed identity ID not found on Arc machine")
 	}
 
-	i.logger.Infof("Assigning roles to managed identity: %s", managedIdentityID)
+	i.logger.Infof("🔐 Starting RBAC role assignment for Arc managed identity: %s", managedIdentityID)
+
+	// Verify target cluster configuration
+	if i.config.Azure.TargetCluster.ResourceID == "" {
+		return fmt.Errorf("target cluster resource ID not configured - cannot assign roles")
+	}
+	i.logger.Infof("Target AKS cluster resource ID: %s", i.config.Azure.TargetCluster.ResourceID)
 
 	// Create role assignments client
 	client, err := i.CreateRoleAssignmentsClient(ctx)
@@ -321,17 +401,37 @@ func (i *Installer) assignRBACRoles(ctx context.Context, arcMachine *armhybridco
 		return fmt.Errorf("failed to create role assignments client: %w", err)
 	}
 
-	// Assign each required role
+	// Get required role assignments
 	requiredRoles := i.getRoleAssignments(arcMachine)
-	for _, role := range requiredRoles {
-		i.logger.Infof("Assigning role '%s' to managed identity %s on scope %s", role.RoleName, managedIdentityID, role.Scope)
+	i.logger.Infof("Need to assign %d RBAC roles", len(requiredRoles))
+
+	// Track assignment results
+	var assignmentErrors []error
+	successCount := 0
+
+	// Assign each required role
+	for idx, role := range requiredRoles {
+		i.logger.Infof("📋 [%d/%d] Assigning role '%s' on scope: %s", idx+1, len(requiredRoles), role.RoleName, role.Scope)
+
 		if err := i.assignRole(ctx, client, managedIdentityID, role.RoleID, role.Scope, role.RoleName); err != nil {
-			i.logger.Errorf("Failed to assign role '%s' on scope %s: %v", role.RoleName, role.Scope, err)
-			return err
+			i.logger.Errorf("❌ Failed to assign role '%s': %v", role.RoleName, err)
+			assignmentErrors = append(assignmentErrors, fmt.Errorf("role '%s': %w", role.RoleName, err))
+		} else {
+			i.logger.Infof("✅ Successfully assigned role '%s'", role.RoleName)
+			successCount++
 		}
 	}
 
-	i.logger.Info("All RBAC roles assigned successfully")
+	// Report final results
+	if len(assignmentErrors) > 0 {
+		i.logger.Errorf("⚠️  RBAC role assignment completed with %d successes and %d failures", successCount, len(assignmentErrors))
+		for _, err := range assignmentErrors {
+			i.logger.Errorf("   - %v", err)
+		}
+		return fmt.Errorf("failed to assign %d out of %d RBAC roles", len(assignmentErrors), len(requiredRoles))
+	}
+
+	i.logger.Infof("🎉 All %d RBAC roles assigned successfully!", successCount)
 	return nil
 }
 
@@ -341,17 +441,20 @@ func (i *Installer) assignRole(ctx context.Context, client *armauthorization.Rol
 	fullRoleDefinitionID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 		i.config.Azure.SubscriptionID, roleDefinitionID)
 
+	i.logger.Debugf("Checking if role assignment already exists...")
+
 	// Check if assignment already exists
 	hasRole, err := i.checkRoleAssignment(ctx, client, principalID, roleDefinitionID, scope)
 	if err != nil {
-		i.logger.Warnf("Error checking existing role assignment for %s: %v", roleName, err)
+		i.logger.Warnf("⚠️  Error checking existing role assignment for %s: %v (will proceed with assignment)", roleName, err)
 	} else if hasRole {
-		i.logger.Infof("Role assignment already exists for role '%s' on scope %s", roleName, scope)
+		i.logger.Infof("ℹ️  Role assignment already exists for role '%s' - skipping", roleName)
 		return nil
 	}
 
 	// Generate a unique name for the role assignment (UUID format required)
 	roleAssignmentName := uuid.New().String()
+	i.logger.Debugf("Creating role assignment with ID: %s", roleAssignmentName)
 
 	// Create the role assignment
 	assignment := armauthorization.RoleAssignmentCreateParameters{
@@ -361,22 +464,40 @@ func (i *Installer) assignRole(ctx context.Context, client *armauthorization.Rol
 		},
 	}
 
+	i.logger.Debugf("Calling Azure API to create role assignment...")
 	_, err = client.Create(ctx, scope, roleAssignmentName, assignment, nil)
 	if err != nil {
-		// Check if it's a conflict error (assignment already exists)
-		if strings.Contains(err.Error(), "RoleAssignmentExists") {
-			i.logger.Infof("Role assignment already exists for role '%s' on scope %s", roleName, scope)
+		// Provide more detailed error information
+		i.logger.Errorf("❌ Role assignment creation failed:")
+		i.logger.Errorf("   Principal ID: %s", principalID)
+		i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
+		i.logger.Errorf("   Scope: %s", scope)
+		i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
+		i.logger.Errorf("   Azure API Error: %v", err)
+
+		// Check for common error patterns
+		errStr := err.Error()
+		if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
+			return fmt.Errorf("insufficient permissions to assign roles - ensure the user/service principal has Owner or User Access Administrator role on the target cluster: %w", err)
+		}
+		if strings.Contains(errStr, "RoleAssignmentExists") {
+			i.logger.Info("ℹ️  Role assignment already exists (detected from error)")
 			return nil
 		}
+		if strings.Contains(errStr, "PrincipalNotFound") {
+			return fmt.Errorf("Arc managed identity not found - ensure Arc machine is properly registered: %w", err)
+		}
+
 		return fmt.Errorf("failed to create role assignment: %w", err)
 	}
 
+	i.logger.Debugf("✅ Role assignment created successfully")
 	return nil
 }
 
-// WaitForRBACPermissions waits for RBAC permissions to be available
+// waitForRBACPermissions waits for RBAC permissions to be available
 func (i *Installer) waitForRBACPermissions(ctx context.Context, arcMachine *armhybridcompute.Machine) error {
-	i.logger.Info("Waiting for RBAC permissions to be assigned to Arc managed identity...")
+	i.logger.Info("🕐 Step 4: Waiting for RBAC permissions to become effective...")
 
 	// Get Arc machine info to get the managed identity object ID
 	managedIdentityID := getArcMachineIdentityID(arcMachine)
@@ -384,37 +505,43 @@ func (i *Installer) waitForRBACPermissions(ctx context.Context, arcMachine *armh
 		return fmt.Errorf("managed identity ID not found on Arc machine")
 	}
 
-	i.logger.Infof("Checking permissions for managed identity: %s", managedIdentityID)
-	i.logger.Info("Please ensure the following permissions are assigned manually:")
-	i.logger.Info("  1. Reader role on the Arc machine (for Arc authentication)")
-	i.logger.Info("  2. Reader role on the AKS cluster")
-	i.logger.Info("  3. Azure Kubernetes Service RBAC Cluster Admin role on the AKS cluster")
-	i.logger.Info("  4. Azure Kubernetes Service Cluster Admin Role on the AKS cluster")
-	i.logger.Info("  5. Network Contributor role on the cluster resource group")
-	i.logger.Info("  6. Contributor role on the managed cluster resource group")
+	i.logger.Infof("Checking permissions for Arc managed identity: %s", managedIdentityID)
+	i.logger.Infof("Target AKS cluster: %s", i.config.Azure.TargetCluster.Name)
+
+	// Show required permissions for reference
+	if i.config.GetArcAutoRoleAssignment() {
+		i.logger.Info("ℹ️  Waiting for the following auto-assigned RBAC roles to become effective:")
+	} else {
+		i.logger.Warn("⚠️  Please ensure the following RBAC permissions are assigned manually:")
+	}
+	i.logger.Info("   • Reader role on the AKS cluster")
+	i.logger.Info("   • Azure Kubernetes Service RBAC Cluster Admin role on the AKS cluster")
+	i.logger.Info("   • Azure Kubernetes Service Cluster Admin Role on the AKS cluster")
 
 	// Check permissions immediately first
-	if hasPermissions := i.checkPermissionsWithLogging(ctx, managedIdentityID, true); hasPermissions {
-		i.logger.Info("✅ All required RBAC permissions are already available!")
+	i.logger.Info("🔍 Performing initial permission check...")
+	if hasPermissions := i.checkPermissionsWithLogging(ctx, managedIdentityID); hasPermissions {
+		i.logger.Info("🎉 All required RBAC permissions are already available!")
 		return nil
 	}
 
-	// Start polling for permissions
+	// Start polling for permissions (with retries and timeout)
+	i.logger.Info("⏳ Starting permission polling (this may take a few minutes)...")
 	return i.pollForPermissions(ctx, managedIdentityID)
 }
 
 // checkPermissionsWithLogging checks permissions and logs the result appropriately
-func (i *Installer) checkPermissionsWithLogging(ctx context.Context, managedIdentityID string, isFirstCheck bool) bool {
-	i.logger.Info("Checking if required permissions are available...")
+func (i *Installer) checkPermissionsWithLogging(ctx context.Context, managedIdentityID string) bool {
+	i.logger.Debug("Checking if required permissions are available...")
 
 	hasPermissions, err := i.checkRequiredPermissions(ctx, managedIdentityID)
 	if err != nil {
-		if isFirstCheck {
-			i.logger.Warnf("Error checking permissions on first attempt: %v", err)
-		} else {
-			i.logger.Warnf("Error checking permissions (will retry): %v", err)
-		}
+		i.logger.Warnf("⚠️  Error checking permissions (will retry): %v", err)
 		return false
+	}
+
+	if !hasPermissions {
+		i.logger.Debug("Some required permissions are still missing")
 	}
 
 	return hasPermissions
@@ -435,7 +562,7 @@ func (i *Installer) pollForPermissions(ctx context.Context, managedIdentityID st
 		case <-timeout:
 			return fmt.Errorf("timeout after %v waiting for RBAC permissions to be assigned", maxWaitTime)
 		case <-ticker.C:
-			if hasPermissions := i.checkPermissionsWithLogging(ctx, managedIdentityID, false); hasPermissions {
+			if hasPermissions := i.checkPermissionsWithLogging(ctx, managedIdentityID); hasPermissions {
 				i.logger.Info("✅ All required RBAC permissions are now available!")
 				return nil
 			}
@@ -500,15 +627,20 @@ func (i *Installer) forceReinstallArcAgent(ctx context.Context) error {
 
 	// Step 3: Download and install fresh package
 	i.logger.Info("Downloading and installing fresh Arc agent...")
-	if err := i.downloadArcAgentScript(ctx); err != nil {
+	scriptPath, err := i.downloadArcAgentScript()
+	if err != nil {
 		return fmt.Errorf("failed to download Arc agent script for reinstall: %w", err)
 	}
 
 	// Clean up script after installation
-	defer i.cleanupInstallationScript()
+	defer func() {
+		if err := utils.RunCleanupCommand(scriptPath); err != nil {
+			logrus.Warnf("Failed to clean up temp file %s: %v", scriptPath, err)
+		}
+	}()
 
 	// Run installation script
-	if err := i.runArcAgentInstallation(ctx); err != nil {
+	if err := i.runArcAgentInstallation(ctx, scriptPath); err != nil {
 		return fmt.Errorf("failed to run Arc agent installation for reinstall: %w", err)
 	}
 
@@ -516,25 +648,53 @@ func (i *Installer) forceReinstallArcAgent(ctx context.Context) error {
 	return nil
 }
 
+// cleanupArcTokens removes old Arc token files to prevent authentication conflicts
+func (i *Installer) cleanupArcTokens() error {
+	i.logger.Info("Cleaning up old Arc tokens to prevent authentication conflicts")
+
+	// Check if tokens directory exists
+	if err := utils.RunSystemCommand("test", "-d", "/var/opt/azcmagent/tokens"); err != nil {
+		i.logger.Debug("Arc tokens directory does not exist, skipping cleanup")
+		return nil
+	}
+
+	// Remove all old token files using shell expansion
+	if err := utils.RunSystemCommand("bash", "-c", "sudo rm -f /var/opt/azcmagent/tokens/*.key"); err != nil {
+		i.logger.Warnf("Failed to clean up Arc tokens: %v", err)
+		return nil // Don't fail the installation if cleanup fails
+	}
+
+	i.logger.Info("Successfully cleaned up old Arc tokens")
+	return nil
+}
+
 // addAuthenticationArgs adds appropriate authentication parameters to the azcmagent command
 func (i *Installer) addAuthenticationArgs(ctx context.Context, args *[]string) error {
-	// Try to get credentials using the same method as other Azure SDK calls
+	// Clean up old tokens first to prevent conflicts
+	if err := i.cleanupArcTokens(); err != nil {
+		i.logger.Warnf("Token cleanup failed: %v", err)
+	}
+
+	// For Azure CLI credentials, we need to preserve the user environment
+	// Check if this is a CLI credential scenario
+	if !i.config.IsSPConfigured() {
+		i.logger.Info("Using Azure CLI authentication - preserving user environment")
+		// Don't add access token for CLI auth - let azcmagent use CLI directly
+		return nil
+	}
+
+	// For service principal, get access token
 	cred, err := i.authProvider.UserCredential(ctx, i.config)
 	if err != nil {
 		return fmt.Errorf("failed to get Azure credentials: %w", err)
 	}
 
-	// Get access token for Azure Resource Manager
-	tokenRequestOptions := policy.TokenRequestOptions{
-		Scopes: []string{"https://management.azure.com/.default"},
-	}
-
-	accessToken, err := cred.GetToken(ctx, tokenRequestOptions)
+	accessToken, err := i.authProvider.GetAccessToken(ctx, cred)
 	if err != nil {
-		return fmt.Errorf("failed to get access token: %w", err)
+		return fmt.Errorf("failed to get access token for Arc agent authentication: %w", err)
 	}
 
 	i.logger.Info("Using access token authentication for Arc agent")
-	*args = append(*args, "--access-token", accessToken.Token)
+	*args = append(*args, "--access-token", accessToken)
 	return nil
 }

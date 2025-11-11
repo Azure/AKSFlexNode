@@ -42,8 +42,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		containerd.NewInstaller(b.logger),            // Install containerd
 		kubernetes_components.NewInstaller(b.logger), // Install k8s components
 		cni.NewInstaller(b.logger),                   // Setup CNI (after container runtime)
-		cluster_credentials.NewInstaller(b.logger),   // Download kube admin credentials
-		kubelet.NewInstaller(b.logger),               // Configure kubelet service
+		cluster_credentials.NewInstaller(b.logger),   // Download cluster credentials using Arc MSI
+		kubelet.NewInstaller(b.logger),               // Configure kubelet service with Arc MSI auth
 		services.NewInstaller(b.logger),              // Start services
 	}
 

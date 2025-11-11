@@ -37,7 +37,7 @@ func (ru *UnInstaller) Execute(ctx context.Context) error {
 
 	// Remove runc binaries from all possible locations
 	for _, binary := range RuncBinaryPaths {
-		if err := utils.RunSystemCommand("rm", "-f", binary); err != nil {
+		if err := utils.RunCleanupCommand(binary); err != nil {
 			ru.logger.Debugf("Failed to remove binary %s: %v (may not exist)", binary, err)
 		} else {
 			ru.logger.Infof("Removed binary: %s", binary)

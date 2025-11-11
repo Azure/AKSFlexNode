@@ -64,7 +64,7 @@ func (c *Manager) removeFlannel() error {
 	for _, confPath := range flannelConfigs {
 		if _, err := os.Stat(confPath); err == nil {
 			logrus.Infof("Removing Flannel config: %s", confPath)
-			if err := utils.RunSystemCommand("rm", "-f", confPath); err != nil {
+			if err := utils.RunCleanupCommand(confPath); err != nil {
 				return fmt.Errorf("failed to remove %s: %w", confPath, err)
 			}
 		}
@@ -154,7 +154,7 @@ func (c *Manager) ExecuteCNIPlugins(version string) error {
 	}
 
 	// Also specifically clean up the exact temp file we'll use
-	if err := utils.RunSystemCommand("rm", "-f", tempFile); err != nil {
+	if err := utils.RunCleanupCommand(tempFile); err != nil {
 		logrus.Warnf("Failed to clean up specific temp file: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func (c *Manager) ExecuteCNIPlugins(version string) error {
 		return fmt.Errorf("failed to download CNI plugins: %w", err)
 	}
 	defer func() {
-		if err := utils.RunSystemCommand("rm", "-f", tempFile); err != nil {
+		if err := utils.RunCleanupCommand(tempFile); err != nil {
 			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
 		}
 	}()
@@ -206,7 +206,7 @@ func (c *Manager) CreateBridgeConfig() error {
 	}
 
 	// Remove any existing invalid or corrupted config
-	if err := utils.RunSystemCommand("rm", "-f", configPath); err != nil {
+	if err := utils.RunCleanupCommand(configPath); err != nil {
 		logrus.Warnf("Failed to remove existing config file: %v", err)
 	}
 

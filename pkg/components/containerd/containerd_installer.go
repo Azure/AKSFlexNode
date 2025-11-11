@@ -240,7 +240,7 @@ func (ci *Installer) cleanupExistingInstallation() error {
 		binaryPath := filepath.Join(SystemBinDir, binary)
 		if utils.FileExists(binaryPath) {
 			ci.logger.Debugf("Removing existing containerd binary: %s", binaryPath)
-			if err := utils.RunSystemCommand("rm", "-f", binaryPath); err != nil {
+			if err := utils.RunCleanupCommand(binaryPath); err != nil {
 				ci.logger.Warnf("Failed to remove %s: %v", binaryPath, err)
 			}
 		}

@@ -188,3 +188,13 @@ func (cfg *Config) GetArcAutoRoleAssignment() bool {
 	}
 	return false // Default to false for safety
 }
+
+// GetSubscriptionID returns the Azure subscription ID from configuration
+func (cfg *Config) GetSubscriptionID() string {
+	return cfg.Azure.SubscriptionID
+}
+
+// GetTenantID returns the Azure tenant ID from configuration
+func (cfg *Config) GetTenantID() string {
+	return cfg.Azure.TenantID
+}

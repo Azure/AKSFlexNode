@@ -3,11 +3,11 @@ package cluster_credentials
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
-	"go.goms.io/aks/AKSFlexNode/pkg/azure"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
@@ -38,30 +38,21 @@ func (i *Installer) Validate(ctx context.Context) error {
 	return nil
 }
 
-// Execute downloads the AKS cluster credentials and configures kubectl
+// Execute downloads the AKS cluster credentials using Azure CLI with Arc managed identity
 func (i *Installer) Execute(ctx context.Context) error {
-	i.logger.Info("Downloading AKS cluster credentials using Azure Arc managed identity")
+	i.logger.Info("Downloading AKS cluster credentials using Azure CLI with Arc managed identity")
 
-	// Get management token using ARC managed identity with retry
-	i.logger.Debug("Acquiring managed identity credential...")
-	cred, err := i.authProvider.ArcCredential()
-	if err != nil {
-		return fmt.Errorf("failed to get managed identity credential (ensure Azure Arc agent is running and properly configured): %w", err)
-	}
-
-	i.logger.Infof("Successfully acquired managed identity credential")
-
-	// Fetch cluster credentials from Azure using SDK
-	i.logger.Infof("Fetching cluster credentials for %s in resource group %s",
+	// Use Azure CLI to get cluster credentials with Arc managed identity authentication
+	i.logger.Infof("Fetching cluster credentials for %s in resource group %s using Azure CLI",
 		i.config.Azure.TargetCluster.Name, i.config.Azure.TargetCluster.ResourceGroup)
 
-	kubeconfigData, err := azure.GetClusterCredentials(ctx, cred, i.logger)
+	kubeconfigData, err := i.getClusterCredentialsWithAzureCLI()
 	if err != nil {
-		return fmt.Errorf("failed to fetch cluster credentials from Azure: %w", err)
+		return fmt.Errorf("failed to fetch cluster credentials using Azure CLI: %w", err)
 	}
 
 	if len(kubeconfigData) == 0 {
-		return fmt.Errorf("received empty kubeconfig data from Azure")
+		return fmt.Errorf("received empty kubeconfig data from Azure CLI")
 	}
 
 	i.logger.Infof("Successfully retrieved cluster credentials (%d bytes)", len(kubeconfigData))
@@ -90,23 +81,63 @@ func (i *Installer) saveKubeconfigFile(kubeconfigData []byte) error {
 		return fmt.Errorf("failed to create kubernetes config directory: %w", err)
 	}
 
-	// Write kubeconfig using a temporary file and sudo to handle permissions
-	tempFile, err := utils.CreateTempFile("kubeconfig-*.conf", kubeconfigData)
-	if err != nil {
-		return fmt.Errorf("failed to create temporary kubeconfig file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempFile.Name())
-	defer tempFile.Close()
-
-	// Copy the temporary file to the final location with proper permissions
-	if err := utils.RunSystemCommand("cp", tempFile.Name(), kubeconfigPath); err != nil {
-		return fmt.Errorf("failed to copy kubeconfig to final location: %w", err)
+	// Write kubeconfig file directly with proper permissions
+	if err := utils.WriteFileAtomicSystem(kubeconfigPath, kubeconfigData, 0644); err != nil {
+		return fmt.Errorf("failed to write kubeconfig file: %w", err)
 	}
 
-	// Set proper ownership and permissions
-	if err := utils.RunSystemCommand("chmod", "600", kubeconfigPath); err != nil {
-		return fmt.Errorf("failed to set kubeconfig permissions: %w", err)
-	}
-
+	i.logger.Info("Kubeconfig file saved successfully")
 	return nil
+}
+
+// createKubeconfigWithCopyApproach simple fallback approach
+func (i *Installer) createKubeconfigWithCopyApproach(kubeconfigData []byte, kubeconfigPath string) error {
+	i.logger.Info("Using simple file write fallback approach...")
+
+	// Write kubeconfig directly with proper permissions
+	if err := utils.WriteFileAtomicSystem(kubeconfigPath, kubeconfigData, 0644); err != nil {
+		return fmt.Errorf("failed to write kubeconfig file: %w", err)
+	}
+
+	i.logger.Info("Kubeconfig written successfully")
+	return nil
+}
+
+// getClusterCredentialsWithAzureCLI downloads AKS cluster credentials using Azure CLI with Arc managed identity
+func (i *Installer) getClusterCredentialsWithAzureCLI() ([]byte, error) {
+	i.logger.Info("Using Azure CLI to download cluster credentials with Arc managed identity authentication")
+
+	// Build Azure CLI command to get AKS credentials
+	// Using --admin flag to get admin credentials
+	// Azure CLI will automatically use Arc managed identity when available
+	args := []string{
+		"aks", "get-credentials",
+		"--resource-group", i.config.Azure.TargetCluster.ResourceGroup,
+		"--name", i.config.Azure.TargetCluster.Name,
+		"--subscription", i.config.Azure.SubscriptionID,
+		"--admin",                        // Get admin credentials
+		"--overwrite-existing",           // Overwrite existing config
+		"--file", "/tmp/kubeconfig-temp", // Write to temp file instead of default location
+	}
+
+	i.logger.Infof("Running Azure CLI command: az %v", args)
+
+	// Execute Azure CLI command
+	// Note: Azure CLI will automatically use Arc managed identity when available
+	if err := utils.RunSystemCommand("az", args...); err != nil {
+		return nil, fmt.Errorf("failed to download cluster credentials using Azure CLI: %w", err)
+	}
+
+	// Read the downloaded kubeconfig file
+	kubeconfigData, err := os.ReadFile("/tmp/kubeconfig-temp")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read downloaded kubeconfig file: %w", err)
+	}
+
+	// Clean up the temporary file
+	if err := os.Remove("/tmp/kubeconfig-temp"); err != nil {
+		i.logger.Warnf("Failed to clean up temporary kubeconfig file: %v", err)
+	}
+
+	return kubeconfigData, nil
 }

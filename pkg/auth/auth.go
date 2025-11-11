@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
@@ -57,3 +58,21 @@ func (a *AuthProvider) cliCredential() (azcore.TokenCredential, error) {
 	return cred, nil
 }
 
+// GetAccessToken retrieves access token for given credential with default ARM scope
+func (a *AuthProvider) GetAccessToken(ctx context.Context, cred azcore.TokenCredential) (string, error) {
+	return a.GetAccessTokenForResource(ctx, cred, "https://management.azure.com/.default")
+}
+
+// GetAccessTokenForResource retrieves access token for given credential and resource
+func (a *AuthProvider) GetAccessTokenForResource(ctx context.Context, cred azcore.TokenCredential, resource string) (string, error) {
+	tokenRequestOptions := policy.TokenRequestOptions{
+		Scopes: []string{resource},
+	}
+
+	accessToken, err := cred.GetToken(ctx, tokenRequestOptions)
+	if err != nil {
+		return "", fmt.Errorf("failed to get access token: %w", err)
+	}
+
+	return accessToken.Token, nil
+}

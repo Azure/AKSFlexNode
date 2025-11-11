@@ -36,8 +36,8 @@ func (su *UnInstaller) Execute(ctx context.Context) error {
 		su.logger.WithError(err).Warn("Failed to cleanup sysctl configuration")
 	}
 
-	// Remove legacy configuration files
-	if err := su.cleanupLegacyFiles(); err != nil {
+	// Remove stale configuration files
+	if err := su.cleanupStaleFiles(); err != nil {
 		su.logger.WithError(err).Warn("Failed to cleanup legacy configuration files")
 	}
 
@@ -75,7 +75,7 @@ func (su *UnInstaller) IsCompleted(ctx context.Context) bool {
 // cleanupSysctlConfig removes the current sysctl configuration
 func (su *UnInstaller) cleanupSysctlConfig() error {
 	if utils.FileExists(SysctlConfigPath) {
-		if err := utils.RunSystemCommand("rm", "-f", SysctlConfigPath); err != nil {
+		if err := utils.RunCleanupCommand(SysctlConfigPath); err != nil {
 			return err
 		}
 		su.logger.Info("Removed sysctl configuration file")
@@ -83,8 +83,8 @@ func (su *UnInstaller) cleanupSysctlConfig() error {
 	return nil
 }
 
-// cleanupLegacyFiles removes legacy configuration files
-func (su *UnInstaller) cleanupLegacyFiles() error {
+// cleanupStaleFiles removes stale configuration files
+func (su *UnInstaller) cleanupStaleFiles() error {
 	legacyFiles := []string{
 		LegacySysctlConfig,
 		LegacyContainerdConf,
@@ -92,8 +92,8 @@ func (su *UnInstaller) cleanupLegacyFiles() error {
 
 	for _, file := range legacyFiles {
 		if utils.FileExists(file) {
-			if err := utils.RunSystemCommand("rm", "-f", file); err != nil {
-				su.logger.WithError(err).Warnf("Failed to remove legacy file: %s", file)
+			if err := utils.RunCleanupCommand(file); err != nil {
+				su.logger.WithError(err).Warnf("Failed to remove file: %s", file)
 				continue
 			}
 			su.logger.Infof("Removed legacy configuration file: %s", file)

@@ -135,7 +135,7 @@ func (i *Installer) cleanupExistingInstallation() error {
 	}
 
 	// Remove the binary
-	if err := utils.RunSystemCommand("rm", "-f", PrimaryRuncBinaryPath); err != nil {
+	if err := utils.RunCleanupCommand(PrimaryRuncBinaryPath); err != nil {
 		return fmt.Errorf("failed to remove existing runc binary at %s: %w", PrimaryRuncBinaryPath, err)
 	}
 

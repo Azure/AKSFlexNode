@@ -72,7 +72,7 @@ func (ab *Base) checkRequiredPermissions(ctx context.Context, principalID string
 		return false, fmt.Errorf("failed to get Arc machine info for permission checking: %w", err)
 	}
 
-	// Use the user's credential to query role assignments (same as other Azure SDK operations)
+	// Use the user's credential to query role assignments
 	cred, err := ab.authProvider.UserCredential(ctx, ab.config)
 	if err != nil {
 		return false, fmt.Errorf("failed to get user credential: %w", err)
@@ -103,12 +103,9 @@ func (ab *Base) checkRequiredPermissions(ctx context.Context, principalID string
 
 func (ab *Base) getRoleAssignments(arcMachine *armhybridcompute.Machine) []RoleAssignment {
 	return []RoleAssignment{
-		{"Reader (Arc Machine)", to.String(arcMachine.ID), roleDefinitionIDs["Reader"]},
 		{"Reader (Target Cluster)", ab.config.Azure.TargetCluster.ResourceID, roleDefinitionIDs["Reader"]},
 		{"Azure Kubernetes Service RBAC Cluster Admin", ab.config.Azure.TargetCluster.ResourceID, roleDefinitionIDs["Azure Kubernetes Service RBAC Cluster Admin"]},
 		{"Azure Kubernetes Service Cluster Admin Role", ab.config.Azure.TargetCluster.ResourceID, roleDefinitionIDs["Azure Kubernetes Service Cluster Admin Role"]},
-		{"Network Contributor", fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", ab.config.Azure.TargetCluster.SubscriptionID, ab.config.Azure.TargetCluster.ResourceGroup), roleDefinitionIDs["Network Contributor"]},
-		{"Contributor", fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", ab.config.Azure.TargetCluster.SubscriptionID, ab.config.Azure.TargetCluster.NodeResourceGroup), roleDefinitionIDs["Contributor"]},
 	}
 }
 

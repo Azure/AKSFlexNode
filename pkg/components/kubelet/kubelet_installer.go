@@ -3,6 +3,8 @@ package kubelet
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -51,6 +53,22 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 	if !utils.FileExists(KubeletServicePath) {
 		return false
 	}
+	if !utils.FileExists(KubeletContainerdConfig) {
+		return false
+	}
+	if !utils.FileExists(KubeletTLSBootstrapConfig) {
+		return false
+	}
+
+	// Check if kubeconfig exists for exec credential authentication
+	if !utils.FileExists(KubeletKubeconfigPath) {
+		return false
+	}
+
+	// Check if Arc token script exists
+	if !utils.FileExists(KubeletTokenScriptPath) {
+		return false
+	}
 
 	// Validate the configuration files have expected content
 	if !i.validateKubeletConfiguration() {
@@ -72,7 +90,7 @@ func (i *Installer) Validate(_ context.Context) error {
 func (i *Installer) configure(ctx context.Context) error {
 	i.logger.Info("Configuring kubelet")
 
-	// Clean up any existing corrupted configuration files
+	// Clean up any existing stale configuration files
 	if err := i.cleanupExistingConfiguration(); err != nil {
 		i.logger.Warnf("Failed to cleanup existing kubelet configuration: %v", err)
 		// Continue anyway - we'll overwrite the files
@@ -83,8 +101,23 @@ func (i *Installer) configure(ctx context.Context) error {
 		return err
 	}
 
+	// Create Arc token script for exec credential authentication
+	if err := i.createArcTokenScript(); err != nil {
+		return err
+	}
+
+	// Create kubeconfig with exec credential provider
+	if err := i.createKubeconfigWithExecCredential(); err != nil {
+		return err
+	}
+
 	// Create kubelet containerd configuration
 	if err := i.createKubeletContainerdConfig(); err != nil {
+		return err
+	}
+
+	// Create kubelet TLS bootstrap configuration
+	if err := i.createKubeletTLSBootstrapConfig(); err != nil {
 		return err
 	}
 
@@ -107,16 +140,20 @@ func (i *Installer) cleanupExistingConfiguration() error {
 	i.logger.Debug("Cleaning up existing kubelet configuration files")
 
 	// List of files to clean up
+	kubeconfigPath := filepath.Join(i.config.Paths.Kubernetes.ConfigDir, "kubeconfig")
 	filesToClean := []string{
 		KubeletDefaultsPath,
 		KubeletServicePath,
 		KubeletContainerdConfig,
+		KubeletTLSBootstrapConfig,
+		kubeconfigPath,
+		KubeletTokenScriptPath,
 	}
 
 	for _, file := range filesToClean {
 		if utils.FileExists(file) {
 			i.logger.Debugf("Removing existing kubelet config file: %s", file)
-			if err := utils.RunSystemCommand("rm", "-f", file); err != nil {
+			if err := utils.RunCleanupCommand(file); err != nil {
 				i.logger.Warnf("Failed to remove %s: %v", file, err)
 			}
 		}
@@ -140,27 +177,17 @@ func (i *Installer) validateKubeletConfiguration() bool {
 	return true
 }
 
-// validateKubeletDefaultsFile checks if the kubelet defaults file has expected content
-func (i *Installer) validateKubeletDefaultsFile() bool {
-	output, err := utils.RunCommandWithOutput("cat", KubeletDefaultsPath)
+// validateFileContent checks if a file contains all expected strings
+func (i *Installer) validateFileContent(filePath string, expectedStrings []string, description string) bool {
+	output, err := utils.RunCommandWithOutput("cat", filePath)
 	if err != nil {
-		i.logger.Debugf("Failed to read kubelet defaults file: %v", err)
+		i.logger.Debugf("Failed to read %s: %v", description, err)
 		return false
 	}
 
-	// Check for key configuration markers
-	expectedSettings := []string{
-		"KUBELET_NODE_LABELS=",
-		"KUBELET_CONFIG_FILE_FLAGS=",
-		"KUBELET_TLS_BOOTSTRAP_FLAGS=",
-		"KUBELET_FLAGS=",
-		"--cgroup-driver=systemd",
-		"--authorization-mode=Webhook",
-	}
-
-	for _, setting := range expectedSettings {
-		if !strings.Contains(output, setting) {
-			i.logger.Debugf("Missing expected setting in kubelet defaults file: %s", setting)
+	for _, expected := range expectedStrings {
+		if !strings.Contains(output, expected) {
+			i.logger.Debugf("Missing expected setting in %s: %s", description, expected)
 			return false
 		}
 	}
@@ -168,15 +195,21 @@ func (i *Installer) validateKubeletDefaultsFile() bool {
 	return true
 }
 
-// validateKubeletServiceFile checks if the kubelet service file has expected content
-func (i *Installer) validateKubeletServiceFile() bool {
-	output, err := utils.RunCommandWithOutput("cat", KubeletServicePath)
-	if err != nil {
-		i.logger.Debugf("Failed to read kubelet service file: %v", err)
-		return false
+// validateKubeletDefaultsFile checks if the kubelet defaults file has expected content
+func (i *Installer) validateKubeletDefaultsFile() bool {
+	expectedSettings := []string{
+		"KUBELET_NODE_LABELS=",
+		"KUBELET_CONFIG_FILE_FLAGS=",
+		"KUBELET_FLAGS=",
+		"--cgroup-driver=systemd",
+		"--authorization-mode=Webhook",
 	}
 
-	// Check for key configuration markers
+	return i.validateFileContent(KubeletDefaultsPath, expectedSettings, "kubelet defaults file")
+}
+
+// validateKubeletServiceFile checks if the kubelet service file has expected content
+func (i *Installer) validateKubeletServiceFile() bool {
 	expectedSettings := []string{
 		"[Unit]",
 		"Description=Kubelet",
@@ -184,14 +217,7 @@ func (i *Installer) validateKubeletServiceFile() bool {
 		"WantedBy=multi-user.target",
 	}
 
-	for _, setting := range expectedSettings {
-		if !strings.Contains(output, setting) {
-			i.logger.Debugf("Missing expected setting in kubelet service file: %s", setting)
-			return false
-		}
-	}
-
-	return true
+	return i.validateFileContent(KubeletServicePath, expectedSettings, "kubelet service file")
 }
 
 // isKubeletServiceHealthy checks if the kubelet service is running and healthy
@@ -221,8 +247,7 @@ func (i *Installer) createKubeletDefaultsFile() error {
 	}
 
 	kubeletDefaults := fmt.Sprintf(`KUBELET_NODE_LABELS="%s"
-KUBELET_CONFIG_FILE_FLAGS="--kubeconfig=/etc/kubernetes/admin.conf"
-KUBELET_TLS_BOOTSTRAP_FLAGS=""
+KUBELET_CONFIG_FILE_FLAGS=""
 KUBELET_FLAGS="\
   --address=0.0.0.0 \
   --anonymous-auth=false \
@@ -267,22 +292,35 @@ KUBELET_FLAGS="\
 	return nil
 }
 
-// createKubeletContainerdConfig creates the kubelet containerd configuration
-func (i *Installer) createKubeletContainerdConfig() error {
-	containerdConf := `[Service]
-Environment=KUBELET_CONTAINERD_FLAGS="--runtime-request-timeout=15m --container-runtime-endpoint=unix:///run/containerd/containerd.sock"`
-
+// createSystemdDropInFile creates a systemd drop-in file with the given content
+func (i *Installer) createSystemdDropInFile(filePath, content, description string) error {
 	// Ensure kubelet service.d directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", KubeletServiceDir); err != nil {
 		return fmt.Errorf("failed to create %s directory: %w", KubeletServiceDir, err)
 	}
 
-	// Write kubelet containerd config file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(KubeletContainerdConfig, []byte(containerdConf), 0644); err != nil {
-		return fmt.Errorf("failed to create kubelet containerd config file: %w", err)
+	// Write config file atomically with proper permissions
+	if err := utils.WriteFileAtomicSystem(filePath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to create %s: %w", description, err)
 	}
 
 	return nil
+}
+
+// createKubeletContainerdConfig creates the kubelet containerd configuration
+func (i *Installer) createKubeletContainerdConfig() error {
+	containerdConf := `[Service]
+Environment=KUBELET_CONTAINERD_FLAGS="--runtime-request-timeout=15m --container-runtime-endpoint=unix:///run/containerd/containerd.sock"`
+
+	return i.createSystemdDropInFile(KubeletContainerdConfig, containerdConf, "kubelet containerd config file")
+}
+
+// createKubeletTLSBootstrapConfig creates the kubelet TLS bootstrap configuration
+func (i *Installer) createKubeletTLSBootstrapConfig() error {
+	tlsBootstrapConf := `[Service]
+Environment=KUBELET_TLS_BOOTSTRAP_FLAGS="--kubeconfig /var/lib/kubelet/kubeconfig"`
+
+	return i.createSystemdDropInFile(KubeletTLSBootstrapConfig, tlsBootstrapConf, "kubelet TLS bootstrap config file")
 }
 
 // createKubeletServiceFile creates the main kubelet systemd service file
@@ -318,4 +356,132 @@ WantedBy=multi-user.target`
 	}
 
 	return nil
+}
+
+// createArcTokenScript creates the Arc token script for exec credential authentication
+func (i *Installer) createArcTokenScript() error {
+	// Arc HIMDS token script using proven Www-Authenticate challenge approach
+	tokenScript := fmt.Sprintf(`#!/bin/bash
+
+# Fetch an AAD token from Azure Arc HIMDS and output it in the ExecCredential format
+# https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication
+
+TOKEN_URL="http://127.0.0.1:40342/metadata/identity/oauth2/token?api-version=2019-11-01&resource=%s"
+EXECCREDENTIAL='''
+{
+  "kind": "ExecCredential",
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "spec": {
+    "interactive": false
+  },
+  "status": {
+    "expirationTimestamp": .expires_on | tonumber | todate,
+    "token": .access_token
+  }
+}
+'''
+
+# Arc IMDS requires a challenge token from a file only readable by root for security
+CHALLENGE_TOKEN_PATH=$(curl -s -D - -H Metadata:true $TOKEN_URL | grep Www-Authenticate | cut -d "=" -f 2 | tr -d "[:cntrl:]")
+CHALLENGE_TOKEN=$(cat $CHALLENGE_TOKEN_PATH)
+if [ $? -ne 0 ]; then
+    echo "Could not retrieve challenge token, double check that this command is run with root privileges."
+    exit 255
+fi
+
+curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL | jq "$EXECCREDENTIAL"`, AKSServiceResourceID)
+
+	// Ensure /var/lib/kubelet directory exists
+	if err := utils.RunSystemCommand("mkdir", "-p", KubeletVarDir); err != nil {
+		return fmt.Errorf("failed to create kubelet var directory: %w", err)
+	}
+
+	// Write token script atomically with executable permissions
+	if err := utils.WriteFileAtomicSystem(KubeletTokenScriptPath, []byte(tokenScript), 0755); err != nil {
+		return fmt.Errorf("failed to create Arc token script: %w", err)
+	}
+
+	// Ensure the script has executable permissions (explicit chmod as backup)
+	if err := utils.RunSystemCommand("chmod", "755", KubeletTokenScriptPath); err != nil {
+		return fmt.Errorf("failed to set executable permissions on Arc token script: %w", err)
+	}
+
+	return nil
+}
+
+// createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for Arc authentication
+func (i *Installer) createKubeconfigWithExecCredential() error {
+	// Get both server URL and CA certificate data in one call
+	serverURL, caCertData, err := i.getClusterCredentialsInfo()
+	if err != nil {
+		i.logger.Debugf("Failed to get cluster info from credentials: %v", err)
+		return fmt.Errorf("failed to get cluster credentials info: %w", err)
+	}
+
+	// Create cluster configuration based on whether we have CA cert
+	var clusterConfig string
+	if caCertData != "" {
+		clusterConfig = fmt.Sprintf(`- cluster:
+    certificate-authority-data: %s
+    server: %s
+  name: %s`, caCertData, serverURL, i.config.Azure.TargetCluster.Name)
+	} else {
+		clusterConfig = fmt.Sprintf(`- cluster:
+    insecure-skip-tls-verify: true
+    server: %s
+  name: %s`, serverURL, i.config.Azure.TargetCluster.Name)
+	}
+
+	// Create kubeconfig with exec credential provider pointing to token script
+	kubeconfigContent := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+%s
+contexts:
+- context:
+    cluster: %s
+    user: arc-user
+  name: arc-context
+current-context: arc-context
+users:
+- name: arc-user
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: /var/lib/kubelet/token.sh
+      env: null
+      provideClusterInfo: false
+`,
+		clusterConfig,
+		i.config.Azure.TargetCluster.Name)
+
+	// Write kubeconfig file to the correct location for kubelet
+	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0600); err != nil {
+		return fmt.Errorf("failed to create kubeconfig file: %w", err)
+	}
+
+	return nil
+}
+
+// getClusterCredentialsInfo extracts cluster info from downloaded admin kubeconfig
+func (i *Installer) getClusterCredentialsInfo() (serverURL, caCertData string, err error) {
+	adminKubeconfigPath := filepath.Join(i.config.Paths.Kubernetes.ConfigDir, "admin.conf")
+
+	if !utils.FileExists(adminKubeconfigPath) {
+		return "", "", fmt.Errorf("admin kubeconfig not found at %s", adminKubeconfigPath)
+	}
+
+	// Read the kubeconfig file
+	kubeconfigData, err := os.ReadFile(adminKubeconfigPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read admin kubeconfig: %w", err)
+	}
+
+	// Parse kubeconfig and extract cluster info
+	serverURL, caCertData, err = utils.GetClusterInfo(kubeconfigData)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse cluster info from kubeconfig: %w", err)
+	}
+
+	return serverURL, caCertData, nil
 }
