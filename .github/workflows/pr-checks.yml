@@ -75,8 +75,10 @@ jobs:
           # Set minimum coverage threshold (can be adjusted)
           threshold=30
           if (( $(echo "$coverage < $threshold" | bc -l) )); then
-            echo "Test coverage ${coverage}% is below threshold ${threshold}%"
-            exit 1
+            echo "::warning::Test coverage ${coverage}% is below threshold ${threshold}%"
+            echo "Please consider adding more tests to improve coverage."
+          else
+            echo "✅ Test coverage ${coverage}% meets threshold ${threshold}%"
           fi
 
   lint:

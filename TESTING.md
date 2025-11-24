@@ -29,7 +29,7 @@ This workflow runs automatically on:
 2. **Test** - Runs the test suite
    - Executes all tests with race detection
    - Generates coverage report
-   - Enforces minimum 30% test coverage threshold
+   - Reports coverage percentage (warns if below 30% but doesn't fail)
 
 3. **Lint** - Runs golangci-lint with comprehensive checks
    - Uses `.golangci.yml` configuration
