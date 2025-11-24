@@ -15,6 +15,6 @@ const (
 	KubeadmPath = BinDir + "/" + KubeadmBinary
 
 	// Repository files
-	KubernetesRepoList    = "/etc/apt/sources.list.d/kubernetes.list"
-	KubernetesKeyring     = "/etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+	KubernetesRepoList = "/etc/apt/sources.list.d/kubernetes.list"
+	KubernetesKeyring  = "/etc/apt/keyrings/kubernetes-apt-keyring.gpg"
 )

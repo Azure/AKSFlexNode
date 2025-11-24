@@ -95,4 +95,3 @@ func (i *Installer) saveKubeconfigFile(kubeconfigData []byte) error {
 	i.logger.Info("Kubeconfig file saved successfully")
 	return nil
 }
-
