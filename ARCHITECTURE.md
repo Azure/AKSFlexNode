@@ -355,59 +355,22 @@ sequenceDiagram
 
 ### Azure Services Used
 
-| Service | Purpose | Role |
-|---------|---------|------|
-| **Azure Arc** | VM Identity Management | Provides cloud identity for non-Azure VMs |
-| **Azure RBAC** | Access Control | Controls what VM can access in Azure |
-| **Azure AD** | Authentication | Verifies identity when accessing resources |
-| **AKS API** | Cluster Management | Provides cluster configuration and workload scheduling |
+The agent integrates with these Azure services during bootstrap:
 
-### Integration Points
+| Service | SDK Package | Code Location |
+|---------|-------------|---------------|
+| **Azure Arc** | `armhybridcompute` | `pkg/components/arc/` |
+| **Azure RBAC** | `armauthorization/v3` | `pkg/components/arc/` |
+| **Azure Container Service** | `armcontainerservice/v5` | `pkg/azure/azure.go` |
+| **Azure AD** | `azidentity` | `pkg/auth/auth.go` |
 
-```mermaid
-graph TB
-    VM[VM] -->|Registers with| Arc[Azure Arc]
-    Arc -->|Creates| Identity[Managed Identity]
-    Identity -->|Authenticates via| AAD[Azure AD]
+**What the agent does**:
+1. Registers VM with Azure Arc (creates managed identity)
+2. Assigns RBAC roles to the identity
+3. Downloads cluster credentials from AKS API
+4. Configures kubelet to use Arc identity for authentication
 
-    VM -->|Requests access| RBAC[Azure RBAC]
-    RBAC -->|Grants permissions| Identity
-
-    VM -->|Fetches config from| AKS[AKS API]
-    VM -->|Joins as node| AKS
-
-    AKS -->|Verifies via| AAD
-    AKS -->|Checks permissions via| RBAC
-
-    style VM fill:#e3f2fd
-    style Arc fill:#fff9c4
-    style Identity fill:#ffe0b2
-    style AKS fill:#c8e6c9
-```
-
-### Why Each Service?
-
-**Azure Arc**
-- Challenge: Non-Azure VMs have no Azure identity
-- Solution: Arc provides managed identity for any VM
-- Benefit: VM can authenticate like native Azure resource
-
-**Azure RBAC**
-- Challenge: Need to control cluster access
-- Solution: Role-based permissions on cluster resources
-- Benefit: Secure, auditable access control
-
-**Azure AD**
-- Challenge: Need to verify identity for each access
-- Solution: Industry-standard authentication service
-- Benefit: Centralized, secure authentication
-
-**AKS API**
-- Challenge: Node needs cluster configuration
-- Solution: Programmatic access to cluster settings
-- Benefit: Automated, consistent configuration
-
-> **API specifications and examples:** See [Azure API Reference](#azure-api-reference) for endpoints, SDKs, and code samples.
+> **For detailed SDK usage**: See [Azure API Reference](#azure-api-reference)
 
 ---
 
@@ -548,147 +511,29 @@ After bootstrap, kubelet authenticates using **HIMDS** (Hybrid Instance Metadata
 
 ## Security & Authentication
 
-### Authentication Strategy
+### Authentication Flow
 
-```mermaid
-graph TB
-    subgraph Bootstrap["Bootstrap Phase"]
-        B1[User Credential] -->|Authenticates| B2[Azure AD]
-        B2 -->|Used for| B3[Setup Operations]
-    end
+**Bootstrap Phase** (`pkg/auth/auth.go`):
+- Uses Service Principal OR Azure CLI credentials
+- Authenticates to Azure AD
+- Used for Arc registration, RBAC assignment, kubeconfig download
 
-    subgraph Runtime["Runtime Phase"]
-        R1[VM Identity] -->|Authenticates| R2[Azure AD]
-        R2 -->|Used for| R3[Cluster Operations]
-    end
+**Runtime Phase** (`pkg/components/kubelet/`):
+- Kubelet uses Arc managed identity (HIMDS)
+- Token script at `/var/lib/kubelet/token.sh`
+- Auto-rotated, short-lived tokens
 
-    B3 -.->|Creates| R1
+### Required Permissions
 
-    style B1 fill:#fff9c4
-    style R1 fill:#c8e6c9
-    style B2 fill:#ffe0b2
-    style R2 fill:#ffe0b2
-```
+**User/Service Principal (Bootstrap)**:
+- `Azure Connected Machine Onboarding` - Register with Arc
+- `User Access Administrator` or `Owner` - Assign RBAC roles
+- `Azure Kubernetes Service Cluster Admin Role` - Download credentials
 
-### Two Authentication Modes
+**Arc Managed Identity (Runtime)**:
+- `Azure Kubernetes Service Cluster User Role` - Assigned by agent during bootstrap
 
-**Bootstrap Authentication**
-- Who: Human operator or service account
-- Purpose: Perform one-time setup
-- Methods: Service Principal OR Azure CLI
-- Permissions: Create identities, assign roles, read cluster config
-
-**Runtime Authentication**
-- Who: VM itself (using its identity)
-- Purpose: Ongoing cluster communication
-- Method: Managed Identity tokens
-- Permissions: Read cluster metadata, manage workloads
-
-### Security Principles
-
-**Least Privilege**
-- Bootstrap credentials: Temporary, setup-only
-- Runtime identity: Limited to node operations
-- No permanent credentials stored
-
-**Credential Isolation**
-- Bootstrap credentials: Never used after setup
-- Runtime credentials: Auto-rotated, short-lived
-- Tokens: Scoped to specific resources
-
-**Defense in Depth**
-- Identity layer: VM must prove identity
-- Authorization layer: Permissions verified each access
-- Network layer: Encrypted communication (HTTPS/TLS)
-
-### Network Requirements
-
-**Outbound Connectivity Required:**
-- Azure Management APIs (setup only)
-- Azure AD (authentication)
-- AKS Cluster API (ongoing)
-- Container Registry (as needed)
-
-**Inbound Connectivity:**
-- None required (VM initiates all connections)
-
-**Local Services:**
-- Identity service runs on VM (no external access)
-
-> **Detailed security information:** See [Detailed Component Specifications - Security Model](#credential-security) for file permissions, encryption details, and security best practices.
-
----
-
-## Conceptual Summary
-
-### Complete System View
-
-```mermaid
-graph TB
-    subgraph "User Layer"
-        Operator[User/Operator]
-    end
-
-    subgraph "Bootstrap Layer"
-        Agent[AKS Flex Node Agent]
-    end
-
-    subgraph "Azure Cloud Services"
-        Arc[Azure Arc<br/>Identity Management]
-        RBAC[Azure RBAC<br/>Access Control]
-        AAD[Azure AD<br/>Authentication]
-        AKS[AKS Cluster<br/>Control Plane]
-    end
-
-    subgraph "VM Runtime"
-        ArcAgent[Azure Arc Agent<br/>Local Identity]
-        Kubelet[Kubelet<br/>Node Agent]
-        Containerd[containerd<br/>Container Runtime]
-        CNI[CNI Plugins<br/>Networking]
-    end
-
-    Operator -->|1. Runs bootstrap| Agent
-    Agent -->|2. Registers| Arc
-    Agent -->|3. Assigns permissions| RBAC
-    Agent -->|4. Downloads config| AKS
-    Agent -->|5. Installs & configures| ArcAgent
-    Agent -->|6. Installs| Containerd
-    Agent -->|7. Configures| Kubelet
-    Agent -->|8. Sets up| CNI
-
-    Arc -->|Provides identity| ArcAgent
-    ArcAgent -->|Supplies tokens to| Kubelet
-    Kubelet -->|Authenticates via| AAD
-    Kubelet -->|Registers with| AKS
-    Kubelet -->|Manages containers| Containerd
-    Containerd -->|Uses networking| CNI
-    AKS -->|Schedules workloads| Kubelet
-    RBAC -->|Controls access to| AKS
-
-    style Operator fill:#e3f2fd
-    style Agent fill:#fff9c4
-    style Arc fill:#c8e6c9
-    style AKS fill:#bbdefb
-    style Kubelet fill:#b2dfdb
-```
-
-### Key Relationships
-
-**Bootstrap Phase:**
-1. User runs AKS Flex Node Agent
-2. Agent registers VM with Azure Arc → creates managed identity
-3. Agent assigns RBAC roles → grants cluster access
-4. Agent downloads cluster config from AKS API
-5. Agent installs and configures all runtime components
-
-**Runtime Phase:**
-- Azure Arc Agent provides local identity service
-- Kubelet gets authentication tokens from Arc Agent
-- Kubelet authenticates to Azure AD
-- Kubelet registers with AKS as a cluster node
-- AKS schedules pods on the node
-- Kubelet manages containers via containerd
-- containerd uses CNI for pod networking
+**Azure Docs**: [Azure RBAC Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
 
 ---
 
