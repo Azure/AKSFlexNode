@@ -1,47 +1,20 @@
-# AKS Flex Node - Architecture & API Documentation
+# AKS Flex Node - Architecture Documentation
 
 ## Table of Contents
 
-### Quick Navigation
-
-**For Decision Makers & Architects (Conceptual Understanding):**
-- [Overview](#overview) - What problem does this solve?
-- [High-Level Architecture](#high-level-architecture) - How does it work conceptually?
-- [System Components](#system-components) - What are the major parts?
-- [Data Flow & Lifecycle](#data-flow--lifecycle) - What happens when?
-- [Azure Integration](#azure-integration) - Why Azure services?
-
-**For Developers & Operators (Technical Implementation):**
-- [Azure API Reference](#azure-api-reference) - Which APIs, what they do
-- [Security & Authentication](#security--authentication) - Auth strategy, security model
-- [Detailed Component Specifications](#detailed-component-specifications) - Implementation details, code, configurations
-
----
-
-### Document Structure
-
-**Part 1: Conceptual Architecture** (What & Why - No Implementation Details)
-1. [Overview](#overview)
-2. [High-Level Architecture](#high-level-architecture)
-3. [System Components](#system-components)
-4. [Data Flow & Lifecycle](#data-flow--lifecycle)
-5. [Azure Integration](#azure-integration)
-6. [Azure API Reference](#azure-api-reference)
-7. [Security & Authentication](#security--authentication)
-
-**Part 2: Technical Specifications** (How - Implementation Details)
-8. [Detailed Component Specifications](#detailed-component-specifications)
-   - Authentication & Credential Flow
-   - Azure API Interactions (endpoints, SDKs, code)
-   - Bootstrap Process Details (11 steps)
-   - Component Architecture (files, patterns)
-   - Network Security Details
+- [Overview](#overview)
+- [High-Level Architecture](#high-level-architecture)
+- [System Components](#system-components)
+- [Data Flow & Lifecycle](#data-flow--lifecycle)
+- [Azure Integration](#azure-integration)
+- [Security & Authentication](#security--authentication)
+- [References](#references)
 
 ---
 
 ## Overview
 
-AKS Flex Node is a Go-based service that transforms non-Azure Ubuntu VMs into fully managed Azure Kubernetes Service (AKS) worker nodes through Azure Arc integration. The service acts as a bridge between edge/on-premises infrastructure and Azure's managed Kubernetes control plane.
+AKS Flex Node transforms non-Azure Ubuntu VMs into fully managed Azure Kubernetes Service (AKS) worker nodes through Azure Arc integration.
 
 **Key Technologies:**
 - **Language:** Go 1.24+
@@ -109,7 +82,7 @@ graph TB
     Kubelet -..-|"Run pods"| Pods
     Pods -..-|"Execute in"| Containerd
 
-    %% Styling - More vibrant colors with better contrast
+    %% Styling
     classDef userStyle fill:#bbdefb,stroke:#0d47a1,stroke-width:3px,color:#000,font-weight:bold
     classDef cloudStyle fill:#fff3e0,stroke:#e65100,stroke-width:3px,color:#000,font-weight:bold
     classDef vmStyle fill:#c8e6c9,stroke:#1b5e20,stroke-width:3px,color:#000,font-weight:bold
@@ -121,26 +94,19 @@ graph TB
     class Pods workloadStyle
 ```
 
-**How to Read This Diagram:**
+**How to Read:**
 
-The diagram shows 4 **layers** (boxes) and 3 **phases** (line styles) plus runtime operations:
+- **Layers** (spatial - WHERE):
+  - 👤 Blue = User Layer
+  - ☁️ Yellow = Azure Cloud Services
+  - 💻 Green = VM/Node
+  - 📦 Purple = Workloads
 
-**Layers** (spatial - WHERE components exist):
-- 👤 **Blue** = User Layer
-- ☁️ **Yellow** = Azure Cloud Services
-- 💻 **Green** = VM/Node (your machine)
-- 📦 **Purple** = Workloads (containers)
-
-**Phases** (temporal - WHEN operations happen):
-- **⟹ Steps 1-4**: Identity Setup - Create Azure Arc identity
-- **- - → Steps 5-9**: Installation - Install runtime components
-- **→ Steps 10-12**: Activation - Join node to cluster
-- **···· Unlabeled**: Runtime - Continuous operations
-
-**Key Bootstrap Steps:**
-1. Start → 2. Register VM → 3. Assign roles → 4. Create identity → 5. Download config → 6-9. Install components → 10. Grant access → 11. Get token → 12. Join cluster
-
-After bootstrap, the dotted lines show continuous runtime operations between components.
+- **Phases** (temporal - WHEN):
+  - **⟹ Steps 1-4**: Identity Setup
+  - **- - → Steps 5-9**: Installation
+  - **→ Steps 10-12**: Activation
+  - **···· Unlabeled**: Runtime (continuous)
 
 ### Operational Phases
 
@@ -176,19 +142,18 @@ graph LR
 - Authenticate user credentials
 - Register VM with Azure Arc (creates managed identity)
 - Assign RBAC permissions to the identity
-- Verify permissions are active
 
 **Phase 2: Installation**
 - Configure system (kernel settings, directories)
-- Install container runtime
-- Install Kubernetes components
-- Setup container networking
+- Install container runtime (containerd + runc)
+- Install Kubernetes components (kubelet, kubectl, kubeadm)
+- Setup CNI networking plugins
 
 **Phase 3: Activation**
 - Download cluster configuration from AKS
 - Configure kubelet to use Arc identity
-- Start container runtime and kubelet services
-- Node automatically joins cluster and becomes ready
+- Start services (containerd, kubelet)
+- Node joins cluster automatically
 
 ---
 
@@ -248,24 +213,18 @@ graph TB
     style Kubelet fill:#b2dfdb
 ```
 
-**Bootstrap Sequence (①-⑧):** Solid lines show one-time setup operations
-- **①** User initiates the transformation process
-- **②** Agent registers VM with Azure Arc (creates identity)
-- **③** Agent assigns RBAC permissions to the identity
-- **④** Agent downloads cluster configuration
-- **⑤** Agent installs and configures Azure Arc Agent
-- **⑥** Agent installs containerd runtime
-- **⑦** Agent configures kubelet
-- **⑧** Agent sets up CNI networking plugins
+**Bootstrap Sequence (①-⑧):** One-time setup
+- User initiates transformation
+- Agent registers with Arc (creates identity)
+- Agent assigns RBAC permissions
+- Agent downloads cluster configuration
+- Agent installs runtime components
 
-**Runtime Operations (⑨-⑬):** Dashed lines show ongoing interactions
-- **⑨** Arc Agent provides identity tokens to kubelet
-- **⑩** Kubelet authenticates using Arc identity
-- **⑪** Kubelet registers as node with AKS cluster
-- **⑫** Kubelet manages container lifecycle
-- **⑬** Containers use CNI for pod networking
-
-> **Implementation details:** See [Detailed Component Specifications](#detailed-component-specifications) for file locations, versions, and configuration options.
+**Runtime Operations (⑨-⑬):** Ongoing interactions
+- Arc Agent provides identity tokens
+- Kubelet authenticates and registers with cluster
+- Kubelet manages container lifecycle
+- Containers use CNI for networking
 
 ---
 
@@ -288,7 +247,6 @@ sequenceDiagram
     Arc-->>Agent: Managed identity created
     Agent->>RBAC: Assign roles to identity
     RBAC-->>Agent: Permissions granted
-    Agent->>RBAC: Verify permissions active
 
     Note over User,AKS: Phase 2: Installation
     Agent->>Agent: Configure system settings
@@ -300,54 +258,28 @@ sequenceDiagram
     Agent->>AKS: Download cluster configuration
     AKS-->>Agent: Kubeconfig with cluster info
     Agent->>Agent: Configure kubelet with Arc identity
-    Agent->>Agent: Start container runtime
-    Agent->>Agent: Start kubelet service
+    Agent->>Agent: Start services
     Agent->>AKS: Kubelet registers as node
     AKS-->>Agent: Node accepted
 ```
 
 ### Phase Breakdown
 
-**Phase 1: Identity Setup (1-5 minutes)**
+**Phase 1: Identity Setup** (1-5 minutes)
 - **Purpose**: Establish trust between VM and AKS cluster
-- **Steps**:
-  1. User authenticates with Azure (Service Principal or Azure CLI)
-  2. Agent registers VM with Azure Arc
-  3. Arc creates a managed identity for the VM
-  4. Agent assigns necessary RBAC roles to the identity
-  5. Agent waits for permissions to become active
 - **Outcome**: VM has cloud identity with cluster permissions
 
-**Phase 2: Installation (5-10 minutes)**
+**Phase 2: Installation** (5-10 minutes)
 - **Purpose**: Prepare VM to run Kubernetes workloads
-- **Steps**:
-  1. Configure kernel parameters and system settings
-  2. Install container runtime (containerd and runc)
-  3. Install Kubernetes binaries (kubelet, kubectl, kubeadm)
-  4. Setup CNI plugins for pod networking
 - **Outcome**: All required software installed and configured
 
-**Phase 3: Activation (1-2 minutes)**
+**Phase 3: Activation** (1-2 minutes)
 - **Purpose**: Connect VM to AKS cluster
-- **Steps**:
-  1. Download cluster configuration from AKS
-  2. Configure kubelet to authenticate using Arc identity
-  3. Start container runtime service
-  4. Start kubelet service
-  5. Kubelet automatically registers with cluster
 - **Outcome**: Node is running and accepting workload assignments
 
-**Runtime Operation (Continuous)**
+**Runtime Operation** (Continuous)
 - **Purpose**: Execute workloads assigned by cluster
-- **Behavior**:
-  - Kubelet retrieves authentication tokens from Arc agent
-  - Kubelet sends heartbeats to cluster every 10 seconds
-  - Cluster schedules pods on the node
-  - Kubelet starts/stops containers as directed
-  - Container runtime executes the workloads
 - **Duration**: Until node is decommissioned
-
-> **Detailed workflow:** See [Detailed Component Specifications - Bootstrap Process](#bootstrap-process-details) for the complete 11-step sequence with code references.
 
 ---
 
@@ -364,149 +296,12 @@ The agent calls these Azure APIs during bootstrap:
 | **Azure Container Service** | Download cluster credentials | [AKS API](https://learn.microsoft.com/rest/api/aks/) |
 | **Azure AD** | Authenticate for API calls | [Azure Identity](https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication) |
 
-**What the agent does**:
+**What the agent does:**
 1. Authenticates to Azure AD (Service Principal or Azure CLI)
 2. Registers VM with Azure Arc → creates managed identity
 3. Assigns RBAC roles to the managed identity
 4. Downloads kubeconfig from AKS API
 5. Configures kubelet to use Arc managed identity
-
-> **For SDK details and code**: See [Azure API Reference](#azure-api-reference)
-
----
-
-## Azure API Reference
-
-This section documents the Azure SDKs used by the AKS Flex Node Agent and where they're called in the codebase.
-
-### Azure SDKs Used
-
-| SDK Package | Purpose | Code Location |
-|-------------|---------|---------------|
-| `armhybridcompute` | Manage Arc machine registration | `pkg/components/arc/arc_base.go` |
-| `armauthorization/v3` | Manage RBAC role assignments | `pkg/components/arc/arc_base.go` |
-| `armcontainerservice/v5` | Download cluster credentials | `pkg/azure/azure.go` |
-| `azidentity` | Azure AD authentication | `pkg/auth/auth.go` |
-
----
-
-### 1. Arc Machine Management
-
-**SDK**: [`armhybridcompute`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute)
-
-**What the agent does**:
-- **Bootstrap**: Retrieves Arc machine details after `azcmagent connect` to get the managed identity
-- **Unbootstrap**: Deletes Arc machine registration from Azure
-
-**Key Operations**:
-```go
-// Get Arc machine and managed identity
-client.Get(ctx, resourceGroup, machineName, nil)
-
-// Delete Arc machine (unbootstrap)
-client.BeginDelete(ctx, resourceGroup, machineName, nil)
-```
-
-**Code**: `pkg/components/arc/arc_base.go`, `pkg/components/arc/arc_uninstaller.go`
-
-**Azure Docs**: [Azure Arc Hybrid Compute API](https://learn.microsoft.com/en-us/rest/api/hybridcompute/)
-
----
-
-### 2. RBAC Role Assignment
-
-**SDK**: [`armauthorization/v3`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3)
-
-**What the agent does**:
-- **Bootstrap**: Assigns "Azure Kubernetes Service Cluster User Role" to Arc managed identity
-- **Unbootstrap**: Lists and deletes role assignments
-
-**Key Operations**:
-```go
-// Create role assignment
-client.Create(ctx, scope, roleAssignmentName, parameters, nil)
-
-// List role assignments
-client.NewListForScopePager(scope, options)
-
-// Delete role assignment
-client.Delete(ctx, scope, roleAssignmentName, nil)
-```
-
-**Code**: `pkg/components/arc/arc_base.go`, `pkg/components/arc/arc_uninstaller.go`
-
-**Azure Docs**: [Azure RBAC API](https://learn.microsoft.com/en-us/rest/api/authorization/)
-
----
-
-### 3. Cluster Credentials Download
-
-**SDK**: [`armcontainerservice/v5`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5)
-
-**What the agent does**:
-- **Bootstrap**: Downloads kubeconfig with cluster admin credentials
-
-**Key Operation**:
-```go
-// Download cluster admin credentials
-mcClient.ListClusterAdminCredentials(ctx, resourceGroup, clusterName, nil)
-```
-
-**Code**: `pkg/azure/azure.go:29`
-
-**Azure Docs**: [Azure Container Service API](https://learn.microsoft.com/en-us/rest/api/aks/)
-
----
-
-### 4. Authentication
-
-**SDK**: [`azidentity`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity)
-
-**What the agent does**:
-- **Bootstrap**: Obtains Azure AD credentials for API calls (Service Principal OR Azure CLI)
-- Credentials used to call all Azure management APIs during bootstrap
-
-**Key Operations**:
-```go
-// Service Principal authentication (if configured)
-azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
-
-// Azure CLI authentication (fallback)
-azidentity.NewAzureCLICredential(nil)
-```
-
-**Code**: `pkg/auth/auth.go`
-
-**Azure Docs**: [Azure Identity SDK](https://learn.microsoft.com/en-us/azure/developer/go/azure-sdk-authentication)
-
----
-
-### API Call Flow
-
-**Bootstrap Sequence**:
-1. Authenticate → Get Azure AD credential (`azidentity`)
-2. Register Arc → Run `azcmagent connect` (CLI, not SDK)
-3. Get Identity → Retrieve Arc machine (`armhybridcompute`)
-4. Assign RBAC → Grant cluster access (`armauthorization`)
-5. Download Config → Get kubeconfig (`armcontainerservice`)
-
-**Unbootstrap Sequence**:
-1. Authenticate → Get Azure AD credential (`azidentity`)
-2. Remove RBAC → Delete role assignments (`armauthorization`)
-3. Delete Arc → Remove Arc registration (`armhybridcompute`)
-4. Disconnect → Run `azcmagent disconnect` (CLI, not SDK)
-
----
-
-### Runtime Authentication (HIMDS)
-
-After bootstrap, kubelet authenticates using **HIMDS** (Hybrid Instance Metadata Service):
-- **Local endpoint**: `http://127.0.0.1:40342/metadata/identity/oauth2/token`
-- **Provided by**: Arc Agent (`azcmagent`)
-- **Used by**: kubelet (not the AKS Flex Node Agent)
-- **Purpose**: Issues short-lived Azure AD tokens for cluster API access
-
-**Azure Docs**: [Arc Managed Identity](https://learn.microsoft.com/en-us/azure/azure-arc/servers/managed-identity-authentication)
 
 ---
 
@@ -514,680 +309,54 @@ After bootstrap, kubelet authenticates using **HIMDS** (Hybrid Instance Metadata
 
 ### Authentication Flow
 
-**Bootstrap Phase** (`pkg/auth/auth.go`):
+**Bootstrap Phase:**
 - Uses Service Principal OR Azure CLI credentials
 - Authenticates to Azure AD
 - Used for Arc registration, RBAC assignment, kubeconfig download
 
-**Runtime Phase** (`pkg/components/kubelet/`):
+**Runtime Phase:**
 - Kubelet uses Arc managed identity (HIMDS)
 - Token script at `/var/lib/kubelet/token.sh`
 - Auto-rotated, short-lived tokens
 
 ### Required Permissions
 
-**User/Service Principal (Bootstrap)**:
+**User/Service Principal (Bootstrap):**
 - `Azure Connected Machine Onboarding` - Register with Arc
 - `User Access Administrator` or `Owner` - Assign RBAC roles
 - `Azure Kubernetes Service Cluster Admin Role` - Download credentials
 
-**Arc Managed Identity (Runtime)**:
+**Arc Managed Identity (Runtime):**
 - `Azure Kubernetes Service Cluster User Role` - Assigned by agent during bootstrap
 
-**Azure Docs**: [Azure RBAC Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
-
----
-
----
-
-# PART 2: TECHNICAL SPECIFICATIONS
-
-> The sections below provide implementation details for developers and operators.
-> For conceptual understanding, refer to Part 1 above.
-
----
-
-## Detailed Component Specifications
-
-> This section provides in-depth technical details for developers and operators who need to understand the internal workings of AKS Flex Node.
-
-### Authentication & Credential Flow
-
-**Code Location**: `pkg/auth/auth.go`
-
-#### Bootstrap Phase Authentication
-
-The agent supports two authentication methods for Azure API calls during bootstrap:
-
-**1. Service Principal** (if configured in `config.json`):
-```go
-// pkg/auth/auth.go
-cred, err := azidentity.NewClientSecretCredential(
-    tenantID, clientID, clientSecret, nil)
-```
-
-**2. Azure CLI** (fallback):
-```go
-// pkg/auth/auth.go
-cred, err := azidentity.NewAzureCLICredential(nil)
-```
-
-If Azure CLI is not authenticated, the user will be prompted to run `az login`.
-
-#### Runtime Phase Authentication
-
-After bootstrap, kubelet uses Arc managed identity via HIMDS (Hybrid Instance Metadata Service).
-
-**Token Script**: `pkg/components/kubelet/kubelet_installer.go` creates `/var/lib/kubelet/token.sh`
-
-**Kubeconfig Exec Credential**:
-```yaml
-# Generated in pkg/components/kubelet/kubelet_installer.go
-users:
-- name: arc-user
-  user:
-    exec:
-      command: /var/lib/kubelet/token.sh
-```
-
-**Azure Docs**:
-- [Arc Managed Identity Authentication](https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication)
-- [Azure Identity SDK](https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication)
-
-### Required Azure Permissions
-
-**For User/Service Principal (Bootstrap)**:
-- `Azure Connected Machine Onboarding` - Register VM with Arc
-- `User Access Administrator` or `Owner` - Assign RBAC roles
-- `Azure Kubernetes Service Cluster Admin Role` - Download cluster credentials
-
-**For Arc Managed Identity (Runtime)**:
-- `Azure Kubernetes Service Cluster User Role` - Assigned by agent during bootstrap
-- Additional roles assigned based on configuration
-
-**Azure Docs**: [Azure Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
-
----
-
-## Bootstrap Process Details
-
-### Sequential Execution Flow
-
-The bootstrap process executes 11 steps in strict order (fail-fast on error):
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Main as main.go
-    participant Boot as Bootstrapper
-    participant Arc as Arc Installer
-    participant SvcStop as Service UnInstaller
-    participant Dirs as Directories Installer
-    participant SysCfg as System Config Installer
-    participant Runc as Runc Installer
-    participant Ctrd as Containerd Installer
-    participant K8s as K8s Components Installer
-    participant CNI as CNI Installer
-    participant Creds as Cluster Credentials Installer
-    participant Kubelet as Kubelet Installer
-    participant SvcStart as Service Installer
-    participant AKSCluster as AKS Cluster
-
-    Main->>Boot: Bootstrap(ctx)
-    Boot->>Arc: Execute(ctx)
-
-    Note over Arc: Step 1: Arc Setup
-    Arc->>Arc: Validate azcmagent installed
-    Arc->>Arc: Register with Azure Arc
-    Arc->>Arc: Assign RBAC roles (if enabled)
-    Arc->>Arc: Wait for permissions (30 min max)
-    Arc-->>Boot: Success
-
-    Boot->>SvcStop: Execute(ctx)
-    Note over SvcStop: Step 2: Stop kubelet if running
-    SvcStop->>SvcStop: systemctl stop kubelet
-    SvcStop-->>Boot: Success
-
-    Boot->>Dirs: Execute(ctx)
-    Note over Dirs: Step 3: Create directories
-    Dirs->>Dirs: mkdir /etc/kubernetes
-    Dirs->>Dirs: mkdir /var/lib/kubelet
-    Dirs->>Dirs: mkdir /opt/cni/bin
-    Dirs-->>Boot: Success
-
-    Boot->>SysCfg: Execute(ctx)
-    Note over SysCfg: Step 4: System configuration
-    SysCfg->>SysCfg: Disable swap
-    SysCfg->>SysCfg: Load kernel modules
-    SysCfg->>SysCfg: Set sysctl parameters
-    SysCfg-->>Boot: Success
-
-    Boot->>Runc: Execute(ctx)
-    Note over Runc: Step 5: Install runc
-    Runc->>Runc: Download runc binary
-    Runc->>Runc: Install to /usr/local/sbin/runc
-    Runc->>Runc: chmod +x
-    Runc-->>Boot: Success
-
-    Boot->>Ctrd: Execute(ctx)
-    Note over Ctrd: Step 6: Install containerd
-    Ctrd->>Ctrd: Download containerd tarball
-    Ctrd->>Ctrd: Extract to /usr/local/bin
-    Ctrd->>Ctrd: Create /etc/containerd/config.toml
-    Ctrd->>Ctrd: Create systemd service
-    Ctrd-->>Boot: Success
-
-    Boot->>K8s: Execute(ctx)
-    Note over K8s: Step 7: Install K8s components
-    K8s->>K8s: Download kubectl binary
-    K8s->>K8s: Download kubelet binary
-    K8s->>K8s: Download kubeadm binary
-    K8s->>K8s: Install to /usr/local/bin
-    K8s-->>Boot: Success
-
-    Boot->>CNI: Execute(ctx)
-    Note over CNI: Step 8: Setup CNI plugins
-    CNI->>CNI: Download CNI plugins tarball
-    CNI->>CNI: Extract to /opt/cni/bin
-    CNI->>CNI: Create /etc/cni/net.d configs
-    CNI-->>Boot: Success
-
-    Boot->>Creds: Execute(ctx)
-    Note over Creds: Step 9: Download cluster credentials
-    Creds->>Creds: Get user credentials
-    Creds->>AKSCluster: ListClusterAdminCredentials()
-    AKSCluster-->>Creds: admin kubeconfig
-    Creds->>Creds: Save to /etc/kubernetes/admin.conf
-    Creds-->>Boot: Success
-
-    Boot->>Kubelet: Execute(ctx)
-    Note over Kubelet: Step 10: Configure kubelet
-    Kubelet->>Kubelet: Create /etc/default/kubelet
-    Kubelet->>Kubelet: Create Arc token script
-    Kubelet->>Kubelet: Create exec credential kubeconfig
-    Kubelet->>Kubelet: Create systemd service
-    Kubelet->>Kubelet: systemctl daemon-reload
-    Kubelet-->>Boot: Success
-
-    Boot->>SvcStart: Execute(ctx)
-    Note over SvcStart: Step 11: Start services
-    SvcStart->>SvcStart: systemctl enable containerd
-    SvcStart->>SvcStart: systemctl start containerd
-    SvcStart->>SvcStart: systemctl enable kubelet
-    SvcStart->>SvcStart: systemctl start kubelet
-    SvcStart-->>Boot: Success
-
-    Boot-->>Main: ExecutionResult{Success: true}
-
-    Note over Kubelet,AKSCluster: Background: Node joins cluster
-    Kubelet->>Kubelet: Execute token.sh every few minutes
-    Kubelet->>AKSCluster: Register node with K8s API
-    AKSCluster-->>Kubelet: Node accepted
-    Kubelet->>AKSCluster: Send heartbeats every 10s
-```
-
-### Step-by-Step Breakdown
-
-#### Step 1: Arc Registration (`pkg/components/arc/arc_installer.go:43-103`)
-
-**Purpose:** Register VM with Azure Arc to establish managed identity
-
-**Key Operations:**
-1. Validate `azcmagent` is installed
-2. Run `azcmagent connect` with access token authentication
-3. Wait for Arc machine registration to complete (10s)
-4. Retrieve Arc machine details from Azure API
-5. Assign RBAC roles to Arc managed identity (if `autoRoleAssignment: true`)
-6. Poll for RBAC permissions to become effective (up to 30 minutes)
-
-**Configuration Used:**
-- `azure.arc.machineName` - Arc machine name
-- `azure.arc.resourceGroup` - Resource group for Arc machine
-- `azure.arc.location` - Azure region
-- `azure.arc.tags` - Tags to apply
-- `azure.arc.autoRoleAssignment` - Enable auto RBAC assignment
-
-**Azure APIs Called:**
-- Arc: `azcmagent connect` (via CLI)
-- Arc: `GET /machines/{machineName}` (via SDK)
-- Authorization: `PUT /roleAssignments/{guid}` (via SDK) × 3 roles
-- Authorization: `GET /roleAssignments?filter=...` (via SDK)
-
-#### Step 2: Service Stop (`pkg/components/services/services_uninstaller.go`)
-
-**Purpose:** Stop kubelet if running from previous installation
-
-**Key Operations:**
-1. Check if kubelet service exists
-2. Stop kubelet service: `systemctl stop kubelet`
-3. Continue even if service doesn't exist
-
-#### Step 3: Directories (`pkg/components/directories/directories_installer.go`)
-
-**Purpose:** Create required filesystem structure
-
-**Directories Created:**
-```
-/etc/kubernetes/           # K8s configuration
-/etc/kubernetes/manifests/ # Static pod manifests
-/etc/cni/net.d/           # CNI network configs
-/opt/cni/bin/             # CNI plugin binaries
-/var/lib/kubelet/         # Kubelet state
-/var/lib/kubelet/pods/    # Pod directories
-/var/log/pods/            # Pod logs
-/etc/containerd/          # Containerd config
-```
-
-#### Step 4: System Configuration (`pkg/components/system_configuration/system_configuration_installer.go`)
-
-**Purpose:** Configure kernel and system settings for Kubernetes
-
-**Key Operations:**
-1. Disable swap: `swapoff -a` + remove from `/etc/fstab`
-2. Load kernel modules:
-   - `overlay` - OverlayFS for container layers
-   - `br_netfilter` - Bridge netfilter for pod networking
-3. Set sysctl parameters:
-   - `net.bridge.bridge-nf-call-iptables=1` - Enable bridge traffic filtering
-   - `net.ipv4.ip_forward=1` - Enable IP forwarding for pod routing
-   - `net.bridge.bridge-nf-call-ip6tables=1` - IPv6 bridge filtering
-
-#### Step 5: Runc (`pkg/components/runc/runc_installer.go`)
-
-**Purpose:** Install low-level container runtime
-
-**Key Operations:**
-1. Download runc binary from `https://github.com/opencontainers/runc/releases/download/v{version}/runc.amd64`
-2. Install to `/usr/local/sbin/runc`
-3. Set executable permissions: `chmod +x`
-4. Verify installation: `runc --version`
-
-**Configuration Used:**
-- `runc.version` - Runc version (e.g., "1.1.12")
-- `runc.url` - Download URL template
-
-#### Step 6: Containerd (`pkg/components/containerd/containerd_installer.go`)
-
-**Purpose:** Install high-level container runtime
-
-**Key Operations:**
-1. Download containerd tarball from `https://github.com/containerd/containerd/releases/download/v{version}/containerd-{version}-linux-amd64.tar.gz`
-2. Extract binaries to `/usr/local/bin/`:
-   - `containerd`
-   - `containerd-shim`
-   - `containerd-shim-runc-v2`
-   - `ctr`
-3. Create `/etc/containerd/config.toml`:
-   ```toml
-   version = 2
-   [plugins."io.containerd.grpc.v1.cri"]
-     [plugins."io.containerd.grpc.v1.cri".containerd]
-       [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-         runtime_type = "io.containerd.runc.v2"
-         [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-           SystemdCgroup = true
-     [plugins."io.containerd.grpc.v1.cri".cni]
-       bin_dir = "/opt/cni/bin"
-       conf_dir = "/etc/cni/net.d"
-   [plugins."io.containerd.grpc.v1.cri".registry]
-     config_path = "/etc/containerd/certs.d"
-   ```
-4. Create systemd service: `/etc/systemd/system/containerd.service`
-
-**Configuration Used:**
-- `containerd.version` - Containerd version (e.g., "1.7.13")
-- `containerd.pauseImage` - Pause container image
-- `paths.cni.binDir` - CNI plugin directory
-- `paths.cni.confDir` - CNI config directory
-
-#### Step 7: Kubernetes Components (`pkg/components/kubernetes_components/kubernetes_components_installer.go`)
-
-**Purpose:** Install Kubernetes binaries
-
-**Key Operations:**
-1. Download kubectl: `{urlTemplate}/kubectl`
-2. Download kubelet: `{urlTemplate}/kubelet`
-3. Download kubeadm: `{urlTemplate}/kubeadm`
-4. Install to `/usr/local/bin/`
-5. Set executable permissions
-6. Verify: `kubectl version --client`, `kubelet --version`
-
-**Configuration Used:**
-- `kubernetes.version` - K8s version (e.g., "1.29.2")
-- `kubernetes.urlTemplate` - Download URL (e.g., `https://dl.k8s.io/release/v{version}/bin/linux/amd64`)
-
-#### Step 8: CNI (`pkg/components/cni/cni_installer.go`)
-
-**Purpose:** Setup Container Network Interface plugins
-
-**Key Operations:**
-1. Download CNI plugins tarball
-2. Extract to `/opt/cni/bin/`:
-   - `bridge` - Bridge networking
-   - `host-local` - IPAM
-   - `loopback` - Loopback interface
-   - `portmap` - Port mapping
-   - And more...
-3. Create CNI network configs in `/etc/cni/net.d/`
-
-#### Step 9: Cluster Credentials (`pkg/components/cluster_credentials/cluster_credentials_installer.go:42-73`)
-
-**Purpose:** Download AKS cluster admin kubeconfig
-
-**Key Operations:**
-1. Get user credentials (SP or CLI)
-2. Call Azure AKS API: `ListClusterAdminCredentials()`
-3. Extract kubeconfig bytes from response
-4. Save to `/etc/kubernetes/admin.conf` (0644 permissions)
-
-**Azure API Called:**
-```go
-clientFactory, err := armcontainerservice.NewClientFactory(subscriptionID, cred, nil)
-resp, err := mcClient.ListClusterAdminCredentials(ctx, resourceGroup, clusterName, nil)
-kubeconfigData := resp.Kubeconfigs[0].Value
-```
-
-**Configuration Used:**
-- `azure.targetCluster.resourceId` - AKS cluster resource ID
-- `azure.targetCluster.name` - Cluster name (parsed from resourceId)
-- `azure.targetCluster.resourceGroup` - Resource group (parsed from resourceId)
-
-#### Step 10: Kubelet Configuration (`pkg/components/kubelet/kubelet_installer.go:35-136`)
-
-**Purpose:** Configure kubelet service with Arc MSI authentication
-
-**Key Operations:**
-
-1. **Create `/etc/default/kubelet`** - Kubelet environment variables
-   - Node labels
-   - Cgroup driver (systemd)
-   - Authorization mode (Webhook)
-   - Pod limits and resource reservations
-   - TLS cipher suites
-
-2. **Create `/var/lib/kubelet/token.sh`** - Arc token retrieval script (0755)
-   ```bash
-   #!/bin/bash
-   # Fetches AAD token from Arc HIMDS
-   TOKEN_URL="http://127.0.0.1:40342/metadata/identity/oauth2/token?..."
-   CHALLENGE_TOKEN_PATH=$(curl -s -D - -H Metadata:true $TOKEN_URL | ...)
-   CHALLENGE_TOKEN=$(cat $CHALLENGE_TOKEN_PATH)
-   curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL | jq ...
-   ```
-
-3. **Create `/var/lib/kubelet/kubeconfig`** - Exec credential kubeconfig (0600)
-   ```yaml
-   apiVersion: v1
-   kind: Config
-   clusters:
-   - cluster:
-       certificate-authority-data: <base64-ca-cert>
-       server: https://<cluster-api-server>:443
-     name: <cluster-name>
-   users:
-   - name: arc-user
-     user:
-       exec:
-         apiVersion: client.authentication.k8s.io/v1beta1
-         command: /var/lib/kubelet/token.sh
-   ```
-
-4. **Create `/etc/systemd/system/kubelet.service.d/10-containerd.conf`**
-   ```ini
-   [Service]
-   Environment=KUBELET_CONTAINERD_FLAGS="--runtime-request-timeout=15m --container-runtime-endpoint=unix:///run/containerd/containerd.sock"
-   ```
-
-5. **Create `/etc/systemd/system/kubelet.service.d/10-kubeadm.conf`**
-   ```ini
-   [Service]
-   Environment=KUBELET_TLS_BOOTSTRAP_FLAGS="--kubeconfig /var/lib/kubelet/kubeconfig"
-   ```
-
-6. **Create `/etc/systemd/system/kubelet.service`**
-   ```ini
-   [Unit]
-   Description=Kubelet
-   [Service]
-   EnvironmentFile=/etc/default/kubelet
-   ExecStart=/usr/local/bin/kubelet \
-     --enable-server \
-     --node-labels="${KUBELET_NODE_LABELS}" \
-     $KUBELET_TLS_BOOTSTRAP_FLAGS \
-     $KUBELET_CONTAINERD_FLAGS \
-     $KUBELET_FLAGS
-   [Install]
-   WantedBy=multi-user.target
-   ```
-
-7. **Reload systemd**: `systemctl daemon-reload`
-
-**Configuration Used:**
-- `node.maxPods` - Maximum pods per node
-- `node.labels` - Node labels
-- `node.kubelet.kubeReserved` - Resources reserved for K8s
-- `node.kubelet.evictionHard` - Eviction thresholds
-- `containerd.pauseImage` - Pause container image
-
-#### Step 11: Service Start (`pkg/components/services/services_installer.go`)
-
-**Purpose:** Start containerd and kubelet services
-
-**Key Operations:**
-1. Enable containerd: `systemctl enable containerd`
-2. Start containerd: `systemctl start containerd`
-3. Verify containerd is running
-4. Enable kubelet: `systemctl enable kubelet`
-5. Start kubelet: `systemctl start kubelet`
-6. Verify kubelet is running
-
-**Post-Start Behavior:**
-- Kubelet executes `/var/lib/kubelet/token.sh` to get Arc MSI token
-- Kubelet connects to AKS API server with token
-- Node registers with Kubernetes control plane
-- Kubelet begins sending heartbeats every 10 seconds
-- AKS cluster can now schedule pods on the node
-
----
-
-## Component Architecture
-
-### Executor Interface Pattern
-
-All components implement the `Executor` interface for consistent lifecycle management:
-
-```go
-// pkg/bootstrapper/executor.go:14-23
-type Executor interface {
-    Execute(ctx context.Context) error
-    IsCompleted(ctx context.Context) bool
-    GetName() string
-}
-
-type StepExecutor interface {
-    Executor
-    Validate(ctx context.Context) error
-}
-```
-
-### Component Structure
-
-Each component follows a consistent structure:
-
-```
-pkg/components/<component>/
-├── <component>_installer.go   # Bootstrap installation logic
-├── <component>_uninstaller.go # Cleanup/removal logic
-├── <component>_base.go        # Shared functionality
-├── consts.go                  # Constants and configuration
-└── helpers.go                 # Utility functions
-```
-
-### Configuration Management
-
-Global singleton pattern for configuration access:
-
-```go
-// pkg/config/config.go
-var globalConfig *Config
-
-func GetConfig() *Config {
-    return globalConfig
-}
-
-func SetConfig(cfg *Config) {
-    globalConfig = cfg
-}
-```
-
-### Logging Architecture
-
-Context-based logger propagation:
-
-```go
-// pkg/logger/logger.go
-func SetupLogger(ctx context.Context, level, logDir string) context.Context {
-    logger := logrus.New()
-    // Configure logger...
-    return context.WithValue(ctx, loggerKey, logger)
-}
-
-func GetLoggerFromContext(ctx context.Context) *logrus.Logger {
-    return ctx.Value(loggerKey).(*logrus.Logger)
-}
-```
-
----
-
-## Security Model
-
-### Privilege Separation
-
-1. **Bootstrap Phase (root required):**
-   - Installing system binaries
-   - Creating system directories
-   - Modifying kernel parameters
-   - Managing systemd services
-
-2. **Runtime Phase:**
-   - Kubelet runs as root (systemd service)
-   - Token script requires root (reads root-only Arc challenge token)
-   - Containers run with configured security contexts
-
-### Credential Security
-
-1. **User Credentials:**
-   - Service Principal: Stored in config file (should be 0600 permissions)
-   - Azure CLI: Stored in `~/.azure` (managed by Azure CLI)
-   - Never logged or exposed in output
-
-2. **Arc Managed Identity:**
-   - Challenge token: Root-only file (`/var/opt/azcmagent/tokens/...`)
-   - AAD tokens: Short-lived (typically 1 hour), never persisted
-   - Token script: Executable only by root (`0755`)
-
-3. **Kubernetes Credentials:**
-   - Admin kubeconfig: `/etc/kubernetes/admin.conf` (0644)
-   - Kubelet kubeconfig: `/var/lib/kubelet/kubeconfig` (0600)
-   - No static tokens or passwords
-
-### Network Security
-
-1. **Arc HIMDS:**
-   - Local-only endpoint: `127.0.0.1:40342`
-   - Not routable outside the VM
-   - Requires root-readable challenge token
-
-2. **AKS API Server:**
-   - TLS encrypted: `https://<cluster-fqdn>:443`
-   - Certificate validation via CA cert in kubeconfig
-   - Token-based authentication
-
-3. **Azure Management APIs:**
-   - All calls over HTTPS to `management.azure.com`
-   - Azure SDK handles certificate validation
-   - Token-based authentication
-
----
-
-### Network Security
-
-#### Protocol Security
-
-1. **Arc HIMDS:**
-   - Local-only endpoint: `127.0.0.1:40342`
-   - Not routable outside the VM
-   - Requires root-readable challenge token
-
-2. **AKS API Server:**
-   - TLS encrypted: `https://<cluster-fqdn>:443`
-   - Certificate validation via CA cert in kubeconfig
-   - Token-based authentication
-
-3. **Azure Management APIs:**
-   - All calls over HTTPS to `management.azure.com`
-   - Azure SDK handles certificate validation
-   - Token-based authentication
-
-#### Network Flow Summary
-
-```
-Bootstrap Phase:
-User Credentials → Azure AD → Azure Management API
-                            → Arc Registration
-                            → RBAC Assignment
-                            → AKS Kubeconfig Download
-
-Runtime Phase:
-Kubelet → Arc HIMDS (local) → Azure AD → AKS API Server
-      → Pod Management
-      → Status Reports
-      → Log Streaming
-```
+**Azure Docs:** [Azure RBAC Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
 
 ---
 
 ## References
 
 ### Azure Documentation
-
 - [Azure Arc-enabled servers](https://learn.microsoft.com/azure/azure-arc/servers/overview)
 - [Azure Arc managed identity](https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication)
 - [Azure RBAC](https://learn.microsoft.com/azure/role-based-access-control/overview)
 - [AKS REST API](https://learn.microsoft.com/rest/api/aks/)
 
 ### Kubernetes Documentation
-
 - [Kubelet Configuration](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/)
 - [Exec Credential Plugin](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#client-go-credential-plugins)
 - [Node API](https://kubernetes.io/docs/reference/kubernetes-api/cluster-resources/node-v1/)
 
 ### Container Runtime Documentation
-
 - [containerd](https://containerd.io/)
 - [runc](https://github.com/opencontainers/runc)
 - [CNI Specification](https://github.com/containernetworking/cni)
 
 ### Code Repository
-
 - [AKS Flex Node Source Code](https://github.com/Azure/AKSFlexNode)
 - [Azure SDK for Go](https://github.com/Azure/azure-sdk-for-go)
 
 ---
 
-## Document Information
-
 **Version:** 1.0
 **Last Updated:** 2025-11-27
-**Project:** AKS Flex Node
-**Repository:** https://github.com/Azure/AKSFlexNode
-
-**Document Structure:**
-- High-level abstractions at the top for quick understanding
-- Detailed specifications in dedicated sections for deep dives
-- Extensive cross-referencing for easy navigation
-- Mermaid diagrams for visual comprehension
-
-**Feedback & Contributions:**
-Please report issues or suggest improvements via [GitHub Issues](https://github.com/Azure/AKSFlexNode/issues)
-
+**Feedback:** [GitHub Issues](https://github.com/Azure/AKSFlexNode/issues)
