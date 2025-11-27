@@ -17,6 +17,28 @@ AKS Flex Node transforms any Ubuntu VM into a fully managed AKS worker node by:
 - 🚀 **Service Orchestration** - Configures and manages all required systemd services
 - ⚡ **Cluster Connection** - Securely joins your VM as a worker node to your existing AKS cluster
 
+### Architecture
+
+For a comprehensive understanding of how AKS Flex Node works, see **[ARCHITECTURE.md](ARCHITECTURE.md)**:
+
+- **For Decision Makers & Architects:**
+  - System overview and high-level architecture
+  - Component interactions and data flow
+  - Azure service integration and rationale
+
+- **For Developers & Operators:**
+  - Detailed Azure API specifications
+  - Authentication and security model
+  - Implementation details and code references
+  - Complete 11-step bootstrap process
+
+Quick links:
+- [System Architecture Diagram](ARCHITECTURE.md#system-architecture) - Visual overview of all components
+- [Operational Phases](ARCHITECTURE.md#operational-phases) - Three-phase transformation process
+- [Azure Integration](ARCHITECTURE.md#azure-integration) - How Azure services are used
+- [Security & Authentication](ARCHITECTURE.md#security--authentication) - Credential management and security
+- [Bootstrap Process Details](ARCHITECTURE.md#bootstrap-process-details) - Complete technical walkthrough
+
 ## Data Flow
 
 ```mermaid
@@ -243,13 +265,24 @@ For a complete list of build targets, run `make help`.
 - **Installation buffer:** ~5-10GB (temporary downloads, garbage collection headroom)
 
 
-## Documentation [TO BE ADDED]
+## Documentation
 
-- [Development Guide](docs/DEVELOPMENT.md)
-- [Configuration Reference](docs/CONFIGURATION.md)
-- [Setup Guide](docs/AKS_EDGE_NODE_SETUP_GUIDE.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [APT Packaging](docs/APT_PACKAGING_GUIDE.md)
+### Architecture & Design
+
+- **[Architecture Documentation](ARCHITECTURE.md)** - Comprehensive system architecture
+  - High-level architecture diagrams and component interactions
+  - Azure API reference with complete specifications
+  - Security model and authentication flows
+  - Detailed bootstrap process (11 steps)
+  - Network requirements and data flow
+
+### Additional Documentation [TO BE ADDED]
+
+- [Development Guide](docs/DEVELOPMENT.md) - Build, test, and contribute
+- [Configuration Reference](docs/CONFIGURATION.md) - Complete config options
+- [Setup Guide](docs/AKS_EDGE_NODE_SETUP_GUIDE.md) - Step-by-step deployment
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
+- [APT Packaging](docs/APT_PACKAGING_GUIDE.md) - Package management
 
 ## Contributing
 
