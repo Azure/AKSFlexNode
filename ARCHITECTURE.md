@@ -353,24 +353,25 @@ sequenceDiagram
 
 ## Azure Integration
 
-### Azure Services Used
+### Azure APIs Used
 
-The agent integrates with these Azure services during bootstrap:
+The agent calls these Azure APIs during bootstrap:
 
-| Service | SDK Package | Code Location |
-|---------|-------------|---------------|
-| **Azure Arc** | `armhybridcompute` | `pkg/components/arc/` |
-| **Azure RBAC** | `armauthorization/v3` | `pkg/components/arc/` |
-| **Azure Container Service** | `armcontainerservice/v5` | `pkg/azure/azure.go` |
-| **Azure AD** | `azidentity` | `pkg/auth/auth.go` |
+| Azure Service | API Purpose | Azure API Documentation |
+|---------------|-------------|------------------------|
+| **Azure Arc** | Register VM, get managed identity | [Hybrid Compute API](https://learn.microsoft.com/rest/api/hybridcompute/) |
+| **Azure RBAC** | Assign cluster permissions | [Authorization API](https://learn.microsoft.com/rest/api/authorization/) |
+| **Azure Container Service** | Download cluster credentials | [AKS API](https://learn.microsoft.com/rest/api/aks/) |
+| **Azure AD** | Authenticate for API calls | [Azure Identity](https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication) |
 
 **What the agent does**:
-1. Registers VM with Azure Arc (creates managed identity)
-2. Assigns RBAC roles to the identity
-3. Downloads cluster credentials from AKS API
-4. Configures kubelet to use Arc identity for authentication
+1. Authenticates to Azure AD (Service Principal or Azure CLI)
+2. Registers VM with Azure Arc → creates managed identity
+3. Assigns RBAC roles to the managed identity
+4. Downloads kubeconfig from AKS API
+5. Configures kubelet to use Arc managed identity
 
-> **For detailed SDK usage**: See [Azure API Reference](#azure-api-reference)
+> **For SDK details and code**: See [Azure API Reference](#azure-api-reference)
 
 ---
 
