@@ -413,145 +413,136 @@ graph TB
 
 ## Azure API Reference
 
-This section documents the Azure REST APIs that the AKS Flex Node Agent **directly calls** during bootstrap and unbootstrap operations.
+This section documents the Azure SDKs used by the AKS Flex Node Agent and where they're called in the codebase.
 
-### APIs Overview
+### Azure SDKs Used
 
-| API | Package Used | Purpose | Bootstrap Phase |
-|-----|--------------|---------|-----------------|
-| **Hybrid Compute API** | `armhybridcompute` | Manage Arc machine registration | Phase 1: Identity Setup |
-| **Authorization API** | `armauthorization/v3` | Manage RBAC role assignments | Phase 1: Identity Setup |
-| **Container Service API** | `armcontainerservice/v5` | Download cluster credentials | Phase 2: Installation |
-
-> **Note**: The agent also uses the `azcmagent` CLI tool (not a direct API) to connect the VM to Azure Arc.
-
----
-
-### 1. Hybrid Compute API (Arc Machines)
-
-**Purpose**: Register and manage Azure Arc-enabled machines
-
-**SDK Package**: `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute`
-
-**Documentation**: [Azure Arc Hybrid Compute REST API](https://learn.microsoft.com/en-us/rest/api/hybridcompute/)
-
-#### Operations Used by Agent:
-
-**Get Arc Machine**
-- **Method**: `MachinesClient.Get()`
-- **REST**: `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.HybridCompute/machines/{machineName}`
-- **When**: After Arc registration to retrieve managed identity
-- **Code Location**: `pkg/components/arc/arc_base.go`
-
-**Delete Arc Machine** (Unbootstrap only)
-- **Method**: `MachinesClient.BeginDelete()`
-- **REST**: `DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.HybridCompute/machines/{machineName}`
-- **When**: During unbootstrap to clean up Arc registration
-- **Code Location**: `pkg/components/arc/arc_uninstaller.go`
+| SDK Package | Purpose | Code Location |
+|-------------|---------|---------------|
+| `armhybridcompute` | Manage Arc machine registration | `pkg/components/arc/arc_base.go` |
+| `armauthorization/v3` | Manage RBAC role assignments | `pkg/components/arc/arc_base.go` |
+| `armcontainerservice/v5` | Download cluster credentials | `pkg/azure/azure.go` |
+| `azidentity` | Azure AD authentication | `pkg/auth/auth.go` |
 
 ---
 
-### 2. Authorization API (RBAC)
+### 1. Arc Machine Management
 
-**Purpose**: Assign and manage role-based access control permissions
+**SDK**: [`armhybridcompute`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute)
 
-**SDK Package**: `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3`
+**What the agent does**:
+- **Bootstrap**: Retrieves Arc machine details after `azcmagent connect` to get the managed identity
+- **Unbootstrap**: Deletes Arc machine registration from Azure
 
-**Documentation**: [Azure RBAC REST API](https://learn.microsoft.com/en-us/rest/api/authorization/)
-
-#### Operations Used by Agent:
-
-**Create Role Assignment**
-- **Method**: `RoleAssignmentsClient.Create()`
-- **REST**: `PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Authorization/roleAssignments/{roleAssignmentName}`
-- **When**: After Arc registration to grant cluster access to Arc managed identity
-- **Roles Assigned**:
-  - `Azure Kubernetes Service Cluster User Role` (on AKS cluster)
-  - Additional custom roles if configured
-- **Code Location**: `pkg/components/arc/arc_base.go`
-
-**List Role Assignments** (Unbootstrap only)
-- **Method**: `RoleAssignmentsClient.NewListForScopePager()`
-- **REST**: `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Authorization/roleAssignments`
-- **When**: During unbootstrap to find role assignments to delete
-- **Code Location**: `pkg/components/arc/arc_uninstaller.go`
-
-**Delete Role Assignment** (Unbootstrap only)
-- **Method**: `RoleAssignmentsClient.Delete()`
-- **REST**: `DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Authorization/roleAssignments/{roleAssignmentName}`
-- **When**: During unbootstrap to remove permissions
-- **Code Location**: `pkg/components/arc/arc_uninstaller.go`
-
----
-
-### 3. Container Service API (AKS)
-
-**Purpose**: Download cluster configuration and credentials
-
-**SDK Package**: `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5`
-
-**Documentation**: [Azure Container Service REST API](https://learn.microsoft.com/en-us/rest/api/aks/)
-
-#### Operations Used by Agent:
-
-**List Cluster Admin Credentials**
-- **Method**: `ManagedClustersClient.ListClusterAdminCredentials()`
-- **REST**: `POST /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerService/managedClusters/{resourceName}/listClusterAdminCredential`
-- **When**: Phase 2 (Installation) to download kubeconfig
-- **Returns**: Kubeconfig with cluster CA certificate, API server endpoint, and admin credentials
-- **Code Location**: `pkg/azure/azure.go:29`
-
----
-
-### Authentication for API Calls
-
-All Azure API calls require authentication via Azure AD access tokens:
-
-**Bootstrap Phase**:
-- **Credential Type**: User credential (Service Principal OR Azure CLI)
-- **Scope**: `https://management.azure.com/.default`
-- **Purpose**: Perform one-time setup operations (register Arc, assign RBAC, download config)
-- **Code Location**: `pkg/auth/auth.go`
-
-**Token Acquisition**:
+**Key Operations**:
 ```go
-// Service Principal (if configured)
-cred, err := azidentity.NewClientSecretCredential(
-    tenantID, clientID, clientSecret, nil)
+// Get Arc machine and managed identity
+client.Get(ctx, resourceGroup, machineName, nil)
 
-// OR Azure CLI (fallback)
-cred, err := azidentity.NewAzureCLICredential(nil)
+// Delete Arc machine (unbootstrap)
+client.BeginDelete(ctx, resourceGroup, machineName, nil)
 ```
 
----
+**Code**: `pkg/components/arc/arc_base.go`, `pkg/components/arc/arc_uninstaller.go`
 
-### Runtime Authentication (Not Direct API Calls)
-
-After bootstrap, the kubelet authenticates using Arc managed identity:
-
-**HIMDS (Hybrid Instance Metadata Service)**:
-- **Local Endpoint**: `http://127.0.0.1:40342/metadata/identity/oauth2/token`
-- **Provided By**: Arc Agent (azcmagent) running on VM
-- **Purpose**: Issues short-lived Azure AD tokens for kubelet
-- **Not a Direct Agent API Call**: Kubelet calls this, not the AKS Flex Node Agent
+**Azure Docs**: [Azure Arc Hybrid Compute API](https://learn.microsoft.com/en-us/rest/api/hybridcompute/)
 
 ---
 
-### API Call Sequence
+### 2. RBAC Role Assignment
 
-**Bootstrap**:
-1. **Arc Registration** → `azcmagent connect` (CLI, not REST API)
-2. **Get Arc Machine** → Hybrid Compute API → Retrieve managed identity
-3. **Assign RBAC** → Authorization API → Grant cluster permissions
-4. **Download Config** → Container Service API → Get kubeconfig
+**SDK**: [`armauthorization/v3`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3)
 
-**Unbootstrap**:
-1. **List Role Assignments** → Authorization API → Find assignments to delete
-2. **Delete Role Assignments** → Authorization API → Remove permissions
-3. **Delete Arc Machine** → Hybrid Compute API → Unregister from Arc
-4. **Disconnect** → `azcmagent disconnect` (CLI, not REST API)
+**What the agent does**:
+- **Bootstrap**: Assigns "Azure Kubernetes Service Cluster User Role" to Arc managed identity
+- **Unbootstrap**: Lists and deletes role assignments
 
-> **For detailed code implementation**: See [Detailed Component Specifications](#detailed-component-specifications) for complete code examples and error handling.
+**Key Operations**:
+```go
+// Create role assignment
+client.Create(ctx, scope, roleAssignmentName, parameters, nil)
+
+// List role assignments
+client.NewListForScopePager(scope, options)
+
+// Delete role assignment
+client.Delete(ctx, scope, roleAssignmentName, nil)
+```
+
+**Code**: `pkg/components/arc/arc_base.go`, `pkg/components/arc/arc_uninstaller.go`
+
+**Azure Docs**: [Azure RBAC API](https://learn.microsoft.com/en-us/rest/api/authorization/)
+
+---
+
+### 3. Cluster Credentials Download
+
+**SDK**: [`armcontainerservice/v5`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5)
+
+**What the agent does**:
+- **Bootstrap**: Downloads kubeconfig with cluster admin credentials
+
+**Key Operation**:
+```go
+// Download cluster admin credentials
+mcClient.ListClusterAdminCredentials(ctx, resourceGroup, clusterName, nil)
+```
+
+**Code**: `pkg/azure/azure.go:29`
+
+**Azure Docs**: [Azure Container Service API](https://learn.microsoft.com/en-us/rest/api/aks/)
+
+---
+
+### 4. Authentication
+
+**SDK**: [`azidentity`](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity)
+
+**What the agent does**:
+- **Bootstrap**: Obtains Azure AD credentials for API calls (Service Principal OR Azure CLI)
+- Credentials used to call all Azure management APIs during bootstrap
+
+**Key Operations**:
+```go
+// Service Principal authentication (if configured)
+azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+
+// Azure CLI authentication (fallback)
+azidentity.NewAzureCLICredential(nil)
+```
+
+**Code**: `pkg/auth/auth.go`
+
+**Azure Docs**: [Azure Identity SDK](https://learn.microsoft.com/en-us/azure/developer/go/azure-sdk-authentication)
+
+---
+
+### API Call Flow
+
+**Bootstrap Sequence**:
+1. Authenticate → Get Azure AD credential (`azidentity`)
+2. Register Arc → Run `azcmagent connect` (CLI, not SDK)
+3. Get Identity → Retrieve Arc machine (`armhybridcompute`)
+4. Assign RBAC → Grant cluster access (`armauthorization`)
+5. Download Config → Get kubeconfig (`armcontainerservice`)
+
+**Unbootstrap Sequence**:
+1. Authenticate → Get Azure AD credential (`azidentity`)
+2. Remove RBAC → Delete role assignments (`armauthorization`)
+3. Delete Arc → Remove Arc registration (`armhybridcompute`)
+4. Disconnect → Run `azcmagent disconnect` (CLI, not SDK)
+
+---
+
+### Runtime Authentication (HIMDS)
+
+After bootstrap, kubelet authenticates using **HIMDS** (Hybrid Instance Metadata Service):
+- **Local endpoint**: `http://127.0.0.1:40342/metadata/identity/oauth2/token`
+- **Provided by**: Arc Agent (`azcmagent`)
+- **Used by**: kubelet (not the AKS Flex Node Agent)
+- **Purpose**: Issues short-lived Azure AD tokens for cluster API access
+
+**Azure Docs**: [Arc Managed Identity](https://learn.microsoft.com/en-us/azure/azure-arc/servers/managed-identity-authentication)
 
 ---
 
@@ -716,318 +707,59 @@ graph TB
 
 ### Authentication & Credential Flow
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Agent as AKS Flex Node
-    participant Auth as Auth Provider
-    participant AzCLI as Azure CLI
-    participant AzureAD as Azure AD
-    participant Arc as Azure Arc
-    participant AKS as AKS API
+**Code Location**: `pkg/auth/auth.go`
 
-    Note over User,AKS: Bootstrap Phase - User Credentials
-    User->>Agent: bootstrap --config config.json
-    Agent->>Auth: UserCredential(ctx, config)
+#### Bootstrap Phase Authentication
 
-    alt Service Principal Configured
-        Auth->>Auth: NewClientSecretCredential()
-        Auth-->>Agent: SP Token Credential
-    else Azure CLI
-        Auth->>AzCLI: az account show
-        AzCLI-->>Auth: Check auth status
-        alt Not Authenticated
-            Auth->>User: Prompt for login
-            User->>AzCLI: az login --tenant <tenant-id>
-            AzCLI->>AzureAD: Device Code Flow
-            AzureAD-->>User: Display device code
-            User->>AzureAD: Enter code + authenticate
-            AzureAD-->>AzCLI: Token
-        end
-        Auth->>AzCLI: NewAzureCLICredential()
-        Auth-->>Agent: CLI Token Credential
-    end
+The agent supports two authentication methods for Azure API calls during bootstrap:
 
-    Note over Agent,Arc: Arc Registration
-    Agent->>Auth: GetAccessToken(cred)
-    Auth->>AzureAD: Token Request<br/>(scope: management.azure.com)
-    AzureAD-->>Auth: Access Token
-    Agent->>Arc: azcmagent connect<br/>--access-token <token>
-    Arc->>AzureAD: Register Machine
-    AzureAD-->>Arc: Managed Identity Created
-
-    Note over Agent,AKS: RBAC Assignment
-    Agent->>Auth: UserCredential(ctx)
-    Agent->>AKS: Assign RBAC Roles<br/>(using user creds)
-    AKS-->>Agent: Role assignments created
-
-    Note over Agent,AKS: Cluster Credentials Download
-    Agent->>Auth: UserCredential(ctx)
-    Agent->>AKS: ListClusterAdminCredentials()<br/>(using user creds)
-    AKS-->>Agent: Kubeconfig (admin.conf)
-
-    Note over Agent,Arc: Runtime Phase - Arc Managed Identity
-    Agent->>Agent: Create Arc token script<br/>(/var/lib/kubelet/token.sh)
-
-    loop Kubelet Runtime Operations
-        Note over Arc,AKS: Kubelet uses Arc MSI for all K8s API calls
-        Arc->>Arc: kubelet calls token.sh
-        Arc->>Arc: curl HIMDS (127.0.0.1:40342)<br/>Get challenge token
-        Arc->>Arc: curl with challenge<br/>Get AAD token
-        Arc-->>Arc: Return token to kubelet
-        Arc->>AKS: K8s API calls with AAD token
-        AKS-->>Arc: API Response
-    end
-```
-
-### Authentication Contexts
-
-#### 1. User Credentials (Bootstrap Phase)
-**Used For:** Arc registration, RBAC assignment, kubeconfig download
-**Methods:** Service Principal OR Azure CLI
-**Scope:** `https://management.azure.com/.default`
-
-**Service Principal Authentication:**
+**1. Service Principal** (if configured in `config.json`):
 ```go
-// pkg/auth/auth.go:41-51
+// pkg/auth/auth.go
 cred, err := azidentity.NewClientSecretCredential(
-    cfg.Azure.ServicePrincipal.TenantID,
-    cfg.Azure.ServicePrincipal.ClientID,
-    cfg.Azure.ServicePrincipal.ClientSecret,
-    nil,
-)
+    tenantID, clientID, clientSecret, nil)
 ```
 
-**Azure CLI Authentication:**
+**2. Azure CLI** (fallback):
 ```go
-// pkg/auth/auth.go:55-60
+// pkg/auth/auth.go
 cred, err := azidentity.NewAzureCLICredential(nil)
 ```
 
-#### 2. Arc Managed Identity (Runtime Phase)
-**Used For:** Kubelet authentication to AKS API
-**Method:** Azure Arc HIMDS (Hybrid Instance Metadata Service)
-**Endpoint:** `http://127.0.0.1:40342/metadata/identity/oauth2/token`
+If Azure CLI is not authenticated, the user will be prompted to run `az login`.
 
-**Token Retrieval Process:**
-```bash
-# pkg/components/kubelet/kubelet_installer.go:364-392
-# 1. Get challenge token from HIMDS
-CHALLENGE_TOKEN_PATH=$(curl -s -D - -H Metadata:true $TOKEN_URL | \
-    grep Www-Authenticate | cut -d "=" -f 2)
+#### Runtime Phase Authentication
 
-# 2. Read challenge token (requires root)
-CHALLENGE_TOKEN=$(cat $CHALLENGE_TOKEN_PATH)
+After bootstrap, kubelet uses Arc managed identity via HIMDS (Hybrid Instance Metadata Service).
 
-# 3. Get AAD token with challenge
-curl -s -H Metadata:true \
-    -H "Authorization: Basic $CHALLENGE_TOKEN" \
-    $TOKEN_URL
-```
+**Token Script**: `pkg/components/kubelet/kubelet_installer.go` creates `/var/lib/kubelet/token.sh`
 
-**Kubeconfig Exec Credential:**
+**Kubeconfig Exec Credential**:
 ```yaml
-# pkg/components/kubelet/kubelet_installer.go:436-454
+# Generated in pkg/components/kubelet/kubelet_installer.go
 users:
 - name: arc-user
   user:
     exec:
-      apiVersion: client.authentication.k8s.io/v1beta1
       command: /var/lib/kubelet/token.sh
-      env: null
-      provideClusterInfo: false
 ```
+
+**Azure Docs**:
+- [Arc Managed Identity Authentication](https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication)
+- [Azure Identity SDK](https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication)
 
 ### Required Azure Permissions
 
-**For User/Service Principal (Bootstrap):**
-- `Azure Connected Machine Onboarding` - Arc machine registration
-- `User Access Administrator` or `Owner` - RBAC role assignment on AKS cluster
-- `Azure Kubernetes Service Cluster Admin Role` - Kubeconfig download
+**For User/Service Principal (Bootstrap)**:
+- `Azure Connected Machine Onboarding` - Register VM with Arc
+- `User Access Administrator` or `Owner` - Assign RBAC roles
+- `Azure Kubernetes Service Cluster Admin Role` - Download cluster credentials
 
-**For Arc Managed Identity (Runtime):**
-- `Reader` - Read AKS cluster metadata
-- `Azure Kubernetes Service RBAC Cluster Admin` - Full K8s RBAC access
-- `Azure Kubernetes Service Cluster Admin Role` - K8s API server access
+**For Arc Managed Identity (Runtime)**:
+- `Azure Kubernetes Service Cluster User Role` - Assigned by agent during bootstrap
+- Additional roles assigned based on configuration
 
----
-
-## Azure API Interactions
-
-### API Endpoints & SDK Usage
-
-#### 1. Azure Arc - Hybrid Compute API
-
-**SDK:** `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute`
-
-**Endpoint:** `https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.HybridCompute/machines/{machineName}`
-
-**Operations:**
-
-| Operation | Method | Location | Purpose |
-|-----------|--------|----------|---------|
-| Register Machine | CLI | `pkg/components/arc/arc_installer.go:167-207` | Registers VM with Azure Arc via `azcmagent connect` |
-| Get Machine | GET | `pkg/components/arc/arc_base.go:40-65` | Retrieves Arc machine details and managed identity |
-| Delete Machine | DELETE | `pkg/components/arc/arc_uninstaller.go` | Removes Arc registration |
-
-**API Documentation:**
-- [Azure Arc-enabled servers REST API](https://learn.microsoft.com/rest/api/hybridcompute/)
-- [Hybrid Compute Machines API](https://learn.microsoft.com/rest/api/hybridcompute/machines)
-- [Azure Arc Overview](https://learn.microsoft.com/azure/azure-arc/servers/overview)
-
-**Example Code:**
-```go
-// pkg/components/arc/arc_base.go:40-65
-client, err := armhybridcompute.NewMachinesClient(subscriptionID, cred, nil)
-result, err := client.Get(ctx, resourceGroup, machineName, nil)
-machine := result.Machine
-
-// Extract managed identity principal ID
-principalID := *machine.Identity.PrincipalID
-```
-
-#### 2. Azure RBAC - Authorization API
-
-**SDK:** `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3`
-
-**Endpoint:** `https://management.azure.com/{scope}/providers/Microsoft.Authorization/roleAssignments/{roleAssignmentId}`
-
-**Operations:**
-
-| Operation | Method | Location | Purpose |
-|-----------|--------|----------|---------|
-| Create Role Assignment | PUT | `pkg/components/arc/arc_installer.go:264-322` | Assigns RBAC roles to Arc managed identity |
-| List Role Assignments | GET | `pkg/components/arc/arc_base.go:113-142` | Verifies existing role assignments |
-| Check Permissions | GET | `pkg/components/arc/arc_base.go:68-102` | Validates required permissions |
-
-**Role Definition IDs:**
-```go
-// pkg/components/arc/consts.go:4-11
-roleDefinitionIDs = map[string]string{
-    "Reader":              "acdd72a7-3385-48ef-bd42-f606fba81ae7",
-    "Azure Kubernetes Service RBAC Cluster Admin":
-        "b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b",
-    "Azure Kubernetes Service Cluster Admin Role":
-        "0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8",
-}
-```
-
-**API Documentation:**
-- [Azure RBAC REST API](https://learn.microsoft.com/rest/api/authorization/)
-- [Role Assignments API](https://learn.microsoft.com/rest/api/authorization/role-assignments)
-- [Azure Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
-
-**Example Code:**
-```go
-// pkg/components/arc/arc_installer.go:286-294
-assignment := armauthorization.RoleAssignmentCreateParameters{
-    Properties: &armauthorization.RoleAssignmentProperties{
-        PrincipalID:      &principalID,
-        RoleDefinitionID: &fullRoleDefinitionID,
-    },
-}
-_, err = client.Create(ctx, scope, roleAssignmentName, assignment, nil)
-```
-
-#### 3. Azure Container Service (AKS) API
-
-**SDK:** `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5`
-
-**Endpoint:** `https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerService/managedClusters/{resourceName}`
-
-**Operations:**
-
-| Operation | Method | Location | Purpose |
-|-----------|--------|----------|---------|
-| List Cluster Admin Credentials | POST | `pkg/azure/azure.go:14-46` | Downloads admin kubeconfig with cluster CA cert and API server URL |
-
-**API Documentation:**
-- [AKS REST API](https://learn.microsoft.com/rest/api/aks/)
-- [Managed Clusters API](https://learn.microsoft.com/rest/api/aks/managed-clusters)
-- [List Cluster Admin Credentials](https://learn.microsoft.com/rest/api/aks/managed-clusters/list-cluster-admin-credentials)
-
-**Example Code:**
-```go
-// pkg/azure/azure.go:21-32
-clientFactory, err := armcontainerservice.NewClientFactory(subscriptionID, cred, nil)
-mcClient := clientFactory.NewManagedClustersClient()
-
-resp, err := mcClient.ListClusterAdminCredentials(
-    ctx,
-    resourceGroup,
-    clusterName,
-    nil,
-)
-kubeconfigData := resp.Kubeconfigs[0].Value
-```
-
-#### 4. Azure Arc HIMDS (Hybrid Instance Metadata Service)
-
-**Endpoint:** `http://127.0.0.1:40342/metadata/identity/oauth2/token`
-
-**Protocol:** HTTP (local-only, non-routable)
-
-**Operations:**
-
-| Operation | Method | Location | Purpose |
-|-----------|--------|----------|---------|
-| Get Challenge Token | GET | `pkg/components/kubelet/kubelet_installer.go:385-390` | Initiates authentication flow |
-| Get AAD Token | GET | `pkg/components/kubelet/kubelet_installer.go:392` | Retrieves access token for AKS |
-
-**API Documentation:**
-- [Azure Arc Managed Identity](https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication)
-- [HIMDS Endpoint Documentation](https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication#using-a-managed-identity)
-
-**Request Flow:**
-```bash
-# 1. Initial request (receives challenge)
-curl -s -D - -H "Metadata: true" \
-  "http://127.0.0.1:40342/metadata/identity/oauth2/token?api-version=2019-11-01&resource=<resource>"
-
-# Response header: Www-Authenticate: Basic realm=/path/to/challenge/token
-
-# 2. Read challenge token (root-only file)
-CHALLENGE_TOKEN=$(cat /path/to/challenge/token)
-
-# 3. Authenticated request
-curl -s -H "Metadata: true" \
-     -H "Authorization: Basic $CHALLENGE_TOKEN" \
-     "http://127.0.0.1:40342/metadata/identity/oauth2/token?api-version=2019-11-01&resource=<resource>"
-
-# Response:
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "expires_on": "1234567890",
-  "resource": "https://management.azure.com/",
-  "token_type": "Bearer"
-}
-```
-
-**Resource IDs:**
-```go
-// pkg/components/kubelet/consts.go
-const AKSServiceResourceID = "6dae42f8-4368-4678-94ff-3960e28e3630"
-```
-
-#### 5. Kubernetes API Server
-
-**Endpoint:** Retrieved from downloaded kubeconfig (e.g., `https://<cluster-fqdn>:443`)
-
-**Authentication:** Arc Managed Identity (via exec credential plugin)
-
-**Operations:**
-
-| Operation | Client | Purpose |
-|-----------|--------|---------|
-| Node Registration | kubelet | Registers node with K8s control plane |
-| Heartbeats | kubelet | Sends node status updates every 10s |
-| Pod Lifecycle | kubelet | Receives pod assignments, reports status |
-| Log/Exec Streaming | kubelet | Handles kubectl logs/exec commands |
-
-**API Documentation:**
-- [Kubernetes API Reference](https://kubernetes.io/docs/reference/kubernetes-api/)
-- [Kubelet API](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/)
-- [Node API](https://kubernetes.io/docs/reference/kubernetes-api/cluster-resources/node-v1/)
+**Azure Docs**: [Azure Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
 
 ---
 
