@@ -26,12 +26,6 @@ func NewUnInstaller(logger *logrus.Logger) *UnInstaller {
 func (u *UnInstaller) Execute(ctx context.Context) error {
 	u.logger.Info("Cleaning up CNI configuration")
 
-	// CNI directories to clean up
-	cniDirs := []string{
-		u.config.Paths.CNI.ConfDir,
-		u.config.Paths.CNI.BinDir,
-	}
-
 	// Remove CNI configuration directories
 	if dirErrors := utils.RemoveDirectories(cniDirs, u.logger); len(dirErrors) > 0 {
 		for _, err := range dirErrors {
@@ -45,12 +39,6 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 
 // IsCompleted checks if CNI configuration directories have been removed
 func (u *UnInstaller) IsCompleted(ctx context.Context) bool {
-	// Check if critical CNI directories still exist
-	cniDirs := []string{
-		u.config.Paths.CNI.ConfDir,
-		u.config.Paths.CNI.BinDir,
-	}
-
 	for _, dir := range cniDirs {
 		if utils.DirectoryExists(dir) {
 			return false

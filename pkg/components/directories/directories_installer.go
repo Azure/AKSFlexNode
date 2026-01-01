@@ -100,16 +100,9 @@ func (i *Installer) Validate(ctx context.Context) error {
 // getRequiredDirectories returns the list of directories required for the bootstrap process
 func (i *Installer) getRequiredDirectories() []string {
 	return []string{
-		i.config.Paths.CNI.LibDir,
-		i.config.Paths.CNI.BinDir,
-		i.config.Paths.CNI.ConfDir,
-		i.config.Paths.Kubernetes.VolumePluginDir,
-		i.config.Paths.Kubernetes.CertsDir,
-		i.config.Paths.Kubernetes.ManifestsDir,
-		i.config.Paths.Kubernetes.ConfigDir,
-		"/etc/containerd",
-		"/etc/systemd/system/kubelet.service.d",
-		i.config.Paths.Kubernetes.KubeletDir,
+		"/etc/containerd",                       // containerd config directory
+		"/etc/systemd/system/kubelet.service.d", // kubelet service drop-in directory
+		"/var/lib/kubelet",                      // kubelet data directory
 	}
 }
 

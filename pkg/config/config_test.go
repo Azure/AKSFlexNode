@@ -21,7 +21,6 @@ func TestSetDefaults(t *testing.T) {
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
 					c.Paths.Kubernetes.ConfigDir == "/etc/kubernetes" &&
-					c.Paths.CNI.BinDir == "/opt/cni/bin" &&
 					c.Node.MaxPods == 110 &&
 					c.Containerd.Version == "1.7.20" &&
 					c.Kubernetes.Version == "1.32.7" &&

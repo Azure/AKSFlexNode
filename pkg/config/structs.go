@@ -9,6 +9,7 @@ type Config struct {
 	Agent      AgentConfig      `json:"agent"`
 	Containerd ContainerdConfig `json:"containerd"`
 	Kubernetes KubernetesConfig `json:"kubernetes"`
+	CNI        CNIConfig        `json:"cni"`
 	Runc       RuntimeConfig    `json:"runc"`
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
@@ -94,7 +95,6 @@ type KubeletConfig struct {
 // PathsConfig holds file system paths used by the agent for Kubernetes and CNI configurations.
 type PathsConfig struct {
 	Kubernetes KubernetesPathsConfig `json:"kubernetes"`
-	CNI        CNIPathsConfig        `json:"cni"`
 }
 
 // KubernetesPathsConfig holds file system paths related to Kubernetes components.
@@ -107,10 +107,8 @@ type KubernetesPathsConfig struct {
 }
 
 // CNIPathsConfig holds file system paths related to CNI plugins and configurations.
-type CNIPathsConfig struct {
-	BinDir  string `json:"binDir"`
-	ConfDir string `json:"confDir"`
-	LibDir  string `json:"libDir"`
+type CNIConfig struct {
+	Version string `json:"version"`
 }
 
 // IsSPConfigured checks if service principal credentials are provided in the configuration

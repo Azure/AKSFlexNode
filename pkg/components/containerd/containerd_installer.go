@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
@@ -354,8 +355,8 @@ oom_score = 0
 [metrics]
 	address = "%s"`,
 		ci.config.Containerd.PauseImage,
-		ci.config.Paths.CNI.BinDir,
-		ci.config.Paths.CNI.ConfDir,
+		cni.DefaultCNIBinDir,
+		cni.DefaultCNIConfDir,
 		ci.config.Containerd.MetricsAddress)
 
 	// Create containerd config file using sudo-aware approach

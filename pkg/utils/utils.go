@@ -80,6 +80,12 @@ func FileExists(path string) bool {
 	return !os.IsNotExist(err)
 }
 
+// FileExistsAndValid checks if a file exists and is not empty (useful for binaries)
+func FileExistsAndValid(path string) bool {
+	stat, err := os.Stat(path)
+	return err == nil && stat.Size() > 0
+}
+
 // IsServiceActive checks if a systemd service is active
 func IsServiceActive(serviceName string) bool {
 	output, err := RunCommandWithOutput("systemctl", "is-active", serviceName)
@@ -503,4 +509,25 @@ func CleanPackageCache(logger *logrus.Logger) {
 	if err := RunSystemCommand("apt-get", "update"); err != nil {
 		logger.Warnf("Failed to update package cache: %v", err)
 	}
+}
+
+// GetArc retrieves the system architecture in a format matching reference scripts
+func GetArc() (string, error) {
+	// Get architecture using same logic as reference script
+	arch, err := RunCommandWithOutput("uname", "-m")
+	if err != nil {
+		return "", fmt.Errorf("failed to get architecture: %w", err)
+	}
+	arch = strings.TrimSpace(arch)
+
+	// Map architecture names to match reference script logic
+	switch arch {
+	case "armv7l", "armv7":
+		arch = "arm"
+	case "aarch64":
+		arch = "arm64"
+	case "x86_64":
+		arch = "amd64"
+	}
+	return arch, nil
 }

@@ -112,17 +112,6 @@ func (c *Config) SetDefaults() {
 		c.Paths.Kubernetes.KubeletDir = "/var/lib/kubelet"
 	}
 
-	// Set default paths for CNI if not provided
-	if c.Paths.CNI.BinDir == "" {
-		c.Paths.CNI.BinDir = "/opt/cni/bin"
-	}
-	if c.Paths.CNI.ConfDir == "" {
-		c.Paths.CNI.ConfDir = "/etc/cni/net.d"
-	}
-	if c.Paths.CNI.LibDir == "" {
-		c.Paths.CNI.LibDir = "/var/lib/cni"
-	}
-
 	// Set default node configuration if not provided
 	if c.Node.MaxPods == 0 {
 		c.Node.MaxPods = 110 // Default Kubernetes node pod limit
