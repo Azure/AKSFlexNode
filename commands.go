@@ -140,7 +140,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 	statusDir := getStatusDirectory()
 	statusFilePath := filepath.Join(statusDir, "status.json")
 
-	if err := os.MkdirAll(statusDir, 0755); err != nil {
+	if err := os.MkdirAll(statusDir, 0750); err != nil {
 		return fmt.Errorf("failed to create status directory %s: %w", statusDir, err)
 	}
 
@@ -260,7 +260,7 @@ func collectAndWriteStatus(cfg *config.Config, logger *logrus.Logger, statusFile
 
 	// Write to temporary file first, then rename (atomic operation)
 	tempFile := statusFilePath + ".tmp"
-	if err := os.WriteFile(tempFile, statusData, 0644); err != nil {
+	if err := os.WriteFile(tempFile, statusData, 0600); err != nil {
 		return fmt.Errorf("failed to write status to temp file: %w", err)
 	}
 
