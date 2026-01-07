@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"time"
 
@@ -118,10 +119,25 @@ func runVersion() {
 	fmt.Printf("Build Time: %s\n", BuildTime)
 }
 
+// getStatusDirectory returns the appropriate status directory path
+// Uses /run/aks-flex-node when running as aks-flex-node user (systemd service)
+// Uses /tmp/aks-flex-node for direct user execution (testing/development)
+func getStatusDirectory() string {
+	// Check if we're running as the aks-flex-node service user
+	currentUser, err := user.Current()
+	if err == nil && currentUser.Username == "aks-flex-node" {
+		// Running as systemd service user - use runtime directory for status files
+		return "/run/aks-flex-node"
+	}
+
+	// Running as regular user (testing/development) - use temp directory
+	return "/tmp/aks-flex-node"
+}
+
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
 func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logger) error {
-	// Create status file directory - use /tmp for testing, systemd service will use proper location
-	statusDir := "/tmp/aks-flex-node"
+	// Create status file directory - using runtime directory for service or temp for development
+	statusDir := getStatusDirectory()
 	statusFilePath := filepath.Join(statusDir, "status.json")
 
 	if err := os.MkdirAll(statusDir, 0755); err != nil {
@@ -141,8 +157,8 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 	logger.Info("Starting periodic status collection daemon (status: 2 minutes, bootstrap check: 1 minute)")
 
 	// Create tickers for different intervals
-	statusTicker := time.NewTicker(2 * time.Minute)
-	bootstrapTicker := time.NewTicker(1 * time.Minute)
+	statusTicker := time.NewTicker(1 * time.Minute)
+	bootstrapTicker := time.NewTicker(2 * time.Minute)
 	defer statusTicker.Stop()
 	defer bootstrapTicker.Stop()
 
@@ -195,7 +211,7 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config, logger *logrus.L
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		// Bootstrap failed - remove status file so next check will detect the problem
-		statusDir := "/tmp/aks-flex-node"
+		statusDir := getStatusDirectory()
 		statusFilePath := filepath.Join(statusDir, "status.json")
 		if removeErr := os.Remove(statusFilePath); removeErr != nil {
 			logger.Debugf("Failed to remove status file after bootstrap failure: %v", removeErr)
@@ -208,7 +224,7 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config, logger *logrus.L
 	// Handle and log the bootstrap result
 	if err := handleExecutionResult(result, "auto-bootstrap", logger); err != nil {
 		// Bootstrap execution failed - remove status file so next check will detect the problem
-		statusDir := "/tmp/aks-flex-node"
+		statusDir := getStatusDirectory()
 		statusFilePath := filepath.Join(statusDir, "status.json")
 		if removeErr := os.Remove(statusFilePath); removeErr != nil {
 			logger.Debugf("Failed to remove status file after bootstrap execution failure: %v", removeErr)

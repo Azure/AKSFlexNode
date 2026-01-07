@@ -19,6 +19,8 @@ User=aks-flex-node
 Group=aks-flex-node
 SupplementaryGroups=himds ubuntu
 Environment=AZURE_CONFIG_DIR=/home/ubuntu/.azure
+RuntimeDirectory=aks-flex-node
+RuntimeDirectoryMode=0755
 StandardOutput=journal
 StandardError=journal
 
@@ -44,7 +46,7 @@ RestrictSUIDSGID=false
 RemoveIPC=false
 
 # Allow access to specific paths that need modification (- prefix makes paths optional)
-ReadWritePaths=-/etc/kubernetes -/var/lib/kubelet -/var/lib/containerd -/etc/containerd -/opt/cni -/etc/cni -/etc/systemd/system -/etc/sysctl.d -/etc/modules-load.d -/var/log/aks-flex-node -/tmp -/etc/aks-flex-node
+ReadWritePaths=-/etc/kubernetes -/var/lib/kubelet -/var/lib/containerd -/etc/containerd -/opt/cni -/etc/cni -/etc/systemd/system -/etc/sysctl.d -/etc/modules-load.d -/var/log/aks-flex-node -/tmp -/etc/aks-flex-node -/run/aks-flex-node
 
 [Install]
 WantedBy=multi-user.target
