@@ -295,16 +295,16 @@ setup_systemd_service() {
     # Download service file from repository
     local temp_dir
     temp_dir=$(mktemp -d)
-    local service_url="https://raw.githubusercontent.com/${REPO}/main/aks-flex-node@.service"
+    local service_url="https://raw.githubusercontent.com/${REPO}/main/aks-flex-node-agent.service"
 
     if command -v curl &> /dev/null; then
-        if ! curl -L -f -o "$temp_dir/aks-flex-node@.service" "$service_url"; then
+        if ! curl -L -f -o "$temp_dir/aks-flex-node-agent.service" "$service_url"; then
             log_error "Failed to download systemd service file"
             rm -rf "$temp_dir"
             return 1
         fi
     elif command -v wget &> /dev/null; then
-        if ! wget -O "$temp_dir/aks-flex-node@.service" "$service_url"; then
+        if ! wget -O "$temp_dir/aks-flex-node-agent.service" "$service_url"; then
             log_error "Failed to download systemd service file"
             rm -rf "$temp_dir"
             return 1
@@ -315,8 +315,8 @@ setup_systemd_service() {
     fi
 
     # Install systemd service file
-    cp "$temp_dir/aks-flex-node@.service" /etc/systemd/system/
-    chmod 644 /etc/systemd/system/aks-flex-node@.service
+    cp "$temp_dir/aks-flex-node-agent.service" /etc/systemd/system/
+    chmod 644 /etc/systemd/system/aks-flex-node-agent.service
 
     # Update the service file with the correct user path for Azure CLI access
     local current_user
@@ -325,8 +325,8 @@ setup_systemd_service() {
     current_user_home=$(eval echo "~$current_user")
 
     log_info "Configuring service file for current user ($current_user)..."
-    sed -i "s|Environment=AZURE_CONFIG_DIR=/home/ubuntu/.azure|Environment=AZURE_CONFIG_DIR=$current_user_home/.azure|g" /etc/systemd/system/aks-flex-node@.service
-    sed -i "s|SupplementaryGroups=himds ubuntu|SupplementaryGroups=himds $current_user|g" /etc/systemd/system/aks-flex-node@.service
+    sed -i "s|Environment=AZURE_CONFIG_DIR=/home/ubuntu/.azure|Environment=AZURE_CONFIG_DIR=$current_user_home/.azure|g" /etc/systemd/system/aks-flex-node-agent.service
+    sed -i "s|SupplementaryGroups=himds ubuntu|SupplementaryGroups=himds $current_user|g" /etc/systemd/system/aks-flex-node-agent.service
 
     # Reload systemd
     systemctl daemon-reload
@@ -372,6 +372,7 @@ EOF
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
     echo -e "${BLUE}Command Line Usage:${NC}"
+    echo "  Run agent daemon:       aks-flex-node agent --config $CONFIG_DIR/config.json"
     echo "  Bootstrap node:         aks-flex-node bootstrap --config $CONFIG_DIR/config.json"
     echo "  Unbootstrap node:       aks-flex-node unbootstrap --config $CONFIG_DIR/config.json"
     echo "  Check version:          aks-flex-node version"
@@ -379,11 +380,11 @@ EOF
 
     if [[ "${SERVICE_SETUP_SUCCESS:-false}" == "true" ]]; then
         echo -e "${BLUE}Systemd Service Usage:${NC}"
-        echo "  Enable bootstrap service:   systemctl enable aks-flex-node@bootstrap.service"
-        echo "  Start bootstrap:            systemctl start aks-flex-node@bootstrap"
-        echo "  Start unbootstrap:          systemctl start aks-flex-node@unbootstrap"
-        echo "  Check service status:       systemctl status aks-flex-node@bootstrap"
-        echo "  View service logs:          journalctl -u aks-flex-node@bootstrap -f"
+        echo "  Enable agent service:       systemctl enable aks-flex-node-agent.service"
+        echo "  Start agent:                systemctl start aks-flex-node-agent"
+        echo "  Stop agent:                 systemctl stop aks-flex-node-agent"
+        echo "  Check service status:       systemctl status aks-flex-node-agent"
+        echo "  View service logs:          journalctl -u aks-flex-node-agent -f"
         echo ""
         echo -e "${GREEN}✅ Systemd service is ready to use!${NC}"
     else

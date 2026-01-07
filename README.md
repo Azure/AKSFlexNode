@@ -156,21 +156,16 @@ aks-flex-node bootstrap
 cat /var/log/aks-flex-node/aks-flex-node.log
 
 # Option 2: Using systemd service
-sudo systemctl enable aks-flex-node@bootstrap.service; sudo systemctl start aks-flex-node@bootstrap
-journalctl -u aks-flex-node@bootstrap --since "1 minutes ago" -f
+sudo systemctl enable aks-flex-node-agent.service; sudo systemctl start aks-flex-node-agent
+journalctl -u aks-flex-node-agent --since "1 minutes ago" -f
 
 ```
 
 #### Unbootstrap
 ```bash
-# Option 1: Direct command execution
+# Direct command execution
 aks-flex-node unbootstrap
 cat /var/log/aks-flex-node/aks-flex-node.log
-
-# Option 2: Using systemd service
-sudo systemctl enable aks-flex-node@unbootstrap.service; sudo systemctl start aks-flex-node@unbootstrap
-journalctl -u aks-flex-node@unbootstrap --since "1 minutes ago" -f
-
 ```
 
 ## Authentication Flow:
@@ -213,7 +208,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/unin
 ```
 
 The uninstall script will:
-- Stop and disable aks-flex-node systemd services (bootstrap/unbootstrap)
+- Stop and disable aks-flex-node agent service
 - Remove the service user and permissions
 - Clean up all directories and configuration files
 - Remove the binary and systemd service files

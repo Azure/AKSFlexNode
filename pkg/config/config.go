@@ -35,13 +35,13 @@ func GetConfig() *Config {
 }
 
 // LoadConfig loads configuration from a JSON file and environment variables.
-// If configPath is empty, it uses the default config path (/etc/aks-flex-node/config.json).
+// The configPath parameter is required and cannot be empty.
 // Environment variables can override config file values using the AKS_NODE_CONTROLLER_ prefix.
 // For example: AKS_NODE_CONTROLLER_AZURE_LOCATION=westus2
 func LoadConfig(configPath string) (*Config, error) {
-	// Use default config path if none specified
+	// Require config path to be specified
 	if configPath == "" {
-		configPath = defaultConfigPath
+		return nil, fmt.Errorf("config file path is required")
 	}
 
 	// Set up viper

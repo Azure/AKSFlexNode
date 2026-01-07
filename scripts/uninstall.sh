@@ -42,7 +42,7 @@ confirm_uninstall() {
     echo ""
     echo "This will remove the following components:"
     echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
-    echo "• Systemd service (aks-flex-node@.service)"
+    echo "• Systemd service (aks-flex-node-agent.service)"
     echo "• Service user ($SERVICE_USER)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
@@ -72,18 +72,16 @@ confirm_uninstall() {
 stop_and_disable_services() {
     log_info "Stopping and disabling systemd services..."
 
-    # Stop any running services
-    for service_instance in bootstrap unbootstrap; do
-        if systemctl is-active --quiet "aks-flex-node@${service_instance}"; then
-            log_info "Stopping aks-flex-node@${service_instance}..."
-            systemctl stop "aks-flex-node@${service_instance}" || true
-        fi
+    # Stop the agent service if running
+    if systemctl is-active --quiet "aks-flex-node-agent"; then
+        log_info "Stopping aks-flex-node-agent..."
+        systemctl stop "aks-flex-node-agent" || true
+    fi
 
-        if systemctl is-enabled --quiet "aks-flex-node@${service_instance}" 2>/dev/null; then
-            log_info "Disabling aks-flex-node@${service_instance}..."
-            systemctl disable "aks-flex-node@${service_instance}" || true
-        fi
-    done
+    if systemctl is-enabled --quiet "aks-flex-node-agent" 2>/dev/null; then
+        log_info "Disabling aks-flex-node-agent..."
+        systemctl disable "aks-flex-node-agent" || true
+    fi
 
     log_success "Services stopped and disabled"
 }
@@ -121,12 +119,12 @@ check_arc_prerequisites() {
 remove_systemd_service() {
     log_info "Removing systemd service files..."
 
-    # Remove service file
-    if [[ -f "/etc/systemd/system/aks-flex-node@.service" ]]; then
-        rm -f "/etc/systemd/system/aks-flex-node@.service"
-        log_success "Removed systemd service file"
+    # Remove agent service file
+    if [[ -f "/etc/systemd/system/aks-flex-node-agent.service" ]]; then
+        rm -f "/etc/systemd/system/aks-flex-node-agent.service"
+        log_success "Removed systemd agent service file"
     else
-        log_info "Systemd service file not found"
+        log_info "Agent service file not found"
     fi
 
     # Reload systemd daemon

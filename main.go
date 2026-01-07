@@ -24,11 +24,12 @@ func main() {
 		Long:  "Azure Kubernetes Service Flex Node Agent for edge computing scenarios",
 	}
 
-	// Add global flags
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to configuration file")
+	// Add global flags for configuration
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
+	// Don't mark as required globally - we'll check in PersistentPreRunE for commands that need it
 
 	// Add commands
-	rootCmd.AddCommand(NewBootstrapCommand())
+	rootCmd.AddCommand(NewAgentCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
 
@@ -51,6 +52,11 @@ func main() {
 		// Skip config loading for version command
 		if cmd.Name() == "version" {
 			return nil
+		}
+
+		// For other commands, config is required
+		if configPath == "" {
+			return fmt.Errorf("config path is required for %s command", cmd.Name())
 		}
 
 		// Load config if specified

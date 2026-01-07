@@ -3,6 +3,7 @@ package arc
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -83,35 +84,48 @@ func (i *Installer) Execute(ctx context.Context) error {
 
 // IsCompleted checks if Arc setup has been completed
 // This can be used by bootstrap steps to verify completion status
+// Uses the same reliable logic as status collector for consistency
 func (i *Installer) IsCompleted(ctx context.Context) bool {
 	i.logger.Debug("Checking Arc setup completion status")
 
-	// Check if Arc agent is running
+	// Check if Arc services are running
 	if !isArcServicesRunning() {
-		i.logger.Debug("Arc agent is not running")
+		i.logger.Debug("Arc services are not running")
 		return false
 	}
 
-	// Check if machine is registered with Arc
-	arcMachine, err := i.getArcMachine(ctx)
+	// Use same approach as status collector - check azcmagent show with timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "azcmagent", "show")
+	output, err := cmd.Output()
 	if err != nil {
-		i.logger.Debugf("Arc machine not registered or not accessible: %v", err)
+		i.logger.Debugf("azcmagent show failed: %v - Arc not ready", err)
 		return false
 	}
 
-	// Check if required permissions are assigned
-	managedIdentityID := getArcMachineIdentityID(arcMachine)
-	hasPermissions, err := i.checkRequiredPermissions(ctx, managedIdentityID)
-	if err != nil || !hasPermissions {
-		if err != nil {
-			i.logger.Warnf("Error checking permissions: %s", err)
+	// Parse output to check if agent is connected (same logic as status collector)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				status := strings.TrimSpace(parts[1])
+				isConnected := strings.ToLower(status) == "connected"
+				if isConnected {
+					i.logger.Debug("Arc setup appears to be completed - agent is connected")
+				} else {
+					i.logger.Debugf("Arc agent status is '%s' - not ready", status)
+				}
+				return isConnected
+			}
 		}
-		i.logger.Info("Some required RBAC permissions are still missing")
-		return false
 	}
 
-	i.logger.Debug("Arc setup appears to be completed")
-	return true
+	i.logger.Debug("Could not find Agent Status in azcmagent show output - Arc not ready")
+	return false
 }
 
 // registerArcMachine registers the machine with Azure Arc using the Arc agent

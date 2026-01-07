@@ -1,14 +1,20 @@
 [Unit]
-Description=AKS Flex Node Agent - %i
+Description=AKS Flex Node Agent
 After=network-online.target
 Wants=network-online.target
+# Restart on failure to enable auto-recovery
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 RemainAfterExit=no
-ExecStart=/usr/local/bin/aks-flex-node %i --config /etc/aks-flex-node/config.json
-TimeoutStartSec=30
-TimeoutStopSec=3600
+ExecStart=/usr/local/bin/aks-flex-node agent --config /etc/aks-flex-node/config.json
+TimeoutStartSec=300
+TimeoutStopSec=60
+# Restart configuration for daemon resilience
+Restart=on-failure
+RestartSec=30
 User=aks-flex-node
 Group=aks-flex-node
 SupplementaryGroups=himds ubuntu
@@ -38,7 +44,7 @@ RestrictSUIDSGID=false
 RemoveIPC=false
 
 # Allow access to specific paths that need modification (- prefix makes paths optional)
-ReadWritePaths=-/etc/kubernetes -/var/lib/kubelet -/var/lib/containerd -/etc/containerd -/opt/cni -/etc/cni -/etc/systemd/system -/etc/sysctl.d -/etc/modules-load.d -/var/log/aks-flex-node -/tmp
+ReadWritePaths=-/etc/kubernetes -/var/lib/kubelet -/var/lib/containerd -/etc/containerd -/opt/cni -/etc/cni -/etc/systemd/system -/etc/sysctl.d -/etc/modules-load.d -/var/log/aks-flex-node -/tmp -/etc/aks-flex-node
 
 [Install]
 WantedBy=multi-user.target
