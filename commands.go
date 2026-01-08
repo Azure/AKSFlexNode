@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"time"
 
@@ -89,7 +88,7 @@ func runAgent(ctx context.Context) error {
 
 	// After successful bootstrap, transition to daemon mode
 	logger.Info("Bootstrap completed successfully, transitioning to daemon mode...")
-	return runDaemonLoop(ctx, cfg, logger)
+	return runDaemonLoop(ctx, cfg)
 }
 
 // runUnbootstrap executes the unbootstrap process
@@ -119,27 +118,12 @@ func runVersion() {
 	fmt.Printf("Build Time: %s\n", BuildTime)
 }
 
-// getStatusDirectory returns the appropriate status directory path
-// Uses /run/aks-flex-node when running as aks-flex-node user (systemd service)
-// Uses /tmp/aks-flex-node for direct user execution (testing/development)
-func getStatusDirectory() string {
-	// Check if we're running as the aks-flex-node service user
-	currentUser, err := user.Current()
-	if err == nil && currentUser.Username == "aks-flex-node" {
-		// Running as systemd service user - use runtime directory for status files
-		return "/run/aks-flex-node"
-	}
-
-	// Running as regular user (testing/development) - use temp directory
-	return "/tmp/aks-flex-node"
-}
-
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
-func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logger) error {
+func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
+	logger := logger.GetLoggerFromContext(ctx)
 	// Create status file directory - using runtime directory for service or temp for development
-	statusDir := getStatusDirectory()
-	statusFilePath := filepath.Join(statusDir, "status.json")
-
+	statusFilePath := status.GetStatusFilePath()
+	statusDir := filepath.Dir(statusFilePath)
 	if err := os.MkdirAll(statusDir, 0750); err != nil {
 		return fmt.Errorf("failed to create status directory %s: %w", statusDir, err)
 	}
@@ -154,7 +138,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 		}
 	}
 
-	logger.Info("Starting periodic status collection daemon (status: 2 minutes, bootstrap check: 1 minute)")
+	logger.Info("Starting periodic status collection daemon (status: 1 minutes, bootstrap check: 2 minute)")
 
 	// Create tickers for different intervals
 	statusTicker := time.NewTicker(1 * time.Minute)
@@ -163,7 +147,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 	defer bootstrapTicker.Stop()
 
 	// Collect status immediately on start
-	if err := collectAndWriteStatus(cfg, logger, statusFilePath); err != nil {
+	if err := collectAndWriteStatus(ctx, cfg, statusFilePath); err != nil {
 		logger.Errorf("Failed to collect initial status: %v", err)
 	}
 
@@ -175,7 +159,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 			return ctx.Err()
 		case <-statusTicker.C:
 			logger.Infof("Starting periodic status collection at %s...", time.Now().Format("2006-01-02 15:04:05"))
-			if err := collectAndWriteStatus(cfg, logger, statusFilePath); err != nil {
+			if err := collectAndWriteStatus(ctx, cfg, statusFilePath); err != nil {
 				logger.Errorf("Failed to collect status at %s: %v", time.Now().Format("2006-01-02 15:04:05"), err)
 				// Continue running even if status collection fails
 			} else {
@@ -183,7 +167,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 			}
 		case <-bootstrapTicker.C:
 			logger.Infof("Starting bootstrap health check at %s...", time.Now().Format("2006-01-02 15:04:05"))
-			if err := checkAndBootstrap(ctx, cfg, logger); err != nil {
+			if err := checkAndBootstrap(ctx, cfg); err != nil {
 				logger.Errorf("Auto-bootstrap check failed at %s: %v", time.Now().Format("2006-01-02 15:04:05"), err)
 				// Continue running even if bootstrap check fails
 			} else {
@@ -194,9 +178,10 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logge
 }
 
 // checkAndBootstrap checks if the node needs re-bootstrapping and performs it if necessary
-func checkAndBootstrap(ctx context.Context, cfg *config.Config, logger *logrus.Logger) error {
+func checkAndBootstrap(ctx context.Context, cfg *config.Config) error {
+	logger := logger.GetLoggerFromContext(ctx)
 	// Create status collector to check bootstrap requirements
-	collector := status.NewCollector(cfg, logger)
+	collector := status.NewCollector(cfg, logger, Version)
 
 	// Check if bootstrap is needed
 	needsBootstrap := collector.NeedsBootstrap(ctx)
@@ -211,46 +196,43 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config, logger *logrus.L
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		// Bootstrap failed - remove status file so next check will detect the problem
-		statusDir := getStatusDirectory()
-		statusFilePath := filepath.Join(statusDir, "status.json")
-		if removeErr := os.Remove(statusFilePath); removeErr != nil {
-			logger.Debugf("Failed to remove status file after bootstrap failure: %v", removeErr)
-		} else {
-			logger.Debug("Removed status file after bootstrap failure to ensure continued bootstrap attempts")
-		}
-		return fmt.Errorf("auto-bootstrap failed: %w", err)
+		removeStatusFile(ctx)
+		return fmt.Errorf("auto-bootstrap failed: %s", err)
 	}
 
 	// Handle and log the bootstrap result
 	if err := handleExecutionResult(result, "auto-bootstrap", logger); err != nil {
 		// Bootstrap execution failed - remove status file so next check will detect the problem
-		statusDir := getStatusDirectory()
-		statusFilePath := filepath.Join(statusDir, "status.json")
-		if removeErr := os.Remove(statusFilePath); removeErr != nil {
-			logger.Debugf("Failed to remove status file after bootstrap execution failure: %v", removeErr)
-		} else {
-			logger.Debug("Removed status file after bootstrap execution failure to ensure continued bootstrap attempts")
-		}
-		return err
+		removeStatusFile(ctx)
+		return fmt.Errorf("auto-bootstrap execution failed: %s", err)
 	}
 
 	logger.Info("Auto-bootstrap completed successfully")
 	return nil
 }
 
+func removeStatusFile(ctx context.Context) {
+	logger := logger.GetLoggerFromContext(ctx)
+	statusFilePath := status.GetStatusFilePath()
+	if removeErr := os.Remove(statusFilePath); removeErr != nil {
+		logger.Debugf("Failed to remove status file: %s", removeErr)
+	} else {
+		logger.Debug("Removed status file successfully")
+	}
+}
+
 // collectAndWriteStatus collects current node status and writes it to the status file
-func collectAndWriteStatus(cfg *config.Config, logger *logrus.Logger, statusFilePath string) error {
+func collectAndWriteStatus(ctx context.Context, cfg *config.Config, statusFilePath string) error {
+	logger := logger.GetLoggerFromContext(ctx)
+
 	// Create status collector
-	collector := status.NewCollector(cfg, logger)
+	collector := status.NewCollector(cfg, logger, Version)
 
 	// Collect comprehensive status
-	nodeStatus, err := collector.CollectStatus(context.Background())
+	nodeStatus, err := collector.CollectStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to collect node status: %w", err)
 	}
-
-	// Set agent version
-	nodeStatus.AgentVersion = Version
 
 	// Write status to JSON file
 	statusData, err := json.MarshalIndent(nodeStatus, "", "  ")

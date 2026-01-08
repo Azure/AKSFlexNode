@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,15 +17,17 @@ import (
 
 // Collector collects system and node status information
 type Collector struct {
-	config *config.Config
-	logger *logrus.Logger
+	config       *config.Config
+	logger       *logrus.Logger
+	agentVersion string
 }
 
 // NewCollector creates a new status collector
-func NewCollector(cfg *config.Config, logger *logrus.Logger) *Collector {
+func NewCollector(cfg *config.Config, logger *logrus.Logger, agentVersion string) *Collector {
 	return &Collector{
-		config: cfg,
-		logger: logger,
+		config:       cfg,
+		logger:       logger,
+		agentVersion: agentVersion,
 	}
 }
 
@@ -31,27 +35,25 @@ func NewCollector(cfg *config.Config, logger *logrus.Logger) *Collector {
 func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 	status := &NodeStatus{
 		LastUpdated:  time.Now(),
-		AgentVersion: "", // Will be set by caller
+		AgentVersion: c.agentVersion,
 	}
 
 	// Get kubelet version
-	if version, err := c.getKubeletVersion(ctx); err == nil {
-		status.KubeletVersion = version
-	} else {
+	version, err := c.getKubeletVersion(ctx)
+	if err != nil {
 		c.logger.Warnf("Failed to get kubelet version: %v", err)
-		status.KubeletVersion = "unknown"
 	}
+	status.KubeletVersion = version
 
 	// Check if kubelet is running
 	status.KubeletRunning = c.isKubeletRunning(ctx)
 
 	// Get runc version
-	if version, err := c.getRuncVersion(ctx); err == nil {
-		status.RuncVersion = version
-	} else {
+	version, err = c.getRuncVersion(ctx)
+	if err != nil {
 		c.logger.Warnf("Failed to get runc version: %v", err)
-		status.RuncVersion = "unknown"
 	}
+	status.RuncVersion = version
 
 	// Collect Arc status
 	arcStatus, err := c.collectArcStatus(ctx)
@@ -67,7 +69,7 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 func (c *Collector) getKubeletVersion(ctx context.Context) (string, error) {
 	output, err := c.runCommand(ctx, "/usr/local/bin/kubelet", "--version")
 	if err != nil {
-		return "", err
+		return "unknown", err
 	}
 
 	// Extract version from output like "Kubernetes v1.32.7"
@@ -76,14 +78,14 @@ func (c *Collector) getKubeletVersion(ctx context.Context) (string, error) {
 		return strings.TrimPrefix(parts[1], "v"), nil
 	}
 
-	return "", fmt.Errorf("could not parse kubelet version from: %s", output)
+	return "unknown", fmt.Errorf("could not parse kubelet version from: %s", output)
 }
 
 // getRuncVersion gets the runc version
 func (c *Collector) getRuncVersion(ctx context.Context) (string, error) {
 	output, err := c.runCommand(ctx, "runc", "--version")
 	if err != nil {
-		return "", err
+		return "unknown", err
 	}
 
 	// Parse runc version output
@@ -99,7 +101,7 @@ func (c *Collector) getRuncVersion(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("could not parse runc version from: %s", output)
+	return "unknown", fmt.Errorf("could not parse runc version from: %s", output)
 }
 
 // collectArcStatus gathers Azure Arc machine registration and connection status
@@ -114,27 +116,6 @@ func (c *Collector) collectArcStatus(ctx context.Context) (ArcStatus, error) {
 		c.logger.Debugf("azcmagent show failed: %v - marking Arc as disconnected", err)
 		status.Connected = false
 		status.Registered = false
-	}
-
-	// If config is available, use it to override/fill missing values
-	if c.config != nil {
-		if status.MachineName == "" {
-			status.MachineName = c.config.GetArcMachineName()
-		}
-		if status.Location == "" {
-			status.Location = c.config.GetArcLocation()
-		}
-		if status.ResourceGroup == "" {
-			status.ResourceGroup = c.config.GetArcResourceGroup()
-		}
-	}
-
-	// If we couldn't get status from azcmagent show, try fallback methods
-	if !status.Connected {
-		if connected, err := c.checkArcConnectivityFallback(ctx); err == nil {
-			status.Connected = connected
-			status.Registered = connected // Simplified: if connected, assume registered
-		}
 	}
 
 	return status, nil
@@ -173,8 +154,6 @@ func (c *Collector) parseArcShowOutput(status *ArcStatus, output string) {
 		case "Agent Status":
 			status.Connected = strings.ToLower(value) == "connected"
 			status.Registered = status.Connected // If connected, assume registered
-		case "Agent Version":
-			status.AgentVersion = value
 		case "Agent Last Heartbeat":
 			if heartbeat, err := time.Parse("2006-01-02T15:04:05Z", value); err == nil {
 				status.LastHeartbeat = heartbeat
@@ -197,33 +176,6 @@ func (c *Collector) parseArcShowOutput(status *ArcStatus, output string) {
 	}
 }
 
-// checkArcConnectivityFallback checks if the Arc agent is connected to Azure using fallback methods
-func (c *Collector) checkArcConnectivityFallback(ctx context.Context) (bool, error) {
-	// Method 1: Check if azcmagent shows status as connected
-	if output, err := c.runCommand(ctx, "azcmagent", "show"); err == nil {
-		// Look for "Agent Status" field in the output
-		lines := strings.Split(strings.TrimSpace(output), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
-				// Parse the status value after the colon
-				parts := strings.SplitN(line, ":", 2)
-				if len(parts) == 2 {
-					status := strings.TrimSpace(parts[1])
-					return strings.ToLower(status) == "connected", nil
-				}
-			}
-		}
-	}
-
-	// Method 2: Check if himds service is running (fallback)
-	if output, err := c.runCommand(ctx, "systemctl", "is-active", "himds"); err == nil {
-		return strings.TrimSpace(output) == "active", nil
-	}
-
-	return false, nil
-}
-
 // isKubeletRunning checks if the kubelet service is running
 func (c *Collector) isKubeletRunning(ctx context.Context) bool {
 	if output, err := c.runCommand(ctx, "systemctl", "is-active", "kubelet"); err == nil {
@@ -234,8 +186,7 @@ func (c *Collector) isKubeletRunning(ctx context.Context) bool {
 
 // NeedsBootstrap checks if the node needs to be (re)bootstrapped based on status file
 func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
-	statusFilePath := "/tmp/aks-flex-node/status.json"
-
+	statusFilePath := GetStatusFilePath()
 	// Try to read the status file
 	statusData, err := os.ReadFile(statusFilePath)
 	if err != nil {
@@ -263,9 +214,9 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 		}
 	}
 
-	// Check if status is too old (older than 15 minutes might indicate daemon issues)
-	if time.Since(nodeStatus.LastUpdated) > 15*time.Minute {
-		c.logger.Info("Status file is stale (older than 15 minutes) - bootstrap needed")
+	// Check if status is too old (older than 5 minutes might indicate daemon issues)
+	if time.Since(nodeStatus.LastUpdated) > 5*time.Minute {
+		c.logger.Info("Status file is stale (older than 5 minutes) - bootstrap needed")
 		return true
 	}
 
@@ -282,4 +233,20 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 
 	c.logger.Debug("Status file indicates healthy state - no bootstrap needed")
 	return false
+}
+
+// GetStatusFilePath returns the appropriate status directory path
+// Uses /run/aks-flex-node/status.json when running as aks-flex-node user (systemd service)
+// Uses /tmp/aks-flex-node/status.json for direct user execution (testing/development)
+func GetStatusFilePath() string {
+	// Running as regular user (testing/development) - use temp directory
+	statusDir := "/tmp/aks-flex-node"
+	// Check if we're running as the aks-flex-node service user
+	currentUser, err := user.Current()
+	if err == nil && currentUser.Username == "aks-flex-node" {
+		// Running as systemd service user - use runtime directory for status files
+		statusDir = "/run/aks-flex-node"
+	}
+
+	return filepath.Join(statusDir, "status.json")
 }
