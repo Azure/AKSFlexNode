@@ -43,8 +43,8 @@ func (i *Installer) Execute(ctx context.Context) error {
 
 // IsCompleted checks if system configuration has been applied
 func (i *Installer) IsCompleted(ctx context.Context) bool {
-	return utils.FileExists(SysctlConfigPath) &&
-		utils.FileExists(ResolvConfPath)
+	return utils.FileExists(sysctlConfigPath) &&
+		utils.FileExists(resolvConfPath)
 }
 
 // Validate validates the system configuration installation
@@ -63,7 +63,7 @@ kernel.panic = 10
 kernel.panic_on_oops = 1`
 
 	// Create sysctl directory if it doesn't exist
-	if err := utils.RunSystemCommand("mkdir", "-p", SysctlDir); err != nil {
+	if err := utils.RunSystemCommand("mkdir", "-p", sysctlDir); err != nil {
 		return fmt.Errorf("failed to create sysctl directory: %w", err)
 	}
 
@@ -75,12 +75,12 @@ kernel.panic_on_oops = 1`
 	defer utils.CleanupTempFile(tempFile.Name())
 
 	// Copy to final location
-	if err := utils.RunSystemCommand("cp", tempFile.Name(), SysctlConfigPath); err != nil {
+	if err := utils.RunSystemCommand("cp", tempFile.Name(), sysctlConfigPath); err != nil {
 		return fmt.Errorf("failed to install sysctl config file: %w", err)
 	}
 
 	// Set proper permissions
-	if err := utils.RunSystemCommand("chmod", "644", SysctlConfigPath); err != nil {
+	if err := utils.RunSystemCommand("chmod", "644", sysctlConfigPath); err != nil {
 		return fmt.Errorf("failed to set sysctl config file permissions: %w", err)
 	}
 
@@ -96,9 +96,9 @@ kernel.panic_on_oops = 1`
 // configureResolvConf configures DNS resolution
 func (i *Installer) configureResolvConf() error {
 	// Check if systemd-resolved is managing DNS
-	if utils.FileExists(ResolvConfSource) {
+	if utils.FileExists(resolvConfSource) {
 		// Create symlink to systemd-resolved configuration
-		if err := utils.RunSystemCommand("ln", "-sf", ResolvConfSource, ResolvConfPath); err != nil {
+		if err := utils.RunSystemCommand("ln", "-sf", resolvConfSource, resolvConfPath); err != nil {
 			return fmt.Errorf("failed to configure resolv.conf symlink: %w", err)
 		}
 		i.logger.Info("Configured resolv.conf to use systemd-resolved")

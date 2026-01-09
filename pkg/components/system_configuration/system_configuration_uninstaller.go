@@ -31,14 +31,14 @@ func (su *UnInstaller) GetName() string {
 func (su *UnInstaller) Execute(ctx context.Context) error {
 	su.logger.Info("Cleaning up system configuration")
 
-	// Remove current sysctl configuration
+	// Remove sysctl configuration
 	if err := su.cleanupSysctlConfig(); err != nil {
 		su.logger.WithError(err).Warn("Failed to cleanup sysctl configuration")
 	}
 
-	// Remove stale configuration files
-	if err := su.cleanupStaleFiles(); err != nil {
-		su.logger.WithError(err).Warn("Failed to cleanup legacy configuration files")
+	// Cleanup resolv.conf configuration
+	if err := su.cleanupResolvConf(); err != nil {
+		su.logger.WithError(err).Warn("Failed to cleanup resolv.conf configuration")
 	}
 
 	// Reload sysctl to apply changes
@@ -52,30 +52,19 @@ func (su *UnInstaller) Execute(ctx context.Context) error {
 
 // IsCompleted checks if system configuration has been removed
 func (su *UnInstaller) IsCompleted(ctx context.Context) bool {
-	// Check if current sysctl config exists
-	if utils.FileExists(SysctlConfigPath) {
+	// Check if sysctl config exists
+	if utils.FileExists(sysctlConfigPath) {
 		return false
 	}
-
-	// Check if legacy config files exist
-	legacyFiles := []string{
-		LegacySysctlConfig,
-		LegacyContainerdConf,
-	}
-
-	for _, file := range legacyFiles {
-		if utils.FileExists(file) {
-			return false
-		}
-	}
-
+	// Note: We don't check resolv.conf as it may have been restored to original state
+	// rather than removed entirely
 	return true
 }
 
-// cleanupSysctlConfig removes the current sysctl configuration
+// cleanupSysctlConfig removes the sysctl configuration
 func (su *UnInstaller) cleanupSysctlConfig() error {
-	if utils.FileExists(SysctlConfigPath) {
-		if err := utils.RunCleanupCommand(SysctlConfigPath); err != nil {
+	if utils.FileExists(sysctlConfigPath) {
+		if err := utils.RunCleanupCommand(sysctlConfigPath); err != nil {
 			return err
 		}
 		su.logger.Info("Removed sysctl configuration file")
@@ -83,22 +72,21 @@ func (su *UnInstaller) cleanupSysctlConfig() error {
 	return nil
 }
 
-// cleanupStaleFiles removes stale configuration files
-func (su *UnInstaller) cleanupStaleFiles() error {
-	legacyFiles := []string{
-		LegacySysctlConfig,
-		LegacyContainerdConf,
-	}
-
-	for _, file := range legacyFiles {
-		if utils.FileExists(file) {
-			if err := utils.RunCleanupCommand(file); err != nil {
-				su.logger.WithError(err).Warnf("Failed to remove file: %s", file)
-				continue
+// cleanupResolvConf restores original resolv.conf configuration
+func (su *UnInstaller) cleanupResolvConf() error {
+	// Check if resolv.conf is a symlink to systemd-resolved that we created
+	if utils.FileExists(resolvConfPath) {
+		// Get link target
+		output, err := utils.RunCommandWithOutput("readlink", resolvConfPath)
+		if err == nil && output == resolvConfSource {
+			// This is the symlink we created, remove it
+			if err := utils.RunCleanupCommand(resolvConfPath); err != nil {
+				return err
 			}
-			su.logger.Infof("Removed legacy configuration file: %s", file)
+			su.logger.Info("Removed resolv.conf symlink to systemd-resolved")
+		} else {
+			su.logger.Debug("resolv.conf is not our symlink, leaving unchanged")
 		}
 	}
-
 	return nil
 }

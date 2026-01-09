@@ -3,8 +3,6 @@ package runc
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -33,60 +31,73 @@ func (i *Installer) GetName() string {
 
 // Execute downloads and installs the runc container runtime
 func (i *Installer) Execute(ctx context.Context) error {
-	i.logger.Infof("Installing runc version %s", i.config.Runc.Version)
+	i.logger.Infof("Installing runc version %s", i.getRuncVersion())
 
-	// Create temporary directory for download to avoid conflicts
-	tempDir, err := os.MkdirTemp("", "runc-install-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary directory: %w", err)
-	}
-	defer func() {
-		_ = os.RemoveAll(tempDir)
-	}()
-
-	tempRuncPath := filepath.Join(tempDir, "runc")
-
-	// Download runc with validation
-	i.logger.Infof("Downloading runc from %s", i.config.Runc.URL)
-	if err := utils.DownloadFile(i.config.Runc.URL, tempRuncPath); err != nil {
-		return fmt.Errorf("failed to download runc from %s: %w", i.config.Runc.URL, err)
+	// Clean up any existing stale runc installation
+	if err := i.cleanupExistingInstallation(); err != nil {
+		return fmt.Errorf("failed to clean up existing runc installation: %w", err)
 	}
 
-	// Verify downloaded file exists and has content
-	info, err := os.Stat(tempRuncPath)
-	if err != nil {
-		return fmt.Errorf("downloaded runc file not found at %s: %w", tempRuncPath, err)
-	}
-	if info.Size() == 0 {
-		return fmt.Errorf("downloaded runc file is empty")
-	}
-	i.logger.Infof("Downloaded runc binary (%d bytes)", info.Size())
-
-	// Verify file is executable binary (basic check)
-	if output, err := utils.RunCommandWithOutput("file", tempRuncPath); err != nil {
-		i.logger.Warnf("Could not verify runc binary type: %v", err)
-	} else {
-		i.logger.Debugf("Downloaded file type: %s", strings.TrimSpace(output))
-		// Basic validation that it's a Linux binary
-		if !strings.Contains(output, "ELF") {
-			i.logger.Warnf("Downloaded file may not be a Linux binary: %s", output)
-		}
-	}
-
-	// Install runc with proper permissions
-	i.logger.Infof("Installing runc binary to %s", PrimaryRuncBinaryPath)
-	if err := utils.RunSystemCommand("install", "-m", "0555", tempRuncPath, PrimaryRuncBinaryPath); err != nil {
-		return fmt.Errorf("failed to install runc to %s: %w", PrimaryRuncBinaryPath, err)
+	// Install runc
+	if err := i.installRunc(); err != nil {
+		return fmt.Errorf("runc installation failed: %w", err)
 	}
 
 	i.logger.Infof("runc version %s installed successfully", i.config.Runc.Version)
 	return nil
 }
 
+func (i *Installer) installRunc() error {
+	// Construct download URL
+	runcFileName, runcDownloadURL, err := i.constructRuncDownloadURL()
+	if err != nil {
+		return fmt.Errorf("failed to construct runc download URL: %w", err)
+	}
+
+	tempFile := fmt.Sprintf("/tmp/%s", runcFileName)
+
+	// Clean up any existing runc temp files from /tmp directory to avoid conflicts
+	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
+		logrus.Warnf("Failed to clean up existing runc temp files from /tmp: %s", err)
+	}
+	defer func() {
+		if err := utils.RunCleanupCommand(tempFile); err != nil {
+			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
+		}
+	}()
+
+	i.logger.Infof("Downloading runc from %s into %s", runcDownloadURL, tempFile)
+
+	if err := utils.DownloadFile(i.config.Runc.URL, tempFile); err != nil {
+		return fmt.Errorf("failed to download runc from %s: %w", i.config.Runc.URL, err)
+	}
+
+	// Install runc with proper permissions
+	i.logger.Infof("Installing runc binary to %s", runcBinaryPath)
+	if err := utils.RunSystemCommand("install", "-m", "0555", tempFile, runcBinaryPath); err != nil {
+		return fmt.Errorf("failed to install runc to %s: %w", runcBinaryPath, err)
+	}
+	return nil
+}
+
+// constructContainerdDownloadURL constructs the download URL for the specified containerd version
+// it returns the file name and URL for downloading containerd
+func (i *Installer) constructRuncDownloadURL() (string, string, error) {
+	runcVersion := i.getRuncVersion()
+	arch, err := utils.GetArc()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get architecture: %w", err)
+	}
+	url := fmt.Sprintf(runcDownloadURL, runcVersion, arch)
+	fileName := fmt.Sprintf(runcFileName, arch)
+	i.logger.Infof("Constructed runc download URL: %s", url)
+	return fileName, url, nil
+}
+
 // IsCompleted checks if runc is installed and has the correct version
 func (i *Installer) IsCompleted(ctx context.Context) bool {
 	// Check if runc binary exists
-	if !utils.FileExists(PrimaryRuncBinaryPath) {
+	if !utils.FileExists(runcBinaryPath) {
 		return false
 	}
 
@@ -96,25 +107,14 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 
 // Validate validates prerequisites before installing runc
 func (i *Installer) Validate(ctx context.Context) error {
-	i.logger.Debug("Validating prerequisites for runc installation")
-
-	// Clean up any existing corrupted installation before proceeding
-	if utils.FileExists(PrimaryRuncBinaryPath) {
-		i.logger.Info("Existing runc installation found, cleaning up before reinstallation")
-		if err := i.cleanupExistingInstallation(); err != nil {
-			i.logger.Warnf("Failed to cleanup existing runc installation: %v", err)
-			// Continue anyway - the install command should overwrite
-		}
-	}
-
 	return nil
 }
 
 // isRuncVersionCorrect checks if the installed runc version matches the expected version
 func (i *Installer) isRuncVersionCorrect() bool {
-	output, err := utils.RunCommandWithOutput(PrimaryRuncBinaryPath, "--version")
+	output, err := utils.RunCommandWithOutput(runcBinaryPath, "--version")
 	if err != nil {
-		i.logger.Debugf("Failed to get runc version from %s: %v", PrimaryRuncBinaryPath, err)
+		i.logger.Debugf("Failed to get runc version from %s: %v", runcBinaryPath, err)
 		return false
 	}
 
@@ -129,7 +129,7 @@ func (i *Installer) isRuncVersionCorrect() bool {
 
 // cleanupExistingInstallation removes any existing runc installation that may be corrupted
 func (i *Installer) cleanupExistingInstallation() error {
-	i.logger.Debugf("Removing existing runc binary at %s", PrimaryRuncBinaryPath)
+	i.logger.Debugf("Removing existing runc binary at %s", runcBinaryPath)
 
 	// Try to stop any processes that might be using runc (best effort)
 	if err := utils.RunSystemCommand("pkill", "-f", "runc"); err != nil {
@@ -137,10 +137,17 @@ func (i *Installer) cleanupExistingInstallation() error {
 	}
 
 	// Remove the binary
-	if err := utils.RunCleanupCommand(PrimaryRuncBinaryPath); err != nil {
-		return fmt.Errorf("failed to remove existing runc binary at %s: %w", PrimaryRuncBinaryPath, err)
+	if err := utils.RunCleanupCommand(runcBinaryPath); err != nil {
+		return fmt.Errorf("failed to remove existing runc binary at %s: %w", runcBinaryPath, err)
 	}
 
 	i.logger.Debugf("Successfully cleaned up existing runc installation")
 	return nil
+}
+
+func (i *Installer) getRuncVersion() string {
+	if i.config.Runc.Version == "" {
+		return "1.1.12" // default version
+	}
+	return i.config.Runc.Version
 }

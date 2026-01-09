@@ -85,9 +85,7 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 	if !i.validateKubeletConfiguration() {
 		return false
 	}
-
-	// Check if kubelet service is running and healthy
-	return i.isKubeletServiceHealthy()
+	return true
 }
 
 // Validate validates prerequisites for kubelet installation
@@ -135,12 +133,6 @@ func (i *Installer) configure(ctx context.Context) error {
 	// Create main kubelet service
 	if err := i.createKubeletServiceFile(); err != nil {
 		return err
-	}
-
-	// Reload systemd to pick up the new kubelet configuration files
-	i.logger.Info("Reloading systemd to pick up kubelet configuration changes")
-	if err := utils.ReloadSystemd(); err != nil {
-		return fmt.Errorf("failed to reload systemd after kubelet configuration: %w", err)
 	}
 
 	return nil
@@ -229,24 +221,6 @@ func (i *Installer) validateKubeletServiceFile() bool {
 	}
 
 	return i.validateFileContent(KubeletServicePath, expectedSettings, "kubelet service file")
-}
-
-// isKubeletServiceHealthy checks if the kubelet service is running and healthy
-func (i *Installer) isKubeletServiceHealthy() bool {
-	// Check if kubelet service is active (running)
-	if err := utils.RunSystemCommand("systemctl", "is-active", "--quiet", "kubelet"); err != nil {
-		i.logger.Debugf("Kubelet service is not active: %v", err)
-		return false
-	}
-
-	// Check if kubelet service is enabled
-	if err := utils.RunSystemCommand("systemctl", "is-enabled", "--quiet", "kubelet"); err != nil {
-		i.logger.Debugf("Kubelet service is not enabled: %v", err)
-		return false
-	}
-
-	i.logger.Debug("Kubelet service is running and healthy")
-	return true
 }
 
 // createKubeletDefaultsFile creates the kubelet defaults configuration file
