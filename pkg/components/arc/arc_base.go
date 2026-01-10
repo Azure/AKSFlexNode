@@ -26,7 +26,7 @@ type base struct {
 	logger                     *logrus.Logger
 	authProvider               *auth.AuthProvider
 	hybridComputeMachineClient *armhybridcompute.MachinesClient
-	roleAssignmentsClient      *armauthorization.RoleAssignmentsClient
+	roleAssignmentsClient      roleAssignmentsClient
 }
 
 // newbase creates a new Arc base instance which will be shared by Installer and Uninstaller
@@ -55,13 +55,13 @@ func (ab *base) setUpClients(ctx context.Context) error {
 	}
 
 	// Create role assignments client
-	roleAssignmentsClient, err := armauthorization.NewRoleAssignmentsClient(config.GetConfig().GetSubscriptionID(), cred, nil)
+	azureClient, err := armauthorization.NewRoleAssignmentsClient(config.GetConfig().GetSubscriptionID(), cred, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create role assignments client: %w", err)
 	}
 
 	ab.hybridComputeMachineClient = hybridComputeMachineClient
-	ab.roleAssignmentsClient = roleAssignmentsClient
+	ab.roleAssignmentsClient = &azureRoleAssignmentsClient{client: azureClient}
 	return nil
 }
 
