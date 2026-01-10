@@ -2,14 +2,10 @@ package runc
 
 // Runc binary paths to check and manage
 const (
-	PrimaryRuncBinaryPath   = "/usr/bin/runc"
-	SecondaryRuncBinaryPath = "/usr/local/bin/runc"
-	SbinRuncBinaryPath      = "/usr/sbin/runc"
+	runcBinaryPath = "/usr/bin/runc"
 )
 
-// All possible runc binary locations
-var RuncBinaryPaths = []string{
-	PrimaryRuncBinaryPath,
-	SecondaryRuncBinaryPath,
-	SbinRuncBinaryPath,
-}
+var (
+	runcFileName    = "runc.%s"
+	runcDownloadURL = "https://github.com/opencontainers/runc/releases/download/v%s/" + runcFileName
+)
