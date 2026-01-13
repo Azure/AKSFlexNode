@@ -66,7 +66,8 @@ func (i *Installer) Execute(ctx context.Context) error {
 
 // IsCompleted checks if containerd and kubelet services are enabled and running
 func (i *Installer) IsCompleted(ctx context.Context) bool {
-	return utils.IsServiceActive("containerd") && utils.IsServiceActive("kubelet")
+	// always return false to ensure services are reenabled each time
+	return false
 }
 
 // Validate validates prerequisites for enabling services

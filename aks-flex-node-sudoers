@@ -81,9 +81,11 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/sysctl.d/k8s.conf
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/modules-load.d/k8s.conf
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/containerd/config.toml
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/default/kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/systemd/system/kubelet.service
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/systemd/system/kubelet.service.d/*
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/kubernetes/*
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/default/kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/systemd/system/kubelet.service
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/systemd/system/kubelet.service.d/*
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/kubernetes/*
 

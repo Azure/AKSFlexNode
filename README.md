@@ -122,6 +122,9 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
       "location": "westus"
     }
   },
+  "kubernetes": {
+    "version": "your-kubernetes-version"
+  },
   "agent": {
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"

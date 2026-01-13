@@ -180,6 +180,32 @@ setup_service_user() {
     fi
 }
 
+install_azure_cli() {
+    log_info "Installing Azure CLI..."
+
+    if ! command -v az &> /dev/null; then
+        log_info "Downloading and installing Azure CLI..."
+        if command -v curl &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+        elif command -v wget &> /dev/null; then
+            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
+        else
+            log_error "Neither curl nor wget is available for downloading Azure CLI"
+            return 1
+        fi
+
+        # Verify installation
+        if command -v az &> /dev/null; then
+            log_success "Azure CLI installed successfully"
+        else
+            log_error "Azure CLI installation failed"
+            return 1
+        fi
+    else
+        log_info "Azure CLI already installed"
+    fi
+}
+
 install_arc_agent() {
     log_info "Installing Azure Arc agent..."
 
@@ -220,12 +246,36 @@ setup_permissions() {
     if [[ -d "$current_user_home/.azure" ]]; then
         # Add service user to current user's group for Azure CLI access
         usermod -a -G "$current_user" "$SERVICE_USER"
-        # Set group read/write permissions on Azure CLI directory and files
-        chmod g+rwX "$current_user_home/.azure"
+
+        # Set group ownership and permissions on Azure CLI directory
+        chgrp -R "$current_user" "$current_user_home/.azure"
+
+        # Set group read/write/execute permissions on directory and subdirectories
+        # Use setgid bit (g+s) so new files inherit the group ownership
+        find "$current_user_home/.azure" -type d -exec chmod g+rwxs {} \;
+
+        # Set group read/write permissions on all existing files
         find "$current_user_home/.azure" -type f -exec chmod g+rw {} \;
+
         log_success "Azure CLI access configured for service user (user: $current_user)"
     else
         log_warning "Azure CLI not found at $current_user_home/.azure - skipping CLI access setup"
+    fi
+}
+
+setup_hostname_resolution() {
+    log_info "Setting up hostname resolution..."
+
+    local current_hostname
+    current_hostname=$(hostname)
+
+    # Check if hostname is already in /etc/hosts
+    if grep -q "$current_hostname" /etc/hosts; then
+        log_info "Hostname $current_hostname already configured in /etc/hosts"
+    else
+        log_info "Adding hostname $current_hostname to /etc/hosts"
+        echo "127.0.1.1 $current_hostname" >> /etc/hosts
+        log_success "Hostname resolution configured for $current_hostname"
     fi
 }
 
@@ -445,8 +495,10 @@ main() {
 
     # Setup service components
     setup_service_user
+    install_azure_cli
     install_arc_agent
     setup_permissions
+    setup_hostname_resolution
     setup_directories
 
     # Setup systemd service components

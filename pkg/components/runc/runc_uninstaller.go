@@ -22,29 +22,21 @@ func NewUnInstaller(logger *logrus.Logger) *UnInstaller {
 	}
 }
 
+// GetName returns the cleanup step name
 func (ru *UnInstaller) GetName() string {
-	return "RuncExecuteed"
+	return "Runc_Uninstaller"
 }
 
 // Execute removes runc
 func (ru *UnInstaller) Execute(ctx context.Context) error {
-	ru.logger.Info("Executeing runc")
+	ru.logger.Info("Uninstalling runc")
 
-	// Remove runc package (best effort)
-	if err := utils.RunSystemCommand("apt-get", "remove", "-y", "runc"); err != nil {
-		ru.logger.Warnf("Failed to remove runc package: %v", err)
+	// Remove runc binary
+	if err := utils.RunCleanupCommand(runcBinaryPath); err != nil {
+		ru.logger.Debugf("Failed to remove binary %s: %v (may not exist)", runcBinaryPath, err)
 	}
 
-	// Remove runc binaries from all possible locations
-	for _, binary := range RuncBinaryPaths {
-		if err := utils.RunCleanupCommand(binary); err != nil {
-			ru.logger.Debugf("Failed to remove binary %s: %v (may not exist)", binary, err)
-		} else {
-			ru.logger.Infof("Removed binary: %s", binary)
-		}
-	}
-
-	ru.logger.Info("Runc Executeed successfully")
+	ru.logger.Info("Runc uninstalled successfully")
 	return nil
 }
 

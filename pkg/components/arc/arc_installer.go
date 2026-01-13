@@ -291,6 +291,7 @@ func (i *Installer) assignRBACRoles(ctx context.Context, arcMachine *armhybridco
 }
 
 // assignRole creates a role assignment for the given principal, role, and scope
+// Implements retry logic with exponential backoff to handle Azure AD replication delays
 func (i *Installer) assignRole(
 	ctx context.Context, principalID, roleDefinitionID, scope, roleName string,
 ) error {
@@ -298,42 +299,86 @@ func (i *Installer) assignRole(
 	fullRoleDefinitionID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 		i.config.Azure.SubscriptionID, roleDefinitionID)
 
-	roleAssignmentName := uuid.New().String()
-	i.logger.Debugf("Calling Azure API to create role assignment with ID: %s", roleAssignmentName)
-	assignment := armauthorization.RoleAssignmentCreateParameters{
-		Properties: &armauthorization.RoleAssignmentProperties{
-			PrincipalID:      &principalID,
-			RoleDefinitionID: &fullRoleDefinitionID,
-		},
-	}
-	// this create operation is synchronous - we need to wait for the role propagation to take effect afterwards
-	if _, err := i.roleAssignmentsClient.Create(ctx, scope, roleAssignmentName, assignment, nil); err != nil {
-		// Provide more detailed error information
-		i.logger.Errorf("❌ Role assignment creation failed:")
-		i.logger.Errorf("   Principal ID: %s", principalID)
-		i.logger.Errorf("   Role Name: %s", roleName)
-		i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
-		i.logger.Errorf("   Scope: %s", scope)
-		i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
-		i.logger.Errorf("   Azure API Error: %v", err)
+	const (
+		maxRetries   = 5
+		initialDelay = 5 * time.Second
+		maxDelay     = 30 * time.Second
+	)
 
-		// Check for common error patterns
-		errStr := err.Error()
-		if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
-			return fmt.Errorf("insufficient permissions to assign roles - ensure the user/service principal has Owner or User Access Administrator role on the target cluster: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := min(initialDelay*time.Duration(1<<(attempt-1)), maxDelay)
+			i.logger.Infof("⏳ Retrying role assignment after %v (attempt %d/%d)...", delay, attempt+1, maxRetries)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		if strings.Contains(errStr, "RoleAssignmentExists") {
-			i.logger.Info("ℹ️  Role assignment already exists (detected from error)")
-			return nil
+
+		roleAssignmentName := uuid.New().String()
+		i.logger.Debugf("Calling Azure API to create role assignment with ID: %s (attempt %d/%d)", roleAssignmentName, attempt+1, maxRetries)
+
+		// Set PrincipalType to ServicePrincipal for Arc managed identities
+		// This helps Azure work around replication delays when the identity was just created
+		principalType := armauthorization.PrincipalTypeServicePrincipal
+		assignment := armauthorization.RoleAssignmentCreateParameters{
+			Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID:      &principalID,
+				RoleDefinitionID: &fullRoleDefinitionID,
+				PrincipalType:    &principalType,
+			},
 		}
-		if strings.Contains(errStr, "PrincipalNotFound") { // TODO(wenxuan): this is retriable, add retry logic later
-			return fmt.Errorf("arc managed identity not found - ensure Arc machine is properly registered: %w", err)
+
+		// this create operation is synchronous - we need to wait for the role propagation to take effect afterwards
+		if _, err := i.roleAssignmentsClient.Create(ctx, scope, roleAssignmentName, assignment, nil); err != nil {
+			lastErr = err
+			errStr := err.Error()
+
+			// Check for common error patterns
+			if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
+				return fmt.Errorf("insufficient permissions to assign roles - ensure the user/service principal has Owner or User Access Administrator role on the target cluster: %w", err)
+			}
+			if strings.Contains(errStr, "RoleAssignmentExists") {
+				i.logger.Info("ℹ️  Role assignment already exists (detected from error)")
+				return nil
+			}
+
+			// PrincipalNotFound is retriable - likely Azure AD replication delay
+			if strings.Contains(errStr, "PrincipalNotFound") {
+				i.logger.Warnf("⚠️  Principal not found (Azure AD replication delay) - will retry...")
+				// Provide detailed error information on last attempt only
+				if attempt == maxRetries-1 {
+					i.logger.Errorf("❌ Role assignment creation failed after %d attempts:", maxRetries)
+					i.logger.Errorf("   Principal ID: %s", principalID)
+					i.logger.Errorf("   Role Name: %s", roleName)
+					i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
+					i.logger.Errorf("   Scope: %s", scope)
+					i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
+					i.logger.Errorf("   Azure API Error: %v", err)
+				}
+				continue // Retry
+			}
+
+			// Non-retriable error - log details and return
+			i.logger.Errorf("❌ Role assignment creation failed:")
+			i.logger.Errorf("   Principal ID: %s", principalID)
+			i.logger.Errorf("   Role Name: %s", roleName)
+			i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
+			i.logger.Errorf("   Scope: %s", scope)
+			i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
+			i.logger.Errorf("   Azure API Error: %v", err)
+			return fmt.Errorf("failed to create role assignment: %s", err)
 		}
-		return fmt.Errorf("failed to create role assignment: %s", err)
+
+		// Success
+		i.logger.Debugf("✅ Role assignment created successfully")
+		return nil
 	}
 
-	i.logger.Debugf("✅ Role assignment created successfully")
-	return nil
+	// Max retries exhausted
+	return fmt.Errorf("failed to assign role after %d attempts due to Azure AD replication delay - arc managed identity not found: %w", maxRetries, lastErr)
 }
 
 // waitForPermissions waits for RBAC permissions propagation with timeout

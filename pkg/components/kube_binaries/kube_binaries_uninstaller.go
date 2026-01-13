@@ -1,4 +1,4 @@
-package kubernetes_components
+package kube_binaries
 
 import (
 	"context"
@@ -31,9 +31,9 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 
 	// List of Kubernetes packages to remove
 	packages := []string{
-		KubeletBinary,
-		KubeadmBinary,
-		KubectlBinary,
+		kubeletBinary,
+		kubeadmBinary,
+		kubectlBinary,
 	}
 
 	// Remove packages using shared utility
@@ -53,9 +53,9 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 	// Remove binaries directly if they were manually Executeed
 	u.logger.Info("Removing Kubernetes binaries")
 	binaryFiles := []string{
-		KubeletPath,
-		KubectlPath,
-		KubeadmPath,
+		kubeletPath,
+		kubectlPath,
+		kubeadmPath,
 	}
 	if fileErrors := utils.RemoveFiles(binaryFiles, u.logger); len(fileErrors) > 0 {
 		for _, err := range fileErrors {
@@ -73,5 +73,5 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 
 // IsCompleted checks if Kubernetes components have been removed
 func (u *UnInstaller) IsCompleted(ctx context.Context) bool {
-	return !utils.BinaryExists(KubeletBinary)
+	return !utils.BinaryExists(kubeletBinary)
 }

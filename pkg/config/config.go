@@ -136,20 +136,9 @@ func (c *Config) SetDefaults() {
 		c.Containerd.MetricsAddress = "0.0.0.0:10257"
 	}
 
-	// Set default Kubernetes configuration if not provided
-	if c.Kubernetes.Version == "" {
-		c.Kubernetes.Version = "1.32.7"
-	}
-	if c.Kubernetes.URLTemplate == "" {
-		c.Kubernetes.URLTemplate = "https://acs-mirror.azureedge.net/kubernetes/v%s/binaries/kubernetes-node-linux-%s.tar.gz"
-	}
-
 	// Set default runc configuration if not provided
 	if c.Runc.Version == "" {
 		c.Runc.Version = "1.1.12"
-	}
-	if c.Runc.URL == "" {
-		c.Runc.URL = "https://github.com/opencontainers/runc/releases/download/v1.1.12/runc.amd64"
 	}
 }
 
