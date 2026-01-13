@@ -48,25 +48,11 @@ func (i *Installer) Execute(ctx context.Context) error {
 }
 
 func (i *Installer) installRunc() error {
-	// Determine download URL - use config override if provided, otherwise construct dynamically
-	var runcDownloadURL string
-	var runcFileName string
-
-	if i.config.Runc.URL != "" {
-		// User provided custom URL in config
-		runcDownloadURL = i.config.Runc.URL
-		runcFileName = "runc"
-		i.logger.Infof("Using custom runc URL from config: %s", runcDownloadURL)
-	} else {
-		// Construct architecture-aware URL dynamically
-		fileName, url, err := i.constructRuncDownloadURL()
-		if err != nil {
-			return fmt.Errorf("failed to construct runc download URL: %w", err)
-		}
-		runcFileName = fileName
-		runcDownloadURL = url
+	// Construct download URL
+	runcFileName, runcDownloadURL, err := i.constructRuncDownloadURL()
+	if err != nil {
+		return fmt.Errorf("failed to construct runc download URL: %w", err)
 	}
-
 	tempFile := fmt.Sprintf("/tmp/%s", runcFileName)
 
 	// Clean up any existing runc temp files from /tmp directory to avoid conflicts
