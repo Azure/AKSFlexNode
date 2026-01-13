@@ -102,7 +102,7 @@ get_latest_release() {
     log_info "Fetching latest release information..." >&2
 
     if command -v curl &> /dev/null; then
-        curl -s "$latest_release_url" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+        curl -s "$h" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
     elif command -v wget &> /dev/null; then
         wget -qO- "$latest_release_url" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
     else

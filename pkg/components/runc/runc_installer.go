@@ -48,10 +48,23 @@ func (i *Installer) Execute(ctx context.Context) error {
 }
 
 func (i *Installer) installRunc() error {
-	// Construct download URL
-	runcFileName, runcDownloadURL, err := i.constructRuncDownloadURL()
-	if err != nil {
-		return fmt.Errorf("failed to construct runc download URL: %w", err)
+	// Determine download URL - use config override if provided, otherwise construct dynamically
+	var runcDownloadURL string
+	var runcFileName string
+
+	if i.config.Runc.URL != "" {
+		// User provided custom URL in config
+		runcDownloadURL = i.config.Runc.URL
+		runcFileName = "runc"
+		i.logger.Infof("Using custom runc URL from config: %s", runcDownloadURL)
+	} else {
+		// Construct architecture-aware URL dynamically
+		fileName, url, err := i.constructRuncDownloadURL()
+		if err != nil {
+			return fmt.Errorf("failed to construct runc download URL: %w", err)
+		}
+		runcFileName = fileName
+		runcDownloadURL = url
 	}
 
 	tempFile := fmt.Sprintf("/tmp/%s", runcFileName)
@@ -68,8 +81,8 @@ func (i *Installer) installRunc() error {
 
 	i.logger.Infof("Downloading runc from %s into %s", runcDownloadURL, tempFile)
 
-	if err := utils.DownloadFile(i.config.Runc.URL, tempFile); err != nil {
-		return fmt.Errorf("failed to download runc from %s: %w", i.config.Runc.URL, err)
+	if err := utils.DownloadFile(runcDownloadURL, tempFile); err != nil {
+		return fmt.Errorf("failed to download runc from %s: %w", runcDownloadURL, err)
 	}
 
 	// Install runc with proper permissions

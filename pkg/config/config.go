@@ -140,9 +140,6 @@ func (c *Config) SetDefaults() {
 	if c.Runc.Version == "" {
 		c.Runc.Version = "1.1.12"
 	}
-	if c.Runc.URL == "" {
-		c.Runc.URL = "https://github.com/opencontainers/runc/releases/download/v1.1.12/runc.amd64"
-	}
 }
 
 // AKSClusterResourceIDPattern is AKS cluster resource ID regex pattern with capture groups
