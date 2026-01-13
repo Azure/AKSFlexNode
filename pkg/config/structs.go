@@ -13,6 +13,7 @@ type Config struct {
 	Runc       RuntimeConfig    `json:"runc"`
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
+	Npd        NPDConfig        `json:"npd"`
 }
 
 // AzureConfig holds Azure-specific configuration required for connecting to Azure services.
@@ -109,6 +110,12 @@ type KubernetesPathsConfig struct {
 // CNIPathsConfig holds file system paths related to CNI plugins and configurations.
 type CNIConfig struct {
 	Version string `json:"version"`
+}
+
+// NPDConfig holds configuration settings for the Node Problem Detector (NPD).
+type NPDConfig struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
 }
 
 // IsSPConfigured checks if service principal credentials are provided in the configuration
