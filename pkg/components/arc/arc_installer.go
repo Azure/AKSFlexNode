@@ -69,9 +69,16 @@ func (i *Installer) Execute(ctx context.Context) error {
 	}
 	i.logger.Info("Successfully registered Arc machine with Azure")
 
-	// Step 3: Assign RBAC roles to managed identity
+	// Step 3: Validate managed cluster requirements
+	i.logger.Info("Step 3: Validating Managed Cluster requirements")
+	if err := i.validateManagedCluster(ctx); err != nil {
+		i.logger.Errorf("Managed Cluster validation failed: %v", err)
+		return fmt.Errorf("arc bootstrap setup failed at managed cluster validation: %w", err)
+	}
+
+	// Step 4: Assign RBAC roles to managed identity
 	time.Sleep(10 * time.Second) // brief pause to ensure identity is ready
-	i.logger.Info("Step 3: Assigning RBAC roles to managed identity")
+	i.logger.Info("Step 4: Assigning RBAC roles to managed identity")
 	if err := i.assignRBACRoles(ctx, arcMachine); err != nil {
 		i.logger.Errorf("Failed to assign RBAC roles: %v", err)
 		return fmt.Errorf("arc bootstrap setup failed at RBAC role assignment: %w", err)
@@ -147,6 +154,26 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 	// make sure registration is complete before proceeding
 	// otherwise role assignment may fail due to identity not found
 	return i.waitForArcRegistration(ctx)
+}
+
+func (i *Installer) validateManagedCluster(ctx context.Context) error {
+	i.logger.Info("Validating target AKS Managed Cluster requirements for Azure RBAC authentication")
+
+	cluster, err := i.getAKSCluster(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get AKS cluster info: %w", err)
+	}
+
+	// Check if Azure RBAC is enabled
+	if cluster.Properties == nil ||
+		cluster.Properties.AADProfile == nil ||
+		cluster.Properties.AADProfile.EnableAzureRBAC == nil ||
+		!*cluster.Properties.AADProfile.EnableAzureRBAC {
+		return fmt.Errorf("target AKS cluster '%s' must have Azure RBAC enabled for node authentication", to.String(cluster.Name))
+	}
+
+	i.logger.Infof("Target AKS cluster '%s' has Azure RBAC enabled", to.String(cluster.Name))
+	return nil
 }
 
 func (i *Installer) waitForArcRegistration(ctx context.Context) (*armhybridcompute.Machine, error) {
@@ -265,7 +292,8 @@ func (i *Installer) assignRBACRoles(ctx context.Context, arcMachine *armhybridco
 
 // assignRole creates a role assignment for the given principal, role, and scope
 func (i *Installer) assignRole(
-	ctx context.Context, principalID, roleDefinitionID, scope, roleName string) error {
+	ctx context.Context, principalID, roleDefinitionID, scope, roleName string,
+) error {
 	// Build the full role definition ID
 	fullRoleDefinitionID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 		i.config.Azure.SubscriptionID, roleDefinitionID)
