@@ -40,7 +40,6 @@ func (i *Installer) Execute(ctx context.Context) error {
 		_ = os.RemoveAll(tempDir)
 	}()
 
-	tempNpdPath := filepath.Join(tempDir, "node-problem-detector")
 	tarFile := filepath.Join(tempDir, "npd.tar.gz")
 
 	// construct download URL
@@ -81,31 +80,8 @@ func (i *Installer) Execute(ctx context.Context) error {
 		return fmt.Errorf("failed to extract NPD archive: %w", err)
 	}
 
-	// Find the extracted binary (it might be in a subdirectory)
-	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.Mode().IsRegular() && strings.Contains(info.Name(), "node-problem-detector") {
-			// Verify it's an executable binary
-			if output, err := utils.RunCommandWithOutput("file", path); err == nil {
-				if strings.Contains(output, "ELF") && strings.Contains(output, "executable") {
-					tempNpdPath = path
-					return filepath.SkipDir // Stop walking once we find the binary
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to search for NPD binary in extracted archive: %w", err)
-	}
-
-	if tempNpdPath == "" {
-		return fmt.Errorf("could not find NPD binary in extracted archive")
-	}
-
-	i.logger.Infof("Found NPD binary at %s", tempNpdPath)
+	tempNpdPath := filepath.Join(tempDir, "bin/node-problem-detector")
+	tempNpdConfig := filepath.Join(tempDir, "config/system-stats-monitor.json")
 
 	// Verify extracted binary
 	if output, err := utils.RunCommandWithOutput("file", tempNpdPath); err != nil {
@@ -122,6 +98,11 @@ func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Infof("Installing NPD binary to %s", PrimaryNpdBinaryPath)
 	if err := utils.RunSystemCommand("install", "-m", "0555", tempNpdPath, PrimaryNpdBinaryPath); err != nil {
 		return fmt.Errorf("failed to install NPD to %s: %w", PrimaryNpdBinaryPath, err)
+	}
+
+	i.logger.Infof("Installing NPD configuration to %s", PrimaryNpdConfigPath)
+	if err := utils.RunSystemCommand("install", "-D", "0644", tempNpdConfig, PrimaryNpdConfigPath); err != nil {
+		return fmt.Errorf("failed to install NPD configuration to %s: %w", PrimaryNpdConfigPath, err)
 	}
 
 	i.logger.Infof("Node Problem Detector version %s installed successfully", i.config.Npd.Version)
@@ -183,6 +164,11 @@ func (i *Installer) cleanupExistingInstallation() error {
 	// Remove the binary
 	if err := utils.RunCleanupCommand(PrimaryNpdBinaryPath); err != nil {
 		return fmt.Errorf("failed to remove existing NPD binary at %s: %w", PrimaryNpdBinaryPath, err)
+	}
+
+	// Remove the configuration
+	if err := utils.RunCleanupCommand(PrimaryNpdConfigPath); err != nil {
+		return fmt.Errorf("failed to remove existing NPD configuration at %s: %w", PrimaryNpdConfigPath, err)
 	}
 
 	i.logger.Debugf("Successfully cleaned up existing NPD installation")

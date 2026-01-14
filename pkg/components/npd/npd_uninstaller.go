@@ -27,7 +27,14 @@ func (nu *UnInstaller) GetName() string {
 func (nu *UnInstaller) Execute(ctx context.Context) error {
 	nu.logger.Info("Uninstalling Node Problem Detector")
 
-	// Implementation for removing NPD would go here
+	// Remove npd binary
+	if err := utils.RunCleanupCommand(PrimaryNpdBinaryPath); err != nil {
+		nu.logger.Debugf("Failed to remove binary %s: %v (may not exist)", PrimaryNpdBinaryPath, err)
+	}
+
+	if err := utils.RunCleanupCommand(PrimaryNpdConfigPath); err != nil {
+		nu.logger.Debugf("Failed to remove config %s: %v (may not exist)", PrimaryNpdConfigPath, err)
+	}
 
 	nu.logger.Info("Node Problem Detector uninstalled successfully")
 	return nil
@@ -35,7 +42,7 @@ func (nu *UnInstaller) Execute(ctx context.Context) error {
 
 func (nu *UnInstaller) IsCompleted(ctx context.Context) bool {
 	// Check if NPD is uninstalled
-	if !utils.FileExists("") {
+	if !utils.FileExists(PrimaryNpdBinaryPath) && !utils.FileExists(PrimaryNpdConfigPath) {
 		return true
 	}
 	return false

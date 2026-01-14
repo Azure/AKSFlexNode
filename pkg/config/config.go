@@ -140,7 +140,6 @@ func (c *Config) SetDefaults() {
 	if c.Runc.Version == "" {
 		c.Runc.Version = "1.1.12"
 	}
-<<<<<<< HEAD
 	if c.Runc.URL == "" {
 		c.Runc.URL = "https://github.com/opencontainers/runc/releases/download/v1.1.12/runc.amd64"
 	}
@@ -152,8 +151,6 @@ func (c *Config) SetDefaults() {
 	if c.Npd.URL == "" {
 		c.Npd.URL = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_amd64.tar.gz"
 	}
-=======
->>>>>>> main
 }
 
 // AKSClusterResourceIDPattern is AKS cluster resource ID regex pattern with capture groups
