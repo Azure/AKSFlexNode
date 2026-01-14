@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/sirupsen/logrus"
@@ -26,7 +27,8 @@ type base struct {
 	logger                     *logrus.Logger
 	authProvider               *auth.AuthProvider
 	hybridComputeMachineClient *armhybridcompute.MachinesClient
-	roleAssignmentsClient      *armauthorization.RoleAssignmentsClient
+	mcClient                   *armcontainerservice.ManagedClustersClient
+	roleAssignmentsClient      roleAssignmentsClient
 }
 
 // newbase creates a new Arc base instance which will be shared by Installer and Uninstaller
@@ -54,14 +56,21 @@ func (ab *base) setUpClients(ctx context.Context) error {
 		return fmt.Errorf("failed to create hybrid compute client: %w", err)
 	}
 
+	// Create managed clusters client
+	mcClient, err := armcontainerservice.NewManagedClustersClient(config.GetConfig().GetSubscriptionID(), cred, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create managed clusters client: %w", err)
+	}
+
 	// Create role assignments client
-	roleAssignmentsClient, err := armauthorization.NewRoleAssignmentsClient(config.GetConfig().GetSubscriptionID(), cred, nil)
+	azureClient, err := armauthorization.NewRoleAssignmentsClient(config.GetConfig().GetSubscriptionID(), cred, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create role assignments client: %w", err)
 	}
 
 	ab.hybridComputeMachineClient = hybridComputeMachineClient
-	ab.roleAssignmentsClient = roleAssignmentsClient
+	ab.mcClient = mcClient
+	ab.roleAssignmentsClient = &azureRoleAssignmentsClient{client: azureClient}
 	return nil
 }
 
@@ -78,6 +87,20 @@ func (ab *base) getArcMachine(ctx context.Context) (*armhybridcompute.Machine, e
 	machine := result.Machine
 	ab.logger.Infof("Successfully retrieved Arc machine info: %s (ID: %s)", to.String(machine.Name), to.String(machine.ID))
 	return &result.Machine, nil
+}
+
+func (ab *base) getAKSCluster(ctx context.Context) (*armcontainerservice.ManagedCluster, error) {
+	clusterName := ab.config.GetTargetClusterName()
+	clusterResourceGroup := ab.config.GetTargetClusterResourceGroup()
+
+	ab.logger.Infof("Getting AKS cluster info for: %s in resource group: %s", clusterName, clusterResourceGroup)
+	result, err := ab.mcClient.Get(ctx, clusterResourceGroup, clusterName, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AKS cluster info via SDK: %w", err)
+	}
+	cluster := result.ManagedCluster
+	ab.logger.Infof("Successfully retrieved AKS cluster info: %s (ID: %s)", to.String(cluster.Name), to.String(cluster.ID))
+	return &result.ManagedCluster, nil
 }
 
 // checkRequiredPermissions verifies if the Arc managed identity has all required permissions by querying role assignments using user credentials

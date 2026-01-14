@@ -122,6 +122,9 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
       "location": "westus"
     }
   },
+  "kubernetes": {
+    "version": "your-kubernetes-version"
+  },
   "agent": {
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
@@ -145,32 +148,27 @@ EOF
 
 | Command | Description | Usage |
 |---------|-------------|-------|
-| `bootstrap` | Transform VM into AKS node | `sudo aks-flex-node bootstrap` |
-| `unbootstrap` | Clean removal of all components | `sudo aks-flex-node unbootstrap` |
-| `version` | Show version information | `sudo aks-flex-node version` |
+| `agent` | Start agent daemon (bootstrap + monitoring) | `aks-flex-node agent --config /etc/aks-flex-node/config.json` |
+| `unbootstrap` | Clean removal of all components | `aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json` |
+| `version` | Show version information | `aks-flex-node version` |
 
-#### Bootstrap
+#### Agent Command (Bootstrap + Daemon)
 ```bash
 # Option 1: Direct command execution
-aks-flex-node bootstrap
+aks-flex-node agent --config /etc/aks-flex-node/config.json
 cat /var/log/aks-flex-node/aks-flex-node.log
 
 # Option 2: Using systemd service
-sudo systemctl enable aks-flex-node@bootstrap.service; sudo systemctl start aks-flex-node@bootstrap
-journalctl -u aks-flex-node@bootstrap --since "1 minutes ago" -f
+sudo systemctl enable aks-flex-node-agent.service; sudo systemctl start aks-flex-node-agent
+journalctl -u aks-flex-node-agent --since "1 minutes ago" -f
 
 ```
 
 #### Unbootstrap
 ```bash
-# Option 1: Direct command execution
-aks-flex-node unbootstrap
+# Direct command execution
+aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
 cat /var/log/aks-flex-node/aks-flex-node.log
-
-# Option 2: Using systemd service
-sudo systemctl enable aks-flex-node@unbootstrap.service; sudo systemctl start aks-flex-node@unbootstrap
-journalctl -u aks-flex-node@unbootstrap --since "1 minutes ago" -f
-
 ```
 
 ## Authentication Flow:
@@ -206,14 +204,14 @@ The service principal must have the same permissions listed in the Prerequisites
 ### Complete Removal
 ```bash
 # First run unbootstrap to cleanly disconnect from Arc and AKS cluster
-aks-flex-node unbootstrap
+aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
 
 # Then run automated uninstall to remove all components
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | sudo bash
 ```
 
 The uninstall script will:
-- Stop and disable aks-flex-node systemd services (bootstrap/unbootstrap)
+- Stop and disable aks-flex-node agent service
 - Remove the service user and permissions
 - Clean up all directories and configuration files
 - Remove the binary and systemd service files

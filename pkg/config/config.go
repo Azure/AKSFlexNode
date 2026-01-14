@@ -35,13 +35,13 @@ func GetConfig() *Config {
 }
 
 // LoadConfig loads configuration from a JSON file and environment variables.
-// If configPath is empty, it uses the default config path (/etc/aks-flex-node/config.json).
+// The configPath parameter is required and cannot be empty.
 // Environment variables can override config file values using the AKS_NODE_CONTROLLER_ prefix.
 // For example: AKS_NODE_CONTROLLER_AZURE_LOCATION=westus2
 func LoadConfig(configPath string) (*Config, error) {
-	// Use default config path if none specified
+	// Require config path to be specified
 	if configPath == "" {
-		configPath = defaultConfigPath
+		return nil, fmt.Errorf("config file path is required")
 	}
 
 	// Set up viper
@@ -136,18 +136,11 @@ func (c *Config) SetDefaults() {
 		c.Containerd.MetricsAddress = "0.0.0.0:10257"
 	}
 
-	// Set default Kubernetes configuration if not provided
-	if c.Kubernetes.Version == "" {
-		c.Kubernetes.Version = "1.32.7"
-	}
-	if c.Kubernetes.URLTemplate == "" {
-		c.Kubernetes.URLTemplate = "https://acs-mirror.azureedge.net/kubernetes/v%s/binaries/kubernetes-node-linux-%s.tar.gz"
-	}
-
 	// Set default runc configuration if not provided
 	if c.Runc.Version == "" {
 		c.Runc.Version = "1.1.12"
 	}
+<<<<<<< HEAD
 	if c.Runc.URL == "" {
 		c.Runc.URL = "https://github.com/opencontainers/runc/releases/download/v1.1.12/runc.amd64"
 	}
@@ -159,6 +152,8 @@ func (c *Config) SetDefaults() {
 	if c.Npd.URL == "" {
 		c.Npd.URL = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_amd64.tar.gz"
 	}
+=======
+>>>>>>> main
 }
 
 // AKSClusterResourceIDPattern is AKS cluster resource ID regex pattern with capture groups

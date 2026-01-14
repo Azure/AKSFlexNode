@@ -94,26 +94,33 @@ jobs:
         with:
           pattern: binaries-*
           path: ./artifacts
-          merge-multiple: true
+
+      - name: Consolidate artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+          ls -lh release-assets/
 
       - name: Generate checksums
         run: |
-          cd artifacts
-          sha256sum * > checksums.txt
+          cd release-assets
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: Release ${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
           body: |
             ## AKS Flex Node ${{ steps.version.outputs.VERSION }}
 
             ### Installation
 
-            **Quick install (Ubuntu 22.04/20.04):**
+            **Quick install (Ubuntu 22.04/24.04):**
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
             ```
 
             **Manual installation:**
@@ -136,6 +143,9 @@ jobs:
 
             <!-- Add your changelog here -->
           files: |
-            artifacts/*
+            release-assets/*.tar.gz
+            release-assets/checksums.txt
           draft: false
           prerelease: false
+          fail_on_unmatched_files: true
+          token: ${{ secrets.GITHUB_TOKEN }}

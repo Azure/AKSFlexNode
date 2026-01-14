@@ -42,14 +42,14 @@ confirm_uninstall() {
     echo ""
     echo "This will remove the following components:"
     echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
-    echo "• Systemd service (aks-flex-node@.service)"
+    echo "• Systemd service (aks-flex-node-agent.service)"
     echo "• Service user ($SERVICE_USER)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
     echo "• Sudo permissions (/etc/sudoers.d/aks-flex-node)"
     echo ""
-    echo -e "${YELLOW}NOTE: This will NOT disconnect the machine from Azure Arc. Use 'aks-flex-node unbootstrap' first if needed.${NC}"
+    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node unbootstrap' to clean up cluster and Arc resources.${NC}"
     echo ""
 
     # Check if running interactively
@@ -72,61 +72,77 @@ confirm_uninstall() {
 stop_and_disable_services() {
     log_info "Stopping and disabling systemd services..."
 
-    # Stop any running services
-    for service_instance in bootstrap unbootstrap; do
-        if systemctl is-active --quiet "aks-flex-node@${service_instance}"; then
-            log_info "Stopping aks-flex-node@${service_instance}..."
-            systemctl stop "aks-flex-node@${service_instance}" || true
-        fi
+    # Stop the agent service if running
+    if systemctl is-active --quiet "aks-flex-node-agent"; then
+        log_info "Stopping aks-flex-node-agent..."
+        systemctl stop "aks-flex-node-agent" || true
+    fi
 
-        if systemctl is-enabled --quiet "aks-flex-node@${service_instance}" 2>/dev/null; then
-            log_info "Disabling aks-flex-node@${service_instance}..."
-            systemctl disable "aks-flex-node@${service_instance}" || true
-        fi
-    done
+    if systemctl is-enabled --quiet "aks-flex-node-agent" 2>/dev/null; then
+        log_info "Disabling aks-flex-node-agent..."
+        systemctl disable "aks-flex-node-agent" || true
+    fi
 
     log_success "Services stopped and disabled"
 }
 
-check_arc_prerequisites() {
-    log_info "Checking Arc prerequisites..."
+run_unbootstrap() {
+    log_info "Running unbootstrap to clean up cluster and Arc resources..."
 
-    # Check if azcmagent is available and machine is connected
-    if command -v azcmagent &> /dev/null; then
-        # Check if machine is connected to Arc by parsing the actual status
-        local arc_status
-        arc_status=$(azcmagent show 2>/dev/null | grep "Agent Status" | awk -F: '{print $2}' | xargs)
-
-        if [[ "$arc_status" == "Connected" ]]; then
-            log_error "❌ Machine is still connected to Azure Arc!"
-            log_error ""
-            log_error "You must run 'aks-flex-node unbootstrap' first to:"
-            log_error "  • Cleanly remove the node from the AKS cluster"
-            log_error "  • Disconnect the machine from Azure Arc"
-            log_error "  • Clean up Azure resources properly"
-            log_error ""
-            log_error "After unbootstrap completes successfully, you can run this uninstall script."
-            log_error ""
-            log_error "Command to run:"
-            log_error "  aks-flex-node unbootstrap"
-            exit 1
-        else
-            log_info "✅ Machine is not connected to Azure Arc (status: ${arc_status:-unknown}) - safe to proceed"
-        fi
-    else
-        log_info "Azure Arc agent not found - safe to proceed"
+    # Check if aks-flex-node binary exists
+    if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
+        log_warning "AKS Flex Node binary not found at $INSTALL_DIR/aks-flex-node"
+        log_info "Skipping unbootstrap - binary may already be removed"
+        return 0
     fi
+
+    # Try to find config file
+    local config_file=""
+    if [[ -f "$CONFIG_DIR/config.json" ]]; then
+        config_file="$CONFIG_DIR/config.json"
+        log_info "Using config file: $config_file"
+    else
+        log_warning "Config file not found at $CONFIG_DIR/config.json"
+        log_warning "Cannot run unbootstrap without config file - skipping resource cleanup"
+        log_info "Manual cleanup of Azure resources may be required"
+        return 0
+    fi
+
+    # Run unbootstrap to clean up resources
+    # Get the current user who ran sudo (the one with Azure CLI credentials)
+    local current_user
+    current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
+    local current_user_home
+    current_user_home=$(eval echo "~$current_user")
+
+    # Set Azure CLI environment variable to point to the user's .azure directory
+    local azure_config_dir="$current_user_home/.azure"
+
+    if [[ -d "$azure_config_dir" ]]; then
+        log_info "Using Azure CLI credentials from: $azure_config_dir"
+        sudo env AZURE_CONFIG_DIR="$azure_config_dir" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" || {
+            log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
+        }
+    else
+        log_warning "Azure CLI credentials not found at $azure_config_dir"
+        log_info "Attempting unbootstrap without Azure CLI credentials..."
+        sudo "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" || {
+            log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
+        }
+    fi
+
+    log_success "Unbootstrap completed"
 }
 
 remove_systemd_service() {
     log_info "Removing systemd service files..."
 
-    # Remove service file
-    if [[ -f "/etc/systemd/system/aks-flex-node@.service" ]]; then
-        rm -f "/etc/systemd/system/aks-flex-node@.service"
-        log_success "Removed systemd service file"
+    # Remove agent service file
+    if [[ -f "/etc/systemd/system/aks-flex-node-agent.service" ]]; then
+        rm -f "/etc/systemd/system/aks-flex-node-agent.service"
+        log_success "Removed systemd agent service file"
     else
-        log_info "Systemd service file not found"
+        log_info "Agent service file not found"
     fi
 
     # Reload systemd daemon
@@ -233,8 +249,8 @@ main() {
     echo ""
     log_info "Starting AKS Flex Node uninstallation..."
 
-    # Check prerequisites before proceeding
-    check_arc_prerequisites
+    # Run unbootstrap before proceeding with uninstall
+    run_unbootstrap
 
     # Uninstall components in reverse order of installation
     stop_and_disable_services

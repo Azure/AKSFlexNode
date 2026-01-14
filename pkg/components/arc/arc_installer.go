@@ -3,6 +3,7 @@ package arc
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -68,9 +69,16 @@ func (i *Installer) Execute(ctx context.Context) error {
 	}
 	i.logger.Info("Successfully registered Arc machine with Azure")
 
-	// Step 3: Assign RBAC roles to managed identity
+	// Step 3: Validate managed cluster requirements
+	i.logger.Info("Step 3: Validating Managed Cluster requirements")
+	if err := i.validateManagedCluster(ctx); err != nil {
+		i.logger.Errorf("Managed Cluster validation failed: %v", err)
+		return fmt.Errorf("arc bootstrap setup failed at managed cluster validation: %w", err)
+	}
+
+	// Step 4: Assign RBAC roles to managed identity
 	time.Sleep(10 * time.Second) // brief pause to ensure identity is ready
-	i.logger.Info("Step 3: Assigning RBAC roles to managed identity")
+	i.logger.Info("Step 4: Assigning RBAC roles to managed identity")
 	if err := i.assignRBACRoles(ctx, arcMachine); err != nil {
 		i.logger.Errorf("Failed to assign RBAC roles: %v", err)
 		return fmt.Errorf("arc bootstrap setup failed at RBAC role assignment: %w", err)
@@ -83,35 +91,48 @@ func (i *Installer) Execute(ctx context.Context) error {
 
 // IsCompleted checks if Arc setup has been completed
 // This can be used by bootstrap steps to verify completion status
+// Uses the same reliable logic as status collector for consistency
 func (i *Installer) IsCompleted(ctx context.Context) bool {
 	i.logger.Debug("Checking Arc setup completion status")
 
-	// Check if Arc agent is running
+	// Check if Arc services are running
 	if !isArcServicesRunning() {
-		i.logger.Debug("Arc agent is not running")
+		i.logger.Debug("Arc services are not running")
 		return false
 	}
 
-	// Check if machine is registered with Arc
-	arcMachine, err := i.getArcMachine(ctx)
+	// Use same approach as status collector - check azcmagent show with timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "azcmagent", "show")
+	output, err := cmd.Output()
 	if err != nil {
-		i.logger.Debugf("Arc machine not registered or not accessible: %v", err)
+		i.logger.Debugf("azcmagent show failed: %v - Arc not ready", err)
 		return false
 	}
 
-	// Check if required permissions are assigned
-	managedIdentityID := getArcMachineIdentityID(arcMachine)
-	hasPermissions, err := i.checkRequiredPermissions(ctx, managedIdentityID)
-	if err != nil || !hasPermissions {
-		if err != nil {
-			i.logger.Warnf("Error checking permissions: %s", err)
+	// Parse output to check if agent is connected (same logic as status collector)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				status := strings.TrimSpace(parts[1])
+				isConnected := strings.ToLower(status) == "connected"
+				if isConnected {
+					i.logger.Debug("Arc setup appears to be completed - agent is connected")
+				} else {
+					i.logger.Debugf("Arc agent status is '%s' - not ready", status)
+				}
+				return isConnected
+			}
 		}
-		i.logger.Info("Some required RBAC permissions are still missing")
-		return false
 	}
 
-	i.logger.Debug("Arc setup appears to be completed")
-	return true
+	i.logger.Debug("Could not find Agent Status in azcmagent show output - Arc not ready")
+	return false
 }
 
 // registerArcMachine registers the machine with Azure Arc using the Arc agent
@@ -133,6 +154,26 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 	// make sure registration is complete before proceeding
 	// otherwise role assignment may fail due to identity not found
 	return i.waitForArcRegistration(ctx)
+}
+
+func (i *Installer) validateManagedCluster(ctx context.Context) error {
+	i.logger.Info("Validating target AKS Managed Cluster requirements for Azure RBAC authentication")
+
+	cluster, err := i.getAKSCluster(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get AKS cluster info: %w", err)
+	}
+
+	// Check if Azure RBAC is enabled
+	if cluster.Properties == nil ||
+		cluster.Properties.AADProfile == nil ||
+		cluster.Properties.AADProfile.EnableAzureRBAC == nil ||
+		!*cluster.Properties.AADProfile.EnableAzureRBAC {
+		return fmt.Errorf("target AKS cluster '%s' must have Azure RBAC enabled for node authentication", to.String(cluster.Name))
+	}
+
+	i.logger.Infof("Target AKS cluster '%s' has Azure RBAC enabled", to.String(cluster.Name))
+	return nil
 }
 
 func (i *Installer) waitForArcRegistration(ctx context.Context) (*armhybridcompute.Machine, error) {
@@ -250,48 +291,94 @@ func (i *Installer) assignRBACRoles(ctx context.Context, arcMachine *armhybridco
 }
 
 // assignRole creates a role assignment for the given principal, role, and scope
+// Implements retry logic with exponential backoff to handle Azure AD replication delays
 func (i *Installer) assignRole(
-	ctx context.Context, principalID, roleDefinitionID, scope, roleName string) error {
+	ctx context.Context, principalID, roleDefinitionID, scope, roleName string,
+) error {
 	// Build the full role definition ID
 	fullRoleDefinitionID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
 		i.config.Azure.SubscriptionID, roleDefinitionID)
 
-	roleAssignmentName := uuid.New().String()
-	i.logger.Debugf("Calling Azure API to create role assignment with ID: %s", roleAssignmentName)
-	assignment := armauthorization.RoleAssignmentCreateParameters{
-		Properties: &armauthorization.RoleAssignmentProperties{
-			PrincipalID:      &principalID,
-			RoleDefinitionID: &fullRoleDefinitionID,
-		},
-	}
-	// this create operation is synchronous - we need to wait for the role propagation to take effect afterwards
-	if _, err := i.roleAssignmentsClient.Create(ctx, scope, roleAssignmentName, assignment, nil); err != nil {
-		// Provide more detailed error information
-		i.logger.Errorf("❌ Role assignment creation failed:")
-		i.logger.Errorf("   Principal ID: %s", principalID)
-		i.logger.Errorf("   Role Name: %s", roleName)
-		i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
-		i.logger.Errorf("   Scope: %s", scope)
-		i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
-		i.logger.Errorf("   Azure API Error: %v", err)
+	const (
+		maxRetries   = 5
+		initialDelay = 5 * time.Second
+		maxDelay     = 30 * time.Second
+	)
 
-		// Check for common error patterns
-		errStr := err.Error()
-		if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
-			return fmt.Errorf("insufficient permissions to assign roles - ensure the user/service principal has Owner or User Access Administrator role on the target cluster: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := min(initialDelay*time.Duration(1<<(attempt-1)), maxDelay)
+			i.logger.Infof("⏳ Retrying role assignment after %v (attempt %d/%d)...", delay, attempt+1, maxRetries)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		if strings.Contains(errStr, "RoleAssignmentExists") {
-			i.logger.Info("ℹ️  Role assignment already exists (detected from error)")
-			return nil
+
+		roleAssignmentName := uuid.New().String()
+		i.logger.Debugf("Calling Azure API to create role assignment with ID: %s (attempt %d/%d)", roleAssignmentName, attempt+1, maxRetries)
+
+		// Set PrincipalType to ServicePrincipal for Arc managed identities
+		// This helps Azure work around replication delays when the identity was just created
+		principalType := armauthorization.PrincipalTypeServicePrincipal
+		assignment := armauthorization.RoleAssignmentCreateParameters{
+			Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID:      &principalID,
+				RoleDefinitionID: &fullRoleDefinitionID,
+				PrincipalType:    &principalType,
+			},
 		}
-		if strings.Contains(errStr, "PrincipalNotFound") { // TODO(wenxuan): this is retriable, add retry logic later
-			return fmt.Errorf("arc managed identity not found - ensure Arc machine is properly registered: %w", err)
+
+		// this create operation is synchronous - we need to wait for the role propagation to take effect afterwards
+		if _, err := i.roleAssignmentsClient.Create(ctx, scope, roleAssignmentName, assignment, nil); err != nil {
+			lastErr = err
+			errStr := err.Error()
+
+			// Check for common error patterns
+			if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
+				return fmt.Errorf("insufficient permissions to assign roles - ensure the user/service principal has Owner or User Access Administrator role on the target cluster: %w", err)
+			}
+			if strings.Contains(errStr, "RoleAssignmentExists") {
+				i.logger.Info("ℹ️  Role assignment already exists (detected from error)")
+				return nil
+			}
+
+			// PrincipalNotFound is retriable - likely Azure AD replication delay
+			if strings.Contains(errStr, "PrincipalNotFound") {
+				i.logger.Warnf("⚠️  Principal not found (Azure AD replication delay) - will retry...")
+				// Provide detailed error information on last attempt only
+				if attempt == maxRetries-1 {
+					i.logger.Errorf("❌ Role assignment creation failed after %d attempts:", maxRetries)
+					i.logger.Errorf("   Principal ID: %s", principalID)
+					i.logger.Errorf("   Role Name: %s", roleName)
+					i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
+					i.logger.Errorf("   Scope: %s", scope)
+					i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
+					i.logger.Errorf("   Azure API Error: %v", err)
+				}
+				continue // Retry
+			}
+
+			// Non-retriable error - log details and return
+			i.logger.Errorf("❌ Role assignment creation failed:")
+			i.logger.Errorf("   Principal ID: %s", principalID)
+			i.logger.Errorf("   Role Name: %s", roleName)
+			i.logger.Errorf("   Role Definition ID: %s", fullRoleDefinitionID)
+			i.logger.Errorf("   Scope: %s", scope)
+			i.logger.Errorf("   Assignment Name: %s", roleAssignmentName)
+			i.logger.Errorf("   Azure API Error: %v", err)
+			return fmt.Errorf("failed to create role assignment: %s", err)
 		}
-		return fmt.Errorf("failed to create role assignment: %s", err)
+
+		// Success
+		i.logger.Debugf("✅ Role assignment created successfully")
+		return nil
 	}
 
-	i.logger.Debugf("✅ Role assignment created successfully")
-	return nil
+	// Max retries exhausted
+	return fmt.Errorf("failed to assign role after %d attempts due to Azure AD replication delay - arc managed identity not found: %w", maxRetries, lastErr)
 }
 
 // waitForPermissions waits for RBAC permissions propagation with timeout

@@ -212,3 +212,8 @@ func (cfg *Config) GetSubscriptionID() string {
 func (cfg *Config) GetTenantID() string {
 	return cfg.Azure.TenantID
 }
+
+// GetKubernetesVersion returns the Kubernetes version from configuration
+func (cfg *Config) GetKubernetesVersion() string {
+	return cfg.Kubernetes.Version
+}

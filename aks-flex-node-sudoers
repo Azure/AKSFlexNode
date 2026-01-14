@@ -25,9 +25,30 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl restart kubelet
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl restart containerd
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl status kubelet
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl status containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl check kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl check containerd
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl is-active *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl is-enabled *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl list-unit-files *
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl daemon-reload
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl enable kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl enable containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl enable --now kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl enable --now containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl disable kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl disable containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl start kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl start containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl stop kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl stop containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl restart kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl restart containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl status kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl status containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl check kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl check containerd
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl is-active *
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl is-enabled *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl list-unit-files *
 
 # Package management (for installing Kubernetes components)
@@ -47,16 +68,26 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/ln *, /usr/bin/ln *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/install *, /bin/install *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/curl *, /usr/bin/wget *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tar *, /usr/bin/unzip *
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/ls *, /usr/bin/ls *
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/test *, /bin/test *
 
 # System configuration for Kubernetes
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/sysctl --system
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/modprobe overlay
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/modprobe br_netfilter
 
-# Configuration file management
+# Configuration file management and reading
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/sysctl.d/k8s.conf
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/modules-load.d/k8s.conf
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/containerd/config.toml
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/default/kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/systemd/system/kubelet.service
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/systemd/system/kubelet.service.d/*
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/cat /etc/kubernetes/*
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/default/kubelet
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/systemd/system/kubelet.service
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/systemd/system/kubelet.service.d/*
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/cat /etc/kubernetes/*
 
 # Network operations for troubleshooting
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/ip route
