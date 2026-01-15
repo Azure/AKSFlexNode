@@ -115,7 +115,6 @@ type CNIConfig struct {
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
 type NPDConfig struct {
 	Version string `json:"version"`
-	URL     string `json:"url"`
 }
 
 // IsSPConfigured checks if service principal credentials are provided in the configuration
