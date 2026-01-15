@@ -2,16 +2,13 @@ package npd
 
 // NPD binary paths to check and manage
 const (
-	PrimaryNpdBinaryPath   = "/usr/bin/node-problem-detector"
-	SecondaryNpdBinaryPath = "/usr/local/bin/node-problem-detector"
-	SbinNpdBinaryPath      = "/usr/sbin/node-problem-detector"
+	npdBinaryPath = "/usr/bin/node-problem-detector"
+	npdConfigPath = "/etc/node-problem-detector/system-stats-monitor.json"
 
-	PrimaryNpdConfigPath = "/etc/node-problem-detector/system-stats-monitor.json"
+	tempDir = "/tmp/npd"
 )
 
-// All possible NPD binary locations
-var NpdBinaryPaths = []string{
-	PrimaryNpdBinaryPath,
-	SecondaryNpdBinaryPath,
-	SbinNpdBinaryPath,
-}
+var (
+	npdFileName    = "npd-%s.tar.gz"
+	npdDownloadURL = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_%s.tar.gz"
+)
