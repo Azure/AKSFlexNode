@@ -40,13 +40,13 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 
 	// Get kubelet related status
 	status.KubeletVersion = c.getKubeletVersion(ctx)
-	status.KubeletRunning = c.isKubeletRunning(ctx)
+	status.KubeletRunning = utils.IsServiceActive("kubelet")
 	status.KubeletReady = c.isKubeletReady(ctx)
 
 	// get containerd related status
 	status.ContainerdVersion = c.getContainerdVersion(ctx)
 	// check if containerd is running, it will cause kubelet not ready
-	status.ContainerdRunning = c.isContainerdRunning(ctx)
+	status.ContainerdRunning = utils.IsServiceActive("containerd")
 
 	// Get runc version
 	status.RuncVersion = c.getRuncVersion(ctx)
@@ -191,31 +191,11 @@ func (c *Collector) parseArcShowOutput(status *ArcStatus, output string) {
 	}
 }
 
-// isKubeletRunning checks if the kubelet service is running
-func (c *Collector) isKubeletRunning(ctx context.Context) bool {
-	if output, err := c.runCommand(ctx, "systemctl", "is-active", "kubelet"); err == nil {
-		return strings.TrimSpace(output) == "active"
-	}
-	return false
-}
-
-func (c *Collector) isContainerdRunning(ctx context.Context) bool {
-	if output, err := c.runCommand(ctx, "systemctl", "is-active", "containerd"); err == nil {
-		return strings.TrimSpace(output) == "active"
-	}
-	return false
-}
-
 // isKubeletReady checks if the kubelet reports the node as Ready
 func (c *Collector) isKubeletReady(ctx context.Context) string {
-	hostname, err := c.runCommand(ctx, "hostname")
+	hostName, err := os.Hostname()
 	if err != nil {
 		c.logger.Warnf("Failed to get hostname: %v", err)
-		return "Unknown"
-	}
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" {
-		c.logger.Warn("Hostname is empty")
 		return "Unknown"
 	}
 
@@ -225,7 +205,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 		"/var/lib/kubelet/kubeconfig",
 		"get",
 		"node",
-		hostname,
+		hostName,
 		"-o",
 		"jsonpath={.status.conditions[?(@.type==\"Ready\")].status}",
 	}
