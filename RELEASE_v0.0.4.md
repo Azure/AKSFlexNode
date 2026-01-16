@@ -2,7 +2,7 @@
 
 ## Tag Created
 
-The git tag `v0.0.4` has been created locally on commit `2fb14db` (latest commit on this branch).
+The git tag `v0.0.4` has been created locally on commit `83fa504` (latest commit on this branch).
 
 ## Next Steps to Trigger Release
 
@@ -50,7 +50,7 @@ After the workflow completes, verify:
 
 ```
 Tag: v0.0.4
-Commit: 2fb14dbb78f4590978cef6bd1685a0704c7f4377
+Commit: 83fa5044c2e90fa1ab4c57062e0e8e8d2b52b2ca
 Message: Release v0.0.4
 ```
 
