@@ -2,7 +2,7 @@
 
 ## Tag Created
 
-The git tag `v0.0.4` has been created locally on commit `c42d30f`.
+The git tag `v0.0.4` has been created locally on commit `2fb14db` (latest commit on this branch).
 
 ## Next Steps to Trigger Release
 
@@ -50,6 +50,14 @@ After the workflow completes, verify:
 
 ```
 Tag: v0.0.4
-Commit: c42d30f0c8491fabc2e03ec8dbec005321619559
+Commit: 2fb14dbb78f4590978cef6bd1685a0704c7f4377
 Message: Release v0.0.4
 ```
+
+## What's Included in This Release
+
+This release includes:
+- Complete codebase with all features from the housekeeping refactor (#35)
+- Automated release script (`scripts/create-release.sh`)
+- Comprehensive contributing guide with release process documentation
+- Release workflow configuration
