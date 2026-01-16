@@ -21,6 +21,7 @@ DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
+DOWNLOAD_BINARY_BASE_URL="https://github.com"  # Can be overridden via --download-binary-base-url
 
 # Functions
 log_info() {
@@ -117,7 +118,7 @@ download_binary() {
     local arch="$3"
     local binary_name="aks-flex-node-${os}-${arch}"
     local archive_name="${binary_name}.tar.gz"
-    local download_url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
+    local download_url="${DOWNLOAD_BINARY_BASE_URL}/${REPO}/releases/download/${version}/${archive_name}"
 
     log_info "Downloading AKS Flex Node ${version} for ${os}/${arch}..." >&2
     log_info "Download URL: $download_url" >&2
@@ -204,6 +205,28 @@ install_azure_cli() {
     else
         log_info "Azure CLI already installed"
     fi
+}
+
+is_azure_vm() {
+    # Detect if running on an Azure VM by querying the Instance Metadata Service (IMDS)
+    # IMDS is available at 169.254.169.254 and requires the Metadata header
+    local imds_url="http://169.254.169.254/metadata/instance?api-version=2025-04-07"
+    local response
+
+    if command -v curl &> /dev/null; then
+        response=$(curl -s -f -H "Metadata:true" --connect-timeout 2 "$imds_url" 2>/dev/null)
+    elif command -v wget &> /dev/null; then
+        response=$(wget -q -O- --header="Metadata:true" --timeout=2 "$imds_url" 2>/dev/null)
+    else
+        return 1
+    fi
+
+    # If we got a valid JSON response with compute info, we're on an Azure VM
+    if [[ -n "$response" ]] && echo "$response" | grep -q '"compute"'; then
+        return 0
+    fi
+
+    return 1
 }
 
 install_arc_agent() {
@@ -455,6 +478,34 @@ EOF
 }
 
 main() {
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --download-binary-base-url)
+                if [[ -n "${2:-}" ]]; then
+                    DOWNLOAD_BINARY_BASE_URL="$2"
+                    shift 2
+                else
+                    log_error "--download-binary-base-url requires a URL argument"
+                    exit 1
+                fi
+                ;;
+            --help|-h)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --download-binary-base-url URL  Override the base URL for downloading binaries"
+                echo "                                  Default: https://github.com"
+                echo "  --help, -h                      Show this help message"
+                exit 0
+                ;;
+            *)
+                log_warning "Unknown option: $1"
+                shift
+                ;;
+        esac
+    done
+
     echo -e "${GREEN}AKS Flex Node Installer${NC}"
     echo -e "${GREEN}========================${NC}"
     echo ""
@@ -496,7 +547,14 @@ main() {
     # Setup service components
     setup_service_user
     install_azure_cli
-    install_arc_agent
+
+    # Skip Arc agent installation on Azure VMs (Arc is for non-Azure machines)
+    if is_azure_vm; then
+        log_info "Detected Azure VM - skipping Azure Arc agent installation"
+    else
+        install_arc_agent
+    fi
+
     setup_permissions
     setup_hostname_resolution
     setup_directories

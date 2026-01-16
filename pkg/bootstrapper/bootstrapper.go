@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/components/arc"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/azurevm"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/containerd"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/kube_binaries"
@@ -15,6 +16,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/components/services"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // Bootstrapper executes bootstrap steps sequentially
@@ -32,8 +34,17 @@ func New(cfg *config.Config, logger *logrus.Logger) *Bootstrapper {
 // Bootstrap executes all bootstrap steps sequentially
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
 	// Define the bootstrap steps in order - using modules directly
-	steps := []Executor{
-		arc.NewInstaller(b.logger),                  // Setup Arc
+	steps := []Executor{}
+
+	// Use Azure VM installer on Azure VMs, Arc installer for non-Azure machines
+	if utils.IsRunningOnAzureVM() {
+		b.logger.Info("Detected Azure VM - using Azure VM installer")
+		steps = append(steps, azurevm.NewInstaller(b.logger)) // Setup Azure VM
+	} else {
+		steps = append(steps, arc.NewInstaller(b.logger)) // Setup Arc
+	}
+
+	steps = append(steps,
 		services.NewUnInstaller(b.logger),           // Stop kubelet before setup
 		system_configuration.NewInstaller(b.logger), // Configure system (early)
 		runc.NewInstaller(b.logger),                 // Install runc
@@ -43,7 +54,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		kubelet.NewInstaller(b.logger),              // Configure kubelet service with Arc MSI auth
 		services.NewInstaller(b.logger),             // Start services
 		npd.NewInstaller(b.logger),                  // Install Node Problem Detector
-	}
+	)
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")
 }
@@ -59,7 +70,13 @@ func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error
 		containerd.NewUnInstaller(b.logger),           // Uninstall containerd binary
 		runc.NewUnInstaller(b.logger),                 // Uninstall runc binary
 		system_configuration.NewUnInstaller(b.logger), // Clean system settings
-		arc.NewUnInstaller(b.logger),                  // Uninstall Arc (after cleanup)
+	}
+
+	// Use Azure VM uninstaller on Azure VMs, Arc uninstaller for non-Azure machines
+	if utils.IsRunningOnAzureVM() {
+		steps = append(steps, azurevm.NewUnInstaller(b.logger)) // Cleanup Azure VM
+	} else {
+		steps = append(steps, arc.NewUnInstaller(b.logger)) // Uninstall Arc (after cleanup)
 	}
 
 	return b.ExecuteSteps(ctx, steps, "unbootstrap")

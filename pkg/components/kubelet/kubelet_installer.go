@@ -110,8 +110,8 @@ func (i *Installer) configure(ctx context.Context) error {
 		return err
 	}
 
-	// Create Arc token script for exec credential authentication
-	if err := i.createArcTokenScript(); err != nil {
+	// Create token script for exec credential authentication (Arc or Azure VM IMDS)
+	if err := i.createTokenScript(); err != nil {
 		return err
 	}
 
@@ -392,6 +392,58 @@ curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL |
 	}
 
 	return nil
+}
+
+// createAzureVmTokenScript creates the Azure VM IMDS token script for exec credential authentication
+func (i *Installer) createAzureVmTokenScript() error {
+	// Azure VM IMDS token script - simpler than Arc as it doesn't require challenge token
+	tokenScript := fmt.Sprintf(`#!/bin/bash
+
+# Fetch an AAD token from Azure VM IMDS and output it in the ExecCredential format
+# https://learn.microsoft.com/azure/virtual-machines/instance-metadata-service
+
+TOKEN_URL="http://169.254.169.254/metadata/identity/oauth2/token?api-version=2025-04-07&resource=%s"
+EXECCREDENTIAL='''
+{
+  "kind": "ExecCredential",
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "spec": {
+    "interactive": false
+  },
+  "status": {
+    "expirationTimestamp": .expires_on | tonumber | todate,
+    "token": .access_token
+  }
+}
+'''
+
+# Azure VM IMDS only requires the Metadata header
+curl -s -H "Metadata: true" "$TOKEN_URL" | jq "$EXECCREDENTIAL"`, AKSServiceResourceID)
+
+	// Ensure /var/lib/kubelet directory exists
+	if err := utils.RunSystemCommand("mkdir", "-p", KubeletVarDir); err != nil {
+		return fmt.Errorf("failed to create kubelet var directory: %w", err)
+	}
+
+	// Write token script atomically with executable permissions
+	if err := utils.WriteFileAtomicSystem(KubeletTokenScriptPath, []byte(tokenScript), 0755); err != nil {
+		return fmt.Errorf("failed to create Azure VM token script: %w", err)
+	}
+
+	// Ensure the script has executable permissions (explicit chmod as backup)
+	if err := utils.RunSystemCommand("chmod", "755", KubeletTokenScriptPath); err != nil {
+		return fmt.Errorf("failed to set executable permissions on Azure VM token script: %w", err)
+	}
+
+	return nil
+}
+
+// createTokenScript creates the appropriate token script based on the environment
+func (i *Installer) createTokenScript() error {
+	if utils.IsRunningOnAzureVM() {
+		return i.createAzureVmTokenScript()
+	}
+	return i.createArcTokenScript()
 }
 
 // createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for Arc authentication

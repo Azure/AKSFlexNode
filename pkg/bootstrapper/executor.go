@@ -131,7 +131,7 @@ func (be *BaseExecutor) executeStep(ctx context.Context, step Executor, stepType
 	var err error
 	if bootstrapStep, ok := step.(StepExecutor); ok && stepType == "bootstrap" {
 		// Validate preconditions for bootstrap steps
-		if validationErr := bootstrapStep.Validate(ctx); validationErr != nil {
+	if validationErr := bootstrapStep.Validate(ctx); validationErr != nil {
 			be.logger.Errorf("%s step %s validation failed with error: %s", stepType, stepName, validationErr)
 			return be.createStepResult(stepName, startTime, false, fmt.Sprintf("validation failed: %v", validationErr))
 		}

@@ -74,6 +74,37 @@ func RunCommandWithOutput(name string, args ...string) (string, error) {
 	return string(output), err
 }
 
+// IsRunningOnAzureVM detects if the code is running on an Azure VM by querying
+// the Azure Instance Metadata Service (IMDS). IMDS is available at 169.254.169.254
+// and is only accessible from within Azure VMs.
+func IsRunningOnAzureVM() bool {
+	const imdsURL = "http://169.254.169.254/metadata/instance?api-version=2025-04-07"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imdsURL, nil)
+	if err != nil {
+		return false
+	}
+
+	// IMDS requires the Metadata header to be set to "true"
+	req.Header.Set("Metadata", "true")
+
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// A successful response (200 OK) indicates we're on an Azure VM
+	return resp.StatusCode == http.StatusOK
+}
+
 // FileExists checks if a file exists
 func FileExists(path string) bool {
 	_, err := os.Stat(path)

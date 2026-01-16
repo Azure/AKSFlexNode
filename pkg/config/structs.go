@@ -23,8 +23,19 @@ type AzureConfig struct {
 	TenantID         string                  `json:"tenantId"`                   // Azure tenant ID
 	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
 	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
-	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
+	Arc              *ArcConfig              `json:"arc,omitempty"`              // Azure Arc machine configuration (for VMs outside Azure)
+	AzureVm          *AzureVmConfig          `json:"azureVm,omitempty"`          // Azure VM configuration (for VMs running in Azure)
 	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
+}
+
+// AzureVmConfig holds configuration for Azure VMs running natively in Azure (not Arc-enabled).
+type AzureVmConfig struct {
+	ManagedIdentity *ManagedIdentityConfig `json:"managedIdentity,omitempty"` // Managed identity configuration
+}
+
+// ManagedIdentityConfig holds configuration for Azure Managed Identity authentication.
+type ManagedIdentityConfig struct {
+	ClientID string `json:"clientId,omitempty"` // Client ID of the user-assigned managed identity
 }
 
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
