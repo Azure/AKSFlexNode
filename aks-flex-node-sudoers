@@ -51,13 +51,11 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl is-active *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl is-enabled *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/systemctl list-unit-files *
 
-# Package management (for installing Kubernetes components)
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt-get update
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt-get install -y apt-transport-https ca-certificates curl gpg
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt-get install -y kubelet kubeadm kubectl containerd
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt-get remove -y kubelet kubeadm kubectl containerd runc
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt-mark hold kubelet kubeadm kubectl
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt-mark unhold kubelet kubeadm kubectl
+# Package management (for utility packages only)
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt update
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt install -y jq
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt install -y iptables
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/apt install -y curl
 
 # Directory and file operations for Kubernetes paths - simplified for compatibility
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/mkdir *, /usr/bin/mkdir *
