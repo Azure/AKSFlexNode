@@ -3,7 +3,7 @@
 A Go service that extends Azure Kubernetes Service (AKS) to non-Azure VMs through Azure Arc integration, enabling hybrid and edge computing scenarios.
 
 **Status:** Work In Progress
-**Platform:** Ubuntu 22.04.5 LTS (tested)
+**Platform:** Ubuntu 24.04 LTS (tested)
 **Architecture:** x86_64 (amd64)
 
 ## Overview
@@ -74,7 +74,7 @@ sequenceDiagram
 
 ### Prerequisites
 - **VM Requirements:**
-  - Ubuntu 22.04.5 LTS VM (non-Azure)
+  - Ubuntu 24.04 LTS VM (non-Azure)
   - Minimum 2GB RAM, 25GB free disk space
   - Sudo access on the VM
 - **AKS Cluster Requirements:**
@@ -86,9 +86,28 @@ sequenceDiagram
     - **RBAC Assignment:** `User Access Administrator` or `Owner` role on the AKS cluster to assign roles to the Arc managed identity
     - **AKS Access:** `Azure Kubernetes Service Cluster Admin Role` on the target AKS cluster
 
+### Prerequisites on the cluster
+
+The cluster needs to be created or updated with command line similar to the following:
+
+```bash
+az aks create \
+    --resource-group <resource group name> \
+    --name <cluster name> \
+    --enable-aad \
+    --enable-azure-rbac \
+    --aad-admin-group-object-ids <group ID>
+```
+
+group ID: ID of a group that will have access to the cluster. Later on you'll use "az login" to log into Azure. The account you use to log in needs to be a member of this group.
+
 ### 1. Installation
 
 ```bash
+# Install az command line and run "az login"
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+az login
+
 # Install aks-flex-node
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
 
@@ -161,8 +180,18 @@ cat /var/log/aks-flex-node/aks-flex-node.log
 # Option 2: Using systemd service
 sudo systemctl enable --now aks-flex-node-agent
 journalctl -u aks-flex-node-agent --since "1 minutes ago" -f
-
 ```
+
+After you've set the correct config and started the agent, it takes a while to finish all the steps. If you used systemd service, as mentioned above, you can use
+
+```bash
+journalctl -u aks-flex-node-agent --since "1 minutes ago" -f
+```
+
+to view logs and see if anything goes wrong. If everything works fine, after a while, you would see the following:
+
+- In the resource group you specified in the config file, you should see a new resource added by Azure Arc with type Microsoft.HybridCompute/machines
+- Running "kubectl get nodes" against your cluster should see the new node added and in "Ready" state
 
 #### Unbootstrap
 ```bash
