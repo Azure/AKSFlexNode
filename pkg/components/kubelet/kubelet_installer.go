@@ -2,7 +2,6 @@ package kubelet
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,8 +9,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
@@ -370,7 +367,7 @@ func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) erro
 		return fmt.Errorf("failed to get cluster credentials: %w", err)
 	}
 
-	serverURL, caCertData, err := i.extractClusterInfo(kubeconfig)
+	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
 	}
@@ -466,44 +463,6 @@ func (i *Installer) getClusterCredentials(ctx context.Context) ([]byte, error) {
 
 	// The Value field is already []byte containing the kubeconfig data, no decoding needed
 	return kubeconfig.Value, nil
-}
-
-// extractClusterInfo extracts server URL and CA certificate data from kubeconfig
-func (i *Installer) extractClusterInfo(kubeconfigData []byte) (string, string, error) {
-	config, err := clientcmd.Load(kubeconfigData)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse kubeconfig: %w", err)
-	}
-
-	// For Azure AKS admin configs, there's typically only one cluster
-	if len(config.Clusters) == 0 {
-		return "", "", fmt.Errorf("no clusters found in kubeconfig")
-	}
-
-	// Get the first (and usually only) cluster
-	var cluster *api.Cluster
-	var clusterName string
-	for name, c := range config.Clusters {
-		cluster = c
-		clusterName = name
-		break
-	}
-
-	i.logger.Debugf("Using cluster: %s", clusterName)
-
-	// Extract what we need
-	if cluster.Server == "" {
-		return "", "", fmt.Errorf("server URL is empty")
-	}
-
-	if len(cluster.CertificateAuthorityData) == 0 {
-		return "", "", fmt.Errorf("CA certificate data is empty")
-	}
-
-	// CertificateAuthorityData should be base64-encoded for kubeconfig
-	// The field contains raw certificate bytes, so we need to encode them
-	caCertDataB64 := base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
-	return cluster.Server, caCertDataB64, nil
 }
 
 // mapToKeyValuePairs converts a map to key=value pairs joined by separator

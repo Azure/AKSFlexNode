@@ -3,6 +3,7 @@ package npd
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -38,6 +39,11 @@ func (i *Installer) Execute(ctx context.Context) error {
 	// Install NPD
 	if err := i.installNpd(); err != nil {
 		return fmt.Errorf("NPD installation failed: %w", err)
+	}
+
+	i.logger.Info("Configuring NPD")
+	if err := i.configure(); err != nil {
+		return fmt.Errorf("NPD configuration failed: %w", err)
 	}
 
 	i.logger.Infof("Node Problem Detector version %s installed successfully", i.config.Npd.Version)
@@ -80,7 +86,7 @@ func (i *Installer) installNpd() error {
 	}
 
 	tempNpdPath := filepath.Join(tempDir, "bin/node-problem-detector")
-	tempNpdConfig := filepath.Join(tempDir, "config/system-stats-monitor.json")
+	tempNpdConfig := filepath.Join(tempDir, "config/kernel-monitor.json")
 
 	// Verify extracted binary
 	if output, err := utils.RunCommandWithOutput("file", tempNpdPath); err != nil {
@@ -105,6 +111,64 @@ func (i *Installer) installNpd() error {
 	}
 
 	i.logger.Infof("Node Problem Detector version %s installed successfully", i.config.Npd.Version)
+	return nil
+}
+
+func (i *Installer) configure() error {
+	// Create NPD systemd service
+	if err := i.createNpdServiceFile(); err != nil {
+		return err
+	}
+
+	i.logger.Info("systemd start NPD service")
+	if err := utils.RunSystemCommand("systemctl", "start", "node-problem-detector"); err != nil {
+		return fmt.Errorf("failed to start NPD service: %w", err)
+	}
+
+	return nil
+}
+
+func (i *Installer) createNpdServiceFile() error {
+	kubeConfigData, err := os.ReadFile(kubeletKubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read kubelet kubeconfig file: %w", err)
+	}
+
+	serverURL, _, err := utils.ExtractClusterInfo(kubeConfigData)
+	if err != nil {
+		return fmt.Errorf("failed to extract cluster info: %w", err)
+	}
+
+	cmd := fmt.Sprintf("%s --apiserver-override=\"%s?inClusterConfig=false&auth=%s\" --config.system-log-monitor=%s",
+		npdBinaryPath, serverURL, kubeletKubeconfigPath, npdConfigPath)
+
+	npdService := `[Unit]
+Description=Node Problem Detector
+After=network.target
+
+[Service]
+ExecStart=` + cmd + `
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+`
+	tempFile, err := utils.CreateTempFile("node-problem-detector-*.service", []byte(npdService))
+	if err != nil {
+		return fmt.Errorf("failed to create temporary NPD service file: %w", err)
+	}
+	defer utils.CleanupTempFile(tempFile.Name())
+
+	if err := utils.RunSystemCommand("cp", tempFile.Name(), npdServicePath); err != nil {
+		return fmt.Errorf("failed to install NPD service file: %w", err)
+	}
+
+	if err := utils.RunSystemCommand("chmod", "644", npdServicePath); err != nil {
+		return fmt.Errorf("failed to set NPD service file permissions: %w", err)
+	}
+	i.logger.Infof("Creating NPD systemd service file at %s", npdServicePath)
+
 	return nil
 }
 
