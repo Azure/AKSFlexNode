@@ -154,19 +154,11 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 `
-	tempFile, err := utils.CreateTempFile("node-problem-detector-*.service", []byte(npdService))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary NPD service file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempFile.Name())
-
-	if err := utils.RunSystemCommand("cp", tempFile.Name(), npdServicePath); err != nil {
-		return fmt.Errorf("failed to install NPD service file: %w", err)
+	// Write NPD service file atomically with proper permissions
+	if err := utils.WriteFileAtomicSystem(npdServicePath, []byte(npdService), 0644); err != nil {
+		return fmt.Errorf("failed to create NPD service file: %w", err)
 	}
 
-	if err := utils.RunSystemCommand("chmod", "644", npdServicePath); err != nil {
-		return fmt.Errorf("failed to set NPD service file permissions: %w", err)
-	}
 	i.logger.Infof("Creating NPD systemd service file at %s", npdServicePath)
 
 	return nil
