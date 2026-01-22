@@ -60,6 +60,12 @@ func (i *Installer) Execute(ctx context.Context) error {
 		return fmt.Errorf("kubelet failed to start properly: %w", err)
 	}
 
+	i.logger.Info("Enabling and starting node-problem-detector service")
+	if err := utils.EnableAndStartService("node-problem-detector"); err != nil {
+		i.logger.Errorf("Failed to enable and start node-problem-detector: %v", err)
+		return fmt.Errorf("failed to enable and start node-problem-detector: %w", err)
+	}
+
 	i.logger.Info("All services enabled and started successfully")
 	return nil
 }

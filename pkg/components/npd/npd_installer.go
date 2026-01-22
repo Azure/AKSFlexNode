@@ -3,7 +3,6 @@ package npd
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -120,21 +119,16 @@ func (i *Installer) configure() error {
 		return err
 	}
 
-	i.logger.Info("systemd start NPD service")
-	if err := utils.RunSystemCommand("systemctl", "start", "node-problem-detector"); err != nil {
-		return fmt.Errorf("failed to start NPD service: %w", err)
-	}
-
 	return nil
 }
 
 func (i *Installer) createNpdServiceFile() error {
-	kubeConfigData, err := os.ReadFile(kubeletKubeconfigPath)
+	kubeConfigData, err := utils.RunCommandWithOutput("cat", kubeletKubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read kubelet kubeconfig file: %w", err)
 	}
 
-	serverURL, _, err := utils.ExtractClusterInfo(kubeConfigData)
+	serverURL, _, err := utils.ExtractClusterInfo([]byte(kubeConfigData))
 	if err != nil {
 		return fmt.Errorf("failed to extract cluster info: %w", err)
 	}
@@ -159,7 +153,7 @@ WantedBy=multi-user.target
 		return fmt.Errorf("failed to create NPD service file: %w", err)
 	}
 
-	i.logger.Infof("Creating NPD systemd service file at %s", npdServicePath)
+	i.logger.Infof("Created NPD systemd service file at %s", npdServicePath)
 
 	return nil
 }
