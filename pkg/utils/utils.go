@@ -70,7 +70,7 @@ func RunSystemCommand(name string, args ...string) error {
 // RunCommandWithOutput executes a command and returns output with sudo when needed
 func RunCommandWithOutput(name string, args ...string) (string, error) {
 	cmd := createCommand(name, args)
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
 

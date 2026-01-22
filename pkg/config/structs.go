@@ -89,6 +89,7 @@ type NodeConfig struct {
 type KubeletConfig struct {
 	KubeReserved         map[string]string `json:"kubeReserved"`
 	EvictionHard         map[string]string `json:"evictionHard"`
+	Verbosity            int               `json:"verbosity"`
 	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
 }
