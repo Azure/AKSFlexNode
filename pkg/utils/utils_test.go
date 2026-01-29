@@ -172,19 +172,19 @@ func TestShouldIgnoreCleanupError(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "nil error",
+			name:     "nil error should not be ignored",
 			err:      nil,
 			expected: false,
 		},
 		{
-			name:     "not loaded error should be ignored",
+			name:     "os.ErrNotExist matches 'does not exist' pattern",
 			err:      os.ErrNotExist,
-			expected: false, // os.ErrNotExist message doesn't match patterns
+			expected: true, // "file does not exist" matches "does not exist" pattern
 		},
 		{
-			name:     "custom not loaded error",
+			name:     "PathError with ErrNotExist should be ignored",
 			err:      &os.PathError{Op: "remove", Path: "/test", Err: os.ErrNotExist},
-			expected: true,
+			expected: true, // Error message contains "no such file or directory"
 		},
 	}
 	

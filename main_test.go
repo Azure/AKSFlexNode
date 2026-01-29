@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-func TestMainFunctionExists(t *testing.T) {
-	// This test verifies that the main function exists and is properly structured
+func TestCommandConstructors(t *testing.T) {
+	// Verify that all command constructors used in main() work properly
 	// We can't directly test main() execution, but we can test the components it uses
 	
 	// Test that command creation works

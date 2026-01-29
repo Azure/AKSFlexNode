@@ -104,10 +104,8 @@ func TestVersionVariables(t *testing.T) {
 	BuildTime = oldBuildTime
 }
 
-func TestHandleExecutionResult(t *testing.T) {
-	// This is an internal function, but we can test it through public interface
-	// by verifying the commands have proper error handling
-	
+func TestAllCommands(t *testing.T) {
+	// Verify all command constructors work properly
 	tests := []struct {
 		name string
 		cmd  string
