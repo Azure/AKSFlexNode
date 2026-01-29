@@ -38,7 +38,7 @@ func TestBootstrapperStructure(t *testing.T) {
 	// Just verify that the bootstrapper is initialized properly
 	// Methods Bootstrap and Unbootstrap exist as methods on the struct
 	if bootstrapper == nil {
-		t.Error("Bootstrapper should not be nil")
+		t.Fatal("Bootstrapper should not be nil")
 	}
 
 	if bootstrapper.BaseExecutor == nil {
