@@ -430,8 +430,8 @@ func (i *Installer) calculateAvailableSubnetInRange(vnetCIDR string, existingSub
 
 	// Convert IP to uint32 for easier calculation
 	vnetStart := uint32(vnetIP[0])<<24 | uint32(vnetIP[1])<<16 | uint32(vnetIP[2])<<8 | uint32(vnetIP[3])
-	vnetPrefixLength := i.getNetworkPrefixLength(vnetNet)
-	vnetMask := uint32(0xFFFFFFFF) << (32 - uint32(vnetPrefixLength))
+	vnetPrefixLength := uint32(i.getNetworkPrefixLength(vnetNet))
+	vnetMask := uint32(0xFFFFFFFF) << (32 - vnetPrefixLength)
 	vnetEnd := vnetStart | (^vnetMask)
 
 	// Start from a high address in the VNet range to avoid conflicts with existing subnets
