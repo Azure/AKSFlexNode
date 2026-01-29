@@ -6,7 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -161,7 +161,7 @@ func (i *Installer) createRootCACertificate(privateKey *rsa.PrivateKey) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal public key: %w", err)
 	}
-	subjectKeyID := sha1.Sum(publicKeyBytes)
+	subjectKeyID := sha256.Sum256(publicKeyBytes)
 
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -203,7 +203,7 @@ func (i *Installer) createClientCertificate(clientPrivateKey, rootPrivateKey *rs
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal client public key: %w", err)
 	}
-	clientSubjectKeyId := sha1.Sum(clientPublicKeyBytes)
+	clientSubjectKeyId := sha256.Sum256(clientPublicKeyBytes)
 
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(2), // Different serial number for client cert
@@ -656,7 +656,7 @@ func (i *Installer) uploadCertificateToAzure(ctx context.Context, certData strin
 	}
 
 	// Create root certificate parameters with unique name based on certificate data
-	certHash := fmt.Sprintf("%x", sha1.Sum([]byte(certData)))[:8] // Use first 8 chars of hash
+	certHash := fmt.Sprintf("%x", sha256.Sum256([]byte(certData)))[:8] // Use first 8 chars of hash
 	certName := fmt.Sprintf("%s-%s", VPNClientRootCertName, certHash)
 
 	i.logger.Infof("Adding VPN root certificate with name: %s", certName)
@@ -833,11 +833,15 @@ func (i *Installer) downloadConfigFromURL(url string) (string, error) {
 			return "", fmt.Errorf("failed to create directory for %s: %w", path, err)
 		}
 
-		// Extract file
+		// Extract file with size limits to prevent decompression bombs
 		fileReader, err := file.Open()
 		if err != nil {
 			return "", fmt.Errorf("failed to open file %s in ZIP: %w", file.Name, err)
 		}
+
+		// Add size limit of 10MB per file to prevent decompression bomb
+		const maxFileSize = 10 * 1024 * 1024 // 10MB
+		limitedReader := io.LimitReader(fileReader, maxFileSize)
 
 		targetFile, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.FileInfo().Mode())
 		if err != nil {
@@ -845,7 +849,7 @@ func (i *Installer) downloadConfigFromURL(url string) (string, error) {
 			return "", fmt.Errorf("failed to create file %s: %w", path, err)
 		}
 
-		_, err = io.Copy(targetFile, fileReader)
+		_, err = io.Copy(targetFile, limitedReader)
 		_ = fileReader.Close()
 		_ = targetFile.Close()
 

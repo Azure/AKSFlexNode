@@ -420,7 +420,7 @@ func (i *Installer) calculateAvailableSubnetInRange(vnetCIDR string, existingSub
 	}
 
 	// Calculate subnet size
-	subnetSize := 1 << (32 - prefixLength)
+	subnetSize := uint32(1 << (32 - prefixLength))
 
 	// Try to find an available subnet range
 	vnetIP := vnetNet.IP.To4()
@@ -430,14 +430,15 @@ func (i *Installer) calculateAvailableSubnetInRange(vnetCIDR string, existingSub
 
 	// Convert IP to uint32 for easier calculation
 	vnetStart := uint32(vnetIP[0])<<24 | uint32(vnetIP[1])<<16 | uint32(vnetIP[2])<<8 | uint32(vnetIP[3])
-	vnetMask := uint32(0xFFFFFFFF) << (32 - i.getNetworkPrefixLength(vnetNet))
+	vnetPrefixLength := i.getNetworkPrefixLength(vnetNet)
+	vnetMask := uint32(0xFFFFFFFF) << (32 - uint32(vnetPrefixLength))
 	vnetEnd := vnetStart | (^vnetMask)
 
 	// Start from a high address in the VNet range to avoid conflicts with existing subnets
-	startAddress := vnetEnd - uint32(subnetSize) + 1
-	startAddress = startAddress &^ (uint32(subnetSize) - 1) // Align to subnet boundary
+	startAddress := vnetEnd - subnetSize + 1
+	startAddress = startAddress &^ (subnetSize - 1) // Align to subnet boundary
 
-	for currentAddr := startAddress; currentAddr >= vnetStart; currentAddr -= uint32(subnetSize) {
+	for currentAddr := startAddress; currentAddr >= vnetStart; currentAddr -= subnetSize {
 		// Create candidate subnet
 		candidateIP := net.IPv4(
 			byte(currentAddr>>24),
