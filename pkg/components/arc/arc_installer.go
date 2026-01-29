@@ -242,7 +242,8 @@ func (i *Installer) runArcAgentConnect(ctx context.Context) error {
 		return fmt.Errorf("failed to configure authentication for Arc agent: %w", err)
 	}
 
-	if err := utils.RunSystemCommand("azcmagent", args...); err != nil {
+	// Execute azcmagent command securely (avoid logging access token)
+	if err := i.runAzcmagentSecurely("azcmagent", args); err != nil {
 		return fmt.Errorf("failed to connect to Azure Arc: %w", err)
 	}
 
@@ -421,5 +422,30 @@ func (i *Installer) addAuthenticationArgs(ctx context.Context, args *[]string) e
 
 	i.logger.Info("Using access token authentication for Arc agent")
 	*args = append(*args, "--access-token", accessToken)
+	return nil
+}
+
+// runAzcmagentSecurely executes azcmagent command without logging sensitive arguments
+func (i *Installer) runAzcmagentSecurely(name string, args []string) error {
+	// Create command args without exposing the access token in logs
+	maskedArgs := make([]string, len(args))
+	copy(maskedArgs, args)
+
+	// Find and mask the access token
+	for j := 0; j < len(maskedArgs)-1; j++ {
+		if maskedArgs[j] == "--access-token" {
+			maskedArgs[j+1] = "***REDACTED***"
+			break
+		}
+	}
+
+	i.logger.Infof("Executing command: %s %v", name, maskedArgs)
+
+	// Execute the actual command with real args but capture output to avoid logging
+	_, err := utils.RunCommandWithOutput(name, args...)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

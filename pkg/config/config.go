@@ -82,11 +82,23 @@ func LoadConfig(configPath string) (*Config, error) {
 
 // SetDefaults sets default values for any missing configuration fields
 func (c *Config) SetDefaults() {
+	c.setAzureCloudDefaults()
+	c.setAgentDefaults()
+	c.setPathDefaults()
+	c.setNodeDefaults()
+	c.setContainerdDefaults()
+	c.setRuncDefaults()
+	c.setNpdDefaults()
+}
+
+func (c *Config) setAzureCloudDefaults() {
 	// Set default Azure cloud if not provided
 	if c.Azure.Cloud == "" {
 		c.Azure.Cloud = defaultAzureCloud
 	}
+}
 
+func (c *Config) setAgentDefaults() {
 	// Set default agent configuration if not provided
 	if c.Agent.LogLevel == "" {
 		c.Agent.LogLevel = defaultLogLevel
@@ -94,7 +106,9 @@ func (c *Config) SetDefaults() {
 	if c.Agent.LogDir == "" {
 		c.Agent.LogDir = defaultLogDir
 	}
+}
 
+func (c *Config) setPathDefaults() {
 	// Set default paths for Kubernetes components if not provided
 	if c.Paths.Kubernetes.ConfigDir == "" {
 		c.Paths.Kubernetes.ConfigDir = "/etc/kubernetes"
@@ -111,13 +125,26 @@ func (c *Config) SetDefaults() {
 	if c.Paths.Kubernetes.KubeletDir == "" {
 		c.Paths.Kubernetes.KubeletDir = "/var/lib/kubelet"
 	}
+}
 
+func (c *Config) setNodeDefaults() {
 	// Set default node configuration if not provided
 	if c.Node.MaxPods == 0 {
 		c.Node.MaxPods = 110 // Default Kubernetes node pod limit
 	}
 
+	// set default node labels if not provided
+	if c.Node.Labels == nil {
+		c.Node.Labels = make(map[string]string)
+	}
+	// Mark node as unmanaged by cloud controller manager by default, otherwise ccm will delete this node if node is not ready
+	// doc: https://cloud-provider-azure.sigs.k8s.io/topics/cross-resource-group-nodes/#unmanaged-nodes
+	c.Node.Labels["kubernetes.azure.com/managed"] = "false"
+
 	// Set default kubelet configuration if not provided
+	if c.Node.Kubelet.Verbosity == 0 {
+		c.Node.Kubelet.Verbosity = 2
+	}
 	if c.Node.Kubelet.ImageGCHighThreshold == 0 {
 		c.Node.Kubelet.ImageGCHighThreshold = 85 // start GC when disk usage > 85%
 	}
@@ -131,16 +158,22 @@ func (c *Config) SetDefaults() {
 	if c.Node.Kubelet.EvictionHard == nil {
 		c.Node.Kubelet.EvictionHard = make(map[string]string)
 	}
+}
 
+func (c *Config) setContainerdDefaults() {
 	if c.Containerd.MetricsAddress == "" {
 		c.Containerd.MetricsAddress = "0.0.0.0:10257"
 	}
+}
 
+func (c *Config) setRuncDefaults() {
 	// Set default runc configuration if not provided
 	if c.Runc.Version == "" {
 		c.Runc.Version = "1.1.12"
 	}
+}
 
+func (c *Config) setNpdDefaults() {
 	// Set default NPD configuration if not provided
 	if c.Npd.Version == "" {
 		c.Npd.Version = "v1.35.1"

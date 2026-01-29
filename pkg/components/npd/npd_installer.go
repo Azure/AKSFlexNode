@@ -40,6 +40,11 @@ func (i *Installer) Execute(ctx context.Context) error {
 		return fmt.Errorf("NPD installation failed: %w", err)
 	}
 
+	i.logger.Info("Configuring NPD")
+	if err := i.configure(); err != nil {
+		return fmt.Errorf("NPD configuration failed: %w", err)
+	}
+
 	i.logger.Infof("Node Problem Detector version %s installed successfully", i.config.Npd.Version)
 	return nil
 }
@@ -80,7 +85,7 @@ func (i *Installer) installNpd() error {
 	}
 
 	tempNpdPath := filepath.Join(tempDir, "bin/node-problem-detector")
-	tempNpdConfig := filepath.Join(tempDir, "config/system-stats-monitor.json")
+	tempNpdConfig := filepath.Join(tempDir, "config/kernel-monitor.json")
 
 	// Verify extracted binary
 	if output, err := utils.RunCommandWithOutput("file", tempNpdPath); err != nil {
@@ -105,6 +110,51 @@ func (i *Installer) installNpd() error {
 	}
 
 	i.logger.Infof("Node Problem Detector version %s installed successfully", i.config.Npd.Version)
+	return nil
+}
+
+func (i *Installer) configure() error {
+	// Create NPD systemd service
+	if err := i.createNpdServiceFile(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (i *Installer) createNpdServiceFile() error {
+	kubeConfigData, err := utils.RunCommandWithOutput("cat", kubeletKubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read kubelet kubeconfig file: %w", err)
+	}
+
+	serverURL, _, err := utils.ExtractClusterInfo([]byte(kubeConfigData))
+	if err != nil {
+		return fmt.Errorf("failed to extract cluster info: %w", err)
+	}
+
+	cmd := fmt.Sprintf("%s --apiserver-override=\"%s?inClusterConfig=false&auth=%s\" --config.system-log-monitor=%s",
+		npdBinaryPath, serverURL, kubeletKubeconfigPath, npdConfigPath)
+
+	npdService := `[Unit]
+Description=Node Problem Detector
+After=network.target
+
+[Service]
+ExecStart=` + cmd + `
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+`
+	// Write NPD service file atomically with proper permissions
+	if err := utils.WriteFileAtomicSystem(npdServicePath, []byte(npdService), 0644); err != nil {
+		return fmt.Errorf("failed to create NPD service file: %w", err)
+	}
+
+	i.logger.Infof("Created NPD systemd service file at %s", npdServicePath)
+
 	return nil
 }
 

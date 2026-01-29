@@ -2,8 +2,11 @@ package npd
 
 // NPD binary paths to check and manage
 const (
-	npdBinaryPath = "/usr/bin/node-problem-detector"
-	npdConfigPath = "/etc/node-problem-detector/system-stats-monitor.json"
+	npdBinaryPath  = "/usr/bin/node-problem-detector"
+	npdConfigPath  = "/etc/node-problem-detector/kernel-monitor.json"
+	npdServicePath = "/etc/systemd/system/node-problem-detector.service"
+
+	kubeletKubeconfigPath = "/var/lib/kubelet/kubeconfig"
 
 	tempDir = "/tmp/npd"
 )

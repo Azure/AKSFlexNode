@@ -45,8 +45,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		cni.NewInstaller(b.logger),                  // Setup CNI (after container runtime)
 		kubelet.NewInstaller(b.logger),              // Configure kubelet service with Arc MSI auth
 		kube_proxy.NewInstaller(b.logger),           // Install and configure kube-proxy
-		services.NewInstaller(b.logger),             // Start services
 		npd.NewInstaller(b.logger),                  // Install Node Problem Detector
+		services.NewInstaller(b.logger),             // Start services
 	}
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")
@@ -55,8 +55,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 // Unbootstrap executes all cleanup steps sequentially (in reverse order of bootstrap)
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
 	steps := []Executor{
-		npd.NewUnInstaller(b.logger),                  // Uninstall Node Problem Detector
 		services.NewUnInstaller(b.logger),             // Stop services first
+		npd.NewUnInstaller(b.logger),                  // Uninstall Node Problem Detector
 		kube_proxy.NewUnInstaller(b.logger),           // Uninstall kube-proxy
 		kubelet.NewUnInstaller(b.logger),              // Clean kubelet configuration
 		cni.NewUnInstaller(b.logger),                  // Clean CNI configs

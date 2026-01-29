@@ -53,20 +53,16 @@ confirm_uninstall() {
     echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node unbootstrap' to clean up cluster and Arc resources.${NC}"
     echo ""
 
-    # Check if running interactively
-    if [[ -t 0 ]]; then
-        read -p "Are you sure you want to continue? (y/N): " -n 1 -r
+    # Always prompt for confirmation, even when piped
+    if [[ "${1:-}" != "--force" ]]; then
+        read -p "Are you sure you want to continue? (y/N): " -n 1 -r response </dev/tty
         echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        if [[ ! $response =~ ^[Yy]$ ]]; then
             echo "Uninstall cancelled."
             exit 0
         fi
     else
-        log_warning "Running in non-interactive mode. Use --force to skip confirmation."
-        if [[ "${1:-}" != "--force" ]]; then
-            log_error "Uninstall cancelled. Use --force flag to proceed without confirmation."
-            exit 1
-        fi
+        log_info "Force flag provided, skipping confirmation."
     fi
 }
 

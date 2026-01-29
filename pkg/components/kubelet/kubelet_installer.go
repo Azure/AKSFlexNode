@@ -2,7 +2,6 @@ package kubelet
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,8 +9,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
@@ -202,6 +199,7 @@ func (i *Installer) createKubeletDefaultsFile() error {
 
 	// Build kubelet flags dynamically
 	kubeletFlags := []string{
+		fmt.Sprintf("--v=%d", i.config.Node.Kubelet.Verbosity),
 		"--address=0.0.0.0",
 		"--anonymous-auth=false",
 		"--authentication-token-webhook=true",
@@ -258,7 +256,7 @@ KUBELET_FLAGS="\
 	}
 
 	// Write kubelet defaults file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(kubeletDefaultsPath, []byte(kubeletDefaults), 0644); err != nil {
+	if err := utils.WriteFileAtomicSystem(kubeletDefaultsPath, []byte(kubeletDefaults), 0o644); err != nil {
 		return fmt.Errorf("failed to create kubelet defaults file: %w", err)
 	}
 
@@ -273,7 +271,7 @@ func (i *Installer) createSystemdDropInFile(filePath, content, description strin
 	}
 
 	// Write config file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(filePath, []byte(content), 0644); err != nil {
+	if err := utils.WriteFileAtomicSystem(filePath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("failed to create %s: %w", description, err)
 	}
 
@@ -313,7 +311,6 @@ ExecStartPre=-/sbin/iptables -t nat --numeric --list
 ExecStart=/usr/local/bin/kubelet \
         --enable-server \
         --node-labels="${KUBELET_NODE_LABELS}" \
-        --v=2 \
         --volume-plugin-dir=/etc/kubernetes/volumeplugins \
         --pod-manifest-path=/etc/kubernetes/manifests/ \
         $KUBELET_TLS_BOOTSTRAP_FLAGS \
@@ -324,7 +321,7 @@ ExecStart=/usr/local/bin/kubelet \
 WantedBy=multi-user.target`
 
 	// Write kubelet service file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(kubeletServicePath, []byte(kubeletService), 0644); err != nil {
+	if err := utils.WriteFileAtomicSystem(kubeletServicePath, []byte(kubeletService), 0o644); err != nil {
 		return fmt.Errorf("failed to create kubelet service file: %w", err)
 	}
 
@@ -370,7 +367,7 @@ curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL |
 	}
 
 	// Write token script atomically with executable permissions
-	if err := utils.WriteFileAtomicSystem(kubeletTokenScriptPath, []byte(tokenScript), 0755); err != nil {
+	if err := utils.WriteFileAtomicSystem(kubeletTokenScriptPath, []byte(tokenScript), 0o755); err != nil {
 		return fmt.Errorf("failed to create Arc token script: %w", err)
 	}
 
@@ -389,7 +386,7 @@ func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) erro
 		return fmt.Errorf("failed to get cluster credentials: %w", err)
 	}
 
-	serverURL, caCertData, err := i.extractClusterInfo(kubeconfig)
+	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
 	}
@@ -432,7 +429,7 @@ users:
 		i.config.Azure.TargetCluster.Name)
 
 	// Write kubeconfig file to the correct location for kubelet
-	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0600); err != nil {
+	if err := utils.WriteFileAtomicSystem(kubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
 		return fmt.Errorf("failed to create kubeconfig file: %w", err)
 	}
 
@@ -451,7 +448,6 @@ func (i *Installer) setUpClients() error {
 	}
 	i.mcClient = clientFactory.NewManagedClustersClient()
 	return nil
-
 }
 
 // GetClusterCredentials retrieves cluster kube admin credentials using Azure SDK
@@ -485,44 +481,6 @@ func (i *Installer) getClusterCredentials(ctx context.Context) ([]byte, error) {
 
 	// The Value field is already []byte containing the kubeconfig data, no decoding needed
 	return kubeconfig.Value, nil
-}
-
-// extractClusterInfo extracts server URL and CA certificate data from kubeconfig
-func (i *Installer) extractClusterInfo(kubeconfigData []byte) (string, string, error) {
-	config, err := clientcmd.Load(kubeconfigData)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse kubeconfig: %w", err)
-	}
-
-	// For Azure AKS admin configs, there's typically only one cluster
-	if len(config.Clusters) == 0 {
-		return "", "", fmt.Errorf("no clusters found in kubeconfig")
-	}
-
-	// Get the first (and usually only) cluster
-	var cluster *api.Cluster
-	var clusterName string
-	for name, c := range config.Clusters {
-		cluster = c
-		clusterName = name
-		break
-	}
-
-	i.logger.Debugf("Using cluster: %s", clusterName)
-
-	// Extract what we need
-	if cluster.Server == "" {
-		return "", "", fmt.Errorf("server URL is empty")
-	}
-
-	if len(cluster.CertificateAuthorityData) == 0 {
-		return "", "", fmt.Errorf("CA certificate data is empty")
-	}
-
-	// CertificateAuthorityData should be base64-encoded for kubeconfig
-	// The field contains raw certificate bytes, so we need to encode them
-	caCertDataB64 := base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
-	return cluster.Server, caCertDataB64, nil
 }
 
 // mapToKeyValuePairs converts a map to key=value pairs joined by separator

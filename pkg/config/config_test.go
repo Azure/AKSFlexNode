@@ -50,6 +50,7 @@ func TestSetDefaults(t *testing.T) {
 			},
 			want: func(c *Config) bool {
 				return c.Node.MaxPods == 50 && // preserved
+					c.Node.Kubelet.Verbosity == 2 &&
 					c.Node.Kubelet.ImageGCHighThreshold == 85 &&
 					c.Node.Kubelet.ImageGCLowThreshold == 80 &&
 					c.Node.Kubelet.KubeReserved != nil &&
@@ -307,7 +308,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create temporary config file
 			configFile := filepath.Join(tempDir, "config.json")
-			if err := os.WriteFile(configFile, []byte(tt.configJSON), 0644); err != nil {
+			if err := os.WriteFile(configFile, []byte(tt.configJSON), 0o644); err != nil {
 				t.Fatalf("Failed to write test config file: %v", err)
 			}
 
