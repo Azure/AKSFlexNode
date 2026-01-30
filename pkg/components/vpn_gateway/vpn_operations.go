@@ -788,9 +788,14 @@ func (i *Installer) extractOpenVPNConfig(zipPath string) (string, error) {
 	}
 	defer func() { _ = reader.Close() }()
 
-	// Look specifically for OpenVPN/vpnconfig.ovpn
+	// Look for any .ovpn file in the ZIP (handle different path separators)
+	i.logger.Info("Examining ZIP contents:")
 	for _, file := range reader.File {
-		if file.Name == "OpenVPN/vpnconfig.ovpn" {
+		i.logger.Infof("  File: %s", file.Name)
+		fileName := strings.ToLower(file.Name)
+		// Check for .ovpn files in OpenVPN directory (handle both / and \ separators)
+		if strings.HasSuffix(fileName, ".ovpn") &&
+		   (strings.Contains(fileName, "openvpn/") || strings.Contains(fileName, "openvpn\\")) {
 			// Extract and read the config file with size limits
 			fileReader, err := file.Open()
 			if err != nil {
@@ -812,5 +817,5 @@ func (i *Installer) extractOpenVPNConfig(zipPath string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("OpenVPN/vpnconfig.ovpn not found in ZIP")
+	return "", fmt.Errorf("OpenVPN configuration file (.ovpn) not found in ZIP")
 }
