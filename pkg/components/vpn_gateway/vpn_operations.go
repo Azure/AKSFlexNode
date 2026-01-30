@@ -795,7 +795,7 @@ func (i *Installer) extractOpenVPNConfig(zipPath string) (string, error) {
 		fileName := strings.ToLower(file.Name)
 		// Check for .ovpn files in OpenVPN directory (handle both / and \ separators)
 		if strings.HasSuffix(fileName, ".ovpn") &&
-		   (strings.Contains(fileName, "openvpn/") || strings.Contains(fileName, "openvpn\\")) {
+			(strings.Contains(fileName, "openvpn/") || strings.Contains(fileName, "openvpn\\")) {
 			// Extract and read the config file with size limits
 			fileReader, err := file.Open()
 			if err != nil {
