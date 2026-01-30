@@ -8,10 +8,37 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
+
+// timestampedFileWriter adds timestamps to log entries before writing to file
+type timestampedFileWriter struct {
+	writer io.Writer
+}
+
+// Write implements io.Writer interface and adds timestamp prefix to file logs
+func (t *timestampedFileWriter) Write(p []byte) (n int, err error) {
+	// Add timestamp prefix to the log entry for file output
+	timestamp := fmt.Sprintf("[%s] ", time.Now().Format("2006-01-02 15:04:05.000"))
+	timestampedEntry := append([]byte(timestamp), p...)
+
+	// Write the timestamped entry to the underlying writer
+	written, err := t.writer.Write(timestampedEntry)
+	if err != nil {
+		return 0, err
+	}
+
+	// Ensure we wrote all the timestamped data
+	if written < len(timestampedEntry) {
+		return 0, fmt.Errorf("short write: wrote %d bytes, expected %d", written, len(timestampedEntry))
+	}
+
+	// Return the original input length to satisfy io.MultiWriter expectations
+	return len(p), nil
+}
 
 // Context key for storing logger
 type contextKey string
@@ -84,8 +111,9 @@ func SetupLogger(ctx context.Context, level, logDir string) context.Context {
 	// Configure log formatter for systemd compatibility
 	logger.SetReportCaller(true)
 
-	// Detect if running under systemd (check for journal environment)
-	isSystemdService := os.Getenv("JOURNAL_STREAM") != "" || isRunningUnderSystemd()
+	// Detect if running as a systemd service (not just under systemd)
+	// Only use systemd formatting when actually running as a service
+	isSystemdService := os.Getenv("JOURNAL_STREAM") != ""
 
 	if isSystemdService {
 		// For systemd services, use a simpler formatter optimized for journald
@@ -105,7 +133,9 @@ func SetupLogger(ctx context.Context, level, logDir string) context.Context {
 			if fileWriter, err := setupLogFileWriter(logDir); err != nil {
 				fmt.Printf("Warning: Failed to setup log file in directory '%s': %v. Logging to journal only.\n", logDir, err)
 			} else {
-				writers = append(writers, fileWriter)
+				// Create a timestamped file writer wrapper
+				timestampedFileWriter := &timestampedFileWriter{fileWriter}
+				writers = append(writers, timestampedFileWriter)
 			}
 		}
 

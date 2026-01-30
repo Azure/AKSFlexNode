@@ -7,7 +7,9 @@ const (
 	DefaultCNILibDir  = "/var/lib/cni"
 
 	// CNI configuration files
-	bridgeConfigFile = "10-bridge.conf"
+	// Using 99-bridge.conf (high number) ensures CNI solutions like Cilium
+	// can override this temporary bridge with lower-numbered configs (e.g., 05-cilium.conf)
+	bridgeConfigFile = "99-bridge.conf"
 
 	// Required CNI plugins
 	bridgePlugin    = "bridge"
@@ -18,10 +20,10 @@ const (
 	tuningPlugin    = "tuning"
 
 	// CNI version
-	DefaultCNIVersion = "1.5.1"
+	defaultCNIVersion = "1.5.1"
 
 	// CNI specification version for configuration files
-	DefaultCNISpecVersion = "0.3.1"
+	defaultCNISpecVersion = "0.3.1"
 )
 
 var cniDirs = []string{

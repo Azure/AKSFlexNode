@@ -21,7 +21,7 @@ const (
 	kubeletKubeConfig          = "/etc/kubernetes/kubelet.conf"
 	kubeletBootstrapKubeConfig = "/etc/kubernetes/bootstrap-kubelet.conf"
 	kubeletVarDir              = "/var/lib/kubelet"
-	kubeletKubeconfigPath      = "/var/lib/kubelet/kubeconfig"
+	KubeletKubeconfigPath      = "/var/lib/kubelet/kubeconfig"
 	kubeletTokenScriptPath     = "/var/lib/kubelet/token.sh"
 
 	// Azure resource identifiers

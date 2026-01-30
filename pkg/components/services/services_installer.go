@@ -60,6 +60,19 @@ func (i *Installer) Execute(ctx context.Context) error {
 		return fmt.Errorf("kubelet failed to start properly: %w", err)
 	}
 
+	// Enable and start kube-proxy
+	i.logger.Info("Enabling and starting kube-proxy service")
+	if err := utils.EnableAndStartService("kube-proxy"); err != nil {
+		i.logger.Errorf("Failed to enable and start kube-proxy: %v", err)
+		return fmt.Errorf("failed to enable and start kube-proxy: %w", err)
+	}
+
+	// Wait for kube-proxy to start
+	i.logger.Info("Waiting for kube-proxy to start...")
+	if err := utils.WaitForService("kube-proxy", 30*time.Second, i.logger); err != nil {
+		return fmt.Errorf("kube-proxy failed to start properly: %w", err)
+	}
+
 	i.logger.Info("Enabling and starting node-problem-detector service")
 	if err := utils.EnableAndStartService("node-problem-detector"); err != nil {
 		i.logger.Errorf("Failed to enable and start node-problem-detector: %v", err)

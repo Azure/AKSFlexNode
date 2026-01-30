@@ -24,6 +24,7 @@ type AzureConfig struct {
 	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
 	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
 	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
+	VPNGateway       *VPNConfig              `json:"vpnGateway"`                 // Azure VPN gateway configuration for P2S connectivity
 	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
 }
 
@@ -51,6 +52,15 @@ type ArcConfig struct {
 	Tags          map[string]string `json:"tags"`          // Tags to apply to the Arc machine
 	ResourceGroup string            `json:"resourceGroup"` // Azure resource group for Arc machine
 	Location      string            `json:"location"`      // Azure region for Arc machine
+}
+
+// VPNConfig holds configuration settings for the VPN gateway.
+type VPNConfig struct {
+	Enabled        bool   `json:"enabled"`
+	P2SGatewayCIDR string `json:"p2sGatewayCIDR"`
+	GatewaySKU     string `json:"gatewaySKU"`
+	PodCIDR        string `json:"podCIDR,omitempty"` // Pod network CIDR (e.g., "10.244.0.0/16") - required for routing
+	VNetID         string `json:"vnetID,omitempty"`  //  Azure VNet resource ID (AKS managed or BYO VNet where AKS nodes reside)
 }
 
 // AgentConfig holds agent-specific operational configuration.
@@ -108,7 +118,7 @@ type KubernetesPathsConfig struct {
 	KubeletDir      string `json:"kubeletDir"`
 }
 
-// CNIPathsConfig holds file system paths related to CNI plugins and configurations.
+// CNIConfig holds configuration settings for CNI plugins and networking
 type CNIConfig struct {
 	Version string `json:"version"`
 }
@@ -158,6 +168,14 @@ func (cfg *Config) GetTargetClusterSubscriptionID() string {
 func (cfg *Config) GetTargetClusterResourceGroup() string {
 	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.ResourceGroup != "" {
 		return cfg.Azure.TargetCluster.ResourceGroup
+	}
+	return ""
+}
+
+// GetTargetClusterNodeResourceGroup returns the target AKS cluster node resource group from configuration
+func (cfg *Config) GetTargetClusterNodeResourceGroup() string {
+	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.NodeResourceGroup != "" {
+		return cfg.Azure.TargetCluster.NodeResourceGroup
 	}
 	return ""
 }
@@ -216,4 +234,29 @@ func (cfg *Config) GetTenantID() string {
 // GetKubernetesVersion returns the Kubernetes version from configuration
 func (cfg *Config) GetKubernetesVersion() string {
 	return cfg.Kubernetes.Version
+}
+
+// IsVPNGatewayEnabled checks if VPN Gateway is enabled in the configuration
+func (cfg *Config) IsVPNGatewayEnabled() bool {
+	if cfg.Azure.VPNGateway != nil &&
+		cfg.Azure.VPNGateway.Enabled {
+		return true
+	}
+	return false
+}
+
+// GetVPNGatewayVNetID returns the VNet ID for the VPN Gateway from configuration
+func (cfg *Config) GetVPNGatewayVNetID() string {
+	if cfg.Azure.VPNGateway != nil {
+		return cfg.Azure.VPNGateway.VNetID
+	}
+	return ""
+}
+
+// GetVPNGatewayPodCIDR returns the Pod CIDR for the VPN Gateway from configuration
+func (cfg *Config) GetVPNGatewayPodCIDR() string {
+	if cfg.Azure.VPNGateway != nil {
+		return cfg.Azure.VPNGateway.PodCIDR
+	}
+	return ""
 }

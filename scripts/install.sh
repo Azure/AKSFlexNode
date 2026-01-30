@@ -236,7 +236,7 @@ check_azure_cli_auth() {
             log_info "  3. Then re-run this installer with sudo"
             log_info ""
             echo -n "Do you want to continue anyway? (service principal auth only) [y/N]: "
-            read -r response
+            read -r response </dev/tty
             case "$response" in
                 [yY]|[yY][eE][sS])
                     log_info "Continuing without CLI authentication. Make sure to configure service principal."

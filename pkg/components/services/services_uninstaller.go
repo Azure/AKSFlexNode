@@ -31,6 +31,17 @@ func (su *UnInstaller) GetName() string {
 func (su *UnInstaller) Execute(ctx context.Context) error {
 	su.logger.Info("Stopping and disabling services")
 
+	// Stop and disable kube-proxy
+	if utils.ServiceExists("kube-proxy") {
+		su.logger.Info("Stopping and disabling kube-proxy service")
+		if err := utils.StopService("kube-proxy"); err != nil {
+			su.logger.Warnf("Failed to stop kube-proxy: %v", err)
+		}
+		if err := utils.DisableService("kube-proxy"); err != nil {
+			su.logger.Warnf("Failed to disable kube-proxy: %v", err)
+		}
+	}
+
 	// Stop and disable kubelet
 	if utils.ServiceExists("kubelet") {
 		su.logger.Info("Stopping and disabling kubelet service")
@@ -59,6 +70,8 @@ func (su *UnInstaller) Execute(ctx context.Context) error {
 
 // IsCompleted checks if services have been stopped and disabled
 func (su *UnInstaller) IsCompleted(ctx context.Context) bool {
-	// Services are considered Executeed if they are not active
-	return !utils.IsServiceActive("containerd") && !utils.IsServiceActive("kubelet")
+	// Services are considered completed if they are not active
+	return !utils.IsServiceActive("containerd") &&
+		!utils.IsServiceActive("kubelet") &&
+		!utils.IsServiceActive("kube-proxy")
 }
