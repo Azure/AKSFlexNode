@@ -91,8 +91,8 @@ func (i *Installer) configure(ctx context.Context) error {
 		return err
 	}
 
-	// Create Arc token script for exec credential authentication
-	if err := i.createArcTokenScript(); err != nil {
+	// Create token script for exec credential authentication (Arc or Service Principal)
+	if err := i.createTokenScript(); err != nil {
 		return err
 	}
 
@@ -313,6 +313,17 @@ WantedBy=multi-user.target`
 	return nil
 }
 
+// createTokenScript creates either Arc or Service Principal token script based on configuration
+func (i *Installer) createTokenScript() error {
+	if i.config.IsARCEnabled() {
+		return i.createArcTokenScript()
+	} else if i.config.IsSPConfigured() {
+		return i.createServicePrincipalTokenScript()
+	} else {
+		return fmt.Errorf("no valid authentication method configured - either Arc must be enabled or Service Principal must be configured")
+	}
+}
+
 // createArcTokenScript creates the Arc token script for exec credential authentication
 func (i *Installer) createArcTokenScript() error {
 	// Arc HIMDS token script using proven Www-Authenticate challenge approach
@@ -346,6 +357,62 @@ fi
 
 curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL | jq "$EXECCREDENTIAL"`, aksServiceResourceID)
 
+	return i.writeTokenScript(tokenScript)
+}
+
+// createServicePrincipalTokenScript creates the Service Principal token script
+func (i *Installer) createServicePrincipalTokenScript() error {
+	sp := i.config.Azure.ServicePrincipal
+	tokenScript := fmt.Sprintf(`#!/bin/bash
+
+# Get Azure AD token using Service Principal credentials for direct AKS authentication
+
+CLIENT_ID="%s"
+CLIENT_SECRET="%s"
+TENANT_ID="%s"
+
+TOKEN_RESPONSE=$(curl -s -X POST \
+  "https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=${CLIENT_ID}" \
+  -d "client_secret=${CLIENT_SECRET}" \
+  -d "scope=%s/.default" \
+  -d "grant_type=client_credentials")
+
+if [ $? -ne 0 ]; then
+    echo "Failed to get token from Azure AD"
+    exit 255
+fi
+
+ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+if [ "$ACCESS_TOKEN" == "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+    echo "Failed to extract access token from response: $TOKEN_RESPONSE"
+    exit 255
+fi
+
+EXPIRES_IN=$(echo "$TOKEN_RESPONSE" | jq -r '.expires_in')
+EXPIRY_TIME=$(date -d "+${EXPIRES_IN} seconds" --iso-8601=seconds)
+
+# Return in ExecCredential format
+cat <<EOF
+{
+  "kind": "ExecCredential",
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "spec": {
+    "interactive": false
+  },
+  "status": {
+    "expirationTimestamp": "${EXPIRY_TIME}",
+    "token": "${ACCESS_TOKEN}"
+  }
+}
+EOF`, sp.ClientID, sp.ClientSecret, sp.TenantID, aksServiceResourceID)
+
+	return i.writeTokenScript(tokenScript)
+}
+
+// writeTokenScript helper method to write the token script with proper permissions
+func (i *Installer) writeTokenScript(tokenScript string) error {
 	// Ensure /var/lib/kubelet directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", kubeletVarDir); err != nil {
 		return fmt.Errorf("failed to create kubelet var directory: %w", err)
@@ -353,18 +420,18 @@ curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL |
 
 	// Write token script atomically with executable permissions
 	if err := utils.WriteFileAtomicSystem(kubeletTokenScriptPath, []byte(tokenScript), 0o755); err != nil {
-		return fmt.Errorf("failed to create Arc token script: %w", err)
+		return fmt.Errorf("failed to create token script: %w", err)
 	}
 
 	// Ensure the script has executable permissions (explicit chmod as backup)
 	if err := utils.RunSystemCommand("chmod", "755", kubeletTokenScriptPath); err != nil {
-		return fmt.Errorf("failed to set executable permissions on Arc token script: %w", err)
+		return fmt.Errorf("failed to set executable permissions on token script: %w", err)
 	}
 
 	return nil
 }
 
-// createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for Arc authentication
+// createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for authentication
 func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) error {
 	kubeconfig, err := i.getClusterCredentials(ctx)
 	if err != nil {
@@ -390,6 +457,16 @@ func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) erro
   name: %s`, serverURL, i.config.Azure.TargetCluster.Name)
 	}
 
+	// Determine user and context names based on auth method
+	var userName, contextName string
+	if i.config.IsARCEnabled() {
+		userName = "arc-user"
+		contextName = "arc-context"
+	} else {
+		userName = "sp-user"
+		contextName = "sp-context"
+	}
+
 	// Create kubeconfig with exec credential provider pointing to token script
 	kubeconfigContent := fmt.Sprintf(`apiVersion: v1
 kind: Config
@@ -398,11 +475,11 @@ clusters:
 contexts:
 - context:
     cluster: %s
-    user: arc-user
-  name: arc-context
-current-context: arc-context
+    user: %s
+  name: %s
+current-context: %s
 users:
-- name: arc-user
+- name: %s
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1beta1
@@ -411,7 +488,11 @@ users:
       provideClusterInfo: false
 `,
 		clusterConfig,
-		i.config.Azure.TargetCluster.Name)
+		i.config.Azure.TargetCluster.Name,
+		userName,
+		contextName,
+		contextName,
+		userName)
 
 	// Write kubeconfig file to the correct location for kubelet
 	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {

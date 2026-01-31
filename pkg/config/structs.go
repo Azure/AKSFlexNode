@@ -47,6 +47,7 @@ type TargetClusterConfig struct {
 
 // ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.
 type ArcConfig struct {
+	Enabled       bool              `json:"enabled"`       // Whether to enable Azure Arc registration
 	MachineName   string            `json:"machineName"`   // Name for the Arc machine resource
 	Tags          map[string]string `json:"tags"`          // Tags to apply to the Arc machine
 	ResourceGroup string            `json:"resourceGroup"` // Azure resource group for Arc machine
@@ -217,4 +218,9 @@ func (cfg *Config) GetTenantID() string {
 // GetKubernetesVersion returns the Kubernetes version from configuration
 func (cfg *Config) GetKubernetesVersion() string {
 	return cfg.Kubernetes.Version
+}
+
+// IsARCEnabled checks if Azure Arc registration is enabled in the configuration
+func (cfg *Config) IsARCEnabled() bool {
+	return cfg.Azure.Arc != nil && cfg.Azure.Arc.Enabled
 }

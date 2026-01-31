@@ -30,6 +30,10 @@ func NewInstaller(logger *logrus.Logger) *Installer {
 
 // Validate validates prerequisites for Arc installation
 func (i *Installer) Validate(ctx context.Context) error {
+	if !i.config.IsARCEnabled() {
+		i.logger.Info("Azure Arc installation is disabled in configuration")
+		return nil
+	}
 	// Ensure SP or CLI auth is ready for Arc agent setup
 	if err := i.ensureAuthentication(ctx); err != nil {
 		i.logger.Errorf("Authentication setup failed: %v", err)
@@ -93,6 +97,10 @@ func (i *Installer) Execute(ctx context.Context) error {
 // This can be used by bootstrap steps to verify completion status
 // Uses the same reliable logic as status collector for consistency
 func (i *Installer) IsCompleted(ctx context.Context) bool {
+	if !i.config.IsARCEnabled() {
+		i.logger.Info("Azure Arc installation is disabled in configuration, skipping execution")
+		return true
+	}
 	i.logger.Debug("Checking Arc setup completion status")
 
 	// Check if Arc services are running

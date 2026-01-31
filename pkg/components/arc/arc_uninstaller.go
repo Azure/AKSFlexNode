@@ -31,6 +31,10 @@ func (u *UnInstaller) GetName() string {
 // IsCompleted checks if Arc cleanup has been completed
 // always returns false to ensure cleanup is attempted
 func (u *UnInstaller) IsCompleted(ctx context.Context) bool {
+	if !u.config.IsARCEnabled() {
+		u.logger.Info("Azure Arc installation is disabled in configuration")
+		return true
+	}
 	return false
 }
 
