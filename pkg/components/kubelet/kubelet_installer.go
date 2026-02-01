@@ -217,6 +217,7 @@ KUBELET_FLAGS="\
   --image-gc-low-threshold=%d  \
   --max-pods=%d  \
   --node-status-update-frequency=10s  \
+  --pod-infra-container-image=%s  \
   --pod-max-pids=-1  \
   --protect-kernel-defaults=true  \
   --read-only-port=0  \
@@ -231,7 +232,8 @@ KUBELET_FLAGS="\
 		mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ","),
 		i.config.Node.Kubelet.ImageGCHighThreshold,
 		i.config.Node.Kubelet.ImageGCLowThreshold,
-		i.config.Node.MaxPods)
+		i.config.Node.MaxPods,
+		i.config.Containerd.PauseImage)
 
 	// Ensure /etc/default directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", etcDefaultDir); err != nil {

@@ -1,0 +1,949 @@
+name: E2E Tests
+
+# This workflow runs ONLY on self-hosted runner
+# Tests the COMPLETE flow: Create AKS cluster → Create VM → Register as flex node
+
+on:
+  # Manual trigger for E2E testing
+  workflow_dispatch:
+    inputs:
+      skip_cleanup:
+        description: 'Skip cleanup (keep cluster and VM for debugging)'
+        required: false
+        default: false
+        type: boolean
+
+  # Run on release tags
+  push:
+    tags:
+      - 'v*'
+
+  # Run on PRs - requires approval via environment protection
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  # ==========================================================================
+  # Job 1: Build Binary
+  # ==========================================================================
+  build:
+    name: Build Binary
+    runs-on: [self-hosted, e2e, azure]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build binary for E2E testing
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔨 Building aks-flex-node binary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          echo "Version:    $VERSION"
+          echo "Commit:     $GIT_COMMIT"
+          echo "Build Date: $BUILD_DATE"
+          echo ""
+
+          LDFLAGS="-X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT} -X main.BuildTime=${BUILD_DATE}"
+
+          GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o aks-flex-node .
+          chmod +x aks-flex-node
+
+          echo "✅ Binary built successfully"
+          ./aks-flex-node version
+
+      - name: Upload binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aks-flex-node-binary
+          path: aks-flex-node
+          retention-days: 1
+
+  # ==========================================================================
+  # Job 2: Provision Infrastructure
+  # ==========================================================================
+  provision-infrastructure:
+    name: Provision Infrastructure
+    runs-on: [self-hosted, e2e, azure]
+    needs: build
+    timeout-minutes: 15
+    environment: e2e-testing  # Requires approval
+    outputs:
+      cluster-name: ${{ steps.names.outputs.CLUSTER_NAME }}
+      vm-name: ${{ steps.names.outputs.VM_NAME }}
+      node-name: ${{ steps.names.outputs.NODE_NAME }}
+      vm-ip: ${{ steps.provision-vm.outputs.VM_IP }}
+      vm-msi: ${{ steps.provision-vm.outputs.VM_MSI }}
+      cluster-id: ${{ steps.create-cluster.outputs.CLUSTER_ID }}
+
+    steps:
+      - name: Verify Azure Access
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔐 Verifying Azure Authentication"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Testing Managed Identity authentication..."
+          az account show --query "{Subscription:name, User:user.name}" -o table
+          echo "✅ Managed Identity works - no secrets needed!"
+
+      - name: Generate unique test names
+        id: names
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🏷️  Generating Test Resource Names"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          TIMESTAMP=$(date +%s)
+          CLUSTER_NAME="aks-e2e-test-${TIMESTAMP}"
+          VM_NAME="vm-e2e-test-${TIMESTAMP}"
+          NODE_NAME="e2e-node-${TIMESTAMP}"
+
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "VM_NAME=$VM_NAME" >> $GITHUB_OUTPUT
+          echo "NODE_NAME=$NODE_NAME" >> $GITHUB_OUTPUT
+
+          echo "Test Cluster: $CLUSTER_NAME"
+          echo "Test VM:      $VM_NAME"
+          echo "Arc Node:     $NODE_NAME"
+          echo ""
+          echo "✅ Names generated"
+
+      - name: Create AKS cluster
+        id: create-cluster
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "☸️  Creating AKS Cluster"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          START_TIME=$(date +%s)
+          CLUSTER_NAME="${{ steps.names.outputs.CLUSTER_NAME }}"
+
+          echo "Creating cluster: $CLUSTER_NAME"
+          echo "Location: ${{ secrets.E2E_LOCATION }}"
+          echo ""
+
+          az aks create \
+            --resource-group ${{ secrets.E2E_RESOURCE_GROUP }} \
+            --name $CLUSTER_NAME \
+            --location ${{ secrets.E2E_LOCATION }} \
+            --enable-managed-identity \
+            --enable-aad \
+            --enable-azure-rbac \
+            --network-plugin azure \
+            --node-count 1 \
+            --node-vm-size Standard_B2s \
+            --generate-ssh-keys \
+            --tags "github-run=${{ github.run_id }}" "purpose=e2e-test" "auto-delete=true" \
+            --output json > /tmp/cluster-info.json
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          # Get subscription ID dynamically from current context
+          SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+          # Construct resource ID
+          CLUSTER_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${{ secrets.E2E_RESOURCE_GROUP }}/providers/Microsoft.ContainerService/managedClusters/$CLUSTER_NAME"
+          echo "CLUSTER_ID=$CLUSTER_ID" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "✅ AKS cluster created in ${DURATION}s"
+          echo "Subscription ID: ${SUBSCRIPTION_ID}"
+          echo "Resource Group: ${{ secrets.E2E_RESOURCE_GROUP }}"
+          echo "Cluster Name: $CLUSTER_NAME"
+          echo "Resource ID: $CLUSTER_ID"
+
+          # Get cluster credentials
+          echo ""
+          echo "Configuring kubectl credentials..."
+          az aks get-credentials \
+            --resource-group ${{ secrets.E2E_RESOURCE_GROUP }} \
+            --name $CLUSTER_NAME \
+            --overwrite-existing \
+            --admin
+
+          echo "✅ Cluster credentials configured"
+
+      - name: Provision test VM with Managed Identity
+        id: provision-vm
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🖥️  Provisioning Test VM"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          START_TIME=$(date +%s)
+          VM_NAME="${{ steps.names.outputs.VM_NAME }}"
+
+          echo "Creating VM: $VM_NAME"
+          echo "Location: ${{ secrets.E2E_LOCATION }}"
+          echo "Image: Ubuntu 22.04 LTS"
+          echo ""
+
+          az vm create \
+            --resource-group ${{ secrets.E2E_RESOURCE_GROUP }} \
+            --name $VM_NAME \
+            --location ${{ secrets.E2E_LOCATION }} \
+            --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
+            --size Standard_B2ms \
+            --admin-username azureuser \
+            --generate-ssh-keys \
+            --public-ip-sku Standard \
+            --assign-identity \
+            --tags "github-run=${{ github.run_id }}" "purpose=e2e-test" "auto-delete=true" \
+            --output json > /tmp/vm-info.json
+
+          VM_IP=$(jq -r '.publicIpAddress' /tmp/vm-info.json)
+          VM_MSI=$(jq -r '.identity.systemAssignedIdentity' /tmp/vm-info.json)
+
+          echo "VM_IP=$VM_IP" >> $GITHUB_OUTPUT
+          echo "VM_MSI=$VM_MSI" >> $GITHUB_OUTPUT
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo ""
+          echo "✅ VM created in ${DURATION}s"
+          echo "IP Address: $VM_IP"
+          echo "MSI Principal: $VM_MSI"
+
+          # Wait for SSH
+          echo ""
+          echo "Waiting for SSH to be ready..."
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@$VM_IP "echo ready" &>/dev/null; then
+              echo "✅ SSH ready after $i attempts"
+              break
+            fi
+            echo "  Attempt $i/30..."
+            sleep 10
+          done
+
+      - name: Save infrastructure info
+        run: |
+          mkdir -p /tmp/e2e-artifacts
+
+          cat > /tmp/e2e-artifacts/infrastructure.json <<EOF
+          {
+            "cluster_name": "${{ steps.names.outputs.CLUSTER_NAME }}",
+            "vm_name": "${{ steps.names.outputs.VM_NAME }}",
+            "node_name": "${{ steps.names.outputs.NODE_NAME }}",
+            "vm_ip": "${{ steps.provision-vm.outputs.VM_IP }}",
+            "vm_msi": "${{ steps.provision-vm.outputs.VM_MSI }}",
+            "cluster_id": "${{ steps.create-cluster.outputs.CLUSTER_ID }}",
+            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+            "tenant_id": "${{ secrets.AZURE_TENANT_ID }}",
+            "resource_group": "${{ secrets.E2E_RESOURCE_GROUP }}",
+            "location": "${{ secrets.E2E_LOCATION }}"
+          }
+          EOF
+
+          echo "✅ Infrastructure info saved"
+
+      - name: Upload infrastructure info
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-info
+          path: /tmp/e2e-artifacts/infrastructure.json
+          retention-days: 1
+
+  # ==========================================================================
+  # Job 3: Grant Permissions
+  # ==========================================================================
+  grant-permissions:
+    name: Grant Permissions
+    runs-on: [self-hosted, e2e, azure]
+    needs: provision-infrastructure
+    timeout-minutes: 5
+
+    steps:
+      - name: Download infrastructure info
+        uses: actions/download-artifact@v4
+        with:
+          name: infrastructure-info
+          path: /tmp/
+
+      - name: Grant VM Arc onboarding permissions
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔑 Granting Arc Onboarding Permissions"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          VM_MSI="${{ needs.provision-infrastructure.outputs.vm-msi }}"
+          VM_NAME="${{ needs.provision-infrastructure.outputs.vm-name }}"
+
+          echo "VM:              $VM_NAME"
+          echo "MSI Principal:   $VM_MSI"
+          echo "Role:            Azure Connected Machine Onboarding"
+          echo "Scope:           Resource Group"
+          echo ""
+
+          # Wait for MSI replication in Azure AD
+          # Azure AD replication can take 5-60 seconds
+          echo "Waiting 30s for MSI replication in Azure AD..."
+          sleep 30
+
+          echo "Attempting role assignment (with retry)..."
+          # Retry role assignment with exponential backoff
+          for i in {1..5}; do
+            if az role assignment create \
+              --assignee-object-id $VM_MSI \
+              --assignee-principal-type ServicePrincipal \
+              --role "Azure Connected Machine Onboarding" \
+              --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.E2E_RESOURCE_GROUP }}" \
+              --output none 2>&1; then
+              echo ""
+              echo "✅ Permissions granted successfully on attempt $i"
+              break
+            else
+              if [ $i -lt 5 ]; then
+                WAIT_TIME=$((10 * i))  # Exponential backoff: 10s, 20s, 30s, 40s
+                echo "⚠️  Attempt $i failed, retrying in ${WAIT_TIME}s..."
+                sleep $WAIT_TIME
+              else
+                echo ""
+                echo "❌ Failed to grant permissions after 5 attempts"
+                echo ""
+                echo "Possible causes:"
+                echo "  - MSI not yet replicated in Azure AD (try increasing initial wait time)"
+                echo "  - Insufficient permissions on runner's managed identity"
+                echo "  - Azure RBAC service temporary issue"
+                exit 1
+              fi
+            fi
+          done
+
+          # Wait for permission propagation across Azure
+          echo ""
+          echo "Waiting 15s for permission propagation..."
+          sleep 15
+          echo "✅ Permissions ready for Arc registration"
+
+      - name: Grant VM MSI permissions to AKS cluster
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔑 Granting AKS Cluster Access Permissions to VM MSI"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Read infrastructure info from artifact
+          INFRA=$(cat /tmp/infrastructure.json)
+          VM_MSI=$(echo $INFRA | jq -r '.vm_msi')
+          CLUSTER_ID=$(echo $INFRA | jq -r '.cluster_id')
+          CLUSTER_NAME=$(echo $INFRA | jq -r '.cluster_name')
+
+          echo "VM MSI:          $VM_MSI"
+          echo "Cluster:         $CLUSTER_NAME"
+          echo "Cluster ID:      $CLUSTER_ID"
+          echo ""
+
+          echo "[1/2] Granting 'Azure Kubernetes Service Cluster Admin Role'..."
+          az role assignment create \
+            --assignee-object-id $VM_MSI \
+            --assignee-principal-type ServicePrincipal \
+            --role "Azure Kubernetes Service Cluster Admin Role" \
+            --scope "$CLUSTER_ID" \
+            --output none
+
+          echo "✅ Cluster Admin Role granted"
+
+          echo "[2/2] Granting 'Azure Kubernetes Service RBAC Cluster Admin'..."
+          az role assignment create \
+            --assignee-object-id $VM_MSI \
+            --assignee-principal-type ServicePrincipal \
+            --role "Azure Kubernetes Service RBAC Cluster Admin" \
+            --scope "$CLUSTER_ID" \
+            --output none
+
+          echo "✅ RBAC Cluster Admin Role granted"
+          echo ""
+          echo "Waiting 15s for permission propagation..."
+          sleep 15
+          echo "✅ AKS cluster permissions ready"
+
+      - name: Setup Azure CLI on VM
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "⚙️  Configuring Azure CLI on VM"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          VM_IP="${{ needs.provision-infrastructure.outputs.vm-ip }}"
+
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          echo "[1/3] Installing Azure CLI..."
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash >/dev/null 2>&1
+
+          echo "[2/3] Login azureuser with Managed Identity..."
+          az login --identity --output none
+
+          echo "[3/3] Login root with Managed Identity..."
+          sudo az login --identity --output none
+
+          echo ""
+          echo "✅ Azure CLI configured with MSI"
+          echo ""
+          echo "azureuser context:"
+          az account show --query "{Subscription:name, User:user.name}" -o table
+          echo ""
+          echo "root context:"
+          sudo az account show --query "{Subscription:name, User:user.name}" -o table
+          REMOTE
+
+          echo ""
+          echo "✅ Azure CLI setup complete"
+
+  # ==========================================================================
+  # Job 4: Bootstrap Flex Node
+  # ==========================================================================
+  bootstrap-flex-node:
+    name: Bootstrap Flex Node
+    runs-on: [self-hosted, e2e, azure]
+    needs: [provision-infrastructure, grant-permissions]
+    timeout-minutes: 15
+
+    steps:
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: aks-flex-node-binary
+          path: /tmp/
+
+      - name: Download infrastructure info
+        uses: actions/download-artifact@v4
+        with:
+          name: infrastructure-info
+          path: /tmp/
+
+      - name: Prepare bootstrap config
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📝 Generating Bootstrap Configuration"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Load infrastructure info
+          INFRA=$(cat /tmp/infrastructure.json)
+          CLUSTER_ID=$(echo $INFRA | jq -r '.cluster_id')
+          NODE_NAME=$(echo $INFRA | jq -r '.node_name')
+          CLUSTER_NAME=$(echo $INFRA | jq -r '.cluster_name')
+          VM_NAME=$(echo $INFRA | jq -r '.vm_name')
+          SUBSCRIPTION_ID=$(echo $INFRA | jq -r '.subscription_id')
+          TENANT_ID=$(echo $INFRA | jq -r '.tenant_id')
+          RESOURCE_GROUP=$(echo $INFRA | jq -r '.resource_group')
+          LOCATION=$(echo $INFRA | jq -r '.location')
+
+          echo "Cluster:  $CLUSTER_NAME"
+          echo "VM:       $VM_NAME"
+          echo "Arc Node: $NODE_NAME"
+          echo ""
+
+          cat > /tmp/config.json <<EOF
+          {
+            "azure": {
+              "subscriptionId": "$SUBSCRIPTION_ID",
+              "tenantId": "$TENANT_ID",
+              "cloud": "AzurePublicCloud",
+              "arc": {
+                "machineName": "$NODE_NAME",
+                "resourceGroup": "$RESOURCE_GROUP",
+                "location": "$LOCATION",
+                "autoRoleAssignment": true,
+                "tags": {
+                  "environment": "e2e-test",
+                  "github-run": "${{ github.run_id }}",
+                  "test-vm": "$VM_NAME",
+                  "test-cluster": "$CLUSTER_NAME"
+                }
+              },
+              "targetCluster": {
+                "resourceId": "$CLUSTER_ID",
+                "location": "$LOCATION"
+              }
+            },
+            "agent": {
+              "logLevel": "debug",
+              "logDir": "/var/log/aks-flex-node"
+            },
+            "kubernetes": {
+              "version": "1.35.0"
+            },
+            "containerd": {
+              "version": "1.7.13"
+            },
+            "runc": {
+              "version": "1.1.12"
+            }
+          }
+          EOF
+
+          echo "✅ Configuration generated (using VM's MSI - no servicePrincipal)"
+
+      - name: Upload files to VM
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📤 Uploading Files to VM"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          VM_IP="${{ needs.provision-infrastructure.outputs.vm-ip }}"
+
+          chmod +x /tmp/aks-flex-node
+
+          echo "Uploading binary..."
+          scp -o StrictHostKeyChecking=no /tmp/aks-flex-node azureuser@$VM_IP:/tmp/
+
+          echo "Uploading config..."
+          scp -o StrictHostKeyChecking=no /tmp/config.json azureuser@$VM_IP:/tmp/
+
+          echo "✅ Files uploaded to $VM_IP"
+
+      - name: Run bootstrap
+        id: bootstrap
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🚀 Running Bootstrap on VM"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          VM_IP="${{ needs.provision-infrastructure.outputs.vm-ip }}"
+          START_TIME=$(date +%s)
+
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP 'bash -s' <<'BOOTSTRAP_TEST'
+          set -euo pipefail
+
+          echo "[1/5] Installing aks-flex-node binary..."
+          sudo cp /tmp/aks-flex-node /usr/local/bin/
+          sudo chmod +x /usr/local/bin/aks-flex-node
+          aks-flex-node version
+          echo ""
+
+          echo "[2/5] Setting up configuration..."
+          sudo mkdir -p /etc/aks-flex-node
+          sudo cp /tmp/config.json /etc/aks-flex-node/
+          sudo mkdir -p /var/log/aks-flex-node
+          echo ""
+
+          echo "[3/5] Running agent (bootstrap)..."
+          sudo aks-flex-node agent --config /etc/aks-flex-node/config.json &
+          AGENT_PID=$!
+          echo "Agent PID: $AGENT_PID"
+          echo ""
+
+          # Wait for bootstrap to complete
+          echo "Waiting 30s for bootstrap process..."
+          sleep 30
+
+          # Check if agent is still running
+          if ps -p $AGENT_PID > /dev/null; then
+            echo "✅ Agent is running (PID: $AGENT_PID)"
+          else
+            echo "❌ Agent exited unexpectedly"
+            echo ""
+            echo "Last 50 lines of log:"
+            sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log
+            exit 1
+          fi
+          echo ""
+
+          echo "[4/5] Verifying kubelet..."
+          sleep 10  # Wait for kubelet to start
+          if systemctl is-active --quiet kubelet; then
+            echo "✅ kubelet is running"
+            systemctl status kubelet --no-pager -l | head -n 10
+          else
+            echo "⚠️  kubelet not running yet, checking status..."
+            systemctl status kubelet --no-pager -l || true
+          fi
+
+          echo "[5/5] Verifying node registration..."
+          echo "Node should appear in cluster within a few minutes"
+          BOOTSTRAP_TEST
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Bootstrap completed in ${DURATION}s"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ==========================================================================
+  # Job 5: Verify Integration
+  # ==========================================================================
+  verify-integration:
+    name: Verify Integration
+    runs-on: [self-hosted, e2e, azure]
+    needs: [provision-infrastructure, grant-permissions, bootstrap-flex-node]
+    if: always() && needs.bootstrap-flex-node.result == 'success'
+    timeout-minutes: 10
+
+    steps:
+      - name: Download infrastructure info
+        uses: actions/download-artifact@v4
+        with:
+          name: infrastructure-info
+          path: /tmp/
+
+      - name: Verify node joined AKS cluster
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "☸️  Verifying Node Joined Cluster"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          INFRA=$(cat /tmp/infrastructure.json)
+          NODE_NAME=$(echo $INFRA | jq -r '.node_name')
+          CLUSTER_NAME=$(echo $INFRA | jq -r '.cluster_name')
+          RESOURCE_GROUP=$(echo $INFRA | jq -r '.resource_group')
+
+          echo "Checking for node: $NODE_NAME"
+          echo "In cluster: $CLUSTER_NAME"
+          echo ""
+
+          # Get cluster credentials
+          az aks get-credentials \
+            --resource-group $RESOURCE_GROUP \
+            --name $CLUSTER_NAME \
+            --overwrite-existing \
+            --admin
+
+          # Wait for node to join
+          echo "Waiting for node to appear in cluster..."
+          for i in {1..30}; do
+            if kubectl get nodes | grep -q "$NODE_NAME"; then
+              echo ""
+              echo "✅ Node successfully joined cluster"
+              echo ""
+              kubectl get nodes
+              echo ""
+              kubectl get node $NODE_NAME -o wide
+              exit 0
+            fi
+            echo "  Waiting... ($i/30)"
+            sleep 10
+          done
+
+          echo ""
+          echo "❌ Node did not join cluster within timeout"
+          echo ""
+          echo "Current nodes in cluster:"
+          kubectl get nodes
+          exit 1
+
+      - name: Run smoke test
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧪 Running Smoke Test"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          INFRA=$(cat /tmp/infrastructure.json)
+          NODE_NAME=$(echo $INFRA | jq -r '.node_name')
+
+          echo "Deploying test pod to flex node..."
+
+          cat > /tmp/test-pod.yaml <<EOF
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: e2e-smoke-test
+          spec:
+            nodeSelector:
+              kubernetes.io/hostname: $NODE_NAME
+            containers:
+            - name: nginx
+              image: nginx:alpine
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "200m"
+          EOF
+
+          kubectl apply -f /tmp/test-pod.yaml
+
+          echo ""
+          echo "Waiting for pod to be ready..."
+          if kubectl wait --for=condition=Ready pod/e2e-smoke-test --timeout=120s; then
+            echo ""
+            echo "✅ Smoke test PASSED"
+            echo ""
+            kubectl get pod e2e-smoke-test -o wide
+
+            # Cleanup
+            kubectl delete pod e2e-smoke-test
+          else
+            echo ""
+            echo "❌ Smoke test FAILED"
+            echo ""
+            kubectl describe pod e2e-smoke-test
+            exit 1
+          fi
+
+  # ==========================================================================
+  # Job 6: Collect Logs (Always Runs)
+  # ==========================================================================
+  collect-logs:
+    name: Collect Logs
+    runs-on: [self-hosted, e2e, azure]
+    needs: [provision-infrastructure, grant-permissions, bootstrap-flex-node]
+    if: always() && needs.provision-infrastructure.result == 'success'
+    timeout-minutes: 5
+
+    steps:
+      - name: Download infrastructure info
+        uses: actions/download-artifact@v4
+        with:
+          name: infrastructure-info
+          path: /tmp/
+
+      - name: Collect logs from VM
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📋 Collecting Logs"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          mkdir -p /tmp/e2e-logs
+
+          INFRA=$(cat /tmp/infrastructure.json)
+          VM_IP=$(echo $INFRA | jq -r '.vm_ip')
+
+          echo "Collecting logs from VM: $VM_IP"
+          echo ""
+
+          echo "[1/4] aks-flex-node.log"
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
+            "sudo cat /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null" \
+            > /tmp/e2e-logs/aks-flex-node.log || echo "⚠️  No aks-flex-node log"
+
+          echo "[2/4] kubelet.log"
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
+            "sudo journalctl -u kubelet -n 200 --no-pager 2>/dev/null" \
+            > /tmp/e2e-logs/kubelet.log || echo "⚠️  No kubelet log"
+
+          echo "[3/4] containerd.log"
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
+            "sudo journalctl -u containerd -n 100 --no-pager 2>/dev/null" \
+            > /tmp/e2e-logs/containerd.log || echo "⚠️  No containerd log"
+
+          echo "[4/4] azcmagent.log"
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
+            "sudo azcmagent show 2>/dev/null" \
+            > /tmp/e2e-logs/azcmagent.log || echo "⚠️  No azcmagent log"
+
+          echo ""
+          echo "✅ Logs collected"
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-logs-${{ github.run_id }}
+          path: /tmp/e2e-logs/
+          retention-days: 7
+
+  # ==========================================================================
+  # Job 7: Cleanup Resources (Always Runs)
+  # ==========================================================================
+  cleanup:
+    name: Cleanup Resources
+    runs-on: [self-hosted, e2e, azure]
+    needs: [provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration, collect-logs]
+    if: always() && needs.provision-infrastructure.result == 'success' && !inputs.skip_cleanup
+    timeout-minutes: 10
+
+    steps:
+      - name: Download infrastructure info
+        uses: actions/download-artifact@v4
+        with:
+          name: infrastructure-info
+          path: /tmp/
+
+      - name: Cleanup test resources
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧹 Cleaning Up E2E Test Resources"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          INFRA=$(cat /tmp/infrastructure.json)
+          CLUSTER_NAME=$(echo $INFRA | jq -r '.cluster_name')
+          VM_NAME=$(echo $INFRA | jq -r '.vm_name')
+          NODE_NAME=$(echo $INFRA | jq -r '.node_name')
+          RESOURCE_GROUP=$(echo $INFRA | jq -r '.resource_group')
+
+          echo ""
+          echo "Strategy: Delete VM with --force-deletion, then cleanup by tags"
+          echo ""
+          echo "Resources to clean up:"
+          echo "  Cluster: $CLUSTER_NAME"
+          echo "  VM:      $VM_NAME"
+          echo "  Node:    $NODE_NAME"
+          echo "  Tagged:  github-run=${{ github.run_id }}"
+          echo ""
+
+          # Step 1: Force delete VM (attempts to delete associated resources)
+          echo "[1/3] Force deleting VM and attempting cleanup of associated resources..."
+          START_TIME=$(date +%s)
+          az vm delete \
+            --resource-group $RESOURCE_GROUP \
+            --name "$VM_NAME" \
+            --force-deletion yes \
+            --yes \
+            --no-wait \
+            || echo "⚠️  VM deletion failed (may not exist)"
+          END_TIME=$(date +%s)
+          echo "✅ VM force deletion initiated ($((END_TIME - START_TIME))s)"
+
+          # Step 2: Delete any remaining resources by tags (catches orphaned resources)
+          # IMPORTANT: Only delete resources created by THIS workflow run
+          echo ""
+          echo "[2/3] Cleaning up remaining tagged resources (disk, NIC, NSG, public IP)..."
+          START_TIME=$(date +%s)
+
+          # Query all resources with BOTH tags: github-run AND one of our resource names
+          # This ensures we only delete resources from THIS specific workflow run
+          TAGGED_RESOURCES=$(az resource list \
+            --resource-group $RESOURCE_GROUP \
+            --tag "github-run=${{ github.run_id }}" \
+            --query "[?tags.purpose=='e2e-test' && (tags.\"test-vm\"=='$VM_NAME' || tags.\"test-cluster\"=='$CLUSTER_NAME')].id" \
+            -o tsv)
+
+          if [ -n "$TAGGED_RESOURCES" ]; then
+            echo "Found tagged resources from this run to cleanup:"
+            echo "$TAGGED_RESOURCES"
+            echo ""
+
+            # Delete all tagged resources (excluding VM and cluster which are already being deleted)
+            echo "$TAGGED_RESOURCES" | while read -r resource_id; do
+              if [[ ! "$resource_id" =~ "/virtualMachines/" ]] && [[ ! "$resource_id" =~ "/managedClusters/" ]]; then
+                echo "  Deleting: $resource_id"
+                az resource delete --ids "$resource_id" --no-wait 2>/dev/null || echo "    ⚠️  Failed to delete $resource_id"
+              fi
+            done
+          else
+            echo "No additional tagged resources found (VM deletion may have cleaned them up)"
+          fi
+
+          END_TIME=$(date +%s)
+          echo "✅ Tagged resource cleanup completed ($((END_TIME - START_TIME))s)"
+
+          # Step 3: Cleanup Arc and AKS
+          echo ""
+          echo "[3/3] Cleaning up Arc registration and AKS cluster..."
+
+          # Arc cleanup
+          START_TIME=$(date +%s)
+          az connectedmachine delete \
+            --resource-group $RESOURCE_GROUP \
+            --name "$NODE_NAME" \
+            --yes \
+            --no-wait \
+            2>/dev/null || echo "⚠️  Arc cleanup failed (may not exist)"
+          echo "✅ Arc cleanup initiated ($(($(date +%s) - START_TIME))s)"
+
+          # AKS cleanup
+          START_TIME=$(date +%s)
+          az aks delete \
+            --resource-group $RESOURCE_GROUP \
+            --name "$CLUSTER_NAME" \
+            --yes \
+            --no-wait \
+            2>/dev/null || echo "⚠️  Cluster cleanup failed (may not exist)"
+          echo "✅ AKS cluster cleanup initiated ($(($(date +%s) - START_TIME))s)"
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Cleanup Completed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Cleanup strategy:"
+          echo "  1. ✓ VM with --force-deletion (attempts to delete disk, NIC, etc)"
+          echo "  2. ✓ Tag-based cleanup (catches any orphaned resources)"
+          echo "  3. ✓ Arc machine registration"
+          echo "  4. ✓ AKS cluster"
+          echo ""
+          echo "Note: Resources are being deleted in the background (--no-wait)"
+          echo "Deletion may take 5-10 minutes to complete in Azure"
+
+  # ==========================================================================
+  # Job 8: Test Summary (Always Runs)
+  # ==========================================================================
+  summary:
+    name: Test Summary
+    runs-on: [self-hosted, e2e, azure]
+    needs: [build, provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 E2E Test Summary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Job Results:"
+          echo "  Build:                ${{ needs.build.result }}"
+          echo "  Provision:            ${{ needs.provision-infrastructure.result }}"
+          echo "  Grant Permissions:    ${{ needs.grant-permissions.result }}"
+          echo "  Bootstrap:            ${{ needs.bootstrap-flex-node.result }}"
+          echo "  Verify Integration:   ${{ needs.verify-integration.result }}"
+          echo ""
+
+          if [ "${{ needs.provision-infrastructure.result }}" == "success" ]; then
+            echo "Test Resources:"
+            echo "  Cluster: ${{ needs.provision-infrastructure.outputs.cluster-name }}"
+            echo "  VM:      ${{ needs.provision-infrastructure.outputs.vm-name }}"
+            echo "  Node:    ${{ needs.provision-infrastructure.outputs.node-name }}"
+            echo ""
+          fi
+
+          echo "Artifacts:"
+          echo "  Logs: e2e-logs-${{ github.run_id }}"
+          echo ""
+
+          # Determine overall status
+          if [ "${{ needs.grant-permissions.result }}" == "success" ] && \
+             [ "${{ needs.bootstrap-flex-node.result }}" == "success" ] && \
+             [ "${{ needs.verify-integration.result }}" == "success" ]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅ E2E Test PASSED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "The aks-flex-node successfully:"
+            echo "  ✅ Built binary"
+            echo "  ✅ Created fresh AKS cluster"
+            echo "  ✅ Created test VM with Managed Identity"
+            echo "  ✅ Granted Arc onboarding permissions to VM's MSI"
+            echo "  ✅ Registered VM with Azure Arc (using VM's MSI)"
+            echo "  ✅ Configured kubelet and containerd"
+            echo "  ✅ Joined the VM as flex node to AKS cluster"
+            echo "  ✅ Passed smoke test"
+            echo ""
+            exit 0
+          else
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ E2E Test FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Check the uploaded logs for details:"
+            echo "  Actions → This run → Artifacts → e2e-logs-${{ github.run_id }}"
+            echo ""
+            exit 1
+          fi

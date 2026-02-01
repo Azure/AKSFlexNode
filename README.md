@@ -44,7 +44,7 @@ aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 For detailed setup instructions, prerequisites, requirements, and configuration options, see the **[Usage Guide](docs/usage.md)**.
 
-## Contributing
+### Advanced Topics
 
 We welcome contributions! See the **[Development Guide](docs/development.md)** for details on building, testing, and submitting pull requests.
 

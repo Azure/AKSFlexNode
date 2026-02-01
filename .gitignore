@@ -43,6 +43,11 @@ Thumbs.db
 # Config files with sensitive data (keep sample config)
 config.json
 
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
 # Build artifacts
 /build/
 /dist/
