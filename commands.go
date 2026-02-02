@@ -14,6 +14,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
+	"go.goms.io/aks/AKSFlexNode/pkg/privatecluster"
 	"go.goms.io/aks/AKSFlexNode/pkg/status"
 )
 
@@ -116,6 +117,107 @@ func runVersion() {
 	fmt.Printf("Version: %s\n", Version)
 	fmt.Printf("Git Commit: %s\n", GitCommit)
 	fmt.Printf("Build Time: %s\n", BuildTime)
+}
+
+// Private cluster command variables
+var (
+	aksResourceID   string
+	cleanupModeFlag string
+)
+
+// NewPrivateJoinCommand creates a new private-join command
+func NewPrivateJoinCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "private-join",
+		Short: "Join a Private AKS cluster (requires sudo)",
+		Long: `Join a Private AKS cluster.
+
+Prerequisites:
+  1. A Private AKS cluster must exist with AAD and Azure RBAC enabled
+     See: pkg/privatecluster/create_private_cluster.md
+
+  2. Current user must have the following roles on the cluster:
+     - Azure Kubernetes Service Cluster Admin Role
+     - Azure Kubernetes Service RBAC Cluster Admin
+
+  3. Current user must be logged in via 'sudo az login'
+
+The full resource ID of the Private AKS cluster is required as the --aks-resource-id parameter.
+This same resource ID can be used later with the private-leave command.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPrivateJoin(cmd.Context())
+		},
+	}
+
+	cmd.Flags().StringVar(&aksResourceID, "aks-resource-id", "", "AKS cluster resource ID (required)")
+	cmd.MarkFlagRequired("aks-resource-id")
+
+	return cmd
+}
+
+// NewPrivateLeaveCommand creates a new private-leave command
+func NewPrivateLeaveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "private-leave",
+		Short: "Leave a Private AKS cluster (--mode=local|full, requires sudo)",
+		Long: `Remove this edge node from a Private AKS cluster.
+
+Cleanup modes:
+  --local  Local cleanup only (default):
+           - Remove node from AKS cluster
+           - Run aks-flex-node unbootstrap
+           - Remove Arc Agent
+           - Stop VPN and remove client config
+           - Keep Gateway for other nodes
+
+  --full   Full cleanup (requires --aks-resource-id):
+           - All local cleanup steps
+           - Delete Gateway VM
+           - Delete Gateway subnet, NSG, Public IP
+           - Delete SSH keys
+
+This command requires the current user to be logged in via 'sudo az login'.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPrivateLeave(cmd.Context())
+		},
+	}
+
+	cmd.Flags().StringVar(&cleanupModeFlag, "mode", "local", "Cleanup mode: 'local' (keep Gateway) or 'full' (remove all Azure resources)")
+	cmd.Flags().StringVar(&aksResourceID, "aks-resource-id", "", "AKS cluster resource ID (required for --mode=full)")
+
+	return cmd
+}
+
+// runPrivateJoin executes the private cluster join process
+func runPrivateJoin(ctx context.Context) error {
+	if os.Getuid() != 0 {
+		return fmt.Errorf("this command requires root privileges, please run with 'sudo'")
+	}
+	runner := privatecluster.NewScriptRunner("")
+	return runner.RunPrivateInstall(ctx, aksResourceID)
+}
+
+// runPrivateLeave executes the private cluster leave process
+func runPrivateLeave(ctx context.Context) error {
+	if os.Getuid() != 0 {
+		return fmt.Errorf("this command requires root privileges, please run with 'sudo'")
+	}
+	// Validate cleanup mode
+	var mode privatecluster.CleanupMode
+	switch cleanupModeFlag {
+	case "local":
+		mode = privatecluster.CleanupModeLocal
+	case "full":
+		mode = privatecluster.CleanupModeFull
+		if aksResourceID == "" {
+			return fmt.Errorf("--aks-resource-id is required for full cleanup mode")
+		}
+	default:
+		return fmt.Errorf("invalid cleanup mode: %s (use 'local' or 'full')", cleanupModeFlag)
+	}
+
+	runner := privatecluster.NewScriptRunner("")
+	return runner.RunPrivateUninstall(ctx, mode, aksResourceID)
 }
 
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
