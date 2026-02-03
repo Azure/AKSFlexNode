@@ -4,16 +4,12 @@ This directory contains both the mermaid source files (`.mmd`) and generated SVG
 
 ## Mermaid Source Files
 
-- `system-overview.mmd` - Complete system architecture diagram
-- `operational-phases.mmd` - Three-phase transformation process
-- `component-interactions.mmd` - Bootstrap and runtime component interactions
+- `system-overview.mmd` - Complete system architecture diagram showing bootstrap and runtime interactions
 - `bootstrap-workflow.mmd` - Sequence diagram of bootstrap workflow
 
 ## Generated SVG Files
 
 - `system-overview.svg`
-- `operational-phases.svg`
-- `component-interactions.svg`
 - `bootstrap-workflow.svg`
 
 ## Regenerating SVG Files
@@ -42,7 +38,5 @@ The SVG files are referenced in `docs/design.md` as:
 
 ```markdown
 ![System Overview](../diagrams/system-overview.svg)
-![Operational Phases](../diagrams/operational-phases.svg)
-![Component Interactions](../diagrams/component-interactions.svg)
 ![Bootstrap Workflow](../diagrams/bootstrap-workflow.svg)
 ```

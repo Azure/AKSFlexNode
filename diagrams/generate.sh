@@ -18,12 +18,6 @@ fi
 echo "Generating system-overview.svg..."
 mmdc -i "$SCRIPT_DIR/system-overview.mmd" -o "$SCRIPT_DIR/system-overview.svg" -b white
 
-echo "Generating operational-phases.svg..."
-mmdc -i "$SCRIPT_DIR/operational-phases.mmd" -o "$SCRIPT_DIR/operational-phases.svg" -b white
-
-echo "Generating component-interactions.svg..."
-mmdc -i "$SCRIPT_DIR/component-interactions.mmd" -o "$SCRIPT_DIR/component-interactions.svg" -b white
-
 echo "Generating bootstrap-workflow.svg..."
 mmdc -i "$SCRIPT_DIR/bootstrap-workflow.mmd" -o "$SCRIPT_DIR/bootstrap-workflow.svg" -b white
 

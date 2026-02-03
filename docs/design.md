@@ -63,8 +63,6 @@ AKS Flex Node supports two deployment modes:
 
 ### Operational Phases
 
-![Operational Phases](../diagrams/operational-phases.svg)
-
 **Phase 1: Identity Setup**
 - Authenticate user credentials
 - **(Optional)** Register VM with Azure Arc (creates managed identity)
@@ -93,29 +91,37 @@ AKS Flex Node supports two deployment modes:
 
 | Component | What It Does | When It Runs |
 |-----------|--------------|--------------|
-| **AKS Flex Node Agent** | Orchestrates VM transformation | Bootstrap phase only |
+| **AKS Flex Node Agent** | Orchestrates VM transformation | Bootstrap + Runtime |
 | **Azure Arc Agent** (Optional) | Manages VM identity and authentication | Bootstrap + Runtime (Arc mode only) |
 | **Container Runtime** | Executes containerized applications | Runtime phase |
 | **Kubelet** | Communicates with AKS control plane | Runtime phase |
 | **CNI Plugins** | Enables pod-to-pod networking | Runtime phase |
 
-### Component Interactions
+### System Architecture
 
-![Component Interactions](../diagrams/component-interactions.svg)
+![System Overview](../diagrams/system-overview.svg)
 
-**Bootstrap Sequence (①-⑧):** One-time setup
-- User initiates transformation
-- **(Optional)** Agent registers with Arc (creates identity)
-- **(Optional)** Agent assigns RBAC permissions
-- Agent downloads cluster configuration
-- Agent installs runtime components
+**Phase 1 - Identity Setup (Steps 1-4):** Azure identity establishment
+- Operator initiates bootstrap
+- **(Optional)** Agent registers VM with Arc
+- **(Optional)** Agent assigns RBAC roles
+- Azure AD creates managed identity (Arc mode) or Service Principal used (non-Arc mode)
 
-**Runtime Operations (⑨-⑬):** Ongoing interactions
+**Phase 2 - Installation (Steps 5-9):** Component installation
+- Agent downloads cluster configuration from AKS
+- Agent installs Arc agent (Arc mode only)
+- Agent installs kubelet, containerd, and CNI plugins
+
+**Phase 3 - Activation (Steps 10-12):** Cluster joining
+- RBAC grants access to AKS cluster
+- Kubelet obtains authentication token
+- Kubelet joins the AKS cluster
+
+**Runtime Operations:** Ongoing interactions
 - **(Arc mode)** Arc Agent provides identity tokens to Kubelet
 - **(Non-Arc mode)** Kubelet uses Service Principal for authentication
-- Kubelet authenticates and registers with cluster
-- Kubelet manages container lifecycle
-- Containers use CNI for networking
+- AKS schedules workloads; Kubelet manages pod lifecycle
+- Containerd executes containers with CNI networking
 
 ---
 

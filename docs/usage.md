@@ -408,10 +408,6 @@ kubectl get nodes
 ### Complete Removal
 
 ```bash
-# First run unbootstrap
-aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
-
-# Then uninstall the agent
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | sudo bash
 ```
 
