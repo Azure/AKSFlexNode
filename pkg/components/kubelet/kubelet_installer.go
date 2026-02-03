@@ -313,14 +313,16 @@ WantedBy=multi-user.target`
 	return nil
 }
 
-// createTokenScript creates either Arc or Service Principal token script based on configuration
+// createTokenScript creates either Arc, MSI, or Service Principal token script based on configuration
 func (i *Installer) createTokenScript() error {
 	if i.config.IsARCEnabled() {
 		return i.createArcTokenScript()
+	} else if i.config.IsMSIEnabled() {
+		return i.createMSITokenScript()
 	} else if i.config.IsSPConfigured() {
 		return i.createServicePrincipalTokenScript()
 	} else {
-		return fmt.Errorf("no valid authentication method configured - either Arc must be enabled or Service Principal must be configured")
+		return fmt.Errorf("no valid authentication method configured - either Arc, MSI, or Service Principal must be configured")
 	}
 }
 
@@ -356,6 +358,54 @@ if [ $? -ne 0 ]; then
 fi
 
 curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL | jq "$EXECCREDENTIAL"`, aksServiceResourceID)
+
+	return i.writeTokenScript(tokenScript)
+}
+
+// createMSITokenScript creates the MSI token script for exec credential authentication using Azure VM Managed Identity
+func (i *Installer) createMSITokenScript() error {
+	// Azure VM MSI token script using IMDS endpoint
+	tokenScript := fmt.Sprintf(`#!/bin/bash
+
+# Fetch an AAD token from Azure Instance Metadata Service (IMDS) using VM Managed Identity
+# https://learn.microsoft.com/azure/active-directory/managed-identities-azure-resources/how-to-use-vm-token
+
+IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"
+API_VERSION="2018-02-01"
+RESOURCE="%s"
+
+# Get token from IMDS
+TOKEN_RESPONSE=$(curl -s -H Metadata:true "$IMDS_ENDPOINT?api-version=$API_VERSION&resource=$RESOURCE")
+
+if [ $? -ne 0 ]; then
+    echo "Failed to get token from Azure IMDS" >&2
+    exit 255
+fi
+
+# Extract access token and expiry
+ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+if [ "$ACCESS_TOKEN" == "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+    echo "Failed to extract access token from IMDS response" >&2
+    exit 255
+fi
+
+EXPIRES_ON=$(echo "$TOKEN_RESPONSE" | jq -r '.expires_on')
+
+# Return in ExecCredential format
+cat <<EOF
+{
+  "kind": "ExecCredential",
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "spec": {
+    "interactive": false
+  },
+  "status": {
+    "expirationTimestamp": "$(date -d @$EXPIRES_ON --iso-8601=seconds)",
+    "token": "$ACCESS_TOKEN"
+  }
+}
+EOF
+`, aksServiceResourceID)
 
 	return i.writeTokenScript(tokenScript)
 }
