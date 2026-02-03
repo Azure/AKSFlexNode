@@ -188,7 +188,8 @@ func (c *Config) setNpdDefaults() {
 
 // AKSClusterResourceIDPattern is AKS cluster resource ID regex pattern with capture groups
 // Format: /subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.ContainerService/managedClusters/{cluster-name}
-var AKSClusterResourceIDPattern = regexp.MustCompile(`^/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourceGroups/([a-zA-Z0-9_\-\.]+)/providers/Microsoft\.ContainerService/managedClusters/([a-zA-Z0-9_\-\.]+)$`)
+// Pattern is case insensitive to handle variations in Azure resource path casing
+var AKSClusterResourceIDPattern = regexp.MustCompile(`(?i)^/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourcegroups/([a-zA-Z0-9_\-\.]+)/providers/microsoft\.containerservice/managedclusters/([a-zA-Z0-9_\-\.]+)$`)
 
 // validateAzureResourceID validates the format of an AKS cluster resource ID using regex pattern matching
 func validateAzureResourceID(resourceID string) error {

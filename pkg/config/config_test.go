@@ -356,6 +356,36 @@ func TestValidateAzureResourceID(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name:       "case insensitive - lowercase provider",
+			resourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/microsoft.containerservice/managedClusters/test-cluster",
+			wantErr:    false,
+		},
+		{
+			name:       "case insensitive - uppercase provider",
+			resourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/MICROSOFT.CONTAINERSERVICE/managedClusters/test-cluster",
+			wantErr:    false,
+		},
+		{
+			name:       "case insensitive - mixed case provider",
+			resourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/microsoft.ContainerService/managedClusters/test-cluster",
+			wantErr:    false,
+		},
+		{
+			name:       "case insensitive - uppercase path segments",
+			resourceID: "/SUBSCRIPTIONS/12345678-1234-1234-1234-123456789012/RESOURCEGROUPS/test-rg/PROVIDERS/Microsoft.ContainerService/MANAGEDCLUSTERS/test-cluster",
+			wantErr:    false,
+		},
+		{
+			name:       "case insensitive - mixed case path segments",
+			resourceID: "/Subscriptions/12345678-1234-1234-1234-123456789012/ResourceGroups/test-rg/Providers/Microsoft.ContainerService/ManagedClusters/test-cluster",
+			wantErr:    false,
+		},
+		{
+			name:       "case insensitive - all lowercase",
+			resourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourcegroups/test-rg/providers/microsoft.containerservice/managedclusters/test-cluster",
+			wantErr:    false,
+		},
+		{
 			name:       "invalid subscription ID format",
 			resourceID: "/subscriptions/invalid-subscription-id/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 			wantErr:    true,
