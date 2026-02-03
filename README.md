@@ -104,10 +104,6 @@ group ID: ID of a group that will have access to the cluster. Later on you'll us
 ### 1. Installation
 
 ```bash
-# Install az command line and run "az login"
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-az login
-
 # Install aks-flex-node
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
 

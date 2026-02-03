@@ -186,9 +186,9 @@ install_azure_cli() {
     if ! command -v az &> /dev/null; then
         log_info "Downloading and installing Azure CLI..."
         if command -v curl &> /dev/null; then
-            curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+            curl -sL https://aka.ms/InstallAzureCLIDeb | bash </dev/null
         elif command -v wget &> /dev/null; then
-            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
+            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash </dev/null
         else
             log_error "Neither curl nor wget is available for downloading Azure CLI"
             return 1
