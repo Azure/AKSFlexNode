@@ -1,0 +1,62 @@
+graph TB
+    subgraph UserLayer["👤 User Layer"]
+        Operator[Operator]
+    end
+
+    subgraph CloudLayer["☁️ Azure Cloud Services"]
+        Arc[Azure Arc]
+        AAD[Azure AD]
+        RBAC[Azure RBAC]
+        AKS[AKS Cluster]
+    end
+
+    subgraph VMLayer["💻 VM / Node"]
+        Agent[AKS Flex Node Agent]
+        ArcAgent[Arc Agent]
+        Kubelet[kubelet]
+        Containerd[containerd]
+        CNI[CNI Plugins]
+    end
+
+    subgraph WorkloadLayer["📦 Workload"]
+        Pods[Pods & Containers]
+    end
+
+    %% Phase 1: Identity Setup - Thick solid lines
+    Operator ==>|"1: Start bootstrap"| Agent
+    Agent ==>|"2: Register VM"| Arc
+    Agent ==>|"3: Assign roles"| RBAC
+    Arc ==>|"4: Create identity"| AAD
+
+    %% Phase 2: Installation - Dashed lines
+    Agent -.->|"5: Download config"| AKS
+    Agent -.->|"6: Install Arc agent"| ArcAgent
+    Agent -.->|"7: Install kubelet"| Kubelet
+    Agent -.->|"8: Install containerd"| Containerd
+    Agent -.->|"9: Install CNI"| CNI
+
+    %% Phase 3: Activation - Thin solid lines
+    RBAC -->|"10: Grant access"| AKS
+    Kubelet -->|"11: Get token"| AAD
+    Kubelet -->|"12: Join cluster"| AKS
+
+    %% Runtime: Continuous - Dotted lines
+    ArcAgent -..-|"Provide tokens"| Arc
+    ArcAgent -..-|"Supply credentials"| Kubelet
+    Kubelet -..-|"Report status"| AKS
+    AKS -..-|"Schedule workloads"| Kubelet
+    Kubelet -..-|"Manage containers"| Containerd
+    Containerd -..-|"Network setup"| CNI
+    Kubelet -..-|"Run pods"| Pods
+    Pods -..-|"Execute in"| Containerd
+
+    %% Styling
+    classDef userStyle fill:#bbdefb,stroke:#0d47a1,stroke-width:3px,color:#000,font-weight:bold
+    classDef cloudStyle fill:#fff3e0,stroke:#e65100,stroke-width:3px,color:#000,font-weight:bold
+    classDef vmStyle fill:#c8e6c9,stroke:#1b5e20,stroke-width:3px,color:#000,font-weight:bold
+    classDef workloadStyle fill:#e1bee7,stroke:#4a148c,stroke-width:3px,color:#000,font-weight:bold
+
+    class Operator userStyle
+    class Arc,AAD,RBAC,AKS cloudStyle
+    class Agent,ArcAgent,Kubelet,Containerd,CNI vmStyle
+    class Pods workloadStyle

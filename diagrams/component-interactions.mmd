@@ -1,0 +1,39 @@
+graph TB
+    subgraph "Bootstrap Time"
+        User[User/Operator]
+        Agent[AKS Flex Node Agent]
+    end
+
+    subgraph "Azure Services"
+        Arc[Azure Arc]
+        RBAC[Azure RBAC]
+        AKS[AKS API]
+    end
+
+    subgraph "VM Runtime Components"
+        ArcAgent[Azure Arc Agent]
+        Containerd[containerd]
+        Kubelet[kubelet]
+        CNI[CNI Plugins]
+    end
+
+    User -->|"① Runs bootstrap"| Agent
+    Agent -->|"② Registers VM"| Arc
+    Agent -->|"③ Assigns roles"| RBAC
+    Agent -->|"④ Downloads config"| AKS
+    Agent -->|"⑤ Installs & configures"| ArcAgent
+    Agent -->|"⑥ Installs"| Containerd
+    Agent -->|"⑦ Configures"| Kubelet
+    Agent -->|"⑧ Sets up"| CNI
+
+    ArcAgent -.->|"⑨ Provides identity"| Kubelet
+    Kubelet -.->|"⑩ Authenticates via"| ArcAgent
+    Kubelet -.->|"⑪ Registers with"| AKS
+    Kubelet -.->|"⑫ Manages containers via"| Containerd
+    Containerd -.->|"⑬ Uses networking from"| CNI
+
+    style User fill:#e3f2fd
+    style Agent fill:#fff9c4
+    style Arc fill:#c8e6c9
+    style AKS fill:#bbdefb
+    style Kubelet fill:#b2dfdb
