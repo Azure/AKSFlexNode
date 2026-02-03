@@ -1,46 +1,94 @@
 # AKS Flex Node Usage Guide
 
-This guide will walk you through installing and configuring AKS Flex Node to transform your Ubuntu VM into an AKS worker node.
+This guide provides two complete deployment paths for AKS Flex Node:
 
-## Prerequisites
+1. **[Deployment with Azure Arc](#deployment-with-azure-arc)** - Easier setup for quick start, plug and play
+2. **[Deployment with Service Principal](#deployment-with-service-principal)** - More scalable for production deployments
+
+## Comparison: Arc vs Service Principal
+
+Use this comparison to choose the deployment path that best fits your requirements:
+
+| Feature | With Azure Arc | With Service Principal |
+|---------|---------------|----------------------|
+| **Setup Complexity** | Simple (plug and play) | Moderate (requires SP setup) |
+| **Scalability** | Limited (Arc overhead per node) | High (lightweight, efficient) |
+| **Credential Management** | Automatic (managed identity) | Manual (SP rotation) |
+| **Azure Visibility** | Full (Arc resource in portal) | Limited (just node) |
+| **Authentication** | Managed identity + auto-rotation | Static SP credentials |
+| **Required Permissions** | More (Arc + RBAC + AKS) | Less (AKS only) |
+| **Performance** | Higher overhead (Arc agent) | Lower overhead (direct auth) |
+| **Use Case** | Quick start, demos, small scale | Production, large scale |
+
+---
+
+## Prerequisites and System Requirements
 
 ### VM Requirements
-- Ubuntu 22.04 LTS or 24.04 LTS VM (non-Azure)
-- Architecture: x86_64 (amd64) or arm64
-- Minimum 2GB RAM, 25GB free disk space
-- Sudo access on the VM
+- **Operating System:** Ubuntu 22.04 LTS or 24.04 LTS (non-Azure VM)
+- **Architecture:** x86_64 (amd64) or arm64
+- **Memory:** Minimum 2GB RAM (4GB recommended)
+- **Storage:**
+  - **Minimum:** 25GB free space
+  - **Recommended:** 40GB free space
+  - **Production:** 50GB+ free space
+- **Network:** Outbound internet connectivity (see Network Requirements below)
+- **Privileges:** Root/sudo access required
 
-### AKS Cluster Requirements
-- Azure RBAC enabled AKS cluster
-- Network connectivity from edge VM to cluster API server (port 443)
+### Storage Breakdown
+- **Base components:** ~3GB (containerd, runc, Kubernetes binaries, CNI plugins, Arc agent if enabled)
+- **System directories:** ~5-10GB (`/var/lib/containerd`, `/var/lib/kubelet`, configurations)
+- **Container images:** ~5-15GB (pause container, system images, workload images)
+- **Logs:** ~2-5GB (`/var/log/pods`, `/var/log/containers`, agent logs)
+- **Installation buffer:** ~5-10GB (temporary downloads, garbage collection headroom)
 
-### Azure Authentication & Permissions
+### Network Requirements
 
-**Required for all deployments:**
-- **AKS Access:** `Azure Kubernetes Service Cluster Admin Role` on the target AKS cluster
+The VM requires outbound internet connectivity to:
 
-**Additional permissions (only if using Azure Arc):**
-- **Arc Registration:** `Azure Connected Machine Onboarding` role on the resource group
-- **RBAC Assignment:** `User Access Administrator` or `Owner` role on the AKS cluster to assign roles to the Arc managed identity
+- **Ubuntu APT Repositories:** Package downloads and updates
+- **Binary Downloads:** Kubelet, containerd, runc, CNI plugins
+- **Azure Endpoints:**
+  - AKS cluster API server (port 443)
+  - Azure Resource Manager APIs
+  - Azure Arc services (if Arc mode enabled)
+- **Container Registries:** Container image pulls (mcr.microsoft.com, etc.)
 
-> **Note:** Azure Arc integration is optional. When Arc is disabled, kubelet authentication uses Service Principal credentials instead of Arc managed identity.
+**Note:** No inbound connectivity is required from the internet. All connections are initiated outbound from the VM.
 
-### Cluster Prerequisites
+### Azure Permissions
 
-The cluster needs to be created or updated with command line similar to the following:
+**For Arc Mode:**
+- `Azure Connected Machine Onboarding` role on the resource group
+- `User Access Administrator` or `Owner` role on the AKS cluster
+- `Azure Kubernetes Service Cluster Admin Role` on the target AKS cluster
+
+**For Service Principal Mode:**
+- `Azure Kubernetes Service Cluster Admin Role` on the target AKS cluster (for initial setup)
+- Service Principal with `Owner` role on the AKS cluster resource
+
+---
+
+## Setup with Azure Arc
+
+Azure Arc provides an easier, plug-and-play setup with managed identity.
+
+### Cluster Setup
+
+Create an AKS cluster with Azure AD and RBAC enabled:
 
 ```bash
 az aks create \
-    --resource-group <resource group name> \
-    --name <cluster name> \
+    --resource-group <resource-group-name> \
+    --name <cluster-name> \
     --enable-aad \
     --enable-azure-rbac \
-    --aad-admin-group-object-ids <group ID>
+    --aad-admin-group-object-ids <group-id>
 ```
 
-**Note:** `group ID` is the ID of a group that will have access to the cluster. Later on you'll use `az login` to log into Azure. The account you use to log in needs to be a member of this group.
+**Note:** The `group-id` is for a group that will have cluster access. Your `az login` account must be a member of this group.
 
-## Installation
+### Installation
 
 ```bash
 # Install aks-flex-node
@@ -50,21 +98,11 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/inst
 aks-flex-node version
 ```
 
-## Configuration
+### Configuration
 
-### Configuration Options
-
-AKS Flex Node supports two authentication modes:
-
-1. **With Azure Arc** - Provides managed identity and enhanced cloud management
-2. **Without Azure Arc** - Uses Service Principal for kubelet authentication
-
-Choose the configuration that matches your requirements below.
-
-### Option 1: Configuration with Azure Arc
+Create the configuration file with Arc enabled:
 
 ```bash
-# Create configuration file with Arc enabled
 sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
 {
   "azure": {
@@ -98,32 +136,192 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
 EOF
 ```
 
-### Option 2: Configuration without Azure Arc
+**Replace these values:**
+- `your-subscription-id`: Azure subscription ID
+- `your-tenant-id`: Azure tenant ID
+- `your-unique-node-name`: Unique name for this node
+- `your-resource-group`: Resource group for Arc machine
+- `your-cluster`: AKS cluster name
 
-When Arc is disabled, you must provide Service Principal credentials for kubelet authentication:
+### Authentication for Arc Registration
+
+You need use Azure CLI credentials for Arc registration:
 
 ```bash
-# Create configuration file without Arc
-sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
+# Login to Azure
+az login
+
+# The agent will use your CLI credentials
+aks-flex-node agent --config /etc/aks-flex-node/config.json
+```
+
+### Running the Agent
+
+```bash
+# Direct execution
+aks-flex-node agent --config /etc/aks-flex-node/config.json
+
+# Or using systemd
+sudo systemctl enable --now aks-flex-node-agent
+journalctl -u aks-flex-node-agent -f
+```
+
+### Verification
+
+After bootstrap completes, verify:
+
+1. **Arc registration:**
+   ```bash
+   az connectedmachine show \
+       --resource-group <resource-group> \
+       --name <machine-name>
+   ```
+
+2. **Node joined cluster:**
+   ```bash
+   kubectl get nodes
+   ```
+
+The node should appear with "Ready" status.
+
+### How It Works
+
+1. Agent registers VM with Azure Arc → creates managed identity
+2. Agent assigns RBAC roles to the managed identity
+3. Kubelet uses Arc-managed identity for authentication
+4. Tokens are automatically rotated by Azure Arc
+
+---
+
+## Setup with Service Principal
+
+Use this approach for production and scalable deployments. Service Principal mode provides direct authentication without Azure Arc overhead, making it more suitable for managing large fleets of edge nodes.
+
+### Cluster Setup
+
+Create an AKS cluster with Azure AD enabled:
+
+```bash
+# Create AKS cluster
+MY_USER_ID=$(az ad signed-in-user show --query id -o tsv)
+RESOURCE_GROUP="your-resource-group"
+CLUSTER_NAME="your-cluster-name"
+az aks create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$CLUSTER_NAME" \
+
+    --enable-aad \
+    --aad-admin-group-object-ids "$MY_USER_ID"
+```
+
+### Service Principal Setup
+
+Create a Service Principal with appropriate permissions:
+
+```bash
+# Get AKS resource ID
+AKS_RESOURCE_ID=$(az aks show \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$CLUSTER_NAME" \
+    --query "id" \
+    --output tsv)
+
+# Create service principal with Owner role on the cluster
+SP_JSON=$(az ad sp create-for-rbac \
+    --name "aks-flex-node-sp" \
+    --role "Owner" \
+    --scopes "$AKS_RESOURCE_ID")
+
+SP_OBJECT_ID=$(echo "$SP_JSON" | jq -r '.id')
+SP_CLIENT_ID=$(echo "$SP_JSON" | jq -r '.appId')
+SP_CLIENT_SECRET=$(echo "$SP_JSON" | jq -r '.password')
+TENANT_ID=$(echo "$SP_JSON" | jq -r '.tenant')
+```
+
+### Configure RBAC Roles
+
+Apply the necessary Kubernetes RBAC roles for the Service Principal:
+
+```bash
+# Get cluster credentials
+az aks get-credentials \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$CLUSTER_NAME" \
+    --admin \
+    --overwrite-existing
+
+# Create node bootstrapper role binding
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-bootstrapper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node-bootstrapper
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: $SP_OBJECT_ID
+EOF
+
+# Create node role binding
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: $SP_OBJECT_ID
+EOF
+```
+
+### Installation
+
+```bash
+# Install aks-flex-node
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
+
+# Verify installation
+aks-flex-node version
+```
+
+### Configuration
+
+Create the configuration file with Service Principal credentials:
+
+```bash
+# Get subscription ID
+SUBSCRIPTION=$(az account show --query id -o tsv)
+
+# Create config file
+sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 {
   "azure": {
-    "subscriptionId": "your-subscription-id",
-    "tenantId": "your-tenant-id",
+    "subscriptionId": "$SUBSCRIPTION",
+    "tenantId": "$TENANT_ID",
     "cloud": "AzurePublicCloud",
     "servicePrincipal": {
-      "clientId": "your-service-principal-client-id",
-      "clientSecret": "your-service-principal-client-secret"
+      "clientId": "$SP_CLIENT_ID",
+      "clientSecret": "$SP_CLIENT_SECRET"
     },
     "arc": {
       "enabled": false
     },
     "targetCluster": {
-      "resourceId": "/subscriptions/your-subscription-id/resourceGroups/your-rg/providers/Microsoft.ContainerService/managedClusters/your-cluster",
-      "location": "westus"
+      "resourceId": "$AKS_RESOURCE_ID",
+      "location": "$LOCATION"
     }
   },
   "kubernetes": {
-    "version": "your-kubernetes-version"
+    "version": "1.30.0"
   },
   "agent": {
     "logLevel": "info",
@@ -133,16 +331,44 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
 EOF
 ```
 
-**Important:** Replace the placeholder values with your actual Azure resource information:
-- `your-subscription-id`: Your Azure subscription ID
-- `your-tenant-id`: Your Azure tenant ID
-- `your-unique-node-name`: A unique name for this edge node (Arc mode only)
-- `your-resource-group`: Resource group where Arc machine and AKS cluster are located (Arc mode only)
-- `your-cluster`: Your AKS cluster name
-- `your-service-principal-client-id`: Service Principal client ID (non-Arc mode only)
-- `your-service-principal-client-secret`: Service Principal client secret (non-Arc mode only)
+### Running the Agent
 
-## Usage
+```bash
+# Direct execution
+aks-flex-node agent --config /etc/aks-flex-node/config.json
+
+# Or using systemd
+sudo systemctl enable --now aks-flex-node-agent
+journalctl -u aks-flex-node-agent -f
+```
+
+### Verification
+
+After bootstrap completes, verify the node joined the cluster:
+
+```bash
+kubectl get nodes
+
+# Check node details
+kubectl describe node <node-name>
+```
+
+### How It Works
+
+1. Service Principal authenticates directly to Azure AD
+2. Agent downloads cluster configuration using SP credentials
+3. Kubelet uses Service Principal for ongoing authentication
+4. No Arc registration or managed identity
+
+### Security Considerations
+
+- **Credential Rotation:** Service Principal secrets must be manually rotated
+- **Secure Storage:** Config file contains sensitive credentials - restrict permissions
+- **Scope Minimization:** Use minimum required permissions for the Service Principal
+
+---
+
+## Common Operations
 
 ### Available Commands
 
@@ -152,102 +378,40 @@ EOF
 | `unbootstrap` | Clean removal of all components | `aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json` |
 | `version` | Show version information | `aks-flex-node version` |
 
-### Running the Agent
+### Monitoring Logs
 
 ```bash
-# Option 1: Direct command execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
-cat /var/log/aks-flex-node/aks-flex-node.log
+# View agent logs (systemd)
+journalctl -u aks-flex-node-agent -f
 
-# Option 2: Using systemd service
-sudo systemctl enable --now aks-flex-node-agent
-journalctl -u aks-flex-node-agent --since "1 minutes ago" -f
+# View agent logs (file)
+tail -f /var/log/aks-flex-node/aks-flex-node.log
+
+# View kubelet logs
+journalctl -u kubelet -f
 ```
-
-After you've set the correct config and started the agent, it takes a while to finish all the steps. If you used systemd service, as mentioned above, you can use:
-
-```bash
-journalctl -u aks-flex-node-agent --since "1 minutes ago" -f
-```
-
-to view logs and see if anything goes wrong.
-
-### Verifying Success
-
-If everything works fine, after a while, you should see:
-
-- **With Arc enabled:** In the resource group you specified in the config file, you should see a new resource added by Azure Arc with type `Microsoft.HybridCompute/machines`
-- **All modes:** Running `kubectl get nodes` against your cluster should see the new node added and in "Ready" state
 
 ### Unbootstrap
 
+Remove the node from the cluster and clean up:
+
 ```bash
-# Direct command execution
+# Run unbootstrap
 aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
-cat /var/log/aks-flex-node/aks-flex-node.log
+
+# Verify node removed from cluster
+kubectl get nodes
 ```
-
-## Authentication Methods
-
-AKS Flex Node supports multiple authentication methods depending on your configuration:
-
-### Bootstrap Authentication (Arc Registration)
-
-**Only applies when Arc is enabled (`arc.enabled: true`)**
-
-For Arc registration and role assignment operations, you can use:
-
-#### Option 1: CLI Credential
-
-When Service Principal isn't configured, the service will use `az login` credential for Arc-related operations (joining the VM to Azure as an ARC machine). If you haven't run `az login` or your token is expired, the bootstrap process will automatically prompt you to login interactively.
-
-- The login prompt will appear in your terminal with device code authentication when needed
-- Once authenticated, the service will use your Azure CLI credentials for Arc join and role assignments
-
-#### Option 2: Service Principal (Bootstrap)
-
-Configure a service principal for Arc operations:
-
-```json
-{
-  "azure": {
-    "servicePrincipal": {
-      "clientId": "your-service-principal-client-id",
-      "clientSecret": "your-service-principal-client-secret"
-    },
-    // ... rest of config
-  }
-}
-```
-
-**Required permissions for Arc mode:**
-- `Azure Connected Machine Onboarding` role on the resource group
-- `User Access Administrator` or `Owner` role on the AKS cluster
-- `Azure Kubernetes Service Cluster Admin Role` on the target AKS cluster
-
-### Runtime Authentication (Kubelet)
-
-How kubelet authenticates to the AKS cluster depends on your Arc configuration:
-
-#### With Arc Enabled
-- Kubelet uses Arc-managed identity for authentication
-- Tokens are automatically managed and rotated by Azure Arc
-- No manual credential management required
-
-#### Without Arc (Service Principal Required)
-- Kubelet uses Service Principal credentials for authentication
-- Service Principal must be configured in the config file
-- Service Principal needs `Azure Kubernetes Service Cluster User Role` on the AKS cluster
 
 ## Uninstallation
 
 ### Complete Removal
 
 ```bash
-# First run unbootstrap to cleanly disconnect from Arc and AKS cluster
+# First run unbootstrap
 aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
 
-# Then run automated uninstall to remove all components
+# Then uninstall the agent
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | sudo bash
 ```
 
@@ -257,36 +421,52 @@ The uninstall script will:
 - Clean up all directories and configuration files
 - Remove the binary and systemd service files
 
-### Force Uninstall (Non-interactive)
+### Force Uninstall
 
 ```bash
-# For automated environments where confirmation prompts should be skipped
+# Non-interactive mode
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | sudo bash -s -- --force
 ```
 
-**⚠️ Important Notes:**
-- Run `aks-flex-node unbootstrap` first to properly disconnect from Arc and clean up Azure resources
-- The uninstall script will NOT disconnect from Arc - this ensures proper cleanup order
-- The Azure Arc agent remains installed but can be removed manually if not needed
-- Backup any important data before uninstalling
+## Troubleshooting
 
-## System Requirements
+### Arc Mode Issues
 
-- **Operating System:** Ubuntu 22.04 LTS or 24.04 LTS
-- **Architecture:** x86_64 (amd64) or arm64
-- **Memory:** Minimum 2GB RAM (4GB recommended)
-- **Storage:**
-  - **Minimum:** 25GB free space
-  - **Recommended:** 40GB free space
-  - **Production:** 50GB+ free space
-- **Network:** Internet connectivity to Azure endpoints
-- **Privileges:** Root/sudo access required
-- **Build Dependencies:** Go 1.24+ (if building from source)
+```bash
+# Check Arc agent status
+sudo systemctl status himds
 
-### Storage Breakdown
+# Check Arc connection
+azcmagent show
 
-- **Base components:** ~3GB (Arc agent, runc, containerd, Kubernetes binaries, CNI plugins)
-- **System directories:** ~5-10GB (`/var/lib/containerd`, `/var/lib/kubelet`, configurations)
-- **Container images:** ~5-15GB (pause container, system images, workload images)
-- **Logs:** ~2-5GB (`/var/log/pods`, `/var/log/containers`, agent logs)
-- **Installation buffer:** ~5-10GB (temporary downloads, garbage collection headroom)
+# View Arc agent logs
+sudo journalctl -u himds -f
+```
+
+### Service Principal Mode Issues
+
+```bash
+# Verify SP can authenticate
+az login --service-principal \
+    --username $SP_CLIENT_ID \
+    --password $SP_CLIENT_SECRET \
+    --tenant $TENANT_ID
+
+# Check SP permissions on cluster
+az aks show \
+    --resource-group $RESOURCE_GROUP \
+    --name $CLUSTER_NAME
+```
+
+### Kubelet Issues
+
+```bash
+# Check kubelet status
+sudo systemctl status kubelet
+
+# View kubelet logs
+sudo journalctl -u kubelet -f
+
+# Check kubelet configuration
+sudo cat /var/lib/kubelet/kubeconfig
+```
