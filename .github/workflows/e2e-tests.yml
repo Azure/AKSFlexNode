@@ -583,11 +583,11 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           INFRA=$(cat /tmp/infrastructure.json)
-          NODE_NAME=$(echo $INFRA | jq -r '.node_name')
+          VM_NAME=$(echo $INFRA | jq -r '.vm_name')
           CLUSTER_NAME=$(echo $INFRA | jq -r '.cluster_name')
           RESOURCE_GROUP=$(echo $INFRA | jq -r '.resource_group')
 
-          echo "Checking for node: $NODE_NAME"
+          echo "Checking for node: $VM_NAME"
           echo "In cluster: $CLUSTER_NAME"
           echo ""
 
@@ -601,13 +601,13 @@ jobs:
           # Wait for node to join
           echo "Waiting for node to appear in cluster..."
           for i in {1..30}; do
-            if kubectl get nodes | grep -q "$NODE_NAME"; then
+            if kubectl get nodes | grep -q "$VM_NAME"; then
               echo ""
               echo "✅ Node successfully joined cluster"
               echo ""
               kubectl get nodes
               echo ""
-              kubectl get node $NODE_NAME -o wide
+              kubectl get node $VM_NAME -o wide
               exit 0
             fi
             echo "  Waiting... ($i/30)"
@@ -628,7 +628,7 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           INFRA=$(cat /tmp/infrastructure.json)
-          NODE_NAME=$(echo $INFRA | jq -r '.node_name')
+          VM_NAME=$(echo $INFRA | jq -r '.vm_name')
 
           echo "Deploying test pod to flex node..."
 
@@ -639,7 +639,7 @@ jobs:
             name: e2e-smoke-test
           spec:
             nodeSelector:
-              kubernetes.io/hostname: $NODE_NAME
+              kubernetes.io/hostname: $VM_NAME
             containers:
             - name: nginx
               image: nginx:alpine
