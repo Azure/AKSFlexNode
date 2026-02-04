@@ -122,9 +122,9 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/ip addr
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/netstat -rn
 
 # Read-only Kubernetes API check for node readiness (used by status collector)
-# This is intentionally limited to 'get node' with the kubelet kubeconfig.
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get node *
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/local/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get node *
+# This is intentionally limited to 'get' with the kubelet kubeconfig.
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get *
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/local/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get *
 
 # Mount/unmount operations for cleanup
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/umount -l /var/lib/kubelet
