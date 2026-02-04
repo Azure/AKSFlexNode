@@ -390,13 +390,28 @@ jobs:
           set -euo pipefail
 
           echo "[1/3] Installing Azure CLI..."
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash >/dev/null 2>&1
+          # Update package lists first
+          sudo apt-get update -qq
+
+          # Install Azure CLI with verbose error output
+          if ! curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash; then
+            echo "❌ Azure CLI installation failed"
+            exit 1
+          fi
 
           echo "[2/3] Login azureuser with Managed Identity..."
-          az login --identity --output none
+          if ! az login --identity --output none; then
+            echo "❌ Failed to login with managed identity as azureuser"
+            echo "Checking MSI endpoint..."
+            curl -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" || echo "MSI endpoint not responding"
+            exit 1
+          fi
 
           echo "[3/3] Login root with Managed Identity..."
-          sudo az login --identity --output none
+          if ! sudo az login --identity --output none; then
+            echo "❌ Failed to login with managed identity as root"
+            exit 1
+          fi
 
           echo ""
           echo "✅ Azure CLI configured with MSI"
