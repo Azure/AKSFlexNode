@@ -333,7 +333,7 @@ func (i *Installer) createTokenScript() error {
 		// Bootstrap token doesn't need a token script
 		return nil
 	} else {
-		return fmt.Errorf("no valid authentication method configured - either Arc, Service Principal, or Bootstrap Token must be configured")
+		return fmt.Errorf("no valid authentication method configured - either Arc, MSI, Service Principal, or Bootstrap Token must be configured")
 	}
 }
 

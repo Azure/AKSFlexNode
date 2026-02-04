@@ -1,6 +1,6 @@
 # AKS Flex Node Usage Guide
 
-This guide provides three complete deployment paths for AKS Flex Node:
+This guide provides three complete setup paths for AKS Flex Node:
 
 1. **[Setup with Azure Arc](#setup-with-azure-arc)** - Easier setup for quick start, plug and play
 2. **[Setup with Service Principal](#setup-with-service-principal)** - More scalable for secure production environment
