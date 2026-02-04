@@ -141,7 +141,7 @@ func (c *ManagedClusterSpecCollector) Collect(ctx context.Context) (*ManagedClus
 	}
 	data = append(data, '\n')
 
-	if err := os.MkdirAll(filepath.Dir(c.outputPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.outputPath), 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create spec output directory: %w", err)
 	}
 	if err := utils.WriteFileAtomicSystem(c.outputPath, data, 0o644); err != nil {
