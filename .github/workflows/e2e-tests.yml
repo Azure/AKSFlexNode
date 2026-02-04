@@ -478,6 +478,7 @@ jobs:
               "cloud": "AzurePublicCloud",
               "managedIdentity": {},
               "arc": {
+                "enabled": true,
                 "machineName": "$NODE_NAME",
                 "resourceGroup": "$RESOURCE_GROUP",
                 "location": "$LOCATION",
