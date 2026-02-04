@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
 	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // Version information variables (set at build time)
@@ -173,6 +176,8 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 			} else {
 				logger.Infof("Bootstrap health check completed at %s", time.Now().Format("2006-01-02 15:04:05"))
 			}
+
+			checkAndReboot(ctx)
 		}
 	}
 }
@@ -275,4 +280,22 @@ func handleExecutionResult(result *bootstrapper.ExecutionResult, operation strin
 
 	// For bootstrap, return error on failure
 	return fmt.Errorf("%s failed: %s", operation, result.Error)
+}
+
+// checkAndReboot is a PoC function, just demonstrate the node agent's remediation capability.
+func checkAndReboot(ctx context.Context) {
+	logger := logger.GetLoggerFromContext(ctx)
+
+	args := []string{"--kubeconfig", kubelet.KubeletKubeconfigPath,
+		"get", "events", "--sort-by=.lastTimestamp"}
+
+	output, err := utils.RunCommandWithOutput("kubectl", args...)
+	if err != nil {
+		logger.Errorf("Failed to get last event: %s", err)
+		return
+	}
+
+	if strings.Contains(output, "kernel NULL pointer") {
+		logger.Warn("Node has kernel NULL pointer error, initiating reboot...")
+	}
 }

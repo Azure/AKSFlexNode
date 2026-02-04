@@ -112,9 +112,9 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/ip addr
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/netstat -rn
 
 # Read-only Kubernetes API check for node readiness (used by status collector)
-# This is intentionally limited to 'get node' with the kubelet kubeconfig.
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get node *
-aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/local/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get node *
+# This is intentionally limited to 'get' with the kubelet kubeconfig.
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get *
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/local/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get *
 
 # Note: Arc agent (azcmagent) is managed by install.sh and should not be removed during unbootstrap
 # Unbootstrap only cleans up what AKS Flex Node created, not the underlying Arc installation
