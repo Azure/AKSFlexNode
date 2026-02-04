@@ -130,7 +130,7 @@ sudo kubelogin convert-kubeconfig -l azurecli --kubeconfig /root/.kube/config
 
 ## Step 6: Get Cluster Resource ID
 
-Save this for use with `private-join` and `private-leave` commands:
+Save this for use in the `config.json` file's `targetCluster.resourceId` field:
 
 ```bash
 az aks show \
@@ -148,18 +148,18 @@ Example output:
 
 ### Join an edge node to the private cluster
 
+Set `"private": true` in your `config.json`, then run:
+
 ```bash
-sudo ./aks-flex-node private-join \
-  --aks-resource-id "/subscriptions/.../resourcegroups/.../providers/Microsoft.ContainerService/managedClusters/my-private-aks"
+sudo ./aks-flex-node agent --config config.json
 ```
 
 ### Leave the private cluster
 
 ```bash
 # Local cleanup (keep Gateway for other nodes)
-sudo ./aks-flex-node private-leave --mode=local
+sudo ./aks-flex-node unbootstrap --config config.json
 
 # Full cleanup (remove Gateway and all Azure resources)
-sudo ./aks-flex-node private-leave --mode=full \
-  --aks-resource-id "/subscriptions/.../resourcegroups/.../providers/Microsoft.ContainerService/managedClusters/my-private-aks"
+sudo ./aks-flex-node unbootstrap --config config.json --cleanup-mode full
 ```

@@ -139,11 +139,32 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.Machine, error) {
 	i.logger.Info("Registering machine with Azure Arc using Arc agent")
 
-	// Check if already registered
+	// Check if already registered in Azure AND locally connected
 	machine, err := i.getArcMachine(ctx)
 	if err == nil && machine != nil {
-		i.logger.Infof("Machine already registered as Arc machine: %s", to.String(machine.Name))
-		return machine, nil
+		// Azure resource exists, but also verify local agent is connected
+		if i.isLocalAgentConnected(ctx) {
+			i.logger.Infof("Machine already registered and locally connected as Arc machine: %s", to.String(machine.Name))
+			return machine, nil
+		}
+		i.logger.Warnf("Arc machine '%s' exists in Azure but local agent is disconnected, re-connecting...", to.String(machine.Name))
+
+		// Step 1: Clean up local agent state
+		i.logger.Info("Cleaning up local agent state...")
+		disconnectCmd := exec.CommandContext(ctx, "azcmagent", "disconnect", "--force-local-only")
+		if output, err := disconnectCmd.CombinedOutput(); err != nil {
+			i.logger.Warnf("Local disconnect had issues (continuing): %v, output: %s", err, string(output))
+		}
+
+		// Step 2: Delete the stale Azure Arc resource so connect can recreate it
+		arcResourceGroup := i.config.GetArcResourceGroup()
+		arcMachineName := i.config.GetArcMachineName()
+		i.logger.Infof("Deleting stale Arc machine resource '%s' from Azure...", arcMachineName)
+		if _, err := i.hybridComputeMachineClient.Delete(ctx, arcResourceGroup, arcMachineName, nil); err != nil {
+			i.logger.Warnf("Failed to delete Arc machine from Azure (continuing): %v", err)
+		} else {
+			i.logger.Info("Stale Arc machine resource deleted from Azure")
+		}
 	}
 
 	// Register using Arc agent command
@@ -154,6 +175,29 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 	// make sure registration is complete before proceeding
 	// otherwise role assignment may fail due to identity not found
 	return i.waitForArcRegistration(ctx)
+}
+
+// isLocalAgentConnected checks if the local Arc agent is connected
+func (i *Installer) isLocalAgentConnected(ctx context.Context) bool {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "azcmagent", "show")
+	output, err := cmd.Output()
+	if err != nil {
+		i.logger.Debugf("azcmagent show failed: %v", err)
+		return false
+	}
+
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(strings.ToLower(parts[1])) == "connected"
+			}
+		}
+	}
+	return false
 }
 
 func (i *Installer) validateManagedCluster(ctx context.Context) error {

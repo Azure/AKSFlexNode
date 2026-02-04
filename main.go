@@ -26,15 +26,13 @@ func main() {
 
 	// Add global flags for configuration
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required for agent/unbootstrap)")
-	rootCmd.PersistentFlags().MarkHidden("config") // Hide from global help, shown in agent/unbootstrap help
+	_ = rootCmd.PersistentFlags().MarkHidden("config")
 	// Don't mark as required globally - we'll check in PersistentPreRunE for commands that need it
 
 	// Add commands
 	rootCmd.AddCommand(NewAgentCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
-	rootCmd.AddCommand(NewPrivateJoinCommand())
-	rootCmd.AddCommand(NewPrivateLeaveCommand())
 
 	// Set up context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,7 +52,7 @@ func main() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for commands that don't need it
 		switch cmd.Name() {
-		case "version", "private-join", "private-leave":
+		case "version":
 			return nil
 		}
 

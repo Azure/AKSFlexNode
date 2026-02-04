@@ -39,6 +39,7 @@ type ServicePrincipalConfig struct {
 type TargetClusterConfig struct {
 	ResourceID        string `json:"resourceId"` // Full resource ID of the target AKS cluster
 	Location          string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
+	Private           bool   `json:"private"`    // Whether this is a private AKS cluster (requires Gateway/VPN setup)
 	Name              string // will be populated from ResourceID
 	ResourceGroup     string // will be populated from ResourceID
 	SubscriptionID    string // will be populated from ResourceID

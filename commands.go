@@ -25,6 +25,9 @@ var (
 	BuildTime = "unknown"
 )
 
+// Unbootstrap command flags
+var cleanupMode string
+
 // NewAgentCommand creates a new agent command
 func NewAgentCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -44,11 +47,18 @@ func NewUnbootstrapCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unbootstrap",
 		Short: "Remove AKS node configuration and Arc connection",
-		Long:  "Clean up and remove all AKS node components and Arc registration from this machine",
+		Long: `Clean up and remove all AKS node components and Arc registration from this machine.
+
+For private clusters (config has private: true), this also handles VPN cleanup:
+  --cleanup-mode=local  Remove node and local VPN config, keep Gateway (default)
+  --cleanup-mode=full   Remove everything including Gateway VM and Azure resources`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUnbootstrap(cmd.Context())
 		},
 	}
+
+	cmd.Flags().StringVar(&cleanupMode, "cleanup-mode", "local",
+		"Private cluster cleanup mode: 'local' (keep Gateway) or 'full' (remove all Azure resources)")
 
 	return cmd
 }
@@ -76,6 +86,19 @@ func runAgent(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
+	// For private clusters, run Gateway/VPN setup before bootstrap
+	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.Private {
+		logger.Info("Private cluster detected, running Gateway/VPN setup...")
+		if os.Getuid() != 0 {
+			return fmt.Errorf("private cluster setup requires root privileges, please run with 'sudo'")
+		}
+		runner := privatecluster.NewScriptRunner("")
+		if err := runner.RunPrivateInstall(ctx, cfg.Azure.TargetCluster.ResourceID); err != nil {
+			return fmt.Errorf("private cluster setup failed: %w", err)
+		}
+		logger.Info("Private cluster setup completed")
+	}
+
 	bootstrapExecutor := bootstrapper.New(cfg, logger)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
@@ -86,6 +109,13 @@ func runAgent(ctx context.Context) error {
 	if err := handleExecutionResult(result, "bootstrap", logger); err != nil {
 		return err
 	}
+
+	// Print visible success message
+	fmt.Println()
+	fmt.Println("========================================")
+	fmt.Println(" Join process finished successfully!")
+	fmt.Println("========================================")
+	fmt.Println()
 
 	// After successful bootstrap, transition to daemon mode
 	logger.Info("Bootstrap completed successfully, transitioning to daemon mode...")
@@ -101,6 +131,39 @@ func runUnbootstrap(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
+	// For private clusters, run VPN/Gateway cleanup first
+	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.Private {
+		logger.Info("Private cluster detected, running VPN/Gateway cleanup...")
+
+		// Validate cleanup mode
+		var mode privatecluster.CleanupMode
+		switch cleanupMode {
+		case "local":
+			mode = privatecluster.CleanupModeLocal
+		case "full":
+			mode = privatecluster.CleanupModeFull
+		default:
+			return fmt.Errorf("invalid cleanup mode: %s (use 'local' or 'full')", cleanupMode)
+		}
+
+		// Check root privileges for private cluster cleanup
+		if os.Getuid() != 0 {
+			return fmt.Errorf("private cluster cleanup requires root privileges, please run with 'sudo'")
+		}
+
+		options := privatecluster.UninstallOptions{
+			Mode:          mode,
+			AKSResourceID: cfg.Azure.TargetCluster.ResourceID,
+		}
+		uninstaller := privatecluster.NewUninstaller(options)
+		if err := uninstaller.Uninstall(ctx); err != nil {
+			logger.Warnf("Private cluster cleanup had errors: %v", err)
+			// Continue with normal unbootstrap even if private cleanup has issues
+		}
+		logger.Info("Private cluster cleanup completed")
+	}
+
+	// Run normal unbootstrap
 	bootstrapExecutor := bootstrapper.New(cfg, logger)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {
@@ -108,7 +171,15 @@ func runUnbootstrap(ctx context.Context) error {
 	}
 
 	// Handle and log the result (unbootstrap is more lenient with failures)
-	return handleExecutionResult(result, "unbootstrap", logger)
+	if err := handleExecutionResult(result, "unbootstrap", logger); err != nil {
+		return err
+	}
+
+	// Print final success message
+	fmt.Println()
+	fmt.Println("\033[0;32mSUCCESS:\033[0m Unbootstrap completed successfully!")
+
+	return nil
 }
 
 // runVersion displays version information
@@ -119,106 +190,6 @@ func runVersion() {
 	fmt.Printf("Build Time: %s\n", BuildTime)
 }
 
-// Private cluster command variables
-var (
-	aksResourceID   string
-	cleanupModeFlag string
-)
-
-// NewPrivateJoinCommand creates a new private-join command
-func NewPrivateJoinCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "private-join",
-		Short: "Join a Private AKS cluster (requires sudo)",
-		Long: `Join a Private AKS cluster.
-
-Prerequisites:
-  1. A Private AKS cluster must exist with AAD and Azure RBAC enabled
-     See: pkg/privatecluster/create_private_cluster.md
-
-  2. Current user must have the following roles on the cluster:
-     - Azure Kubernetes Service Cluster Admin Role
-     - Azure Kubernetes Service RBAC Cluster Admin
-
-  3. Current user must be logged in via 'sudo az login'
-
-The full resource ID of the Private AKS cluster is required as the --aks-resource-id parameter.
-This same resource ID can be used later with the private-leave command.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrivateJoin(cmd.Context())
-		},
-	}
-
-	cmd.Flags().StringVar(&aksResourceID, "aks-resource-id", "", "AKS cluster resource ID (required)")
-	cmd.MarkFlagRequired("aks-resource-id")
-
-	return cmd
-}
-
-// NewPrivateLeaveCommand creates a new private-leave command
-func NewPrivateLeaveCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "private-leave",
-		Short: "Leave a Private AKS cluster (--mode=local|full, requires sudo)",
-		Long: `Remove this edge node from a Private AKS cluster.
-
-Cleanup modes:
-  --local  Local cleanup only (default):
-           - Remove node from AKS cluster
-           - Run aks-flex-node unbootstrap
-           - Remove Arc Agent
-           - Stop VPN and remove client config
-           - Keep Gateway for other nodes
-
-  --full   Full cleanup (requires --aks-resource-id):
-           - All local cleanup steps
-           - Delete Gateway VM
-           - Delete Gateway subnet, NSG, Public IP
-           - Delete SSH keys
-
-This command requires the current user to be logged in via 'sudo az login'.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrivateLeave(cmd.Context())
-		},
-	}
-
-	cmd.Flags().StringVar(&cleanupModeFlag, "mode", "local", "Cleanup mode: 'local' (keep Gateway) or 'full' (remove all Azure resources)")
-	cmd.Flags().StringVar(&aksResourceID, "aks-resource-id", "", "AKS cluster resource ID (required for --mode=full)")
-
-	return cmd
-}
-
-// runPrivateJoin executes the private cluster join process
-func runPrivateJoin(ctx context.Context) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("this command requires root privileges, please run with 'sudo'")
-	}
-	runner := privatecluster.NewScriptRunner("")
-	return runner.RunPrivateInstall(ctx, aksResourceID)
-}
-
-// runPrivateLeave executes the private cluster leave process
-func runPrivateLeave(ctx context.Context) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("this command requires root privileges, please run with 'sudo'")
-	}
-	// Validate cleanup mode
-	var mode privatecluster.CleanupMode
-	switch cleanupModeFlag {
-	case "local":
-		mode = privatecluster.CleanupModeLocal
-	case "full":
-		mode = privatecluster.CleanupModeFull
-		if aksResourceID == "" {
-			return fmt.Errorf("--aks-resource-id is required for full cleanup mode")
-		}
-	default:
-		return fmt.Errorf("invalid cleanup mode: %s (use 'local' or 'full')", cleanupModeFlag)
-	}
-
-	runner := privatecluster.NewScriptRunner("")
-	return runner.RunPrivateUninstall(ctx, mode, aksResourceID)
-}
 
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
 func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
