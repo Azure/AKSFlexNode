@@ -322,7 +322,7 @@ func (i *Installer) createTokenScript() error {
 	} else if i.config.IsSPConfigured() {
 		return i.createServicePrincipalTokenScript()
 	} else {
-		return fmt.Errorf("no valid authentication method configured - either Arc, MSI, or Service Principal must be configured")
+		return fmt.Errorf("no valid authentication method configured - either Arc, MSI, or Service Principal must be explicitly configured")
 	}
 }
 
@@ -364,6 +364,11 @@ curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL |
 
 // createMSITokenScript creates the MSI token script for exec credential authentication using Azure VM Managed Identity
 func (i *Installer) createMSITokenScript() error {
+	clientIDParam := ""
+	if i.config.Azure.ManagedIdentity != nil && i.config.Azure.ManagedIdentity.ClientID != "" {
+		clientIDParam = fmt.Sprintf("\nCLIENT_ID=\"%s\"", i.config.Azure.ManagedIdentity.ClientID)
+	}
+
 	// Azure VM MSI token script using IMDS endpoint
 	tokenScript := fmt.Sprintf(`#!/bin/bash
 
@@ -372,10 +377,16 @@ func (i *Installer) createMSITokenScript() error {
 
 IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"
 API_VERSION="2018-02-01"
-RESOURCE="%s"
+RESOURCE="%s"%s
+
+# Build IMDS URL with optional client_id parameter
+IMDS_URL="$IMDS_ENDPOINT?api-version=$API_VERSION&resource=$RESOURCE"
+if [ -n "${CLIENT_ID:-}" ]; then
+    IMDS_URL="$IMDS_URL&client_id=$CLIENT_ID"
+fi
 
 # Get token from IMDS
-TOKEN_RESPONSE=$(curl -s -H Metadata:true "$IMDS_ENDPOINT?api-version=$API_VERSION&resource=$RESOURCE")
+TOKEN_RESPONSE=$(curl -s -H Metadata:true "$IMDS_URL")
 
 if [ $? -ne 0 ]; then
     echo "Failed to get token from Azure IMDS" >&2
@@ -405,7 +416,7 @@ cat <<EOF
   }
 }
 EOF
-`, aksServiceResourceID)
+`, aksServiceResourceID, clientIDParam)
 
 	return i.writeTokenScript(tokenScript)
 }

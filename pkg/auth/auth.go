@@ -35,14 +35,21 @@ func (a *AuthProvider) UserCredential(cfg *config.Config) (azcore.TokenCredentia
 		return a.serviceCredential(cfg)
 	}
 	if cfg.IsMSIEnabled() {
-		return a.msiCredential()
+		return a.msiCredential(cfg)
 	}
 	return a.cliCredential()
 }
 
-// msiCredential creates managed identity credential for VM MSI
-func (a *AuthProvider) msiCredential() (azcore.TokenCredential, error) {
-	cred, err := azidentity.NewManagedIdentityCredential(nil)
+// msiCredential creates managed identity credential for VM MSI with optional ClientID
+func (a *AuthProvider) msiCredential(cfg *config.Config) (azcore.TokenCredential, error) {
+	options := &azidentity.ManagedIdentityCredentialOptions{}
+
+	// If ClientID is specified, use it to select a specific managed identity
+	if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
+		options.ID = azidentity.ClientID(cfg.Azure.ManagedIdentity.ClientID)
+	}
+
+	cred, err := azidentity.NewManagedIdentityCredential(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create managed identity credential: %w", err)
 	}
