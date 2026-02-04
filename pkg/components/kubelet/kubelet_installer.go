@@ -91,14 +91,23 @@ func (i *Installer) configure(ctx context.Context) error {
 		return err
 	}
 
-	// Create token script for exec credential authentication (Arc or Service Principal)
-	if err := i.createTokenScript(); err != nil {
-		return err
-	}
+	// Create authentication configuration based on auth method
+	if i.config.IsBootstrapTokenConfigured() {
+		// Bootstrap token authentication uses a simple token-based kubeconfig
+		if err := i.createBootstrapKubeconfig(ctx); err != nil {
+			return err
+		}
+	} else {
+		// Arc or Service Principal authentication uses exec credential provider
+		// Create token script for exec credential authentication (Arc or Service Principal)
+		if err := i.createTokenScript(); err != nil {
+			return err
+		}
 
-	// Create kubeconfig with exec credential provider
-	if err := i.createKubeconfigWithExecCredential(ctx); err != nil {
-		return err
+		// Create kubeconfig with exec credential provider
+		if err := i.createKubeconfigWithExecCredential(ctx); err != nil {
+			return err
+		}
 	}
 
 	// Create kubelet containerd configuration
@@ -222,6 +231,7 @@ KUBELET_FLAGS="\
   --read-only-port=0  \
   --resolv-conf=/run/systemd/resolve/resolv.conf  \
   --streaming-connection-idle-timeout=4h  \
+  --rotate-certificates=true \
   --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
   "`,
 		strings.Join(labels, ","),
@@ -319,8 +329,11 @@ func (i *Installer) createTokenScript() error {
 		return i.createMSITokenScript()
 	} else if i.config.IsSPConfigured() {
 		return i.createServicePrincipalTokenScript()
+	} else if i.config.IsBootstrapTokenConfigured() {
+		// Bootstrap token doesn't need a token script
+		return nil
 	} else {
-		return fmt.Errorf("no valid authentication method configured - either Arc, MSI, or Service Principal must be explicitly configured")
+		return fmt.Errorf("no valid authentication method configured - either Arc, Service Principal, or Bootstrap Token must be configured")
 	}
 }
 
@@ -558,6 +571,69 @@ users:
 		return fmt.Errorf("failed to create kubeconfig file: %w", err)
 	}
 
+	return nil
+}
+
+// createBootstrapKubeconfig creates a kubeconfig file with bootstrap token authentication
+func (i *Installer) createBootstrapKubeconfig(ctx context.Context) error {
+	i.logger.Info("Creating bootstrap token kubeconfig")
+
+	// Get cluster info from Azure
+	kubeconfig, err := i.getClusterCredentials(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster credentials: %w", err)
+	}
+
+	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
+	}
+
+	// Get bootstrap token from configuration
+	bootstrapToken := i.config.Azure.BootstrapToken.Token
+
+	// Create cluster configuration based on whether we have CA cert
+	var clusterConfig string
+	if caCertData != "" {
+		clusterConfig = fmt.Sprintf(`- cluster:
+    certificate-authority-data: %s
+    server: %s
+  name: %s`, caCertData, serverURL, i.config.Azure.TargetCluster.Name)
+	} else {
+		clusterConfig = fmt.Sprintf(`- cluster:
+    insecure-skip-tls-verify: true
+    server: %s
+  name: %s`, serverURL, i.config.Azure.TargetCluster.Name)
+	}
+
+	// Create kubeconfig with bootstrap token authentication
+	kubeconfigContent := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+%s
+contexts:
+- context:
+    cluster: %s
+    user: kubelet-bootstrap
+  name: kubelet-bootstrap@%s
+current-context: kubelet-bootstrap@%s
+users:
+- name: kubelet-bootstrap
+  user:
+    token: %s
+`,
+		clusterConfig,
+		i.config.Azure.TargetCluster.Name,
+		i.config.Azure.TargetCluster.Name,
+		i.config.Azure.TargetCluster.Name,
+		bootstrapToken)
+
+	// Write kubeconfig file to the correct location for kubelet
+	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
+		return fmt.Errorf("failed to create bootstrap kubeconfig file: %w", err)
+	}
+
+	i.logger.Info("Bootstrap token kubeconfig created successfully")
 	return nil
 }
 

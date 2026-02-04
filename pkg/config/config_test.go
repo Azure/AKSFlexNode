@@ -83,6 +83,9 @@ func TestValidate(t *testing.T) {
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						Location:   "eastus",
@@ -217,6 +220,7 @@ func TestValidate(t *testing.T) {
 						Location:   "eastus",
 					},
 					Arc: &ArcConfig{
+						Enabled:       true,
 						ResourceGroup: "test-rg",
 						MachineName:   "test-machine",
 						Location:      "eastus",
@@ -273,6 +277,9 @@ func TestLoadConfig(t *testing.T) {
 					"subscriptionId": "12345678-1234-1234-1234-123456789012",
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
+					"bootstrapToken": {
+						"token": "abcdef.0123456789abcdef"
+					},
 					"targetCluster": {
 						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						"location": "eastus"
@@ -615,6 +622,189 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 				}
 				if gotClientID != tt.wantMIClientID {
 					t.Errorf("ManagedIdentity.ClientID = %q, want %q", gotClientID, tt.wantMIClientID)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateBootstrapToken(t *testing.T) {
+	tests := []struct {
+		name      string
+		tokenCfg  *BootstrapTokenConfig
+		wantErr   bool
+		errString string
+	}{
+		{
+			name: "valid bootstrap token",
+			tokenCfg: &BootstrapTokenConfig{
+				Token: "abcdef.0123456789abcdef",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid token format - uppercase",
+			tokenCfg: &BootstrapTokenConfig{
+				Token: "ABCDEF.0123456789ABCDEF",
+			},
+			wantErr:   true,
+			errString: "invalid bootstrap token format",
+		},
+		{
+			name: "invalid token format - wrong token-id length",
+			tokenCfg: &BootstrapTokenConfig{
+				Token: "abcde.0123456789abcdef",
+			},
+			wantErr:   true,
+			errString: "invalid bootstrap token format",
+		},
+		{
+			name: "invalid token format - wrong token-secret length",
+			tokenCfg: &BootstrapTokenConfig{
+				Token: "abcdef.0123456789abcde",
+			},
+			wantErr:   true,
+			errString: "invalid bootstrap token format",
+		},
+		{
+			name: "invalid token format - no separator",
+			tokenCfg: &BootstrapTokenConfig{
+				Token: "abcdef0123456789abcdef",
+			},
+			wantErr:   true,
+			errString: "invalid bootstrap token format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBootstrapToken(tt.tokenCfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("validateBootstrapToken() expected error but got none")
+				} else if tt.errString != "" && !strings.Contains(err.Error(), tt.errString) {
+					t.Errorf("validateBootstrapToken() error = %v, want error containing %v", err, tt.errString)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateBootstrapToken() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestAuthenticationMethodValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *Config
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "bootstrap token authentication enabled",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "service principal authentication enabled",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID:     "12345678-1234-1234-1234-123456789012",
+						ClientID:     "12345678-1234-1234-1234-123456789012",
+						ClientSecret: "test-secret",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "both bootstrap token and service principal enabled fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID:     "12345678-1234-1234-1234-123456789012",
+						ClientID:     "12345678-1234-1234-1234-123456789012",
+						ClientSecret: "test-secret",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "only one authentication method can be enabled at a time",
+		},
+		{
+			name: "no authentication method configured fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "at least one authentication method must be configured",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Validate() expected error but got none")
+				} else if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Validate() error = %v, want error containing %v", err, tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Validate() unexpected error = %v", err)
 				}
 			}
 		})

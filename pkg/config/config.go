@@ -196,12 +196,31 @@ func (c *Config) setNpdDefaults() {
 // Pattern is case insensitive to handle variations in Azure resource path casing
 var AKSClusterResourceIDPattern = regexp.MustCompile(`(?i)^/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourcegroups/([a-zA-Z0-9_\-\.]+)/providers/microsoft\.containerservice/managedclusters/([a-zA-Z0-9_\-\.]+)$`)
 
+// BootstrapTokenPattern is the regex pattern for Kubernetes bootstrap tokens
+// Format: <token-id>.<token-secret> where token-id is 6 chars [a-z0-9] and token-secret is 16 chars [a-z0-9]
+var BootstrapTokenPattern = regexp.MustCompile(`^[a-z0-9]{6}\.[a-z0-9]{16}$`)
+
 // validateAzureResourceID validates the format of an AKS cluster resource ID using regex pattern matching
 func validateAzureResourceID(resourceID string) error {
 	// Check AKS cluster resource ID format
 	if !AKSClusterResourceIDPattern.MatchString(resourceID) {
 		return fmt.Errorf("invalid AKS cluster resource ID format. Expected format:" +
 			"/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.ContainerService/managedClusters/{cluster-name}")
+	}
+
+	return nil
+}
+
+// validateBootstrapToken validates the bootstrap token configuration
+func validateBootstrapToken(tokenCfg *BootstrapTokenConfig) error {
+	if tokenCfg == nil {
+		return fmt.Errorf("bootstrap token configuration is nil")
+	}
+
+	// Validate token format
+	if !BootstrapTokenPattern.MatchString(tokenCfg.Token) {
+		return fmt.Errorf("invalid bootstrap token format. Expected format: <token-id>.<token-secret> " +
+			"where token-id is 6 lowercase alphanumeric characters and token-secret is 16 lowercase alphanumeric characters")
 	}
 
 	return nil

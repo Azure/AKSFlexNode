@@ -28,6 +28,7 @@ type AzureConfig struct {
 	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
 	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
 	ManagedIdentity  *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`  // Optional managed identity authentication
+	BootstrapToken   *BootstrapTokenConfig   `json:"bootstrapToken,omitempty"`   // Optional bootstrap token authentication
 	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
 	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
 }
@@ -44,6 +45,12 @@ type ServicePrincipalConfig struct {
 // It can only be used when the agent is running on an Azure VM with a managed identity assigned.
 type ManagedIdentityConfig struct {
 	ClientID string `json:"clientId,omitempty"` // Client ID of the managed identity (optional, for VMs with multiple identities)
+}
+
+// BootstrapTokenConfig holds Kubernetes bootstrap token authentication configuration.
+// Bootstrap tokens provide a lightweight authentication method for node joining.
+type BootstrapTokenConfig struct {
+	Token string `json:"token"` // Bootstrap token in format: <token-id>.<token-secret>
 }
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
@@ -143,6 +150,12 @@ func (cfg *Config) IsSPConfigured() bool {
 // Uses internal flag set during config loading to handle viper's empty object behavior
 func (cfg *Config) IsMIConfigured() bool {
 	return cfg.isMIExplicitlySet
+}
+
+// IsBootstrapTokenConfigured checks if bootstrap token credentials are provided in the configuration
+func (cfg *Config) IsBootstrapTokenConfigured() bool {
+	return cfg.Azure.BootstrapToken != nil &&
+		cfg.Azure.BootstrapToken.Token != ""
 }
 
 // GetArcMachineName returns the Arc machine name from configuration or defaults to the system hostname
