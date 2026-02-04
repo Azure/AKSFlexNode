@@ -507,20 +507,29 @@ jobs:
           echo ""
 
           echo "[3/5] Running agent (bootstrap)..."
-          sudo aks-flex-node agent --config /etc/aks-flex-node/config.json &
-          AGENT_PID=$!
-          echo "Agent PID: $AGENT_PID"
+          # Run agent as a transient systemd service so it persists after SSH session ends
+          sudo systemd-run \
+            --unit=aks-flex-node-e2e \
+            --description="AKS Flex Node E2E Test" \
+            --remain-after-exit \
+            /usr/local/bin/aks-flex-node agent --config /etc/aks-flex-node/config.json
+
+          echo "Agent started as systemd unit: aks-flex-node-e2e"
           echo ""
 
           # Wait for bootstrap to complete
-          echo "Waiting 30s for bootstrap process..."
-          sleep 30
+          echo "Waiting 60s for bootstrap process..."
+          sleep 60
 
           # Check if agent is still running
-          if ps -p $AGENT_PID > /dev/null; then
-            echo "✅ Agent is running (PID: $AGENT_PID)"
+          if systemctl is-active --quiet aks-flex-node-e2e; then
+            echo "✅ Agent is running"
+            sudo systemctl status aks-flex-node-e2e --no-pager -l | head -n 10
           else
             echo "❌ Agent exited unexpectedly"
+            echo ""
+            echo "Systemd unit status:"
+            sudo systemctl status aks-flex-node-e2e --no-pager -l || true
             echo ""
             echo "Last 50 lines of log:"
             sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log
@@ -694,25 +703,30 @@ jobs:
           echo "Collecting logs from VM: $VM_IP"
           echo ""
 
-          echo "[1/4] aks-flex-node.log"
+          echo "[1/5] aks-flex-node.log"
           ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
             "sudo cat /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null" \
             > /tmp/e2e-logs/aks-flex-node.log || echo "⚠️  No aks-flex-node log"
 
-          echo "[2/4] kubelet.log"
+          echo "[2/5] aks-flex-node-e2e systemd unit log"
+          ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
+            "sudo journalctl -u aks-flex-node-e2e -n 200 --no-pager 2>/dev/null" \
+            > /tmp/e2e-logs/aks-flex-node-e2e.log || echo "⚠️  No systemd unit log"
+
+          echo "[3/5] kubelet.log"
           ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
             "sudo journalctl -u kubelet -n 200 --no-pager 2>/dev/null" \
             > /tmp/e2e-logs/kubelet.log || echo "⚠️  No kubelet log"
 
-          echo "[3/4] containerd.log"
+          echo "[4/5] containerd.log"
           ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
             "sudo journalctl -u containerd -n 100 --no-pager 2>/dev/null" \
             > /tmp/e2e-logs/containerd.log || echo "⚠️  No containerd log"
 
-          echo "[4/4] azcmagent.log"
+          echo "[5/5] VM system info"
           ssh -o StrictHostKeyChecking=no azureuser@$VM_IP \
-            "sudo azcmagent show 2>/dev/null" \
-            > /tmp/e2e-logs/azcmagent.log || echo "⚠️  No azcmagent log"
+            "sudo systemctl list-units --type=service --state=running | grep -E 'kubelet|containerd|aks-flex' || true" \
+            > /tmp/e2e-logs/running-services.log || echo "⚠️  No service info"
 
           echo ""
           echo "✅ Logs collected"
