@@ -9,6 +9,9 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/azcmagent show *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/azcmagent logs *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/azcmagent *
 
+# User and group management for Arc setup
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/sbin/usermod -a -G himds aks-flex-node
+
 # System service management (required for kubelet, containerd, CNI services)
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl daemon-reload
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/systemctl enable kubelet

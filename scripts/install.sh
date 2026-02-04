@@ -257,9 +257,6 @@ check_azure_cli_auth() {
 setup_permissions() {
     log_info "Setting up permissions..."
 
-    # Add service user to himds group (created by Arc agent installation)
-    usermod -a -G himds "$SERVICE_USER"
-
     # Configure Azure CLI access for service user
     local current_user
     current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")

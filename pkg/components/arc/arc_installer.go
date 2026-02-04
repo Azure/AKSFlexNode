@@ -86,7 +86,27 @@ func (i *Installer) installArcAgentBinary(ctx context.Context) error {
 		return fmt.Errorf("failed to install Azure Arc agent: %w", err)
 	}
 
+	// Setup Arc-specific permissions (add service user to himds group)
+	if err := i.setupArcPermissions(); err != nil {
+		i.logger.Warnf("Failed to setup Arc permissions: %v", err)
+		// Don't fail the installation for permission issues
+	}
+
 	i.logger.Info("Azure Arc agent binary installed successfully")
+	return nil
+}
+
+// setupArcPermissions adds the aks-flex-node service user to the himds group
+func (i *Installer) setupArcPermissions() error {
+	i.logger.Info("Setting up Arc-specific permissions...")
+
+	// Add service user to himds group (created by Arc agent installation)
+	serviceUser := "aks-flex-node"
+	if err := utils.RunSystemCommand("usermod", "-a", "-G", "himds", serviceUser); err != nil {
+		return fmt.Errorf("failed to add %s to himds group: %w", serviceUser, err)
+	}
+
+	i.logger.Info("Successfully added service user to himds group")
 	return nil
 }
 
