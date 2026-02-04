@@ -1,5 +1,10 @@
 package arc
 
+const (
+	// Arc agent installation script URL
+	arcInstallScriptURL = "https://gbl.his.arc.azure.com/azcmagent-linux"
+)
+
 var (
 	// Map role names to role definition IDs
 	roleDefinitionIDs = map[string]string{
@@ -10,5 +15,31 @@ var (
 		"Azure Kubernetes Service Cluster Admin Role": "0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8",
 	}
 
+	// Arc services that may be present (not all are guaranteed to exist on every installation)
 	arcServices = []string{"himdsd", "gcarcservice", "extd"}
+
+	// Arc agent binary paths
+	arcBinaryPaths = []string{
+		"/usr/bin/azcmagent",
+		"/usr/local/bin/azcmagent",
+		"/opt/azcmagent/bin/azcmagent",
+	}
+
+	// Arc configuration and data directories
+	arcDirectories = []string{
+		"/var/opt/azcmagent",
+		"/opt/azcmagent",
+		"/etc/opt/azcmagent",
+		"/var/log/azcmagent",
+		"/var/log/himds",
+		"/var/lib/GuestConfig",
+	}
+
+	// Arc systemd service files
+	arcServiceFiles = []string{
+		"/lib/systemd/system/himdsd.service",
+		"/lib/systemd/system/gcarcservice.service",
+		"/etc/systemd/system/himdsd.service",
+		"/etc/systemd/system/gcarcservice.service",
+	}
 )

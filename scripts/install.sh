@@ -235,11 +235,11 @@ check_azure_cli_auth() {
             log_info "  2. Run 'az login' as user $current_user"
             log_info "  3. Then re-run this installer with sudo"
             log_info ""
-            echo -n "Do you want to continue anyway? (service principal auth only) [y/N]: "
+            echo -n "Do you want to continue anyway? (service principal or managed identity auth only) [y/N]: "
             read -r response </dev/tty
             case "$response" in
                 [yY]|[yY][eE][sS])
-                    log_info "Continuing without CLI authentication. Make sure to configure service principal."
+                    log_info "Continuing without CLI authentication. Make sure to configure service principal or managed identity."
                     return 0
                     ;;
                 *)
@@ -251,33 +251,6 @@ check_azure_cli_auth() {
     else
         log_warning "Could not detect original user (SUDO_USER not set)"
         log_info "Make sure to run 'az login' before configuring the service"
-    fi
-}
-
-install_arc_agent() {
-    log_info "Installing Azure Arc agent..."
-
-    if ! command -v azcmagent &> /dev/null; then
-        # Clean up any existing package state to avoid conflicts
-        sudo dpkg --purge azcmagent 2>/dev/null || true
-        log_info "Downloading Azure Arc agent installation script..."
-        local temp_dir
-        temp_dir=$(mktemp -d)
-
-        if command -v curl &> /dev/null; then
-            curl -L -o "$temp_dir/install_linux_azcmagent.sh" https://gbl.his.arc.azure.com/azcmagent-linux
-        elif command -v wget &> /dev/null; then
-            wget -O "$temp_dir/install_linux_azcmagent.sh" https://gbl.his.arc.azure.com/azcmagent-linux
-        fi
-
-        chmod +x "$temp_dir/install_linux_azcmagent.sh"
-        log_info "Installing Azure Arc agent..."
-        bash "$temp_dir/install_linux_azcmagent.sh"
-        rm -rf "$temp_dir"
-
-        log_success "Azure Arc agent installed successfully"
-    else
-        log_info "Azure Arc agent already installed"
     fi
 }
 
@@ -547,7 +520,6 @@ main() {
     setup_service_user
     install_azure_cli
     check_azure_cli_auth
-    install_arc_agent
     setup_permissions
     setup_hostname_resolution
     setup_directories

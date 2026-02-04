@@ -3,7 +3,9 @@ package arc
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -39,13 +41,76 @@ func (i *Installer) Validate(ctx context.Context) error {
 		i.logger.Errorf("Authentication setup failed: %v", err)
 		return fmt.Errorf("arc bootstrap setup failed at authentication: %w", err)
 	}
-	// Ensure Arc agent is installed and running
+	// Ensure Arc agent is installed
 	if !isArcAgentInstalled() {
-		i.logger.Info("Azure Arc agent not found")
-		return fmt.Errorf("azure Arc agent not found - please run the installation script first:\n" +
-			"curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash")
+		i.logger.Info("Azure Arc agent not found, installing...")
+		if err := i.installArcAgentBinary(ctx); err != nil {
+			return fmt.Errorf("failed to install Azure Arc agent binary: %w", err)
+		}
 	}
 	return nil
+}
+
+// installArcAgentBinary downloads and installs the Azure Arc agent binary
+func (i *Installer) installArcAgentBinary(ctx context.Context) error {
+	i.logger.Info("Installing Azure Arc agent binary...")
+
+	// Clean up any existing package state to avoid conflicts
+	if err := utils.RunSystemCommand("dpkg", "--purge", "azcmagent"); err != nil {
+		i.logger.Debug("No existing azcmagent package to remove")
+	}
+
+	// Create temporary directory for installation script
+	tempDir, err := os.MkdirTemp("", "arc-install-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Download Arc agent installation script
+	installScriptPath := filepath.Join(tempDir, "install_linux_azcmagent.sh")
+	i.logger.Info("Downloading Azure Arc agent installation script...")
+
+	if err := i.downloadArcInstallScript(ctx, installScriptPath); err != nil {
+		return fmt.Errorf("failed to download Arc installation script: %w", err)
+	}
+
+	// Make script executable
+	if err := os.Chmod(installScriptPath, 0o755); err != nil {
+		return fmt.Errorf("failed to make installation script executable: %w", err)
+	}
+
+	// Execute installation script
+	i.logger.Info("Running Azure Arc agent installation script...")
+	if err := utils.RunSystemCommand("bash", installScriptPath); err != nil {
+		return fmt.Errorf("failed to install Azure Arc agent: %w", err)
+	}
+
+	i.logger.Info("Azure Arc agent binary installed successfully")
+	return nil
+}
+
+// downloadArcInstallScript downloads the Arc installation script using curl or wget
+func (i *Installer) downloadArcInstallScript(ctx context.Context, destPath string) error {
+	// Try curl first
+	if _, err := exec.LookPath("curl"); err == nil {
+		cmd := exec.CommandContext(ctx, "curl", "-L", "-o", destPath, arcInstallScriptURL)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("curl download failed: %w", err)
+		}
+		return nil
+	}
+
+	// Try wget as fallback
+	if _, err := exec.LookPath("wget"); err == nil {
+		cmd := exec.CommandContext(ctx, "wget", "-O", destPath, arcInstallScriptURL)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("wget download failed: %w", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("neither curl nor wget is available for downloading Arc installation script")
 }
 
 // GetName returns the step name

@@ -116,9 +116,6 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/netstat -rn
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get node *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/local/bin/kubectl --kubeconfig /var/lib/kubelet/kubeconfig get node *
 
-# Note: Arc agent (azcmagent) is managed by install.sh and should not be removed during unbootstrap
-# Unbootstrap only cleans up what AKS Flex Node created, not the underlying Arc installation
-
 # Mount/unmount operations for cleanup
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/umount -l /var/lib/kubelet
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/umount -l *

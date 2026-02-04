@@ -9,6 +9,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/sirupsen/logrus"
+
+	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // UnInstaller handles Azure Arc cleanup operations
@@ -82,6 +84,15 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 		failedOperations = append(failedOperations, "Arc machine disconnection")
 	} else {
 		u.logger.Info("Successfully disconnected Arc machine from Azure")
+	}
+
+	// Step 5: Remove Arc agent binaries and configuration
+	u.logger.Info("Step 5: Removing Arc agent binaries and configuration")
+	if err := u.removeArcAgentBinary(ctx); err != nil {
+		u.logger.Warnf("Failed to remove Arc agent binaries (continuing cleanup): %v", err)
+		failedOperations = append(failedOperations, "Arc agent binary removal")
+	} else {
+		u.logger.Info("Successfully removed Arc agent binaries and configuration")
 	}
 
 	// Report results
@@ -212,5 +223,75 @@ func (u *UnInstaller) removeRoleAssignment(ctx context.Context, principalID, rol
 		u.logger.Debugf("No role assignments found for role %s on scope %s", roleName, scope)
 	}
 
+	return nil
+}
+
+// removeArcAgentBinary removes Arc agent binaries, services, and configuration files
+func (u *UnInstaller) removeArcAgentBinary(ctx context.Context) error {
+	u.logger.Info("Removing Azure Arc agent binaries and configuration...")
+
+	if !isArcAgentInstalled() {
+		u.logger.Info("Azure Arc agent not found - already removed or never installed")
+		return nil
+	}
+
+	// Ensure disconnection happened (in case it failed earlier)
+	u.logger.Info("Ensuring Arc machine is disconnected...")
+	if err := utils.RunSystemCommand("azcmagent", "disconnect", "--force-local-only"); err != nil {
+		u.logger.Debug("Arc disconnect command failed or already disconnected")
+	}
+
+	// Stop Arc agent services
+	u.logger.Info("Stopping Arc agent services...")
+	for _, service := range arcServices {
+		// Only try to stop/disable services that actually exist
+		if utils.ServiceExists(service) {
+			if err := utils.StopService(service); err != nil {
+				u.logger.Debugf("Failed to stop service %s: %v", service, err)
+			}
+			if err := utils.DisableService(service); err != nil {
+				u.logger.Debugf("Failed to disable service %s: %v", service, err)
+			}
+		} else {
+			u.logger.Debugf("Service %s does not exist, skipping", service)
+		}
+	}
+
+	// Remove Arc agent binaries and files
+	u.logger.Info("Removing Arc agent binaries...")
+	for _, path := range arcBinaryPaths {
+		if err := utils.RunCleanupCommand(path); err != nil {
+			u.logger.Debugf("Failed to remove binary %s: %v", path, err)
+		}
+	}
+
+	// Clean up Arc directories and configuration
+	u.logger.Info("Removing Arc configuration directories...")
+	if errors := utils.RemoveDirectories(arcDirectories, u.logger); len(errors) > 0 {
+		for _, err := range errors {
+			u.logger.Debugf("Directory removal error: %v", err)
+		}
+	}
+
+	// Remove systemd service files
+	u.logger.Info("Removing Arc systemd service files...")
+	for _, file := range arcServiceFiles {
+		if err := utils.RunCleanupCommand(file); err != nil {
+			u.logger.Debugf("Failed to remove service file %s: %v", file, err)
+		}
+	}
+
+	// Reload systemd
+	if err := utils.ReloadSystemd(); err != nil {
+		u.logger.Debug("Failed to reload systemd daemon")
+	}
+
+	// Verify removal
+	if isArcAgentInstalled() {
+		u.logger.Warning("azcmagent command still available after cleanup - manual removal may be required")
+		return fmt.Errorf("Arc agent binary still present after cleanup")
+	}
+
+	u.logger.Info("Azure Arc agent binaries and configuration removed successfully")
 	return nil
 }
