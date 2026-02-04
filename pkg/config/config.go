@@ -247,6 +247,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid agent.logLevel: %s. Valid values are: debug, info, warning, error", c.Agent.LogLevel)
 	}
 
+	// Validate authentication configuration - Arc and MSI cannot coexist
+	if c.IsARCEnabled() && c.IsMIConfigured() {
+		return fmt.Errorf("invalid configuration: Arc and ManagedIdentity cannot be configured together. " +
+			"Choose either Arc (with arc.enabled: true) or ManagedIdentity (with managedIdentity config), but not both")
+	}
+
 	return nil
 }
 

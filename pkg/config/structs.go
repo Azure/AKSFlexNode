@@ -23,6 +23,7 @@ type AzureConfig struct {
 	TenantID         string                  `json:"tenantId"`                   // Azure tenant ID
 	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
 	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
+	ManagedIdentity  *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`  // Optional managed identity authentication
 	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
 	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
 }
@@ -33,6 +34,12 @@ type ServicePrincipalConfig struct {
 	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
 	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
 	ClientSecret string `json:"clientSecret"` // Azure AD application client secret
+}
+
+// ManagedIdentityConfig holds managed identity authentication configuration.
+// It can only be used when the agent is running on an Azure VM with a managed identity assigned.
+type ManagedIdentityConfig struct {
+	ClientID string `json:"clientId,omitempty"` // Client ID of the managed identity (optional, for VMs with multiple identities)
 }
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
@@ -126,6 +133,11 @@ func (cfg *Config) IsSPConfigured() bool {
 		cfg.Azure.ServicePrincipal.ClientID != "" &&
 		cfg.Azure.ServicePrincipal.ClientSecret != "" &&
 		cfg.Azure.ServicePrincipal.TenantID != ""
+}
+
+// IsMIConfigured checks if managed identity configuration is provided in the configuration
+func (cfg *Config) IsMIConfigured() bool {
+	return cfg.Azure.ManagedIdentity != nil
 }
 
 // GetArcMachineName returns the Arc machine name from configuration or defaults to the system hostname
