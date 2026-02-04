@@ -317,7 +317,7 @@ WantedBy=multi-user.target`
 func (i *Installer) createTokenScript() error {
 	if i.config.IsARCEnabled() {
 		return i.createArcTokenScript()
-	} else if i.config.IsMSIEnabled() {
+	} else if i.config.IsMIConfigured() {
 		return i.createMSITokenScript()
 	} else if i.config.IsSPConfigured() {
 		return i.createServicePrincipalTokenScript()

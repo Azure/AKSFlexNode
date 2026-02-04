@@ -34,7 +34,7 @@ func (a *AuthProvider) UserCredential(cfg *config.Config) (azcore.TokenCredentia
 	if cfg.IsSPConfigured() {
 		return a.serviceCredential(cfg)
 	}
-	if cfg.IsMSIEnabled() {
+	if cfg.IsMIConfigured() {
 		return a.msiCredential(cfg)
 	}
 	return a.cliCredential()

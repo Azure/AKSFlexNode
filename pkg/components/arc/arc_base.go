@@ -169,7 +169,7 @@ func (ab *base) ensureAuthentication(ctx context.Context) error {
 		return nil
 	}
 
-	if ab.config.IsMSIEnabled() {
+	if ab.config.IsMIConfigured() {
 		ab.logger.Info("🔐 Using managed identity authentication")
 		return nil
 	}

@@ -236,9 +236,3 @@ func (cfg *Config) GetKubernetesVersion() string {
 func (cfg *Config) IsARCEnabled() bool {
 	return cfg.Azure.Arc != nil && cfg.Azure.Arc.Enabled
 }
-
-// IsMSIEnabled checks if VM Managed Service Identity should be used for authentication
-// MSI must be explicitly configured in the config
-func (cfg *Config) IsMSIEnabled() bool {
-	return cfg.IsMIConfigured()
-}
