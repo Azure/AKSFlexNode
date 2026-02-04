@@ -169,11 +169,6 @@ func (ab *base) ensureAuthentication(ctx context.Context) error {
 		return nil
 	}
 
-	if ab.config.IsMIConfigured() {
-		ab.logger.Info("🔐 Using managed identity authentication")
-		return nil
-	}
-
 	ab.logger.Info("🔐 Checking Azure CLI authentication status...")
 	tenantID := ab.config.GetTenantID()
 	if err := ab.authProvider.EnsureAuthenticated(ctx, tenantID); err != nil {
