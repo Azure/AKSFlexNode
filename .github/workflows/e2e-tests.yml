@@ -797,12 +797,11 @@ jobs:
           echo "[2/3] Cleaning up remaining tagged resources (disk, NIC, NSG, public IP)..."
           START_TIME=$(date +%s)
 
-          # Query all resources with BOTH tags: github-run AND one of our resource names
+          # Query all resources in the resource group with our github-run tag
           # This ensures we only delete resources from THIS specific workflow run
           TAGGED_RESOURCES=$(az resource list \
             --resource-group $RESOURCE_GROUP \
-            --tag "github-run=${{ github.run_id }}" \
-            --query "[?tags.purpose=='e2e-test' && (tags.\"test-vm\"=='$VM_NAME' || tags.\"test-cluster\"=='$CLUSTER_NAME')].id" \
+            --query "[?tags.\"github-run\"=='${{ github.run_id }}' && tags.purpose=='e2e-test'].id" \
             -o tsv)
 
           if [ -n "$TAGGED_RESOURCES" ]; then
