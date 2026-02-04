@@ -461,6 +461,7 @@ jobs:
               "subscriptionId": "$SUBSCRIPTION_ID",
               "tenantId": "$TENANT_ID",
               "cloud": "AzurePublicCloud",
+              "managedIdentity": {},
               "arc": {
                 "machineName": "$NODE_NAME",
                 "resourceGroup": "$RESOURCE_GROUP",
@@ -494,7 +495,7 @@ jobs:
           }
           EOF
 
-          echo "✅ Configuration generated (using VM's MSI - no servicePrincipal)"
+          echo "✅ Configuration generated (using VM's system-assigned MSI)"
 
       - name: Upload files to VM
         run: |
