@@ -794,31 +794,50 @@ jobs:
           # Step 2: Delete any remaining resources by tags (catches orphaned resources)
           # IMPORTANT: Only delete resources created by THIS workflow run
           echo ""
-          echo "[2/3] Cleaning up remaining tagged resources (disk, NIC, NSG, public IP)..."
+          echo "[2/3] Cleaning up remaining tagged resources in dependency order..."
           START_TIME=$(date +%s)
 
-          # Query all resources in the resource group with our github-run tag
-          # This ensures we only delete resources from THIS specific workflow run
-          TAGGED_RESOURCES=$(az resource list \
+          # Delete resources in proper dependency order to avoid conflicts
+          # Order: NIC → Public IP → NSG → Disk
+
+          echo "Deleting NICs..."
+          az resource list \
             --resource-group $RESOURCE_GROUP \
-            --query "[?tags.\"github-run\"=='${{ github.run_id }}' && tags.purpose=='e2e-test'].id" \
-            -o tsv)
-
-          if [ -n "$TAGGED_RESOURCES" ]; then
-            echo "Found tagged resources from this run to cleanup:"
-            echo "$TAGGED_RESOURCES"
-            echo ""
-
-            # Delete all tagged resources (excluding VM and cluster which are already being deleted)
-            echo "$TAGGED_RESOURCES" | while read -r resource_id; do
-              if [[ ! "$resource_id" =~ "/virtualMachines/" ]] && [[ ! "$resource_id" =~ "/managedClusters/" ]]; then
-                echo "  Deleting: $resource_id"
-                az resource delete --ids "$resource_id" --no-wait 2>/dev/null || echo "    ⚠️  Failed to delete $resource_id"
-              fi
+            --query "[?tags.\"github-run\"=='${{ github.run_id }}' && tags.purpose=='e2e-test' && type=='Microsoft.Network/networkInterfaces'].id" \
+            -o tsv | while read -r resource_id; do
+              echo "  Deleting NIC: $resource_id"
+              az resource delete --ids "$resource_id" --no-wait 2>/dev/null || echo "    ⚠️  Failed"
             done
-          else
-            echo "No additional tagged resources found (VM deletion may have cleaned them up)"
-          fi
+
+          # Wait a bit for NICs to start deleting
+          sleep 5
+
+          echo "Deleting Public IPs..."
+          az resource list \
+            --resource-group $RESOURCE_GROUP \
+            --query "[?tags.\"github-run\"=='${{ github.run_id }}' && tags.purpose=='e2e-test' && type=='Microsoft.Network/publicIPAddresses'].id" \
+            -o tsv | while read -r resource_id; do
+              echo "  Deleting Public IP: $resource_id"
+              az resource delete --ids "$resource_id" --no-wait 2>/dev/null || echo "    ⚠️  Failed"
+            done
+
+          echo "Deleting NSGs..."
+          az resource list \
+            --resource-group $RESOURCE_GROUP \
+            --query "[?tags.\"github-run\"=='${{ github.run_id }}' && tags.purpose=='e2e-test' && type=='Microsoft.Network/networkSecurityGroups'].id" \
+            -o tsv | while read -r resource_id; do
+              echo "  Deleting NSG: $resource_id"
+              az resource delete --ids "$resource_id" --no-wait 2>/dev/null || echo "    ⚠️  Failed"
+            done
+
+          echo "Deleting Disks..."
+          az resource list \
+            --resource-group $RESOURCE_GROUP \
+            --query "[?tags.\"github-run\"=='${{ github.run_id }}' && tags.purpose=='e2e-test' && type=='Microsoft.Compute/disks'].id" \
+            -o tsv | while read -r resource_id; do
+              echo "  Deleting Disk: $resource_id"
+              az resource delete --ids "$resource_id" --no-wait 2>/dev/null || echo "    ⚠️  Failed"
+            done
 
           END_TIME=$(date +%s)
           echo "✅ Tagged resource cleanup completed ($((END_TIME - START_TIME))s)"
