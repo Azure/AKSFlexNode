@@ -376,7 +376,7 @@ Use this approach for temporary setup, hyperscale environments. Bootstrap tokens
 - **Simplest setup** - No Azure Arc registration needed
 - **Native Kubernetes** - Uses standard K8s authentication (TLS bootstrapping)
 - **Time-limited** - Tokens expire automatically after configured TTL
-- **Quick provisioning** - Generate tokens with minimum dependency with `kubeadm`
+- **Quick provisioning** - Generate tokens with minimal dependencies
 
 ### Cluster Setup
 
@@ -396,7 +396,7 @@ az aks create \
 
 ### Bootstrap Token Creation
 
-The simplest way to create a bootstrap token is using `kubeadm`, which is already installed on the node:
+Create a bootstrap token by creating a Kubernetes secret:
 
 ```bash
 # Get cluster credentials
@@ -406,28 +406,38 @@ az aks get-credentials \
     --admin \
     --overwrite-existing
 
-# Create a bootstrap token with TTL
-# TTL examples: "24h" for 1 day, "168h" for 7 days, "1h" for 1 hour
-TTL="24h"
+# Generate a valid bootstrap token (format: 6 chars . 16 chars)
+TOKEN_ID=$(openssl rand -hex 3)
+TOKEN_SECRET=$(openssl rand -hex 8)
+BOOTSTRAP_TOKEN="${TOKEN_ID}.${TOKEN_SECRET}"
 
-# Create bootstrap token using kubeadm
-BOOTSTRAP_TOKEN=$(kubeadm token create --ttl ${TTL} --groups system:bootstrappers:aks-flex-node --description "AKS Flex Node bootstrap token")
+# Set expiration (e.g., 24 hours from now)
+EXPIRATION=$(date -u -d "+24 hours" +"%Y-%m-%dT%H:%M:%SZ")
 
-echo ""
-echo "✓ Bootstrap token created successfully!"
-echo "  Token: ${BOOTSTRAP_TOKEN}"
-echo "  TTL: ${TTL}"
-echo ""
-echo "Use this token in your config.json:"
-echo '  "bootstrapToken": {'
-echo "    \"token\": \"${BOOTSTRAP_TOKEN}\""
-echo '  }'
+# Create the bootstrap token secret
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-token-${TOKEN_ID}
+  namespace: kube-system
+type: bootstrap.kubernetes.io/token
+stringData:
+  description: "AKS Flex Node bootstrap token"
+  token-id: "${TOKEN_ID}"
+  token-secret: "${TOKEN_SECRET}"
+  expiration: "${EXPIRATION}"
+  usage-bootstrap-authentication: "true"
+  usage-bootstrap-signing: "true"
+  auth-extra-groups: "system:bootstrappers:aks-flex-node"
+EOF
 ```
 
 **Important Notes:**
-- Token format must be exactly 6 + 16 lowercase alphanumeric characters
+- Token format must be exactly 6 + 16 lowercase alphanumeric characters (total: 23 chars with dot)
 - The secret must be in the `kube-system` namespace
 - The secret type must be `bootstrap.kubernetes.io/token`
+- Secret name must be `bootstrap-token-<token-id>`
 - Bootstrap tokens follow the [Kubernetes bootstrap token specification](https://kubernetes.io/docs/reference/access-authn-authz/bootstrap-tokens/)
 
 ### Configure RBAC Roles
@@ -671,6 +681,26 @@ az login --service-principal \
 az aks show \
     --resource-group $RESOURCE_GROUP \
     --name $CLUSTER_NAME
+```
+
+### Bootstrap Token Mode Issues
+
+```bash
+# Verify bootstrap token exists and is valid
+kubectl get secret -n kube-system | grep bootstrap-token
+
+# Check bootstrap token details (decode base64 values)
+kubectl get secret bootstrap-token-<token-id> -n kube-system -o yaml
+
+# Verify RBAC bindings
+kubectl get clusterrolebinding aks-flex-node-bootstrapper
+kubectl get clusterrolebinding aks-flex-node-auto-approve-csr
+
+# Check certificate signing requests
+kubectl get csr
+
+# Approve pending CSR if needed
+kubectl certificate approve <csr-name>
 ```
 
 ### Kubelet Issues
