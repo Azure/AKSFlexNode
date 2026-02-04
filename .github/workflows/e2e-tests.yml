@@ -123,7 +123,7 @@ jobs:
 
           echo "Test Cluster: $CLUSTER_NAME"
           echo "Test VM:      $VM_NAME"
-          echo "Arc Node:     $NODE_NAME"
+          echo "Node Name:    $NODE_NAME"
           echo ""
           echo "✅ Names generated"
 
@@ -281,10 +281,10 @@ jobs:
           name: infrastructure-info
           path: /tmp/
 
-      - name: Grant VM Arc onboarding permissions
+      - name: Wait for VM MSI replication
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔑 Granting Arc Onboarding Permissions"
+          echo "⏳ Waiting for MSI Replication"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           VM_MSI="${{ needs.provision-infrastructure.outputs.vm-msi }}"
@@ -292,50 +292,13 @@ jobs:
 
           echo "VM:              $VM_NAME"
           echo "MSI Principal:   $VM_MSI"
-          echo "Role:            Azure Connected Machine Onboarding"
-          echo "Scope:           Resource Group"
           echo ""
 
           # Wait for MSI replication in Azure AD
           # Azure AD replication can take 5-60 seconds
           echo "Waiting 30s for MSI replication in Azure AD..."
           sleep 30
-
-          echo "Attempting role assignment (with retry)..."
-          # Retry role assignment with exponential backoff
-          for i in {1..5}; do
-            if az role assignment create \
-              --assignee-object-id $VM_MSI \
-              --assignee-principal-type ServicePrincipal \
-              --role "Azure Connected Machine Onboarding" \
-              --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.E2E_RESOURCE_GROUP }}" \
-              --output none 2>&1; then
-              echo ""
-              echo "✅ Permissions granted successfully on attempt $i"
-              break
-            else
-              if [ $i -lt 5 ]; then
-                WAIT_TIME=$((10 * i))  # Exponential backoff: 10s, 20s, 30s, 40s
-                echo "⚠️  Attempt $i failed, retrying in ${WAIT_TIME}s..."
-                sleep $WAIT_TIME
-              else
-                echo ""
-                echo "❌ Failed to grant permissions after 5 attempts"
-                echo ""
-                echo "Possible causes:"
-                echo "  - MSI not yet replicated in Azure AD (try increasing initial wait time)"
-                echo "  - Insufficient permissions on runner's managed identity"
-                echo "  - Azure RBAC service temporary issue"
-                exit 1
-              fi
-            fi
-          done
-
-          # Wait for permission propagation across Azure
-          echo ""
-          echo "Waiting 15s for permission propagation..."
-          sleep 15
-          echo "✅ Permissions ready for Arc registration"
+          echo "✅ MSI should be replicated"
 
       - name: Grant VM MSI permissions to AKS cluster
         run: |
@@ -467,7 +430,7 @@ jobs:
 
           echo "Cluster:  $CLUSTER_NAME"
           echo "VM:       $VM_NAME"
-          echo "Arc Node: $NODE_NAME"
+          echo "Node:     $NODE_NAME"
           echo ""
 
           cat > /tmp/config.json <<EOF
@@ -477,19 +440,6 @@ jobs:
               "tenantId": "$TENANT_ID",
               "cloud": "AzurePublicCloud",
               "managedIdentity": {},
-              "arc": {
-                "enabled": true,
-                "machineName": "$NODE_NAME",
-                "resourceGroup": "$RESOURCE_GROUP",
-                "location": "$LOCATION",
-                "autoRoleAssignment": true,
-                "tags": {
-                  "environment": "e2e-test",
-                  "github-run": "${{ github.run_id }}",
-                  "test-vm": "$VM_NAME",
-                  "test-cluster": "$CLUSTER_NAME"
-                }
-              },
               "targetCluster": {
                 "resourceId": "$CLUSTER_ID",
                 "location": "$LOCATION"
@@ -860,19 +810,9 @@ jobs:
           END_TIME=$(date +%s)
           echo "✅ Tagged resource cleanup completed ($((END_TIME - START_TIME))s)"
 
-          # Step 3: Cleanup Arc and AKS
+          # Step 3: Cleanup AKS cluster
           echo ""
-          echo "[3/3] Cleaning up Arc registration and AKS cluster..."
-
-          # Arc cleanup
-          START_TIME=$(date +%s)
-          az connectedmachine delete \
-            --resource-group $RESOURCE_GROUP \
-            --name "$NODE_NAME" \
-            --yes \
-            --no-wait \
-            2>/dev/null || echo "⚠️  Arc cleanup failed (may not exist)"
-          echo "✅ Arc cleanup initiated ($(($(date +%s) - START_TIME))s)"
+          echo "[3/3] Cleaning up AKS cluster..."
 
           # AKS cleanup
           START_TIME=$(date +%s)
@@ -892,8 +832,7 @@ jobs:
           echo "Cleanup strategy:"
           echo "  1. ✓ VM with --force-deletion (attempts to delete disk, NIC, etc)"
           echo "  2. ✓ Tag-based cleanup (catches any orphaned resources)"
-          echo "  3. ✓ Arc machine registration"
-          echo "  4. ✓ AKS cluster"
+          echo "  3. ✓ AKS cluster"
           echo ""
           echo "Note: Resources are being deleted in the background (--no-wait)"
           echo "Deletion may take 5-10 minutes to complete in Azure"
@@ -947,9 +886,8 @@ jobs:
             echo "  ✅ Built binary"
             echo "  ✅ Created fresh AKS cluster"
             echo "  ✅ Created test VM with Managed Identity"
-            echo "  ✅ Granted Arc onboarding permissions to VM's MSI"
-            echo "  ✅ Registered VM with Azure Arc (using VM's MSI)"
-            echo "  ✅ Configured kubelet and containerd"
+            echo "  ✅ Granted AKS cluster access to VM's MSI"
+            echo "  ✅ Configured kubelet and containerd (using VM's MSI)"
             echo "  ✅ Joined the VM as flex node to AKS cluster"
             echo "  ✅ Passed smoke test"
             echo ""
