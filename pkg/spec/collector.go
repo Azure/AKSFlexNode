@@ -155,24 +155,17 @@ func enrichKubernetesVersionRequired(spec *ManagedClusterSpec, resp armcontainer
 	if spec == nil {
 		return fmt.Errorf("spec is nil")
 	}
-
-	var kubernetesVersion string
-	if resp.ManagedCluster.Properties != nil && resp.ManagedCluster.Properties.KubernetesVersion != nil {
-		kubernetesVersion = *resp.ManagedCluster.Properties.KubernetesVersion
-	}
-	if kubernetesVersion == "" {
+	// set kubernetesVersion
+	if resp.Properties == nil || resp.Properties.KubernetesVersion == nil || *resp.Properties.KubernetesVersion == "" {
 		return fmt.Errorf("managed cluster kubernetesVersion is empty")
 	}
-	spec.KubernetesVersion = kubernetesVersion
+	spec.KubernetesVersion = *resp.Properties.KubernetesVersion
 
-	var currentKubernetesVersion string
-	if resp.ManagedCluster.Properties != nil && resp.ManagedCluster.Properties.CurrentKubernetesVersion != nil {
-		currentKubernetesVersion = *resp.ManagedCluster.Properties.CurrentKubernetesVersion
-	}
-	if currentKubernetesVersion == "" {
+	// set currentKubernetesVersion
+	if resp.Properties == nil || resp.Properties.CurrentKubernetesVersion == nil || *resp.Properties.CurrentKubernetesVersion == "" {
 		return fmt.Errorf("managed cluster currentKubernetesVersion is empty")
 	}
-	spec.CurrentKubernetesVersion = currentKubernetesVersion
+	spec.CurrentKubernetesVersion = *resp.Properties.CurrentKubernetesVersion
 	return nil
 }
 
@@ -180,9 +173,9 @@ func enrichFQDNRequired(spec *ManagedClusterSpec, resp armcontainerservice.Manag
 	if spec == nil {
 		return fmt.Errorf("spec is nil")
 	}
-	if resp.ManagedCluster.Properties == nil || resp.ManagedCluster.Properties.Fqdn == nil || *resp.ManagedCluster.Properties.Fqdn == "" {
+	if resp.Properties == nil || resp.Properties.Fqdn == nil || *resp.Properties.Fqdn == "" {
 		return fmt.Errorf("managed cluster FQDN is empty")
 	}
-	spec.Fqdn = *resp.ManagedCluster.Properties.Fqdn
+	spec.Fqdn = *resp.Properties.Fqdn
 	return nil
 }
