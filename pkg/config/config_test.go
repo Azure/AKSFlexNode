@@ -463,3 +463,160 @@ func TestPopulateTargetClusterInfoFromConfig(t *testing.T) {
 		t.Errorf("Expected ResourceID %s, got %s", expected.ResourceID, config.Azure.TargetCluster.ResourceID)
 	}
 }
+
+func TestManagedIdentityConfiguration(t *testing.T) {
+	// Create a temporary directory for test config files
+	tempDir, err := os.MkdirTemp("", "aks-config-msi-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
+
+	tests := []struct {
+		name               string
+		configJSON         string
+		wantMIConfigured   bool
+		wantMIClientID     string
+		wantValidationErr  bool
+	}{
+		{
+			name: "managedIdentity with empty object",
+			configJSON: `{
+				"azure": {
+					"subscriptionId": "12345678-1234-1234-1234-123456789012",
+					"tenantId": "12345678-1234-1234-1234-123456789012",
+					"cloud": "AzurePublicCloud",
+					"managedIdentity": {},
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						"location": "eastus"
+					}
+				}
+			}`,
+			wantMIConfigured:  true,
+			wantMIClientID:    "",
+			wantValidationErr: false,
+		},
+		{
+			name: "managedIdentity with clientId",
+			configJSON: `{
+				"azure": {
+					"subscriptionId": "12345678-1234-1234-1234-123456789012",
+					"tenantId": "12345678-1234-1234-1234-123456789012",
+					"cloud": "AzurePublicCloud",
+					"managedIdentity": {
+						"clientId": "87654321-4321-4321-4321-210987654321"
+					},
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						"location": "eastus"
+					}
+				}
+			}`,
+			wantMIConfigured:  true,
+			wantMIClientID:    "87654321-4321-4321-4321-210987654321",
+			wantValidationErr: false,
+		},
+		{
+			name: "managedIdentity with empty clientId string",
+			configJSON: `{
+				"azure": {
+					"subscriptionId": "12345678-1234-1234-1234-123456789012",
+					"tenantId": "12345678-1234-1234-1234-123456789012",
+					"cloud": "AzurePublicCloud",
+					"managedIdentity": {
+						"clientId": ""
+					},
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						"location": "eastus"
+					}
+				}
+			}`,
+			wantMIConfigured:  true,
+			wantMIClientID:    "",
+			wantValidationErr: false,
+		},
+		{
+			name: "no managedIdentity field",
+			configJSON: `{
+				"azure": {
+					"subscriptionId": "12345678-1234-1234-1234-123456789012",
+					"tenantId": "12345678-1234-1234-1234-123456789012",
+					"cloud": "AzurePublicCloud",
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						"location": "eastus"
+					}
+				}
+			}`,
+			wantMIConfigured:  false,
+			wantMIClientID:    "",
+			wantValidationErr: false,
+		},
+		{
+			name: "arc and managedIdentity both configured should fail validation",
+			configJSON: `{
+				"azure": {
+					"subscriptionId": "12345678-1234-1234-1234-123456789012",
+					"tenantId": "12345678-1234-1234-1234-123456789012",
+					"cloud": "AzurePublicCloud",
+					"managedIdentity": {},
+					"arc": {
+						"enabled": true,
+						"machineName": "test-node",
+						"resourceGroup": "test-rg",
+						"location": "eastus"
+					},
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						"location": "eastus"
+					}
+				}
+			}`,
+			wantMIConfigured:  true,
+			wantValidationErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary config file
+			configFile := filepath.Join(tempDir, "config-"+tt.name+".json")
+			if err := os.WriteFile(configFile, []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatalf("Failed to write test config file: %v", err)
+			}
+
+			// Test LoadConfig
+			config, err := LoadConfig(configFile)
+			if tt.wantValidationErr {
+				if err == nil {
+					t.Errorf("LoadConfig() expected validation error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error = %v", err)
+			}
+
+			// Verify IsMIConfigured
+			if got := config.IsMIConfigured(); got != tt.wantMIConfigured {
+				t.Errorf("IsMIConfigured() = %v, want %v", got, tt.wantMIConfigured)
+			}
+
+			// Verify ClientID if ManagedIdentity is configured
+			if tt.wantMIConfigured {
+				var gotClientID string
+				if config.Azure.ManagedIdentity != nil {
+					gotClientID = config.Azure.ManagedIdentity.ClientID
+				}
+				if gotClientID != tt.wantMIClientID {
+					t.Errorf("ManagedIdentity.ClientID = %q, want %q", gotClientID, tt.wantMIClientID)
+				}
+			}
+		})
+	}
+}

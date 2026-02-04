@@ -14,6 +14,10 @@ type Config struct {
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
+
+	// Internal field to track if ManagedIdentity was explicitly set in config
+	// This is necessary because viper unmarshals empty JSON objects {} as nil
+	isMIExplicitlySet bool `json:"-"`
 }
 
 // AzureConfig holds Azure-specific configuration required for connecting to Azure services.
@@ -136,8 +140,9 @@ func (cfg *Config) IsSPConfigured() bool {
 }
 
 // IsMIConfigured checks if managed identity configuration is provided in the configuration
+// Uses internal flag set during config loading to handle viper's empty object behavior
 func (cfg *Config) IsMIConfigured() bool {
-	return cfg.Azure.ManagedIdentity != nil
+	return cfg.isMIExplicitlySet
 }
 
 // GetArcMachineName returns the Arc machine name from configuration or defaults to the system hostname

@@ -62,6 +62,11 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
+	// Track if managedIdentity was explicitly set in config
+	// This is necessary because viper unmarshals empty JSON objects {} as nil pointers
+	// Using viper.IsSet() correctly detects if the key was present in the config file
+	config.isMIExplicitlySet = v.IsSet("azure.managedIdentity")
+
 	// Set defaults for any missing values
 	config.SetDefaults()
 
