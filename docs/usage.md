@@ -2,8 +2,8 @@
 
 This guide provides two complete deployment paths for AKS Flex Node:
 
-1. **[Deployment with Azure Arc](#deployment-with-azure-arc)** - Easier setup for quick start, plug and play
-2. **[Deployment with Service Principal](#deployment-with-service-principal)** - More scalable for production deployments
+1. **[Setup with Azure Arc](#setup-with-azure-arc)** - Easier setup for quick start, plug and play
+2. **[Setup with Service Principal](#setup-with-service-principal)** - More scalable for production deployments
 
 ## Comparison: Arc vs Service Principal
 
@@ -209,7 +209,6 @@ CLUSTER_NAME="your-cluster-name"
 az aks create \
     --resource-group "$RESOURCE_GROUP" \
     --name "$CLUSTER_NAME" \
-
     --enable-aad \
     --aad-admin-group-object-ids "$MY_USER_ID"
 ```
