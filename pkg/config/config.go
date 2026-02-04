@@ -271,10 +271,33 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid agent.logLevel: %s. Valid values are: debug, info, warning, error", c.Agent.LogLevel)
 	}
 
-	// Validate authentication configuration - Arc and MSI cannot coexist
-	if c.IsARCEnabled() && c.IsMIConfigured() {
-		return fmt.Errorf("invalid configuration: Arc and ManagedIdentity cannot be configured together. " +
-			"Choose either Arc (with arc.enabled: true) or ManagedIdentity (with managedIdentity config), but not both")
+	// Validate authentication configuration - ensure mutual exclusivity
+	authMethodCount := 0
+	if c.IsARCEnabled() {
+		authMethodCount++
+	}
+	if c.IsSPConfigured() {
+		authMethodCount++
+	}
+	if c.IsMIConfigured() {
+		authMethodCount++
+	}
+	if c.IsBootstrapTokenConfigured() {
+		authMethodCount++
+	}
+
+	if authMethodCount == 0 {
+		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	}
+	if authMethodCount > 1 {
+		return fmt.Errorf("only one authentication method can be enabled at a time: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	}
+
+	// Validate bootstrap token if configured
+	if c.IsBootstrapTokenConfigured() {
+		if err := validateBootstrapToken(c.Azure.BootstrapToken); err != nil {
+			return fmt.Errorf("invalid bootstrap token configuration: %w", err)
+		}
 	}
 
 	return nil

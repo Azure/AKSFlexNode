@@ -746,7 +746,80 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "both bootstrap token and service principal enabled fails",
+			name: "managed identity authentication enabled",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "arc authentication enabled",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					Arc: &ArcConfig{
+						Enabled:       true,
+						ResourceGroup: "test-rg",
+						MachineName:   "test-machine",
+						Location:      "eastus",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "arc and managed identity together fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					Arc: &ArcConfig{
+						Enabled:       true,
+						ResourceGroup: "test-rg",
+						MachineName:   "test-machine",
+						Location:      "eastus",
+					},
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "only one authentication method can be enabled at a time",
+		},
+		{
+			name: "bootstrap token and service principal together fails",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -754,6 +827,36 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
 						Token: "abcdef.0123456789abcdef",
+					},
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID:     "12345678-1234-1234-1234-123456789012",
+						ClientID:     "12345678-1234-1234-1234-123456789012",
+						ClientSecret: "test-secret",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "only one authentication method can be enabled at a time",
+		},
+		{
+			name: "arc and service principal together fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					Arc: &ArcConfig{
+						Enabled:       true,
+						ResourceGroup: "test-rg",
+						MachineName:   "test-machine",
+						Location:      "eastus",
 					},
 					ServicePrincipal: &ServicePrincipalConfig{
 						TenantID:     "12345678-1234-1234-1234-123456789012",
