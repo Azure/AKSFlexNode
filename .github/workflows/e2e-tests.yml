@@ -474,7 +474,7 @@ jobs:
           chmod +x /tmp/aks-flex-node
 
           echo "Uploading binary..."
-          scp -o StrictHostKeyChecking=no /tmp/aks-flex-node azureuser@$VM_IP:/tmp/
+          scp -o StrictHostKeyChecking=no /tmp/aks-flex-node azureuser@$VM_IP:/tmp/aks-flex-node-binary
 
           echo "Uploading config..."
           scp -o StrictHostKeyChecking=no /tmp/config.json azureuser@$VM_IP:/tmp/
@@ -495,7 +495,7 @@ jobs:
           set -euo pipefail
 
           echo "[1/5] Installing aks-flex-node binary..."
-          sudo cp /tmp/aks-flex-node /usr/local/bin/
+          sudo cp /tmp/aks-flex-node-binary /usr/local/bin/aks-flex-node
           sudo chmod +x /usr/local/bin/aks-flex-node
           aks-flex-node version
           echo ""
