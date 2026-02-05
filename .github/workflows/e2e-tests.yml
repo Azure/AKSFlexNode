@@ -86,7 +86,6 @@ jobs:
     runs-on: [self-hosted, e2e, azure]
     needs: build
     timeout-minutes: 15
-    environment: e2e-testing  # Requires approval
     outputs:
       cluster-name: ${{ steps.names.outputs.CLUSTER_NAME }}
       vm-name: ${{ steps.names.outputs.VM_NAME }}
