@@ -84,9 +84,7 @@ func TestValidate(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token:      "abcdef.0123456789abcdef",
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						Token: "abcdef.0123456789abcdef",
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -95,6 +93,12 @@ func TestValidate(t *testing.T) {
 				},
 				Agent: AgentConfig{
 					LogLevel: "info",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
 				},
 			},
 			wantErr: false,
@@ -280,9 +284,7 @@ func TestLoadConfig(t *testing.T) {
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
 					"bootstrapToken": {
-						"token": "abcdef.0123456789abcdef",
-						"serverURL": "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
+						"token": "abcdef.0123456789abcdef"
 					},
 					"targetCluster": {
 						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -291,6 +293,12 @@ func TestLoadConfig(t *testing.T) {
 				},
 				"agent": {
 					"logLevel": "debug"
+				},
+				"node": {
+					"kubelet": {
+						"serverURL": "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
+					}
 				}
 			}`,
 			wantErr: false,
@@ -557,9 +565,18 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 					"subscriptionId": "12345678-1234-1234-1234-123456789012",
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
+					"bootstrapToken": {
+						"token": "abcdef.0123456789abcdef"
+					},
 					"targetCluster": {
 						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						"location": "eastus"
+					}
+				},
+				"node": {
+					"kubelet": {
+						"serverURL": "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
 					}
 				}
 			}`,
@@ -635,47 +652,95 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 func TestValidateBootstrapToken(t *testing.T) {
 	tests := []struct {
 		name      string
-		tokenCfg  *BootstrapTokenConfig
+		config    *Config
 		wantErr   bool
 		errString string
 	}{
 		{
 			name: "valid bootstrap token",
-			tokenCfg: &BootstrapTokenConfig{
-				Token:      "abcdef.0123456789abcdef",
-				ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-				CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid token format - uppercase",
-			tokenCfg: &BootstrapTokenConfig{
-				Token: "ABCDEF.0123456789ABCDEF",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "ABCDEF.0123456789ABCDEF",
+					},
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
 			wantErr:   true,
 			errString: "invalid bootstrap token format",
 		},
 		{
 			name: "invalid token format - wrong token-id length",
-			tokenCfg: &BootstrapTokenConfig{
-				Token: "abcde.0123456789abcdef",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcde.0123456789abcdef",
+					},
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
 			wantErr:   true,
 			errString: "invalid bootstrap token format",
 		},
 		{
 			name: "invalid token format - wrong token-secret length",
-			tokenCfg: &BootstrapTokenConfig{
-				Token: "abcdef.0123456789abcde",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcde",
+					},
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
 			wantErr:   true,
 			errString: "invalid bootstrap token format",
 		},
 		{
 			name: "invalid token format - no separator",
-			tokenCfg: &BootstrapTokenConfig{
-				Token: "abcdef0123456789abcdef",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef0123456789abcdef",
+					},
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
 			wantErr:   true,
 			errString: "invalid bootstrap token format",
@@ -684,7 +749,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateBootstrapToken(tt.tokenCfg)
+			err := validateBootstrapToken(tt.config)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("validateBootstrapToken() expected error but got none")
@@ -715,9 +780,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token:      "abcdef.0123456789abcdef",
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						Token: "abcdef.0123456789abcdef",
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -726,6 +789,12 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Agent: AgentConfig{
 					LogLevel: "info",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
 				},
 			},
 			wantErr: false,
@@ -771,6 +840,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
+				isMIExplicitlySet: true,
 			},
 			wantErr: false,
 		},
@@ -822,6 +892,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
+				isMIExplicitlySet: true,
 			},
 			wantErr: true,
 			errMsg:  "only one authentication method can be enabled at a time",
@@ -834,9 +905,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token:      "abcdef.0123456789abcdef",
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						Token: "abcdef.0123456789abcdef",
 					},
 					ServicePrincipal: &ServicePrincipalConfig{
 						TenantID:     "12345678-1234-1234-1234-123456789012",
@@ -850,6 +919,12 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Agent: AgentConfig{
 					LogLevel: "info",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
 				},
 			},
 			wantErr: true,
@@ -912,8 +987,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token:      "abcdef.0123456789abcdef",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						Token: "abcdef.0123456789abcdef",
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -923,9 +997,14 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
 			wantErr: true,
-			errMsg:  "azure.bootstrapToken.serverURL is required when using bootstrap token authentication",
+			errMsg:  "node.kubelet.serverURL is required when using bootstrap token authentication",
 		},
 		{
 			name: "bootstrap token without caCertData fails",
@@ -935,8 +1014,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token:     "abcdef.0123456789abcdef",
-						ServerURL: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						Token: "abcdef.0123456789abcdef",
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -946,9 +1024,14 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+					},
+				},
 			},
 			wantErr: true,
-			errMsg:  "azure.bootstrapToken.caCertData is required when using bootstrap token authentication",
+			errMsg:  "node.kubelet.caCertData is required when using bootstrap token authentication",
 		},
 	}
 

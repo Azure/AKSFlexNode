@@ -212,7 +212,8 @@ func validateAzureResourceID(resourceID string) error {
 }
 
 // validateBootstrapToken validates the bootstrap token configuration
-func validateBootstrapToken(tokenCfg *BootstrapTokenConfig) error {
+func validateBootstrapToken(cfg *Config) error {
+	tokenCfg := cfg.Azure.BootstrapToken
 	if tokenCfg == nil {
 		return fmt.Errorf("bootstrap token configuration is nil")
 	}
@@ -223,13 +224,13 @@ func validateBootstrapToken(tokenCfg *BootstrapTokenConfig) error {
 			"where token-id is 6 lowercase alphanumeric characters and token-secret is 16 lowercase alphanumeric characters")
 	}
 
-	// When using bootstrap token, serverURL and caCertData are required
+	// When using bootstrap token, serverURL and caCertData are required in kubelet config
 	// because there's no Azure authentication to fetch them
-	if tokenCfg.ServerURL == "" {
-		return fmt.Errorf("azure.bootstrapToken.serverURL is required when using bootstrap token authentication")
+	if cfg.Node.Kubelet.ServerURL == "" {
+		return fmt.Errorf("node.kubelet.serverURL is required when using bootstrap token authentication")
 	}
-	if tokenCfg.CACertData == "" {
-		return fmt.Errorf("azure.bootstrapToken.caCertData is required when using bootstrap token authentication")
+	if cfg.Node.Kubelet.CACertData == "" {
+		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
 	}
 
 	return nil
@@ -304,7 +305,7 @@ func (c *Config) Validate() error {
 
 	// Validate bootstrap token if configured
 	if c.IsBootstrapTokenConfigured() {
-		if err := validateBootstrapToken(c.Azure.BootstrapToken); err != nil {
+		if err := validateBootstrapToken(c); err != nil {
 			return fmt.Errorf("invalid bootstrap token configuration: %w", err)
 		}
 	}

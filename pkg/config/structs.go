@@ -50,9 +50,7 @@ type ManagedIdentityConfig struct {
 // BootstrapTokenConfig holds Kubernetes bootstrap token authentication configuration.
 // Bootstrap tokens provide a lightweight authentication method for node joining.
 type BootstrapTokenConfig struct {
-	Token      string `json:"token"`      // Bootstrap token in format: <token-id>.<token-secret>
-	ServerURL  string `json:"serverURL"`  // Kubernetes API server URL
-	CACertData string `json:"caCertData"` // Base64-encoded CA certificate data
+	Token string `json:"token"` // Bootstrap token in format: <token-id>.<token-secret>
 }
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
@@ -114,6 +112,8 @@ type KubeletConfig struct {
 	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
 	DNSServiceIP         string            `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	ServerURL            string            `json:"serverURL"`    // Kubernetes API server URL
+	CACertData           string            `json:"caCertData"`   // Base64-encoded CA certificate data
 }
 
 // PathsConfig holds file system paths used by the agent for Kubernetes and CNI configurations.

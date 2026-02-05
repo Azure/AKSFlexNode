@@ -586,9 +586,9 @@ users:
 func (i *Installer) createBootstrapKubeconfig(ctx context.Context) error {
 	i.logger.Info("Creating bootstrap token kubeconfig")
 
-	// Use cluster info from bootstrap token config (required fields validated earlier)
-	serverURL := i.config.Azure.BootstrapToken.ServerURL
-	caCertData := i.config.Azure.BootstrapToken.CACertData
+	// Use cluster info from kubelet config (required fields validated earlier)
+	serverURL := i.config.Node.Kubelet.ServerURL
+	caCertData := i.config.Node.Kubelet.CACertData
 	bootstrapToken := i.config.Azure.BootstrapToken.Token
 
 	// Create cluster configuration based on whether we have CA cert
