@@ -48,7 +48,7 @@ confirm_uninstall() {
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
     echo "• Sudo permissions (/etc/sudoers.d/aks-flex-node)"
-    echo "• Azure Arc agent and connection"
+    echo "• Azure CLI"
     echo ""
     echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node unbootstrap' to clean up cluster and Arc resources.${NC}"
         echo ""
@@ -208,6 +208,27 @@ remove_binary() {
     fi
 }
 
+remove_azure_cli() {
+    log_info "Removing Azure CLI..."
+
+    if command -v az &> /dev/null; then
+        # Uninstall Azure CLI package
+        log_info "Uninstalling Azure CLI package..."
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get remove -y azure-cli 2>/dev/null || true
+        apt-get purge -y azure-cli 2>/dev/null || true
+
+        # Verify removal
+        if command -v az &> /dev/null; then
+            log_warning "az command still available after cleanup - manual removal may be required"
+        else
+            log_success "Azure CLI removed successfully"
+        fi
+    else
+        log_info "Azure CLI not found - already removed or never installed"
+    fi
+}
+
 show_completion_message() {
     log_success "AKS Flex Node uninstallation completed!"
     echo ""
@@ -218,6 +239,7 @@ show_completion_message() {
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
     echo "✅ Sudo permissions"
+    echo "✅ Azure CLI"
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"
     echo ""
@@ -247,7 +269,8 @@ main() {
     remove_service_user
     remove_directories
     remove_binary
-   
+    remove_azure_cli
+
     # Show completion message
     show_completion_message
 }

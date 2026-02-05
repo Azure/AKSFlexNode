@@ -21,6 +21,7 @@ DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
+ASSUME_YES=false
 
 # Functions
 log_info() {
@@ -186,9 +187,9 @@ install_azure_cli() {
     if ! command -v az &> /dev/null; then
         log_info "Downloading and installing Azure CLI..."
         if command -v curl &> /dev/null; then
-            curl -sL https://aka.ms/InstallAzureCLIDeb | bash </dev/null
+            curl -sL https://aka.ms/InstallAzureCLIDeb | bash
         elif command -v wget &> /dev/null; then
-            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash </dev/null
+            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
         else
             log_error "Neither curl nor wget is available for downloading Azure CLI"
             return 1
@@ -235,11 +236,15 @@ check_azure_cli_auth() {
             log_info "  2. Run 'az login' as user $current_user"
             log_info "  3. Then re-run this installer with sudo"
             log_info ""
-            echo -n "Do you want to continue anyway? (service principal or managed identity auth only) [y/N]: "
+            if [[ "$ASSUME_YES" == "true" ]]; then
+                log_info "Continuing without CLI authentication (--yes flag provided)"
+                return 0
+            fi
+            echo -n "Do you want to continue anyway? Azure Arc will not work with CLI authentication [y/N]: "
             read -r response </dev/tty
             case "$response" in
                 [yY]|[yY][eE][sS])
-                    log_info "Continuing without CLI authentication. Make sure to configure service principal or managed identity."
+                    log_info "Continuing without CLI authentication. Make sure to configure service principal or managed identity or bootstrap token."
                     return 0
                     ;;
                 *)
@@ -475,6 +480,11 @@ EOF
 }
 
 main() {
+    # Check for force/yes flag
+    if [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
+        ASSUME_YES=true
+    fi
+
     echo -e "${GREEN}AKS Flex Node Installer${NC}"
     echo -e "${GREEN}========================${NC}"
     echo ""
