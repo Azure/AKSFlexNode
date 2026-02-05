@@ -40,6 +40,7 @@ func (i *Installer) GetName() string {
 func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Installing and configuring kubelet")
 
+	// Set up mc client for getting cluster info
 	if err := i.setUpClients(); err != nil {
 		return fmt.Errorf("failed to set up Azure SDK clients: %w", err)
 	}
