@@ -40,13 +40,8 @@ func (i *Installer) GetName() string {
 func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Installing and configuring kubelet")
 
-	// Set up Azure SDK clients to fetch cluster credentials from Azure
-	// Only needed for Arc or Service Principal modes (not bootstrap token)
-	if !i.config.IsBootstrapTokenConfigured() {
-		i.logger.Info("Setting up Azure clients to fetch cluster credentials from Azure")
-		if err := i.setUpClients(); err != nil {
-			return fmt.Errorf("failed to set up Azure SDK clients: %w", err)
-		}
+	if err := i.setUpClients(); err != nil {
+		return fmt.Errorf("failed to set up Azure SDK clients: %w", err)
 	}
 
 	// Configure kubelet service with systemd unit file and default settings
@@ -100,7 +95,7 @@ func (i *Installer) configure(ctx context.Context) error {
 	// Create authentication configuration based on auth method
 	if i.config.IsBootstrapTokenConfigured() {
 		// Bootstrap token authentication uses a simple token-based kubeconfig
-		if err := i.createKubeconfigWithBootstrapToken (ctx); err != nil {
+		if err := i.createKubeconfigWithBootstrapToken(ctx); err != nil {
 			return err
 		}
 	} else {
@@ -584,7 +579,7 @@ users:
 }
 
 // createKubeconfigWithBootstrapToken  creates a kubeconfig file with bootstrap token authentication
-func (i *Installer) createKubeconfigWithBootstrapToken (ctx context.Context) error {
+func (i *Installer) createKubeconfigWithBootstrapToken(ctx context.Context) error {
 	i.logger.Info("Creating bootstrap token kubeconfig")
 
 	// Use cluster info from kubelet config (required fields validated earlier)
