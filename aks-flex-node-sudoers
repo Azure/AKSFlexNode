@@ -99,6 +99,7 @@ aks-flex-node ALL=(root) NOPASSWD:SETENV: /usr/bin/test *, /bin/test *
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/sysctl --system
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/modprobe overlay
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/modprobe br_netfilter
+aks-flex-node ALL=(root) NOPASSWD:SETENV: /sbin/swapoff -a
 
 # Configuration file management and reading
 aks-flex-node ALL=(root) NOPASSWD:SETENV: /bin/tee /etc/sysctl.d/k8s.conf
