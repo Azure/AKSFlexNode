@@ -54,15 +54,19 @@ func (i *Installer) Validate(ctx context.Context) error {
 
 // configureSysctl creates and applies sysctl configuration for Kubernetes
 func (i *Installer) configureSysctl() error {
+	// Disable swap immediately - kubelet sees no active swap devices
+	// so it can start successfully. This is a critical step for kubelet compatibility.
+	if err := i.disableSwap(); err != nil {
+		return fmt.Errorf("failed to disable swap: %w", err)
+	}
+
 	sysctlConfig := `# Kubernetes sysctl settings
 net.bridge.bridge-nf-call-iptables = 1
 net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward = 1
 vm.overcommit_memory = 1
 kernel.panic = 10
-kernel.panic_on_oops = 1
-# Disable swap permanently - required for kubelet
-vm.swappiness = 0`
+kernel.panic_on_oops = 1`
 
 	// Create sysctl directory if it doesn't exist
 	if err := utils.RunSystemCommand("mkdir", "-p", sysctlDir); err != nil {
@@ -106,6 +110,20 @@ func (i *Installer) configureResolvConf() error {
 		i.logger.Info("Configured resolv.conf to use systemd-resolved")
 	} else {
 		i.logger.Info("systemd-resolved not available, using existing resolv.conf")
+	}
+
+	return nil
+}
+
+// disableSwap disables swap immediately for kubelet compatibility
+func (i *Installer) disableSwap() error {
+	i.logger.Info("Disabling swap for kubelet compatibility")
+
+	// Disable all swap devices immediately
+	if err := utils.RunSystemCommand("swapoff", "-a"); err != nil {
+		i.logger.WithError(err).Warning("Failed to disable swap - may not be enabled")
+	} else {
+		i.logger.Info("Swap disabled successfully")
 	}
 
 	return nil
