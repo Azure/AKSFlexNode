@@ -223,6 +223,15 @@ func validateBootstrapToken(tokenCfg *BootstrapTokenConfig) error {
 			"where token-id is 6 lowercase alphanumeric characters and token-secret is 16 lowercase alphanumeric characters")
 	}
 
+	// When using bootstrap token, serverURL and caCertData are required
+	// because there's no Azure authentication to fetch them
+	if tokenCfg.ServerURL == "" {
+		return fmt.Errorf("azure.bootstrapToken.serverURL is required when using bootstrap token authentication")
+	}
+	if tokenCfg.CACertData == "" {
+		return fmt.Errorf("azure.bootstrapToken.caCertData is required when using bootstrap token authentication")
+	}
+
 	return nil
 }
 

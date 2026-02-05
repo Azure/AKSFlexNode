@@ -508,6 +508,11 @@ LOCATION=$(az aks show \
     --query "location" \
     --output tsv)
 
+SERVER_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+
+CA_CERT_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+```
+
 # Create config file (with bootstrap token)
 sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 {
@@ -516,7 +521,9 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
     "tenantId": "$(az account show --query tenantId -o tsv)",
     "cloud": "AzurePublicCloud",
     "bootstrapToken": {
-      "token": "$BOOTSTRAP_TOKEN"
+      "token": "$BOOTSTRAP_TOKEN",
+      "serverURL": "$SERVER_URL",
+      "caCertData": "$CA_CERT_DATA"
     },
     "arc": {
       "enabled": false
@@ -536,6 +543,11 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 }
 EOF
 ```
+
+**Replace these values:**
+- `$BOOTSTRAP_TOKEN`: Bootstrap token generated earlier
+- `$SERVER_URL`: API server URL extracted from kubeconfig (see [Extracting Cluster Connection Information](#extracting-cluster-connection-information))
+- `$CA_CERT_DATA`: Base64-encoded CA certificate data extracted from kubeconfig
 
 ### Running the Agent
 

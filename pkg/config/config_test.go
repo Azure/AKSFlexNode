@@ -84,7 +84,9 @@ func TestValidate(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token: "abcdef.0123456789abcdef",
+						Token:      "abcdef.0123456789abcdef",
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -278,7 +280,9 @@ func TestLoadConfig(t *testing.T) {
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
 					"bootstrapToken": {
-						"token": "abcdef.0123456789abcdef"
+						"token": "abcdef.0123456789abcdef",
+						"serverURL": "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
 					},
 					"targetCluster": {
 						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -638,7 +642,9 @@ func TestValidateBootstrapToken(t *testing.T) {
 		{
 			name: "valid bootstrap token",
 			tokenCfg: &BootstrapTokenConfig{
-				Token: "abcdef.0123456789abcdef",
+				Token:      "abcdef.0123456789abcdef",
+				ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+				CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 			},
 			wantErr: false,
 		},
@@ -709,7 +715,9 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token: "abcdef.0123456789abcdef",
+						Token:      "abcdef.0123456789abcdef",
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -826,7 +834,9 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
-						Token: "abcdef.0123456789abcdef",
+						Token:      "abcdef.0123456789abcdef",
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 					ServicePrincipal: &ServicePrincipalConfig{
 						TenantID:     "12345678-1234-1234-1234-123456789012",
@@ -893,6 +903,52 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "at least one authentication method must be configured",
+		},
+		{
+			name: "bootstrap token without serverURL fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token:      "abcdef.0123456789abcdef",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.bootstrapToken.serverURL is required when using bootstrap token authentication",
+		},
+		{
+			name: "bootstrap token without caCertData fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token:     "abcdef.0123456789abcdef",
+						ServerURL: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.bootstrapToken.caCertData is required when using bootstrap token authentication",
 		},
 	}
 

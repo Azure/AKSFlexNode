@@ -50,7 +50,9 @@ type ManagedIdentityConfig struct {
 // BootstrapTokenConfig holds Kubernetes bootstrap token authentication configuration.
 // Bootstrap tokens provide a lightweight authentication method for node joining.
 type BootstrapTokenConfig struct {
-	Token string `json:"token"` // Bootstrap token in format: <token-id>.<token-secret>
+	Token      string `json:"token"`      // Bootstrap token in format: <token-id>.<token-secret>
+	ServerURL  string `json:"serverURL"`  // Kubernetes API server URL
+	CACertData string `json:"caCertData"` // Base64-encoded CA certificate data
 }
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.

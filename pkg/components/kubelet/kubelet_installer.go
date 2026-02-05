@@ -38,9 +38,14 @@ func (i *Installer) GetName() string {
 // Execute installs and configures kubelet service
 func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Installing and configuring kubelet")
-	// Set up mc client for getting cluster info
-	if err := i.setUpClients(); err != nil {
-		return fmt.Errorf("failed to set up Azure SDK clients: %w", err)
+
+	// Set up Azure SDK clients to fetch cluster credentials from Azure
+	// Only needed for Arc or Service Principal modes (not bootstrap token)
+	if !i.config.IsBootstrapTokenConfigured() {
+		i.logger.Info("Setting up Azure clients to fetch cluster credentials from Azure")
+		if err := i.setUpClients(); err != nil {
+			return fmt.Errorf("failed to set up Azure SDK clients: %w", err)
+		}
 	}
 
 	// Configure kubelet service with systemd unit file and default settings
@@ -505,11 +510,14 @@ func (i *Installer) writeTokenScript(tokenScript string) error {
 
 // createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for authentication
 func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) error {
+	// Fetch cluster credentials from Azure (for Arc/SP/MI modes)
+	i.logger.Info("Fetching cluster credentials from Azure")
 	kubeconfig, err := i.getClusterCredentials(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster credentials: %w", err)
 	}
 
+	// Extract server URL and CA cert from kubeconfig
 	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
@@ -578,18 +586,9 @@ users:
 func (i *Installer) createBootstrapKubeconfig(ctx context.Context) error {
 	i.logger.Info("Creating bootstrap token kubeconfig")
 
-	// Get cluster info from Azure
-	kubeconfig, err := i.getClusterCredentials(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get cluster credentials: %w", err)
-	}
-
-	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
-	}
-
-	// Get bootstrap token from configuration
+	// Use cluster info from bootstrap token config (required fields validated earlier)
+	serverURL := i.config.Azure.BootstrapToken.ServerURL
+	caCertData := i.config.Azure.BootstrapToken.CACertData
 	bootstrapToken := i.config.Azure.BootstrapToken.Token
 
 	// Create cluster configuration based on whether we have CA cert
@@ -637,6 +636,7 @@ users:
 	return nil
 }
 
+// setUpClients sets up Azure SDK clients for fetching cluster credentials
 func (i *Installer) setUpClients() error {
 	cred, err := auth.NewAuthProvider().UserCredential(config.GetConfig())
 	if err != nil {
@@ -651,7 +651,7 @@ func (i *Installer) setUpClients() error {
 	return nil
 }
 
-// GetClusterCredentials retrieves cluster kube admin credentials using Azure SDK
+// getClusterCredentials retrieves cluster kube admin credentials using Azure SDK
 func (i *Installer) getClusterCredentials(ctx context.Context) ([]byte, error) {
 	cfg := config.GetConfig()
 	clusterResourceGroup := cfg.GetTargetClusterResourceGroup()
