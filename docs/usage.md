@@ -492,10 +492,9 @@ aks-flex-node version
 
 Create the configuration file with Bootstrap Token:
 
-#### Option A: Using Azure CLI Credentials (Simpler)
-
 ```bash
 # Get subscription ID and cluster resource ID
+TENANT_ID=$(az account show --query tenantId -o tsv)
 SUBSCRIPTION=$(az account show --query id -o tsv)
 AKS_RESOURCE_ID=$(az aks show \
     --resource-group "$RESOURCE_GROUP" \
@@ -509,7 +508,6 @@ LOCATION=$(az aks show \
     --output tsv)
 
 SERVER_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
-
 CA_CERT_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
 ```
 
@@ -518,7 +516,7 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 {
   "azure": {
     "subscriptionId": "$SUBSCRIPTION",
-    "tenantId": "$(az account show --query tenantId -o tsv)",
+    "tenantId": "$TENANT_ID",
     "cloud": "AzurePublicCloud",
     "bootstrapToken": {
       "token": "$BOOTSTRAP_TOKEN",
@@ -542,13 +540,6 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   }
 }
 EOF
-```
-
-**Replace these values:**
-- `$BOOTSTRAP_TOKEN`: Bootstrap token generated earlier
-- `$SERVER_URL`: API server URL extracted from kubeconfig (see [Extracting Cluster Connection Information](#extracting-cluster-connection-information))
-- `$CA_CERT_DATA`: Base64-encoded CA certificate data extracted from kubeconfig
-
 ### Running the Agent
 
 ```bash
