@@ -14,6 +14,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
+	"go.goms.io/aks/AKSFlexNode/pkg/spec"
 	"go.goms.io/aks/AKSFlexNode/pkg/status"
 )
 
@@ -124,7 +125,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 	// Create status file directory - using runtime directory for service or temp for development
 	statusFilePath := status.GetStatusFilePath()
 	statusDir := filepath.Dir(statusFilePath)
-	if err := os.MkdirAll(statusDir, 0750); err != nil {
+	if err := os.MkdirAll(statusDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create status directory %s: %w", statusDir, err)
 	}
 
@@ -143,12 +144,19 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 	// Create tickers for different intervals
 	statusTicker := time.NewTicker(1 * time.Minute)
 	bootstrapTicker := time.NewTicker(2 * time.Minute)
+	specTicker := time.NewTicker(30 * time.Minute)
 	defer statusTicker.Stop()
 	defer bootstrapTicker.Stop()
+	defer specTicker.Stop()
 
 	// Collect status immediately on start
 	if err := collectAndWriteStatus(ctx, cfg, statusFilePath); err != nil {
 		logger.Errorf("Failed to collect initial status: %v", err)
+	}
+
+	// Collect managed cluster spec once on daemon startup.
+	if err := collectAndWriteManagedClusterSpec(ctx, cfg); err != nil {
+		logger.Warnf("Failed to collect initial managed cluster spec: %v", err)
 	}
 
 	// Run the periodic collection and monitoring loop
@@ -173,8 +181,22 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 			} else {
 				logger.Infof("Bootstrap health check completed at %s", time.Now().Format("2006-01-02 15:04:05"))
 			}
+		case <-specTicker.C:
+			logger.Infof("Starting periodic managed cluster spec collection at %s...", time.Now().Format("2006-01-02 15:04:05"))
+			if err := collectAndWriteManagedClusterSpec(ctx, cfg); err != nil {
+				logger.Warnf("Failed to collect managed cluster spec at %s: %v", time.Now().Format("2006-01-02 15:04:05"), err)
+			} else {
+				logger.Infof("Managed cluster spec collection completed at %s", time.Now().Format("2006-01-02 15:04:05"))
+			}
 		}
 	}
+}
+
+func collectAndWriteManagedClusterSpec(ctx context.Context, cfg *config.Config) error {
+	logger := logger.GetLoggerFromContext(ctx)
+	collector := spec.NewManagedClusterSpecCollector(cfg, logger)
+	_, err := collector.Collect(ctx)
+	return err
 }
 
 // checkAndBootstrap checks if the node needs re-bootstrapping and performs it if necessary
@@ -242,7 +264,7 @@ func collectAndWriteStatus(ctx context.Context, cfg *config.Config, statusFilePa
 
 	// Write to temporary file first, then rename (atomic operation)
 	tempFile := statusFilePath + ".tmp"
-	if err := os.WriteFile(tempFile, statusData, 0600); err != nil {
+	if err := os.WriteFile(tempFile, statusData, 0o600); err != nil {
 		return fmt.Errorf("failed to write status to temp file: %w", err)
 	}
 
