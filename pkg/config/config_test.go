@@ -475,11 +475,11 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name               string
-		configJSON         string
-		wantMIConfigured   bool
-		wantMIClientID     string
-		wantValidationErr  bool
+		name              string
+		configJSON        string
+		wantMIConfigured  bool
+		wantMIClientID    string
+		wantValidationErr bool
 	}{
 		{
 			name: "managedIdentity with empty object",
