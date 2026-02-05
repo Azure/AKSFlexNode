@@ -3,6 +3,7 @@ package kubelet
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -591,6 +592,15 @@ func (i *Installer) createKubeconfigWithBootstrapToken (ctx context.Context) err
 	caCertData := i.config.Node.Kubelet.CACertData
 	bootstrapToken := i.config.Azure.BootstrapToken.Token
 
+	// Get node hostname for audit logging
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("failed to get hostname for bootstrap kubeconfig: %w", err)
+	}
+
+	// Include node name in username for better auditing in Kubernetes API server logs
+	username := fmt.Sprintf("kubelet-bootstrap-%s", hostname)
+
 	// Create cluster configuration based on whether we have CA cert
 	var clusterConfig string
 	if caCertData != "" {
@@ -613,18 +623,20 @@ clusters:
 contexts:
 - context:
     cluster: %s
-    user: kubelet-bootstrap
-  name: kubelet-bootstrap@%s
-current-context: kubelet-bootstrap@%s
+    user: %s
+  name: %s
+current-context: %s
 users:
-- name: kubelet-bootstrap
+- name: %s
   user:
     token: %s
 `,
 		clusterConfig,
 		i.config.Azure.TargetCluster.Name,
+		username,
 		i.config.Azure.TargetCluster.Name,
 		i.config.Azure.TargetCluster.Name,
+		username,
 		bootstrapToken)
 
 	// Write kubeconfig file to the correct location for kubelet
