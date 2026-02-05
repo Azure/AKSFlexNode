@@ -99,7 +99,7 @@ func (i *Installer) configure(ctx context.Context) error {
 	// Create authentication configuration based on auth method
 	if i.config.IsBootstrapTokenConfigured() {
 		// Bootstrap token authentication uses a simple token-based kubeconfig
-		if err := i.createBootstrapKubeconfig(ctx); err != nil {
+		if err := i.createKubeconfigWithBootstrapToken (ctx); err != nil {
 			return err
 		}
 	} else {
@@ -582,8 +582,8 @@ users:
 	return nil
 }
 
-// createBootstrapKubeconfig creates a kubeconfig file with bootstrap token authentication
-func (i *Installer) createBootstrapKubeconfig(ctx context.Context) error {
+// createKubeconfigWithBootstrapToken  creates a kubeconfig file with bootstrap token authentication
+func (i *Installer) createKubeconfigWithBootstrapToken (ctx context.Context) error {
 	i.logger.Info("Creating bootstrap token kubeconfig")
 
 	// Use cluster info from kubelet config (required fields validated earlier)
