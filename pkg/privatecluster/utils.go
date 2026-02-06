@@ -156,7 +156,7 @@ func AddHostsEntry(ip, hostname string) error {
 		return nil // Entry already exists
 	}
 
-	f, err := os.OpenFile(hostsPath, os.O_APPEND|os.O_WRONLY, 0644) // #nosec G302,G304 -- /etc/hosts requires 0644
+	f, err := os.OpenFile(hostsPath, os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 -- hostsPath is validated
 	if err != nil {
 		return fmt.Errorf("failed to open hosts file: %w", err)
 	}
