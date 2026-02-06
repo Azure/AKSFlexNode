@@ -191,7 +191,6 @@ func runVersion() {
 	fmt.Printf("Build Time: %s\n", BuildTime)
 }
 
-
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
 func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 	logger := logger.GetLoggerFromContext(ctx)
