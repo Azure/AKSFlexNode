@@ -14,6 +14,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/components/runc"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/services"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/vpn_gateway"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
@@ -34,6 +35,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 	// Define the bootstrap steps in order - using modules directly
 	steps := []Executor{
 		arc.NewInstaller(b.logger),                  // Setup Arc
+		vpn_gateway.NewInstaller(b.logger),          // Setup VPN Gateway (if enabled)
 		services.NewUnInstaller(b.logger),           // Stop kubelet before setup
 		system_configuration.NewInstaller(b.logger), // Configure system (early)
 		runc.NewInstaller(b.logger),                 // Install runc
@@ -59,6 +61,7 @@ func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error
 		containerd.NewUnInstaller(b.logger),           // Uninstall containerd binary
 		runc.NewUnInstaller(b.logger),                 // Uninstall runc binary
 		system_configuration.NewUnInstaller(b.logger), // Clean system settings
+		vpn_gateway.NewUnInstaller(b.logger),          // Clean VPN Gateway
 		arc.NewUnInstaller(b.logger),                  // Uninstall Arc (after cleanup)
 	}
 
