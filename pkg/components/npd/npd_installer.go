@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
@@ -123,7 +124,7 @@ func (i *Installer) configure() error {
 }
 
 func (i *Installer) createNpdServiceFile() error {
-	kubeConfigData, err := utils.RunCommandWithOutput("cat", kubeletKubeconfigPath)
+	kubeConfigData, err := utils.RunCommandWithOutput("cat", kubelet.KubeletKubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read kubelet kubeconfig file: %w", err)
 	}
@@ -134,7 +135,7 @@ func (i *Installer) createNpdServiceFile() error {
 	}
 
 	cmd := fmt.Sprintf("%s --apiserver-override=\"%s?inClusterConfig=false&auth=%s\" --config.system-log-monitor=%s",
-		npdBinaryPath, serverURL, kubeletKubeconfigPath, npdConfigPath)
+		npdBinaryPath, serverURL, kubelet.KubeletKubeconfigPath, npdConfigPath)
 
 	npdService := `[Unit]
 Description=Node Problem Detector

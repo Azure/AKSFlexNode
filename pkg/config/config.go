@@ -62,6 +62,11 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
+	// Track if managedIdentity was explicitly set in config
+	// This is necessary because viper unmarshals empty JSON objects {} as nil pointers
+	// Using viper.IsSet() correctly detects if the key was present in the config file
+	config.isMIExplicitlySet = v.IsSet("azure.managedIdentity")
+
 	// Set defaults for any missing values
 	config.SetDefaults()
 
@@ -151,6 +156,12 @@ func (c *Config) setNodeDefaults() {
 	if c.Node.Kubelet.ImageGCLowThreshold == 0 {
 		c.Node.Kubelet.ImageGCLowThreshold = 80 // stop GC when disk usage < 80%
 	}
+	// Set default DNS service IP if not provided
+	// Note: This default assumes the standard AKS service CIDR (10.0.0.0/16)
+	// Clusters with custom service CIDRs should specify this value explicitly
+	if c.Node.Kubelet.DNSServiceIP == "" {
+		c.Node.Kubelet.DNSServiceIP = "10.0.0.10"
+	}
 	// Initialize default kubelet resource reservations if not provided
 	if c.Node.Kubelet.KubeReserved == nil {
 		c.Node.Kubelet.KubeReserved = make(map[string]string)
@@ -182,7 +193,12 @@ func (c *Config) setNpdDefaults() {
 
 // AKSClusterResourceIDPattern is AKS cluster resource ID regex pattern with capture groups
 // Format: /subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.ContainerService/managedClusters/{cluster-name}
-var AKSClusterResourceIDPattern = regexp.MustCompile(`^/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourceGroups/([a-zA-Z0-9_\-\.]+)/providers/Microsoft\.ContainerService/managedClusters/([a-zA-Z0-9_\-\.]+)$`)
+// Pattern is case insensitive to handle variations in Azure resource path casing
+var AKSClusterResourceIDPattern = regexp.MustCompile(`(?i)^/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourcegroups/([a-zA-Z0-9_\-\.]+)/providers/microsoft\.containerservice/managedclusters/([a-zA-Z0-9_\-\.]+)$`)
+
+// BootstrapTokenPattern is the regex pattern for Kubernetes bootstrap tokens
+// Format: <token-id>.<token-secret> where token-id is 6 chars [a-z0-9] and token-secret is 16 chars [a-z0-9]
+var BootstrapTokenPattern = regexp.MustCompile(`^[a-z0-9]{6}\.[a-z0-9]{16}$`)
 
 // validateAzureResourceID validates the format of an AKS cluster resource ID using regex pattern matching
 func validateAzureResourceID(resourceID string) error {
@@ -190,6 +206,31 @@ func validateAzureResourceID(resourceID string) error {
 	if !AKSClusterResourceIDPattern.MatchString(resourceID) {
 		return fmt.Errorf("invalid AKS cluster resource ID format. Expected format:" +
 			"/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.ContainerService/managedClusters/{cluster-name}")
+	}
+
+	return nil
+}
+
+// validateBootstrapToken validates the bootstrap token configuration
+func validateBootstrapToken(cfg *Config) error {
+	tokenCfg := cfg.Azure.BootstrapToken
+	if tokenCfg == nil {
+		return fmt.Errorf("bootstrap token configuration is nil")
+	}
+
+	// Validate token format
+	if !BootstrapTokenPattern.MatchString(tokenCfg.Token) {
+		return fmt.Errorf("invalid bootstrap token format. Expected format: <token-id>.<token-secret> " +
+			"where token-id is 6 lowercase alphanumeric characters and token-secret is 16 lowercase alphanumeric characters")
+	}
+
+	// When using bootstrap token, serverURL and caCertData are required in kubelet config
+	// because there's no Azure authentication to fetch them
+	if cfg.Node.Kubelet.ServerURL == "" {
+		return fmt.Errorf("node.kubelet.serverURL is required when using bootstrap token authentication")
+	}
+	if cfg.Node.Kubelet.CACertData == "" {
+		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
 	}
 
 	return nil
@@ -238,6 +279,35 @@ func (c *Config) Validate() error {
 	// Validate log level
 	if !validLogLevels[c.Agent.LogLevel] {
 		return fmt.Errorf("invalid agent.logLevel: %s. Valid values are: debug, info, warning, error", c.Agent.LogLevel)
+	}
+
+	// Validate authentication configuration - ensure mutual exclusivity
+	authMethodCount := 0
+	if c.IsARCEnabled() {
+		authMethodCount++
+	}
+	if c.IsSPConfigured() {
+		authMethodCount++
+	}
+	if c.IsMIConfigured() {
+		authMethodCount++
+	}
+	if c.IsBootstrapTokenConfigured() {
+		authMethodCount++
+	}
+
+	if authMethodCount == 0 {
+		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	}
+	if authMethodCount > 1 {
+		return fmt.Errorf("only one authentication method can be enabled at a time: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	}
+
+	// Validate bootstrap token if configured
+	if c.IsBootstrapTokenConfigured() {
+		if err := validateBootstrapToken(c); err != nil {
+			return fmt.Errorf("invalid bootstrap token configuration: %w", err)
+		}
 	}
 
 	return nil

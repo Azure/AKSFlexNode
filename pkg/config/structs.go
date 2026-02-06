@@ -14,6 +14,10 @@ type Config struct {
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
+
+	// Internal field to track if ManagedIdentity was explicitly set in config
+	// This is necessary because viper unmarshals empty JSON objects {} as nil
+	isMIExplicitlySet bool `json:"-"`
 }
 
 // AzureConfig holds Azure-specific configuration required for connecting to Azure services.
@@ -23,6 +27,8 @@ type AzureConfig struct {
 	TenantID         string                  `json:"tenantId"`                   // Azure tenant ID
 	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
 	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
+	ManagedIdentity  *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`  // Optional managed identity authentication
+	BootstrapToken   *BootstrapTokenConfig   `json:"bootstrapToken,omitempty"`   // Optional bootstrap token authentication
 	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
 	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
 }
@@ -33,6 +39,18 @@ type ServicePrincipalConfig struct {
 	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
 	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
 	ClientSecret string `json:"clientSecret"` // Azure AD application client secret
+}
+
+// ManagedIdentityConfig holds managed identity authentication configuration.
+// It can only be used when the agent is running on an Azure VM with a managed identity assigned.
+type ManagedIdentityConfig struct {
+	ClientID string `json:"clientId,omitempty"` // Client ID of the managed identity (optional, for VMs with multiple identities)
+}
+
+// BootstrapTokenConfig holds Kubernetes bootstrap token authentication configuration.
+// Bootstrap tokens provide a lightweight authentication method for node joining.
+type BootstrapTokenConfig struct {
+	Token string `json:"token"` // Bootstrap token in format: <token-id>.<token-secret>
 }
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
@@ -48,6 +66,7 @@ type TargetClusterConfig struct {
 
 // ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.
 type ArcConfig struct {
+	Enabled       bool              `json:"enabled"`       // Whether to enable Azure Arc registration
 	MachineName   string            `json:"machineName"`   // Name for the Arc machine resource
 	Tags          map[string]string `json:"tags"`          // Tags to apply to the Arc machine
 	ResourceGroup string            `json:"resourceGroup"` // Azure resource group for Arc machine
@@ -93,6 +112,9 @@ type KubeletConfig struct {
 	Verbosity            int               `json:"verbosity"`
 	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
+	DNSServiceIP         string            `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	ServerURL            string            `json:"serverURL"`    // Kubernetes API server URL
+	CACertData           string            `json:"caCertData"`   // Base64-encoded CA certificate data
 }
 
 // PathsConfig holds file system paths used by the agent for Kubernetes and CNI configurations.
@@ -125,6 +147,18 @@ func (cfg *Config) IsSPConfigured() bool {
 		cfg.Azure.ServicePrincipal.ClientID != "" &&
 		cfg.Azure.ServicePrincipal.ClientSecret != "" &&
 		cfg.Azure.ServicePrincipal.TenantID != ""
+}
+
+// IsMIConfigured checks if managed identity configuration is provided in the configuration
+// Uses internal flag set during config loading to handle viper's empty object behavior
+func (cfg *Config) IsMIConfigured() bool {
+	return cfg.isMIExplicitlySet
+}
+
+// IsBootstrapTokenConfigured checks if bootstrap token credentials are provided in the configuration
+func (cfg *Config) IsBootstrapTokenConfigured() bool {
+	return cfg.Azure.BootstrapToken != nil &&
+		cfg.Azure.BootstrapToken.Token != ""
 }
 
 // GetArcMachineName returns the Arc machine name from configuration or defaults to the system hostname
@@ -217,4 +251,9 @@ func (cfg *Config) GetTenantID() string {
 // GetKubernetesVersion returns the Kubernetes version from configuration
 func (cfg *Config) GetKubernetesVersion() string {
 	return cfg.Kubernetes.Version
+}
+
+// IsARCEnabled checks if Azure Arc registration is enabled in the configuration
+func (cfg *Config) IsARCEnabled() bool {
+	return cfg.Azure.Arc != nil && cfg.Azure.Arc.Enabled
 }

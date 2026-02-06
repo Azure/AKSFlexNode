@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
@@ -202,7 +203,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 	// Readiness condition status is one of: True, False, Unknown
 	args := []string{
 		"--kubeconfig",
-		"/var/lib/kubelet/kubeconfig",
+		kubelet.KubeletKubeconfigPath,
 		"get",
 		"node",
 		hostName,

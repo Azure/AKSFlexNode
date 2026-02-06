@@ -19,13 +19,16 @@
 *.swp
 *.test
 *~
+._*
 .DS_Store
 .DS_Store?
 .Spotlight-V100
 .Trashes
-._*
 .idea/
 .vscode/
+.env
+.env.local
+.env.*.local
 /build/
 /dist/AKSFlexNode
 /var/log/

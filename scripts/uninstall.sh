@@ -48,10 +48,10 @@ confirm_uninstall() {
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
     echo "• Sudo permissions (/etc/sudoers.d/aks-flex-node)"
-    echo "• Azure Arc agent and connection"
+    echo "• Azure CLI"
     echo ""
     echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node unbootstrap' to clean up cluster and Arc resources.${NC}"
-    echo ""
+        echo ""
 
     # Always prompt for confirmation, even when piped
     if [[ "${1:-}" != "--force" ]]; then
@@ -208,56 +208,24 @@ remove_binary() {
     fi
 }
 
-cleanup_arc_agent() {
-    log_info "Removing Azure Arc agent..."
+remove_azure_cli() {
+    log_info "Removing Azure CLI..."
 
-    if command -v azcmagent &> /dev/null; then
-        # First ensure disconnection happened (in case unbootstrap failed)
-        log_info "Ensuring Arc machine is disconnected..."
-        sudo azcmagent disconnect --force-local-only 2>/dev/null || true
-
-        # Stop Arc agent services
-        log_info "Stopping Arc agent services..."
-        sudo systemctl stop himdsd 2>/dev/null || true
-        sudo systemctl stop gcarcservice 2>/dev/null || true
-        sudo systemctl disable himdsd 2>/dev/null || true
-        sudo systemctl disable gcarcservice 2>/dev/null || true
-
-        # Remove Arc agent binaries and files (installed via Microsoft script)
-        log_info "Removing Arc agent binaries and configuration..."
-        sudo rm -f /usr/bin/azcmagent 2>/dev/null || true
-        sudo rm -f /usr/local/bin/azcmagent 2>/dev/null || true
-        sudo rm -f /opt/azcmagent/bin/azcmagent 2>/dev/null || true
-
-        # Clean up Arc directories and configuration
-        sudo rm -rf /var/opt/azcmagent 2>/dev/null || true
-        sudo rm -rf /opt/azcmagent 2>/dev/null || true
-        sudo rm -rf /etc/opt/azcmagent 2>/dev/null || true
-
-        # Remove Arc agent log files
-        sudo rm -rf /var/log/azcmagent 2>/dev/null || true
-        sudo rm -rf /var/log/himds 2>/dev/null || true
-
-        # Remove systemd service files
-        sudo rm -f /lib/systemd/system/himdsd.service 2>/dev/null || true
-        sudo rm -f /lib/systemd/system/gcarcservice.service 2>/dev/null || true
-        sudo rm -f /etc/systemd/system/himdsd.service 2>/dev/null || true
-        sudo rm -f /etc/systemd/system/gcarcservice.service 2>/dev/null || true
-
-        # Remove Guest Configuration files (Arc-specific)
-        sudo rm -rf /var/lib/GuestConfig 2>/dev/null || true
-
-        # Reload systemd
-        sudo systemctl daemon-reload || true
+    if command -v az &> /dev/null; then
+        # Uninstall Azure CLI package
+        log_info "Uninstalling Azure CLI package..."
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get remove -y azure-cli 2>/dev/null || true
+        apt-get purge -y azure-cli 2>/dev/null || true
 
         # Verify removal
-        if command -v azcmagent &> /dev/null; then
-            log_warning "azcmagent command still available after cleanup - manual removal may be required"
+        if command -v az &> /dev/null; then
+            log_warning "az command still available after cleanup - manual removal may be required"
         else
-            log_success "Azure Arc agent removed successfully"
+            log_success "Azure CLI removed successfully"
         fi
     else
-        log_info "Azure Arc agent not found - already removed or never installed"
+        log_info "Azure CLI not found - already removed or never installed"
     fi
 }
 
@@ -271,7 +239,7 @@ show_completion_message() {
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
     echo "✅ Sudo permissions"
-    echo "✅ Azure Arc agent and connection"
+    echo "✅ Azure CLI"
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"
     echo ""
@@ -301,7 +269,7 @@ main() {
     remove_service_user
     remove_directories
     remove_binary
-    cleanup_arc_agent
+    remove_azure_cli
 
     # Show completion message
     show_completion_message

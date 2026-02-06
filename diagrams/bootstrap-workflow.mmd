@@ -1,0 +1,28 @@
+sequenceDiagram
+    actor User
+    participant Agent as AKS Flex Node Agent
+    participant Arc as Azure Arc
+    participant RBAC as Azure RBAC
+    participant AKS as AKS API
+
+    Note over User,AKS: Phase 1: Identity Setup
+    User->>Agent: Run bootstrap command
+    Agent->>User: Verify Azure credentials (SP or CLI)
+    Agent->>Arc: Register VM with Arc
+    Arc-->>Agent: Managed identity created
+    Agent->>RBAC: Assign roles to identity
+    RBAC-->>Agent: Permissions granted
+
+    Note over User,AKS: Phase 2: Installation
+    Agent->>Agent: Configure system settings
+    Agent->>Agent: Install container runtime (containerd)
+    Agent->>Agent: Install Kubernetes components (kubelet)
+    Agent->>Agent: Setup CNI networking
+
+    Note over User,AKS: Phase 3: Activation
+    Agent->>AKS: Download cluster configuration
+    AKS-->>Agent: Kubeconfig with cluster info
+    Agent->>Agent: Configure kubelet with Arc identity
+    Agent->>Agent: Start services
+    Agent->>AKS: Kubelet registers as node
+    AKS-->>Agent: Node accepted

@@ -54,7 +54,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Step 2: Installing CNI plugins")
 	if err := i.installCNIPlugins(); err != nil {
 		i.logger.Errorf("CNI plugins installation failed: %v", err)
-		return fmt.Errorf("failed to install CNI plugins version %s: %w", DefaultCNIVersion, err)
+		return fmt.Errorf("failed to install CNI plugins version %s: %w", defaultCNIVersion, err)
 	}
 	i.logger.Info("CNI plugins installed successfully")
 
@@ -117,9 +117,13 @@ func (i *Installer) prepareCNIDirectories() error {
 			}
 		}
 
-		// Set proper permissions
-		if err := utils.RunSystemCommand("chmod", "-R", "0755", dir); err != nil {
-			logrus.Warnf("Failed to set permissions for CNI directory %s: %v", dir, err)
+		// Fix permissions for Ubuntu 24.04 AppArmor compatibility
+		if err := utils.RunSystemCommand("chmod", "755", dir); err != nil {
+			return fmt.Errorf("failed to set permissions for CNI directory %s: %w", dir, err)
+		}
+
+		if err := utils.RunSystemCommand("chown", "-R", "root:root", dir); err != nil {
+			logrus.Warnf("Failed to set ownership for CNI directory %s: %v", dir, err)
 		}
 	}
 	return nil
@@ -172,6 +176,17 @@ func (i *Installer) installCNIPlugins() error {
 		return fmt.Errorf("failed to extract CNI plugins: %w", err)
 	}
 
+	// Set ownership of extracted CNI plugins - critical for Cilium init containers
+	// Cilium init containers run as root and need to write to /opt/cni/bin
+	if err := utils.RunSystemCommand("chown", "-R", "root:root", DefaultCNIBinDir); err != nil {
+		logrus.Warnf("Failed to fix ownership of extracted CNI plugins: %v", err)
+	}
+
+	// Ensure proper permissions for extracted files
+	if err := utils.RunSystemCommand("chmod", "-R", "755", DefaultCNIBinDir); err != nil {
+		logrus.Warnf("Failed to fix permissions of extracted CNI plugins: %v", err)
+	}
+
 	logrus.Info("CNI plugins installed successfully")
 	return nil
 }
@@ -202,12 +217,12 @@ func getCNIVersion(cfg *config.Config) string {
 	if cfg.CNI.Version != "" {
 		return cfg.CNI.Version
 	}
-	return DefaultCNIVersion
+	return defaultCNIVersion
 }
 
 // CreateBridgeConfig creates bridge CNI configuration for edge nodes (compatible with BYO Cilium)
+// Uses 99-bridge.conf filename to ensure CNI solutions like Cilium can override with higher priority configs
 func (i *Installer) createBridgeConfig() error {
-	logrus.Info("Creating bridge CNI configuration for edge node...")
 	configPath := filepath.Join(DefaultCNIConfDir, bridgeConfigFile)
 
 	// Load br_netfilter kernel module which is required for bridge networking
@@ -246,7 +261,7 @@ func (i *Installer) createBridgeConfig() error {
             }
         ]
     }
-}`, DefaultCNISpecVersion)
+}`, defaultCNISpecVersion)
 
 	// Write the config file into a temp file for Atomic file write
 	tempBridgeFile, err := utils.CreateTempFile("bridge-cni-*.conf", []byte(bridgeConfig))

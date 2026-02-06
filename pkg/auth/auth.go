@@ -29,12 +29,31 @@ func (a *AuthProvider) ArcCredential() (azcore.TokenCredential, error) {
 	return cred, nil
 }
 
-// UserCredential returns credential based on config (service principal or CLI fallback)
+// UserCredential returns credential based on config (service principal, MSI, or CLI fallback)
 func (a *AuthProvider) UserCredential(cfg *config.Config) (azcore.TokenCredential, error) {
 	if cfg.IsSPConfigured() {
 		return a.serviceCredential(cfg)
 	}
+	if cfg.IsMIConfigured() {
+		return a.msiCredential(cfg)
+	}
 	return a.cliCredential()
+}
+
+// msiCredential creates managed identity credential for VM MSI with optional ClientID
+func (a *AuthProvider) msiCredential(cfg *config.Config) (azcore.TokenCredential, error) {
+	options := &azidentity.ManagedIdentityCredentialOptions{}
+
+	// If ClientID is specified, use it to select a specific managed identity
+	if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
+		options.ID = azidentity.ClientID(cfg.Azure.ManagedIdentity.ClientID)
+	}
+
+	cred, err := azidentity.NewManagedIdentityCredential(options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create managed identity credential: %w", err)
+	}
+	return cred, nil
 }
 
 // serviceCredential creates service principal credential from config

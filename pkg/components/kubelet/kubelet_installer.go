@@ -3,6 +3,7 @@ package kubelet
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -38,6 +39,7 @@ func (i *Installer) GetName() string {
 // Execute installs and configures kubelet service
 func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Installing and configuring kubelet")
+
 	// Set up mc client for getting cluster info
 	if err := i.setUpClients(); err != nil {
 		return fmt.Errorf("failed to set up Azure SDK clients: %w", err)
@@ -91,14 +93,23 @@ func (i *Installer) configure(ctx context.Context) error {
 		return err
 	}
 
-	// Create Arc token script for exec credential authentication
-	if err := i.createArcTokenScript(); err != nil {
-		return err
-	}
+	// Create authentication configuration based on auth method
+	if i.config.IsBootstrapTokenConfigured() {
+		// Bootstrap token authentication uses a simple token-based kubeconfig
+		if err := i.createKubeconfigWithBootstrapToken(ctx); err != nil {
+			return err
+		}
+	} else {
+		// Arc or Service Principal authentication uses exec credential provider
+		// Create token script for exec credential authentication (Arc or Service Principal)
+		if err := i.createTokenScript(); err != nil {
+			return err
+		}
 
-	// Create kubeconfig with exec credential provider
-	if err := i.createKubeconfigWithExecCredential(ctx); err != nil {
-		return err
+		// Create kubeconfig with exec credential provider
+		if err := i.createKubeconfigWithExecCredential(ctx); err != nil {
+			return err
+		}
 	}
 
 	// Create kubelet containerd configuration
@@ -200,7 +211,7 @@ func (i *Installer) createKubeletDefaultsFile() error {
 	kubeletDefaults := fmt.Sprintf(`KUBELET_NODE_LABELS="%s"
 KUBELET_CONFIG_FILE_FLAGS=""
 KUBELET_FLAGS="\
-	--v=%d \
+  --v=%d \
   --address=0.0.0.0 \
   --anonymous-auth=false \
   --authentication-token-webhook=true \
@@ -208,6 +219,8 @@ KUBELET_FLAGS="\
   --cgroup-driver=systemd \
   --cgroups-per-qos=true \
   --enforce-node-allocatable=pods \
+  --cluster-dns=%s \
+  --cluster-domain=cluster.local \
   --event-qps=0  \
   --eviction-hard=%s  \
   --kube-reserved=%s  \
@@ -215,22 +228,22 @@ KUBELET_FLAGS="\
   --image-gc-low-threshold=%d  \
   --max-pods=%d  \
   --node-status-update-frequency=10s  \
-  --pod-infra-container-image=%s  \
   --pod-max-pids=-1  \
   --protect-kernel-defaults=true  \
   --read-only-port=0  \
   --resolv-conf=/run/systemd/resolve/resolv.conf  \
   --streaming-connection-idle-timeout=4h  \
+  --rotate-certificates=true \
   --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
   "`,
 		strings.Join(labels, ","),
 		i.config.Node.Kubelet.Verbosity,
+		i.config.Node.Kubelet.DNSServiceIP,
 		mapToEvictionThresholds(i.config.Node.Kubelet.EvictionHard, ","),
 		mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ","),
 		i.config.Node.Kubelet.ImageGCHighThreshold,
 		i.config.Node.Kubelet.ImageGCLowThreshold,
-		i.config.Node.MaxPods,
-		i.config.Containerd.PauseImage)
+		i.config.Node.MaxPods)
 
 	// Ensure /etc/default directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", etcDefaultDir); err != nil {
@@ -310,6 +323,22 @@ WantedBy=multi-user.target`
 	return nil
 }
 
+// createTokenScript creates either Arc, MSI, or Service Principal token script based on configuration
+func (i *Installer) createTokenScript() error {
+	if i.config.IsARCEnabled() {
+		return i.createArcTokenScript()
+	} else if i.config.IsMIConfigured() {
+		return i.createMSITokenScript()
+	} else if i.config.IsSPConfigured() {
+		return i.createServicePrincipalTokenScript()
+	} else if i.config.IsBootstrapTokenConfigured() {
+		// Bootstrap token doesn't need a token script
+		return nil
+	} else {
+		return fmt.Errorf("no valid authentication method configured - either Arc, MSI, Service Principal, or Bootstrap Token must be configured")
+	}
+}
+
 // createArcTokenScript creates the Arc token script for exec credential authentication
 func (i *Installer) createArcTokenScript() error {
 	// Arc HIMDS token script using proven Www-Authenticate challenge approach
@@ -343,6 +372,121 @@ fi
 
 curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL | jq "$EXECCREDENTIAL"`, aksServiceResourceID)
 
+	return i.writeTokenScript(tokenScript)
+}
+
+// createMSITokenScript creates the MSI token script for exec credential authentication using Azure VM Managed Identity
+func (i *Installer) createMSITokenScript() error {
+	clientIDParam := ""
+	if i.config.Azure.ManagedIdentity != nil && i.config.Azure.ManagedIdentity.ClientID != "" {
+		clientIDParam = fmt.Sprintf("\nCLIENT_ID=\"%s\"", i.config.Azure.ManagedIdentity.ClientID)
+	}
+
+	// Azure VM MSI token script using IMDS endpoint
+	tokenScript := fmt.Sprintf(`#!/bin/bash
+
+# Fetch an AAD token from Azure Instance Metadata Service (IMDS) using VM Managed Identity
+# https://learn.microsoft.com/azure/active-directory/managed-identities-azure-resources/how-to-use-vm-token
+
+IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"
+API_VERSION="2018-02-01"
+RESOURCE="%s"%s
+
+# Build IMDS URL with optional client_id parameter
+IMDS_URL="$IMDS_ENDPOINT?api-version=$API_VERSION&resource=$RESOURCE"
+if [ -n "${CLIENT_ID:-}" ]; then
+    IMDS_URL="$IMDS_URL&client_id=$CLIENT_ID"
+fi
+
+# Get token from IMDS
+TOKEN_RESPONSE=$(curl -s -H Metadata:true "$IMDS_URL")
+
+if [ $? -ne 0 ]; then
+    echo "Failed to get token from Azure IMDS" >&2
+    exit 255
+fi
+
+# Extract access token and expiry
+ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+if [ "$ACCESS_TOKEN" == "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+    echo "Failed to extract access token from IMDS response" >&2
+    exit 255
+fi
+
+EXPIRES_ON=$(echo "$TOKEN_RESPONSE" | jq -r '.expires_on')
+
+# Return in ExecCredential format
+cat <<EOF
+{
+  "kind": "ExecCredential",
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "spec": {
+    "interactive": false
+  },
+  "status": {
+    "expirationTimestamp": "$(date -d @$EXPIRES_ON --iso-8601=seconds)",
+    "token": "$ACCESS_TOKEN"
+  }
+}
+EOF
+`, aksServiceResourceID, clientIDParam)
+
+	return i.writeTokenScript(tokenScript)
+}
+
+// createServicePrincipalTokenScript creates the Service Principal token script
+func (i *Installer) createServicePrincipalTokenScript() error {
+	sp := i.config.Azure.ServicePrincipal
+	tokenScript := fmt.Sprintf(`#!/bin/bash
+
+# Get Azure AD token using Service Principal credentials for direct AKS authentication
+
+CLIENT_ID="%s"
+CLIENT_SECRET="%s"
+TENANT_ID="%s"
+
+TOKEN_RESPONSE=$(curl -s -X POST \
+  "https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=${CLIENT_ID}" \
+  -d "client_secret=${CLIENT_SECRET}" \
+  -d "scope=%s/.default" \
+  -d "grant_type=client_credentials")
+
+if [ $? -ne 0 ]; then
+    echo "Failed to get token from Azure AD"
+    exit 255
+fi
+
+ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+if [ "$ACCESS_TOKEN" == "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+    echo "Failed to extract access token from response: $TOKEN_RESPONSE"
+    exit 255
+fi
+
+EXPIRES_IN=$(echo "$TOKEN_RESPONSE" | jq -r '.expires_in')
+EXPIRY_TIME=$(date -d "+${EXPIRES_IN} seconds" --iso-8601=seconds)
+
+# Return in ExecCredential format
+cat <<EOF
+{
+  "kind": "ExecCredential",
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "spec": {
+    "interactive": false
+  },
+  "status": {
+    "expirationTimestamp": "${EXPIRY_TIME}",
+    "token": "${ACCESS_TOKEN}"
+  }
+}
+EOF`, sp.ClientID, sp.ClientSecret, sp.TenantID, aksServiceResourceID)
+
+	return i.writeTokenScript(tokenScript)
+}
+
+// writeTokenScript helper method to write the token script with proper permissions
+func (i *Installer) writeTokenScript(tokenScript string) error {
 	// Ensure /var/lib/kubelet directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", kubeletVarDir); err != nil {
 		return fmt.Errorf("failed to create kubelet var directory: %w", err)
@@ -350,24 +494,27 @@ curl -s -H Metadata:true -H "Authorization: Basic $CHALLENGE_TOKEN" $TOKEN_URL |
 
 	// Write token script atomically with executable permissions
 	if err := utils.WriteFileAtomicSystem(kubeletTokenScriptPath, []byte(tokenScript), 0o755); err != nil {
-		return fmt.Errorf("failed to create Arc token script: %w", err)
+		return fmt.Errorf("failed to create token script: %w", err)
 	}
 
 	// Ensure the script has executable permissions (explicit chmod as backup)
 	if err := utils.RunSystemCommand("chmod", "755", kubeletTokenScriptPath); err != nil {
-		return fmt.Errorf("failed to set executable permissions on Arc token script: %w", err)
+		return fmt.Errorf("failed to set executable permissions on token script: %w", err)
 	}
 
 	return nil
 }
 
-// createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for Arc authentication
+// createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for authentication
 func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) error {
+	// Fetch cluster credentials from Azure (for Arc/SP/MI modes)
+	i.logger.Info("Fetching cluster credentials from Azure")
 	kubeconfig, err := i.getClusterCredentials(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster credentials: %w", err)
 	}
 
+	// Extract server URL and CA cert from kubeconfig
 	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
@@ -387,6 +534,16 @@ func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) erro
   name: %s`, serverURL, i.config.Azure.TargetCluster.Name)
 	}
 
+	// Determine user and context names based on auth method
+	var userName, contextName string
+	if i.config.IsARCEnabled() {
+		userName = "arc-user"
+		contextName = "arc-context"
+	} else {
+		userName = "sp-user"
+		contextName = "sp-context"
+	}
+
 	// Create kubeconfig with exec credential provider pointing to token script
 	kubeconfigContent := fmt.Sprintf(`apiVersion: v1
 kind: Config
@@ -395,11 +552,11 @@ clusters:
 contexts:
 - context:
     cluster: %s
-    user: arc-user
-  name: arc-context
-current-context: arc-context
+    user: %s
+  name: %s
+current-context: %s
 users:
-- name: arc-user
+- name: %s
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1beta1
@@ -408,16 +565,86 @@ users:
       provideClusterInfo: false
 `,
 		clusterConfig,
-		i.config.Azure.TargetCluster.Name)
+		i.config.Azure.TargetCluster.Name,
+		userName,
+		contextName,
+		contextName,
+		userName)
 
 	// Write kubeconfig file to the correct location for kubelet
-	if err := utils.WriteFileAtomicSystem(kubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
+	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
 		return fmt.Errorf("failed to create kubeconfig file: %w", err)
 	}
 
 	return nil
 }
 
+// createKubeconfigWithBootstrapToken  creates a kubeconfig file with bootstrap token authentication
+func (i *Installer) createKubeconfigWithBootstrapToken(ctx context.Context) error {
+	i.logger.Info("Creating bootstrap token kubeconfig")
+
+	// Use cluster info from kubelet config (required fields validated earlier)
+	serverURL := i.config.Node.Kubelet.ServerURL
+	caCertData := i.config.Node.Kubelet.CACertData
+	bootstrapToken := i.config.Azure.BootstrapToken.Token
+
+	// Get node hostname for audit logging
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("failed to get hostname for bootstrap kubeconfig: %w", err)
+	}
+
+	// Include node name in username for better auditing in Kubernetes API server logs
+	username := fmt.Sprintf("kubelet-bootstrap-%s", hostname)
+
+	// Create cluster configuration based on whether we have CA cert
+	var clusterConfig string
+	if caCertData != "" {
+		clusterConfig = fmt.Sprintf(`- cluster:
+    certificate-authority-data: %s
+    server: %s
+  name: %s`, caCertData, serverURL, i.config.Azure.TargetCluster.Name)
+	} else {
+		clusterConfig = fmt.Sprintf(`- cluster:
+    insecure-skip-tls-verify: true
+    server: %s
+  name: %s`, serverURL, i.config.Azure.TargetCluster.Name)
+	}
+
+	// Create kubeconfig with bootstrap token authentication
+	kubeconfigContent := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+%s
+contexts:
+- context:
+    cluster: %s
+    user: %s
+  name: %s
+current-context: %s
+users:
+- name: %s
+  user:
+    token: %s
+`,
+		clusterConfig,
+		i.config.Azure.TargetCluster.Name,
+		username,
+		i.config.Azure.TargetCluster.Name,
+		i.config.Azure.TargetCluster.Name,
+		username,
+		bootstrapToken)
+
+	// Write kubeconfig file to the correct location for kubelet
+	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
+		return fmt.Errorf("failed to create bootstrap kubeconfig file: %w", err)
+	}
+
+	i.logger.Info("Bootstrap token kubeconfig created successfully")
+	return nil
+}
+
+// setUpClients sets up Azure SDK clients for fetching cluster credentials
 func (i *Installer) setUpClients() error {
 	cred, err := auth.NewAuthProvider().UserCredential(config.GetConfig())
 	if err != nil {
@@ -432,7 +659,7 @@ func (i *Installer) setUpClients() error {
 	return nil
 }
 
-// GetClusterCredentials retrieves cluster kube admin credentials using Azure SDK
+// getClusterCredentials retrieves cluster kube admin credentials using Azure SDK
 func (i *Installer) getClusterCredentials(ctx context.Context) ([]byte, error) {
 	cfg := config.GetConfig()
 	clusterResourceGroup := cfg.GetTargetClusterResourceGroup()

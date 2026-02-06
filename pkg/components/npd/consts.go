@@ -5,10 +5,7 @@ const (
 	npdBinaryPath  = "/usr/bin/node-problem-detector"
 	npdConfigPath  = "/etc/node-problem-detector/kernel-monitor.json"
 	npdServicePath = "/etc/systemd/system/node-problem-detector.service"
-
-	kubeletKubeconfigPath = "/var/lib/kubelet/kubeconfig"
-
-	tempDir = "/tmp/npd"
+	tempDir        = "/tmp/npd"
 )
 
 var (

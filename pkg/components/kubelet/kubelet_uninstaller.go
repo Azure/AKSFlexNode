@@ -43,6 +43,7 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 		kubeletConfigPath,
 		kubeletKubeConfig,
 		kubeletBootstrapKubeConfig,
+		kubeletTokenScriptPath,
 	}
 
 	// Remove kubelet configuration directories
@@ -83,6 +84,7 @@ func (u *UnInstaller) IsCompleted(ctx context.Context) bool {
 		kubeletConfigPath,
 		kubeletKubeConfig,
 		kubeletBootstrapKubeConfig,
+		kubeletTokenScriptPath, // Check token script cleanup
 	}
 
 	for _, file := range criticalFiles {
