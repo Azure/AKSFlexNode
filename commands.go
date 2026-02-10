@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -156,7 +157,14 @@ func runUnbootstrap(ctx context.Context) error {
 			Mode:          mode,
 			AKSResourceID: cfg.Azure.TargetCluster.ResourceID,
 		}
-		uninstaller := privatecluster.NewUninstaller(options)
+		cred, err := azidentity.NewAzureCLICredential(nil)
+		if err != nil {
+			return fmt.Errorf("failed to create Azure CLI credential: %w", err)
+		}
+		uninstaller, err := privatecluster.NewUninstaller(options, cred)
+		if err != nil {
+			return fmt.Errorf("failed to create private cluster uninstaller: %w", err)
+		}
 		if err := uninstaller.Uninstall(ctx); err != nil {
 			logger.Warnf("Private cluster cleanup had errors: %v", err)
 			// Continue with normal unbootstrap even if private cleanup has issues

@@ -118,8 +118,7 @@ func (i *Installer) setupArcPermissions() error {
 func (i *Installer) downloadArcInstallScript(ctx context.Context, destPath string) error {
 	// Try curl first
 	if _, err := exec.LookPath("curl"); err == nil {
-		cmd := exec.CommandContext(ctx, "curl", "-L", "-o", destPath, arcInstallScriptURL)
-		if err := cmd.Run(); err != nil {
+		if _, err := utils.RunCommandWithOutput("curl", "-L", "-o", destPath, arcInstallScriptURL); err != nil {
 			return fmt.Errorf("curl download failed: %w", err)
 		}
 		return nil
@@ -127,8 +126,7 @@ func (i *Installer) downloadArcInstallScript(ctx context.Context, destPath strin
 
 	// Try wget as fallback
 	if _, err := exec.LookPath("wget"); err == nil {
-		cmd := exec.CommandContext(ctx, "wget", "-O", destPath, arcInstallScriptURL)
-		if err := cmd.Run(); err != nil {
+		if _, err := utils.RunCommandWithOutput("wget", "-O", destPath, arcInstallScriptURL); err != nil {
 			return fmt.Errorf("wget download failed: %w", err)
 		}
 		return nil
@@ -198,19 +196,15 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 		return false
 	}
 
-	// Use same approach as status collector - check azcmagent show with timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(timeoutCtx, "azcmagent", "show")
-	output, err := cmd.Output()
+	// Use same approach as status collector - check azcmagent show
+	output, err := utils.RunCommandWithOutput("azcmagent", "show")
 	if err != nil {
 		i.logger.Debugf("azcmagent show failed: %v - Arc not ready", err)
 		return false
 	}
 
 	// Parse output to check if agent is connected (same logic as status collector)
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
@@ -248,9 +242,8 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 
 		// Step 1: Clean up local agent state
 		i.logger.Info("Cleaning up local agent state...")
-		disconnectCmd := exec.CommandContext(ctx, "azcmagent", "disconnect", "--force-local-only")
-		if output, err := disconnectCmd.CombinedOutput(); err != nil {
-			i.logger.Warnf("Local disconnect had issues (continuing): %v, output: %s", err, string(output))
+		if output, err := utils.RunCommandWithOutput("azcmagent", "disconnect", "--force-local-only"); err != nil {
+			i.logger.Warnf("Local disconnect had issues (continuing): %v, output: %s", err, output)
 		}
 
 		// Step 2: Delete the stale Azure Arc resource so connect can recreate it
@@ -275,18 +268,14 @@ func (i *Installer) registerArcMachine(ctx context.Context) (*armhybridcompute.M
 }
 
 // isLocalAgentConnected checks if the local Arc agent is connected
-func (i *Installer) isLocalAgentConnected(ctx context.Context) bool {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(timeoutCtx, "azcmagent", "show")
-	output, err := cmd.Output()
+func (i *Installer) isLocalAgentConnected(_ context.Context) bool {
+	output, err := utils.RunCommandWithOutput("azcmagent", "show")
 	if err != nil {
 		i.logger.Debugf("azcmagent show failed: %v", err)
 		return false
 	}
 
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {

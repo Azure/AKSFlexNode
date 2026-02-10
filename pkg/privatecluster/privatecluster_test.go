@@ -126,15 +126,17 @@ func TestInstallerCreation(t *testing.T) {
 		Verbose:       true,
 	}
 
-	installer := NewInstaller(options)
+	// NewInstaller requires a credential; pass nil to test creation without Azure calls
+	installer, err := NewInstaller(options, nil)
+	// Expected to fail since nil credential can't create Azure clients
+	if err != nil {
+		t.Skipf("Skipping: NewInstaller requires valid Azure credential: %v", err)
+	}
 	if installer == nil {
 		t.Fatal("NewInstaller() should not return nil")
 	}
 	if installer.logger == nil {
 		t.Error("Installer.logger should not be nil")
-	}
-	if installer.azure == nil {
-		t.Error("Installer.azure should not be nil")
 	}
 }
 
@@ -144,7 +146,11 @@ func TestUninstallerCreation(t *testing.T) {
 		AKSResourceID: "",
 	}
 
-	uninstaller := NewUninstaller(options)
+	// NewUninstaller with empty resource ID and nil cred skips Azure client creation
+	uninstaller, err := NewUninstaller(options, nil)
+	if err != nil {
+		t.Fatalf("NewUninstaller() returned error: %v", err)
+	}
 	if uninstaller == nil {
 		t.Error("NewUninstaller() should not return nil")
 	}

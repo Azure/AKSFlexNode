@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
 
 // Uninstaller handles private cluster uninstallation
 type Uninstaller struct {
-	logger  *Logger
-	azure   *AzureCLI
-	options UninstallOptions
+	logger        *Logger
+	azureClient   *AzureClient
+	toolInstaller *ToolInstaller
+	options       UninstallOptions
 
 	// State
 	clusterInfo *AKSClusterInfo
@@ -20,16 +23,33 @@ type Uninstaller struct {
 	clientKey   string
 }
 
-// NewUninstaller creates a new Uninstaller instance
-func NewUninstaller(options UninstallOptions) *Uninstaller {
+// NewUninstaller creates a new Uninstaller instance.
+// cred is the Azure credential used for SDK calls. If nil, Azure resource cleanup will be skipped.
+func NewUninstaller(options UninstallOptions, cred azcore.TokenCredential) (*Uninstaller, error) {
 	logger := NewLogger(false)
-	return &Uninstaller{
-		logger:     logger,
-		azure:      NewAzureCLI(logger),
-		options:    options,
-		vpnConfig:  DefaultVPNConfig(),
-		sshKeyPath: GetSSHKeyPath(),
+
+	u := &Uninstaller{
+		logger:        logger,
+		toolInstaller: NewToolInstaller(logger),
+		options:       options,
+		vpnConfig:     DefaultVPNConfig(),
+		sshKeyPath:    GetSSHKeyPath(),
 	}
+
+	// Only create Azure client if we have a resource ID (needed for full cleanup)
+	if options.AKSResourceID != "" && cred != nil {
+		subscriptionID, _, _, err := ParseResourceID(options.AKSResourceID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse resource ID: %w", err)
+		}
+		azureClient, err := NewAzureClient(cred, subscriptionID, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure client: %w", err)
+		}
+		u.azureClient = azureClient
+	}
+
+	return u, nil
 }
 
 // Uninstall runs the uninstallation process
@@ -52,7 +72,7 @@ func (u *Uninstaller) Uninstall(ctx context.Context) error {
 		u.logger.Info("Cluster: %s/%s (Subscription: %s)", resourceGroup, clusterName, subscriptionID)
 	}
 
-	_ = u.azure.InstallConnectedMachineExtension(ctx)
+	_ = u.toolInstaller.InstallConnectedMachineExtension(ctx)
 
 	switch u.options.Mode {
 	case CleanupModeLocal:
@@ -228,12 +248,12 @@ func (u *Uninstaller) removeArcAgent(ctx context.Context, nodeName string) {
 		}
 	}
 
-	if arcRG != "" {
+	if arcRG != "" && u.azureClient != nil {
 		u.logger.Info("Deleting Arc machine from Azure...")
-		_ = u.azure.DeleteConnectedMachine(ctx, arcRG, nodeName)
+		_ = u.azureClient.DeleteConnectedMachine(ctx, arcRG, nodeName)
 		u.logger.Success("Arc machine deleted from Azure")
-	} else if u.clusterInfo != nil {
-		_ = u.azure.DeleteConnectedMachine(ctx, u.clusterInfo.ResourceGroup, nodeName)
+	} else if u.clusterInfo != nil && u.azureClient != nil {
+		_ = u.azureClient.DeleteConnectedMachine(ctx, u.clusterInfo.ResourceGroup, nodeName)
 	}
 
 	_, _ = RunCommand(ctx, "azcmagent", "disconnect", "--force-local-only")
@@ -308,39 +328,36 @@ func (u *Uninstaller) deleteSSHKeys() {
 
 // deleteAzureResources deletes all Azure resources created for the Gateway
 func (u *Uninstaller) deleteAzureResources(ctx context.Context) error {
-	if u.clusterInfo == nil {
-		return fmt.Errorf("cluster info not available")
+	if u.clusterInfo == nil || u.azureClient == nil {
+		return fmt.Errorf("cluster info or Azure client not available")
 	}
 
 	u.logger.Info("Deleting Azure resources...")
-	if err := u.azure.SetSubscription(ctx, u.clusterInfo.SubscriptionID); err != nil {
-		return err
-	}
 
 	gatewayName := "wg-gateway"
 	nicName := gatewayName + "VMNic"
 	pipName := gatewayName + "-pip"
 	nsgName := gatewayName + "-nsg"
 
-	if err := u.azure.DeleteVM(ctx, u.clusterInfo.ResourceGroup, gatewayName); err != nil {
+	if err := u.azureClient.DeleteVM(ctx, u.clusterInfo.ResourceGroup, gatewayName); err != nil {
 		u.logger.Warning("Delete VM: %v", err)
 	}
-	if err := u.azure.DeleteNIC(ctx, u.clusterInfo.ResourceGroup, nicName); err != nil {
+	if err := u.azureClient.DeleteNIC(ctx, u.clusterInfo.ResourceGroup, nicName); err != nil {
 		u.logger.Warning("Delete NIC: %v", err)
 	}
-	if err := u.azure.DeletePublicIP(ctx, u.clusterInfo.ResourceGroup, pipName); err != nil {
+	if err := u.azureClient.DeletePublicIP(ctx, u.clusterInfo.ResourceGroup, pipName); err != nil {
 		u.logger.Warning("Delete Public IP: %v", err)
 	}
-	if err := u.azure.DeleteNSG(ctx, u.clusterInfo.ResourceGroup, nsgName); err != nil {
+	if err := u.azureClient.DeleteNSG(ctx, u.clusterInfo.ResourceGroup, nsgName); err != nil {
 		u.logger.Warning("Delete NSG: %v", err)
 	}
-	_ = u.azure.DeleteDisks(ctx, u.clusterInfo.ResourceGroup, gatewayName)
+	_ = u.azureClient.DeleteDisks(ctx, u.clusterInfo.ResourceGroup, gatewayName)
 
-	clusterInfo, err := u.azure.GetAKSClusterInfo(ctx, u.clusterInfo.ResourceGroup, u.clusterInfo.ClusterName)
+	clusterInfo, err := u.azureClient.GetAKSClusterInfo(ctx, u.clusterInfo.ResourceGroup, u.clusterInfo.ClusterName)
 	if err == nil {
-		vnetName, vnetRG, err := u.azure.GetVNetInfo(ctx, clusterInfo.NodeResourceGroup)
+		vnetName, vnetRG, err := u.azureClient.GetVNetInfo(ctx, clusterInfo.NodeResourceGroup)
 		if err == nil {
-			_ = u.azure.DeleteSubnet(ctx, vnetRG, vnetName, "wg-subnet")
+			_ = u.azureClient.DeleteSubnet(ctx, vnetRG, vnetName, "wg-subnet")
 		}
 	}
 	u.logger.Success("Azure resources deleted")

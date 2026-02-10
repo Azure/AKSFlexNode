@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
 
 // Installer handles private cluster installation
 type Installer struct {
-	logger  *Logger
-	azure   *AzureCLI
-	options InstallOptions
+	logger        *Logger
+	azureClient   *AzureClient
+	toolInstaller *ToolInstaller
+	options       InstallOptions
 
 	// State collected during installation
 	clusterInfo *AKSClusterInfo
@@ -19,8 +22,9 @@ type Installer struct {
 	gatewayIP   string
 }
 
-// NewInstaller creates a new Installer instance
-func NewInstaller(options InstallOptions) *Installer {
+// NewInstaller creates a new Installer instance.
+// cred is the Azure credential used for SDK calls.
+func NewInstaller(options InstallOptions, cred azcore.TokenCredential) (*Installer, error) {
 	logger := NewLogger(options.Verbose)
 
 	// Apply defaults
@@ -28,13 +32,24 @@ func NewInstaller(options InstallOptions) *Installer {
 		options.Gateway = DefaultGatewayConfig()
 	}
 
-	return &Installer{
-		logger:     logger,
-		azure:      NewAzureCLI(logger),
-		options:    options,
-		vpnConfig:  DefaultVPNConfig(),
-		sshKeyPath: GetSSHKeyPath(),
+	subscriptionID, _, _, err := ParseResourceID(options.AKSResourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse resource ID: %w", err)
 	}
+
+	azureClient, err := NewAzureClient(cred, subscriptionID, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Azure client: %w", err)
+	}
+
+	return &Installer{
+		logger:        logger,
+		azureClient:   azureClient,
+		toolInstaller: NewToolInstaller(logger),
+		options:       options,
+		vpnConfig:     DefaultVPNConfig(),
+		sshKeyPath:    GetSSHKeyPath(),
+	}, nil
 }
 
 // Install runs the complete installation process
@@ -84,36 +99,21 @@ func (i *Installer) Install(ctx context.Context) error {
 // phase1EnvironmentCheck checks prerequisites
 func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	_ = CleanKubeCache()
-	if err := i.azure.CheckInstalled(); err != nil {
-		return err
-	}
-	if err := i.azure.CheckLogin(ctx); err != nil {
-		return err
-	}
-	i.logger.Success("Azure CLI ready")
-
-	// Check/refresh token
-	if err := i.azure.CheckAndRefreshToken(ctx); err != nil {
-		return err
-	}
-
-	if err := i.azure.SetSubscription(ctx, i.clusterInfo.SubscriptionID); err != nil {
-		return err
-	}
+	i.logger.Success("Azure SDK client ready")
 	i.logger.Success("Subscription: %s", i.clusterInfo.SubscriptionID)
 
 	// Get Tenant ID
-	tenantID, err := i.azure.GetTenantID(ctx)
+	tenantID, err := i.azureClient.GetTenantID(ctx)
 	if err != nil {
 		return err
 	}
 	i.clusterInfo.TenantID = tenantID
 	i.logger.Verbose("Tenant ID: %s", tenantID)
 
-	if !i.azure.AKSClusterExists(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName) {
+	if !i.azureClient.AKSClusterExists(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName) {
 		return fmt.Errorf("AKS cluster '%s' not found", i.clusterInfo.ClusterName)
 	}
-	clusterInfo, err := i.azure.GetAKSClusterInfo(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName)
+	clusterInfo, err := i.azureClient.GetAKSClusterInfo(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	i.clusterInfo.PrivateFQDN = clusterInfo.PrivateFQDN
 	i.logger.Success("AKS cluster: %s (AAD/RBAC enabled)", i.clusterInfo.ClusterName)
 
-	vnetName, vnetRG, err := i.azure.GetVNetInfo(ctx, i.clusterInfo.NodeResourceGroup)
+	vnetName, vnetRG, err := i.azureClient.GetVNetInfo(ctx, i.clusterInfo.NodeResourceGroup)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 		return fmt.Errorf("failed to install jq: %w", err)
 	}
 	if !CommandExists("kubectl") || !CommandExists("kubelogin") {
-		if err := i.azure.InstallAKSCLI(ctx); err != nil {
+		if err := i.toolInstaller.InstallAKSCLI(ctx); err != nil {
 			return fmt.Errorf("failed to install kubectl/kubelogin: %w", err)
 		}
 	}
@@ -147,7 +147,7 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	if !CommandExists("kubelogin") {
 		return fmt.Errorf("kubelogin installation failed")
 	}
-	_ = i.azure.InstallConnectedMachineExtension(ctx)
+	_ = i.toolInstaller.InstallConnectedMachineExtension(ctx)
 	i.logger.Success("Dependencies ready")
 
 	return nil
@@ -156,9 +156,9 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 // phase2GatewaySetup sets up the VPN Gateway
 func (i *Installer) phase2GatewaySetup(ctx context.Context) error {
 	gatewayExists := false
-	if i.azure.VMExists(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name) {
+	if i.azureClient.VMExists(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name) {
 		gatewayExists = true
-		ip, err := i.azure.GetVMPublicIP(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name)
+		ip, err := i.azureClient.GetVMPublicIP(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get Gateway public IP: %w", err)
 		}
@@ -174,7 +174,7 @@ func (i *Installer) phase2GatewaySetup(ctx context.Context) error {
 	if err := GenerateSSHKey(i.sshKeyPath); err != nil {
 		return fmt.Errorf("failed to generate SSH key: %w", err)
 	}
-	if err := i.azure.AddSSHKeyToVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name, i.sshKeyPath); err != nil {
+	if err := i.azureClient.AddSSHKeyToVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name, i.sshKeyPath); err != nil {
 		return fmt.Errorf("failed to add SSH key to Gateway: %w", err)
 	}
 
@@ -195,27 +195,29 @@ func (i *Installer) phase2GatewaySetup(ctx context.Context) error {
 func (i *Installer) createGatewayInfrastructure(ctx context.Context) error {
 	nsgName := i.options.Gateway.Name + "-nsg"
 	pipName := i.options.Gateway.Name + "-pip"
+	location := i.clusterInfo.Location
 
-	if err := i.azure.CreateSubnet(ctx, i.clusterInfo.VNetResourceGroup, i.clusterInfo.VNetName,
+	if err := i.azureClient.CreateSubnet(ctx, i.clusterInfo.VNetResourceGroup, i.clusterInfo.VNetName,
 		i.options.Gateway.SubnetName, i.options.Gateway.SubnetPrefix); err != nil {
 		return fmt.Errorf("failed to create subnet: %w", err)
 	}
-	if err := i.azure.CreateNSG(ctx, i.clusterInfo.ResourceGroup, nsgName, i.options.Gateway.Port); err != nil {
+	if err := i.azureClient.CreateNSG(ctx, i.clusterInfo.ResourceGroup, nsgName, location, i.options.Gateway.Port); err != nil {
 		return fmt.Errorf("failed to create NSG: %w", err)
 	}
-	if err := i.azure.CreatePublicIP(ctx, i.clusterInfo.ResourceGroup, pipName); err != nil {
+	if err := i.azureClient.CreatePublicIP(ctx, i.clusterInfo.ResourceGroup, pipName, location); err != nil {
 		return fmt.Errorf("failed to create public IP: %w", err)
 	}
 	if err := GenerateSSHKey(i.sshKeyPath); err != nil {
 		return fmt.Errorf("failed to generate SSH key: %w", err)
 	}
-	if err := i.azure.CreateVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name,
-		i.clusterInfo.VNetName, i.options.Gateway.SubnetName, nsgName, pipName,
+	if err := i.azureClient.CreateVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name,
+		location, i.clusterInfo.VNetResourceGroup, i.clusterInfo.VNetName,
+		i.options.Gateway.SubnetName, nsgName, pipName,
 		i.sshKeyPath, i.options.Gateway.VMSize); err != nil {
 		return fmt.Errorf("failed to create Gateway VM: %w", err)
 	}
 
-	ip, err := i.azure.GetPublicIPAddress(ctx, i.clusterInfo.ResourceGroup, pipName)
+	ip, err := i.azureClient.GetPublicIPAddress(ctx, i.clusterInfo.ResourceGroup, pipName)
 	if err != nil {
 		return fmt.Errorf("failed to get public IP address: %w", err)
 	}
@@ -244,7 +246,7 @@ func (i *Installer) waitForVMReady(ctx context.Context, gatewayExists bool) erro
 
 	if gatewayExists {
 		i.logger.Info("Restarting VM...")
-		_ = i.azure.RestartVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name)
+		_ = i.azureClient.RestartVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -353,7 +355,7 @@ func (i *Installer) phase4NodeJoin(ctx context.Context) error {
 	}
 
 	kubeconfigPath := "/root/.kube/config"
-	if err := i.azure.GetAKSCredentials(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName, kubeconfigPath); err != nil {
+	if err := i.azureClient.GetAKSCredentials(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName, kubeconfigPath); err != nil {
 		return fmt.Errorf("failed to get AKS credentials: %w", err)
 	}
 	if _, err := RunCommand(ctx, "kubelogin", "convert-kubeconfig", "-l", "azurecli", "--kubeconfig", kubeconfigPath); err != nil {
