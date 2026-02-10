@@ -136,7 +136,9 @@ func (c *AzureClient) GetAKSClusterInfo(ctx context.Context, resourceGroup, clus
 	return info, nil
 }
 
-// GetVNetInfo retrieves VNet information from AKS VMSS in the node resource group.
+// GetVNetInfo discovers VNet name and resource group by inspecting VMSS subnet configuration
+// in the node resource group. This works for both default and BYO VNet scenarios since the
+// VNet resource group is extracted from the VMSS subnet ID, not assumed to be nodeResourceGroup.
 func (c *AzureClient) GetVNetInfo(ctx context.Context, nodeResourceGroup string) (vnetName, vnetRG string, err error) {
 	pager := c.vmssClient.NewListPager(nodeResourceGroup, nil)
 	for pager.More() {
@@ -564,12 +566,6 @@ func (c *AzureClient) DeleteDisks(ctx context.Context, resourceGroup, pattern st
 			_, _ = poller.PollUntilDone(ctx, nil)
 		}
 	}
-	return nil
-}
-
-// DeleteConnectedMachine deletes an Arc connected machine (errors are ignored).
-func (c *AzureClient) DeleteConnectedMachine(ctx context.Context, resourceGroup, machineName string) error {
-	_, _ = c.arcClient.Delete(ctx, resourceGroup, machineName, nil)
 	return nil
 }
 

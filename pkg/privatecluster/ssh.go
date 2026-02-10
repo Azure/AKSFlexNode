@@ -105,15 +105,6 @@ func (s *SSHClient) ReadRemoteFile(ctx context.Context, path string) (string, er
 	return s.Execute(ctx, fmt.Sprintf("sudo cat %s 2>/dev/null || echo ''", path))
 }
 
-// WriteRemoteFile writes content to a file on the remote host
-func (s *SSHClient) WriteRemoteFile(ctx context.Context, path, content string) error {
-	// Use heredoc to write file
-	script := fmt.Sprintf(`sudo tee %s > /dev/null << 'EOFCONTENT'
-%s
-EOFCONTENT`, path, content)
-	return s.ExecuteScript(ctx, script)
-}
-
 // CommandExists checks if a command exists on the remote host
 func (s *SSHClient) CommandExists(ctx context.Context, command string) bool {
 	return s.ExecuteSilent(ctx, fmt.Sprintf("command -v %s", command))

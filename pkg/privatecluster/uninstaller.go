@@ -3,7 +3,6 @@ package privatecluster
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
@@ -96,16 +95,13 @@ func (u *Uninstaller) cleanupLocal(ctx context.Context) error {
 	// Get Gateway IP and client key from VPN config (before stopping VPN)
 	u.readVPNConfig()
 
-	// Remove node from cluster (while VPN is still connected)
+	// Remove node from cluster while VPN is still connected.
+	// This must happen here (not in bootstrapper) because the private cluster API server
+	// is only reachable through the VPN tunnel, which gets torn down below.
 	u.removeNodeFromCluster(ctx, hostname)
 
-	// Stop any running aks-flex-node agent process
-	u.stopFlexNodeAgent(ctx)
-
-	// Note: main unbootstrap handles kubelet/containerd cleanup
-
-	// Remove Arc Agent
-	u.removeArcAgent(ctx, hostname)
+	// Note: stopFlexNodeAgent and removeArcAgent are handled by the bootstrapper's
+	// services.UnInstaller and arc.UnInstaller steps respectively.
 
 	// Remove client peer from Gateway
 	u.removeClientPeerFromGateway(ctx)
@@ -142,16 +138,8 @@ func (u *Uninstaller) cleanupFull(ctx context.Context) error {
 	// Get Gateway IP and client key from VPN config (before stopping VPN)
 	u.readVPNConfig()
 
-	// Remove node from cluster (while VPN is still connected)
+	// Remove node from cluster while VPN is still connected (see comment in cleanupLocal)
 	u.removeNodeFromCluster(ctx, hostname)
-
-	// Stop any running aks-flex-node agent process
-	u.stopFlexNodeAgent(ctx)
-
-	// Note: main unbootstrap handles kubelet/containerd cleanup
-
-	// Remove Arc Agent
-	u.removeArcAgent(ctx, hostname)
 
 	// Remove client peer from Gateway
 	u.removeClientPeerFromGateway(ctx)
@@ -216,62 +204,6 @@ func (u *Uninstaller) removeNodeFromCluster(ctx context.Context, nodeName string
 	}
 
 	u.logger.Warning("Failed to remove node from cluster (may need manual cleanup: kubectl delete node %s)", nodeName)
-}
-
-// stopFlexNodeAgent stops any running aks-flex-node agent process
-func (u *Uninstaller) stopFlexNodeAgent(ctx context.Context) {
-	u.logger.Info("Stopping aks-flex-node agent...")
-	_, _ = RunCommand(ctx, "pkill", "-f", "aks-flex-node agent")
-	_, _ = RunCommand(ctx, "sleep", "2")
-}
-
-// removeArcAgent removes Azure Arc agent
-func (u *Uninstaller) removeArcAgent(ctx context.Context, nodeName string) {
-	if !CommandExists("azcmagent") {
-		u.logger.Info("Arc Agent not found, skipping")
-		return
-	}
-
-	u.logger.Info("Removing Arc Agent...")
-
-	// Get Arc resource group
-	arcRG := ""
-	output, err := RunCommand(ctx, "azcmagent", "show")
-	if err == nil {
-		for _, line := range strings.Split(output, "\n") {
-			if strings.Contains(line, "Resource Group") {
-				parts := strings.SplitN(line, ":", 2)
-				if len(parts) == 2 {
-					arcRG = strings.TrimSpace(parts[1])
-				}
-			}
-		}
-	}
-
-	if arcRG != "" && u.azureClient != nil {
-		u.logger.Info("Deleting Arc machine from Azure...")
-		_ = u.azureClient.DeleteConnectedMachine(ctx, arcRG, nodeName)
-		u.logger.Success("Arc machine deleted from Azure")
-	} else if u.clusterInfo != nil && u.azureClient != nil {
-		_ = u.azureClient.DeleteConnectedMachine(ctx, u.clusterInfo.ResourceGroup, nodeName)
-	}
-
-	_, _ = RunCommand(ctx, "azcmagent", "disconnect", "--force-local-only")
-
-	for _, service := range []string{"himdsd", "extd", "gcad", "arcproxyd"} {
-		_, _ = RunCommand(ctx, "systemctl", "stop", service)
-		_, _ = RunCommand(ctx, "systemctl", "disable", service)
-	}
-
-	if CommandExists("apt") {
-		_, _ = RunCommand(ctx, "apt", "remove", "azcmagent", "-y")
-	} else if CommandExists("yum") {
-		_, _ = RunCommand(ctx, "yum", "remove", "azcmagent", "-y")
-	}
-
-	_, _ = RunCommand(ctx, "rm", "-rf", "/var/opt/azcmagent", "/opt/azcmagent")
-
-	u.logger.Success("Arc Agent removed")
 }
 
 // removeClientPeerFromGateway removes this client's peer from the Gateway

@@ -79,15 +79,6 @@ func RunCommandSilent(ctx context.Context, name string, args ...string) bool {
 	return cmd.Run() == nil
 }
 
-// RunCommandInteractive executes a command with stdout/stderr/stdin connected to the terminal
-func RunCommandInteractive(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- commands are from trusted internal code
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	return cmd.Run()
-}
-
 // CommandExists checks if a command is available in PATH
 func CommandExists(name string) bool {
 	_, err := exec.LookPath(name)
@@ -250,11 +241,6 @@ func GetHostname() (string, error) {
 		return "", err
 	}
 	return strings.ToLower(hostname), nil
-}
-
-// IsRoot checks if the current process is running as root
-func IsRoot() bool {
-	return os.Getuid() == 0
 }
 
 // CleanKubeCache removes kube cache directories
