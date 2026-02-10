@@ -94,8 +94,19 @@ func runAgent(ctx context.Context) error {
 		if os.Getuid() != 0 {
 			return fmt.Errorf("private cluster setup requires root privileges, please run with 'sudo'")
 		}
-		runner := privatecluster.NewScriptRunner("")
-		if err := runner.RunPrivateInstall(ctx, cfg.Azure.TargetCluster.ResourceID); err != nil {
+		cred, err := azidentity.NewAzureCLICredential(nil)
+		if err != nil {
+			return fmt.Errorf("failed to create Azure CLI credential: %w", err)
+		}
+		options := privatecluster.InstallOptions{
+			AKSResourceID: cfg.Azure.TargetCluster.ResourceID,
+			Gateway:       privatecluster.DefaultGatewayConfig(),
+		}
+		installer, err := privatecluster.NewInstaller(options, cred)
+		if err != nil {
+			return fmt.Errorf("failed to create private cluster installer: %w", err)
+		}
+		if err := installer.Install(ctx); err != nil {
 			return fmt.Errorf("private cluster setup failed: %w", err)
 		}
 		logger.Info("Private cluster setup completed")
