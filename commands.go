@@ -89,7 +89,7 @@ func runAgent(ctx context.Context) error {
 	}
 
 	// For private clusters, run Gateway/VPN setup before bootstrap
-	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.Private {
+	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.IsPrivateCluster {
 		logger.Info("Private cluster detected, running Gateway/VPN setup...")
 		if os.Getuid() != 0 {
 			return fmt.Errorf("private cluster setup requires root privileges, please run with 'sudo'")
@@ -134,7 +134,7 @@ func runUnbootstrap(ctx context.Context) error {
 	}
 
 	// For private clusters, run VPN/Gateway cleanup first
-	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.Private {
+	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.IsPrivateCluster {
 		logger.Info("Private cluster detected, running VPN/Gateway cleanup...")
 
 		// Validate cleanup mode

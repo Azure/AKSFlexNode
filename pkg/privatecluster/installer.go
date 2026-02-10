@@ -133,9 +133,6 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	if err := InstallVPNTools(ctx, i.logger); err != nil {
 		return fmt.Errorf("failed to install VPN tools: %w", err)
 	}
-	if err := InstallJQ(ctx, i.logger); err != nil {
-		return fmt.Errorf("failed to install jq: %w", err)
-	}
 	if !CommandExists("kubectl") || !CommandExists("kubelogin") {
 		if err := i.toolInstaller.InstallAKSCLI(ctx); err != nil {
 			return fmt.Errorf("failed to install kubectl/kubelogin: %w", err)

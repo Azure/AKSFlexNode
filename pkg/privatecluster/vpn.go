@@ -257,11 +257,3 @@ func InstallVPNTools(ctx context.Context, logger *Logger) error {
 	return err
 }
 
-// InstallJQ installs jq locally
-func InstallJQ(ctx context.Context, logger *Logger) error {
-	if CommandExists("jq") {
-		return nil
-	}
-	_, err := RunCommand(ctx, "apt-get", "install", "-y", "jq")
-	return err
-}
