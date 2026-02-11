@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       skip_cleanup:
-        description: 'Skip cleanup (keep cluster and VM for debugging)'
+        description: "Skip cleanup (keep cluster and VM for debugging)"
         required: false
         default: false
         type: boolean
@@ -16,7 +16,7 @@ on:
   # Run on release tags
   push:
     tags:
-      - 'v*'
+      - "v*"
 
   # Run on PRs - requires approval via environment protection
   pull_request:
@@ -25,9 +25,6 @@ on:
 
 permissions:
   contents: read
-
-env:
-  GO_VERSION: '1.24'
 
 jobs:
   # ==========================================================================
@@ -45,7 +42,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Build binary for E2E testing
@@ -86,7 +83,7 @@ jobs:
     runs-on: [self-hosted, e2e, azure]
     needs: build
     timeout-minutes: 15
-    environment: e2e-testing  # Requires approval
+    environment: e2e-testing # Requires approval
     outputs:
       cluster-name: ${{ steps.names.outputs.CLUSTER_NAME }}
       vm-name: ${{ steps.names.outputs.VM_NAME }}
@@ -745,7 +742,14 @@ jobs:
   cleanup:
     name: Cleanup Resources
     runs-on: [self-hosted, e2e, azure]
-    needs: [provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration, collect-logs]
+    needs:
+      [
+        provision-infrastructure,
+        grant-permissions,
+        bootstrap-flex-node,
+        verify-integration,
+        collect-logs,
+      ]
     if: always() && needs.provision-infrastructure.result == 'success' && !inputs.skip_cleanup
     timeout-minutes: 10
 
@@ -875,7 +879,14 @@ jobs:
   summary:
     name: Test Summary
     runs-on: [self-hosted, e2e, azure]
-    needs: [build, provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration]
+    needs:
+      [
+        build,
+        provision-infrastructure,
+        grant-permissions,
+        bootstrap-flex-node,
+        verify-integration,
+      ]
     if: always()
     timeout-minutes: 5
 
