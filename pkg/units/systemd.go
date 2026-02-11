@@ -1,6 +1,7 @@
 package units
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log"
@@ -8,11 +9,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/coreos/go-systemd/v22/dbus"
 )
 
-// systemdManager abstracts systemd daemon control so that the real D-Bus
+// Manager abstracts systemd daemon control so that the real D-Bus
 // implementation can be swapped for a fake in tests or early development.
-type systemdManager interface {
+type Manager interface {
 	// ReloadDaemon asks systemd to reload its configuration (daemon-reload).
 	ReloadDaemon() error
 
@@ -27,6 +30,161 @@ type systemdManager interface {
 
 	// StopUnit stops a unit by name.
 	StopUnit(name string) error
+
+	// Close releases any resources held by the manager (e.g. D-Bus
+	// connections). It is safe to call multiple times. Implementations
+	// that hold no resources may treat this as a no-op.
+	Close()
+}
+
+// dbusManager is the production implementation of Manager that talks to
+// systemd over D-Bus using github.com/coreos/go-systemd/v22/dbus.
+type dbusManager struct {
+	conn *dbus.Conn
+}
+
+var _ Manager = (*dbusManager)(nil)
+
+// NewManager creates a new Manager backed by a real D-Bus connection to
+// the system's systemd instance.
+//
+// The caller should call Close on the returned Manager when it is no
+// longer needed. If the Manager does not need closing (e.g. a fake),
+// Close is a no-op.
+func NewManager(ctx context.Context) (Manager, error) {
+	conn, err := dbus.NewWithContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to systemd via D-Bus: %w", err)
+	}
+	return &dbusManager{conn: conn}, nil
+}
+
+// Close closes the underlying D-Bus connection. It is safe to call
+// multiple times.
+func (m *dbusManager) Close() {
+	if m.conn != nil {
+		m.conn.Close()
+	}
+}
+
+// ReloadDaemon instructs systemd to re-scan and reload all unit files,
+// equivalent to `systemctl daemon-reload`.
+func (m *dbusManager) ReloadDaemon() error {
+	log.Printf("[systemd] daemon-reload")
+	if err := m.conn.ReloadContext(context.TODO()); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
+	}
+	return nil
+}
+
+// StartUnit starts the named unit, waiting for the job to complete.
+// The mode is "replace", which is equivalent to `systemctl start <name>`.
+func (m *dbusManager) StartUnit(name string) error {
+	log.Printf("[systemd] start %s", name)
+	return m.doUnit("start", name, func(ctx context.Context, n, mode string, ch chan<- string) (int, error) {
+		return m.conn.StartUnitContext(ctx, n, mode, ch)
+	})
+}
+
+// RestartUnit restarts the named unit, waiting for the job to complete.
+// The mode is "replace", which is equivalent to `systemctl restart <name>`.
+func (m *dbusManager) RestartUnit(name string) error {
+	log.Printf("[systemd] restart %s", name)
+	return m.doUnit("restart", name, func(ctx context.Context, n, mode string, ch chan<- string) (int, error) {
+		return m.conn.RestartUnitContext(ctx, n, mode, ch)
+	})
+}
+
+// ReloadUnit reloads the named unit (e.g. sends SIGHUP), waiting for the
+// job to complete. The mode is "replace", equivalent to
+// `systemctl reload <name>`.
+func (m *dbusManager) ReloadUnit(name string) error {
+	log.Printf("[systemd] reload %s", name)
+	return m.doUnit("reload", name, func(ctx context.Context, n, mode string, ch chan<- string) (int, error) {
+		return m.conn.ReloadUnitContext(ctx, n, mode, ch)
+	})
+}
+
+// StopUnit stops the named unit, waiting for the job to complete.
+// The mode is "replace", which is equivalent to `systemctl stop <name>`.
+func (m *dbusManager) StopUnit(name string) error {
+	log.Printf("[systemd] stop %s", name)
+	return m.doUnit("stop", name, func(ctx context.Context, n, mode string, ch chan<- string) (int, error) {
+		return m.conn.StopUnitContext(ctx, n, mode, ch)
+	})
+}
+
+// unitFunc is the signature shared by Start/Stop/Restart/ReloadUnitContext.
+type unitFunc func(ctx context.Context, name, mode string, ch chan<- string) (int, error)
+
+// doUnit is the common implementation for unit operations. It enqueues
+// the job with mode "replace" and waits synchronously for the job result
+// via a channel. A result of "done" is considered success; anything else
+// (canceled, timeout, failed, dependency, skipped) is treated as an error.
+func (m *dbusManager) doUnit(verb, name string, fn unitFunc) error {
+	ch := make(chan string, 1)
+	ctx := context.TODO()
+
+	_, err := fn(ctx, name, "replace", ch)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", verb, name, err)
+	}
+
+	result := <-ch
+	if result != "done" {
+		return fmt.Errorf("%s %s: job result %q", verb, name, result)
+	}
+
+	return nil
+}
+
+// FakeManager is a development/test implementation that logs actions
+// instead of talking to a real systemd instance.
+type FakeManager struct {
+	// Actions records every operation as "verb:unit" strings for test assertions.
+	Actions []string
+}
+
+var _ Manager = (*FakeManager)(nil)
+
+// Close is a no-op for the fake manager.
+func (f *FakeManager) Close() {}
+
+func (f *FakeManager) record(action, unit string) {
+	entry := fmt.Sprintf("%s:%s", action, unit)
+	f.Actions = append(f.Actions, entry)
+	log.Printf("[systemd-fake] %s %s", action, unit)
+}
+
+// ReloadDaemon records a daemon-reload action.
+func (f *FakeManager) ReloadDaemon() error {
+	f.Actions = append(f.Actions, "daemon-reload")
+	log.Printf("[systemd-fake] daemon-reload")
+	return nil
+}
+
+// StartUnit records a start action.
+func (f *FakeManager) StartUnit(name string) error {
+	f.record("start", name)
+	return nil
+}
+
+// RestartUnit records a restart action.
+func (f *FakeManager) RestartUnit(name string) error {
+	f.record("restart", name)
+	return nil
+}
+
+// ReloadUnit records a reload action.
+func (f *FakeManager) ReloadUnit(name string) error {
+	f.record("reload", name)
+	return nil
+}
+
+// StopUnit records a stop action.
+func (f *FakeManager) StopUnit(name string) error {
+	f.record("stop", name)
+	return nil
 }
 
 // systemdUnitDeltas describes the set of actions needed to transition from
@@ -181,9 +339,9 @@ func isSystemdUnitFile(name string) bool {
 	return false
 }
 
-// applyDeltas executes the computed deltas against a systemdManager:
+// applyDeltas executes the computed deltas against a Manager:
 // stop removed units, daemon-reload, then start new and restart changed.
-func applyDeltas(mgr systemdManager, deltas *systemdUnitDeltas) error {
+func applyDeltas(mgr Manager, deltas *systemdUnitDeltas) error {
 	// Phase 1: Stop units that were removed.
 	for _, unit := range deltas.UnitsToStop {
 		if err := mgr.StopUnit(unit); err != nil {
@@ -217,47 +375,6 @@ func applyDeltas(mgr systemdManager, deltas *systemdUnitDeltas) error {
 		}
 	}
 
-	return nil
-}
-
-// fakeSystemdManager is a development/test implementation that logs actions
-// instead of talking to a real systemd instance.
-type fakeSystemdManager struct {
-	// Actions records every operation as "verb:unit" strings for test assertions.
-	Actions []string
-}
-
-var _ systemdManager = (*fakeSystemdManager)(nil)
-
-func (f *fakeSystemdManager) record(action, unit string) {
-	entry := fmt.Sprintf("%s:%s", action, unit)
-	f.Actions = append(f.Actions, entry)
-	log.Printf("[systemd-fake] %s %s", action, unit)
-}
-
-func (f *fakeSystemdManager) ReloadDaemon() error {
-	f.Actions = append(f.Actions, "daemon-reload")
-	log.Printf("[systemd-fake] daemon-reload")
-	return nil
-}
-
-func (f *fakeSystemdManager) StartUnit(name string) error {
-	f.record("start", name)
-	return nil
-}
-
-func (f *fakeSystemdManager) RestartUnit(name string) error {
-	f.record("restart", name)
-	return nil
-}
-
-func (f *fakeSystemdManager) ReloadUnit(name string) error {
-	f.record("reload", name)
-	return nil
-}
-
-func (f *fakeSystemdManager) StopUnit(name string) error {
-	f.record("stop", name)
 	return nil
 }
 

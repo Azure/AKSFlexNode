@@ -44,7 +44,7 @@ func TestSetupDiskLayout_CreatesRequiredDirs(t *testing.T) {
 // (no previous generation) starts all systemd units via the manager.
 func TestOverlay_Apply_StartsSystemdUnits(t *testing.T) {
 	root := t.TempDir()
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 
 	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
 	os.MkdirAll(filepath.Join(containerdSrc, "bin"), 0755)
@@ -96,7 +96,7 @@ func TestOverlay_Apply_TwoGenerations_SystemdDeltas(t *testing.T) {
 	os.MkdirAll(filepath.Join(kubeletSrc, "bin"), 0755)
 	os.WriteFile(filepath.Join(kubeletSrc, "bin", "kubelet"), []byte("kubelet-v1"), 0755)
 
-	mgr1 := &fakeSystemdManager{}
+	mgr1 := &FakeManager{}
 	overlay1 := NewOverlay(OverlayConfig{
 		Version: "v1",
 		PackagesByName: map[string]OverlayPackageDef{
@@ -147,7 +147,7 @@ func TestOverlay_Apply_TwoGenerations_SystemdDeltas(t *testing.T) {
 	os.MkdirAll(filepath.Join(calicoSrc, "bin"), 0755)
 	os.WriteFile(filepath.Join(calicoSrc, "bin", "calico-node"), []byte("calico-bin"), 0755)
 
-	mgr2 := &fakeSystemdManager{}
+	mgr2 := &FakeManager{}
 	overlay2 := NewOverlay(OverlayConfig{
 		Version: "v2",
 		PackagesByName: map[string]OverlayPackageDef{
@@ -194,7 +194,7 @@ func TestOverlay_Apply_TwoGenerations_SystemdDeltas(t *testing.T) {
 // no systemd units still calls daemon-reload (and nothing else).
 func TestOverlay_Apply_NoSystemdUnits_DaemonReload(t *testing.T) {
 	root := t.TempDir()
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 
 	overlay := NewOverlay(OverlayConfig{
 		Version: "v1",
@@ -237,7 +237,7 @@ func TestOverlay_Apply_UnchangedUnits_NoRestart(t *testing.T) {
 	}
 
 	// First Apply: starts the unit.
-	mgr1 := &fakeSystemdManager{}
+	mgr1 := &FakeManager{}
 	overlay1 := NewOverlay(config, root, root, mgr1)
 
 	ctx := context.Background()
@@ -246,7 +246,7 @@ func TestOverlay_Apply_UnchangedUnits_NoRestart(t *testing.T) {
 	}
 
 	// Second Apply with same config: unchanged units should NOT be restarted.
-	mgr2 := &fakeSystemdManager{}
+	mgr2 := &FakeManager{}
 	overlay2 := NewOverlay(config, root, root, mgr2)
 
 	if err := overlay2.Apply(ctx); err != nil {

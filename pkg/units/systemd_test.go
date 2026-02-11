@@ -339,7 +339,7 @@ func TestIsSystemdUnitFile(t *testing.T) {
 }
 
 func TestFakeSystemdManager_RecordsActions(t *testing.T) {
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 
 	mgr.StartUnit("foo.service")
 	mgr.RestartUnit("bar.service")
@@ -361,7 +361,7 @@ func TestFakeSystemdManager_RecordsActions(t *testing.T) {
 }
 
 func TestApplyDeltas_ExecutesInOrder(t *testing.T) {
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 
 	deltas := &systemdUnitDeltas{
 		UnitsToStop:    []string{"old.service"},
@@ -388,7 +388,7 @@ func TestApplyDeltas_ExecutesInOrder(t *testing.T) {
 }
 
 func TestApplyDeltas_EmptyDeltas(t *testing.T) {
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 
 	deltas := &systemdUnitDeltas{}
 
@@ -404,7 +404,7 @@ func TestApplyDeltas_EmptyDeltas(t *testing.T) {
 }
 
 func TestApplyDeltas_MultipleUnitsPerPhase(t *testing.T) {
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 
 	deltas := &systemdUnitDeltas{
 		UnitsToStop:    []string{"a.service", "b.service"},
@@ -481,7 +481,7 @@ func TestGenerateDeltas_EndToEnd_TwoGenerations(t *testing.T) {
 	}
 
 	// Now apply the deltas to a fake manager and verify order.
-	mgr := &fakeSystemdManager{}
+	mgr := &FakeManager{}
 	if err := applyDeltas(mgr, deltas); err != nil {
 		t.Fatalf("applyDeltas() error = %v", err)
 	}
@@ -543,5 +543,56 @@ func TestWalkUnitDir_NonexistentPath(t *testing.T) {
 	}
 	if len(units) != 0 {
 		t.Errorf("expected empty map, got %v", units)
+	}
+}
+
+func TestFakeManager_ImplementsInterface(t *testing.T) {
+	// Compile-time check that FakeManager implements Manager.
+	var _ Manager = (*FakeManager)(nil)
+}
+
+func TestFakeManager_NoErrorsReturned(t *testing.T) {
+	mgr := &FakeManager{}
+
+	if err := mgr.StartUnit("test.service"); err != nil {
+		t.Errorf("StartUnit() error = %v", err)
+	}
+	if err := mgr.StopUnit("test.service"); err != nil {
+		t.Errorf("StopUnit() error = %v", err)
+	}
+	if err := mgr.RestartUnit("test.service"); err != nil {
+		t.Errorf("RestartUnit() error = %v", err)
+	}
+	if err := mgr.ReloadUnit("test.service"); err != nil {
+		t.Errorf("ReloadUnit() error = %v", err)
+	}
+	if err := mgr.ReloadDaemon(); err != nil {
+		t.Errorf("ReloadDaemon() error = %v", err)
+	}
+}
+
+func TestFakeManager_ActionsInitiallyEmpty(t *testing.T) {
+	mgr := &FakeManager{}
+
+	if len(mgr.Actions) != 0 {
+		t.Errorf("Actions = %v, want empty", mgr.Actions)
+	}
+}
+
+func TestFakeManager_MultipleUnitsOfSameType(t *testing.T) {
+	mgr := &FakeManager{}
+
+	mgr.StartUnit("a.service")
+	mgr.StartUnit("b.service")
+	mgr.StartUnit("c.service")
+
+	want := []string{
+		"start:a.service",
+		"start:b.service",
+		"start:c.service",
+	}
+
+	if !reflect.DeepEqual(mgr.Actions, want) {
+		t.Errorf("Actions = %v, want %v", mgr.Actions, want)
 	}
 }

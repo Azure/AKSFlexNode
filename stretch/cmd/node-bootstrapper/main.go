@@ -79,11 +79,17 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("reading config: %w", err)
 	}
 
+	sd, err := units.NewManager(ctx)
+	if err != nil {
+		return fmt.Errorf("connecting to systemd: %w", err)
+	}
+	defer sd.Close()
+
 	overlay := units.NewOverlay(
 		config,
 		flagStoreRootDir,
 		flagOSRootDir,
-		nil,
+		sd,
 	)
 
 	return overlay.Apply(ctx)

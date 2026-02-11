@@ -168,10 +168,10 @@ func calculatePackageFingerprint(pkg Package) string {
 }
 
 // packageStateDirName returns the directory name for a package in the states dir.
-// Format: <name>-<fingerprint>
+// Format: <kind>-<name>-<version>-<fingerprint>
 func packageStateDirName(pkg Package) string {
 	fingerprint := calculatePackageFingerprint(pkg)
-	return fmt.Sprintf("%s-%s", pkg.Name(), fingerprint)
+	return fmt.Sprintf("%s-%s-%s-%s", pkg.Kind(), pkg.Name(), pkg.Version(), fingerprint)
 }
 
 type Overlay struct {
@@ -179,18 +179,18 @@ type Overlay struct {
 
 	store   *StoreManager
 	etc     *etcManager
-	systemd systemdManager
+	systemd Manager
 }
 
 // NewOverlay creates a new Overlay for the given config.
 // If storeRoot is empty, DefaultStoreRoot is used. The rootDir for the
 // etcManager defaults to "/" if osRoot is empty. If systemd is nil, a
-// fakeSystemdManager is used (suitable for development and tests).
+// FakeManager is used (suitable for development and tests).
 func NewOverlay(
 	config OverlayConfig,
 	storeRoot string,
 	osRoot string,
-	systemd systemdManager,
+	sd Manager,
 ) *Overlay {
 	if storeRoot == "" {
 		storeRoot = DefaultStoreRoot
@@ -198,14 +198,14 @@ func NewOverlay(
 	if osRoot == "" {
 		osRoot = "/"
 	}
-	if systemd == nil {
-		systemd = &fakeSystemdManager{}
+	if sd == nil {
+		sd = &FakeManager{}
 	}
 	return &Overlay{
 		config:  config,
 		store:   NewStoreManager(storeRoot),
 		etc:     newEtcManager(osRoot, filepath.Join(storeRoot, statesDir)),
-		systemd: systemd,
+		systemd: sd,
 	}
 }
 

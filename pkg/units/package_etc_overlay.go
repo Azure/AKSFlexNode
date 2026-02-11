@@ -55,7 +55,7 @@ func (p *etcOverlayPackage) Version() string {
 func (p *etcOverlayPackage) Sources() []string {
 	sources := make([]string, len(p.packages))
 	for i, pkg := range p.packages {
-		sources[i] = fmt.Sprintf("%s://%s", pkg.Kind(), pkg.Name())
+		sources[i] = packageSource(pkg)
 	}
 	sort.Strings(sources)
 	return sources
@@ -86,7 +86,7 @@ func (p *etcOverlayPackage) Install(_ context.Context, base string) error {
 			if existing, ok := seen[ef.Target]; ok {
 				return fmt.Errorf(
 					"etc target conflict: %q is declared by both package %q and package %q",
-					ef.Target, existing.pkg.Name(), pkg.Name(),
+					ef.Target, packageSource(existing.pkg), packageSource(pkg),
 				)
 			}
 			seen[ef.Target] = etcEntry{pkg: pkg, etcFile: ef}

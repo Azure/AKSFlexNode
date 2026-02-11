@@ -50,7 +50,7 @@ func (s *systemdUnitPackage) Version() string {
 func (s *systemdUnitPackage) Sources() []string {
 	sources := make([]string, len(s.packages))
 	for i, pkg := range s.packages {
-		sources[i] = fmt.Sprintf("%s://%s", pkg.Kind(), pkg.Name())
+		sources[i] = packageSource(pkg)
 	}
 	sort.Strings(sources)
 	return sources

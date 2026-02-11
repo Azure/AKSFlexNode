@@ -1,6 +1,9 @@
 package units
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // PackageEtcFile defines a file that needs to be placed in /etc as part of the package installation.
 //
@@ -46,6 +49,10 @@ type Package interface {
 	// EtcFiles returns the list of files that need to be placed in /etc as part of
 	// the package installation.
 	EtcFiles() []PackageEtcFile
+}
+
+func packageSource(p Package) string {
+	return fmt.Sprintf("%s://%s@%s", p.Kind(), p.Name(), p.Version())
 }
 
 // 1. resolve packages (download or reuse from cache)
