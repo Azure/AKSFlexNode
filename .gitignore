@@ -53,3 +53,6 @@ config.json
 /dist/
 
 overlayconfig.json
+
+# QEMU VM artifacts (images, disks, seed ISOs)
+.vm/
