@@ -3,112 +3,148 @@ package privatecluster
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/sirupsen/logrus"
+
+	"go.goms.io/aks/AKSFlexNode/pkg/auth"
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
-// Installer handles private cluster installation
+// Installer handles private cluster VPN/Gateway setup, implementing bootstrapper.StepExecutor.
 type Installer struct {
-	logger        *Logger
+	config        *config.Config
+	logger        *logrus.Logger
+	authProvider  *auth.AuthProvider
 	azureClient   *AzureClient
 	toolInstaller *ToolInstaller
-	options       InstallOptions
 
-	// State collected during installation
 	clusterInfo *AKSClusterInfo
 	vpnConfig   VPNConfig
 	sshKeyPath  string
 	gatewayIP   string
 }
 
-// NewInstaller creates a new Installer instance.
-// cred is the Azure credential used for SDK calls.
-func NewInstaller(options InstallOptions, cred azcore.TokenCredential) (*Installer, error) {
-	logger := NewLogger(options.Verbose)
-
-	// Apply defaults
-	if options.Gateway.Name == "" {
-		options.Gateway = DefaultGatewayConfig()
-	}
-
-	subscriptionID, _, _, err := ParseResourceID(options.AKSResourceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse resource ID: %w", err)
-	}
-
-	azureClient, err := NewAzureClient(cred, subscriptionID, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure client: %w", err)
-	}
-
+// NewInstaller creates a new private cluster Installer.
+func NewInstaller(logger *logrus.Logger) *Installer {
 	return &Installer{
+		config:        config.GetConfig(),
 		logger:        logger,
-		azureClient:   azureClient,
+		authProvider:  auth.NewAuthProvider(),
 		toolInstaller: NewToolInstaller(logger),
-		options:       options,
 		vpnConfig:     DefaultVPNConfig(),
 		sshKeyPath:    GetSSHKeyPath(),
-	}, nil
+	}
 }
 
-// Install runs the complete installation process
-func (i *Installer) Install(ctx context.Context) error {
-	fmt.Printf("%s========================================%s\n", colorGreen, colorReset)
-	fmt.Printf("%s Add Edge Node to Private AKS Cluster%s\n", colorGreen, colorReset)
-	fmt.Printf("%s========================================%s\n\n", colorGreen, colorReset)
+// GetName returns the step name.
+func (i *Installer) GetName() string {
+	return "PrivateClusterInstall"
+}
 
-	// Parse resource ID
-	subscriptionID, resourceGroup, clusterName, err := ParseResourceID(i.options.AKSResourceID)
-	if err != nil {
-		return err
+// Validate checks prerequisites for private cluster installation.
+func (i *Installer) Validate(ctx context.Context) error {
+	if !i.isPrivateCluster() {
+		return nil
+	}
+	if os.Getuid() != 0 {
+		return fmt.Errorf("private cluster setup requires root privileges, please run with 'sudo'")
+	}
+	return nil
+}
+
+// IsCompleted returns true for non-private clusters or when VPN is already connected.
+func (i *Installer) IsCompleted(ctx context.Context) bool {
+	if !i.isPrivateCluster() {
+		return true
+	}
+	vpnClient := NewVPNClient(i.vpnConfig, i.logger)
+	return vpnClient.TestConnection(ctx)
+}
+
+// Execute runs the private cluster installation (Gateway/VPN setup).
+func (i *Installer) Execute(ctx context.Context) error {
+	if !i.isPrivateCluster() {
+		return nil
 	}
 
+	i.logger.Infof("========================================")
+	i.logger.Infof(" Add Edge Node to Private AKS Cluster")
+	i.logger.Infof("========================================")
+
+	cred, err := i.authProvider.UserCredential(i.config)
+	if err != nil {
+		return fmt.Errorf("failed to get Azure credential: %w", err)
+	}
+
+	subscriptionID, _, _, err := ParseResourceID(i.config.GetTargetClusterID())
+	if err != nil {
+		return fmt.Errorf("failed to parse resource ID: %w", err)
+	}
+
+	azureClient, err := NewAzureClient(cred, subscriptionID, i.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create Azure client: %w", err)
+	}
+	i.azureClient = azureClient
+
+	resourceGroup, clusterName := i.config.GetTargetClusterResourceGroup(), i.config.GetTargetClusterName()
 	i.clusterInfo = &AKSClusterInfo{
-		ResourceID:     i.options.AKSResourceID,
+		ResourceID:     i.config.GetTargetClusterID(),
 		SubscriptionID: subscriptionID,
 		ResourceGroup:  resourceGroup,
 		ClusterName:    clusterName,
 	}
 
-	// Phase 1: Environment Check
 	if err := i.phase1EnvironmentCheck(ctx); err != nil {
 		return fmt.Errorf("environment check failed: %w", err)
 	}
-
-	// Phase 2: Gateway Setup
 	if err := i.phase2GatewaySetup(ctx); err != nil {
 		return fmt.Errorf("gateway setup failed: %w", err)
 	}
-
-	// Phase 3: Client Configuration
 	if err := i.phase3ClientSetup(ctx); err != nil {
 		return fmt.Errorf("client setup failed: %w", err)
 	}
-
-	// Phase 4: Node Join Preparation
 	if err := i.phase4NodeJoin(ctx); err != nil {
 		return fmt.Errorf("node join failed: %w", err)
 	}
 
-	// Phase 5 (Verification) skipped - node needs bootstrap to become Ready
-	i.logger.Success("Private cluster setup completed. Bootstrap will continue...")
+	i.logger.Infof("Private cluster setup completed. Bootstrap will continue...")
 	return nil
+}
+
+// isPrivateCluster checks if the config indicates a private cluster.
+func (i *Installer) isPrivateCluster() bool {
+	return i.config != nil &&
+		i.config.Azure.TargetCluster != nil &&
+		i.config.Azure.TargetCluster.IsPrivateCluster
+}
+
+// gatewayConfig returns the Gateway configuration, applying any overrides from config.
+func (i *Installer) gatewayConfig() GatewayConfig {
+	gw := DefaultGatewayConfig()
+	if i.config.Azure.TargetCluster.GatewayVMSize != "" {
+		gw.VMSize = i.config.Azure.TargetCluster.GatewayVMSize
+	}
+	if i.config.Azure.TargetCluster.GatewayPort > 0 {
+		gw.Port = i.config.Azure.TargetCluster.GatewayPort
+	}
+	return gw
 }
 
 // phase1EnvironmentCheck checks prerequisites
 func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	_ = CleanKubeCache()
-	i.logger.Success("Azure SDK client ready")
-	i.logger.Success("Subscription: %s", i.clusterInfo.SubscriptionID)
+	i.logger.Infof("Azure SDK client ready")
+	i.logger.Infof("Subscription: %s", i.clusterInfo.SubscriptionID)
 
-	// Get Tenant ID
 	tenantID, err := i.azureClient.GetTenantID(ctx)
 	if err != nil {
 		return err
 	}
 	i.clusterInfo.TenantID = tenantID
-	i.logger.Verbose("Tenant ID: %s", tenantID)
+	i.logger.Debugf("Tenant ID: %s", tenantID)
 
 	if !i.azureClient.AKSClusterExists(ctx, i.clusterInfo.ResourceGroup, i.clusterInfo.ClusterName) {
 		return fmt.Errorf("AKS cluster '%s' not found", i.clusterInfo.ClusterName)
@@ -120,7 +156,7 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	i.clusterInfo.Location = clusterInfo.Location
 	i.clusterInfo.NodeResourceGroup = clusterInfo.NodeResourceGroup
 	i.clusterInfo.PrivateFQDN = clusterInfo.PrivateFQDN
-	i.logger.Success("AKS cluster: %s (AAD/RBAC enabled)", i.clusterInfo.ClusterName)
+	i.logger.Infof("AKS cluster: %s (AAD/RBAC enabled)", i.clusterInfo.ClusterName)
 
 	vnetName, vnetRG, err := i.azureClient.GetVNetInfo(ctx, i.clusterInfo.NodeResourceGroup)
 	if err != nil {
@@ -128,41 +164,36 @@ func (i *Installer) phase1EnvironmentCheck(ctx context.Context) error {
 	}
 	i.clusterInfo.VNetName = vnetName
 	i.clusterInfo.VNetResourceGroup = vnetRG
-	i.logger.Success("VNet: %s/%s", vnetRG, vnetName)
+	i.logger.Infof("VNet: %s/%s", vnetRG, vnetName)
 
 	if err := InstallVPNTools(ctx, i.logger); err != nil {
 		return fmt.Errorf("failed to install VPN tools: %w", err)
 	}
-	if !CommandExists("kubectl") || !CommandExists("kubelogin") {
-		if err := i.toolInstaller.InstallAKSCLI(ctx); err != nil {
-			return fmt.Errorf("failed to install kubectl/kubelogin: %w", err)
-		}
+	if err := i.toolInstaller.InstallKubectl(ctx, i.config.GetKubernetesVersion()); err != nil {
+		return fmt.Errorf("failed to install kubectl: %w", err)
 	}
-	if !CommandExists("kubectl") {
-		return fmt.Errorf("kubectl installation failed")
+	if err := i.toolInstaller.InstallKubelogin(ctx); err != nil {
+		return fmt.Errorf("failed to install kubelogin: %w", err)
 	}
-	if !CommandExists("kubelogin") {
-		return fmt.Errorf("kubelogin installation failed")
-	}
-	_ = i.toolInstaller.InstallConnectedMachineExtension(ctx)
-	i.logger.Success("Dependencies ready")
+	i.logger.Infof("Dependencies ready")
 
 	return nil
 }
 
 // phase2GatewaySetup sets up the VPN Gateway
 func (i *Installer) phase2GatewaySetup(ctx context.Context) error {
+	gateway := i.gatewayConfig()
 	gatewayExists := false
-	if i.azureClient.VMExists(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name) {
+	if i.azureClient.VMExists(ctx, i.clusterInfo.ResourceGroup, gateway.Name) {
 		gatewayExists = true
-		ip, err := i.azureClient.GetVMPublicIP(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name)
+		ip, err := i.azureClient.GetVMPublicIP(ctx, i.clusterInfo.ResourceGroup, gateway.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get Gateway public IP: %w", err)
 		}
 		i.gatewayIP = ip
-		i.logger.Success("Gateway exists: %s", i.gatewayIP)
+		i.logger.Infof("Gateway exists: %s", i.gatewayIP)
 	} else {
-		i.logger.Info("Creating Gateway...")
+		i.logger.Infof("Creating Gateway...")
 		if err := i.createGatewayInfrastructure(ctx); err != nil {
 			return err
 		}
@@ -171,7 +202,7 @@ func (i *Installer) phase2GatewaySetup(ctx context.Context) error {
 	if err := GenerateSSHKey(i.sshKeyPath); err != nil {
 		return fmt.Errorf("failed to generate SSH key: %w", err)
 	}
-	if err := i.azureClient.AddSSHKeyToVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name, i.sshKeyPath); err != nil {
+	if err := i.azureClient.AddSSHKeyToVM(ctx, i.clusterInfo.ResourceGroup, gateway.Name, i.sshKeyPath); err != nil {
 		return fmt.Errorf("failed to add SSH key to Gateway: %w", err)
 	}
 
@@ -190,15 +221,16 @@ func (i *Installer) phase2GatewaySetup(ctx context.Context) error {
 
 // createGatewayInfrastructure creates Gateway VM and related resources
 func (i *Installer) createGatewayInfrastructure(ctx context.Context) error {
-	nsgName := i.options.Gateway.Name + "-nsg"
-	pipName := i.options.Gateway.Name + "-pip"
+	gateway := i.gatewayConfig()
+	nsgName := gateway.Name + "-nsg"
+	pipName := gateway.Name + "-pip"
 	location := i.clusterInfo.Location
 
 	if err := i.azureClient.CreateSubnet(ctx, i.clusterInfo.VNetResourceGroup, i.clusterInfo.VNetName,
-		i.options.Gateway.SubnetName, i.options.Gateway.SubnetPrefix); err != nil {
+		gateway.SubnetName, gateway.SubnetPrefix); err != nil {
 		return fmt.Errorf("failed to create subnet: %w", err)
 	}
-	if err := i.azureClient.CreateNSG(ctx, i.clusterInfo.ResourceGroup, nsgName, location, i.options.Gateway.Port); err != nil {
+	if err := i.azureClient.CreateNSG(ctx, i.clusterInfo.ResourceGroup, nsgName, location, gateway.Port); err != nil {
 		return fmt.Errorf("failed to create NSG: %w", err)
 	}
 	if err := i.azureClient.CreatePublicIP(ctx, i.clusterInfo.ResourceGroup, pipName, location); err != nil {
@@ -207,10 +239,10 @@ func (i *Installer) createGatewayInfrastructure(ctx context.Context) error {
 	if err := GenerateSSHKey(i.sshKeyPath); err != nil {
 		return fmt.Errorf("failed to generate SSH key: %w", err)
 	}
-	if err := i.azureClient.CreateVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name,
+	if err := i.azureClient.CreateVM(ctx, i.clusterInfo.ResourceGroup, gateway.Name,
 		location, i.clusterInfo.VNetResourceGroup, i.clusterInfo.VNetName,
-		i.options.Gateway.SubnetName, nsgName, pipName,
-		i.sshKeyPath, i.options.Gateway.VMSize); err != nil {
+		gateway.SubnetName, nsgName, pipName,
+		i.sshKeyPath, gateway.VMSize); err != nil {
 		return fmt.Errorf("failed to create Gateway VM: %w", err)
 	}
 
@@ -219,9 +251,9 @@ func (i *Installer) createGatewayInfrastructure(ctx context.Context) error {
 		return fmt.Errorf("failed to get public IP address: %w", err)
 	}
 	i.gatewayIP = ip
-	i.logger.Success("Gateway created: %s", i.gatewayIP)
+	i.logger.Infof("Gateway created: %s", i.gatewayIP)
 
-	i.logger.Info("Waiting for VM to boot (120s)...")
+	i.logger.Infof("Waiting for VM to boot (120s)...")
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -237,13 +269,14 @@ func (i *Installer) waitForVMReady(ctx context.Context, gatewayExists bool) erro
 	ssh := NewSSHClient(sshConfig, i.logger)
 
 	if ssh.TestConnection(ctx) {
-		i.logger.Success("SSH ready")
+		i.logger.Infof("SSH ready")
 		return nil
 	}
 
 	if gatewayExists {
-		i.logger.Info("Restarting VM...")
-		_ = i.azureClient.RestartVM(ctx, i.clusterInfo.ResourceGroup, i.options.Gateway.Name)
+		gateway := i.gatewayConfig()
+		i.logger.Infof("Restarting VM...")
+		_ = i.azureClient.RestartVM(ctx, i.clusterInfo.ResourceGroup, gateway.Name)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -254,7 +287,7 @@ func (i *Installer) waitForVMReady(ctx context.Context, gatewayExists bool) erro
 	if err := ssh.WaitForConnection(ctx, 18, 10*time.Second); err != nil {
 		return fmt.Errorf("VM SSH connection timeout")
 	}
-	i.logger.Success("SSH ready")
+	i.logger.Infof("SSH ready")
 	return nil
 }
 
@@ -265,7 +298,7 @@ func (i *Installer) configureVPNServer(ctx context.Context) error {
 	vpnServer := NewVPNServerManager(ssh, i.logger)
 
 	if !vpnServer.IsInstalled(ctx) {
-		i.logger.Info("Installing VPN on Gateway...")
+		i.logger.Infof("Installing VPN on Gateway...")
 		if err := vpnServer.Install(ctx); err != nil {
 			return fmt.Errorf("failed to install VPN on Gateway: %w", err)
 		}
@@ -286,19 +319,20 @@ func (i *Installer) configureVPNServer(ctx context.Context) error {
 
 	peerCount, _ := vpnServer.GetPeerCount(ctx)
 	i.vpnConfig.ClientVPNIP = fmt.Sprintf("172.16.0.%d", peerCount+2)
-	i.logger.Success("VPN server ready, client IP: %s", i.vpnConfig.ClientVPNIP)
+	i.logger.Infof("VPN server ready, client IP: %s", i.vpnConfig.ClientVPNIP)
 
 	return nil
 }
 
 // phase3ClientSetup configures the local VPN client
 func (i *Installer) phase3ClientSetup(ctx context.Context) error {
+	gateway := i.gatewayConfig()
 	vpnClient := NewVPNClient(i.vpnConfig, i.logger)
 	privateKey, publicKey, err := vpnClient.GenerateKeyPair(ctx)
 	if err != nil {
 		return err
 	}
-	if err := vpnClient.CreateClientConfig(privateKey, i.options.Gateway.Port); err != nil {
+	if err := vpnClient.CreateClientConfig(privateKey, gateway.Port); err != nil {
 		return err
 	}
 
@@ -322,7 +356,7 @@ func (i *Installer) phase3ClientSetup(ctx context.Context) error {
 	if !vpnClient.TestConnection(ctx) {
 		return fmt.Errorf("VPN connection failed")
 	}
-	i.logger.Success("VPN connected: %s", i.vpnConfig.GatewayVPNIP)
+	i.logger.Infof("VPN connected: %s", i.vpnConfig.GatewayVPNIP)
 
 	return nil
 }
@@ -341,7 +375,7 @@ func (i *Installer) phase4NodeJoin(ctx context.Context) error {
 	if err := AddHostsEntry(apiServerIP, i.clusterInfo.PrivateFQDN); err != nil {
 		return fmt.Errorf("failed to add hosts entry: %w", err)
 	}
-	i.logger.Success("API Server: %s (%s)", i.clusterInfo.PrivateFQDN, apiServerIP)
+	i.logger.Infof("API Server: %s (%s)", i.clusterInfo.PrivateFQDN, apiServerIP)
 
 	_, _ = RunCommand(ctx, "swapoff", "-a")
 
@@ -358,7 +392,7 @@ func (i *Installer) phase4NodeJoin(ctx context.Context) error {
 	if _, err := RunCommand(ctx, "kubelogin", "convert-kubeconfig", "-l", "azurecli", "--kubeconfig", kubeconfigPath); err != nil {
 		return fmt.Errorf("failed to convert kubeconfig: %w", err)
 	}
-	i.logger.Success("Kubeconfig ready: %s", kubeconfigPath)
+	i.logger.Infof("Kubeconfig ready: %s", kubeconfigPath)
 
 	return nil
 }

@@ -8,14 +8,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
-	"go.goms.io/aks/AKSFlexNode/pkg/privatecluster"
 	"go.goms.io/aks/AKSFlexNode/pkg/spec"
 	"go.goms.io/aks/AKSFlexNode/pkg/status"
 )
@@ -88,30 +86,6 @@ func runAgent(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
-	// For private clusters, run Gateway/VPN setup before bootstrap
-	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.IsPrivateCluster {
-		logger.Info("Private cluster detected, running Gateway/VPN setup...")
-		if os.Getuid() != 0 {
-			return fmt.Errorf("private cluster setup requires root privileges, please run with 'sudo'")
-		}
-		cred, err := azidentity.NewAzureCLICredential(nil)
-		if err != nil {
-			return fmt.Errorf("failed to create Azure CLI credential: %w", err)
-		}
-		options := privatecluster.InstallOptions{
-			AKSResourceID: cfg.Azure.TargetCluster.ResourceID,
-			Gateway:       privatecluster.DefaultGatewayConfig(),
-		}
-		installer, err := privatecluster.NewInstaller(options, cred)
-		if err != nil {
-			return fmt.Errorf("failed to create private cluster installer: %w", err)
-		}
-		if err := installer.Install(ctx); err != nil {
-			return fmt.Errorf("private cluster setup failed: %w", err)
-		}
-		logger.Info("Private cluster setup completed")
-	}
-
 	bootstrapExecutor := bootstrapper.New(cfg, logger)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
@@ -144,46 +118,11 @@ func runUnbootstrap(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
-	// For private clusters, run VPN/Gateway cleanup first
-	if cfg.Azure.TargetCluster != nil && cfg.Azure.TargetCluster.IsPrivateCluster {
-		logger.Info("Private cluster detected, running VPN/Gateway cleanup...")
-
-		// Validate cleanup mode
-		var mode privatecluster.CleanupMode
-		switch cleanupMode {
-		case "local":
-			mode = privatecluster.CleanupModeLocal
-		case "full":
-			mode = privatecluster.CleanupModeFull
-		default:
-			return fmt.Errorf("invalid cleanup mode: %s (use 'local' or 'full')", cleanupMode)
-		}
-
-		// Check root privileges for private cluster cleanup
-		if os.Getuid() != 0 {
-			return fmt.Errorf("private cluster cleanup requires root privileges, please run with 'sudo'")
-		}
-
-		options := privatecluster.UninstallOptions{
-			Mode:          mode,
-			AKSResourceID: cfg.Azure.TargetCluster.ResourceID,
-		}
-		cred, err := azidentity.NewAzureCLICredential(nil)
-		if err != nil {
-			return fmt.Errorf("failed to create Azure CLI credential: %w", err)
-		}
-		uninstaller, err := privatecluster.NewUninstaller(options, cred)
-		if err != nil {
-			return fmt.Errorf("failed to create private cluster uninstaller: %w", err)
-		}
-		if err := uninstaller.Uninstall(ctx); err != nil {
-			logger.Warnf("Private cluster cleanup had errors: %v", err)
-			// Continue with normal unbootstrap even if private cleanup has issues
-		}
-		logger.Info("Private cluster cleanup completed")
+	// Pass cleanup mode to config so the PrivateClusterUninstall step can read it
+	if cfg.Azure.TargetCluster != nil {
+		cfg.Azure.TargetCluster.CleanupMode = cleanupMode
 	}
 
-	// Run normal unbootstrap
 	bootstrapExecutor := bootstrapper.New(cfg, logger)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {

@@ -15,11 +15,12 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
+	"github.com/sirupsen/logrus"
 )
 
-// AzureClient provides Azure operations using the Azure SDK for Go (Track 2).
+// AzureClient provides Azure operations using the Azure SDK for Go.
 type AzureClient struct {
-	logger         *Logger
+	logger         *logrus.Logger
 	subscriptionID string
 
 	vmClient           *armcompute.VirtualMachinesClient
@@ -35,7 +36,7 @@ type AzureClient struct {
 }
 
 // NewAzureClient creates a new AzureClient with all sub-clients initialized.
-func NewAzureClient(cred azcore.TokenCredential, subscriptionID string, logger *Logger) (*AzureClient, error) {
+func NewAzureClient(cred azcore.TokenCredential, subscriptionID string, logger *logrus.Logger) (*AzureClient, error) {
 	c := &AzureClient{
 		logger:         logger,
 		subscriptionID: subscriptionID,
@@ -108,12 +109,10 @@ func (c *AzureClient) GetAKSClusterInfo(ctx context.Context, resourceGroup, clus
 		return nil, fmt.Errorf("AKS cluster properties are nil")
 	}
 
-	// Check AAD enabled
 	if props.AADProfile == nil || props.AADProfile.Managed == nil || !*props.AADProfile.Managed {
 		return nil, fmt.Errorf("AKS cluster AAD not enabled, please enable: az aks update --enable-aad")
 	}
 
-	// Check Azure RBAC enabled
 	if props.AADProfile.EnableAzureRBAC == nil || !*props.AADProfile.EnableAzureRBAC {
 		return nil, fmt.Errorf("AKS cluster Azure RBAC not enabled, please enable: az aks update --enable-azure-rbac")
 	}
@@ -136,9 +135,7 @@ func (c *AzureClient) GetAKSClusterInfo(ctx context.Context, resourceGroup, clus
 	return info, nil
 }
 
-// GetVNetInfo discovers VNet name and resource group by inspecting VMSS subnet configuration
-// in the node resource group. This works for both default and BYO VNet scenarios since the
-// VNet resource group is extracted from the VMSS subnet ID, not assumed to be nodeResourceGroup.
+// GetVNetInfo discovers VNet name and resource group from VMSS subnet configuration.
 func (c *AzureClient) GetVNetInfo(ctx context.Context, nodeResourceGroup string) (vnetName, vnetRG string, err error) {
 	pager := c.vmssClient.NewListPager(nodeResourceGroup, nil)
 	for pager.More() {
@@ -214,7 +211,7 @@ func (c *AzureClient) GetVMPublicIP(ctx context.Context, resourceGroup, vmName s
 func (c *AzureClient) CreateSubnet(ctx context.Context, vnetRG, vnetName, subnetName, addressPrefix string) error {
 	_, err := c.subnetClient.Get(ctx, vnetRG, vnetName, subnetName, nil)
 	if err == nil {
-		c.logger.Info("Subnet %s already exists", subnetName)
+		c.logger.Infof("Subnet %s already exists", subnetName)
 		return nil
 	}
 
@@ -236,7 +233,7 @@ func (c *AzureClient) CreateSubnet(ctx context.Context, vnetRG, vnetName, subnet
 func (c *AzureClient) CreateNSG(ctx context.Context, resourceGroup, nsgName, location string, vpnPort int) error {
 	_, err := c.nsgClient.Get(ctx, resourceGroup, nsgName, nil)
 	if err == nil {
-		c.logger.Info("NSG %s already exists", nsgName)
+		c.logger.Infof("NSG %s already exists", nsgName)
 		return nil
 	}
 
@@ -288,7 +285,7 @@ func (c *AzureClient) CreateNSG(ctx context.Context, resourceGroup, nsgName, loc
 func (c *AzureClient) CreatePublicIP(ctx context.Context, resourceGroup, pipName, location string) error {
 	_, err := c.pipClient.Get(ctx, resourceGroup, pipName, nil)
 	if err == nil {
-		c.logger.Info("Public IP %s already exists", pipName)
+		c.logger.Infof("Public IP %s already exists", pipName)
 		return nil
 	}
 
@@ -322,17 +319,14 @@ func (c *AzureClient) GetPublicIPAddress(ctx context.Context, resourceGroup, pip
 	return *resp.Properties.IPAddress, nil
 }
 
-// CreateVM creates a VM with the specified configuration.
-// It first creates a NIC, then creates the VM referencing that NIC.
+// CreateVM creates a NIC and VM with the specified configuration.
 func (c *AzureClient) CreateVM(ctx context.Context, resourceGroup, vmName, location, vnetRG, vnetName, subnetName, nsgName, pipName, sshKeyPath, vmSize string) error {
-	// Read SSH public key
 	pubKeyData, err := ReadFileContent(sshKeyPath + ".pub")
 	if err != nil {
 		return fmt.Errorf("failed to read SSH public key: %w", err)
 	}
 	pubKey := strings.TrimSpace(pubKeyData)
 
-	// Build resource IDs
 	subnetID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s/subnets/%s",
 		c.subscriptionID, vnetRG, vnetName, subnetName)
 	nsgID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/securityGroups/%s",
@@ -340,7 +334,6 @@ func (c *AzureClient) CreateVM(ctx context.Context, resourceGroup, vmName, locat
 	pipID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s",
 		c.subscriptionID, resourceGroup, pipName)
 
-	// Create NIC
 	nicName := vmName + "VMNic"
 	nicPoller, err := c.nicClient.BeginCreateOrUpdate(ctx, resourceGroup, nicName, armnetwork.Interface{
 		Location: ptr(location),
@@ -372,7 +365,6 @@ func (c *AzureClient) CreateVM(ctx context.Context, resourceGroup, vmName, locat
 		return fmt.Errorf("failed to create NIC: %w", err)
 	}
 
-	// Create VM
 	vm := armcompute.VirtualMachine{
 		Location: ptr(location),
 		Zones:    []*string{ptr("1")},
@@ -383,9 +375,9 @@ func (c *AzureClient) CreateVM(ctx context.Context, resourceGroup, vmName, locat
 			StorageProfile: &armcompute.StorageProfile{
 				ImageReference: &armcompute.ImageReference{
 					Publisher: ptr("Canonical"),
-					Offer:    ptr("0001-com-ubuntu-server-jammy"),
-					SKU:      ptr("22_04-lts-gen2"),
-					Version:  ptr("latest"),
+					Offer:     ptr("0001-com-ubuntu-server-jammy"),
+					SKU:       ptr("22_04-lts-gen2"),
+					Version:   ptr("latest"),
 				},
 				OSDisk: &armcompute.OSDisk{
 					CreateOption: ptr(armcompute.DiskCreateOptionTypesFromImage),
@@ -587,8 +579,6 @@ func (c *AzureClient) GetAKSCredentials(ctx context.Context, resourceGroup, clus
 	}
 	return nil
 }
-
-// --- Helper functions ---
 
 // ptr returns a pointer to the given value.
 func ptr[T any](v T) *T {

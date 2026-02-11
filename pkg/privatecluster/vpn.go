@@ -6,16 +6,18 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
 // VPNClient provides VPN (WireGuard) operations
 type VPNClient struct {
 	config VPNConfig
-	logger *Logger
+	logger *logrus.Logger
 }
 
 // NewVPNClient creates a new VPNClient instance
-func NewVPNClient(config VPNConfig, logger *Logger) *VPNClient {
+func NewVPNClient(config VPNConfig, logger *logrus.Logger) *VPNClient {
 	return &VPNClient{
 		config: config,
 		logger: logger,
@@ -24,7 +26,6 @@ func NewVPNClient(config VPNConfig, logger *Logger) *VPNClient {
 
 // GenerateKeyPair generates a WireGuard key pair and returns (privateKey, publicKey)
 func (v *VPNClient) GenerateKeyPair(ctx context.Context) (string, string, error) {
-	// Generate private key
 	privateKey, err := RunCommand(ctx, "wg", "genkey")
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate VPN private key: %w", err)
@@ -104,14 +105,12 @@ func (v *VPNClient) GetClientConfigInfo() (gatewayIP, privateKey string, err err
 		return "", "", fmt.Errorf("failed to read VPN config: %w", err)
 	}
 
-	// Parse Endpoint to get Gateway IP
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Endpoint") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
 				endpoint := strings.TrimSpace(parts[1])
-				// Remove port
 				gatewayIP = strings.Split(endpoint, ":")[0]
 			}
 		}
@@ -140,11 +139,11 @@ func (v *VPNClient) GetPublicKeyFromPrivate(ctx context.Context, privateKey stri
 // VPNServerManager manages VPN server on the Gateway
 type VPNServerManager struct {
 	ssh    *SSHClient
-	logger *Logger
+	logger *logrus.Logger
 }
 
 // NewVPNServerManager creates a new VPNServerManager instance
-func NewVPNServerManager(ssh *SSHClient, logger *Logger) *VPNServerManager {
+func NewVPNServerManager(ssh *SSHClient, logger *logrus.Logger) *VPNServerManager {
 	return &VPNServerManager{
 		ssh:    ssh,
 		logger: logger,
@@ -214,13 +213,11 @@ func (m *VPNServerManager) GetPeerCount(ctx context.Context) (int, error) {
 
 // AddPeer adds a client peer to the server
 func (m *VPNServerManager) AddPeer(ctx context.Context, clientPublicKey, clientIP string) error {
-	// Add peer
 	cmd := fmt.Sprintf("sudo wg set wg0 peer '%s' allowed-ips %s/32", clientPublicKey, clientIP)
 	if _, err := m.ssh.Execute(ctx, cmd); err != nil {
 		return fmt.Errorf("failed to add peer: %w", err)
 	}
 
-	// Persist configuration
 	if _, err := m.ssh.Execute(ctx, "sudo wg-quick save wg0"); err != nil {
 		return fmt.Errorf("failed to save VPN config: %w", err)
 	}
@@ -246,7 +243,7 @@ func (m *VPNServerManager) ResolveDNS(ctx context.Context, hostname string) (str
 }
 
 // InstallVPNTools installs VPN tools locally
-func InstallVPNTools(ctx context.Context, logger *Logger) error {
+func InstallVPNTools(ctx context.Context, logger *logrus.Logger) error {
 	if CommandExists("wg") {
 		return nil
 	}
@@ -256,4 +253,3 @@ func InstallVPNTools(ctx context.Context, logger *Logger) error {
 	_, err := RunCommand(ctx, "apt-get", "install", "-y", "wireguard-tools")
 	return err
 }
-

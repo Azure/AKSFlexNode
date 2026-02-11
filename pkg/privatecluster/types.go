@@ -51,19 +51,6 @@ type SSHConfig struct {
 	Timeout int
 }
 
-// InstallOptions holds options for the install operation
-type InstallOptions struct {
-	AKSResourceID string
-	Gateway       GatewayConfig
-	Verbose       bool
-}
-
-// UninstallOptions holds options for the uninstall operation
-type UninstallOptions struct {
-	Mode          CleanupMode
-	AKSResourceID string
-}
-
 // DefaultGatewayConfig returns the default Gateway configuration
 func DefaultGatewayConfig() GatewayConfig {
 	return GatewayConfig{

@@ -15,6 +15,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/components/services"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"go.goms.io/aks/AKSFlexNode/pkg/privatecluster"
 )
 
 // Bootstrapper executes bootstrap steps sequentially
@@ -31,8 +32,8 @@ func New(cfg *config.Config, logger *logrus.Logger) *Bootstrapper {
 
 // Bootstrap executes all bootstrap steps sequentially
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
-	// Define the bootstrap steps in order - using modules directly
 	steps := []Executor{
+		privatecluster.NewInstaller(b.logger),       // VPN/Gateway setup (if private cluster)
 		arc.NewInstaller(b.logger),                  // Setup Arc
 		services.NewUnInstaller(b.logger),           // Stop kubelet before setup
 		system_configuration.NewInstaller(b.logger), // Configure system (early)
@@ -51,6 +52,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 // Unbootstrap executes all cleanup steps sequentially (in reverse order of bootstrap)
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
 	steps := []Executor{
+		privatecluster.NewUninstaller(b.logger),       // Node removal + VPN teardown (if private cluster)
 		services.NewUnInstaller(b.logger),             // Stop services first
 		npd.NewUnInstaller(b.logger),                  // Uninstall Node Problem Detector
 		kubelet.NewUnInstaller(b.logger),              // Clean kubelet configuration
@@ -59,7 +61,7 @@ func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error
 		containerd.NewUnInstaller(b.logger),           // Uninstall containerd binary
 		runc.NewUnInstaller(b.logger),                 // Uninstall runc binary
 		system_configuration.NewUnInstaller(b.logger), // Clean system settings
-		arc.NewUnInstaller(b.logger),                  // Uninstall Arc (after cleanup)
+		arc.NewUnInstaller(b.logger),                  // Uninstall Arc (after cleanup, uses public internet)
 	}
 
 	return b.ExecuteSteps(ctx, steps, "unbootstrap")

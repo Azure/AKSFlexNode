@@ -11,57 +11,6 @@ import (
 	"strings"
 )
 
-// Color codes for terminal output
-const (
-	colorRed    = "\033[0;31m"
-	colorGreen  = "\033[0;32m"
-	colorYellow = "\033[1;33m"
-	colorBlue   = "\033[0;34m"
-	colorReset  = "\033[0m"
-)
-
-// Logger provides colored logging for the private cluster operations
-type Logger struct {
-	verbose bool
-}
-
-// NewLogger creates a new Logger instance
-func NewLogger(verbose bool) *Logger {
-	return &Logger{verbose: verbose}
-}
-
-// Info logs an info message
-func (l *Logger) Info(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("%sINFO:%s %s\n", colorBlue, colorReset, msg)
-}
-
-// Success logs a success message
-func (l *Logger) Success(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("%sSUCCESS:%s %s\n", colorGreen, colorReset, msg)
-}
-
-// Warning logs a warning message
-func (l *Logger) Warning(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("%sWARNING:%s %s\n", colorYellow, colorReset, msg)
-}
-
-// Error logs an error message
-func (l *Logger) Error(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("%sERROR:%s %s\n", colorRed, colorReset, msg)
-}
-
-// Verbose logs a verbose message (only if verbose mode is enabled)
-func (l *Logger) Verbose(format string, args ...interface{}) {
-	if l.verbose {
-		msg := fmt.Sprintf(format, args...)
-		fmt.Printf("%sVERBOSE:%s %s\n", colorBlue, colorReset, msg)
-	}
-}
-
 // RunCommand executes a command and returns its output
 func RunCommand(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- commands are from trusted internal code
@@ -87,13 +36,11 @@ func CommandExists(name string) bool {
 
 // GetRealHome returns the real user's home directory (handles sudo)
 func GetRealHome() string {
-	// Check if running with sudo
 	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
 		if u, err := user.Lookup(sudoUser); err == nil {
 			return u.HomeDir
 		}
 	}
-	// Fallback to current user's home
 	if home := os.Getenv("HOME"); home != "" {
 		return home
 	}
@@ -137,7 +84,6 @@ func WriteFileContent(path, content string, perm os.FileMode) error {
 func AddHostsEntry(ip, hostname string) error {
 	hostsPath := "/etc/hosts"
 
-	// Check if entry already exists
 	content, err := ReadFileContent(hostsPath)
 	if err != nil {
 		return fmt.Errorf("failed to read hosts file: %w", err)
@@ -189,7 +135,6 @@ func RemoveHostsEntries(pattern string) error {
 
 // ParseResourceID parses an Azure resource ID and returns its components
 func ParseResourceID(resourceID string) (subscriptionID, resourceGroup, resourceName string, err error) {
-	// Normalize: Azure CLI sometimes returns lowercase 'resourcegroups'
 	resourceID = strings.Replace(resourceID, "/resourcegroups/", "/resourceGroups/", 1)
 
 	parts := strings.Split(resourceID, "/")
@@ -197,7 +142,6 @@ func ParseResourceID(resourceID string) (subscriptionID, resourceGroup, resource
 		return "", "", "", fmt.Errorf("invalid resource ID format: %s", resourceID)
 	}
 
-	// Format: /subscriptions/{sub}/resourceGroups/{rg}/providers/{provider}/{type}/{name}
 	subscriptionID = parts[2]
 	resourceGroup = parts[4]
 	resourceName = parts[8]
@@ -221,7 +165,6 @@ func FixSSHKeyOwnership(keyPath string) error {
 		return fmt.Errorf("failed to lookup user %s: %w", sudoUser, err)
 	}
 
-	// Change ownership of both private and public keys
 	for _, path := range []string{keyPath, keyPath + ".pub"} {
 		if FileExists(path) {
 			cmd := exec.Command("chown", fmt.Sprintf("%s:%s", u.Uid, u.Gid), path) // #nosec G204 -- chown with uid/gid

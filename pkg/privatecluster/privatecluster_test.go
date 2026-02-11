@@ -1,7 +1,10 @@
 package privatecluster
 
 import (
+	"context"
 	"testing"
+
+	"github.com/sirupsen/logrus"
 )
 
 func TestParseResourceID(t *testing.T) {
@@ -83,19 +86,6 @@ func TestDefaultConfigs(t *testing.T) {
 	}
 }
 
-func TestLogger(t *testing.T) {
-	// Just test that logger doesn't panic
-	logger := NewLogger(false)
-	logger.Info("test info")
-	logger.Success("test success")
-	logger.Warning("test warning")
-	logger.Error("test error")
-	logger.Verbose("should not print") // verbose=false
-
-	loggerVerbose := NewLogger(true)
-	loggerVerbose.Verbose("should print")
-}
-
 func TestFileExists(t *testing.T) {
 	// Test with existing file
 	if !FileExists("types.go") {
@@ -121,37 +111,55 @@ func TestCommandExists(t *testing.T) {
 }
 
 func TestInstallerCreation(t *testing.T) {
-	options := InstallOptions{
-		AKSResourceID: "/subscriptions/xxx/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
-		Verbose:       true,
-	}
-
-	// NewInstaller requires a credential; pass nil to test creation without Azure calls
-	installer, err := NewInstaller(options, nil)
-	// Expected to fail since nil credential can't create Azure clients
-	if err != nil {
-		t.Skipf("Skipping: NewInstaller requires valid Azure credential: %v", err)
-	}
+	logger := logrus.New()
+	installer := NewInstaller(logger)
 	if installer == nil {
 		t.Fatal("NewInstaller() should not return nil")
 	}
-	if installer.logger == nil {
-		t.Error("Installer.logger should not be nil")
+	if installer.logger != logger {
+		t.Error("Installer.logger should match the provided logger")
+	}
+}
+
+func TestInstallerGetName(t *testing.T) {
+	installer := NewInstaller(logrus.New())
+	if name := installer.GetName(); name != "PrivateClusterInstall" {
+		t.Errorf("GetName() = %v, want PrivateClusterInstall", name)
+	}
+}
+
+func TestInstallerIsCompletedNonPrivate(t *testing.T) {
+	// When config is nil (non-private cluster), IsCompleted should return true
+	installer := NewInstaller(logrus.New())
+	installer.config = nil
+	if !installer.IsCompleted(context.Background()) {
+		t.Error("IsCompleted() should return true for non-private cluster")
 	}
 }
 
 func TestUninstallerCreation(t *testing.T) {
-	options := UninstallOptions{
-		Mode:          CleanupModeLocal,
-		AKSResourceID: "",
-	}
-
-	// NewUninstaller with empty resource ID and nil cred skips Azure client creation
-	uninstaller, err := NewUninstaller(options, nil)
-	if err != nil {
-		t.Fatalf("NewUninstaller() returned error: %v", err)
-	}
+	logger := logrus.New()
+	uninstaller := NewUninstaller(logger)
 	if uninstaller == nil {
-		t.Error("NewUninstaller() should not return nil")
+		t.Fatal("NewUninstaller() should not return nil")
+	}
+	if uninstaller.logger != logger {
+		t.Error("Uninstaller.logger should match the provided logger")
+	}
+}
+
+func TestUninstallerGetName(t *testing.T) {
+	uninstaller := NewUninstaller(logrus.New())
+	if name := uninstaller.GetName(); name != "PrivateClusterUninstall" {
+		t.Errorf("GetName() = %v, want PrivateClusterUninstall", name)
+	}
+}
+
+func TestUninstallerIsCompletedNonPrivate(t *testing.T) {
+	// When config is nil (non-private cluster), IsCompleted should return true
+	uninstaller := NewUninstaller(logrus.New())
+	uninstaller.config = nil
+	if !uninstaller.IsCompleted(context.Background()) {
+		t.Error("IsCompleted() should return true for non-private cluster")
 	}
 }

@@ -3,43 +3,92 @@ package privatecluster
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
+	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
-// ToolInstaller handles installation of CLI tools that cannot be replaced by SDK calls.
+const (
+	kubeloginVersion    = "0.1.6"
+	kubeloginURLPattern = "https://github.com/Azure/kubelogin/releases/download/v%s/kubelogin-linux-%s.zip"
+	kubectlURLPattern   = "https://acs-mirror.azureedge.net/kubernetes/v%s/bin/linux/%s/kubectl"
+)
+
+// ToolInstaller handles installation of CLI tools via direct downloads.
 type ToolInstaller struct {
-	logger *Logger
+	logger *logrus.Logger
 }
 
 // NewToolInstaller creates a new ToolInstaller instance.
-func NewToolInstaller(logger *Logger) *ToolInstaller {
+func NewToolInstaller(logger *logrus.Logger) *ToolInstaller {
 	return &ToolInstaller{logger: logger}
 }
 
-// InstallAKSCLI installs kubectl and kubelogin via Azure CLI.
-func (t *ToolInstaller) InstallAKSCLI(ctx context.Context) error {
-	_, err := RunCommand(ctx, "az", "aks", "install-cli",
-		"--install-location", "/usr/local/bin/kubectl",
-		"--kubelogin-install-location", "/usr/local/bin/kubelogin")
-	if err != nil {
-		return fmt.Errorf("failed to install kubectl/kubelogin: %w", err)
-	}
-
-	_, _ = RunCommand(ctx, "chmod", "+x", "/usr/local/bin/kubectl", "/usr/local/bin/kubelogin")
-	return nil
-}
-
-// InstallConnectedMachineExtension installs the connectedmachine Azure CLI extension.
-func (t *ToolInstaller) InstallConnectedMachineExtension(ctx context.Context) error {
-	// Check if already installed
-	if RunCommandSilent(ctx, "az", "extension", "show", "--name", "connectedmachine") {
+// InstallKubelogin downloads and installs kubelogin binary.
+func (t *ToolInstaller) InstallKubelogin(ctx context.Context) error {
+	if CommandExists("kubelogin") {
 		return nil
 	}
 
-	_, _ = RunCommand(ctx, "az", "config", "set", "extension.dynamic_install_allow_preview=true", "--only-show-errors")
+	arch := goArch()
+	url := fmt.Sprintf(kubeloginURLPattern, kubeloginVersion, arch)
+	zipPath := "/tmp/kubelogin.zip"
 
-	_, err := RunCommand(ctx, "az", "extension", "add",
-		"--name", "connectedmachine",
-		"--allow-preview", "true",
-		"--only-show-errors")
-	return err
+	t.logger.Infof("Downloading kubelogin v%s...", kubeloginVersion)
+
+	if _, err := RunCommand(ctx, "curl", "-L", "-o", zipPath, url); err != nil {
+		return fmt.Errorf("failed to download kubelogin: %w", err)
+	}
+	defer func() { _ = os.Remove(zipPath) }()
+
+	extractDir := "/tmp/kubelogin-extract"
+	_ = os.RemoveAll(extractDir)
+	if _, err := RunCommand(ctx, "unzip", "-o", zipPath, "-d", extractDir); err != nil {
+		return fmt.Errorf("failed to extract kubelogin: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(extractDir) }()
+
+	binaryPath := fmt.Sprintf("%s/bin/linux_%s/kubelogin", extractDir, arch)
+	if !FileExists(binaryPath) {
+		return fmt.Errorf("kubelogin binary not found at %s", binaryPath)
+	}
+
+	if _, err := RunCommand(ctx, "cp", binaryPath, "/usr/local/bin/kubelogin"); err != nil {
+		return fmt.Errorf("failed to install kubelogin: %w", err)
+	}
+	_ = os.Chmod("/usr/local/bin/kubelogin", 0755)
+
+	t.logger.Infof("kubelogin v%s installed", kubeloginVersion)
+	return nil
+}
+
+// InstallKubectl downloads and installs kubectl binary.
+func (t *ToolInstaller) InstallKubectl(ctx context.Context, kubernetesVersion string) error {
+	if CommandExists("kubectl") {
+		return nil
+	}
+
+	arch := goArch()
+	url := fmt.Sprintf(kubectlURLPattern, kubernetesVersion, arch)
+
+	t.logger.Infof("Downloading kubectl v%s...", kubernetesVersion)
+
+	if _, err := RunCommand(ctx, "curl", "-L", "-o", "/usr/local/bin/kubectl", url); err != nil {
+		return fmt.Errorf("failed to download kubectl: %w", err)
+	}
+	_ = os.Chmod("/usr/local/bin/kubectl", 0755)
+
+	t.logger.Infof("kubectl v%s installed", kubernetesVersion)
+	return nil
+}
+
+// goArch returns the Go-style architecture string.
+func goArch() string {
+	arch := runtime.GOARCH
+	if arch == "" {
+		arch = "amd64"
+	}
+	return strings.TrimSpace(arch)
 }

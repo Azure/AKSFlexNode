@@ -6,16 +6,18 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // SSHClient provides SSH operations to a remote host
 type SSHClient struct {
 	config SSHConfig
-	logger *Logger
+	logger *logrus.Logger
 }
 
 // NewSSHClient creates a new SSHClient instance
-func NewSSHClient(config SSHConfig, logger *Logger) *SSHClient {
+func NewSSHClient(config SSHConfig, logger *logrus.Logger) *SSHClient {
 	return &SSHClient{
 		config: config,
 		logger: logger,
@@ -76,12 +78,11 @@ func (s *SSHClient) TestConnection(ctx context.Context) bool {
 
 // WaitForConnection waits for SSH connection to be ready with retries
 func (s *SSHClient) WaitForConnection(ctx context.Context, maxAttempts int, interval time.Duration) error {
-	// Quick first check
 	if s.TestConnection(ctx) {
 		return nil
 	}
 
-	s.logger.Info("Waiting for SSH connection to be ready...")
+	s.logger.Infof("Waiting for SSH connection to be ready...")
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		select {
@@ -94,7 +95,7 @@ func (s *SSHClient) WaitForConnection(ctx context.Context, maxAttempts int, inte
 			return nil
 		}
 
-		s.logger.Verbose("Waiting for SSH... (%d/%d)", attempt, maxAttempts)
+		s.logger.Debugf("Waiting for SSH... (%d/%d)", attempt, maxAttempts)
 	}
 
 	return fmt.Errorf("SSH connection timeout after %d attempts", maxAttempts)
@@ -112,12 +113,10 @@ func (s *SSHClient) CommandExists(ctx context.Context, command string) bool {
 
 // GenerateSSHKey generates an SSH key pair
 func GenerateSSHKey(keyPath string) error {
-	// Check if key already exists
 	if FileExists(keyPath) {
 		return nil
 	}
 
-	// Ensure directory exists
 	if err := EnsureDirectory(GetRealHome() + "/.ssh"); err != nil {
 		return err
 	}
@@ -127,7 +126,6 @@ func GenerateSSHKey(keyPath string) error {
 		return fmt.Errorf("failed to generate SSH key: %w\nOutput: %s", err, string(output))
 	}
 
-	// Fix ownership if running with sudo
 	return FixSSHKeyOwnership(keyPath)
 }
 
