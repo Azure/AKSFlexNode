@@ -33,6 +33,10 @@ func newSystemdUnitPackage(name, version string, packages []*installedPackage, t
 
 var _ Package = (*systemdUnitPackage)(nil)
 
+func (s *systemdUnitPackage) Kind() string {
+	return packageKindSystemdUnit
+}
+
 func (s *systemdUnitPackage) Name() string {
 	return s.name
 }
@@ -41,15 +45,15 @@ func (s *systemdUnitPackage) Version() string {
 	return s.version
 }
 
-// Sources returns the sorted names of dependent packages. These are used
-// as part of the fingerprint calculation for cache invalidation.
+// Sources returns the dependent packages formatted as <kind>://<name>,
+// sorted for deterministic fingerprinting.
 func (s *systemdUnitPackage) Sources() []string {
-	names := make([]string, len(s.packages))
+	sources := make([]string, len(s.packages))
 	for i, pkg := range s.packages {
-		names[i] = pkg.Name()
+		sources[i] = fmt.Sprintf("%s://%s", pkg.Kind(), pkg.Name())
 	}
-	sort.Strings(names)
-	return names
+	sort.Strings(sources)
+	return sources
 }
 
 // EtcFiles declares the unit file so the etc manager can symlink it into /etc.

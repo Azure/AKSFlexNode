@@ -480,6 +480,186 @@ func TestPrepareOverlayPackages_CleansUpOnFailure(t *testing.T) {
 	}
 }
 
+// TestEtcOverlay_SymlinksValidAfterAtomicRename verifies that symlinks created
+// by etcOverlayPackage still resolve correctly after installPackage atomically
+// renames the temp directory to the final state directory. The symlink targets
+// are absolute paths to other packages' state dirs, so renaming the directory
+// containing the symlinks must not invalidate them.
+func TestEtcOverlay_SymlinksValidAfterAtomicRename(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewStoreManager(root)
+	if err := mgr.setupDiskLayout(); err != nil {
+		t.Fatalf("setupDiskLayout() error = %v", err)
+	}
+
+	// Create a real source directory for a dependency package with files
+	// that will be symlinked from the etc overlay.
+	depSrcDir := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(depSrcDir, "bin"), 0755)
+	os.MkdirAll(filepath.Join(depSrcDir, "etc", "containerd"), 0755)
+	os.WriteFile(filepath.Join(depSrcDir, "bin", "containerd"), []byte("containerd-binary"), 0755)
+	os.WriteFile(filepath.Join(depSrcDir, "etc", "containerd", "config.toml"), []byte("root = \"/var/lib/containerd\""), 0644)
+
+	depPkg, err := newOverlayPackage("containerd", OverlayPackageDef{
+		Version: "1.7.0",
+		Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: depSrcDir},
+		ETCFiles: []PackageEtcFile{
+			{Source: "etc/containerd/config.toml", Target: "containerd/config.toml"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newOverlayPackage() error = %v", err)
+	}
+
+	// Install the dependency package through installPackage (temp dir + atomic rename).
+	depStateDir, err := mgr.installPackage(context.Background(), depPkg)
+	if err != nil {
+		t.Fatalf("installPackage(containerd) error = %v", err)
+	}
+
+	// Create the etc overlay referencing the installed dependency.
+	installedDep := &installedPackage{
+		Package:            depPkg,
+		InstalledStatePath: depStateDir,
+	}
+	etcPkg := newEtcOverlayPackage("v1", []*installedPackage{installedDep})
+
+	// Install the etc overlay itself through installPackage (another temp dir + atomic rename).
+	etcStateDir, err := mgr.installPackage(context.Background(), etcPkg)
+	if err != nil {
+		t.Fatalf("installPackage(etc) error = %v", err)
+	}
+
+	// The etc state dir should NOT be the temp dir — it should be the final fingerprinted path.
+	if strings.Contains(filepath.Base(etcStateDir), "-tmp-") {
+		t.Errorf("etc state dir looks like a temp dir: %s", etcStateDir)
+	}
+
+	// Verify the symlink exists and points to the dependency's final state dir.
+	symlinkPath := filepath.Join(etcStateDir, "etc", "containerd", "config.toml")
+	linkTarget, err := os.Readlink(symlinkPath)
+	if err != nil {
+		t.Fatalf("Readlink(%q) error = %v", symlinkPath, err)
+	}
+
+	expectedTarget := filepath.Join(depStateDir, "etc", "containerd", "config.toml")
+	if linkTarget != expectedTarget {
+		t.Errorf("symlink target = %q, want %q", linkTarget, expectedTarget)
+	}
+
+	// The critical check: does the symlink actually resolve to the correct content?
+	// This proves the symlink survived the atomic rename of its own directory.
+	content, err := os.ReadFile(symlinkPath)
+	if err != nil {
+		t.Fatalf("reading through symlink after atomic rename: %v", err)
+	}
+	if string(content) != "root = \"/var/lib/containerd\"" {
+		t.Errorf("content through symlink = %q, want %q", content, "root = \"/var/lib/containerd\"")
+	}
+}
+
+// TestPrepareEtcOverlay_EndToEnd exercises the full Overlay.Prepare flow with
+// real file-based packages that declare EtcFiles and a systemd unit, then
+// verifies that the etc overlay's symlinks resolve correctly after all the
+// atomic renames have completed.
+func TestPrepareEtcOverlay_EndToEnd(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewStoreManager(root)
+
+	// Create source directories for two packages.
+	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(containerdSrc, "bin"), 0755)
+	os.MkdirAll(filepath.Join(containerdSrc, "etc", "containerd"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "bin", "containerd"), []byte("containerd-bin"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "etc", "containerd", "config.toml"), []byte("cfg-content"), 0644)
+
+	runcSrc := filepath.Join(t.TempDir(), "runc-src")
+	os.MkdirAll(filepath.Join(runcSrc, "bin"), 0755)
+	os.WriteFile(filepath.Join(runcSrc, "bin", "runc"), []byte("runc-bin"), 0755)
+
+	overlay := &Overlay{
+		config: OverlayConfig{
+			Version: "v1-test",
+			PackageByNames: map[string]OverlayPackageDef{
+				"containerd": {
+					Version: "1.7.0",
+					Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
+					ETCFiles: []PackageEtcFile{
+						{Source: "etc/containerd/config.toml", Target: "containerd/config.toml"},
+					},
+				},
+				"runc": {
+					Version: "1.1.4",
+					Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: runcSrc},
+					// runc has no etc files — should be fine.
+				},
+			},
+			SystemdUnitsByName: map[string]OverlaySystemdUnitDef{
+				"containerd": {
+					Version:        "1.0.0",
+					Packages:       []string{"containerd", "runc"},
+					TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}",
+				},
+			},
+		},
+		store: mgr,
+	}
+
+	ctx := context.Background()
+	if err := overlay.Prepare(ctx); err != nil {
+		t.Fatalf("Overlay.Prepare() error = %v", err)
+	}
+
+	// Find the etc overlay state directory.
+	statesRoot := filepath.Join(root, statesDir)
+	entries, err := os.ReadDir(statesRoot)
+	if err != nil {
+		t.Fatalf("reading states dir: %v", err)
+	}
+
+	var etcStateDir string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "etc-") {
+			etcStateDir = filepath.Join(statesRoot, e.Name())
+			break
+		}
+	}
+	if etcStateDir == "" {
+		t.Fatal("could not find etc overlay state directory")
+	}
+
+	// Verify the containerd config symlink resolves to the correct content.
+	containerdCfg := filepath.Join(etcStateDir, "etc", "containerd", "config.toml")
+	content, err := os.ReadFile(containerdCfg)
+	if err != nil {
+		t.Fatalf("reading containerd config through etc overlay symlink: %v", err)
+	}
+	if string(content) != "cfg-content" {
+		t.Errorf("containerd config content = %q, want %q", content, "cfg-content")
+	}
+
+	// Verify the systemd unit symlink resolves to a rendered template.
+	unitFile := filepath.Join(etcStateDir, "etc", "systemd", "system", "containerd.service")
+	unitContent, err := os.ReadFile(unitFile)
+	if err != nil {
+		t.Fatalf("reading containerd.service through etc overlay symlink: %v", err)
+	}
+	// The rendered template should contain the actual installed path to containerd binary.
+	if !strings.Contains(string(unitContent), "/bin/containerd") {
+		t.Errorf("containerd.service content = %q, expected it to contain the resolved containerd binary path", unitContent)
+	}
+
+	// Verify the symlinks are actual symlinks (not copies).
+	linkTarget, err := os.Readlink(containerdCfg)
+	if err != nil {
+		t.Fatalf("Readlink() error = %v", err)
+	}
+	// The target should point into the containerd package's state dir, not the etc dir.
+	if !strings.Contains(linkTarget, "containerd-") {
+		t.Errorf("symlink target %q should point into the containerd package state dir", linkTarget)
+	}
+}
+
 func TestPrepare_PersistsConfigAsJSON(t *testing.T) {
 	root := t.TempDir()
 	mgr := NewStoreManager(root)

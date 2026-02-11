@@ -77,12 +77,12 @@ func TestSystemdUnitPackage_Sources(t *testing.T) {
 		t.Fatalf("Sources() returned %d entries, want 2", len(sources))
 	}
 
-	// Sources should be sorted package names.
-	if sources[0] != "containerd" {
-		t.Errorf("Sources()[0] = %q, want %q", sources[0], "containerd")
+	// Sources should be sorted as <kind>://<name>.
+	if sources[0] != "systemd-unit://containerd" {
+		t.Errorf("Sources()[0] = %q, want %q", sources[0], "systemd-unit://containerd")
 	}
-	if sources[1] != "kubelet-bin" {
-		t.Errorf("Sources()[1] = %q, want %q", sources[1], "kubelet-bin")
+	if sources[1] != "systemd-unit://kubelet-bin" {
+		t.Errorf("Sources()[1] = %q, want %q", sources[1], "systemd-unit://kubelet-bin")
 	}
 }
 

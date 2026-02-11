@@ -19,8 +19,16 @@ type PackageEtcFile struct {
 	Target string `json:"target"`
 }
 
+const (
+	packageKindSource      = "source"
+	packageKindSystemdUnit = "systemd-unit"
+	packageKindEtcOverlay  = "etc-overlay"
+)
+
 // Package defines a package unit to be used in the node host.
 type Package interface {
+	// Kind returns the kind of the package. This is used for identifying the type of the package.
+	Kind() string
 	// Name returns the name of the package.
 	// Ex: "containerd", "runc", "kubelet", etc.
 	Name() string

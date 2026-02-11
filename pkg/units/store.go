@@ -172,8 +172,20 @@ func (o *Overlay) Prepare(ctx context.Context) error {
 		return fmt.Errorf("preparing overlay packages: %w", err)
 	}
 
-	if err := o.prepareSystemdUnits(ctx, installedPkgs); err != nil {
+	unitPkgs, err := o.prepareSystemdUnits(ctx, installedPkgs)
+	if err != nil {
 		return fmt.Errorf("preparing systemd units: %w", err)
+	}
+
+	// Collect all installed packages for the etc overlay.
+	allPkgs := make([]*installedPackage, 0, len(installedPkgs)+len(unitPkgs))
+	for _, pkg := range installedPkgs {
+		allPkgs = append(allPkgs, pkg)
+	}
+	allPkgs = append(allPkgs, unitPkgs...)
+
+	if err := o.prepareEtcOverlay(ctx, allPkgs); err != nil {
+		return fmt.Errorf("preparing etc overlay: %w", err)
 	}
 
 	return nil
@@ -225,24 +237,46 @@ func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*insta
 
 // prepareSystemdUnits resolves each systemd unit defined in overlay config,
 // resolves its template content and package dependencies, creates a
-// systemdUnitPackage and installs it into the store.
-func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[string]*installedPackage) error {
+// systemdUnitPackage and installs it into the store. Returns the installed
+// systemd unit packages so they can be included in the etc overlay.
+func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[string]*installedPackage) ([]*installedPackage, error) {
+	var unitPkgs []*installedPackage
+
 	for name, def := range o.config.SystemdUnitsByName {
 		template, err := resolveSystemdTemplate(def)
 		if err != nil {
-			return fmt.Errorf("resolving template for systemd unit %q: %w", name, err)
+			return nil, fmt.Errorf("resolving template for systemd unit %q: %w", name, err)
 		}
 
 		packages, err := resolvePackageRefs(name, def.Packages, installedPkgs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		pkg := newSystemdUnitPackage(name, def.Version, packages, template)
 
-		if _, err := o.store.installPackage(ctx, pkg); err != nil {
-			return err
+		stateDir, err := o.store.installPackage(ctx, pkg)
+		if err != nil {
+			return nil, err
 		}
+
+		unitPkgs = append(unitPkgs, &installedPackage{
+			Package:            pkg,
+			InstalledStatePath: stateDir,
+		})
+	}
+
+	return unitPkgs, nil
+}
+
+// prepareEtcOverlay builds and installs the etc overlay package, which
+// collects all EtcFiles from the given installed packages and creates a
+// unified symlink tree under <state>/etc/.
+func (o *Overlay) prepareEtcOverlay(ctx context.Context, packages []*installedPackage) error {
+	etcPkg := newEtcOverlayPackage(o.config.Version, packages)
+
+	if _, err := o.store.installPackage(ctx, etcPkg); err != nil {
+		return err
 	}
 
 	return nil

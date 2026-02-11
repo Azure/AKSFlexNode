@@ -62,6 +62,10 @@ func newOverlayPackage(name string, def OverlayPackageDef) (*overlayPackage, err
 
 var _ Package = (*overlayPackage)(nil)
 
+func (o *overlayPackage) Kind() string {
+	return packageKindSource
+}
+
 func (o *overlayPackage) Name() string {
 	return o.name
 }
