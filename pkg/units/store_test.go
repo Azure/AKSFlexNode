@@ -52,7 +52,7 @@ func TestOverlay_Apply_StartsSystemdUnits(t *testing.T) {
 
 	overlay := NewOverlay(OverlayConfig{
 		Version: "v1",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "1.7.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
@@ -99,7 +99,7 @@ func TestOverlay_Apply_TwoGenerations_SystemdDeltas(t *testing.T) {
 	mgr1 := &fakeSystemdManager{}
 	overlay1 := NewOverlay(OverlayConfig{
 		Version: "v1",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "1.0.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
@@ -150,7 +150,7 @@ func TestOverlay_Apply_TwoGenerations_SystemdDeltas(t *testing.T) {
 	mgr2 := &fakeSystemdManager{}
 	overlay2 := NewOverlay(OverlayConfig{
 		Version: "v2",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "2.0.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrcV2},
@@ -221,7 +221,7 @@ func TestOverlay_Apply_UnchangedUnits_NoRestart(t *testing.T) {
 
 	config := OverlayConfig{
 		Version: "v1",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "1.7.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
@@ -569,7 +569,7 @@ func TestPrepareOverlayPackages_InstallsToStateDir(t *testing.T) {
 
 	overlay := &Overlay{
 		config: OverlayConfig{
-			PackageByNames: map[string]OverlayPackageDef{
+			PackagesByName: map[string]OverlayPackageDef{
 				"pkgA": {
 					Version: "1.0.0",
 					Source: struct {
@@ -630,7 +630,7 @@ func TestPreparePackages_SkipsCachedPackage(t *testing.T) {
 
 	overlay := &Overlay{
 		config: OverlayConfig{
-			PackageByNames: map[string]OverlayPackageDef{
+			PackagesByName: map[string]OverlayPackageDef{
 				"mypkg": {
 					Version: "1.0.0",
 					Source: struct {
@@ -674,7 +674,7 @@ func TestPrepareOverlayPackages_CleansUpOnFailure(t *testing.T) {
 
 	overlay := &Overlay{
 		config: OverlayConfig{
-			PackageByNames: map[string]OverlayPackageDef{
+			PackagesByName: map[string]OverlayPackageDef{
 				"badpkg": {
 					Version: "1.0.0",
 					Source: struct {
@@ -801,7 +801,7 @@ func TestPrepareEtcOverlay_EndToEnd(t *testing.T) {
 	overlay := &Overlay{
 		config: OverlayConfig{
 			Version: "v1-test",
-			PackageByNames: map[string]OverlayPackageDef{
+			PackagesByName: map[string]OverlayPackageDef{
 				"containerd": {
 					Version: "1.7.0",
 					Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
@@ -875,7 +875,7 @@ func TestPrepare_PersistsConfigAsJSON(t *testing.T) {
 
 	config := OverlayConfig{
 		Version: "v1.2.3",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "1.6.21",
 				Source: struct {
@@ -910,7 +910,7 @@ func TestPrepare_PersistsConfigAsJSON(t *testing.T) {
 		t.Errorf("version = %q, want %q", got.Version, config.Version)
 	}
 
-	pkgDef, ok := got.PackageByNames["containerd"]
+	pkgDef, ok := got.PackagesByName["containerd"]
 	if !ok {
 		t.Fatal("expected containerd package in deserialized config")
 	}
@@ -947,7 +947,7 @@ func TestPrepare_OverwritesExistingConfig(t *testing.T) {
 
 	config1 := OverlayConfig{
 		Version: "v1",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"pkg1": {
 				Version: "1.0.0",
 				Source: struct {
@@ -960,7 +960,7 @@ func TestPrepare_OverwritesExistingConfig(t *testing.T) {
 
 	config2 := OverlayConfig{
 		Version: "v1",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"pkg2": {
 				Version: "2.0.0",
 				Source: struct {
@@ -989,10 +989,10 @@ func TestPrepare_OverwritesExistingConfig(t *testing.T) {
 		t.Fatalf("unmarshaling config: %v", err)
 	}
 
-	if _, ok := got.PackageByNames["pkg2"]; !ok {
+	if _, ok := got.PackagesByName["pkg2"]; !ok {
 		t.Error("expected pkg2 in overwritten config")
 	}
-	if _, ok := got.PackageByNames["pkg1"]; ok {
+	if _, ok := got.PackagesByName["pkg1"]; ok {
 		t.Error("expected pkg1 to be gone from overwritten config")
 	}
 }
@@ -1044,7 +1044,7 @@ func TestOverlay_Apply_EndToEnd(t *testing.T) {
 
 	overlay := NewOverlay(OverlayConfig{
 		Version: "v1-apply-test",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "1.7.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
@@ -1132,7 +1132,7 @@ func TestOverlay_Apply_TwoGenerations(t *testing.T) {
 
 	overlay1 := NewOverlay(OverlayConfig{
 		Version: "v1",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"containerd": {
 				Version: "1.0.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
@@ -1166,7 +1166,7 @@ func TestOverlay_Apply_TwoGenerations(t *testing.T) {
 
 	overlay2 := NewOverlay(OverlayConfig{
 		Version: "v2",
-		PackageByNames: map[string]OverlayPackageDef{
+		PackagesByName: map[string]OverlayPackageDef{
 			"kubelet": {
 				Version: "1.28.0",
 				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: kubeletSrc},

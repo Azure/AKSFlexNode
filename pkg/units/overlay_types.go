@@ -10,7 +10,7 @@ type OverlayPackageSource struct {
 // OverlaySystemdUnitDef defines a systemd unit in the overlay config.
 type OverlaySystemdUnitDef struct {
 	Version        string   `json:"version"`        // version of the systemd unit definition
-	Packages       []string `json:"packages"`       // reference PackageByNames
+	Packages       []string `json:"packages"`       // reference PackagesByName
 	TemplateFile   string   `json:"templateFile"`   // path to the systemd unit template file
 	TemplateInline string   `json:"templateInline"` // inline systemd unit template content (alternative to TemplateFile)
 }
@@ -24,6 +24,6 @@ type OverlayPackageDef struct {
 type OverlayConfig struct { // JSON config
 	Version string `json:"version"` // Unique version across all overlay configs
 
-	PackageByNames     map[string]OverlayPackageDef     `json:"packageByNames,omitempty"`
+	PackagesByName     map[string]OverlayPackageDef     `json:"packagesByName,omitempty"`
 	SystemdUnitsByName map[string]OverlaySystemdUnitDef `json:"systemdUnitsByName,omitempty"`
 }

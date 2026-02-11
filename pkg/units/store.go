@@ -243,9 +243,9 @@ func (p *InstalledPackage) BinPaths() []string {
 // TODO: process packages concurrently (e.g. via an errgroup) once Install
 // implementations are confirmed safe for parallel execution.
 func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*InstalledPackage, error) {
-	installed := make(map[string]*InstalledPackage, len(o.config.PackageByNames))
+	installed := make(map[string]*InstalledPackage, len(o.config.PackagesByName))
 
-	for name, def := range o.config.PackageByNames {
+	for name, def := range o.config.PackagesByName {
 		pkg, err := newOverlayPackage(name, def)
 		if err != nil {
 			return nil, fmt.Errorf("creating package %q: %w", name, err)
