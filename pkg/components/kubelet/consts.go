@@ -5,6 +5,7 @@ const (
 	etcDefaultDir     = "/etc/default"
 	kubeletServiceDir = "/etc/systemd/system/kubelet.service.d"
 	etcKubernetesDir  = "/etc/kubernetes"
+	kubernetesPKIDir  = "/etc/kubernetes/pki"
 
 	// Kubelet-specific directories
 	kubeletManifestsDir    = "/etc/kubernetes/manifests"
@@ -23,6 +24,9 @@ const (
 	kubeletVarDir              = "/var/lib/kubelet"
 	KubeletKubeconfigPath      = "/var/lib/kubelet/kubeconfig"
 	kubeletTokenScriptPath     = "/var/lib/kubelet/token.sh"
+
+	// PKI certificate paths
+	apiserverClientCAPath = "/etc/kubernetes/pki/apiserver-client-ca.crt"
 
 	// Azure resource identifiers
 	aksServiceResourceID = "6dae42f8-4368-4678-94ff-3960e28e3630"
