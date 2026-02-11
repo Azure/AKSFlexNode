@@ -51,3 +51,5 @@ config.json
 # Build artifacts
 /build/
 /dist/
+
+overlayconfig.json

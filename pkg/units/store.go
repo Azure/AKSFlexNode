@@ -166,19 +166,19 @@ type Overlay struct {
 
 // NewOverlay creates a new Overlay for the given config.
 // If storeRoot is empty, DefaultStoreRoot is used. The rootDir for the
-// etcManager defaults to "/" if etcRoot is empty. If systemd is nil, a
+// etcManager defaults to "/" if osRoot is empty. If systemd is nil, a
 // fakeSystemdManager is used (suitable for development and tests).
 func NewOverlay(
 	config OverlayConfig,
 	storeRoot string,
-	etcRoot string,
+	osRoot string,
 	systemd systemdManager,
 ) *Overlay {
 	if storeRoot == "" {
 		storeRoot = DefaultStoreRoot
 	}
-	if etcRoot == "" {
-		etcRoot = "/"
+	if osRoot == "" {
+		osRoot = "/"
 	}
 	if systemd == nil {
 		systemd = &fakeSystemdManager{}
@@ -186,7 +186,7 @@ func NewOverlay(
 	return &Overlay{
 		config:  config,
 		store:   NewStoreManager(storeRoot),
-		etc:     newEtcManager(etcRoot),
+		etc:     newEtcManager(osRoot),
 		systemd: systemd,
 	}
 }
