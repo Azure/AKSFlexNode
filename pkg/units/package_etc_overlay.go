@@ -24,10 +24,10 @@ import (
 //	       |- ...
 type etcOverlayPackage struct {
 	version  string
-	packages []*installedPackage
+	packages []*InstalledPackage
 }
 
-func newEtcOverlayPackage(version string, packages []*installedPackage) *etcOverlayPackage {
+func newEtcOverlayPackage(version string, packages []*InstalledPackage) *etcOverlayPackage {
 	return &etcOverlayPackage{
 		version:  version,
 		packages: packages,
@@ -77,7 +77,7 @@ func (p *etcOverlayPackage) EtcFiles() []PackageEtcFile {
 func (p *etcOverlayPackage) Install(_ context.Context, base string) error {
 	// First pass: detect duplicate target paths across all packages.
 	type etcEntry struct {
-		pkg     *installedPackage
+		pkg     *InstalledPackage
 		etcFile PackageEtcFile
 	}
 	seen := make(map[string]etcEntry)

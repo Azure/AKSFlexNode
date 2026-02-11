@@ -159,44 +159,66 @@ type Overlay struct {
 	config OverlayConfig
 
 	store *StoreManager
-	// TODO: etc manager / systemd manager
+	etc   *etcManager
 }
 
-func (o *Overlay) Prepare(ctx context.Context) error {
+// NewOverlay creates a new Overlay for the given config.
+// If storeRoot is empty, DefaultStoreRoot is used. The rootDir for the
+// etcManager defaults to storeRoot (so /etc lives at <storeRoot>/etc).
+func NewOverlay(
+	config OverlayConfig,
+	storeRoot string,
+	etcRoot string,
+) *Overlay {
+	if storeRoot == "" {
+		storeRoot = DefaultStoreRoot
+	}
+	if etcRoot == "" {
+		etcRoot = "/"
+	}
+	return &Overlay{
+		config: config,
+		store:  NewStoreManager(storeRoot),
+		etc:    newEtcManager(etcRoot),
+	}
+}
+
+func (o *Overlay) Prepare(ctx context.Context) (*InstalledPackage, error) {
 	if err := o.store.Prepare(o.config); err != nil {
-		return fmt.Errorf("setting up disk layout: %w", err)
+		return nil, fmt.Errorf("setting up disk layout: %w", err)
 	}
 
 	installedPkgs, err := o.prepareOverlayPackages(ctx)
 	if err != nil {
-		return fmt.Errorf("preparing overlay packages: %w", err)
+		return nil, fmt.Errorf("preparing overlay packages: %w", err)
 	}
 
 	unitPkgs, err := o.prepareSystemdUnits(ctx, installedPkgs)
 	if err != nil {
-		return fmt.Errorf("preparing systemd units: %w", err)
+		return nil, fmt.Errorf("preparing systemd units: %w", err)
 	}
 
 	// Collect all installed packages for the etc overlay.
-	allPkgs := make([]*installedPackage, 0, len(installedPkgs)+len(unitPkgs))
+	allPkgs := make([]*InstalledPackage, 0, len(installedPkgs)+len(unitPkgs))
 	for _, pkg := range installedPkgs {
 		allPkgs = append(allPkgs, pkg)
 	}
 	allPkgs = append(allPkgs, unitPkgs...)
 
-	if err := o.prepareEtcOverlay(ctx, allPkgs); err != nil {
-		return fmt.Errorf("preparing etc overlay: %w", err)
+	etcOverlay, err := o.prepareEtcOverlay(ctx, allPkgs)
+	if err != nil {
+		return nil, fmt.Errorf("preparing etc overlay: %w", err)
 	}
 
-	return nil
+	return etcOverlay, nil
 }
 
-type installedPackage struct {
+type InstalledPackage struct {
 	Package
 	InstalledStatePath string
 }
 
-func (p *installedPackage) BinPaths() []string {
+func (p *InstalledPackage) BinPaths() []string {
 	var binPaths []string
 	binDir := filepath.Join(p.InstalledStatePath, "bin")
 	if dirExists(binDir) {
@@ -207,13 +229,13 @@ func (p *installedPackage) BinPaths() []string {
 
 // prepareOverlayPackages resolves each package defined in overlay config and installs
 // it into the store via StoreManager.installPackage. It returns a map of package
-// name to installedPackage so callers (e.g. systemd unit preparation) can look up
+// name to InstalledPackage so callers (e.g. systemd unit preparation) can look up
 // dependencies and access installed state paths.
 //
 // TODO: process packages concurrently (e.g. via an errgroup) once Install
 // implementations are confirmed safe for parallel execution.
-func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*installedPackage, error) {
-	installed := make(map[string]*installedPackage, len(o.config.PackageByNames))
+func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*InstalledPackage, error) {
+	installed := make(map[string]*InstalledPackage, len(o.config.PackageByNames))
 
 	for name, def := range o.config.PackageByNames {
 		pkg, err := newOverlayPackage(name, def)
@@ -226,7 +248,7 @@ func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*insta
 			return nil, err
 		}
 
-		installed[name] = &installedPackage{
+		installed[name] = &InstalledPackage{
 			Package:            pkg,
 			InstalledStatePath: stateDir,
 		}
@@ -239,8 +261,8 @@ func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*insta
 // resolves its template content and package dependencies, creates a
 // systemdUnitPackage and installs it into the store. Returns the installed
 // systemd unit packages so they can be included in the etc overlay.
-func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[string]*installedPackage) ([]*installedPackage, error) {
-	var unitPkgs []*installedPackage
+func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[string]*InstalledPackage) ([]*InstalledPackage, error) {
+	var unitPkgs []*InstalledPackage
 
 	for name, def := range o.config.SystemdUnitsByName {
 		template, err := resolveSystemdTemplate(def)
@@ -260,7 +282,7 @@ func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[str
 			return nil, err
 		}
 
-		unitPkgs = append(unitPkgs, &installedPackage{
+		unitPkgs = append(unitPkgs, &InstalledPackage{
 			Package:            pkg,
 			InstalledStatePath: stateDir,
 		})
@@ -272,14 +294,18 @@ func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[str
 // prepareEtcOverlay builds and installs the etc overlay package, which
 // collects all EtcFiles from the given installed packages and creates a
 // unified symlink tree under <state>/etc/.
-func (o *Overlay) prepareEtcOverlay(ctx context.Context, packages []*installedPackage) error {
+func (o *Overlay) prepareEtcOverlay(ctx context.Context, packages []*InstalledPackage) (*InstalledPackage, error) {
 	etcPkg := newEtcOverlayPackage(o.config.Version, packages)
 
-	if _, err := o.store.installPackage(ctx, etcPkg); err != nil {
-		return err
+	stateDir, err := o.store.installPackage(ctx, etcPkg)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil
+	return &InstalledPackage{
+		Package:            etcPkg,
+		InstalledStatePath: stateDir,
+	}, nil
 }
 
 // resolveSystemdTemplate reads the template content for a systemd unit definition.
@@ -309,8 +335,8 @@ func resolveSystemdTemplate(def OverlaySystemdUnitDef) (string, error) {
 // resolvePackageRefs looks up package names from the installed packages map and
 // returns the corresponding Package slice. Returns an error if any referenced
 // package was not found.
-func resolvePackageRefs(unitName string, packageNames []string, installed map[string]*installedPackage) ([]*installedPackage, error) {
-	packages := make([]*installedPackage, 0, len(packageNames))
+func resolvePackageRefs(unitName string, packageNames []string, installed map[string]*InstalledPackage) ([]*InstalledPackage, error) {
+	packages := make([]*InstalledPackage, 0, len(packageNames))
 	for _, pkgName := range packageNames {
 		pkg, ok := installed[pkgName]
 		if !ok {
@@ -321,6 +347,30 @@ func resolvePackageRefs(unitName string, packageNames []string, installed map[st
 	return packages, nil
 }
 
+// Apply activates the prepared overlay by:
+//  1. Pointing <rootDir>/etc/static at the etc overlay's etc/ tree
+//  2. Promoting every entry in the static tree into /etc as a symlink
+//  3. Cleaning up stale /etc entries from previous generations
+//
+// TODO: once systemdManager is implemented, Apply should also reload
+// systemd daemon and start/restart/reload changed units.
 func (o *Overlay) Apply(ctx context.Context) error {
+	etcOverlay, err := o.Prepare(ctx)
+	if err != nil {
+		return err
+	}
+
+	// The etc overlay's Install creates <statePath>/etc/<target> symlinks,
+	// so the directory we want to point /etc/static at is <statePath>/etc.
+	etcTreePath := filepath.Join(etcOverlay.InstalledStatePath, "etc")
+
+	if err := o.etc.SymlinkToStatic(etcTreePath); err != nil {
+		return fmt.Errorf("creating static symlink: %w", err)
+	}
+
+	if err := o.etc.PromoteStaticToEtc(); err != nil {
+		return fmt.Errorf("promoting static entries to etc: %w", err)
+	}
+
 	return nil
 }

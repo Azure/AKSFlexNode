@@ -518,11 +518,11 @@ func TestEtcOverlay_SymlinksValidAfterAtomicRename(t *testing.T) {
 	}
 
 	// Create the etc overlay referencing the installed dependency.
-	installedDep := &installedPackage{
+	installedDep := &InstalledPackage{
 		Package:            depPkg,
 		InstalledStatePath: depStateDir,
 	}
-	etcPkg := newEtcOverlayPackage("v1", []*installedPackage{installedDep})
+	etcPkg := newEtcOverlayPackage("v1", []*InstalledPackage{installedDep})
 
 	// Install the etc overlay itself through installPackage (another temp dir + atomic rename).
 	etcStateDir, err := mgr.installPackage(context.Background(), etcPkg)
@@ -606,27 +606,15 @@ func TestPrepareEtcOverlay_EndToEnd(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := overlay.Prepare(ctx); err != nil {
+	etcOverlay, err := overlay.Prepare(ctx)
+	if err != nil {
 		t.Fatalf("Overlay.Prepare() error = %v", err)
 	}
-
-	// Find the etc overlay state directory.
-	statesRoot := filepath.Join(root, statesDir)
-	entries, err := os.ReadDir(statesRoot)
-	if err != nil {
-		t.Fatalf("reading states dir: %v", err)
+	if etcOverlay == nil {
+		t.Fatal("Overlay.Prepare() returned nil etc overlay")
 	}
 
-	var etcStateDir string
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "etc-") {
-			etcStateDir = filepath.Join(statesRoot, e.Name())
-			break
-		}
-	}
-	if etcStateDir == "" {
-		t.Fatal("could not find etc overlay state directory")
-	}
+	etcStateDir := etcOverlay.InstalledStatePath
 
 	// Verify the containerd config symlink resolves to the correct content.
 	containerdCfg := filepath.Join(etcStateDir, "etc", "containerd", "config.toml")
@@ -785,5 +773,211 @@ func TestPrepare_OverwritesExistingConfig(t *testing.T) {
 	}
 	if _, ok := got.PackageByNames["pkg1"]; ok {
 		t.Error("expected pkg1 to be gone from overwritten config")
+	}
+}
+
+func TestNewOverlay_DefaultRoot(t *testing.T) {
+	o := NewOverlay(OverlayConfig{Version: "v1"}, "", "")
+	if o.store.root != DefaultStoreRoot {
+		t.Errorf("store root = %q, want %q", o.store.root, DefaultStoreRoot)
+	}
+	if o.etc.rootDir != "/" {
+		t.Errorf("etc rootDir = %q, want %q", o.etc.rootDir, "/")
+	}
+}
+
+func TestNewOverlay_CustomRoot(t *testing.T) {
+	o := NewOverlay(OverlayConfig{Version: "v1"}, "/custom/store", "/custom/etc")
+	if o.store.root != "/custom/store" {
+		t.Errorf("store root = %q, want %q", o.store.root, "/custom/store")
+	}
+	if o.etc.rootDir != "/custom/etc" {
+		t.Errorf("etc rootDir = %q, want %q", o.etc.rootDir, "/custom/etc")
+	}
+}
+
+func TestOverlay_Apply_WithoutPrepare(t *testing.T) {
+	root := t.TempDir()
+	o := NewOverlay(OverlayConfig{Version: "v1"}, root, root)
+
+	// Apply now calls Prepare internally, so an empty config with a valid
+	// version should succeed (empty overlay, no packages).
+	err := o.Apply(context.Background())
+	if err != nil {
+		t.Fatalf("Apply() with empty config should succeed, got error = %v", err)
+	}
+}
+
+// TestOverlay_Apply_EndToEnd exercises the full Prepare → Apply pipeline:
+// packages are installed, the etc overlay is built, then Apply wires up
+// /etc/static and promotes entries into /etc.
+func TestOverlay_Apply_EndToEnd(t *testing.T) {
+	root := t.TempDir()
+
+	// Create source directory for a package with an etc file.
+	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(containerdSrc, "bin"), 0755)
+	os.MkdirAll(filepath.Join(containerdSrc, "etc", "containerd"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "bin", "containerd"), []byte("containerd-bin"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "etc", "containerd", "config.toml"), []byte("root = \"/var/lib/containerd\""), 0644)
+
+	overlay := NewOverlay(OverlayConfig{
+		Version: "v1-apply-test",
+		PackageByNames: map[string]OverlayPackageDef{
+			"containerd": {
+				Version: "1.7.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
+				ETCFiles: []PackageEtcFile{
+					{Source: "etc/containerd/config.toml", Target: "containerd/config.toml"},
+				},
+			},
+		},
+		SystemdUnitsByName: map[string]OverlaySystemdUnitDef{
+			"containerd": {
+				Version:        "1.0.0",
+				Packages:       []string{"containerd"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}",
+			},
+		},
+	}, root, root)
+
+	ctx := context.Background()
+
+	// Prepare must succeed.
+	etcOverlay, err := overlay.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if etcOverlay == nil {
+		t.Fatal("Prepare() returned nil etc overlay")
+	}
+
+	// Apply must succeed.
+	if err := overlay.Apply(ctx); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	// Verify /etc/static symlink exists and points to the etc overlay's etc/ tree.
+	staticLink := filepath.Join(root, "etc", "static")
+	linkTarget, err := os.Readlink(staticLink)
+	if err != nil {
+		t.Fatalf("Readlink(etc/static) error = %v", err)
+	}
+	expectedTarget := filepath.Join(etcOverlay.InstalledStatePath, "etc")
+	if linkTarget != expectedTarget {
+		t.Errorf("etc/static -> %q, want %q", linkTarget, expectedTarget)
+	}
+
+	// Verify the promoted symlink for containerd config exists.
+	promotedCfg := filepath.Join(root, "etc", "containerd", "config.toml")
+	cfgTarget, err := os.Readlink(promotedCfg)
+	if err != nil {
+		t.Fatalf("Readlink(etc/containerd/config.toml) error = %v", err)
+	}
+	expectedCfgTarget := filepath.Join(root, "etc", "static", "containerd", "config.toml")
+	if cfgTarget != expectedCfgTarget {
+		t.Errorf("etc/containerd/config.toml -> %q, want %q", cfgTarget, expectedCfgTarget)
+	}
+
+	// Verify the content resolves end-to-end.
+	content, err := os.ReadFile(promotedCfg)
+	if err != nil {
+		t.Fatalf("reading promoted config: %v", err)
+	}
+	if string(content) != "root = \"/var/lib/containerd\"" {
+		t.Errorf("config content = %q, want %q", content, "root = \"/var/lib/containerd\"")
+	}
+
+	// Verify the promoted symlink for the systemd unit exists.
+	promotedUnit := filepath.Join(root, "etc", "systemd", "system", "containerd.service")
+	unitContent, err := os.ReadFile(promotedUnit)
+	if err != nil {
+		t.Fatalf("reading promoted containerd.service: %v", err)
+	}
+	if !strings.Contains(string(unitContent), "/bin/containerd") {
+		t.Errorf("containerd.service content = %q, expected it to contain the resolved containerd binary path", unitContent)
+	}
+}
+
+// TestOverlay_Apply_TwoGenerations verifies that applying a second generation
+// correctly replaces the first: new entries appear, stale entries are removed.
+func TestOverlay_Apply_TwoGenerations(t *testing.T) {
+	root := t.TempDir()
+
+	// --- Generation 1: containerd with config ---
+	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(containerdSrc, "etc", "containerd"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "etc", "containerd", "config.toml"), []byte("gen1"), 0644)
+
+	overlay1 := NewOverlay(OverlayConfig{
+		Version: "v1",
+		PackageByNames: map[string]OverlayPackageDef{
+			"containerd": {
+				Version: "1.0.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
+				ETCFiles: []PackageEtcFile{
+					{Source: "etc/containerd/config.toml", Target: "containerd/config.toml"},
+				},
+			},
+		},
+	}, root, root)
+
+	ctx := context.Background()
+	if _, err := overlay1.Prepare(ctx); err != nil {
+		t.Fatalf("gen1 Prepare() error = %v", err)
+	}
+	if err := overlay1.Apply(ctx); err != nil {
+		t.Fatalf("gen1 Apply() error = %v", err)
+	}
+
+	// Verify gen1 entry exists.
+	gen1Cfg := filepath.Join(root, "etc", "containerd", "config.toml")
+	if content, err := os.ReadFile(gen1Cfg); err != nil {
+		t.Fatalf("gen1: reading promoted config: %v", err)
+	} else if string(content) != "gen1" {
+		t.Errorf("gen1 config = %q, want %q", content, "gen1")
+	}
+
+	// --- Generation 2: kubelet replaces containerd ---
+	kubeletSrc := filepath.Join(t.TempDir(), "kubelet-src")
+	os.MkdirAll(filepath.Join(kubeletSrc, "etc", "kubernetes"), 0755)
+	os.WriteFile(filepath.Join(kubeletSrc, "etc", "kubernetes", "kubelet.conf"), []byte("gen2"), 0644)
+
+	overlay2 := NewOverlay(OverlayConfig{
+		Version: "v2",
+		PackageByNames: map[string]OverlayPackageDef{
+			"kubelet": {
+				Version: "1.28.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: kubeletSrc},
+				ETCFiles: []PackageEtcFile{
+					{Source: "etc/kubernetes/kubelet.conf", Target: "kubernetes/kubelet.conf"},
+				},
+			},
+		},
+	}, root, root)
+
+	if _, err := overlay2.Prepare(ctx); err != nil {
+		t.Fatalf("gen2 Prepare() error = %v", err)
+	}
+	if err := overlay2.Apply(ctx); err != nil {
+		t.Fatalf("gen2 Apply() error = %v", err)
+	}
+
+	// Verify gen2 entry exists.
+	gen2Cfg := filepath.Join(root, "etc", "kubernetes", "kubelet.conf")
+	if content, err := os.ReadFile(gen2Cfg); err != nil {
+		t.Fatalf("gen2: reading promoted config: %v", err)
+	} else if string(content) != "gen2" {
+		t.Errorf("gen2 config = %q, want %q", content, "gen2")
+	}
+
+	// Verify gen1 entry was cleaned up (symlink removed).
+	if _, err := os.Lstat(gen1Cfg); !os.IsNotExist(err) {
+		t.Errorf("gen1 containerd/config.toml should have been removed, but err = %v", err)
+	}
+
+	// Verify the containerd parent dir was cleaned up (empty).
+	if _, err := os.Stat(filepath.Join(root, "etc", "containerd")); !os.IsNotExist(err) {
+		t.Errorf("gen1 etc/containerd/ dir should have been removed, but err = %v", err)
 	}
 }

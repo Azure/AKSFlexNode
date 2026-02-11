@@ -26,11 +26,11 @@ func TestEtcOverlayPackage_EtcFiles_ReturnsNil(t *testing.T) {
 }
 
 func TestEtcOverlayPackage_Sources(t *testing.T) {
-	depA := &installedPackage{
+	depA := &InstalledPackage{
 		Package:            newSystemdUnitPackage("kubelet", "1.0.0", nil, "dummy"),
 		InstalledStatePath: "/aks-flex/states/kubelet-abc",
 	}
-	depB := &installedPackage{
+	depB := &InstalledPackage{
 		Package: &fakePackageWithEtcFiles{
 			name:    "containerd",
 			version: "1.7.0",
@@ -41,7 +41,7 @@ func TestEtcOverlayPackage_Sources(t *testing.T) {
 		InstalledStatePath: "/aks-flex/states/containerd-def",
 	}
 
-	pkg := newEtcOverlayPackage("v1", []*installedPackage{depA, depB})
+	pkg := newEtcOverlayPackage("v1", []*InstalledPackage{depA, depB})
 	sources := pkg.Sources()
 
 	// Should include one entry per package as <kind>://<name>, sorted.
@@ -66,11 +66,11 @@ func TestEtcOverlayPackage_Install_CreatesSymlinks(t *testing.T) {
 	os.MkdirAll(filepath.Join(stateB, "etc", "containerd"), 0755)
 	os.WriteFile(filepath.Join(stateB, "etc", "containerd", "config.toml"), []byte("key = \"value\""), 0644)
 
-	pkgA := &installedPackage{
+	pkgA := &InstalledPackage{
 		Package:            newSystemdUnitPackage("kubelet", "1.0.0", nil, "dummy"),
 		InstalledStatePath: stateA,
 	}
-	pkgB := &installedPackage{
+	pkgB := &InstalledPackage{
 		Package: &fakePackageWithEtcFiles{
 			name:    "containerd",
 			version: "1.7.0",
@@ -81,7 +81,7 @@ func TestEtcOverlayPackage_Install_CreatesSymlinks(t *testing.T) {
 		InstalledStatePath: stateB,
 	}
 
-	etcPkg := newEtcOverlayPackage("v1", []*installedPackage{pkgA, pkgB})
+	etcPkg := newEtcOverlayPackage("v1", []*InstalledPackage{pkgA, pkgB})
 
 	base := filepath.Join(t.TempDir(), "etc-overlay")
 	if err := etcPkg.Install(context.Background(), base); err != nil {
@@ -140,7 +140,7 @@ func TestEtcOverlayPackage_Install_NoPackages(t *testing.T) {
 
 func TestEtcOverlayPackage_Install_NoEtcFiles(t *testing.T) {
 	// Package exists but declares no etc files.
-	dep := &installedPackage{
+	dep := &InstalledPackage{
 		Package: &fakePackageWithEtcFiles{
 			name:     "noop",
 			version:  "1.0.0",
@@ -149,7 +149,7 @@ func TestEtcOverlayPackage_Install_NoEtcFiles(t *testing.T) {
 		InstalledStatePath: t.TempDir(),
 	}
 
-	etcPkg := newEtcOverlayPackage("v1", []*installedPackage{dep})
+	etcPkg := newEtcOverlayPackage("v1", []*InstalledPackage{dep})
 
 	base := filepath.Join(t.TempDir(), "etc-overlay")
 	if err := etcPkg.Install(context.Background(), base); err != nil {
@@ -163,7 +163,7 @@ func TestEtcOverlayPackage_Install_NoEtcFiles(t *testing.T) {
 }
 
 func TestEtcOverlayPackage_Install_DuplicateTargetConflict(t *testing.T) {
-	pkgA := &installedPackage{
+	pkgA := &InstalledPackage{
 		Package: &fakePackageWithEtcFiles{
 			name:    "foo",
 			version: "1.0.0",
@@ -173,7 +173,7 @@ func TestEtcOverlayPackage_Install_DuplicateTargetConflict(t *testing.T) {
 		},
 		InstalledStatePath: t.TempDir(),
 	}
-	pkgB := &installedPackage{
+	pkgB := &InstalledPackage{
 		Package: &fakePackageWithEtcFiles{
 			name:    "bar",
 			version: "2.0.0",
@@ -184,7 +184,7 @@ func TestEtcOverlayPackage_Install_DuplicateTargetConflict(t *testing.T) {
 		InstalledStatePath: t.TempDir(),
 	}
 
-	etcPkg := newEtcOverlayPackage("v1", []*installedPackage{pkgA, pkgB})
+	etcPkg := newEtcOverlayPackage("v1", []*InstalledPackage{pkgA, pkgB})
 
 	base := filepath.Join(t.TempDir(), "etc-overlay")
 	err := etcPkg.Install(context.Background(), base)

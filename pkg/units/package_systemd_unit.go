@@ -18,11 +18,11 @@ import (
 type systemdUnitPackage struct {
 	name     string
 	version  string
-	packages []*installedPackage
+	packages []*InstalledPackage
 	template string
 }
 
-func newSystemdUnitPackage(name, version string, packages []*installedPackage, template string) *systemdUnitPackage {
+func newSystemdUnitPackage(name, version string, packages []*InstalledPackage, template string) *systemdUnitPackage {
 	return &systemdUnitPackage{
 		name:     name,
 		version:  version,
@@ -70,7 +70,7 @@ func (s *systemdUnitPackage) EtcFiles() []PackageEtcFile {
 // unitTemplateContext provides helper functions available inside systemd unit
 // templates. It is passed as the data argument to text/template.Execute.
 type unitTemplateContext struct {
-	packages []*installedPackage
+	packages []*InstalledPackage
 }
 
 // defaultSystemPaths are the standard system PATH directories. These are NOT

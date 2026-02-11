@@ -67,10 +67,10 @@ func TestSystemdUnitPackage_EtcFiles(t *testing.T) {
 }
 
 func TestSystemdUnitPackage_Sources(t *testing.T) {
-	depA := &installedPackage{Package: newSystemdUnitPackage("containerd", "1.0.0", nil, "dummy")}
-	depB := &installedPackage{Package: newSystemdUnitPackage("kubelet-bin", "1.0.0", nil, "dummy")}
+	depA := &InstalledPackage{Package: newSystemdUnitPackage("containerd", "1.0.0", nil, "dummy")}
+	depB := &InstalledPackage{Package: newSystemdUnitPackage("kubelet-bin", "1.0.0", nil, "dummy")}
 
-	pkg := newSystemdUnitPackage("kubelet", "1.0.0", []*installedPackage{depB, depA}, kubeletUnitTemplate)
+	pkg := newSystemdUnitPackage("kubelet", "1.0.0", []*InstalledPackage{depB, depA}, kubeletUnitTemplate)
 
 	sources := pkg.Sources()
 	if len(sources) != 2 {
@@ -95,9 +95,9 @@ func TestSystemdUnitPackage_Sources_NoPackages(t *testing.T) {
 	}
 }
 
-// newTestInstalledPackage creates an installedPackage with a real temp state dir.
+// newTestInstalledPackage creates an InstalledPackage with a real temp state dir.
 // If withBin is true, a bin/ subdirectory is created inside the state dir.
-func newTestInstalledPackage(t *testing.T, name string, withBin bool) *installedPackage {
+func newTestInstalledPackage(t *testing.T, name string, withBin bool) *InstalledPackage {
 	t.Helper()
 	stateDir := filepath.Join(t.TempDir(), name)
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
@@ -108,7 +108,7 @@ func newTestInstalledPackage(t *testing.T, name string, withBin bool) *installed
 			t.Fatal(err)
 		}
 	}
-	return &installedPackage{
+	return &InstalledPackage{
 		Package:            newSystemdUnitPackage(name, "1.0.0", nil, "dummy"),
 		InstalledStatePath: stateDir,
 	}
@@ -122,7 +122,7 @@ func TestSystemdUnitPackage_Install_TemplateGetPathEnv(t *testing.T) {
 Environment="PATH={{ .GetPathEnv }}"
 ExecStart=/usr/bin/kubelet
 `
-	pkg := newSystemdUnitPackage("kubelet", "1.0.0", []*installedPackage{depB, depA}, tmpl)
+	pkg := newSystemdUnitPackage("kubelet", "1.0.0", []*InstalledPackage{depB, depA}, tmpl)
 
 	base := filepath.Join(t.TempDir(), "state")
 	if err := pkg.Install(context.Background(), base); err != nil {
@@ -152,7 +152,7 @@ func TestSystemdUnitPackage_Install_TemplateGetPathEnv_NoBinDirs(t *testing.T) {
 	dep := newTestInstalledPackage(t, "noBinPkg", false)
 
 	tmpl := `PATH={{ .GetPathEnv }}`
-	pkg := newSystemdUnitPackage("test", "1.0.0", []*installedPackage{dep}, tmpl)
+	pkg := newSystemdUnitPackage("test", "1.0.0", []*InstalledPackage{dep}, tmpl)
 
 	base := filepath.Join(t.TempDir(), "state")
 	if err := pkg.Install(context.Background(), base); err != nil {
@@ -169,7 +169,7 @@ func TestSystemdUnitPackage_Install_TemplateGetPathEnvWithSystemDefaults(t *test
 	depA := newTestInstalledPackage(t, "containerd", true)
 
 	tmpl := `PATH={{ .GetPathEnvWithSystemDefaults }}`
-	pkg := newSystemdUnitPackage("test", "1.0.0", []*installedPackage{depA}, tmpl)
+	pkg := newSystemdUnitPackage("test", "1.0.0", []*InstalledPackage{depA}, tmpl)
 
 	base := filepath.Join(t.TempDir(), "state")
 	if err := pkg.Install(context.Background(), base); err != nil {
@@ -190,7 +190,7 @@ func TestSystemdUnitPackage_Install_TemplateGetPathEnvWithSystemDefaults_NoBinDi
 	dep := newTestInstalledPackage(t, "noBinPkg", false)
 
 	tmpl := `PATH={{ .GetPathEnvWithSystemDefaults }}`
-	pkg := newSystemdUnitPackage("test", "1.0.0", []*installedPackage{dep}, tmpl)
+	pkg := newSystemdUnitPackage("test", "1.0.0", []*InstalledPackage{dep}, tmpl)
 
 	base := filepath.Join(t.TempDir(), "state")
 	if err := pkg.Install(context.Background(), base); err != nil {
@@ -208,7 +208,7 @@ func TestSystemdUnitPackage_Install_TemplateGetPackagePath(t *testing.T) {
 	dep := newTestInstalledPackage(t, "kubelet-bin", true)
 
 	tmpl := `ExecStart={{ .GetPackagePath "kubelet-bin" "bin" "kubelet" }}`
-	pkg := newSystemdUnitPackage("kubelet", "1.0.0", []*installedPackage{dep}, tmpl)
+	pkg := newSystemdUnitPackage("kubelet", "1.0.0", []*InstalledPackage{dep}, tmpl)
 
 	base := filepath.Join(t.TempDir(), "state")
 	if err := pkg.Install(context.Background(), base); err != nil {
@@ -226,7 +226,7 @@ func TestSystemdUnitPackage_Install_TemplateGetPackagePath_NotFound(t *testing.T
 	dep := newTestInstalledPackage(t, "containerd", false)
 
 	tmpl := `ExecStart={{ .GetPackagePath "nonexistent" "bin" "foo" }}`
-	pkg := newSystemdUnitPackage("bad", "1.0.0", []*installedPackage{dep}, tmpl)
+	pkg := newSystemdUnitPackage("bad", "1.0.0", []*InstalledPackage{dep}, tmpl)
 
 	base := filepath.Join(t.TempDir(), "state")
 	err := pkg.Install(context.Background(), base)
