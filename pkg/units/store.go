@@ -80,6 +80,22 @@ func (mgr *StoreManager) Prepare(overlayConfig OverlayConfig) error {
 	if overlayConfig.Version == "" {
 		return fmt.Errorf("overlay config version is required")
 	}
+	// TODO: disallow overriding existing version?
+
+	// Resolve templateFile references to templateInline so the persisted
+	// config is self-contained and produces consistent results regardless
+	// of whether the original template files are still present on disk.
+	for name, def := range overlayConfig.SystemdUnitsByName {
+		if def.TemplateFile != "" {
+			data, err := os.ReadFile(def.TemplateFile)
+			if err != nil {
+				return fmt.Errorf("reading template file %q for unit %q: %w", def.TemplateFile, name, err)
+			}
+			def.TemplateInline = string(data)
+			def.TemplateFile = ""
+			overlayConfig.SystemdUnitsByName[name] = def
+		}
+	}
 
 	configPath := filepath.Join(mgr.root, configsDir, overlayConfig.Version+".json")
 	data, err := json.MarshalIndent(overlayConfig, "", "  ")
