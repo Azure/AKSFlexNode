@@ -227,7 +227,6 @@ func (i *Installer) createKubeletDefaultsFile() error {
 		fmt.Sprintf("--image-gc-low-threshold=%d", i.config.Node.Kubelet.ImageGCLowThreshold),
 		fmt.Sprintf("--max-pods=%d", i.config.Node.MaxPods),
 		"--node-status-update-frequency=10s",
-		fmt.Sprintf("--pod-infra-container-image=%s", i.config.Containerd.PauseImage),
 		"--pod-max-pids=-1",
 		"--protect-kernel-defaults=true",
 		"--read-only-port=0",
