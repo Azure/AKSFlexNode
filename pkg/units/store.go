@@ -204,7 +204,7 @@ func NewOverlay(
 	return &Overlay{
 		config:  config,
 		store:   NewStoreManager(storeRoot),
-		etc:     newEtcManager(osRoot),
+		etc:     newEtcManager(osRoot, filepath.Join(storeRoot, statesDir)),
 		systemd: systemd,
 	}
 }

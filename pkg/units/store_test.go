@@ -1095,7 +1095,7 @@ func TestOverlay_Apply_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Readlink(etc/containerd/config.toml) error = %v", err)
 	}
-	expectedCfgTarget := filepath.Join(root, "etc", "static", "containerd", "config.toml")
+	expectedCfgTarget := filepath.Join(etcOverlay.InstalledStatePath, "etc", "containerd", "config.toml")
 	if cfgTarget != expectedCfgTarget {
 		t.Errorf("etc/containerd/config.toml -> %q, want %q", cfgTarget, expectedCfgTarget)
 	}

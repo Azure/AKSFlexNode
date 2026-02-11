@@ -9,9 +9,11 @@ import (
 
 func TestEtcManager_symlinkToStatic_CreatesSymlink(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	source := filepath.Join(t.TempDir(), "etc-overlay", "etc")
+	source := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(source, 0755)
 
 	err := mgr.symlinkToStatic(source)
@@ -32,11 +34,13 @@ func TestEtcManager_symlinkToStatic_CreatesSymlink(t *testing.T) {
 
 func TestEtcManager_symlinkToStatic_ReplacesExisting(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	source1 := filepath.Join(t.TempDir(), "overlay-v1", "etc")
+	source1 := filepath.Join(statesDir, "overlay-v1", "etc")
 	os.MkdirAll(source1, 0755)
-	source2 := filepath.Join(t.TempDir(), "overlay-v2", "etc")
+	source2 := filepath.Join(statesDir, "overlay-v2", "etc")
 	os.MkdirAll(source2, 0755)
 
 	if err := mgr.symlinkToStatic(source1); err != nil {
@@ -58,9 +62,11 @@ func TestEtcManager_symlinkToStatic_ReplacesExisting(t *testing.T) {
 
 func TestEtcManager_symlinkToStatic_CreatesEtcDir(t *testing.T) {
 	rootDir := filepath.Join(t.TempDir(), "nonexistent")
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	source := filepath.Join(t.TempDir(), "overlay", "etc")
+	source := filepath.Join(statesDir, "overlay-v1", "etc")
 	os.MkdirAll(source, 0755)
 
 	if err := mgr.symlinkToStatic(source); err != nil {
@@ -78,10 +84,12 @@ func TestEtcManager_symlinkToStatic_CreatesEtcDir(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_CreatesSymlinks(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
 	// Set up a static dir with files.
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(filepath.Join(overlayDir, "containerd"), 0755)
 	os.WriteFile(filepath.Join(overlayDir, "containerd", "config.toml"), []byte("cfg"), 0644)
 	os.WriteFile(filepath.Join(overlayDir, "hosts"), []byte("hosts-data"), 0644)
@@ -94,13 +102,14 @@ func TestEtcManager_promoteStaticToEtc_CreatesSymlinks(t *testing.T) {
 		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
-	// Check containerd/config.toml symlink.
+	// Check containerd/config.toml symlink — should point directly into
+	// the store (overlayDir), not through /etc/static.
 	linkPath := filepath.Join(rootDir, "etc", "containerd", "config.toml")
 	dest, err := os.Readlink(linkPath)
 	if err != nil {
 		t.Fatalf("Readlink(%s) error = %v", linkPath, err)
 	}
-	wantTarget := filepath.Join(rootDir, "etc", "static", "containerd", "config.toml")
+	wantTarget := filepath.Join(overlayDir, "containerd", "config.toml")
 	if dest != wantTarget {
 		t.Errorf("symlink target = %q, want %q", dest, wantTarget)
 	}
@@ -126,9 +135,11 @@ func TestEtcManager_promoteStaticToEtc_CreatesSymlinks(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_CreatesParentDirs(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(filepath.Join(overlayDir, "systemd", "system"), 0755)
 	os.WriteFile(filepath.Join(overlayDir, "systemd", "system", "foo.service"), []byte("unit"), 0644)
 
@@ -148,9 +159,11 @@ func TestEtcManager_promoteStaticToEtc_CreatesParentDirs(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_Idempotent(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(overlayDir, 0755)
 	os.WriteFile(filepath.Join(overlayDir, "hosts"), []byte("hosts"), 0644)
 
@@ -170,7 +183,7 @@ func TestEtcManager_promoteStaticToEtc_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Readlink() error = %v", err)
 	}
-	wantTarget := filepath.Join(rootDir, "etc", "static", "hosts")
+	wantTarget := filepath.Join(overlayDir, "hosts")
 	if dest != wantTarget {
 		t.Errorf("symlink target = %q, want %q", dest, wantTarget)
 	}
@@ -178,9 +191,11 @@ func TestEtcManager_promoteStaticToEtc_Idempotent(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(overlayDir, 0755)
 	os.WriteFile(filepath.Join(overlayDir, "resolv.conf"), []byte("nameserver 8.8.8.8"), 0644)
 
@@ -202,7 +217,7 @@ func TestEtcManager_promoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Readlink() error = %v", err)
 	}
-	wantTarget := filepath.Join(rootDir, "etc", "static", "resolv.conf")
+	wantTarget := filepath.Join(overlayDir, "resolv.conf")
 	if dest != wantTarget {
 		t.Errorf("symlink target = %q, want %q", dest, wantTarget)
 	}
@@ -210,9 +225,11 @@ func TestEtcManager_promoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_RefusesNonSymlink(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(overlayDir, 0755)
 	os.WriteFile(filepath.Join(overlayDir, "important.conf"), []byte("overlay-version"), 0644)
 
@@ -235,10 +252,12 @@ func TestEtcManager_promoteStaticToEtc_RefusesNonSymlink(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
 	// Gen 1: two files.
-	overlay1 := filepath.Join(t.TempDir(), "etc")
+	overlay1 := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(filepath.Join(overlay1, "systemd", "system"), 0755)
 	os.WriteFile(filepath.Join(overlay1, "hosts"), []byte("hosts"), 0644)
 	os.WriteFile(filepath.Join(overlay1, "systemd", "system", "foo.service"), []byte("foo"), 0644)
@@ -258,7 +277,7 @@ func TestEtcManager_promoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 	}
 
 	// Gen 2: only hosts (foo.service removed).
-	overlay2 := filepath.Join(t.TempDir(), "etc")
+	overlay2 := filepath.Join(statesDir, "etc-overlay-v2", "etc")
 	os.MkdirAll(overlay2, 0755)
 	os.WriteFile(filepath.Join(overlay2, "hosts"), []byte("hosts-v2"), 0644)
 
@@ -283,10 +302,12 @@ func TestEtcManager_promoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
 	// Gen 1: deep nested file.
-	overlay1 := filepath.Join(t.TempDir(), "etc")
+	overlay1 := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(filepath.Join(overlay1, "deep", "nested"), 0755)
 	os.WriteFile(filepath.Join(overlay1, "deep", "nested", "file.conf"), []byte("data"), 0644)
 
@@ -298,7 +319,7 @@ func TestEtcManager_promoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
 	}
 
 	// Gen 2: empty overlay (everything removed).
-	overlay2 := filepath.Join(t.TempDir(), "etc")
+	overlay2 := filepath.Join(statesDir, "etc-overlay-v2", "etc")
 	os.MkdirAll(overlay2, 0755)
 
 	if err := mgr.symlinkToStatic(overlay2); err != nil {
@@ -317,10 +338,12 @@ func TestEtcManager_promoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
 	// Gen 1: has "manual.conf".
-	overlay1 := filepath.Join(t.TempDir(), "etc")
+	overlay1 := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(overlay1, 0755)
 	os.WriteFile(filepath.Join(overlay1, "manual.conf"), []byte("managed"), 0644)
 
@@ -336,7 +359,7 @@ func TestEtcManager_promoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 	os.Remove(filepath.Join(rootDir, "etc", "manual.conf"))
 	os.Symlink("/some/other/path", filepath.Join(rootDir, "etc", "manual.conf"))
 
-	overlay2 := filepath.Join(t.TempDir(), "etc")
+	overlay2 := filepath.Join(statesDir, "etc-overlay-v2", "etc")
 	os.MkdirAll(overlay2, 0755)
 
 	if err := mgr.symlinkToStatic(overlay2); err != nil {
@@ -346,7 +369,8 @@ func TestEtcManager_promoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 		t.Fatalf("gen2 promoteStaticToEtc() error = %v", err)
 	}
 
-	// The symlink should still exist because it no longer points into static.
+	// The symlink should still exist because it no longer points into
+	// the store's states dir (user changed it to /some/other/path).
 	if _, err := os.Lstat(filepath.Join(rootDir, "etc", "manual.conf")); err != nil {
 		t.Errorf("expected non-managed symlink to be left alone: %v", err)
 	}
@@ -354,9 +378,11 @@ func TestEtcManager_promoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 
 func TestEtcManager_promoteStaticToEtc_EmptyStaticDir(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(overlayDir, 0755)
 
 	if err := mgr.symlinkToStatic(overlayDir); err != nil {
@@ -380,10 +406,12 @@ func TestEtcManager_promoteStaticToEtc_EmptyStaticDir(t *testing.T) {
 
 func TestEtcManager_EndToEnd_TwoGenerations(t *testing.T) {
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
 	// --- Generation 1: containerd config + systemd unit ---
-	overlay1 := filepath.Join(t.TempDir(), "etc")
+	overlay1 := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(filepath.Join(overlay1, "containerd"), 0755)
 	os.MkdirAll(filepath.Join(overlay1, "systemd", "system"), 0755)
 	os.WriteFile(filepath.Join(overlay1, "containerd", "config.toml"), []byte("gen1-cfg"), 0644)
@@ -406,7 +434,7 @@ func TestEtcManager_EndToEnd_TwoGenerations(t *testing.T) {
 	}
 
 	// --- Generation 2: update config, remove systemd unit, add new file ---
-	overlay2 := filepath.Join(t.TempDir(), "etc")
+	overlay2 := filepath.Join(statesDir, "etc-overlay-v2", "etc")
 	os.MkdirAll(filepath.Join(overlay2, "containerd"), 0755)
 	os.WriteFile(filepath.Join(overlay2, "containerd", "config.toml"), []byte("gen2-cfg"), 0644)
 	os.WriteFile(filepath.Join(overlay2, "resolv.conf"), []byte("nameserver 1.1.1.1"), 0644)
@@ -455,15 +483,17 @@ func TestEtcManager_promoteStaticToEtc_WalksSymlinksInStaticDir(t *testing.T) {
 	// state dirs. promoteStaticToEtc should follow symlinks in the static
 	// tree to discover the leaf files.
 	rootDir := t.TempDir()
-	mgr := newEtcManager(rootDir)
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
 
 	// Simulate a package state dir with a real file.
-	pkgStateDir := filepath.Join(t.TempDir(), "containerd-abc123")
+	pkgStateDir := filepath.Join(statesDir, "containerd-abc123")
 	os.MkdirAll(filepath.Join(pkgStateDir, "etc", "containerd"), 0755)
 	os.WriteFile(filepath.Join(pkgStateDir, "etc", "containerd", "config.toml"), []byte("real-cfg"), 0644)
 
 	// Create the etc overlay tree with a symlink (as etcOverlayPackage does).
-	overlayDir := filepath.Join(t.TempDir(), "etc")
+	overlayDir := filepath.Join(statesDir, "etc-overlay-v1", "etc")
 	os.MkdirAll(filepath.Join(overlayDir, "containerd"), 0755)
 	os.Symlink(
 		filepath.Join(pkgStateDir, "etc", "containerd", "config.toml"),
@@ -477,13 +507,14 @@ func TestEtcManager_promoteStaticToEtc_WalksSymlinksInStaticDir(t *testing.T) {
 		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
-	// The /etc/containerd/config.toml symlink should point through static.
+	// The /etc/containerd/config.toml symlink should point directly into
+	// the store (overlayDir), not through /etc/static.
 	linkPath := filepath.Join(rootDir, "etc", "containerd", "config.toml")
 	dest, err := os.Readlink(linkPath)
 	if err != nil {
 		t.Fatalf("Readlink() error = %v", err)
 	}
-	wantTarget := filepath.Join(rootDir, "etc", "static", "containerd", "config.toml")
+	wantTarget := filepath.Join(overlayDir, "containerd", "config.toml")
 	if dest != wantTarget {
 		t.Errorf("symlink target = %q, want %q", dest, wantTarget)
 	}
@@ -498,26 +529,76 @@ func TestEtcManager_promoteStaticToEtc_WalksSymlinksInStaticDir(t *testing.T) {
 	}
 }
 
-func TestIsStaticSymlink(t *testing.T) {
+func TestIsUnderDir(t *testing.T) {
 	tests := []struct {
-		name       string
-		dest       string
-		staticPath string
-		want       bool
+		name string
+		path string
+		dir  string
+		want bool
 	}{
-		{"inside static", "/root/etc/static/foo.conf", "/root/etc/static", true},
-		{"nested inside static", "/root/etc/static/deep/nested/f", "/root/etc/static", true},
-		{"outside static", "/some/other/path", "/root/etc/static", false},
-		{"parent of static", "/root/etc", "/root/etc/static", false},
-		{"static itself", "/root/etc/static", "/root/etc/static", false},
+		{"inside dir", "/store/etc-abc/foo.conf", "/store/etc-abc", true},
+		{"nested inside dir", "/store/etc-abc/deep/nested/f", "/store/etc-abc", true},
+		{"outside dir", "/some/other/path", "/store/etc-abc", false},
+		{"parent of dir", "/store", "/store/etc-abc", false},
+		{"dir itself", "/store/etc-abc", "/store/etc-abc", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isStaticSymlink(tt.dest, tt.staticPath)
+			got := isUnderDir(tt.path, tt.dir)
 			if got != tt.want {
-				t.Errorf("isStaticSymlink(%q, %q) = %v, want %v", tt.dest, tt.staticPath, got, tt.want)
+				t.Errorf("isUnderDir(%q, %q) = %v, want %v", tt.path, tt.dir, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEtcManager_Apply_EndToEnd(t *testing.T) {
+	rootDir := t.TempDir()
+	statesDir := filepath.Join(t.TempDir(), "states")
+	os.MkdirAll(statesDir, 0755)
+	mgr := newEtcManager(rootDir, statesDir)
+
+	// Gen 1
+	overlay1 := filepath.Join(statesDir, "etc-overlay-v1", "etc")
+	os.MkdirAll(filepath.Join(overlay1, "systemd", "system"), 0755)
+	os.WriteFile(filepath.Join(overlay1, "hosts"), []byte("gen1"), 0644)
+	os.WriteFile(filepath.Join(overlay1, "systemd", "system", "foo.service"), []byte("foo"), 0644)
+
+	if err := mgr.Apply(overlay1); err != nil {
+		t.Fatalf("gen1 Apply() error = %v", err)
+	}
+
+	// Verify gen1 symlinks point to overlay1.
+	dest, err := os.Readlink(filepath.Join(rootDir, "etc", "hosts"))
+	if err != nil {
+		t.Fatalf("Readlink hosts: %v", err)
+	}
+	if dest != filepath.Join(overlay1, "hosts") {
+		t.Errorf("hosts symlink = %q, want %q", dest, filepath.Join(overlay1, "hosts"))
+	}
+
+	// Gen 2: remove foo.service, update hosts.
+	overlay2 := filepath.Join(statesDir, "etc-overlay-v2", "etc")
+	os.MkdirAll(overlay2, 0755)
+	os.WriteFile(filepath.Join(overlay2, "hosts"), []byte("gen2"), 0644)
+
+	if err := mgr.Apply(overlay2); err != nil {
+		t.Fatalf("gen2 Apply() error = %v", err)
+	}
+
+	// Verify gen2 hosts points to overlay2.
+	dest, err = os.Readlink(filepath.Join(rootDir, "etc", "hosts"))
+	if err != nil {
+		t.Fatalf("Readlink hosts: %v", err)
+	}
+	if dest != filepath.Join(overlay2, "hosts") {
+		t.Errorf("hosts symlink = %q, want %q", dest, filepath.Join(overlay2, "hosts"))
+	}
+
+	// Verify stale foo.service was removed.
+	fooPath := filepath.Join(rootDir, "etc", "systemd", "system", "foo.service")
+	if _, err := os.Lstat(fooPath); !os.IsNotExist(err) {
+		t.Errorf("expected %s to be removed, got err = %v", fooPath, err)
 	}
 }

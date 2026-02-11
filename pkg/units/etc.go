@@ -15,11 +15,12 @@ const (
 )
 
 type etcManager struct {
-	rootDir string
+	rootDir   string
+	statesDir string // store states directory (e.g. /aks-flex/states); symlinks pointing here are managed by us
 }
 
-func newEtcManager(rootDir string) *etcManager {
-	return &etcManager{rootDir: rootDir}
+func newEtcManager(rootDir, statesDir string) *etcManager {
+	return &etcManager{rootDir: rootDir, statesDir: statesDir}
 }
 
 // etcDir returns the absolute path to <rootDir>/etc.
@@ -69,14 +70,15 @@ func (e *etcManager) symlinkToStatic(source string) error {
 	return nil
 }
 
-// PromoteStaticToEtc walks the tree under <rootDir>/etc/static, and for
+// promoteStaticToEtc walks the tree under <rootDir>/etc/static, and for
 // every file (or symlink leaf) found, creates a corresponding symlink at
-// <rootDir>/etc/<relative> pointing to <rootDir>/etc/static/<relative>.
+// <rootDir>/etc/<relative> pointing directly into the store directory
+// that /etc/static references (read via Readlink), rather than through
+// the /etc/static symlink itself.
 //
-// After creating all new symlinks it removes stale entries from previous
-// generations: it walks /etc looking for symlinks that point into
-// <rootDir>/etc/static/... but are now dangling (i.e. the static tree
-// no longer contains them). This eliminates the need for a manifest file.
+// After creating all new symlinks it removes stale entries: symlinks in
+// /etc that point into the store's states directory but are NOT in the
+// current generation set.
 //
 // If a non-symlink regular file already exists at a target path in /etc,
 // it is skipped with an error collected but does not abort the walk —
@@ -84,7 +86,15 @@ func (e *etcManager) symlinkToStatic(source string) error {
 func (e *etcManager) promoteStaticToEtc() error {
 	staticDir := e.staticPath()
 
-	// Resolve the static symlink to get the real directory to walk.
+	// Read the direct target of /etc/static (one level, no chain resolution).
+	// This is the store path we want /etc entries to point into.
+	staticTarget, err := os.Readlink(staticDir)
+	if err != nil {
+		return fmt.Errorf("reading static symlink %s: %w", staticDir, err)
+	}
+
+	// Resolve the static symlink fully to get the real directory to walk
+	// (EvalSymlinks follows the entire chain).
 	resolvedStatic, err := filepath.EvalSymlinks(staticDir)
 	if err != nil {
 		return fmt.Errorf("resolving static symlink %s: %w", staticDir, err)
@@ -109,7 +119,7 @@ func (e *etcManager) promoteStaticToEtc() error {
 			return fmt.Errorf("computing relative path for %s: %w", path, err)
 		}
 
-		if err := e.promoteEntry(rel); err != nil {
+		if err := e.promoteEntry(rel, staticTarget); err != nil {
 			promoteErrors = append(promoteErrors, err)
 			return nil // continue walking
 		}
@@ -144,10 +154,12 @@ func (e *etcManager) Apply(source string) error {
 }
 
 // promoteEntry creates a single symlink at <rootDir>/etc/<target>
-// pointing to <rootDir>/etc/static/<target>.
-func (e *etcManager) promoteEntry(target string) error {
+// pointing to <staticTarget>/<target>, where staticTarget is the direct
+// Readlink of /etc/static (the store path). This means the /etc symlink
+// points directly into the store, bypassing the /etc/static indirection.
+func (e *etcManager) promoteEntry(target, staticTarget string) error {
 	linkPath := filepath.Join(e.etcDir(), target)
-	linkTarget := filepath.Join(e.staticPath(), target)
+	linkTarget := filepath.Join(staticTarget, target)
 
 	// Check if the symlink already exists and is correct.
 	existing, err := os.Readlink(linkPath)
@@ -188,8 +200,8 @@ func (e *etcManager) promoteEntry(target string) error {
 }
 
 // cleanupStaleSymlinks walks <rootDir>/etc and removes any symlinks that
-// point into <rootDir>/etc/static/... but whose relative target is NOT
-// in the newTargets set — meaning they are leftovers from a previous
+// point into the store's states directory but whose relative target is
+// NOT in the newTargets set — meaning they are leftovers from a previous
 // generation. Empty parent directories are cleaned up afterward.
 func (e *etcManager) cleanupStaleSymlinks(newTargets map[string]struct{}) {
 	etcDir := e.etcDir()
@@ -218,8 +230,8 @@ func (e *etcManager) cleanupStaleSymlinks(newTargets map[string]struct{}) {
 			return nil
 		}
 
-		// Only consider symlinks that point into our static dir.
-		if !isStaticSymlink(dest, staticPrefix) {
+		// Only consider symlinks that point into the store's states dir.
+		if !isUnderDir(dest, e.statesDir) {
 			return nil
 		}
 
@@ -256,16 +268,12 @@ func (e *etcManager) cleanupEmptyParents(path string) {
 	}
 }
 
-// isStaticSymlink reports whether dest is a path under the static
-// directory (i.e., the symlink is one we manage).
-func isStaticSymlink(dest, staticPath string) bool {
-	// The symlink targets look like <rootDir>/etc/static/<target>,
-	// so they must have the static path as a prefix.
-	rel, err := filepath.Rel(staticPath, dest)
+// isUnderDir reports whether path is strictly under dir.
+func isUnderDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
 	if err != nil {
 		return false
 	}
-	// filepath.Rel returns a path starting with ".." if dest is outside staticPath.
 	return len(rel) > 0 && rel[0] != '.'
 }
 
