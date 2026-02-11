@@ -25,6 +25,9 @@ var (
 	BuildTime = "unknown"
 )
 
+// Unbootstrap command flags
+var cleanupMode string
+
 // NewAgentCommand creates a new agent command
 func NewAgentCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -44,11 +47,18 @@ func NewUnbootstrapCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unbootstrap",
 		Short: "Remove AKS node configuration and Arc connection",
-		Long:  "Clean up and remove all AKS node components and Arc registration from this machine",
+		Long: `Clean up and remove all AKS node components and Arc registration from this machine.
+
+For private clusters (config has private: true), this also handles VPN cleanup:
+  --cleanup-mode=local  Remove node and local VPN config, keep Gateway (default)
+  --cleanup-mode=full   Remove everything including Gateway VM and Azure resources`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUnbootstrap(cmd.Context())
 		},
 	}
+
+	cmd.Flags().StringVar(&cleanupMode, "cleanup-mode", "local",
+		"[private cluster only] Cleanup mode: 'local' (keep Gateway) or 'full' (remove all Azure resources)")
 
 	return cmd
 }
@@ -87,6 +97,13 @@ func runAgent(ctx context.Context) error {
 		return err
 	}
 
+	// Print visible success message
+	fmt.Println()
+	fmt.Println("========================================")
+	fmt.Println(" Join process finished successfully!")
+	fmt.Println("========================================")
+	fmt.Println()
+
 	// After successful bootstrap, transition to daemon mode
 	logger.Info("Bootstrap completed successfully, transitioning to daemon mode...")
 	return runDaemonLoop(ctx, cfg)
@@ -101,6 +118,11 @@ func runUnbootstrap(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
+	// Pass cleanup mode to config so the PrivateClusterUninstall step can read it
+	if cfg.Azure.TargetCluster != nil {
+		cfg.Azure.TargetCluster.CleanupMode = cleanupMode
+	}
+
 	bootstrapExecutor := bootstrapper.New(cfg, logger)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {
@@ -108,7 +130,15 @@ func runUnbootstrap(ctx context.Context) error {
 	}
 
 	// Handle and log the result (unbootstrap is more lenient with failures)
-	return handleExecutionResult(result, "unbootstrap", logger)
+	if err := handleExecutionResult(result, "unbootstrap", logger); err != nil {
+		return err
+	}
+
+	// Print final success message
+	fmt.Println()
+	fmt.Println("\033[0;32mSUCCESS:\033[0m Unbootstrap completed successfully!")
+
+	return nil
 }
 
 // runVersion displays version information
