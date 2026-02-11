@@ -11,9 +11,11 @@ require (
 	github.com/Azure/go-autorest/autorest/to v0.4.1
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/google/uuid v1.6.0
+	github.com/klauspost/compress v1.18.4
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
+	github.com/ulikunitz/xz v0.5.15
 	k8s.io/client-go v0.35.0
 )
 

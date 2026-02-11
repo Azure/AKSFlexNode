@@ -127,6 +127,8 @@ func (mgr *StoreManager) installPackage(ctx context.Context, pkg Package) (strin
 		return "", fmt.Errorf("moving package %q to state dir: %w", pkg.Name(), err)
 	}
 
+	fmt.Printf("Installed package %s (ver=%s, kind=%s)\n", pkg.Name(), pkg.Version(), pkg.Kind())
+
 	return stateDir, nil
 }
 
@@ -228,9 +230,11 @@ type InstalledPackage struct {
 
 func (p *InstalledPackage) BinPaths() []string {
 	var binPaths []string
-	binDir := filepath.Join(p.InstalledStatePath, "bin")
-	if dirExists(binDir) {
-		binPaths = append(binPaths, binDir)
+	for _, rel := range []string{"bin", "usr/bin"} {
+		dir := filepath.Join(p.InstalledStatePath, rel)
+		if dirExists(dir) {
+			binPaths = append(binPaths, dir)
+		}
 	}
 	return binPaths
 }

@@ -22,6 +22,10 @@ const (
 	overlayPackageSourceTypeURLTar = "url+tar"
 	// OverlayPackageSourceTypeURLZip indicates that the package source is a URL to a zip file that needs to be downloaded and extracted.
 	overlayPackageSourceTypeURLZip = "url+zip"
+	// OverlayPackageSourceTypeURLRPM indicates that the package source is a URL to an RPM package that needs to be downloaded and extracted.
+	overlayPackageSourceTypeURLRPM = "url+rpm"
+	// OverlayPackageSourceTypeURLDeb indicates that the package source is a URL to a Debian package that needs to be downloaded and extracted.
+	overlayPackageSourceTypeURLDeb = "url+deb"
 	// OverlayPackageSourceTypeFile indicates that the package source is a local file.
 	overlayPackageSourceTypeFile = "file"
 )
@@ -30,6 +34,8 @@ var validOverlayPackageSourceTypes = map[string]struct{}{
 	overlayPackageSourceTypeURL:    {},
 	overlayPackageSourceTypeURLTar: {},
 	overlayPackageSourceTypeURLZip: {},
+	overlayPackageSourceTypeURLRPM: {},
+	overlayPackageSourceTypeURLDeb: {},
 	overlayPackageSourceTypeFile:   {},
 }
 
@@ -92,7 +98,7 @@ func (o *overlayPackage) Install(ctx context.Context, base string) error {
 	switch o.def.Source.Type {
 	case overlayPackageSourceTypeURL:
 		return o.installFromURL(ctx, base)
-	case overlayPackageSourceTypeURLTar, overlayPackageSourceTypeURLZip:
+	case overlayPackageSourceTypeURLTar, overlayPackageSourceTypeURLZip, overlayPackageSourceTypeURLRPM, overlayPackageSourceTypeURLDeb:
 		return o.installFromURLArchive(ctx, base)
 	case overlayPackageSourceTypeFile:
 		return o.installFromFile(base)
@@ -144,7 +150,7 @@ func (o *overlayPackage) installFromURL(ctx context.Context, base string) error 
 	return o.download(ctx, dst)
 }
 
-// installFromURLArchive downloads an archive (tar.gz or zip) from the source
+// installFromURLArchive downloads an archive (tar.gz, zip, rpm, or deb) from the source
 // URI and extracts its contents into base.
 func (o *overlayPackage) installFromURLArchive(ctx context.Context, base string) error {
 	tmpFile, err := os.CreateTemp("", "overlay-pkg-*")
@@ -163,6 +169,10 @@ func (o *overlayPackage) installFromURLArchive(ctx context.Context, base string)
 		return extractTar(tmpFile.Name(), base)
 	case overlayPackageSourceTypeURLZip:
 		return extractZip(tmpFile.Name(), base)
+	case overlayPackageSourceTypeURLRPM:
+		return extractRPM(tmpFile.Name(), base)
+	case overlayPackageSourceTypeURLDeb:
+		return extractDeb(tmpFile.Name(), base)
 	default:
 		return fmt.Errorf("unsupported archive type %q", o.def.Source.Type)
 	}
@@ -263,6 +273,36 @@ func extractEntry(target string, mode os.FileMode, isDir bool, r io.Reader) erro
 	return nil
 }
 
+// extractSymlink creates a symlink at target pointing to linkTarget.
+// The resolved link destination is validated to stay within base to
+// prevent symlink-based path traversal attacks. Relative symlinks that
+// remain inside base are allowed.
+func extractSymlink(base, target, linkTarget string) error {
+	if err := os.MkdirAll(filepath.Dir(target), dirPermissions); err != nil {
+		return fmt.Errorf("creating parent directory for symlink %s: %w", target, err)
+	}
+
+	// Resolve the effective destination of the symlink.
+	var resolved string
+	if filepath.IsAbs(linkTarget) {
+		// Absolute symlinks are re-rooted under base.
+		resolved = filepath.Join(base, linkTarget)
+	} else {
+		resolved = filepath.Join(filepath.Dir(target), linkTarget)
+	}
+	resolved = filepath.Clean(resolved)
+
+	cleanBase := filepath.Clean(base)
+	if resolved != cleanBase && !strings.HasPrefix(resolved, cleanBase+string(os.PathSeparator)) {
+		return fmt.Errorf("symlink %q -> %q escapes base directory", target, linkTarget)
+	}
+
+	// Remove any existing entry at target before creating the symlink.
+	os.Remove(target)
+
+	return os.Symlink(linkTarget, target)
+}
+
 // extractTar extracts a gzipped tarball at src into base.
 func extractTar(src, base string) error {
 	f, err := os.Open(src)
@@ -299,6 +339,10 @@ func extractTar(src, base string) error {
 			}
 		case tar.TypeReg:
 			if err := extractEntry(target, os.FileMode(hdr.Mode), false, tr); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if err := extractSymlink(base, target, hdr.Linkname); err != nil {
 				return err
 			}
 		}
