@@ -26,6 +26,12 @@ const (
 	dirPermissions = 0755
 )
 
+// dirExists reports whether path exists and is a directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 // StoreManager manages the on-disk store layout for AKS Flex node packages and configs.
 type StoreManager struct {
 	// root is the absolute path to the store root directory (e.g. /aks-flex).
@@ -99,7 +105,7 @@ func (mgr *StoreManager) installPackage(ctx context.Context, pkg Package) (strin
 	stateDir := filepath.Join(statesRoot, packageStateDirName(pkg))
 
 	// Skip if this exact package version is already installed.
-	if info, err := os.Stat(stateDir); err == nil && info.IsDir() {
+	if dirExists(stateDir) {
 		return stateDir, nil
 	}
 
@@ -161,24 +167,78 @@ func (o *Overlay) Prepare(ctx context.Context) error {
 		return fmt.Errorf("setting up disk layout: %w", err)
 	}
 
-	if err := o.prepareOverlayPackages(ctx); err != nil {
+	installedPkgs, err := o.prepareOverlayPackages(ctx)
+	if err != nil {
 		return fmt.Errorf("preparing overlay packages: %w", err)
+	}
+
+	if err := o.prepareSystemdUnits(ctx, installedPkgs); err != nil {
+		return fmt.Errorf("preparing systemd units: %w", err)
 	}
 
 	return nil
 }
 
+type installedPackage struct {
+	Package
+	InstalledStatePath string
+}
+
+func (p *installedPackage) BinPaths() []string {
+	var binPaths []string
+	binDir := filepath.Join(p.InstalledStatePath, "bin")
+	if dirExists(binDir) {
+		binPaths = append(binPaths, binDir)
+	}
+	return binPaths
+}
+
 // prepareOverlayPackages resolves each package defined in overlay config and installs
-// it into the store via StoreManager.installPackage.
+// it into the store via StoreManager.installPackage. It returns a map of package
+// name to installedPackage so callers (e.g. systemd unit preparation) can look up
+// dependencies and access installed state paths.
 //
 // TODO: process packages concurrently (e.g. via an errgroup) once Install
 // implementations are confirmed safe for parallel execution.
-func (o *Overlay) prepareOverlayPackages(ctx context.Context) error {
+func (o *Overlay) prepareOverlayPackages(ctx context.Context) (map[string]*installedPackage, error) {
+	installed := make(map[string]*installedPackage, len(o.config.PackageByNames))
+
 	for name, def := range o.config.PackageByNames {
 		pkg, err := newOverlayPackage(name, def)
 		if err != nil {
-			return fmt.Errorf("creating package %q: %w", name, err)
+			return nil, fmt.Errorf("creating package %q: %w", name, err)
 		}
+
+		stateDir, err := o.store.installPackage(ctx, pkg)
+		if err != nil {
+			return nil, err
+		}
+
+		installed[name] = &installedPackage{
+			Package:            pkg,
+			InstalledStatePath: stateDir,
+		}
+	}
+
+	return installed, nil
+}
+
+// prepareSystemdUnits resolves each systemd unit defined in overlay config,
+// resolves its template content and package dependencies, creates a
+// systemdUnitPackage and installs it into the store.
+func (o *Overlay) prepareSystemdUnits(ctx context.Context, installedPkgs map[string]*installedPackage) error {
+	for name, def := range o.config.SystemdUnitsByName {
+		template, err := resolveSystemdTemplate(def)
+		if err != nil {
+			return fmt.Errorf("resolving template for systemd unit %q: %w", name, err)
+		}
+
+		packages, err := resolvePackageRefs(name, def.Packages, installedPkgs)
+		if err != nil {
+			return err
+		}
+
+		pkg := newSystemdUnitPackage(name, def.Version, packages, template)
 
 		if _, err := o.store.installPackage(ctx, pkg); err != nil {
 			return err
@@ -186,6 +246,45 @@ func (o *Overlay) prepareOverlayPackages(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// resolveSystemdTemplate reads the template content for a systemd unit definition.
+// Exactly one of TemplateFile or TemplateInline must be set.
+func resolveSystemdTemplate(def OverlaySystemdUnitDef) (string, error) {
+	hasFile := def.TemplateFile != ""
+	hasInline := def.TemplateInline != ""
+
+	if hasFile && hasInline {
+		return "", fmt.Errorf("templateFile and templateInline are mutually exclusive")
+	}
+	if !hasFile && !hasInline {
+		return "", fmt.Errorf("templateFile or templateInline is required")
+	}
+
+	if hasInline {
+		return def.TemplateInline, nil
+	}
+
+	data, err := os.ReadFile(def.TemplateFile)
+	if err != nil {
+		return "", fmt.Errorf("reading template file %q: %w", def.TemplateFile, err)
+	}
+	return string(data), nil
+}
+
+// resolvePackageRefs looks up package names from the installed packages map and
+// returns the corresponding Package slice. Returns an error if any referenced
+// package was not found.
+func resolvePackageRefs(unitName string, packageNames []string, installed map[string]*installedPackage) ([]*installedPackage, error) {
+	packages := make([]*installedPackage, 0, len(packageNames))
+	for _, pkgName := range packageNames {
+		pkg, ok := installed[pkgName]
+		if !ok {
+			return nil, fmt.Errorf("systemd unit %q references unknown package %q", unitName, pkgName)
+		}
+		packages = append(packages, pkg)
+	}
+	return packages, nil
 }
 
 func (o *Overlay) Apply(ctx context.Context) error {

@@ -40,17 +40,6 @@ type Package interface {
 	EtcFiles() []PackageEtcFile
 }
 
-type SystemdUnit struct { // -> this is also a Package
-	// Name is the name of the systemd unit, e.g. "kubelet" -> "kubelet.service"
-	Name string
-	// Packages defines the list of packages that this systemd unit depends on.
-	// It will be resolved with the absolute package binary paths and exposed
-	// as PATH environment variable in the systemd unit for use in ExecStart and other commands.
-	Packages []Package
-	// UnitTemplate is the template string for rendering the system unit file.
-	UnitTemplate string
-}
-
 // 1. resolve packages (download or reuse from cache)
 // 2. produce overlay
 // 3. symlink overlay

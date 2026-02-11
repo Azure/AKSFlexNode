@@ -369,7 +369,7 @@ func TestPrepareOverlayPackages_InstallsToStateDir(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := overlay.prepareOverlayPackages(ctx); err != nil {
+	if _, err := overlay.prepareOverlayPackages(ctx); err != nil {
 		t.Fatalf("prepareOverlayPackages() error = %v", err)
 	}
 
@@ -425,7 +425,7 @@ func TestPreparePackages_SkipsCachedPackage(t *testing.T) {
 	ctx := context.Background()
 
 	// First run: installs the package.
-	if err := overlay.prepareOverlayPackages(ctx); err != nil {
+	if _, err := overlay.prepareOverlayPackages(ctx); err != nil {
 		t.Fatalf("first prepareOverlayPackages() error = %v", err)
 	}
 
@@ -434,7 +434,7 @@ func TestPreparePackages_SkipsCachedPackage(t *testing.T) {
 	entries1, _ := os.ReadDir(statesRoot)
 
 	// Second run: should skip (no new dirs, no errors).
-	if err := overlay.prepareOverlayPackages(ctx); err != nil {
+	if _, err := overlay.prepareOverlayPackages(ctx); err != nil {
 		t.Fatalf("second prepareOverlayPackages() error = %v", err)
 	}
 
@@ -467,7 +467,7 @@ func TestPrepareOverlayPackages_CleansUpOnFailure(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := overlay.prepareOverlayPackages(ctx)
+	_, err := overlay.prepareOverlayPackages(ctx)
 	if err == nil {
 		t.Fatal("expected preparePackages() to fail")
 	}
