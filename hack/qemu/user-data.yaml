@@ -1,0 +1,40 @@
+#cloud-config
+
+# User configuration
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [sudo]
+    lock_passwd: false
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+
+# Package management
+package_update: true
+package_upgrade: false
+packages:
+  - curl
+  - jq
+  - apt-transport-https
+  - ca-certificates
+  - net-tools
+  - vim
+
+# Mount host repo into guest via virtio-9p
+mounts:
+  - ["flexnode", "/flex-node", "9p", "trans=virtio,version=9p2000.L,nofail", "0", "0"]
+
+# Run commands on first boot
+runcmd:
+  - mkdir -p /flex-node
+  - mount -a
+  - echo "hello, world"
+
+# Write files
+write_files:
+  - path: /etc/flexnode/provisioned
+    content: |
+      provisioned=true
+      timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    permissions: "0644"
