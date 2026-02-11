@@ -2,11 +2,13 @@
 
 ## Prerequisites
 
-### 1. Login to Azure CLI as root
+### 1. Login to Azure CLI
 
 ```bash
-sudo az login
+az login
 ```
+
+> **Note:** When running the agent with `sudo`, use `sudo -E` to preserve your Azure CLI token. Alternatively, run `sudo az login` to login as root directly.
 
 ### 2. Create a Private AKS Cluster
 
@@ -29,6 +31,7 @@ Create a `config.json` with `"private": true` in the `targetCluster` section:
       "private": true
     },
     "arc": {
+      "enabled": true,
       "resourceGroup": "<RG>",
       "location": "eastus2"
     }
@@ -60,7 +63,7 @@ go build -o aks-flex-node .
 When the config has `"private": true`, the `agent` command automatically sets up the Gateway/VPN before bootstrapping:
 
 ```bash
-sudo ./aks-flex-node agent --config config.json
+sudo -E ./aks-flex-node agent --config config.json
 ```
 
 This will:
@@ -72,7 +75,7 @@ This will:
 ### 3. Verify
 
 ```bash
-sudo kubectl get nodes
+kubectl get nodes
 ```
 
 ## Leave Private AKS Cluster
@@ -87,8 +90,8 @@ sudo ./aks-flex-node unbootstrap --config config.json [--cleanup-mode <local|ful
 
 | Mode | Command | Description |
 |------|---------|-------------|
-| `local` (default) | `sudo ./aks-flex-node unbootstrap --config config.json` | Remove node and local VPN config, **keep Gateway** for other nodes |
-| `full` | `sudo ./aks-flex-node unbootstrap --config config.json --cleanup-mode full` | Remove all components **including Gateway VM and Azure resources** |
+| `local` (default) | `sudo -E ./aks-flex-node unbootstrap --config config.json` | Remove node and local VPN config, **keep Gateway** for other nodes |
+| `full` | `sudo -E ./aks-flex-node unbootstrap --config config.json --cleanup-mode full` | Remove all components **including Gateway VM and Azure resources** |
 
 ### When to use each mode
 

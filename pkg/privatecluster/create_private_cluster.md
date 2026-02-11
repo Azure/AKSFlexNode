@@ -4,10 +4,10 @@ This guide shows how to create a Private AKS Cluster with AAD and Azure RBAC ena
 
 ## Prerequisites
 
-### 1. Login to Azure CLI as root
+### 1. Login to Azure CLI
 
 ```bash
-sudo az login
+az login
 ```
 
 ### 2. Set variables
