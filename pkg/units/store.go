@@ -105,6 +105,7 @@ func (mgr *StoreManager) installPackage(ctx context.Context, pkg Package) (strin
 	stateDir := filepath.Join(statesRoot, packageStateDirName(pkg))
 
 	// Skip if this exact package version is already installed.
+	// TODO: allow force reinstall
 	if dirExists(stateDir) {
 		return stateDir, nil
 	}
@@ -158,17 +159,20 @@ func packageStateDirName(pkg Package) string {
 type Overlay struct {
 	config OverlayConfig
 
-	store *StoreManager
-	etc   *etcManager
+	store   *StoreManager
+	etc     *etcManager
+	systemd systemdManager
 }
 
 // NewOverlay creates a new Overlay for the given config.
 // If storeRoot is empty, DefaultStoreRoot is used. The rootDir for the
-// etcManager defaults to storeRoot (so /etc lives at <storeRoot>/etc).
+// etcManager defaults to "/" if etcRoot is empty. If systemd is nil, a
+// fakeSystemdManager is used (suitable for development and tests).
 func NewOverlay(
 	config OverlayConfig,
 	storeRoot string,
 	etcRoot string,
+	systemd systemdManager,
 ) *Overlay {
 	if storeRoot == "" {
 		storeRoot = DefaultStoreRoot
@@ -176,10 +180,14 @@ func NewOverlay(
 	if etcRoot == "" {
 		etcRoot = "/"
 	}
+	if systemd == nil {
+		systemd = &fakeSystemdManager{}
+	}
 	return &Overlay{
-		config: config,
-		store:  NewStoreManager(storeRoot),
-		etc:    newEtcManager(etcRoot),
+		config:  config,
+		store:   NewStoreManager(storeRoot),
+		etc:     newEtcManager(etcRoot),
+		systemd: systemd,
 	}
 }
 
@@ -348,13 +356,17 @@ func resolvePackageRefs(unitName string, packageNames []string, installed map[st
 }
 
 // Apply activates the prepared overlay by:
-//  1. Pointing <rootDir>/etc/static at the etc overlay's etc/ tree
-//  2. Promoting every entry in the static tree into /etc as a symlink
-//  3. Cleaning up stale /etc entries from previous generations
-//
-// TODO: once systemdManager is implemented, Apply should also reload
-// systemd daemon and start/restart/reload changed units.
+//  1. Capturing the old generation's systemd unit directory (if any)
+//  2. Preparing the new generation (install packages, render units, build etc overlay)
+//  3. Pointing <rootDir>/etc/static at the etc overlay's etc/ tree
+//  4. Promoting every entry in the static tree into /etc as a symlink
+//  5. Cleaning up stale /etc entries from previous generations
+//  6. Computing systemd unit deltas between old and new generations
+//  7. Applying the deltas (stop removed, daemon-reload, start new, restart changed)
 func (o *Overlay) Apply(ctx context.Context) error {
+	// Capture the old generation's static target before we replace /etc/static.
+	oldStaticTarget := o.etc.CurrentStaticTarget()
+
 	etcOverlay, err := o.Prepare(ctx)
 	if err != nil {
 		return err
@@ -364,12 +376,36 @@ func (o *Overlay) Apply(ctx context.Context) error {
 	// so the directory we want to point /etc/static at is <statePath>/etc.
 	etcTreePath := filepath.Join(etcOverlay.InstalledStatePath, "etc")
 
-	if err := o.etc.SymlinkToStatic(etcTreePath); err != nil {
-		return fmt.Errorf("creating static symlink: %w", err)
+	if err := o.etc.Apply(etcTreePath); err != nil {
+		return fmt.Errorf("applying etc overlay: %w", err)
 	}
 
-	if err := o.etc.PromoteStaticToEtc(); err != nil {
-		return fmt.Errorf("promoting static entries to etc: %w", err)
+	// TODO: move the below part to systemdManager
+
+	// Compute and apply systemd unit deltas.
+	// Use walkUnitDir because the etc overlay tree uses symlinks.
+	var oldUnits map[string][]byte
+	if oldStaticTarget != "" {
+		oldUnitDir := filepath.Join(oldStaticTarget, "systemd", "system")
+		oldUnits, err = walkUnitDir(oldUnitDir)
+		if err != nil {
+			return fmt.Errorf("reading old systemd units: %w", err)
+		}
+	}
+
+	newUnitDir := filepath.Join(etcTreePath, "systemd", "system")
+	newUnits, err := walkUnitDir(newUnitDir)
+	if err != nil {
+		return fmt.Errorf("reading new systemd units: %w", err)
+	}
+
+	deltas, err := computeDeltas(oldUnits, newUnits)
+	if err != nil {
+		return fmt.Errorf("computing systemd deltas: %w", err)
+	}
+
+	if err := applyDeltas(o.systemd, deltas); err != nil {
+		return fmt.Errorf("applying systemd deltas: %w", err)
 	}
 
 	return nil

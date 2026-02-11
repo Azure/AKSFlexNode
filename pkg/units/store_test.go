@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,226 @@ func TestSetupDiskLayout_CreatesRequiredDirs(t *testing.T) {
 		if !info.IsDir() {
 			t.Errorf("expected %s to be a directory", dir)
 		}
+	}
+}
+
+// TestOverlay_Apply_StartsSystemdUnits verifies that the first Apply
+// (no previous generation) starts all systemd units via the manager.
+func TestOverlay_Apply_StartsSystemdUnits(t *testing.T) {
+	root := t.TempDir()
+	mgr := &fakeSystemdManager{}
+
+	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(containerdSrc, "bin"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "bin", "containerd"), []byte("containerd-bin"), 0755)
+
+	overlay := NewOverlay(OverlayConfig{
+		Version: "v1",
+		PackageByNames: map[string]OverlayPackageDef{
+			"containerd": {
+				Version: "1.7.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
+			},
+		},
+		SystemdUnitsByName: map[string]OverlaySystemdUnitDef{
+			"containerd": {
+				Version:        "1.0.0",
+				Packages:       []string{"containerd"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}",
+			},
+		},
+	}, root, root, mgr)
+
+	if err := overlay.Apply(context.Background()); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	// First apply: no previous generation, so the unit should be started.
+	want := []string{
+		"daemon-reload",
+		"start:containerd.service",
+	}
+	if !reflect.DeepEqual(mgr.Actions, want) {
+		t.Errorf("systemd actions = %v, want %v", mgr.Actions, want)
+	}
+}
+
+// TestOverlay_Apply_TwoGenerations_SystemdDeltas verifies that applying
+// a second generation correctly computes and applies systemd deltas:
+// new units start, removed units stop, changed units restart.
+func TestOverlay_Apply_TwoGenerations_SystemdDeltas(t *testing.T) {
+	root := t.TempDir()
+
+	// --- Generation 1: containerd + kubelet ---
+	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(containerdSrc, "bin"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "bin", "containerd"), []byte("containerd-v1"), 0755)
+
+	kubeletSrc := filepath.Join(t.TempDir(), "kubelet-src")
+	os.MkdirAll(filepath.Join(kubeletSrc, "bin"), 0755)
+	os.WriteFile(filepath.Join(kubeletSrc, "bin", "kubelet"), []byte("kubelet-v1"), 0755)
+
+	mgr1 := &fakeSystemdManager{}
+	overlay1 := NewOverlay(OverlayConfig{
+		Version: "v1",
+		PackageByNames: map[string]OverlayPackageDef{
+			"containerd": {
+				Version: "1.0.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
+			},
+			"kubelet": {
+				Version: "1.0.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: kubeletSrc},
+			},
+		},
+		SystemdUnitsByName: map[string]OverlaySystemdUnitDef{
+			"containerd": {
+				Version:        "1.0.0",
+				Packages:       []string{"containerd"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}",
+			},
+			"kubelet": {
+				Version:        "1.0.0",
+				Packages:       []string{"kubelet"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"kubelet\" \"bin\" \"kubelet\" }}",
+			},
+		},
+	}, root, root, mgr1)
+
+	ctx := context.Background()
+	if err := overlay1.Apply(ctx); err != nil {
+		t.Fatalf("gen1 Apply() error = %v", err)
+	}
+
+	// Gen1: both units should start.
+	wantGen1 := []string{
+		"daemon-reload",
+		"start:containerd.service",
+		"start:kubelet.service",
+	}
+	if !reflect.DeepEqual(mgr1.Actions, wantGen1) {
+		t.Errorf("gen1 systemd actions = %v, want %v", mgr1.Actions, wantGen1)
+	}
+
+	// --- Generation 2: containerd (changed version), calico (new), kubelet removed ---
+	containerdSrcV2 := filepath.Join(t.TempDir(), "containerd-src-v2")
+	os.MkdirAll(filepath.Join(containerdSrcV2, "bin"), 0755)
+	os.WriteFile(filepath.Join(containerdSrcV2, "bin", "containerd"), []byte("containerd-v2"), 0755)
+
+	calicoSrc := filepath.Join(t.TempDir(), "calico-src")
+	os.MkdirAll(filepath.Join(calicoSrc, "bin"), 0755)
+	os.WriteFile(filepath.Join(calicoSrc, "bin", "calico-node"), []byte("calico-bin"), 0755)
+
+	mgr2 := &fakeSystemdManager{}
+	overlay2 := NewOverlay(OverlayConfig{
+		Version: "v2",
+		PackageByNames: map[string]OverlayPackageDef{
+			"containerd": {
+				Version: "2.0.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrcV2},
+			},
+			"calico": {
+				Version: "3.26.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: calicoSrc},
+			},
+		},
+		SystemdUnitsByName: map[string]OverlaySystemdUnitDef{
+			"containerd": {
+				Version:        "2.0.0",
+				Packages:       []string{"containerd"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}\nRestart=always",
+			},
+			"calico-node": {
+				Version:        "1.0.0",
+				Packages:       []string{"calico"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"calico\" \"bin\" \"calico-node\" }}",
+			},
+		},
+	}, root, root, mgr2)
+
+	if err := overlay2.Apply(ctx); err != nil {
+		t.Fatalf("gen2 Apply() error = %v", err)
+	}
+
+	// Gen2: kubelet stopped, containerd restarted (changed), calico-node started.
+	wantGen2 := []string{
+		"stop:kubelet.service",
+		"daemon-reload",
+		"start:calico-node.service",
+		"restart:containerd.service",
+	}
+	if !reflect.DeepEqual(mgr2.Actions, wantGen2) {
+		t.Errorf("gen2 systemd actions = %v, want %v", mgr2.Actions, wantGen2)
+	}
+}
+
+// TestOverlay_Apply_NoSystemdUnits_DaemonReload verifies that Apply with
+// no systemd units still calls daemon-reload (and nothing else).
+func TestOverlay_Apply_NoSystemdUnits_DaemonReload(t *testing.T) {
+	root := t.TempDir()
+	mgr := &fakeSystemdManager{}
+
+	overlay := NewOverlay(OverlayConfig{
+		Version: "v1",
+	}, root, root, mgr)
+
+	if err := overlay.Apply(context.Background()); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	want := []string{"daemon-reload"}
+	if !reflect.DeepEqual(mgr.Actions, want) {
+		t.Errorf("systemd actions = %v, want %v", mgr.Actions, want)
+	}
+}
+
+// TestOverlay_Apply_UnchangedUnits_NoRestart verifies that applying the
+// same overlay twice does not restart unchanged units.
+func TestOverlay_Apply_UnchangedUnits_NoRestart(t *testing.T) {
+	root := t.TempDir()
+
+	containerdSrc := filepath.Join(t.TempDir(), "containerd-src")
+	os.MkdirAll(filepath.Join(containerdSrc, "bin"), 0755)
+	os.WriteFile(filepath.Join(containerdSrc, "bin", "containerd"), []byte("containerd-bin"), 0755)
+
+	config := OverlayConfig{
+		Version: "v1",
+		PackageByNames: map[string]OverlayPackageDef{
+			"containerd": {
+				Version: "1.7.0",
+				Source:  OverlayPackageSource{Type: overlayPackageSourceTypeFile, URI: containerdSrc},
+			},
+		},
+		SystemdUnitsByName: map[string]OverlaySystemdUnitDef{
+			"containerd": {
+				Version:        "1.0.0",
+				Packages:       []string{"containerd"},
+				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}",
+			},
+		},
+	}
+
+	// First Apply: starts the unit.
+	mgr1 := &fakeSystemdManager{}
+	overlay1 := NewOverlay(config, root, root, mgr1)
+
+	ctx := context.Background()
+	if err := overlay1.Apply(ctx); err != nil {
+		t.Fatalf("first Apply() error = %v", err)
+	}
+
+	// Second Apply with same config: unchanged units should NOT be restarted.
+	mgr2 := &fakeSystemdManager{}
+	overlay2 := NewOverlay(config, root, root, mgr2)
+
+	if err := overlay2.Apply(ctx); err != nil {
+		t.Fatalf("second Apply() error = %v", err)
+	}
+
+	// Only daemon-reload expected — no start, stop, or restart.
+	want := []string{"daemon-reload"}
+	if !reflect.DeepEqual(mgr2.Actions, want) {
+		t.Errorf("second apply systemd actions = %v, want %v", mgr2.Actions, want)
 	}
 }
 
@@ -777,7 +998,7 @@ func TestPrepare_OverwritesExistingConfig(t *testing.T) {
 }
 
 func TestNewOverlay_DefaultRoot(t *testing.T) {
-	o := NewOverlay(OverlayConfig{Version: "v1"}, "", "")
+	o := NewOverlay(OverlayConfig{Version: "v1"}, "", "", nil)
 	if o.store.root != DefaultStoreRoot {
 		t.Errorf("store root = %q, want %q", o.store.root, DefaultStoreRoot)
 	}
@@ -787,7 +1008,7 @@ func TestNewOverlay_DefaultRoot(t *testing.T) {
 }
 
 func TestNewOverlay_CustomRoot(t *testing.T) {
-	o := NewOverlay(OverlayConfig{Version: "v1"}, "/custom/store", "/custom/etc")
+	o := NewOverlay(OverlayConfig{Version: "v1"}, "/custom/store", "/custom/etc", nil)
 	if o.store.root != "/custom/store" {
 		t.Errorf("store root = %q, want %q", o.store.root, "/custom/store")
 	}
@@ -798,7 +1019,7 @@ func TestNewOverlay_CustomRoot(t *testing.T) {
 
 func TestOverlay_Apply_WithoutPrepare(t *testing.T) {
 	root := t.TempDir()
-	o := NewOverlay(OverlayConfig{Version: "v1"}, root, root)
+	o := NewOverlay(OverlayConfig{Version: "v1"}, root, root, nil)
 
 	// Apply now calls Prepare internally, so an empty config with a valid
 	// version should succeed (empty overlay, no packages).
@@ -839,7 +1060,7 @@ func TestOverlay_Apply_EndToEnd(t *testing.T) {
 				TemplateInline: "[Service]\nExecStart={{ .GetPackagePath \"containerd\" \"bin\" \"containerd\" }}",
 			},
 		},
-	}, root, root)
+	}, root, root, nil)
 
 	ctx := context.Background()
 
@@ -920,7 +1141,7 @@ func TestOverlay_Apply_TwoGenerations(t *testing.T) {
 				},
 			},
 		},
-	}, root, root)
+	}, root, root, nil)
 
 	ctx := context.Background()
 	if _, err := overlay1.Prepare(ctx); err != nil {
@@ -954,7 +1175,7 @@ func TestOverlay_Apply_TwoGenerations(t *testing.T) {
 				},
 			},
 		},
-	}, root, root)
+	}, root, root, nil)
 
 	if _, err := overlay2.Prepare(ctx); err != nil {
 		t.Fatalf("gen2 Prepare() error = %v", err)

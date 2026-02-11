@@ -32,14 +32,14 @@ func (e *etcManager) staticPath() string {
 	return filepath.Join(e.etcDir(), etcStaticName)
 }
 
-// SymlinkToStatic creates (or atomically replaces) the symlink at
+// symlinkToStatic creates (or atomically replaces) the symlink at
 // <rootDir>/etc/static so it points to source, which should be the
 // etc overlay's <statePath>/etc directory containing the unified
 // symlink tree.
 //
 // The update is as atomic as the filesystem allows: create a temporary
 // symlink next to the target, then os.Rename over the old one.
-func (e *etcManager) SymlinkToStatic(source string) error {
+func (e *etcManager) symlinkToStatic(source string) error {
 	etcDir := e.etcDir()
 	if err := os.MkdirAll(etcDir, dirPermissions); err != nil {
 		return fmt.Errorf("creating etc dir %s: %w", etcDir, err)
@@ -81,7 +81,7 @@ func (e *etcManager) SymlinkToStatic(source string) error {
 // If a non-symlink regular file already exists at a target path in /etc,
 // it is skipped with an error collected but does not abort the walk —
 // we never silently overwrite files we don't manage.
-func (e *etcManager) PromoteStaticToEtc() error {
+func (e *etcManager) promoteStaticToEtc() error {
 	staticDir := e.staticPath()
 
 	// Resolve the static symlink to get the real directory to walk.
@@ -128,6 +128,18 @@ func (e *etcManager) PromoteStaticToEtc() error {
 		return fmt.Errorf("encountered %d errors promoting static entries (first: %w)", len(promoteErrors), promoteErrors[0])
 	}
 
+	return nil
+}
+
+// Apply activates a new etc generation by pointing <rootDir>/etc/static at
+// source and then promoting all entries into /etc as symlinks.
+func (e *etcManager) Apply(source string) error {
+	if err := e.symlinkToStatic(source); err != nil {
+		return fmt.Errorf("creating static symlink: %w", err)
+	}
+	if err := e.promoteStaticToEtc(); err != nil {
+		return fmt.Errorf("promoting static entries to etc: %w", err)
+	}
 	return nil
 }
 
@@ -255,4 +267,16 @@ func isStaticSymlink(dest, staticPath string) bool {
 	}
 	// filepath.Rel returns a path starting with ".." if dest is outside staticPath.
 	return len(rel) > 0 && rel[0] != '.'
+}
+
+// CurrentStaticTarget reads the current /etc/static symlink and returns
+// the directory it points to, or "" if the symlink does not exist or cannot
+// be read. This is used to discover the previous generation's etc tree
+// before replacing it.
+func (e *etcManager) CurrentStaticTarget() string {
+	target, err := os.Readlink(e.staticPath())
+	if err != nil {
+		return ""
+	}
+	return target
 }

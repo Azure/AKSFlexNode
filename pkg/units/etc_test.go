@@ -7,16 +7,16 @@ import (
 	"testing"
 )
 
-func TestEtcManager_SymlinkToStatic_CreatesSymlink(t *testing.T) {
+func TestEtcManager_symlinkToStatic_CreatesSymlink(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
 	source := filepath.Join(t.TempDir(), "etc-overlay", "etc")
 	os.MkdirAll(source, 0755)
 
-	err := mgr.SymlinkToStatic(source)
+	err := mgr.symlinkToStatic(source)
 	if err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
 	wantPath := filepath.Join(rootDir, "etc", "static")
@@ -30,7 +30,7 @@ func TestEtcManager_SymlinkToStatic_CreatesSymlink(t *testing.T) {
 	}
 }
 
-func TestEtcManager_SymlinkToStatic_ReplacesExisting(t *testing.T) {
+func TestEtcManager_symlinkToStatic_ReplacesExisting(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -39,12 +39,12 @@ func TestEtcManager_SymlinkToStatic_ReplacesExisting(t *testing.T) {
 	source2 := filepath.Join(t.TempDir(), "overlay-v2", "etc")
 	os.MkdirAll(source2, 0755)
 
-	if err := mgr.SymlinkToStatic(source1); err != nil {
-		t.Fatalf("first SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(source1); err != nil {
+		t.Fatalf("first symlinkToStatic() error = %v", err)
 	}
 
-	if err := mgr.SymlinkToStatic(source2); err != nil {
-		t.Fatalf("second SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(source2); err != nil {
+		t.Fatalf("second symlinkToStatic() error = %v", err)
 	}
 
 	dest, err := os.Readlink(mgr.staticPath())
@@ -56,15 +56,15 @@ func TestEtcManager_SymlinkToStatic_ReplacesExisting(t *testing.T) {
 	}
 }
 
-func TestEtcManager_SymlinkToStatic_CreatesEtcDir(t *testing.T) {
+func TestEtcManager_symlinkToStatic_CreatesEtcDir(t *testing.T) {
 	rootDir := filepath.Join(t.TempDir(), "nonexistent")
 	mgr := newEtcManager(rootDir)
 
 	source := filepath.Join(t.TempDir(), "overlay", "etc")
 	os.MkdirAll(source, 0755)
 
-	if err := mgr.SymlinkToStatic(source); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(source); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
 	info, err := os.Stat(filepath.Join(rootDir, "etc"))
@@ -76,7 +76,7 @@ func TestEtcManager_SymlinkToStatic_CreatesEtcDir(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_CreatesSymlinks(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_CreatesSymlinks(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -86,12 +86,12 @@ func TestEtcManager_PromoteStaticToEtc_CreatesSymlinks(t *testing.T) {
 	os.WriteFile(filepath.Join(overlayDir, "containerd", "config.toml"), []byte("cfg"), 0644)
 	os.WriteFile(filepath.Join(overlayDir, "hosts"), []byte("hosts-data"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
 	// Check containerd/config.toml symlink.
@@ -124,7 +124,7 @@ func TestEtcManager_PromoteStaticToEtc_CreatesSymlinks(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_CreatesParentDirs(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_CreatesParentDirs(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -132,12 +132,12 @@ func TestEtcManager_PromoteStaticToEtc_CreatesParentDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(overlayDir, "systemd", "system"), 0755)
 	os.WriteFile(filepath.Join(overlayDir, "systemd", "system", "foo.service"), []byte("unit"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
 	linkPath := filepath.Join(rootDir, "etc", "systemd", "system", "foo.service")
@@ -146,7 +146,7 @@ func TestEtcManager_PromoteStaticToEtc_CreatesParentDirs(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_Idempotent(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_Idempotent(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -154,16 +154,16 @@ func TestEtcManager_PromoteStaticToEtc_Idempotent(t *testing.T) {
 	os.MkdirAll(overlayDir, 0755)
 	os.WriteFile(filepath.Join(overlayDir, "hosts"), []byte("hosts"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
 	// Call twice — second call should be a no-op.
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("first PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("first promoteStaticToEtc() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("second PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("second promoteStaticToEtc() error = %v", err)
 	}
 
 	dest, err := os.Readlink(filepath.Join(rootDir, "etc", "hosts"))
@@ -176,7 +176,7 @@ func TestEtcManager_PromoteStaticToEtc_Idempotent(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -184,8 +184,8 @@ func TestEtcManager_PromoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 	os.MkdirAll(overlayDir, 0755)
 	os.WriteFile(filepath.Join(overlayDir, "resolv.conf"), []byte("nameserver 8.8.8.8"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
 	// Create a stale symlink pointing somewhere else.
@@ -193,9 +193,9 @@ func TestEtcManager_PromoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 	os.MkdirAll(etcDir, 0755)
 	os.Symlink("/some/old/path", filepath.Join(etcDir, "resolv.conf"))
 
-	// PromoteStaticToEtc should replace it.
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("PromoteStaticToEtc() error = %v", err)
+	// promoteStaticToEtc should replace it.
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
 	dest, err := os.Readlink(filepath.Join(rootDir, "etc", "resolv.conf"))
@@ -208,7 +208,7 @@ func TestEtcManager_PromoteStaticToEtc_ReplacesStaleSymlink(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_RefusesNonSymlink(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_RefusesNonSymlink(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -216,24 +216,24 @@ func TestEtcManager_PromoteStaticToEtc_RefusesNonSymlink(t *testing.T) {
 	os.MkdirAll(overlayDir, 0755)
 	os.WriteFile(filepath.Join(overlayDir, "important.conf"), []byte("overlay-version"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
 
 	// Create a real file at the target location.
 	etcDir := filepath.Join(rootDir, "etc")
 	os.WriteFile(filepath.Join(etcDir, "important.conf"), []byte("do not touch"), 0644)
 
-	err := mgr.PromoteStaticToEtc()
+	err := mgr.promoteStaticToEtc()
 	if err == nil {
-		t.Fatal("PromoteStaticToEtc() should report error for non-symlink conflict")
+		t.Fatal("promoteStaticToEtc() should report error for non-symlink conflict")
 	}
 	if !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Errorf("error = %q, want it to mention refusing to overwrite", err)
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -243,11 +243,11 @@ func TestEtcManager_PromoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 	os.WriteFile(filepath.Join(overlay1, "hosts"), []byte("hosts"), 0644)
 	os.WriteFile(filepath.Join(overlay1, "systemd", "system", "foo.service"), []byte("foo"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlay1); err != nil {
-		t.Fatalf("gen1 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay1); err != nil {
+		t.Fatalf("gen1 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen1 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen1 promoteStaticToEtc() error = %v", err)
 	}
 
 	// Verify both exist.
@@ -262,11 +262,11 @@ func TestEtcManager_PromoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 	os.MkdirAll(overlay2, 0755)
 	os.WriteFile(filepath.Join(overlay2, "hosts"), []byte("hosts-v2"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlay2); err != nil {
-		t.Fatalf("gen2 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay2); err != nil {
+		t.Fatalf("gen2 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen2 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen2 promoteStaticToEtc() error = %v", err)
 	}
 
 	// hosts should still exist.
@@ -281,7 +281,7 @@ func TestEtcManager_PromoteStaticToEtc_RemovesStaleEntries(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -290,22 +290,22 @@ func TestEtcManager_PromoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(overlay1, "deep", "nested"), 0755)
 	os.WriteFile(filepath.Join(overlay1, "deep", "nested", "file.conf"), []byte("data"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlay1); err != nil {
-		t.Fatalf("gen1 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay1); err != nil {
+		t.Fatalf("gen1 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen1 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen1 promoteStaticToEtc() error = %v", err)
 	}
 
 	// Gen 2: empty overlay (everything removed).
 	overlay2 := filepath.Join(t.TempDir(), "etc")
 	os.MkdirAll(overlay2, 0755)
 
-	if err := mgr.SymlinkToStatic(overlay2); err != nil {
-		t.Fatalf("gen2 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay2); err != nil {
+		t.Fatalf("gen2 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen2 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen2 promoteStaticToEtc() error = %v", err)
 	}
 
 	// The deep/nested/ dirs should be cleaned up.
@@ -315,7 +315,7 @@ func TestEtcManager_PromoteStaticToEtc_CleansEmptyParentDirs(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
@@ -324,11 +324,11 @@ func TestEtcManager_PromoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 	os.MkdirAll(overlay1, 0755)
 	os.WriteFile(filepath.Join(overlay1, "manual.conf"), []byte("managed"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlay1); err != nil {
-		t.Fatalf("gen1 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay1); err != nil {
+		t.Fatalf("gen1 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen1 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen1 promoteStaticToEtc() error = %v", err)
 	}
 
 	// Now manually replace the /etc/manual.conf symlink to point elsewhere
@@ -339,11 +339,11 @@ func TestEtcManager_PromoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 	overlay2 := filepath.Join(t.TempDir(), "etc")
 	os.MkdirAll(overlay2, 0755)
 
-	if err := mgr.SymlinkToStatic(overlay2); err != nil {
-		t.Fatalf("gen2 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay2); err != nil {
+		t.Fatalf("gen2 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen2 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen2 promoteStaticToEtc() error = %v", err)
 	}
 
 	// The symlink should still exist because it no longer points into static.
@@ -352,18 +352,18 @@ func TestEtcManager_PromoteStaticToEtc_SkipsNonManagedSymlinks(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_EmptyStaticDir(t *testing.T) {
+func TestEtcManager_promoteStaticToEtc_EmptyStaticDir(t *testing.T) {
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
 
 	overlayDir := filepath.Join(t.TempDir(), "etc")
 	os.MkdirAll(overlayDir, 0755)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
 	// /etc should exist but contain only the static symlink (no promoted entries).
@@ -389,11 +389,11 @@ func TestEtcManager_EndToEnd_TwoGenerations(t *testing.T) {
 	os.WriteFile(filepath.Join(overlay1, "containerd", "config.toml"), []byte("gen1-cfg"), 0644)
 	os.WriteFile(filepath.Join(overlay1, "systemd", "system", "containerd.service"), []byte("gen1-unit"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlay1); err != nil {
-		t.Fatalf("gen1 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay1); err != nil {
+		t.Fatalf("gen1 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen1 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen1 promoteStaticToEtc() error = %v", err)
 	}
 
 	// Verify gen1 content resolves.
@@ -411,11 +411,11 @@ func TestEtcManager_EndToEnd_TwoGenerations(t *testing.T) {
 	os.WriteFile(filepath.Join(overlay2, "containerd", "config.toml"), []byte("gen2-cfg"), 0644)
 	os.WriteFile(filepath.Join(overlay2, "resolv.conf"), []byte("nameserver 1.1.1.1"), 0644)
 
-	if err := mgr.SymlinkToStatic(overlay2); err != nil {
-		t.Fatalf("gen2 SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlay2); err != nil {
+		t.Fatalf("gen2 symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("gen2 PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("gen2 promoteStaticToEtc() error = %v", err)
 	}
 
 	// Verify gen2 containerd config now shows updated content.
@@ -449,10 +449,10 @@ func TestEtcManager_EndToEnd_TwoGenerations(t *testing.T) {
 	}
 }
 
-func TestEtcManager_PromoteStaticToEtc_WalksSymlinksInStaticDir(t *testing.T) {
-	// The static dir itself is a symlink (created by SymlinkToStatic), and
+func TestEtcManager_promoteStaticToEtc_WalksSymlinksInStaticDir(t *testing.T) {
+	// The static dir itself is a symlink (created by symlinkToStatic), and
 	// the etc overlay inside it contains symlinks pointing into package
-	// state dirs. PromoteStaticToEtc should follow symlinks in the static
+	// state dirs. promoteStaticToEtc should follow symlinks in the static
 	// tree to discover the leaf files.
 	rootDir := t.TempDir()
 	mgr := newEtcManager(rootDir)
@@ -470,11 +470,11 @@ func TestEtcManager_PromoteStaticToEtc_WalksSymlinksInStaticDir(t *testing.T) {
 		filepath.Join(overlayDir, "containerd", "config.toml"),
 	)
 
-	if err := mgr.SymlinkToStatic(overlayDir); err != nil {
-		t.Fatalf("SymlinkToStatic() error = %v", err)
+	if err := mgr.symlinkToStatic(overlayDir); err != nil {
+		t.Fatalf("symlinkToStatic() error = %v", err)
 	}
-	if err := mgr.PromoteStaticToEtc(); err != nil {
-		t.Fatalf("PromoteStaticToEtc() error = %v", err)
+	if err := mgr.promoteStaticToEtc(); err != nil {
+		t.Fatalf("promoteStaticToEtc() error = %v", err)
 	}
 
 	// The /etc/containerd/config.toml symlink should point through static.
