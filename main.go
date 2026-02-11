@@ -25,7 +25,8 @@ func main() {
 	}
 
 	// Add global flags for configuration
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required for agent/unbootstrap)")
+	_ = rootCmd.PersistentFlags().MarkHidden("config")
 	// Don't mark as required globally - we'll check in PersistentPreRunE for commands that need it
 
 	// Add commands
@@ -49,8 +50,9 @@ func main() {
 
 	// Set up persistent pre-run to initialize config and logger
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		// Skip config loading for version command
-		if cmd.Name() == "version" {
+		// Skip config loading for commands that don't need it
+		switch cmd.Name() {
+		case "version":
 			return nil
 		}
 

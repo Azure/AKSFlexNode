@@ -3,7 +3,6 @@ package config
 import "os"
 
 // Config represents the complete agent configuration structure.
-// It contains Azure-specific settings and agent operational settings.
 type Config struct {
 	Azure      AzureConfig      `json:"azure"`
 	Agent      AgentConfig      `json:"agent"`
@@ -15,13 +14,11 @@ type Config struct {
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
 
-	// Internal field to track if ManagedIdentity was explicitly set in config
-	// This is necessary because viper unmarshals empty JSON objects {} as nil
+	// Tracks if ManagedIdentity was explicitly set (viper unmarshals empty {} as nil)
 	isMIExplicitlySet bool `json:"-"`
 }
 
-// AzureConfig holds Azure-specific configuration required for connecting to Azure services.
-// All fields except Cloud are required for proper operation.
+// AzureConfig holds Azure-specific configuration for connecting to Azure services.
 type AzureConfig struct {
 	SubscriptionID   string                  `json:"subscriptionId"`             // Azure subscription ID
 	TenantID         string                  `json:"tenantId"`                   // Azure tenant ID
@@ -34,7 +31,6 @@ type AzureConfig struct {
 }
 
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
-// When provided, service principal authentication will be used instead of Azure CLI.
 type ServicePrincipalConfig struct {
 	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
 	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
@@ -42,21 +38,23 @@ type ServicePrincipalConfig struct {
 }
 
 // ManagedIdentityConfig holds managed identity authentication configuration.
-// It can only be used when the agent is running on an Azure VM with a managed identity assigned.
 type ManagedIdentityConfig struct {
 	ClientID string `json:"clientId,omitempty"` // Client ID of the managed identity (optional, for VMs with multiple identities)
 }
 
 // BootstrapTokenConfig holds Kubernetes bootstrap token authentication configuration.
-// Bootstrap tokens provide a lightweight authentication method for node joining.
 type BootstrapTokenConfig struct {
 	Token string `json:"token"` // Bootstrap token in format: <token-id>.<token-secret>
 }
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
 type TargetClusterConfig struct {
-	ResourceID        string `json:"resourceId"` // Full resource ID of the target AKS cluster
-	Location          string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
+	ResourceID        string `json:"resourceId"`                                           // Full resource ID of the target AKS cluster
+	Location          string `json:"location"`                                             // Azure region of the cluster (e.g., "eastus", "westus2")
+	IsPrivateCluster  bool   `json:"private" mapstructure:"private"`                       // Whether this is a private AKS cluster (requires Gateway/VPN setup)
+	GatewayVMSize     string `json:"gatewayVMSize,omitempty" mapstructure:"gatewayVMSize"` // VPN Gateway VM size (defaults to "Standard_D2s_v3")
+	GatewayPort       int    `json:"gatewayPort,omitempty" mapstructure:"gatewayPort"`     // VPN Gateway port (defaults to 51820)
+	CleanupMode       string `json:"-"`                                                    // Runtime-only, set by CLI flag for unbootstrap
 	Name              string // will be populated from ResourceID
 	ResourceGroup     string // will be populated from ResourceID
 	SubscriptionID    string // will be populated from ResourceID
@@ -130,7 +128,7 @@ type KubernetesPathsConfig struct {
 	KubeletDir      string `json:"kubeletDir"`
 }
 
-// CNIPathsConfig holds file system paths related to CNI plugins and configurations.
+// CNIConfig holds configuration settings for CNI plugins.
 type CNIConfig struct {
 	Version string `json:"version"`
 }
@@ -149,7 +147,6 @@ func (cfg *Config) IsSPConfigured() bool {
 }
 
 // IsMIConfigured checks if managed identity configuration is provided in the configuration
-// Uses internal flag set during config loading to handle viper's empty object behavior
 func (cfg *Config) IsMIConfigured() bool {
 	return cfg.isMIExplicitlySet
 }

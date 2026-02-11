@@ -1,53 +1,44 @@
 # Binaries for programs and plugins
+# Build artifacts
+# Config files with sensitive data (keep sample config)
+# Go workspace file
+# IDE and editor files
+# Log files
+# OS generated files
+# Output of the go coverage tool, specifically when used with LiteIDE
+# Test binary, built with `go test -c`
+# Test coverage reports
+*.dll
+*.dylib
 *.exe
 *.exe~
-*.dll
-*.so
-*.dylib
-aks-flex-node
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
+*.log
 *.out
-
-# Test coverage reports
-coverage.out
-coverage.html
-coverage.xml
-
-# Go workspace file
-go.work
-
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
+*.so
 *.swo
+*.swp
+*.test
 *~
-
-# OS generated files
+._*
 .DS_Store
 .DS_Store?
-._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
-Thumbs.db
-
-# Log files
-*.log
-/var/log/
-
-# Config files with sensitive data (keep sample config)
-config.json
-
-# Environment files with secrets
+.idea/
+.vscode/
 .env
 .env.local
 .env.*.local
-
-# Build artifacts
 /build/
-/dist/
+/dist/AKSFlexNode
+/var/log/
+AKSFlexNode
+Standard_D8pds_v6_sku.json
+Thumbs.db
+aks-flex-node
+config.json
+coverage.html
+coverage.out
+coverage.xml
+ehthumbs.db
+go.work
