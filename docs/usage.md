@@ -34,7 +34,7 @@ Use this comparison to choose the deployment path that best fits your requiremen
   - **Recommended:** 40GB free space
   - **Production:** 50GB+ free space
 - **Network:** Outbound internet connectivity (see Network Requirements below)
-- **Privileges:** Root/sudo access required
+- **Privileges:** Root/sudo access required (the agent runs as root)
 
 ### Storage Breakdown
 - **Base components:** ~3GB (containerd, runc, Kubernetes binaries, CNI plugins, Arc agent if enabled)
@@ -152,15 +152,15 @@ You need use Azure CLI credentials for Arc registration:
 # Login to Azure
 az login
 
-# The agent will use your CLI credentials
-aks-flex-node agent --config /etc/aks-flex-node/config.json
+# The agent will use your CLI credentials (requires root)
+sudo aks-flex-node agent --config /etc/aks-flex-node/config.json
 ```
 
 ### Running the Agent
 
 ```bash
-# Direct execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
+# Direct execution (requires root)
+sudo aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 # Or using systemd
 sudo systemctl enable --now aks-flex-node-agent
@@ -334,8 +334,8 @@ EOF
 ### Running the Agent
 
 ```bash
-# Direct execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
+# Direct execution (requires root)
+sudo aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 # Or using systemd
 sudo systemctl enable --now aks-flex-node-agent
@@ -547,8 +547,8 @@ EOF
 ### Running the Agent
 
 ```bash
-# Direct execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
+# Direct execution (requires root)
+sudo aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 # Or using systemd
 sudo systemctl enable --now aks-flex-node-agent
@@ -610,8 +610,8 @@ This approach is more secure than long-lived credentials because:
 
 | Command | Description | Usage |
 |---------|-------------|-------|
-| `agent` | Start agent daemon (bootstrap + monitoring) | `aks-flex-node agent --config /etc/aks-flex-node/config.json` |
-| `unbootstrap` | Clean removal of all components | `aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json` |
+| `agent` | Start agent daemon (bootstrap + monitoring) | `sudo aks-flex-node agent --config /etc/aks-flex-node/config.json` |
+| `unbootstrap` | Clean removal of all components | `sudo aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json` |
 | `version` | Show version information | `aks-flex-node version` |
 
 ### Monitoring Logs
@@ -632,8 +632,8 @@ journalctl -u kubelet -f
 Remove the node from the cluster and clean up:
 
 ```bash
-# Run unbootstrap
-aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
+# Run unbootstrap (requires root)
+sudo aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
 
 # Verify node removed from cluster
 kubectl get nodes
@@ -649,7 +649,6 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/unin
 
 The uninstall script will:
 - Stop and disable aks-flex-node agent service
-- Remove the service user and permissions
 - Clean up all directories and configuration files
 - Remove the binary and systemd service files
 

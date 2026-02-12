@@ -238,7 +238,6 @@ func createLogFileIfNotExists(logFilePath string) error {
 	}
 
 	// Use WriteFileAtomicSystem to create an empty log file with proper permissions
-	// This handles all the sudo logic and system path handling automatically
 	if err := utils.WriteFileAtomicSystem(logFilePath, []byte{}, 0644); err != nil {
 		return err
 	}
