@@ -34,18 +34,8 @@ func main() {
 	rootCmd.AddCommand(NewVersionCommand())
 
 	// Set up context with signal handling
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-
-	// Handle shutdown signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		// Use a basic logger for shutdown signal since context may not be available
-		fmt.Println("Received shutdown signal, cancelling operations...")
-		cancel()
-	}()
 
 	// Set up persistent pre-run to initialize config and logger
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
