@@ -21,8 +21,8 @@ the expected behaviors for key lifecycle operations.
 - We will limit the support scope to Linux-based nodes and focus on Ubuntu distro for now.
   This is because Ubuntu is the widely and commonly available Linux distribution
   across the target environments.
-- Credential management (bootstrap token rotation, CA renewal, etc) is out of scope
-  for this document, but will be handled by the operations described below.
+- Credential management (bootstrap token distribution & rotation, CA renewal, etc)
+  is out of scope for this document, but will be handled by the operations described below.
 - Extra security harding and compliance requirements are out of scope for this document,
   but can be added as optional layers on top of the baseline environment in the future.
 - Detailed GPU device plugin requirements and enablement strategies will be addressed in
