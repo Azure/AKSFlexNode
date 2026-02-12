@@ -40,17 +40,20 @@ the expected behaviors for key lifecycle operations.
 - Time synchronization configured;
 - Proper host level DNS setup;
 - Outbound connectivity to cluster control plane endpoint;
-- Container runtime:
+- Container runtime components:
   * `containerd` w/ 2.0+ version;
   * `runc`
 - Kubernetes components:
   * `kubelet` matching with the target worker node version;
-  * Control plane public CA certificate(s);
-  * TLS bootstrap configurations;
   * Other cloud provider binaries;
 - NFTables / IPtables installed for Kubernetes network policies;
 - Network forward, IP masquerade and bridge settings configured for Kubernetes networking;
 - Support tools / binaries (e.g., `curl`, `ping`, etc) for diagnostics and troubleshooting;
+- Configurations:
+  * Standard container runtime configurations layout on the host;
+  * Standard Kubernetes node configurations layout on the host;
+  * Control plane public CA certificate(s);
+  * TLS bootstrap configurations;
 
 ### GPU-Capable Nodes
 
@@ -58,7 +61,8 @@ the expected behaviors for key lifecycle operations.
 - GPU drivers and runtime (e.g. NVIDIA drivers and CUDA toolkit for NVIDIA GPUs)
   compatible with OS kernel;
 - RDMA, SR-IOV and InfiniBand drivers and runtime for GPU direct communication (if applicable);
-- Updated container runtime with GPU support;
+- Configurations:
+  * Updated container runtime configurations with support for GPU drivers and runtimes;
 
 ### Additional Requirements
 
@@ -66,6 +70,7 @@ the expected behaviors for key lifecycle operations.
 - CNI plugin binaries and configurations;
 - Node-problem-detector;
 - Node local DNS caching;
+- VPN components for cross region/cloud connectivity;
 - Background auto-repair agent;
 - Pre-cached container images for critical system components;
 - Support for adding optional feature layers & customizations during node image
@@ -107,12 +112,18 @@ requirements and can be instantiated consistently across environments.
 
 **Expected behaviors**:
 
-- Produced image is **immutable** and **reproducible** giving the same inputs.
+- Produced image is **immutable**[^1] and **reproducible**[^2] giving the same inputs.
 - Sources for all installed components **MUST** be pinned with qualified versions
   and checksums for traceability and security.
 - Every baking step fully completes without partial failures.
 - Image is able to boot successfully and reach a "ready-to-bootstrap" state.
 - GPU image boot with drivers loaded.
+
+[^1]: Immutable means once the image is built and published, it should not be modified.
+      Any updates or changes should trigger a new image build with a new version/tag.
+
+[^2]: Reproducible means given the same inputs and build process, the output image
+      should be identical with the installed components/configurations setup.
 
 **Failure handling**:
 
@@ -127,10 +138,11 @@ node that can join the cluster and serve workloads.
 **Inputs**:
 
 - Cluster endpoint (API server URL, CA bundle)
-- Kubelet bootstrap credentials
+- Kubelet bootstrap credentials (node identity credentials)
 - Node configuration (e.g., kubelet config, runtime settings, node labels/taints)
 - Environment-specific instance metadata (node name, region/zone). Can be
   exposed later via cloud provider.
+- VPN configurations for cross region/cloud connectivity if applicable
 
 **Actions**:
 
