@@ -512,6 +512,8 @@ CA_CERT_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].clu
 ```
 
 # Create config file (with bootstrap token)
+
+```
 sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 {
   "azure": {
@@ -540,6 +542,8 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   }
 }
 EOF
+```
+
 ### Running the Agent
 
 ```bash

@@ -52,8 +52,5 @@ config.json
 /build/
 /dist/
 
-overlayconfig.json
-node-bootstrapper
-
-# QEMU VM artifacts (images, disks, seed ISOs)
-.vm/
+# qemu vm state
+.vm

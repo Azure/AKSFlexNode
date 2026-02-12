@@ -2,6 +2,7 @@ package kubelet
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -165,6 +166,7 @@ func (i *Installer) createRequiredDirectories() error {
 		kubeletManifestsDir,    // For pod manifests
 		kubeletVolumePluginDir, // For volume plugins
 		kubeletVarDir,          // For kubelet data
+		kubernetesPKIDir,       // For PKI certificates
 	}
 
 	for _, dir := range directories {
@@ -216,6 +218,7 @@ KUBELET_FLAGS="\
   --anonymous-auth=false \
   --authentication-token-webhook=true \
   --authorization-mode=Webhook \
+  --client-ca-file=%s \
   --cgroup-driver=systemd \
   --cgroups-per-qos=true \
   --enforce-node-allocatable=pods \
@@ -238,6 +241,7 @@ KUBELET_FLAGS="\
   "`,
 		strings.Join(labels, ","),
 		i.config.Node.Kubelet.Verbosity,
+		apiserverClientCAPath,
 		i.config.Node.Kubelet.DNSServiceIP,
 		mapToEvictionThresholds(i.config.Node.Kubelet.EvictionHard, ","),
 		mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ","),
@@ -505,6 +509,30 @@ func (i *Installer) writeTokenScript(tokenScript string) error {
 	return nil
 }
 
+// writeClientCACertificate writes the API server client CA certificate to disk for kubelet authentication
+func (i *Installer) writeClientCACertificate(caCertData string) error {
+	if caCertData == "" {
+		i.logger.Debug("No CA certificate data provided, skipping client CA file creation")
+		return nil
+	}
+
+	i.logger.Info("Writing API server client CA certificate")
+
+	// Decode base64 CA certificate data
+	caCertBytes, err := base64.StdEncoding.DecodeString(caCertData)
+	if err != nil {
+		return fmt.Errorf("failed to decode CA certificate data: %w", err)
+	}
+
+	// Write CA certificate atomically with proper permissions
+	if err := utils.WriteFileAtomicSystem(apiserverClientCAPath, caCertBytes, 0o644); err != nil {
+		return fmt.Errorf("failed to write API server client CA certificate: %w", err)
+	}
+
+	i.logger.Infof("API server client CA certificate written to %s", apiserverClientCAPath)
+	return nil
+}
+
 // createKubeconfigWithExecCredential creates kubeconfig with exec credential provider for authentication
 func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) error {
 	// Fetch cluster credentials from Azure (for Arc/SP/MI modes)
@@ -518,6 +546,11 @@ func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) erro
 	serverURL, caCertData, err := utils.ExtractClusterInfo(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to extract cluster info from kubeconfig: %w", err)
+	}
+
+	// Write CA certificate to file for kubelet client authentication
+	if err := i.writeClientCACertificate(caCertData); err != nil {
+		return fmt.Errorf("failed to write client CA certificate: %w", err)
 	}
 
 	// Create cluster configuration based on whether we have CA cert
@@ -587,6 +620,11 @@ func (i *Installer) createKubeconfigWithBootstrapToken(ctx context.Context) erro
 	serverURL := i.config.Node.Kubelet.ServerURL
 	caCertData := i.config.Node.Kubelet.CACertData
 	bootstrapToken := i.config.Azure.BootstrapToken.Token
+
+	// Write CA certificate to file for kubelet client authentication
+	if err := i.writeClientCACertificate(caCertData); err != nil {
+		return fmt.Errorf("failed to write client CA certificate: %w", err)
+	}
 
 	// Get node hostname for audit logging
 	hostname, err := os.Hostname()
