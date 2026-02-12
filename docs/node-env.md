@@ -21,15 +21,22 @@ the expected behaviors for key lifecycle operations.
 - We will limit the support scope to Linux-based nodes and focus on Ubuntu distro for now.
   This is because Ubuntu is the widely and commonly available Linux distribution
   across the target environments.
+- Credential management (bootstrap token rotation, CA renewal, etc) is out of scope
+  for this document, but will be handled by the operations described below.
+- Extra security harding and compliance requirements are out of scope for this document,
+  but can be added as optional layers on top of the baseline environment in the future.
+- Detailed GPU device plugin requirements and enablement strategies will be addressed in
+  a separate document.
 
 ## Baseline Environment Requirements
 
 ### CPU Only Nodes
 
 - A Linux-based OS with `systemd` init system;
-- Modern Linux kernel (currently LTS or supported release) enabled with cgroup v2;
+- Modern Linux kernel (currently LTS or supported release, minimum 5.19) enabled
+  with cgroup v2, namespaces, overlayfs, eBPF etc for container support.
 - Swap disabled;
-- Syslog with rotation configured;
+- System level logging enabled with rotation configured;
 - Time synchronization configured;
 - Proper host level DNS setup;
 - Outbound connectivity to cluster control plane endpoint;
@@ -64,10 +71,11 @@ the expected behaviors for key lifecycle operations.
 - Support for adding optional feature layers & customizations during node image
   baking or bootstrapping process;
 - In some environments, pre-built VHD images might not be available. In such
-  cases, the node bootstrapping process should also handle the initial OS image baking and provisioning to ensure a consistent baseline environment.
+  cases, the node bootstrapping process should also handle the initial OS image
+  baking and provisioning to ensure a consistent baseline environment.
 - In some environments, the node might have limited outbound connectivity
-  (e.g., no direct access to public internet). In such cases, the node bootstrapping process should also handle pulling necessary components
-  through proxy or fallback endpoints.
+  (e.g., no direct access to public internet). In such cases, the node bootstrapping
+  process should also handle pulling necessary components through proxy or fallback endpoints.
 
 ## Node Lifecycle Operations
 
@@ -148,7 +156,9 @@ node that can join the cluster and serve workloads.
 
 ### Node Bootstrapping w/ Baking
 
-**Purpose**: In environments without pre-baked images, the bootstrapping process should also handle the initial image baking and provisioning to ensure a consistent baseline environment.
+**Purpose**: In environments without pre-baked images, the bootstrapping process
+should also handle the initial image baking and provisioning to ensure a
+consistent baseline environment.
 
 **Inputs**:
 
@@ -180,14 +190,14 @@ maintaining node health and minimizing disruption to workloads.
 
 **Node Rebooting**
 
-- Inputs: N/A
+- Inputs: node name and reboot type (planned vs unplanned)
 - Expected behaviors:
   * Node is cordoned/drained before planned reboot
   * Node becomes `Ready` within a target SLA after reboot
 
 **Node Repairing**
 
-- Inputs: N/A
+- Inputs: node name and repair category
 - Expected behaviors:
   * Monitoring components detect node issues and trigger repair actions
   * Impacted services are being restarted
@@ -203,7 +213,8 @@ maintaining node health and minimizing disruption to workloads.
 
 _TODO_: This part needs more details and breakdown designs
 
-**Purpose**: Upgrade on node components to newer versions.
+**Purpose**: Upgrade on node components (kubelet, container runtime,
+CNI plugins) to newer versions.
 
 **Inputs**:
 
@@ -266,7 +277,7 @@ recovering from failures or applying updates.
 ### Node Deletion
 
 **Purpose**: Remove a node from the cluster intentionally, either for
-scaling down, decommissioning, or drifting replacement.
+scaling down, decommissioning, or drift replacement.
 
 **Inputs**: node name
 
