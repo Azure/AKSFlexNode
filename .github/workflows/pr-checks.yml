@@ -117,6 +117,13 @@ jobs:
           # we let the report trigger content trigger a failure using the GitHub Security features.
           args: "-no-fail -fmt sarif -out results.sarif ./..."
 
+      # Fix duplicate tags in SARIF file (workaround for https://github.com/golang/go/issues/75890)
+      - name: Deduplicate SARIF tags
+        run: |
+          set -e
+          jq '(.runs[].tool.driver.rules[]?.properties.tags) |= (unique)' results.sarif > results-cleaned.sarif
+          mv results-cleaned.sarif results.sarif
+
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@v4
         if: always()
