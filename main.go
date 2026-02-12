@@ -19,9 +19,10 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "aks-flex-node",
-		Short: "AKS Flex Node Agent",
-		Long:  "Azure Kubernetes Service Flex Node Agent for edge computing scenarios",
+		Use:          "aks-flex-node",
+		Short:        "AKS Flex Node Agent",
+		Long:         "Azure Kubernetes Service Flex Node Agent for edge computing scenarios",
+		SilenceUsage: true,
 	}
 
 	// Add global flags for configuration
@@ -29,6 +30,7 @@ func main() {
 	// Don't mark as required globally - we'll check in PersistentPreRunE for commands that need it
 
 	// Add commands
+	rootCmd.AddCommand(NewApplyCommand())
 	rootCmd.AddCommand(NewAgentCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
