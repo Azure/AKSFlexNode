@@ -112,13 +112,10 @@ jobs:
           cache: true
 
       - name: Run Gosec Security Scanner
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -fmt=sarif -out=results.sarif -no-fail ./...
-          # Remove invalid fixes from SARIF to prevent upload errors
-          jq 'del(.runs[].results[].fixes)' results.sarif > results-clean.sarif
-          mv results-clean.sarif results.sarif
-        continue-on-error: true
+        uses: securego/gosec@master
+        with:
+          # we let the report trigger content trigger a failure using the GitHub Security features.
+          args: "-no-fail -fmt sarif -out results.sarif ./..."
 
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@v4
