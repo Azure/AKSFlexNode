@@ -44,6 +44,7 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 		kubeletKubeConfig,
 		kubeletBootstrapKubeConfig,
 		kubeletTokenScriptPath,
+		apiserverClientCAPath,
 	}
 
 	// Remove kubelet configuration directories
