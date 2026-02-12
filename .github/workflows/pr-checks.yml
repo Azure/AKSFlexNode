@@ -121,6 +121,7 @@ jobs:
       - name: Deduplicate SARIF tags
         run: |
           set -e
+          cat results.sarif
           jq '(.runs[].tool.driver.rules[]?.properties.tags) |= (unique)' results.sarif > results-cleaned.sarif
           mv results-cleaned.sarif results.sarif
 
