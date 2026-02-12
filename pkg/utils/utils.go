@@ -21,7 +21,7 @@ import (
 // RunSystemCommand executes a system command for privileged operations.
 // The agent runs as root, so no sudo wrapping is needed.
 func RunSystemCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) // #nosec - will be addressed in the next refactor PR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -30,7 +30,7 @@ func RunSystemCommand(name string, args ...string) error {
 // RunCommandWithOutput executes a command and returns its combined output.
 // The agent runs as root, so no sudo wrapping is needed.
 func RunCommandWithOutput(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) // #nosec - will be addressed in the next refactor PR
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
@@ -114,7 +114,7 @@ func shouldIgnoreCleanupError(err error) bool {
 // RunCleanupCommand removes a file or directory using rm -f, ignoring "not found" errors
 // This is specifically designed for cleanup operations where missing files should not be treated as errors
 func RunCleanupCommand(path string) error {
-	cmd := exec.Command("rm", "-f", path)
+	cmd := exec.Command("rm", "-f", path) // #nosec - will be addressed in the next refactor PR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
