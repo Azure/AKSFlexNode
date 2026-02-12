@@ -38,8 +38,8 @@ aks-flex-node version
 ### Usage
 
 ```bash
-# Start the agent
-aks-flex-node agent --config /etc/aks-flex-node/config.json
+# Start the agent (requires root)
+sudo aks-flex-node agent --config /etc/aks-flex-node/config.json
 ```
 
 For detailed setup instructions, prerequisites, requirements, and configuration options, see the **[Usage Guide](docs/usage.md)**.

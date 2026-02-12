@@ -244,14 +244,14 @@ OOMScoreAdjust=-999
 [Install]
 WantedBy=multi-user.target`
 
-	// Create containerd service file using sudo-aware approach
+	// Create containerd service file
 	tempFile, err := utils.CreateTempFile("containerd-service-*.service", []byte(containerdService))
 	if err != nil {
 		return fmt.Errorf("failed to create temporary containerd service file: %w", err)
 	}
 	defer utils.CleanupTempFile(tempFile.Name())
 
-	// Copy the temp file to the final location using sudo
+	// Copy the temp file to the final location
 	if err := utils.RunSystemCommand("cp", tempFile.Name(), containerdServiceFile); err != nil {
 		return fmt.Errorf("failed to install containerd service file: %w", err)
 	}
@@ -302,7 +302,7 @@ oom_score = 0
 	}
 	defer utils.CleanupTempFile(tempConfigFile.Name())
 
-	// Copy the temp file to the final location using sudo
+	// Copy the temp file to the final location
 	if err := utils.RunSystemCommand("cp", tempConfigFile.Name(), containerdConfigFile); err != nil {
 		return fmt.Errorf("failed to install containerd config file: %w", err)
 	}

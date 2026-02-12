@@ -213,8 +213,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 
 	output, err := utils.RunCommandWithOutput("kubectl", args...)
 	if err != nil {
-		// Common in dev: agent runs as ubuntu and can't read root:aks-flex-node 0640 kubeconfig.
-		// Retry with sudo (non-interactive) if we see a permissions failure.
+		// Log the kubectl error for debugging.
 		c.logger.Errorf("kubectl command failed: %v with output: %s", err, output)
 		return "Unknown"
 	}
