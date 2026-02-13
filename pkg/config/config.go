@@ -229,7 +229,7 @@ func validateBootstrapToken(cfg *Config) error {
 	if cfg.Node.Kubelet.ServerURL == "" {
 		return fmt.Errorf("node.kubelet.serverURL is required when using bootstrap token authentication")
 	}
-	if cfg.Node.Kubelet.CACertData == "" {
+	if cfg.Node.Kubelet.CACertData == nil {
 		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
 	}
 
