@@ -103,21 +103,16 @@ func (i *Installer) installContainerd(ctx context.Context) error {
 			return err
 		}
 
-		if !strings.HasPrefix(tarFile.Header.Name, "bin/") {
+		if !strings.HasPrefix(tarFile.Name, "bin/") {
 			continue
 		}
 
-		fileContent, err := utilio.ReadAll1GiB(tarFile.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
-		}
-
-		fileName := strings.TrimPrefix(tarFile.Header.Name, "bin/")
+		fileName := strings.TrimPrefix(tarFile.Name, "bin/")
 		targetFilePath := filepath.Join(systemBinDir, fileName)
 
-		i.logger.Debugf("extracting file %q to %q", tarFile.Header.Name, targetFilePath)
+		i.logger.Debugf("extracting file %q to %q", tarFile.Name, targetFilePath)
 
-		if err := utilio.WriteFile(targetFilePath, fileContent, 0755); err != nil {
+		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
 			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
 		}
 	}

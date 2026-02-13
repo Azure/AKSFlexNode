@@ -62,7 +62,7 @@ func (i *Installer) installNpd(ctx context.Context) error {
 			return err
 		}
 
-		switch n := tarFile.Header.Name; n {
+		switch n := tarFile.Name; n {
 		case "bin/node-problem-detector":
 			i.logger.Debugf("installing %q to %q", n, npdBinaryPath)
 			if err := utilio.InstallFile(npdBinaryPath, tarFile.Body, 0755); err != nil {

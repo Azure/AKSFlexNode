@@ -149,17 +149,12 @@ func (i *Installer) installCNIPlugins(ctx context.Context) error {
 			return err
 		}
 
-		fileContent, err := utilio.ReadAll1GiB(tarFile.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
-		}
-
-		fileName := tarFile.Header.Name
+		fileName := tarFile.Name
 		targetFilePath := filepath.Join(DefaultCNIBinDir, fileName)
 
-		i.logger.Debugf("extracting file %q to %q", tarFile.Header.Name, targetFilePath)
+		i.logger.Debugf("extracting file %q to %q", tarFile.Name, targetFilePath)
 
-		if err := utilio.WriteFile(targetFilePath, fileContent, 0755); err != nil {
+		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
 			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
 		}
 	}
