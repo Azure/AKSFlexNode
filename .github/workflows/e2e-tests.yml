@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       skip_cleanup:
-        description: 'Skip cleanup (keep cluster and VM for debugging)'
+        description: "Skip cleanup (keep cluster and VM for debugging)"
         required: false
         default: false
         type: boolean
@@ -16,7 +16,7 @@ on:
   # Run on release tags
   push:
     tags:
-      - 'v*'
+      - "v*"
 
   # Run on PRs - requires approval via environment protection
   pull_request:
@@ -25,9 +25,6 @@ on:
 
 permissions:
   contents: read
-
-env:
-  GO_VERSION: '1.24'
 
 jobs:
   # ==========================================================================
@@ -45,7 +42,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Build binary for E2E testing
@@ -86,7 +83,7 @@ jobs:
     runs-on: [self-hosted, e2e, azure]
     needs: build
     timeout-minutes: 15
-    environment: e2e-testing  # Requires approval
+    environment: e2e-testing # Requires approval
     outputs:
       cluster-name: ${{ steps.names.outputs.CLUSTER_NAME }}
       vm-name: ${{ steps.names.outputs.VM_NAME }}
@@ -353,14 +350,47 @@ jobs:
           set -euo pipefail
 
           echo "[1/3] Installing Azure CLI..."
-          # Update package lists first
-          sudo apt-get update -qq
+          # Retry wrapper for transient dpkg lock / network failures
+          MAX_RETRIES=5
+          RETRY_DELAY=15
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $attempt/$MAX_RETRIES: apt-get update && install Azure CLI..."
 
-          # Install Azure CLI with verbose error output
-          if ! curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash; then
-            echo "❌ Azure CLI installation failed"
-            exit 1
-          fi
+            # Wait for any existing dpkg/apt locks to be released
+            while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+              echo "  Waiting for dpkg lock to be released..."
+              sleep 5
+            done
+
+            # Update package lists
+            if ! sudo apt-get update -qq; then
+              echo "⚠️  apt-get update failed (attempt $attempt/$MAX_RETRIES)"
+              if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+                echo "  Retrying in ${RETRY_DELAY}s..."
+                sleep $RETRY_DELAY
+                continue
+              fi
+              echo "❌ apt-get update failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+
+            # Install Azure CLI
+            if curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash; then
+              echo "✅ Azure CLI installed successfully on attempt $attempt"
+              break
+            fi
+
+            echo "⚠️  Azure CLI installation failed (attempt $attempt/$MAX_RETRIES)"
+            if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+              # Clean up any partial dpkg state before retrying
+              sudo dpkg --configure -a 2>/dev/null || true
+              echo "  Retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            else
+              echo "❌ Azure CLI installation failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+          done
 
           echo "[2/3] Login azureuser with Managed Identity..."
           if ! az login --identity --output none; then
@@ -745,7 +775,14 @@ jobs:
   cleanup:
     name: Cleanup Resources
     runs-on: [self-hosted, e2e, azure]
-    needs: [provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration, collect-logs]
+    needs:
+      [
+        provision-infrastructure,
+        grant-permissions,
+        bootstrap-flex-node,
+        verify-integration,
+        collect-logs,
+      ]
     if: always() && needs.provision-infrastructure.result == 'success' && !inputs.skip_cleanup
     timeout-minutes: 10
 
@@ -875,7 +912,14 @@ jobs:
   summary:
     name: Test Summary
     runs-on: [self-hosted, e2e, azure]
-    needs: [build, provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration]
+    needs:
+      [
+        build,
+        provision-infrastructure,
+        grant-permissions,
+        bootstrap-flex-node,
+        verify-integration,
+      ]
     if: always()
     timeout-minutes: 5
 

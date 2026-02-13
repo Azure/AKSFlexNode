@@ -121,7 +121,8 @@ func (i *Installer) installContainerd() error {
 
 	// Ensure all extracted binaries are executable and have proper permissions
 	i.logger.Info("Setting executable permissions on containerd binaries")
-	for _, binary := range containerdBinaries {
+	versionBinaries := getContainerdBinariesForVersion(i.getContainerdVersion())
+	for _, binary := range versionBinaries {
 		binaryPath := filepath.Join(systemBinDir, binary)
 		if err := utils.RunSystemCommand("chmod", "0755", binaryPath); err != nil {
 			return fmt.Errorf("failed to set executable permissions on containerd binaries: %w", err)
@@ -132,8 +133,9 @@ func (i *Installer) installContainerd() error {
 }
 
 func (i *Installer) canSkipContainerdInstallation() bool {
-	// Check if containerd binary exists
-	for _, binary := range containerdBinaries {
+	// Check if containerd binary exists (only check version-appropriate binaries)
+	versionBinaries := getContainerdBinariesForVersion(i.getContainerdVersion())
+	for _, binary := range versionBinaries {
 		binaryPath := filepath.Join(systemBinDir, binary)
 		if !utils.FileExists(binaryPath) {
 			i.logger.Debugf("containerd binary %s does not exist", binaryPath)
@@ -179,8 +181,9 @@ func (i *Installer) cleanupExistingInstallation() error {
 		i.logger.Debugf("No containerd processes found to kill (or pkill failed): %v", err)
 	}
 
-	// List of binaries to clean up
-	for _, binary := range containerdBinaries {
+	// Clean up all possible binaries (including those from older versions)
+	// This ensures we remove deprecated binaries when upgrading from 1.x to 2.x
+	for _, binary := range getAllContainerdBinaries() {
 		binaryPath := filepath.Join(systemBinDir, binary)
 		if utils.FileExists(binaryPath) {
 			i.logger.Debugf("Removing existing containerd binary: %s", binaryPath)
@@ -241,14 +244,14 @@ OOMScoreAdjust=-999
 [Install]
 WantedBy=multi-user.target`
 
-	// Create containerd service file using sudo-aware approach
+	// Create containerd service file
 	tempFile, err := utils.CreateTempFile("containerd-service-*.service", []byte(containerdService))
 	if err != nil {
 		return fmt.Errorf("failed to create temporary containerd service file: %w", err)
 	}
 	defer utils.CleanupTempFile(tempFile.Name())
 
-	// Copy the temp file to the final location using sudo
+	// Copy the temp file to the final location
 	if err := utils.RunSystemCommand("cp", tempFile.Name(), containerdServiceFile); err != nil {
 		return fmt.Errorf("failed to install containerd service file: %w", err)
 	}
@@ -299,7 +302,7 @@ oom_score = 0
 	}
 	defer utils.CleanupTempFile(tempConfigFile.Name())
 
-	// Copy the temp file to the final location using sudo
+	// Copy the temp file to the final location
 	if err := utils.RunSystemCommand("cp", tempConfigFile.Name(), containerdConfigFile); err != nil {
 		return fmt.Errorf("failed to install containerd config file: %w", err)
 	}

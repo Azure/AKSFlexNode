@@ -10,7 +10,7 @@ type Config struct {
 	Containerd ContainerdConfig `json:"containerd"`
 	Kubernetes KubernetesConfig `json:"kubernetes"`
 	CNI        CNIConfig        `json:"cni"`
-	Runc       RuntimeConfig    `json:"runc"`
+	Runc       RuncConfig       `json:"runc"`
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
@@ -94,8 +94,8 @@ type KubernetesConfig struct {
 	URLTemplate string `json:"urlTemplate"`
 }
 
-// RuntimeConfig holds configuration settings for the container runtime (runc).
-type RuntimeConfig struct {
+// RuncConfig holds configuration settings for the container runtime (runc).
+type RuncConfig struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
 }

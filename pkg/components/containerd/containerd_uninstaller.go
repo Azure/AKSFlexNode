@@ -56,8 +56,8 @@ func (u *UnInstaller) Execute(ctx context.Context) error {
 
 // IsCompleted checks if containerd has been completely removed
 func (u *UnInstaller) IsCompleted(ctx context.Context) bool {
-	// Check if any containerd binaries still exist
-	for _, binary := range containerdBinaries {
+	// Check if any containerd binaries still exist (check all versions)
+	for _, binary := range getAllContainerdBinaries() {
 		if utils.BinaryExists(binary) {
 			return false
 		}
@@ -98,8 +98,8 @@ func (u *UnInstaller) removeContainerdBinaries() error {
 	u.logger.Info("Removing containerd binaries")
 
 	var binaryPaths []string
-	// Add system binary paths
-	for _, binary := range containerdBinaries {
+	// Add system binary paths (include all versions for complete cleanup)
+	for _, binary := range getAllContainerdBinaries() {
 		binaryPaths = append(binaryPaths, filepath.Join(systemBinDir, binary))
 	}
 

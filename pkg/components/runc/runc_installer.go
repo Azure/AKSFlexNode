@@ -80,7 +80,7 @@ func (i *Installer) installRunc() error {
 	return nil
 }
 
-// constructContainerdDownloadURL constructs the download URL for the specified containerd version
+// constructRuncDownloadURL constructs the download URL for the specified Runc version
 // it returns the file name and URL for downloading containerd
 func (i *Installer) constructRuncDownloadURL() (string, string, error) {
 	runcVersion := i.getRuncVersion()

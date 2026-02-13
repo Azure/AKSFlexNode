@@ -18,61 +18,19 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api"
 )
 
-// sudoCommandLists holds the command lists for sudo determination
-var (
-	alwaysNeedsSudo = []string{"apt", "apt-get", "dpkg", "systemctl", "mount", "umount", "modprobe", "sysctl", "azcmagent", "usermod", "kubectl", "pkill", "swapoff", "iptables", "ip"}
-	conditionalSudo = []string{"mkdir", "cp", "chmod", "chown", "mv", "tar", "rm", "bash", "install", "ln", "cat"}
-	systemPaths     = []string{"/etc/", "/usr/", "/var/", "/opt/", "/boot/", "/sys/"}
-)
-
-// requiresSudoAccess determines if a command needs sudo based on command name and arguments
-func requiresSudoAccess(name string, args []string) bool {
-	// Check if this command always needs sudo
-	for _, sudoCmd := range alwaysNeedsSudo {
-		if name == sudoCmd {
-			return true
-		}
-	}
-
-	// Check if this command needs sudo based on the paths involved
-	for _, sudoCmd := range conditionalSudo {
-		if name == sudoCmd {
-			// Check if any argument involves system paths
-			for _, arg := range args {
-				for _, sysPath := range systemPaths {
-					if strings.HasPrefix(arg, sysPath) {
-						return true
-					}
-				}
-			}
-			break
-		}
-	}
-
-	return false
-}
-
-// createCommand creates an exec.Cmd with appropriate sudo handling
-func createCommand(name string, args []string) *exec.Cmd {
-	if requiresSudoAccess(name, args) && os.Geteuid() != 0 {
-		allArgs := append([]string{"-E", name}, args...)
-		return exec.Command("sudo", allArgs...)
-	}
-	// Run directly (either doesn't need sudo or already running as root)
-	return exec.Command(name, args...)
-}
-
-// RunSystemCommand executes a system command with sudo when needed for privileged operations
+// RunSystemCommand executes a system command for privileged operations.
+// The agent runs as root, so no sudo wrapping is needed.
 func RunSystemCommand(name string, args ...string) error {
-	cmd := createCommand(name, args)
+	cmd := exec.Command(name, args...) // #nosec - will be addressed in the next refactor PR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-// RunCommandWithOutput executes a command and returns output with sudo when needed
+// RunCommandWithOutput executes a command and returns its combined output.
+// The agent runs as root, so no sudo wrapping is needed.
 func RunCommandWithOutput(name string, args ...string) (string, error) {
-	cmd := createCommand(name, args)
+	cmd := exec.Command(name, args...) // #nosec - will be addressed in the next refactor PR
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
@@ -170,7 +128,7 @@ func shouldIgnoreCleanupError(err error) bool {
 // RunCleanupCommand removes a file or directory using rm -f, ignoring "not found" errors
 // This is specifically designed for cleanup operations where missing files should not be treated as errors
 func RunCleanupCommand(path string) error {
-	cmd := createCommand("rm", []string{"-f", path})
+	cmd := exec.Command("rm", "-f", path) // #nosec - will be addressed in the next refactor PR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -263,41 +221,9 @@ func WriteFileAtomic(filename string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// WriteFileAtomicSystem writes data to a file atomically with system-level permissions
-// Uses sudo for privileged paths that require elevated permissions
+// WriteFileAtomicSystem writes data to a file atomically with system-level permissions.
+// Since the agent runs as root, this delegates directly to WriteFileAtomic.
 func WriteFileAtomicSystem(filename string, data []byte, perm os.FileMode) error {
-	// For system paths, use the temporary file approach with sudo copy/move
-	if requiresSudoAccess("cp", []string{filename}) {
-		// Create temp file in user-writable location
-		tempFile, err := CreateTempFile("atomic-write-*.tmp", data)
-		if err != nil {
-			return fmt.Errorf("failed to create temporary file: %w", err)
-		}
-		defer CleanupTempFile(tempFile.Name())
-
-		// Close the temp file before sudo operations
-		_ = tempFile.Close()
-
-		// Create temporary file in target directory using sudo
-		tempPath := filename + ".tmp"
-		if err := RunSystemCommand("cp", tempFile.Name(), tempPath); err != nil {
-			return fmt.Errorf("failed to copy to temporary location: %w", err)
-		}
-
-		// Set proper permissions
-		if err := RunSystemCommand("chmod", fmt.Sprintf("%o", perm), tempPath); err != nil {
-			return fmt.Errorf("failed to set permissions: %w", err)
-		}
-
-		// Atomic rename
-		if err := RunSystemCommand("mv", tempPath, filename); err != nil {
-			return fmt.Errorf("failed to rename to final location: %w", err)
-		}
-
-		return nil
-	}
-
-	// For non-privileged paths, use regular atomic write
 	return WriteFileAtomic(filename, data, perm)
 }
 
@@ -413,7 +339,7 @@ func RemoveDirectories(directories []string, logger *logrus.Logger) []error {
 			continue
 		}
 
-		if err := RunSystemCommand("sudo", "rm", "-rf", dir); err != nil {
+		if err := RunSystemCommand("rm", "-rf", dir); err != nil {
 			logger.Errorf("Failed to remove directory %s: %v", dir, err)
 			errors = append(errors, fmt.Errorf("failed to remove %s: %w", dir, err))
 		} else {
