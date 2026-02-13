@@ -3,11 +3,16 @@ package cni
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 
+	"github.com/google/renameio/v2"
 	"github.com/sirupsen/logrus"
+
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/remoteio"
 )
 
 // Installer handles CNI setup and installation operations
@@ -52,7 +57,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 
 	// Install CNI plugins
 	i.logger.Info("Step 2: Installing CNI plugins")
-	if err := i.installCNIPlugins(); err != nil {
+	if err := i.installCNIPlugins(ctx); err != nil {
 		i.logger.Errorf("CNI plugins installation failed: %v", err)
 		return fmt.Errorf("failed to install CNI plugins version %s: %w", defaultCNIVersion, err)
 	}
@@ -130,61 +135,40 @@ func (i *Installer) prepareCNIDirectories() error {
 }
 
 // installCNIPlugins downloads and installs CNI plugins (matching reference script)
-func (i *Installer) installCNIPlugins() error {
+func (i *Installer) installCNIPlugins(ctx context.Context) error {
 	if canSkipCNIPluginInstallation() {
 		logrus.Info("CNI plugins are already installed and valid, skipping installation")
 		return nil
 	}
 
-	// Clean up any corrupted installations before proceeding
-	logrus.Info("Cleaning up corrupted CNI plugins files to start fresh")
-	if err := utils.RunSystemCommand("rm", "-rf", DefaultCNIBinDir+"/*"); err != nil {
-		logrus.Warnf("Failed to clean CNI bin directory: %v", err)
-	}
-
-	// Ensure curl is installed before using it for downloading CNI plugins
-	if err := utils.RunSystemCommand("which", "curl"); err != nil {
-		logrus.Info("Installing curl...")
-		if err := utils.RunSystemCommand("apt", "install", "-y", "curl"); err != nil {
-			logrus.Warnf("Failed to install curl: %v", err)
-		}
-	}
-
 	// Construct CNI download URL
-	cniFileName, cniDownloadURL, err := i.constructCNIDownloadURL()
+	_, cniDownloadURL, err := i.constructCNIDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct CNI download URL: %w", err)
 	}
 
-	// Download the CNI plugin tar file into tmp directory
-	tempFile := fmt.Sprintf("/tmp/%s", cniFileName)
-	// Clean up any existing CNI temp files from both /tmp and home directory
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
-		logrus.Warnf("Failed to clean up existing CNI temp files from /tmp: %s", err)
+	if err := os.MkdirAll(DefaultCNIBinDir, 0755); err != nil {
+		return err
 	}
-	if err := utils.RunSystemCommand("curl", "-o", tempFile, "-L", cniDownloadURL); err != nil {
-		return fmt.Errorf("failed to download CNI plugins: %w", err)
-	}
-	defer func() {
-		if err := utils.RunCleanupCommand(tempFile); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
+
+	for tarFile, err := range remoteio.DecompressTarGzFromRemote(ctx, cniDownloadURL) {
+		if err != nil {
+			return err
 		}
-	}()
 
-	// Extract CNI plugins to /opt/cni/bin
-	if err := utils.RunSystemCommand("tar", "-C", DefaultCNIBinDir, "-xzf", tempFile); err != nil {
-		return fmt.Errorf("failed to extract CNI plugins: %w", err)
-	}
+		fileContent, err := io.ReadAll(tarFile.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
+		}
 
-	// Set ownership of extracted CNI plugins - critical for Cilium init containers
-	// Cilium init containers run as root and need to write to /opt/cni/bin
-	if err := utils.RunSystemCommand("chown", "-R", "root:root", DefaultCNIBinDir); err != nil {
-		logrus.Warnf("Failed to fix ownership of extracted CNI plugins: %v", err)
-	}
+		fileName := tarFile.Header.Name
+		targetFilePath := filepath.Join(DefaultCNIBinDir, fileName)
 
-	// Ensure proper permissions for extracted files
-	if err := utils.RunSystemCommand("chmod", "-R", "755", DefaultCNIBinDir); err != nil {
-		logrus.Warnf("Failed to fix permissions of extracted CNI plugins: %v", err)
+		i.logger.Debugf("extracting file %q to %q", tarFile.Header.Name, targetFilePath)
+
+		if err := renameio.WriteFile(targetFilePath, fileContent, 0755); err != nil {
+			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
+		}
 	}
 
 	logrus.Info("CNI plugins installed successfully")
