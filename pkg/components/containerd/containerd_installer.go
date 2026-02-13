@@ -3,7 +3,6 @@ package containerd
 import (
 	"context"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
 
@@ -109,7 +108,7 @@ func (i *Installer) installContainerd(ctx context.Context) error {
 			continue
 		}
 
-		fileContent, err := io.ReadAll(tarFile.Body)
+		fileContent, err := remoteio.ReadAll1GiB(tarFile.Body)
 		if err != nil {
 			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
 		}

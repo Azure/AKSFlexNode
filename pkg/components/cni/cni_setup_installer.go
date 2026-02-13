@@ -3,7 +3,6 @@ package cni
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -156,7 +155,7 @@ func (i *Installer) installCNIPlugins(ctx context.Context) error {
 			return err
 		}
 
-		fileContent, err := io.ReadAll(tarFile.Body)
+		fileContent, err := remoteio.ReadAll1GiB(tarFile.Body)
 		if err != nil {
 			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
 		}
