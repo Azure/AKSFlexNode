@@ -11,6 +11,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Context key for storing logger
@@ -238,7 +239,7 @@ func createLogFileIfNotExists(logFilePath string) error {
 	}
 
 	// Use WriteFileAtomicSystem to create an empty log file with proper permissions
-	if err := utils.WriteFileAtomicSystem(logFilePath, []byte{}, 0644); err != nil {
+	if err := utilio.WriteFile(logFilePath, []byte{}, 0644); err != nil {
 		return err
 	}
 

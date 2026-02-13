@@ -15,6 +15,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles kubelet installation and configuration
@@ -255,7 +256,7 @@ KUBELET_FLAGS="\
 	}
 
 	// Write kubelet defaults file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(kubeletDefaultsPath, []byte(kubeletDefaults), 0o644); err != nil {
+	if err := utilio.WriteFile(kubeletDefaultsPath, []byte(kubeletDefaults), 0o644); err != nil {
 		return fmt.Errorf("failed to create kubelet defaults file: %w", err)
 	}
 
@@ -270,7 +271,7 @@ func (i *Installer) createSystemdDropInFile(filePath, content, description strin
 	}
 
 	// Write config file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(filePath, []byte(content), 0o644); err != nil {
+	if err := utilio.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("failed to create %s: %w", description, err)
 	}
 
@@ -320,7 +321,7 @@ ExecStart=/usr/local/bin/kubelet \
 WantedBy=multi-user.target`
 
 	// Write kubelet service file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(kubeletServicePath, []byte(kubeletService), 0o644); err != nil {
+	if err := utilio.WriteFile(kubeletServicePath, []byte(kubeletService), 0o644); err != nil {
 		return fmt.Errorf("failed to create kubelet service file: %w", err)
 	}
 
@@ -497,7 +498,7 @@ func (i *Installer) writeTokenScript(tokenScript string) error {
 	}
 
 	// Write token script atomically with executable permissions
-	if err := utils.WriteFileAtomicSystem(kubeletTokenScriptPath, []byte(tokenScript), 0o755); err != nil {
+	if err := utilio.WriteFile(kubeletTokenScriptPath, []byte(tokenScript), 0o755); err != nil {
 		return fmt.Errorf("failed to create token script: %w", err)
 	}
 
@@ -525,7 +526,7 @@ func (i *Installer) writeClientCACertificate(caCertData string) error {
 	}
 
 	// Write CA certificate atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(apiserverClientCAPath, caCertBytes, 0o644); err != nil {
+	if err := utilio.WriteFile(apiserverClientCAPath, caCertBytes, 0o644); err != nil {
 		return fmt.Errorf("failed to write API server client CA certificate: %w", err)
 	}
 
@@ -605,7 +606,7 @@ users:
 		userName)
 
 	// Write kubeconfig file to the correct location for kubelet
-	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
+	if err := utilio.WriteFile(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
 		return fmt.Errorf("failed to create kubeconfig file: %w", err)
 	}
 
@@ -674,7 +675,7 @@ users:
 		bootstrapToken)
 
 	// Write kubeconfig file to the correct location for kubelet
-	if err := utils.WriteFileAtomicSystem(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
+	if err := utilio.WriteFile(KubeletKubeconfigPath, []byte(kubeconfigContent), 0o600); err != nil {
 		return fmt.Errorf("failed to create bootstrap kubeconfig file: %w", err)
 	}
 

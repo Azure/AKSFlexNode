@@ -119,7 +119,7 @@ RestartSec=5s
 WantedBy=multi-user.target
 `
 	// Write NPD service file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(npdServicePath, []byte(npdService), 0644); err != nil {
+	if err := utilio.WriteFile(npdServicePath, []byte(npdService), 0644); err != nil {
 		return fmt.Errorf("failed to create NPD service file: %w", err)
 	}
 
