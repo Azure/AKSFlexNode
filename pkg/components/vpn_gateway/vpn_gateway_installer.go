@@ -182,28 +182,6 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 		i.logger.Info("VPN Gateway setup is disabled in configuration, skipping installation...")
 		return true
 	}
-
-	i.logger.Debug("Checking VPN Gateway setup completion status")
-
-	// Check if VPN is connected
-	if !i.isVPNConnected() {
-		i.logger.Debug("VPN is not connected")
-		return false
-	}
-
-	// // Check if network configuration is applied (automatically discovered)
-	// if !i.isNetworkConfigured(ctx) {
-	// 	i.logger.Debug("VPN network configuration not applied")
-	// 	return false
-	// }
-
-	// // Check if VPN Gateway exists in Azure
-	// if gateway, err := i.getVPNGateway(ctx); err != nil || gateway == nil {
-	// 	i.logger.Debugf("VPN Gateway not found or not accessible: %v", err)
-	// 	return false
-	// }
-
-	// i.logger.Debug("VPN Gateway setup appears to be completed")
 	return false
 }
 
