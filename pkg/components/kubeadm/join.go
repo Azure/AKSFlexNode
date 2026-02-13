@@ -2,8 +2,10 @@ package kubeadm
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +17,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/upstreamv1beta4"
 
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
@@ -36,22 +39,61 @@ type nodeJoin struct {
 	config         nodeJoinConfig
 }
 
+func NewNodeJoin(cfg *config.Config) (*nodeJoin, error) {
+	baseDir, err := os.MkdirTemp("", "aks-flex-node-kubeadm-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir for kubeadm join config: %w", err)
+	}
+
+	ca, err := base64.StdEncoding.DecodeString(cfg.Node.Kubelet.CACertData)
+	if err != nil {
+		return nil, fmt.Errorf("decode CA cert data: %w", err)
+	}
+
+	rv := &nodeJoin{
+		baseDir: baseDir,
+		config: nodeJoinConfig{
+			APIServerEndpoint: cfg.Node.Kubelet.ServerURL,
+			APIServerCAData:   ca,
+			KubeletAuthInfo: &api.AuthInfo{
+				Token: cfg.Azure.BootstrapToken.Token,
+			},
+		},
+	}
+
+	return rv, nil
+}
+
+func (n *nodeJoin) resolveKubeadmBinary() (string, error) {
+	if n.kubeadmCommand != "" {
+		return n.kubeadmCommand, nil
+	}
+
+	return exec.LookPath("kubeadm")
+}
+
 func (n *nodeJoin) GetName() string {
 	return "kubeadm-join"
 }
 
 func (n *nodeJoin) IsCompleted(ctx context.Context) bool {
-	return n.pollForKubeletStatus(ctx) == nil
+	// return n.pollForKubeletStatus(ctx) == nil
+	return false
 }
 
 func (n *nodeJoin) Execute(ctx context.Context) error {
+	kubeadmBinary, err := n.resolveKubeadmBinary()
+	if err != nil {
+		return fmt.Errorf("resolve kubeadm binary: %w", err)
+	}
+
 	config, err := n.writeKubeadmJoinConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("write kubeadm config: %w", err)
 	}
 
 	if err := utils.RunSystemCommand(
-		n.kubeadmCommand,
+		kubeadmBinary,
 		"join",
 		"--config", config,
 		"--v", "5",

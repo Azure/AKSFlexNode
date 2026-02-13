@@ -25,6 +25,18 @@ var (
 	BuildTime = "unknown"
 )
 
+func NewApplyCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply the AKS node configuration and join the cluster",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runApply(cmd.Context())
+		},
+	}
+
+	return cmd
+}
+
 // NewAgentCommand creates a new agent command
 func NewAgentCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -65,6 +77,28 @@ func NewVersionCommand() *cobra.Command {
 	}
 
 	return cmd
+}
+
+// runApply applies the node configuration and joins the cluster.
+func runApply(ctx context.Context) error {
+	logger := logger.GetLoggerFromContext(ctx)
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+	}
+
+	exectuor := bootstrapper.NewMinimal(cfg, logger)
+	result, err := exectuor.Bootstrap(ctx)
+	if err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
+
+	if err := handleExecutionResult(result, "bootstrap", logger); err != nil {
+		return fmt.Errorf("bootstrap execution failed: %w", err)
+	}
+
+	return nil
 }
 
 // runAgent executes the bootstrap process and then runs as daemon
