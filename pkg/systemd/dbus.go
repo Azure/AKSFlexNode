@@ -68,10 +68,6 @@ func (d *dbusImpl) writeSystemdFile(
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-
 	if err := utilio.WriteFile(path, content, 0600); err != nil {
 		return err
 	}

@@ -3,7 +3,6 @@ package cni
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
@@ -143,10 +142,6 @@ func (i *Installer) installCNIPlugins(ctx context.Context) error {
 	_, cniDownloadURL, err := i.constructCNIDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct CNI download URL: %w", err)
-	}
-
-	if err := os.MkdirAll(DefaultCNIBinDir, 0755); err != nil {
-		return err
 	}
 
 	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, cniDownloadURL) {

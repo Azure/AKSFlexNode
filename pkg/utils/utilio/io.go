@@ -41,7 +41,7 @@ func InstallFile(filename string, r io.Reader, perm os.FileMode) error {
 // WriteFile writes the provided content to a local file with specified permissions.
 // It ensures that the target directory exists and handles the file writing atomically.
 func WriteFile(filename string, content []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filename), 0750); err != nil {
 		return err
 	}
 
