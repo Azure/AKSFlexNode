@@ -31,7 +31,7 @@ func downloadFromRemote(ctx context.Context, url string) (io.ReadCloser, error) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close() //nolint:errcheck // body close
 		return nil, fmt.Errorf("download %q failed with status code %d", url, resp.StatusCode)
 	}
 
@@ -51,14 +51,14 @@ func DecompressTarGzFromRemote(ctx context.Context, url string) iter.Seq2[*TarFi
 			yield(nil, err)
 			return
 		}
-		defer body.Close()
+		defer body.Close() //nolint:errcheck // body close
 
 		gzipStream, err := gzip.NewReader(body)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		defer gzipStream.Close()
+		defer gzipStream.Close() //nolint:errcheck // gzip reader close
 
 		tarReader := tar.NewReader(gzipStream)
 
@@ -118,7 +118,7 @@ func DownloadToLocalFile(ctx context.Context, url string, filename string, perm 
 	if err != nil {
 		return err
 	}
-	defer body.Close()
+	defer body.Close() //nolint:errcheck // body close
 
 	return InstallFile(filename, body, perm)
 }
