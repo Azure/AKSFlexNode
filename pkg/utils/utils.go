@@ -125,41 +125,6 @@ func RunCleanupCommand(path string) error {
 	return nil
 }
 
-// CreateTempFile creates a temporary file with given pattern and content
-func CreateTempFile(pattern string, content []byte) (*os.File, error) {
-	tempFile, err := os.CreateTemp("", pattern)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary file: %w", err)
-	}
-
-	if _, err := tempFile.Write(content); err != nil {
-		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to close temporary file: %w", err)
-	}
-
-	// Reopen for reading
-	reopened, err := os.Open(tempFile.Name())
-	if err != nil {
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to reopen temporary file: %w", err)
-	}
-
-	return reopened, nil
-}
-
-// CleanupTempFile removes a temporary file
-func CleanupTempFile(filePath string) {
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		logrus.Warnf("Failed to cleanup temporary file %s: %v", filePath, err)
-	}
-}
-
 // WaitForService waits until a systemd service is active or timeout occurs
 func WaitForService(serviceName string, timeout time.Duration, logger *logrus.Logger) error {
 	logger.Debugf("Waiting for service %s to be active (timeout: %v)", serviceName, timeout)

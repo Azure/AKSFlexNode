@@ -245,26 +245,8 @@ func (i *Installer) createBridgeConfig() error {
     }
 }`, defaultCNISpecVersion)
 
-	// Write the config file into a temp file for Atomic file write
-	tempBridgeFile, err := utils.CreateTempFile("bridge-cni-*.conf", []byte(bridgeConfig))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary bridge config file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempBridgeFile.Name())
-
-	// Copy the temp file to the final location
-	if err := utils.RunSystemCommand("cp", tempBridgeFile.Name(), configPath); err != nil {
-		return fmt.Errorf("failed to Execute bridge config file: %w", err)
-	}
-
-	// Set proper permissions - it needs to be readable by the kubelet and CNI runtime, but only writable by root
-	if err := utils.RunSystemCommand("chmod", "644", configPath); err != nil {
-		return fmt.Errorf("failed to set bridge config file permissions: %w", err)
-	}
-
-	// Set proper ownership to root:root
-	if err := utils.RunSystemCommand("chown", "root:root", configPath); err != nil {
-		logrus.Warnf("Failed to set ownership for bridge config: %v", err)
+	if err := utilio.WriteFile(configPath, []byte(bridgeConfig), 0644); err != nil {
+		return err
 	}
 
 	logrus.Info("Bridge CNI configuration created")

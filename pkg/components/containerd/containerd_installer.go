@@ -237,21 +237,8 @@ OOMScoreAdjust=-999
 [Install]
 WantedBy=multi-user.target`
 
-	// Create containerd service file
-	tempFile, err := utils.CreateTempFile("containerd-service-*.service", []byte(containerdService))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary containerd service file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempFile.Name())
-
-	// Copy the temp file to the final location
-	if err := utils.RunSystemCommand("cp", tempFile.Name(), containerdServiceFile); err != nil {
-		return fmt.Errorf("failed to install containerd service file: %w", err)
-	}
-
-	// Set proper permissions: root can modify the service, but everyone else can only read it, and nobody can execute it
-	if err := utils.RunSystemCommand("chmod", "644", containerdServiceFile); err != nil {
-		return fmt.Errorf("failed to set containerd service file permissions: %w", err)
+	if err := utilio.WriteFile(containerdServiceFile, []byte(containerdService), 0644); err != nil {
+		return err
 	}
 
 	return nil
@@ -288,21 +275,8 @@ oom_score = 0
 		cni.DefaultCNIConfDir,
 		i.getMetricsAddress())
 
-	// Create a tmp containerd config file
-	tempConfigFile, err := utils.CreateTempFile("containerd-config-*.toml", []byte(containerdConfig))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary containerd config file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempConfigFile.Name())
-
-	// Copy the temp file to the final location
-	if err := utils.RunSystemCommand("cp", tempConfigFile.Name(), containerdConfigFile); err != nil {
-		return fmt.Errorf("failed to install containerd config file: %w", err)
-	}
-
-	// Set proper permissions
-	if err := utils.RunSystemCommand("chmod", "644", containerdConfigFile); err != nil {
-		return fmt.Errorf("failed to set containerd config file permissions: %w", err)
+	if err := utilio.WriteFile(containerdConfigFile, []byte(containerdConfig), 0644); err != nil {
+		return err
 	}
 
 	return nil

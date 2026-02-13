@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles system configuration installation
@@ -68,31 +69,8 @@ vm.overcommit_memory = 1
 kernel.panic = 10
 kernel.panic_on_oops = 1`
 
-	// Create sysctl directory if it doesn't exist
-	if err := utils.RunSystemCommand("mkdir", "-p", sysctlDir); err != nil {
-		return fmt.Errorf("failed to create sysctl directory: %w", err)
-	}
-
-	// Create temporary file with sysctl configuration
-	tempFile, err := utils.CreateTempFile("sysctl-aks-*.conf", []byte(sysctlConfig))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary sysctl config file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempFile.Name())
-
-	// Copy to final location
-	if err := utils.RunSystemCommand("cp", tempFile.Name(), sysctlConfigPath); err != nil {
-		return fmt.Errorf("failed to install sysctl config file: %w", err)
-	}
-
-	// Set proper permissions
-	if err := utils.RunSystemCommand("chmod", "644", sysctlConfigPath); err != nil {
-		return fmt.Errorf("failed to set sysctl config file permissions: %w", err)
-	}
-
-	// Apply sysctl settings
-	if err := utils.RunSystemCommand("sysctl", "--system"); err != nil {
-		return fmt.Errorf("failed to apply sysctl settings: %w", err)
+	if err := utilio.WriteFile(sysctlConfigPath, []byte(sysctlConfig), 0644); err != nil {
+		return err
 	}
 
 	i.logger.Info("Sysctl configuration applied successfully")
