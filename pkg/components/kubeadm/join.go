@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/renameio/v2"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -106,7 +107,7 @@ func (n *nodeJoin) Execute(ctx context.Context) error {
 		return fmt.Errorf("resolve kubeadm binary: %w", err)
 	}
 
-	config, err := n.writeKubeadmJoinConfig(ctx)
+	config, err := n.writeKubeadmJoinConfig()
 	if err != nil {
 		return fmt.Errorf("write kubeadm config: %w", err)
 	}
@@ -143,14 +144,14 @@ func (n *nodeJoin) writeFile(filename string, content []byte) (string, error) {
 
 	p := filepath.Join(n.baseDir, filename)
 
-	if err := os.WriteFile(p, content, filePerm); err != nil {
+	if err := renameio.WriteFile(p, content, filePerm); err != nil {
 		return "", err
 	}
 
 	return p, nil
 }
 
-func (n *nodeJoin) writeBootstrapKubeconfig(ctx context.Context) (string, error) {
+func (n *nodeJoin) writeBootstrapKubeconfig() (string, error) {
 	const (
 		cluster  = "cluster"
 		context  = "context"
@@ -182,10 +183,8 @@ func (n *nodeJoin) writeBootstrapKubeconfig(ctx context.Context) (string, error)
 	return n.writeFile("bootstrap.kubeconfig", content)
 }
 
-func (n *nodeJoin) writeKubeadmJoinConfig(
-	ctx context.Context,
-) (string, error) {
-	bootstrapKubeconfig, err := n.writeBootstrapKubeconfig(ctx)
+func (n *nodeJoin) writeKubeadmJoinConfig() (string, error) {
+	bootstrapKubeconfig, err := n.writeBootstrapKubeconfig()
 	if err != nil {
 		return "", err
 	}
