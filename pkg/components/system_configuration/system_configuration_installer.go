@@ -73,6 +73,10 @@ kernel.panic_on_oops = 1`
 		return err
 	}
 
+	if err := utils.RunSystemCommand("sysctl", "--system"); err != nil {
+		return fmt.Errorf("failed to apply sysctl settings: %w", err)
+	}
+
 	i.logger.Info("Sysctl configuration applied successfully")
 	return nil
 }
