@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -357,15 +358,15 @@ func GetArc() (string, error) {
 }
 
 // ExtractClusterInfo extracts server URL and CA certificate data from kubeconfig
-func ExtractClusterInfo(kubeconfigData []byte) (string, []byte, error) {
+func ExtractClusterInfo(kubeconfigData []byte) (string, string, error) {
 	config, err := clientcmd.Load(kubeconfigData)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to parse kubeconfig: %w", err)
+		return "", "", fmt.Errorf("failed to parse kubeconfig: %w", err)
 	}
 
 	// For Azure AKS admin configs, there's typically only one cluster
 	if len(config.Clusters) == 0 {
-		return "", nil, fmt.Errorf("no clusters found in kubeconfig")
+		return "", "", fmt.Errorf("no clusters found in kubeconfig")
 	}
 
 	// Get the first (and usually only) cluster
@@ -381,12 +382,15 @@ func ExtractClusterInfo(kubeconfigData []byte) (string, []byte, error) {
 
 	// Extract what we need
 	if cluster.Server == "" {
-		return "", nil, fmt.Errorf("server URL is empty")
+		return "", "", fmt.Errorf("server URL is empty")
 	}
 
 	if len(cluster.CertificateAuthorityData) == 0 {
-		return "", nil, fmt.Errorf("CA certificate data is empty")
+		return "", "", fmt.Errorf("CA certificate data is empty")
 	}
 
-	return cluster.Server, cluster.CertificateAuthorityData, nil
+	// CertificateAuthorityData should be base64-encoded for kubeconfig
+	// The field contains raw certificate bytes, so we need to encode them
+	caCertDataB64 := base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
+	return cluster.Server, caCertDataB64, nil
 }

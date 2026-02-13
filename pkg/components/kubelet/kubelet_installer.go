@@ -510,16 +510,22 @@ func (i *Installer) writeTokenScript(tokenScript string) error {
 }
 
 // writeClientCACertificate writes the API server client CA certificate to disk for kubelet authentication
-func (i *Installer) writeClientCACertificate(caCertData []byte) error {
-	if len(caCertData) == 0 {
+func (i *Installer) writeClientCACertificate(caCertData string) error {
+	if caCertData == "" {
 		i.logger.Debug("No CA certificate data provided, skipping client CA file creation")
 		return nil
 	}
 
 	i.logger.Info("Writing API server client CA certificate")
 
+	// Decode base64 CA certificate data
+	caCertBytes, err := base64.StdEncoding.DecodeString(caCertData)
+	if err != nil {
+		return fmt.Errorf("failed to decode CA certificate data: %w", err)
+	}
+
 	// Write CA certificate atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(apiserverClientCAPath, caCertData, 0o644); err != nil {
+	if err := utils.WriteFileAtomicSystem(apiserverClientCAPath, caCertBytes, 0o644); err != nil {
 		return fmt.Errorf("failed to write API server client CA certificate: %w", err)
 	}
 
@@ -549,12 +555,11 @@ func (i *Installer) createKubeconfigWithExecCredential(ctx context.Context) erro
 
 	// Create cluster configuration based on whether we have CA cert
 	var clusterConfig string
-	if caCertData != nil {
-		caCertDataEncoded := base64.StdEncoding.EncodeToString(caCertData)
+	if caCertData != "" {
 		clusterConfig = fmt.Sprintf(`- cluster:
     certificate-authority-data: %s
     server: %s
-  name: %s`, caCertDataEncoded, serverURL, i.config.Azure.TargetCluster.Name)
+  name: %s`, caCertData, serverURL, i.config.Azure.TargetCluster.Name)
 	} else {
 		clusterConfig = fmt.Sprintf(`- cluster:
     insecure-skip-tls-verify: true
@@ -632,12 +637,11 @@ func (i *Installer) createKubeconfigWithBootstrapToken(ctx context.Context) erro
 
 	// Create cluster configuration based on whether we have CA cert
 	var clusterConfig string
-	if caCertData != nil {
-		caCertDataEncoded := base64.StdEncoding.EncodeToString(caCertData)
+	if caCertData != "" {
 		clusterConfig = fmt.Sprintf(`- cluster:
     certificate-authority-data: %s
     server: %s
-  name: %s`, caCertDataEncoded, serverURL, i.config.Azure.TargetCluster.Name)
+  name: %s`, caCertData, serverURL, i.config.Azure.TargetCluster.Name)
 	} else {
 		clusterConfig = fmt.Sprintf(`- cluster:
     insecure-skip-tls-verify: true

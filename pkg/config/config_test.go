@@ -1,22 +1,11 @@
 package config
 
 import (
-	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func caFromBase64(t testing.TB, s string) []byte {
-	data, err := base64.StdEncoding.WithPadding(base64.NoPadding).DecodeString(s)
-	if err != nil {
-		t.Fatalf("failed to decode base64 string: %v", err)
-	}
-	return data
-}
-
-const testCAData = "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0"
 
 func TestSetDefaults(t *testing.T) {
 	tests := []struct {
@@ -108,7 +97,7 @@ func TestValidate(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -678,7 +667,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -695,7 +684,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -713,7 +702,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -731,7 +720,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -749,7 +738,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -804,7 +793,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -934,7 +923,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
 						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1010,7 +999,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						CACertData: caFromBase64(t, testCAData),
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
