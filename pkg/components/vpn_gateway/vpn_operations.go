@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
+	"github.com/apparentlymart/go-cidr/cidr"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
@@ -539,14 +540,9 @@ func (i *Installer) calculateGatewayIP() (string, error) {
 	}
 
 	// Gateway IP is typically the first usable IP in the range
-	// For 192.168.100.0/24, the gateway would be 192.168.100.1
-	ip := network.IP.To4()
-	if ip == nil {
-		return "", fmt.Errorf("only IPv4 networks are supported")
-	}
-
-	// Increment the network address by 1 to get the gateway IP
-	gatewayIP := net.IPv4(ip[0], ip[1], ip[2], ip[3]+1)
+	// Use go-cidr to safely get the first host IP (network + 1)
+	firstIP, _ := cidr.AddressRange(network)
+	gatewayIP := cidr.Inc(firstIP) // Increment by 1 to get the gateway IP
 	return gatewayIP.String(), nil
 }
 

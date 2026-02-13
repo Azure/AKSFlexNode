@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
 	"github.com/Azure/go-autorest/autorest/to"
+	"github.com/apparentlymart/go-cidr/cidr"
 	"github.com/sirupsen/logrus"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
@@ -384,6 +385,21 @@ func (i *Installer) calculateAvailableSubnetInRange(vnetCIDR string, existingSub
 		return "", fmt.Errorf("failed to parse VNet CIDR %s: %w", vnetCIDR, err)
 	}
 
+	// Only support IPv4
+	if vnetNet.IP.To4() == nil {
+		return "", fmt.Errorf("only IPv4 networks are supported")
+	}
+
+	// Validate prefix length
+	if prefixLength < 0 || prefixLength > 32 {
+		return "", fmt.Errorf("invalid prefix length: %d", prefixLength)
+	}
+
+	vnetPrefixLen, _ := vnetNet.Mask.Size()
+	if prefixLength <= vnetPrefixLen {
+		return "", fmt.Errorf("requested subnet prefix /%d must be larger than VNet prefix /%d", prefixLength, vnetPrefixLen)
+	}
+
 	// Convert existing subnets to IPNet for overlap checking
 	var existingNets []*net.IPNet
 	for _, subnet := range existingSubnets {
@@ -397,41 +413,16 @@ func (i *Installer) calculateAvailableSubnetInRange(vnetCIDR string, existingSub
 		}
 	}
 
-	// Calculate subnet size
-	subnetSize := uint32(1 << (32 - prefixLength))
+	// Use go-cidr library to generate all possible subnets of the desired size
+	subnetBits := prefixLength - vnetPrefixLen
 
-	// Try to find an available subnet range
-	vnetIP := vnetNet.IP.To4()
-	if vnetIP == nil {
-		return "", fmt.Errorf("only IPv4 networks are supported")
-	}
-
-	// Convert IP to uint32 for easier calculation
-	vnetStart := uint32(vnetIP[0])<<24 | uint32(vnetIP[1])<<16 | uint32(vnetIP[2])<<8 | uint32(vnetIP[3])
-	prefixLen := i.getNetworkPrefixLength(vnetNet)
-	if prefixLen < 0 || prefixLen > 32 {
-		return "", fmt.Errorf("invalid network prefix length: %d", prefixLen)
-	}
-	vnetPrefixLength := uint32(prefixLen)
-	vnetMask := uint32(0xFFFFFFFF) << (32 - vnetPrefixLength)
-	vnetEnd := vnetStart | (^vnetMask)
-
-	// Start from a high address in the VNet range to avoid conflicts with existing subnets
-	startAddress := vnetEnd - subnetSize + 1
-	startAddress = startAddress &^ (subnetSize - 1) // Align to subnet boundary
-
-	for currentAddr := startAddress; currentAddr >= vnetStart; currentAddr -= subnetSize {
-		// Create candidate subnet
-		candidateIP := net.IPv4(
-			byte(currentAddr>>24),
-			byte(currentAddr>>16),
-			byte(currentAddr>>8),
-			byte(currentAddr),
-		)
-
-		candidateNet := &net.IPNet{
-			IP:   candidateIP,
-			Mask: net.CIDRMask(prefixLength, 32),
+	// Find a subnet that doesn't overlap with existing ones, starting from the end
+	// We'll iterate through possible subnet positions
+	maxSubnets := 1 << subnetBits
+	for idx := maxSubnets - 1; idx >= 0; idx-- {
+		candidateNet, err := cidr.Subnet(vnetNet, subnetBits, idx)
+		if err != nil {
+			continue
 		}
 
 		// Check if this subnet overlaps with any existing subnet
@@ -451,41 +442,16 @@ func (i *Installer) calculateAvailableSubnetInRange(vnetCIDR string, existingSub
 	return "", fmt.Errorf("no available /%d subnet found in VNet %s", prefixLength, vnetCIDR)
 }
 
-// getNetworkPrefixLength returns the prefix length of a network
-func (i *Installer) getNetworkPrefixLength(network *net.IPNet) int {
-	ones, _ := network.Mask.Size()
-	return ones
-}
-
 // subnetsOverlap checks if two subnets overlap
 func (i *Installer) subnetsOverlap(subnet1, subnet2 *net.IPNet) bool {
-	return subnet1.Contains(subnet2.IP) || subnet2.Contains(subnet1.IP) ||
-		subnet1.Contains(i.getLastIP(subnet2)) || subnet2.Contains(i.getLastIP(subnet1))
-}
+	// A simpler and more reliable approach using standard Contains checks
+	// Two subnets overlap if either contains the other's network or broadcast address
+	firstIP1, lastIP1 := cidr.AddressRange(subnet1)
+	firstIP2, lastIP2 := cidr.AddressRange(subnet2)
 
-// getLastIP returns the last IP address in a subnet
-func (i *Installer) getLastIP(network *net.IPNet) net.IP {
-	ip := network.IP.To4()
-	if ip == nil {
-		return nil
-	}
-
-	// Convert to uint32
-	ipInt := uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
-
-	// Get network mask
-	ones, bits := network.Mask.Size()
-	mask := uint32(0xFFFFFFFF) << (bits - ones)
-
-	// Calculate last IP
-	lastIPInt := ipInt | (^mask)
-
-	return net.IPv4(
-		byte(lastIPInt>>24),
-		byte(lastIPInt>>16),
-		byte(lastIPInt>>8),
-		byte(lastIPInt),
-	)
+	// Check if any boundary IP of one subnet is contained in the other
+	return subnet1.Contains(firstIP2) || subnet1.Contains(lastIP2) ||
+		   subnet2.Contains(firstIP1) || subnet2.Contains(lastIP1)
 }
 
 // AKS nodes can be in either BYO VNet or AKS managed VNet
