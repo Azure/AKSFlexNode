@@ -451,7 +451,7 @@ func (i *Installer) subnetsOverlap(subnet1, subnet2 *net.IPNet) bool {
 
 	// Check if any boundary IP of one subnet is contained in the other
 	return subnet1.Contains(firstIP2) || subnet1.Contains(lastIP2) ||
-		   subnet2.Contains(firstIP1) || subnet2.Contains(lastIP1)
+		subnet2.Contains(firstIP1) || subnet2.Contains(lastIP1)
 }
 
 // AKS nodes can be in either BYO VNet or AKS managed VNet
