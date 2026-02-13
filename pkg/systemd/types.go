@@ -17,7 +17,15 @@ var ErrUnitNotFound = errors.New("unit not found")
 
 // Manager defines the interface for interacting with systemd.
 type Manager interface {
+	// DaemonReload triggers a systemd daemon reload to recognize new or changed unit files.
+	DaemonReload(ctx context.Context) error
+
 	// GetUnitStatus retrieves the status of a systemd unit by name.
 	// Returns ErrUnitNotFound if no unit with the specified name exists.
 	GetUnitStatus(ctx context.Context, unitName string) (dbus.UnitStatus, error)
+
+	// WriteUnitFile writes a systemd unit file with the given name and content.
+	WriteUnitFile(ctx context.Context, unitName string, content []byte) error
+	// WriteDropInFile writes a systemd drop-in file for the specified unit.
+	WriteDropInFile(ctx context.Context, unitName string, dropInName string, content []byte) error
 }

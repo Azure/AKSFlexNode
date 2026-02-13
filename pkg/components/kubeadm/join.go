@@ -26,11 +26,6 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
-const (
-	systemdUnitKubelet = "kubelet.service"
-	dirVarLibKubelet   = "/var/lib/kubelet"
-)
-
 type nodeJoinConfig struct {
 	APIServerEndpoint string
 	APIServerCAData   []byte
@@ -114,6 +109,10 @@ func (n *nodeJoin) Execute(ctx context.Context) error {
 	config, err := n.writeKubeadmJoinConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("write kubeadm config: %w", err)
+	}
+
+	if err := n.ensureKubeletUnit(ctx); err != nil {
+		return fmt.Errorf("ensure kubelet systemd unit: %w", err)
 	}
 
 	if err := utils.RunSystemCommand(
@@ -238,6 +237,40 @@ func (n *nodeJoin) writeKubeadmJoinConfig(
 	}
 
 	return n.writeFile("join-config.yaml", content)
+}
+
+func (n *nodeJoin) ensureKubeletUnit(ctx context.Context) error {
+	_, err := n.systemd.GetUnitStatus(ctx, systemdUnitKubelet)
+	switch {
+	case errors.Is(err, systemd.ErrUnitNotFound):
+		// proceed to create
+	case err != nil:
+		return err
+	default:
+		return nil // unit already exists, nothing to do
+	}
+
+	if err := n.systemd.WriteUnitFile(
+		ctx,
+		systemdUnitKubelet,
+		systemdUnitKubeletFile,
+	); err != nil {
+		return fmt.Errorf("kubelet unit: %w", err)
+	}
+	if err := n.systemd.WriteDropInFile(
+		ctx,
+		systemdUnitKubelet,
+		systemdDropInKubeadm,
+		systemdDropInKubeadmFile,
+	); err != nil {
+		return fmt.Errorf("kubelet unit drop-in: %w", err)
+	}
+
+	if err := n.systemd.DaemonReload(ctx); err != nil {
+		return fmt.Errorf("systemd daemon reload: %w", err)
+	}
+
+	return nil
 }
 
 func (n *nodeJoin) pollUntilKubeletActive(ctx context.Context) error {

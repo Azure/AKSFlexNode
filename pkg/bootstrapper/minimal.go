@@ -5,8 +5,11 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/containerd"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/kube_binaries"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/kubeadm"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/runc"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
@@ -32,6 +35,9 @@ func (b *MinimalBootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, 
 
 	steps := []Executor{
 		kube_binaries.NewInstaller(b.logger), // for installing kubeadm
+		cni.NewInstaller(b.logger),           // Install CNI plugins
+		runc.NewInstaller(b.logger),          // Install runc
+		containerd.NewInstaller(b.logger),    // Install containerd
 		kubeadmNodeJoin,
 	}
 
