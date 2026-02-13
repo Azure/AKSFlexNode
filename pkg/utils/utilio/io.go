@@ -38,7 +38,7 @@ func InstallFileWithLimitedSize(filename string, r io.Reader, perm os.FileMode, 
 	if err != nil {
 		return err
 	}
-	defer pf.Cleanup()
+	defer pf.Cleanup() // nolint:errcheck // pending file cleanup
 
 	lr := io.LimitReader(r, maxBytes+1)
 	n, err := io.Copy(pf, lr)
