@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -24,6 +25,57 @@ var (
 	GitCommit = "unknown"
 	BuildTime = "unknown"
 )
+
+func NewApplyCommand() *cobra.Command {
+	var flagMode string
+
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply configuration to the node",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+
+			logger := logger.GetLoggerFromContext(ctx)
+
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+			}
+
+			var b interface {
+				Bootstrap(context.Context) (*bootstrapper.ExecutionResult, error)
+			}
+
+			if strings.EqualFold(flagMode, "minimal") {
+				logger.Info("Using minimal bootstrapper mode")
+				b = bootstrapper.NewMinimal(cfg, logger)
+			} else {
+				logger.Info("Using full bootstrapper mode")
+				b = bootstrapper.New(cfg, logger)
+			}
+
+			result, err := b.Bootstrap(ctx)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf(
+				"Bootstrap completed with success: %t, duration: %v, steps: %d\n",
+				result.Success, result.Duration, result.StepCount,
+			)
+			if !result.Success {
+				fmt.Printf("Bootstrap failed with error: %s\n", result.Error)
+				return fmt.Errorf("bootstrap failed: %s", result.Error)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&flagMode, "mode", "minimal", "minimal or full")
+
+	return cmd
+}
 
 // NewAgentCommand creates a new agent command
 func NewAgentCommand() *cobra.Command {
