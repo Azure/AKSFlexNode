@@ -7,9 +7,11 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
+
 	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles containerd installation operations
@@ -35,7 +37,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Prepared containerd directories successfully")
 
 	i.logger.Infof("Step 2: Downloading and installing containerd version %s", i.getContainerdVersion())
-	if err := i.installContainerd(); err != nil {
+	if err := i.installContainerd(ctx); err != nil {
 		return fmt.Errorf("failed to install containerd: %w", err)
 	}
 	i.logger.Info("containerd binaries installed successfully")
@@ -76,7 +78,7 @@ func (i *Installer) prepareContainerdDirectories() error {
 	return nil
 }
 
-func (i *Installer) installContainerd() error {
+func (i *Installer) installContainerd(ctx context.Context) error {
 	// Check if we can skip installation
 	if i.canSkipContainerdInstallation() {
 		i.logger.Info("containerd is already installed and valid, skipping installation")
@@ -91,41 +93,27 @@ func (i *Installer) installContainerd() error {
 	}
 
 	// Construct download URL
-	containerdFileName, containerdURL, err := i.constructContainerdDownloadURL()
+	_, containerdURL, err := i.constructContainerdDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct containerd download URL: %w", err)
 	}
 
-	// Download the containerd plugin tar file into tmp directory
-	tempFile := fmt.Sprintf("/tmp/%s", containerdFileName)
-	// Clean up any existing containerd temp files from /tmp directory to avoid conflicts
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
-		logrus.Warnf("Failed to clean up existing containerd temp files from /tmp: %s", err)
-	}
-	defer func() {
-		if err := utils.RunCleanupCommand(tempFile); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, containerdURL) {
+		if err != nil {
+			return err
 		}
-	}()
 
-	i.logger.Infof("Downloading containerd from %s into %s", containerdURL, tempFile)
-	if err := utils.DownloadFile(containerdURL, tempFile); err != nil {
-		return fmt.Errorf("failed to download containerd from %s: %w", containerdURL, err)
-	}
+		if !strings.HasPrefix(tarFile.Name, "bin/") {
+			continue
+		}
 
-	// Extract containerd binaries directly to /usr/bin, stripping the 'bin/' prefix
-	i.logger.Info("Extracting containerd binaries to /usr/bin")
-	if err := utils.RunSystemCommand("tar", "-C", systemBinDir, "--strip-components=1", "-xzf", tempFile, "bin/"); err != nil {
-		return fmt.Errorf("failed to extract containerd binaries: %w", err)
-	}
+		fileName := strings.TrimPrefix(tarFile.Name, "bin/")
+		targetFilePath := filepath.Join(systemBinDir, fileName)
 
-	// Ensure all extracted binaries are executable and have proper permissions
-	i.logger.Info("Setting executable permissions on containerd binaries")
-	versionBinaries := getContainerdBinariesForVersion(i.getContainerdVersion())
-	for _, binary := range versionBinaries {
-		binaryPath := filepath.Join(systemBinDir, binary)
-		if err := utils.RunSystemCommand("chmod", "0755", binaryPath); err != nil {
-			return fmt.Errorf("failed to set executable permissions on containerd binaries: %w", err)
+		i.logger.Debugf("extracting file %q to %q", tarFile.Name, targetFilePath)
+
+		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
+			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
 		}
 	}
 
@@ -244,21 +232,8 @@ OOMScoreAdjust=-999
 [Install]
 WantedBy=multi-user.target`
 
-	// Create containerd service file
-	tempFile, err := utils.CreateTempFile("containerd-service-*.service", []byte(containerdService))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary containerd service file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempFile.Name())
-
-	// Copy the temp file to the final location
-	if err := utils.RunSystemCommand("cp", tempFile.Name(), containerdServiceFile); err != nil {
-		return fmt.Errorf("failed to install containerd service file: %w", err)
-	}
-
-	// Set proper permissions: root can modify the service, but everyone else can only read it, and nobody can execute it
-	if err := utils.RunSystemCommand("chmod", "644", containerdServiceFile); err != nil {
-		return fmt.Errorf("failed to set containerd service file permissions: %w", err)
+	if err := utilio.WriteFile(containerdServiceFile, []byte(containerdService), 0644); err != nil {
+		return err
 	}
 
 	return nil
@@ -295,21 +270,8 @@ oom_score = 0
 		cni.DefaultCNIConfDir,
 		i.getMetricsAddress())
 
-	// Create a tmp containerd config file
-	tempConfigFile, err := utils.CreateTempFile("containerd-config-*.toml", []byte(containerdConfig))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary containerd config file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempConfigFile.Name())
-
-	// Copy the temp file to the final location
-	if err := utils.RunSystemCommand("cp", tempConfigFile.Name(), containerdConfigFile); err != nil {
-		return fmt.Errorf("failed to install containerd config file: %w", err)
-	}
-
-	// Set proper permissions
-	if err := utils.RunSystemCommand("chmod", "644", containerdConfigFile); err != nil {
-		return fmt.Errorf("failed to set containerd config file permissions: %w", err)
+	if err := utilio.WriteFile(containerdConfigFile, []byte(containerdConfig), 0644); err != nil {
+		return err
 	}
 
 	return nil

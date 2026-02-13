@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -128,91 +125,6 @@ func RunCleanupCommand(path string) error {
 	return nil
 }
 
-// CreateTempFile creates a temporary file with given pattern and content
-func CreateTempFile(pattern string, content []byte) (*os.File, error) {
-	tempFile, err := os.CreateTemp("", pattern)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary file: %w", err)
-	}
-
-	if _, err := tempFile.Write(content); err != nil {
-		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to close temporary file: %w", err)
-	}
-
-	// Reopen for reading
-	reopened, err := os.Open(tempFile.Name())
-	if err != nil {
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to reopen temporary file: %w", err)
-	}
-
-	return reopened, nil
-}
-
-// CleanupTempFile removes a temporary file
-func CleanupTempFile(filePath string) {
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		logrus.Warnf("Failed to cleanup temporary file %s: %v", filePath, err)
-	}
-}
-
-// WriteFileAtomic writes data to a file atomically using a temporary file and rename operation
-// This prevents partial writes and corruption during system failures
-func WriteFileAtomic(filename string, data []byte, perm os.FileMode) error {
-	// Create temporary file in the same directory as the target file
-	dir := filepath.Dir(filename)
-	tmpFile, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(filename)+"-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %w", err)
-	}
-
-	tmpPath := tmpFile.Name()
-	defer func() {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath) // Clean up temp file on error
-	}()
-
-	// Write data to temporary file
-	if _, err := tmpFile.Write(data); err != nil {
-		return fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	// Ensure data is flushed to disk
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync temporary file: %w", err)
-	}
-
-	// Close the temporary file
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temporary file: %w", err)
-	}
-
-	// Set the correct permissions
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return fmt.Errorf("failed to set file permissions: %w", err)
-	}
-
-	// Atomic rename to final location
-	if err := os.Rename(tmpPath, filename); err != nil {
-		return fmt.Errorf("failed to rename temporary file: %w", err)
-	}
-
-	return nil
-}
-
-// WriteFileAtomicSystem writes data to a file atomically with system-level permissions.
-// Since the agent runs as root, this delegates directly to WriteFileAtomic.
-func WriteFileAtomicSystem(filename string, data []byte, perm os.FileMode) error {
-	return WriteFileAtomic(filename, data, perm)
-}
-
 // WaitForService waits until a systemd service is active or timeout occurs
 func WaitForService(serviceName string, timeout time.Duration, logger *logrus.Logger) error {
 	logger.Debugf("Waiting for service %s to be active (timeout: %v)", serviceName, timeout)
@@ -240,44 +152,6 @@ func WaitForService(serviceName string, timeout time.Duration, logger *logrus.Lo
 			}
 		}
 	}
-}
-
-// DownloadFile downloads a file from URL to destination
-func DownloadFile(url, destination string) error {
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 10 * time.Minute,
-	}
-
-	// Make request
-	resp, err := client.Get(url)
-	if err != nil {
-		return fmt.Errorf("failed to download from %s: %w", url, err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status %d for %s", resp.StatusCode, url)
-	}
-
-	// Create destination file
-	out, err := os.Create(destination)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", destination, err)
-	}
-	defer func() {
-		_ = out.Close()
-	}()
-
-	// Copy response body to file
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to write file %s: %w", destination, err)
-	}
-
-	return nil
 }
 
 // DirectoryExists checks if a directory exists

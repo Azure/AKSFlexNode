@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
+
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles CNI setup and installation operations
@@ -52,7 +54,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 
 	// Install CNI plugins
 	i.logger.Info("Step 2: Installing CNI plugins")
-	if err := i.installCNIPlugins(); err != nil {
+	if err := i.installCNIPlugins(ctx); err != nil {
 		i.logger.Errorf("CNI plugins installation failed: %v", err)
 		return fmt.Errorf("failed to install CNI plugins version %s: %w", defaultCNIVersion, err)
 	}
@@ -130,61 +132,31 @@ func (i *Installer) prepareCNIDirectories() error {
 }
 
 // installCNIPlugins downloads and installs CNI plugins (matching reference script)
-func (i *Installer) installCNIPlugins() error {
+func (i *Installer) installCNIPlugins(ctx context.Context) error {
 	if canSkipCNIPluginInstallation() {
 		logrus.Info("CNI plugins are already installed and valid, skipping installation")
 		return nil
 	}
 
-	// Clean up any corrupted installations before proceeding
-	logrus.Info("Cleaning up corrupted CNI plugins files to start fresh")
-	if err := utils.RunSystemCommand("rm", "-rf", DefaultCNIBinDir+"/*"); err != nil {
-		logrus.Warnf("Failed to clean CNI bin directory: %v", err)
-	}
-
-	// Ensure curl is installed before using it for downloading CNI plugins
-	if err := utils.RunSystemCommand("which", "curl"); err != nil {
-		logrus.Info("Installing curl...")
-		if err := utils.RunSystemCommand("apt", "install", "-y", "curl"); err != nil {
-			logrus.Warnf("Failed to install curl: %v", err)
-		}
-	}
-
 	// Construct CNI download URL
-	cniFileName, cniDownloadURL, err := i.constructCNIDownloadURL()
+	_, cniDownloadURL, err := i.constructCNIDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct CNI download URL: %w", err)
 	}
 
-	// Download the CNI plugin tar file into tmp directory
-	tempFile := fmt.Sprintf("/tmp/%s", cniFileName)
-	// Clean up any existing CNI temp files from both /tmp and home directory
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
-		logrus.Warnf("Failed to clean up existing CNI temp files from /tmp: %s", err)
-	}
-	if err := utils.RunSystemCommand("curl", "-o", tempFile, "-L", cniDownloadURL); err != nil {
-		return fmt.Errorf("failed to download CNI plugins: %w", err)
-	}
-	defer func() {
-		if err := utils.RunCleanupCommand(tempFile); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, cniDownloadURL) {
+		if err != nil {
+			return err
 		}
-	}()
 
-	// Extract CNI plugins to /opt/cni/bin
-	if err := utils.RunSystemCommand("tar", "-C", DefaultCNIBinDir, "-xzf", tempFile); err != nil {
-		return fmt.Errorf("failed to extract CNI plugins: %w", err)
-	}
+		fileName := tarFile.Name
+		targetFilePath := filepath.Join(DefaultCNIBinDir, fileName)
 
-	// Set ownership of extracted CNI plugins - critical for Cilium init containers
-	// Cilium init containers run as root and need to write to /opt/cni/bin
-	if err := utils.RunSystemCommand("chown", "-R", "root:root", DefaultCNIBinDir); err != nil {
-		logrus.Warnf("Failed to fix ownership of extracted CNI plugins: %v", err)
-	}
+		i.logger.Debugf("extracting file %q to %q", tarFile.Name, targetFilePath)
 
-	// Ensure proper permissions for extracted files
-	if err := utils.RunSystemCommand("chmod", "-R", "755", DefaultCNIBinDir); err != nil {
-		logrus.Warnf("Failed to fix permissions of extracted CNI plugins: %v", err)
+		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
+			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
+		}
 	}
 
 	logrus.Info("CNI plugins installed successfully")
@@ -263,26 +235,8 @@ func (i *Installer) createBridgeConfig() error {
     }
 }`, defaultCNISpecVersion)
 
-	// Write the config file into a temp file for Atomic file write
-	tempBridgeFile, err := utils.CreateTempFile("bridge-cni-*.conf", []byte(bridgeConfig))
-	if err != nil {
-		return fmt.Errorf("failed to create temporary bridge config file: %w", err)
-	}
-	defer utils.CleanupTempFile(tempBridgeFile.Name())
-
-	// Copy the temp file to the final location
-	if err := utils.RunSystemCommand("cp", tempBridgeFile.Name(), configPath); err != nil {
-		return fmt.Errorf("failed to Execute bridge config file: %w", err)
-	}
-
-	// Set proper permissions - it needs to be readable by the kubelet and CNI runtime, but only writable by root
-	if err := utils.RunSystemCommand("chmod", "644", configPath); err != nil {
-		return fmt.Errorf("failed to set bridge config file permissions: %w", err)
-	}
-
-	// Set proper ownership to root:root
-	if err := utils.RunSystemCommand("chown", "root:root", configPath); err != nil {
-		logrus.Warnf("Failed to set ownership for bridge config: %v", err)
+	if err := utilio.WriteFile(configPath, []byte(bridgeConfig), 0644); err != nil {
+		return err
 	}
 
 	logrus.Info("Bridge CNI configuration created")
