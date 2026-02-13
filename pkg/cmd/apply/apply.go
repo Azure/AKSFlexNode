@@ -9,10 +9,14 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"go.goms.io/aks/AKSFlexNode/pkg/actions"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
+
+	"go.goms.io/aks/AKSFlexNode/components/api"
+	"go.goms.io/aks/AKSFlexNode/components/services/actions"
+	"go.goms.io/aks/AKSFlexNode/components/services/inmem"
 )
 
 const stdinFilePath = "-"
@@ -49,6 +53,12 @@ func init() {
 }
 
 func apply(ctx context.Context, input []byte) error {
+	conn, err := inmem.NewConnection()
+	if err != nil {
+		return err
+	}
+	defer conn.Close() //nolint:errcheck // close connection
+
 	tok, err := json.NewDecoder(bytes.NewBuffer(input)).Token()
 	if err != nil {
 		return err
@@ -64,7 +74,7 @@ func apply(ctx context.Context, input []byte) error {
 	}
 
 	for _, b := range bs {
-		if err := applyOne(ctx, b); err != nil {
+		if err := applyOne(ctx, conn, b); err != nil {
 			return err
 		}
 	}
@@ -72,8 +82,8 @@ func apply(ctx context.Context, input []byte) error {
 	return nil
 }
 
-func applyOne(ctx context.Context, b []byte) error {
-	action := &actions.Base{}
+func applyOne(ctx context.Context, conn *grpc.ClientConn, b []byte) error {
+	action := &api.Base{}
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(b, action); err != nil {
 		return err
 	}
@@ -96,7 +106,7 @@ func applyOne(ctx context.Context, b []byte) error {
 		return fmt.Errorf("unmarshal action %q: %w", actionType, err)
 	}
 
-	fmt.Println("Applying action:", m)
+	_, err = actions.ApplyAction(conn, ctx, m)
 
-	return nil
+	return err
 }

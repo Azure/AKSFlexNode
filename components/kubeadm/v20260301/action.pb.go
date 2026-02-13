@@ -7,7 +7,7 @@
 package v20260301
 
 import (
-	actions "go.goms.io/aks/AKSFlexNode/pkg/actions"
+	api "go.goms.io/aks/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -23,7 +23,7 @@ const (
 
 type KubadmNodeJoin struct {
 	state               protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Metadata *actions.Metadata      `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
 	xxx_hidden_Spec     *KubeadmNodeJoinSpec   `protobuf:"bytes,2,opt,name=spec"`
 	xxx_hidden_Status   *KubeadmNodeJoinStatus `protobuf:"bytes,3,opt,name=status"`
 	unknownFields       protoimpl.UnknownFields
@@ -55,7 +55,7 @@ func (x *KubadmNodeJoin) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-func (x *KubadmNodeJoin) GetMetadata() *actions.Metadata {
+func (x *KubadmNodeJoin) GetMetadata() *api.Metadata {
 	if x != nil {
 		return x.xxx_hidden_Metadata
 	}
@@ -76,7 +76,7 @@ func (x *KubadmNodeJoin) GetStatus() *KubeadmNodeJoinStatus {
 	return nil
 }
 
-func (x *KubadmNodeJoin) SetMetadata(v *actions.Metadata) {
+func (x *KubadmNodeJoin) SetMetadata(v *api.Metadata) {
 	x.xxx_hidden_Metadata = v
 }
 
@@ -124,7 +124,7 @@ func (x *KubadmNodeJoin) ClearStatus() {
 type KubadmNodeJoin_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	Metadata *actions.Metadata
+	Metadata *api.Metadata
 	Spec     *KubeadmNodeJoinSpec
 	Status   *KubeadmNodeJoinStatus
 }
@@ -673,9 +673,9 @@ var File_components_kubeadm_v20260301_action_proto protoreflect.FileDescriptor
 
 const file_components_kubeadm_v20260301_action_proto_rawDesc = "" +
 	"\n" +
-	")components/kubeadm/v20260301/action.proto\x12%aks.flex.components.kubeadm.v20260301\x1a\x19pkg/actions/actions.proto\"\xe5\x01\n" +
-	"\x0eKubadmNodeJoin\x12-\n" +
-	"\bmetadata\x18\x01 \x01(\v2\x11.actions.MetadataR\bmetadata\x12N\n" +
+	")components/kubeadm/v20260301/action.proto\x12%aks.flex.components.kubeadm.v20260301\x1a\x18components/api/api.proto\"\xf5\x01\n" +
+	"\x0eKubadmNodeJoin\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12N\n" +
 	"\x04spec\x18\x02 \x01(\v2:.aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpecR\x04spec\x12T\n" +
 	"\x06status\x18\x03 \x01(\v2<.aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinStatusR\x06status\"d\n" +
 	"\fControlPlane\x12\x16\n" +
@@ -707,10 +707,10 @@ var file_components_kubeadm_v20260301_action_proto_goTypes = []any{
 	(*KubeadmNodeJoinSpec)(nil),   // 4: aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpec
 	(*KubeadmNodeJoinStatus)(nil), // 5: aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinStatus
 	nil,                           // 6: aks.flex.components.kubeadm.v20260301.Kubelet.NodeLabelsEntry
-	(*actions.Metadata)(nil),      // 7: actions.Metadata
+	(*api.Metadata)(nil),          // 7: aks.flex.components.api.Metadata
 }
 var file_components_kubeadm_v20260301_action_proto_depIdxs = []int32{
-	7, // 0: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.metadata:type_name -> actions.Metadata
+	7, // 0: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
 	4, // 1: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpec
 	5, // 2: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinStatus
 	3, // 3: aks.flex.components.kubeadm.v20260301.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.v20260301.NodeAuthInfo

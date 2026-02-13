@@ -1,0 +1,19 @@
+edition = "2024";
+
+package aks.flex.components.services.actions;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/services/actions";
+
+import "google/protobuf/any.proto";
+
+message ApplyActionRequest {
+  google.protobuf.Any item = 1;
+}
+
+message ApplyActionResponse {
+  google.protobuf.Any item = 1;
+}
+
+service ActionsService {
+  rpc ApplyAction(ApplyActionRequest) returns (ApplyActionResponse) {};
+}

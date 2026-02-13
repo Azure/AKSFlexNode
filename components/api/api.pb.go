@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.4
-// source: pkg/actions/actions.proto
+// source: components/api/api.proto
 
-package actions
+package api
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -33,7 +33,7 @@ type Metadata struct {
 
 func (x *Metadata) Reset() {
 	*x = Metadata{}
-	mi := &file_pkg_actions_actions_proto_msgTypes[0]
+	mi := &file_components_api_api_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -45,7 +45,7 @@ func (x *Metadata) String() string {
 func (*Metadata) ProtoMessage() {}
 
 func (x *Metadata) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_actions_actions_proto_msgTypes[0]
+	mi := &file_components_api_api_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -143,7 +143,7 @@ type Base struct {
 
 func (x *Base) Reset() {
 	*x = Base{}
-	mi := &file_pkg_actions_actions_proto_msgTypes[1]
+	mi := &file_components_api_api_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -155,7 +155,7 @@ func (x *Base) String() string {
 func (*Base) ProtoMessage() {}
 
 func (x *Base) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_actions_actions_proto_msgTypes[1]
+	mi := &file_components_api_api_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -202,24 +202,24 @@ func (b0 Base_builder) Build() *Base {
 	return m0
 }
 
-var File_pkg_actions_actions_proto protoreflect.FileDescriptor
+var File_components_api_api_proto protoreflect.FileDescriptor
 
-const file_pkg_actions_actions_proto_rawDesc = "" +
+const file_components_api_api_proto_rawDesc = "" +
 	"\n" +
-	"\x19pkg/actions/actions.proto\x12\aactions\"2\n" +
+	"\x18components/api/api.proto\x12\x17aks.flex.components.api\"2\n" +
 	"\bMetadata\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"5\n" +
-	"\x04Base\x12-\n" +
-	"\bmetadata\x18\x01 \x01(\v2\x11.actions.MetadataR\bmetadataB(Z&go.goms.io/aks/AKSFlexNode/pkg/actionsb\beditionsp\xe9\a"
+	"\x04name\x18\x02 \x01(\tR\x04name\"E\n" +
+	"\x04Base\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadataB+Z)go.goms.io/aks/AKSFlexNode/components/apib\beditionsp\xe9\a"
 
-var file_pkg_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_pkg_actions_actions_proto_goTypes = []any{
-	(*Metadata)(nil), // 0: actions.Metadata
-	(*Base)(nil),     // 1: actions.Base
+var file_components_api_api_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_components_api_api_proto_goTypes = []any{
+	(*Metadata)(nil), // 0: aks.flex.components.api.Metadata
+	(*Base)(nil),     // 1: aks.flex.components.api.Base
 }
-var file_pkg_actions_actions_proto_depIdxs = []int32{
-	0, // 0: actions.Base.metadata:type_name -> actions.Metadata
+var file_components_api_api_proto_depIdxs = []int32{
+	0, // 0: aks.flex.components.api.Base.metadata:type_name -> aks.flex.components.api.Metadata
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -227,26 +227,26 @@ var file_pkg_actions_actions_proto_depIdxs = []int32{
 	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_pkg_actions_actions_proto_init() }
-func file_pkg_actions_actions_proto_init() {
-	if File_pkg_actions_actions_proto != nil {
+func init() { file_components_api_api_proto_init() }
+func file_components_api_api_proto_init() {
+	if File_components_api_api_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_actions_actions_proto_rawDesc), len(file_pkg_actions_actions_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_api_api_proto_rawDesc), len(file_components_api_api_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_pkg_actions_actions_proto_goTypes,
-		DependencyIndexes: file_pkg_actions_actions_proto_depIdxs,
-		MessageInfos:      file_pkg_actions_actions_proto_msgTypes,
+		GoTypes:           file_components_api_api_proto_goTypes,
+		DependencyIndexes: file_components_api_api_proto_depIdxs,
+		MessageInfos:      file_components_api_api_proto_msgTypes,
 	}.Build()
-	File_pkg_actions_actions_proto = out.File
-	file_pkg_actions_actions_proto_goTypes = nil
-	file_pkg_actions_actions_proto_depIdxs = nil
+	File_components_api_api_proto = out.File
+	file_components_api_api_proto_goTypes = nil
+	file_components_api_api_proto_depIdxs = nil
 }

@@ -2,7 +2,6 @@ package kubeadm
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -21,60 +22,58 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/upstreamv1beta4"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
 )
 
-type nodeJoinConfig struct {
-	APIServerEndpoint string
-	APIServerCAData   []byte
-
-	KubeletAuthInfo   *api.AuthInfo
-	KubeletNodeLabels map[string]string
-	KubeletNodeIP     string
-}
-
-// nodeJoin provides the functionality for joining the current machine to
-// the Kubernetes cluster using kubeadm.
-// It expects the kubeadmin binary is present in the PATH.
-type nodeJoin struct {
-	logger         *logrus.Logger
-	kubeadmCommand string // to allow overriding in unit test
-	baseDir        string // base directory for the join config
-	config         nodeJoinConfig
+type nodeJoinAction struct {
 	systemd        systemd.Manager
+	kubeadmCommand string // to allow overriding in unit test
 }
 
-func NewNodeJoin(cfg *config.Config, logger *logrus.Logger) (*nodeJoin, error) {
-	baseDir, err := os.MkdirTemp("", "aks-flex-node-kubeadm-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir for kubeadm join config: %w", err)
-	}
+func newNodeJoinAction() (actions.Server, error) {
+	systemdManager := systemd.New()
 
-	ca, err := base64.StdEncoding.DecodeString(cfg.Node.Kubelet.CACertData)
-	if err != nil {
-		return nil, fmt.Errorf("decode CA cert data: %w", err)
-	}
-
-	rv := &nodeJoin{
-		logger:  logger,
-		baseDir: baseDir,
-		config: nodeJoinConfig{
-			APIServerEndpoint: cfg.Node.Kubelet.ServerURL,
-			APIServerCAData:   ca,
-			KubeletAuthInfo: &api.AuthInfo{
-				Token: cfg.Azure.BootstrapToken.Token,
-			},
-		},
-		systemd: systemd.New(),
-	}
-
-	return rv, nil
+	return &nodeJoinAction{
+		systemd: systemdManager,
+	}, nil
 }
 
-func (n *nodeJoin) resolveKubeadmBinary() (string, error) {
+var _ actions.Server = (*nodeJoinAction)(nil)
+
+func (n *nodeJoinAction) ApplyAction(
+	ctx context.Context,
+	req *actions.ApplyActionRequest,
+) (*actions.ApplyActionResponse, error) {
+	config, err := utilpb.AnyTo[*v20260301.KubadmNodeJoin](req.GetItem())
+	if err != nil {
+		return nil, err
+	}
+
+	if n.canRun() {
+		if err := n.runJoin(ctx, config.GetSpec()); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := n.pollUntilKubeletActive(ctx); err != nil {
+		return nil, err
+	}
+
+	// TODO: capture status
+	item, err := anypb.New(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
+}
+
+func (n *nodeJoinAction) resolveKubeadmBinary() (string, error) {
 	if n.kubeadmCommand != "" {
 		return n.kubeadmCommand, nil
 	}
@@ -82,76 +81,10 @@ func (n *nodeJoin) resolveKubeadmBinary() (string, error) {
 	return exec.LookPath("kubeadm")
 }
 
-func (n *nodeJoin) GetName() string {
-	return "kubeadm-join"
-}
-
-func (n *nodeJoin) IsCompleted(ctx context.Context) bool {
-	// if the kubelet directory exists,
-	// we assume the node has already joined or is in the process of joining
-	return hasDir(dirVarLibKubelet)
-}
-
-func (n *nodeJoin) Execute(ctx context.Context) error {
-	if err := n.ensureBaseDir(); err != nil {
-		return fmt.Errorf("ensure base dir: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(n.baseDir); err != nil {
-			n.logger.Warnf("remove base dir: %s", err)
-		}
-	}()
-
-	kubeadmBinary, err := n.resolveKubeadmBinary()
-	if err != nil {
-		return fmt.Errorf("resolve kubeadm binary: %w", err)
-	}
-
-	config, err := n.writeKubeadmJoinConfig()
-	if err != nil {
-		return fmt.Errorf("write kubeadm config: %w", err)
-	}
-
-	if err := n.ensureKubeletUnit(ctx); err != nil {
-		return fmt.Errorf("ensure kubelet systemd unit: %w", err)
-	}
-
-	if err := utils.RunSystemCommand(
-		kubeadmBinary,
-		"join",
-		"--config", config,
-		"-v", "5",
-	); err != nil {
-		return fmt.Errorf("kubeadm join: %w", err)
-	}
-
-	if err := n.pollUntilKubeletActive(ctx); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (n *nodeJoin) ensureBaseDir() error {
-	if hasDir(n.baseDir) {
-		return nil
-	}
-	return os.MkdirAll(n.baseDir, 0700)
-}
-
-func (n *nodeJoin) writeFile(filename string, content []byte) (string, error) {
-	const filePerm = 0600 // read/write for owner only
-
-	p := filepath.Join(n.baseDir, filename)
-
-	if err := utilio.WriteFile(p, content, filePerm); err != nil {
-		return "", err
-	}
-
-	return p, nil
-}
-
-func (n *nodeJoin) writeBootstrapKubeconfig() (string, error) {
+func (n *nodeJoinAction) writeBootstrapKubeconfig(
+	baseDir string,
+	config *v20260301.KubeadmNodeJoinSpec,
+) (string, error) {
 	const (
 		cluster  = "cluster"
 		context  = "context"
@@ -161,8 +94,8 @@ func (n *nodeJoin) writeBootstrapKubeconfig() (string, error) {
 	content, err := runtime.Encode(latest.Codec, &api.Config{
 		Clusters: map[string]*api.Cluster{
 			cluster: {
-				CertificateAuthorityData: n.config.APIServerCAData,
-				Server:                   n.config.APIServerEndpoint,
+				CertificateAuthorityData: config.GetControlPlane().GetCertificateAuthorityData(),
+				Server:                   config.GetControlPlane().GetServer(),
 			},
 		},
 		Contexts: map[string]*api.Context{
@@ -173,18 +106,29 @@ func (n *nodeJoin) writeBootstrapKubeconfig() (string, error) {
 		},
 		CurrentContext: context,
 		AuthInfos: map[string]*api.AuthInfo{
-			authInfo: n.config.KubeletAuthInfo,
+			authInfo: {
+				// TODO: add support for exec plugin
+				Token: config.GetKubelet().GetBootstrapAuthInfo().GetToken(),
+			},
 		},
 	})
 	if err != nil {
 		return "", err
 	}
 
-	return n.writeFile("bootstrap.kubeconfig", content)
+	dest := filepath.Join(baseDir, "bootstrap.kubeconfig")
+	if err := utilio.WriteFile(dest, content, 0600); err != nil {
+		return "", err
+	}
+
+	return dest, nil
 }
 
-func (n *nodeJoin) writeKubeadmJoinConfig() (string, error) {
-	bootstrapKubeconfig, err := n.writeBootstrapKubeconfig()
+func (n *nodeJoinAction) writeKubeadmJoinConfig(
+	baseDir string,
+	config *v20260301.KubeadmNodeJoinSpec,
+) (string, error) {
+	bootstrapKubeconfig, err := n.writeBootstrapKubeconfig(baseDir, config)
 	if err != nil {
 		return "", err
 	}
@@ -206,7 +150,7 @@ func (n *nodeJoin) writeKubeadmJoinConfig() (string, error) {
 	var kubeletArgs []upstreamv1beta4.Arg
 
 	// Add static node labels
-	if l := n.config.KubeletNodeLabels; len(l) > 0 {
+	if l := config.GetKubelet().GetNodeLabels(); len(l) > 0 {
 		kubeletArgs = append(kubeletArgs, upstreamv1beta4.Arg{
 			Name:  "node-labels",
 			Value: nodeLabels(l),
@@ -214,10 +158,10 @@ func (n *nodeJoin) writeKubeadmJoinConfig() (string, error) {
 	}
 
 	// Add --node-ip if configured (to advertise a different node IP)
-	if n.config.KubeletNodeIP != "" {
+	if config.GetKubelet().HasNodeIp() {
 		kubeletArgs = append(kubeletArgs, upstreamv1beta4.Arg{
 			Name:  "node-ip",
-			Value: n.config.KubeletNodeIP,
+			Value: config.GetKubelet().GetNodeIp(),
 		})
 	}
 
@@ -235,10 +179,15 @@ func (n *nodeJoin) writeKubeadmJoinConfig() (string, error) {
 		return "", err
 	}
 
-	return n.writeFile("join-config.yaml", content)
+	dest := filepath.Join(baseDir, "join-config.yaml")
+	if err := utilio.WriteFile(dest, content, 0600); err != nil {
+		return "", err
+	}
+
+	return dest, nil
 }
 
-func (n *nodeJoin) ensureKubeletUnit(ctx context.Context) error {
+func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 	_, err := n.systemd.GetUnitStatus(ctx, systemdUnitKubelet)
 	switch {
 	case errors.Is(err, systemd.ErrUnitNotFound):
@@ -272,7 +221,42 @@ func (n *nodeJoin) ensureKubeletUnit(ctx context.Context) error {
 	return nil
 }
 
-func (n *nodeJoin) pollUntilKubeletActive(ctx context.Context) error {
+func (n *nodeJoinAction) canRun() bool {
+	// if the kubelet directory exists,
+	// we assume the node has already joined or is in the process of joining
+	return !hasDir(dirVarLibKubelet)
+}
+
+func (n *nodeJoinAction) runJoin(
+	ctx context.Context,
+	config *v20260301.KubeadmNodeJoinSpec,
+) error {
+	baseDir, err := os.MkdirTemp("", "aks-flex-node-kubeadm-*") // maybe move to utilio?
+	if err != nil {
+		return status.Errorf(codes.Internal, "create temp dir for kubeadm join config: %s", err)
+	}
+	_ = os.RemoveAll(baseDir) //nolint:errcheck // clean up temp dir
+
+	joinConfig, err := n.writeKubeadmJoinConfig(baseDir, config)
+	if err != nil {
+		return status.Errorf(codes.Internal, "write kubeadm config: %s", err)
+	}
+
+	if err := n.ensureKubeletUnit(ctx); err != nil {
+		return status.Errorf(codes.Internal, "ensure kubelet systemd unit: %s", err)
+	}
+
+	if err := utils.RunSystemCommand(
+		n.kubeadmCommand,
+		"join", "--config", joinConfig, "-v", "5",
+	); err != nil {
+		return status.Errorf(codes.Internal, "kubeadm join: %s", err)
+	}
+
+	return nil
+}
+
+func (n *nodeJoinAction) pollUntilKubeletActive(ctx context.Context) error {
 	const (
 		pollInterval = 5 * time.Second
 		waitTimeout  = 3 * time.Minute
@@ -294,7 +278,7 @@ func (n *nodeJoin) pollUntilKubeletActive(ctx context.Context) error {
 			default:
 				active := unit.ActiveState == systemd.UnitActiveStateActive
 				if !active {
-					n.logger.Debugf("kubelet unit status: %s", unit.ActiveState)
+					// n.logger.Debugf("kubelet unit status: %s", unit.ActiveState)
 				}
 				return active, nil
 			}
@@ -302,18 +286,16 @@ func (n *nodeJoin) pollUntilKubeletActive(ctx context.Context) error {
 	)
 }
 
-func nodeLabels(labels map[string]string) string {
-	kv := make([]string, 0, len(labels))
-
-	for k, v := range labels {
-		kv = append(kv, k+"="+v)
-	}
-
-	return strings.Join(kv, ",")
+func hasDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
-// hasDir checks if the given path exists and is a directory.
-func hasDir(path string) bool {
-	s, err := os.Stat(path)
-	return err == nil && s.IsDir()
+func nodeLabels(labels map[string]string) string {
+	parts := make([]string, 0, len(labels))
+	for k, v := range labels {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	return strings.Join(parts, ",")
 }

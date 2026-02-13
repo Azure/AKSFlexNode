@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/actions/cmd/apply"
+	"go.goms.io/aks/AKSFlexNode/pkg/cmd/apply"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
 )

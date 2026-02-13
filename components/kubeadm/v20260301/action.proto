@@ -4,10 +4,10 @@ package aks.flex.components.kubeadm.v20260301;
 
 option go_package = "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301";
 
-import "pkg/actions/actions.proto";
+import "components/api/api.proto";
 
 message KubadmNodeJoin {
-  actions.Metadata metadata = 1;
+  api.Metadata metadata = 1;
 
   KubeadmNodeJoinSpec spec = 2;
 
