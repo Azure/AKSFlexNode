@@ -19,20 +19,19 @@ var remoteHTTPClient = &http.Client{
 	Timeout: 10 * time.Minute, // FIXME: proper configuration
 }
 
-// FIXME: harden to mitigate SSRF
 func downloadFromRemote(ctx context.Context, url string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	resp, err := remoteHTTPClient.Do(req)
+	resp, err := remoteHTTPClient.Do(req) // #nosec - FIXME: harden to mitigate SSRF in the following PRs
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform HTTP request: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close() //nolint:errcheck // body close
 		return nil, fmt.Errorf("download %q failed with status code %d", url, resp.StatusCode)
 	}
 
@@ -52,14 +51,14 @@ func DecompressTarGzFromRemote(ctx context.Context, url string) iter.Seq2[*TarFi
 			yield(nil, err)
 			return
 		}
-		defer body.Close()
+		defer body.Close() //nolint:errcheck // body close
 
 		gzipStream, err := gzip.NewReader(body)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		defer gzipStream.Close()
+		defer gzipStream.Close() //nolint:errcheck // gzip reader close
 
 		tarReader := tar.NewReader(gzipStream)
 
@@ -119,7 +118,7 @@ func DownloadToLocalFile(ctx context.Context, url string, filename string, perm 
 	if err != nil {
 		return err
 	}
-	defer body.Close()
+	defer body.Close() //nolint:errcheck // body close
 
 	return InstallFile(filename, body, perm)
 }

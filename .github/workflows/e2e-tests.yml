@@ -575,6 +575,7 @@ jobs:
           else
             echo "⚠️  kubelet not running yet, checking status..."
             systemctl status kubelet --no-pager -l || true
+            journalctl -u kubelet -n 20 --no-pager || echo "No kubelet logs"
           fi
 
           echo "[5/5] Verifying node registration..."
