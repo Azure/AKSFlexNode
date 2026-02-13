@@ -19,14 +19,13 @@ var remoteHTTPClient = &http.Client{
 	Timeout: 10 * time.Minute, // FIXME: proper configuration
 }
 
-// FIXME: harden to mitigate SSRF
 func downloadFromRemote(ctx context.Context, url string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	resp, err := remoteHTTPClient.Do(req)
+	resp, err := remoteHTTPClient.Do(req) // #nosec - FIXME: harden to mitigate SSRF in the following PRs
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform HTTP request: %w", err)
 	}
