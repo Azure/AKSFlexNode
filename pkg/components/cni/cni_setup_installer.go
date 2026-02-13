@@ -91,13 +91,6 @@ func (i *Installer) IsCompleted(ctx context.Context) bool {
 		}
 	}
 
-	// Validate Step 3: Bridge configuration
-	configPath := filepath.Join(DefaultCNIConfDir, bridgeConfigFile)
-	if !utils.FileExistsAndValid(configPath) {
-		i.logger.Debug("Bridge configuration file not found")
-		return false
-	}
-
 	i.logger.Debug("CNI setup validation passed - all components properly configured")
 	return true
 }

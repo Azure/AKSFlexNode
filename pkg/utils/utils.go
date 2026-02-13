@@ -53,6 +53,15 @@ func IsServiceActive(serviceName string) bool {
 	return strings.TrimSpace(output) == "active"
 }
 
+// IsServiceEnabled checks if a systemd service is enabled
+func IsServiceEnabled(serviceName string) bool {
+	output, err := RunCommandWithOutput("systemctl", "is-enabled", serviceName)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(output) == "enabled"
+}
+
 // ServiceExists checks if a systemd service unit file exists
 func ServiceExists(serviceName string) bool {
 	err := RunSystemCommand("systemctl", "list-unit-files", serviceName+".service")
@@ -67,6 +76,11 @@ func StopService(serviceName string) error {
 // DisableService disables a systemd service
 func DisableService(serviceName string) error {
 	return RunSystemCommand("systemctl", "disable", serviceName)
+}
+
+// EnableService enables a systemd service
+func EnableService(serviceName string) error {
+	return RunSystemCommand("systemctl", "enable", serviceName)
 }
 
 // EnableAndStartService enables and starts a systemd service
@@ -267,4 +281,134 @@ func ExtractClusterInfo(kubeconfigData []byte) (string, string, error) {
 	// The field contains raw certificate bytes, so we need to encode them
 	caCertDataB64 := base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
 	return cluster.Server, caCertDataB64, nil
+}
+
+// GetVPNInterface returns the first available VPN interface (tun0, tun1, etc.)
+func GetVPNInterface() (string, error) {
+	const vpnInterfacePrefix = "tun"
+	const maxVPNInterfaces = 10
+
+	// Check for tun interfaces
+	for j := 0; j < maxVPNInterfaces; j++ {
+		iface := fmt.Sprintf("%s%d", vpnInterfacePrefix, j)
+		if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", iface)); err == nil {
+			return iface, nil
+		}
+	}
+	return "", fmt.Errorf("no VPN interface found")
+}
+
+// GetVPNInterfaceIP returns the IP address of the given VPN interface
+func GetVPNInterfaceIP(iface string) (string, error) {
+	output, err := RunCommandWithOutput("ip", "addr", "show", iface)
+	if err != nil {
+		return "", fmt.Errorf("failed to get interface %s info: %w", iface, err)
+	}
+
+	// Parse IP address from output
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "inet ") && !strings.Contains(line, "inet6") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				ip := strings.Split(fields[1], "/")[0]
+				return ip, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no IP address found for interface %s", iface)
+}
+
+// ValidateAzureResourceID validates that the provided resource ID follows Azure resource ID format
+// Expected format: /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProvider}/{resourceType}/{resourceName}
+func ValidateAzureResourceID(resourceID, expectedResourceType string) error {
+	if resourceID == "" {
+		return fmt.Errorf("resource ID cannot be empty")
+	}
+
+	// Azure resource IDs must start with /subscriptions/
+	if !strings.HasPrefix(resourceID, "/subscriptions/") {
+		return fmt.Errorf("resource ID must start with '/subscriptions/', got: %s", resourceID)
+	}
+
+	// Split the resource ID into parts
+	parts := strings.Split(resourceID, "/")
+
+	// Azure resource ID should have at least 9 parts:
+	// ["", "subscriptions", "{subscriptionId}", "resourceGroups", "{resourceGroupName}", "providers", "{resourceProvider}", "{resourceType}", "{resourceName}"]
+	if len(parts) < 9 {
+		return fmt.Errorf("resource ID has invalid format, expected at least 9 segments, got %d: %s", len(parts), resourceID)
+	}
+
+	// Validate the fixed parts of the resource ID format
+	expectedSegments := map[int]string{
+		1: "subscriptions",
+		3: "resourceGroups",
+		5: "providers",
+	}
+
+	for index, expectedValue := range expectedSegments {
+		if index >= len(parts) || parts[index] != expectedValue {
+			return fmt.Errorf("resource ID segment %d should be '%s', got '%s': %s", index, expectedValue, parts[index], resourceID)
+		}
+	}
+
+	// Validate that required segments are not empty
+	requiredSegments := map[int]string{
+		2: "subscription ID",
+		4: "resource group name",
+		6: "resource provider",
+		7: "resource type",
+		8: "resource name",
+	}
+
+	for index, segmentName := range requiredSegments {
+		if index >= len(parts) || strings.TrimSpace(parts[index]) == "" {
+			return fmt.Errorf("resource ID %s cannot be empty: %s", segmentName, resourceID)
+		}
+	}
+
+	// Validate the resource type matches expected type
+	if expectedResourceType != "" && parts[7] != expectedResourceType {
+		return fmt.Errorf("expected resource type '%s', got '%s': %s", expectedResourceType, parts[7], resourceID)
+	}
+
+	// Validate that it's a Microsoft.Network provider for VNet
+	if expectedResourceType == "virtualNetworks" && parts[6] != "Microsoft.Network" {
+		return fmt.Errorf("VNet resource must use Microsoft.Network provider, got '%s': %s", parts[6], resourceID)
+	}
+
+	return nil
+}
+
+// GetResourceGroupFromResourceID extracts the resource group name from an Azure resource ID
+func GetResourceGroupFromResourceID(resourceID string) string {
+	parts := strings.Split(resourceID, "/")
+	for i, part := range parts {
+		if strings.EqualFold(part, "resourceGroups") && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+// GetResourceNameFromResourceID extracts the resource name from an Azure resource ID
+func GetResourceNameFromResourceID(resourceID string) string {
+	parts := strings.Split(resourceID, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+// GetSubscriptionIDFromResourceID extracts the subscription ID from an Azure resource ID
+func GetSubscriptionIDFromResourceID(resourceID string) string {
+	parts := strings.Split(resourceID, "/")
+	for i, part := range parts {
+		if strings.EqualFold(part, "subscriptions") && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }

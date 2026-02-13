@@ -211,44 +211,59 @@ func (i *Installer) createKubeletDefaultsFile() error {
 		labels = append(labels, fmt.Sprintf("%s=%s", key, value))
 	}
 
+	// Build kubelet flags dynamically
+	kubeletFlags := []string{
+		fmt.Sprintf("--v=%d", i.config.Node.Kubelet.Verbosity),
+		"--address=0.0.0.0",
+		"--anonymous-auth=false",
+		"--authentication-token-webhook=true",
+		"--authorization-mode=Webhook",
+		fmt.Sprintf("--client-ca-file=%s", apiserverClientCAPath),
+		"--cgroup-driver=systemd",
+		"--cgroups-per-qos=true",
+		"--enforce-node-allocatable=pods",
+		fmt.Sprintf("--cluster-dns=%s", i.config.Node.Kubelet.DNSServiceIP),
+		"--cluster-domain=cluster.local",
+		"--event-qps=0",
+		fmt.Sprintf("--eviction-hard=%s", mapToEvictionThresholds(i.config.Node.Kubelet.EvictionHard, ",")),
+		fmt.Sprintf("--kube-reserved=%s", mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ",")),
+		fmt.Sprintf("--image-gc-high-threshold=%d", i.config.Node.Kubelet.ImageGCHighThreshold),
+		fmt.Sprintf("--image-gc-low-threshold=%d", i.config.Node.Kubelet.ImageGCLowThreshold),
+		fmt.Sprintf("--max-pods=%d", i.config.Node.MaxPods),
+		"--node-status-update-frequency=10s",
+		"--pod-max-pids=-1",
+		"--protect-kernel-defaults=true",
+		"--read-only-port=0",
+		"--resolv-conf=/run/systemd/resolve/resolv.conf",
+		"--streaming-connection-idle-timeout=4h",
+		"--rotate-certificates=true",
+		"--tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256",
+	}
+
+	// Add VPN node IP if VPN gateway is enabled and connected
+	if vpnIP := i.getVPNInterfaceIP(); vpnIP != "" {
+		kubeletFlags = append(kubeletFlags, fmt.Sprintf("--node-ip=%s", vpnIP))
+		i.logger.Infof("Configuring kubelet to use VPN interface IP: %s", vpnIP)
+	}
+
+	// Format flags with proper line continuation
+	flagsFormatted := make([]string, len(kubeletFlags))
+	for i, flag := range kubeletFlags {
+		flagsFormatted[i] = fmt.Sprintf("  %s \\", flag)
+	}
+	// Remove trailing backslash from last flag
+	if len(flagsFormatted) > 0 {
+		lastFlag := flagsFormatted[len(flagsFormatted)-1]
+		flagsFormatted[len(flagsFormatted)-1] = strings.TrimSuffix(lastFlag, " \\")
+	}
+
 	kubeletDefaults := fmt.Sprintf(`KUBELET_NODE_LABELS="%s"
 KUBELET_CONFIG_FILE_FLAGS=""
 KUBELET_FLAGS="\
-  --v=%d \
-  --address=0.0.0.0 \
-  --anonymous-auth=false \
-  --authentication-token-webhook=true \
-  --authorization-mode=Webhook \
-  --client-ca-file=%s \
-  --cgroup-driver=systemd \
-  --cgroups-per-qos=true \
-  --enforce-node-allocatable=pods \
-  --cluster-dns=%s \
-  --cluster-domain=cluster.local \
-  --event-qps=0  \
-  --eviction-hard=%s  \
-  --kube-reserved=%s  \
-  --image-gc-high-threshold=%d  \
-  --image-gc-low-threshold=%d  \
-  --max-pods=%d  \
-  --node-status-update-frequency=10s  \
-  --pod-max-pids=-1  \
-  --protect-kernel-defaults=true  \
-  --read-only-port=0  \
-  --resolv-conf=/run/systemd/resolve/resolv.conf  \
-  --streaming-connection-idle-timeout=4h  \
-  --rotate-certificates=true \
-  --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
+%s \
   "`,
 		strings.Join(labels, ","),
-		i.config.Node.Kubelet.Verbosity,
-		apiserverClientCAPath,
-		i.config.Node.Kubelet.DNSServiceIP,
-		mapToEvictionThresholds(i.config.Node.Kubelet.EvictionHard, ","),
-		mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ","),
-		i.config.Node.Kubelet.ImageGCHighThreshold,
-		i.config.Node.Kubelet.ImageGCLowThreshold,
-		i.config.Node.MaxPods)
+		strings.Join(flagsFormatted, "\n"))
 
 	// Ensure /etc/default directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", etcDefaultDir); err != nil {
@@ -747,4 +762,29 @@ func mapToEvictionThresholds(m map[string]string, separator string) string {
 		pairs = append(pairs, fmt.Sprintf("%s<%s", k, v))
 	}
 	return strings.Join(pairs, separator)
+}
+
+// getVPNInterfaceIP returns the IP address of the VPN interface if VPN is enabled and connected
+func (i *Installer) getVPNInterfaceIP() string {
+	// Check if VPN gateway is enabled in configuration
+	if !i.config.IsVPNGatewayEnabled() {
+		return ""
+	}
+
+	// Get VPN interface using the generic utility function
+	vpnInterface, err := utils.GetVPNInterface()
+	if err != nil {
+		i.logger.Debugf("VPN interface not found: %v", err)
+		return ""
+	}
+
+	// Get IP address of the VPN interface
+	ip, err := utils.GetVPNInterfaceIP(vpnInterface)
+	if err != nil {
+		i.logger.Debugf("Failed to get VPN interface IP: %v", err)
+		return ""
+	}
+
+	i.logger.Infof("Found VPN interface %s with IP: %s", vpnInterface, ip)
+	return ip
 }
