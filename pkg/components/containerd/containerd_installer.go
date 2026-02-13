@@ -3,13 +3,17 @@ package containerd
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
+	"github.com/google/renameio/v2"
 	"github.com/sirupsen/logrus"
+
 	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/remoteio"
 )
 
 // Installer handles containerd installation operations
@@ -35,7 +39,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Info("Prepared containerd directories successfully")
 
 	i.logger.Infof("Step 2: Downloading and installing containerd version %s", i.getContainerdVersion())
-	if err := i.installContainerd(); err != nil {
+	if err := i.installContainerd(ctx); err != nil {
 		return fmt.Errorf("failed to install containerd: %w", err)
 	}
 	i.logger.Info("containerd binaries installed successfully")
@@ -76,7 +80,7 @@ func (i *Installer) prepareContainerdDirectories() error {
 	return nil
 }
 
-func (i *Installer) installContainerd() error {
+func (i *Installer) installContainerd(ctx context.Context) error {
 	// Check if we can skip installation
 	if i.canSkipContainerdInstallation() {
 		i.logger.Info("containerd is already installed and valid, skipping installation")
@@ -91,41 +95,32 @@ func (i *Installer) installContainerd() error {
 	}
 
 	// Construct download URL
-	containerdFileName, containerdURL, err := i.constructContainerdDownloadURL()
+	_, containerdURL, err := i.constructContainerdDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct containerd download URL: %w", err)
 	}
 
-	// Download the containerd plugin tar file into tmp directory
-	tempFile := fmt.Sprintf("/tmp/%s", containerdFileName)
-	// Clean up any existing containerd temp files from /tmp directory to avoid conflicts
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
-		logrus.Warnf("Failed to clean up existing containerd temp files from /tmp: %s", err)
-	}
-	defer func() {
-		if err := utils.RunCleanupCommand(tempFile); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
+	for tarFile, err := range remoteio.DecompressTarGzFromRemote(ctx, containerdURL) {
+		if err != nil {
+			return err
 		}
-	}()
 
-	i.logger.Infof("Downloading containerd from %s into %s", containerdURL, tempFile)
-	if err := utils.DownloadFile(containerdURL, tempFile); err != nil {
-		return fmt.Errorf("failed to download containerd from %s: %w", containerdURL, err)
-	}
+		if !strings.HasPrefix(tarFile.Header.Name, "bin/") {
+			continue
+		}
 
-	// Extract containerd binaries directly to /usr/bin, stripping the 'bin/' prefix
-	i.logger.Info("Extracting containerd binaries to /usr/bin")
-	if err := utils.RunSystemCommand("tar", "-C", systemBinDir, "--strip-components=1", "-xzf", tempFile, "bin/"); err != nil {
-		return fmt.Errorf("failed to extract containerd binaries: %w", err)
-	}
+		fileContent, err := io.ReadAll(tarFile.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
+		}
 
-	// Ensure all extracted binaries are executable and have proper permissions
-	i.logger.Info("Setting executable permissions on containerd binaries")
-	versionBinaries := getContainerdBinariesForVersion(i.getContainerdVersion())
-	for _, binary := range versionBinaries {
-		binaryPath := filepath.Join(systemBinDir, binary)
-		if err := utils.RunSystemCommand("chmod", "0755", binaryPath); err != nil {
-			return fmt.Errorf("failed to set executable permissions on containerd binaries: %w", err)
+		fileName := strings.TrimPrefix(tarFile.Header.Name, "bin/")
+		targetFilePath := filepath.Join(systemBinDir, fileName)
+
+		i.logger.Debugf("extracting file %q to %q", tarFile.Header.Name, targetFilePath)
+
+		if err := renameio.WriteFile(targetFilePath, fileContent, 0755); err != nil {
+			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
 		}
 	}
 
