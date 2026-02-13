@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	_ "go.goms.io/aks/AKSFlexNode/components"
 	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
@@ -81,22 +82,22 @@ func NewVersionCommand() *cobra.Command {
 
 // runApply applies the node configuration and joins the cluster.
 func runApply(ctx context.Context) error {
-	logger := logger.GetLoggerFromContext(ctx)
+	// logger := logger.GetLoggerFromContext(ctx)
 
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
-	}
+	// cfg, err := config.LoadConfig(configPath)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+	// }
 
-	exectuor := bootstrapper.NewMinimal(cfg, logger)
-	result, err := exectuor.Bootstrap(ctx)
-	if err != nil {
-		return fmt.Errorf("bootstrap failed: %w", err)
-	}
+	// exectuor := bootstrapper.NewMinimal(cfg, logger)
+	// result, err := exectuor.Bootstrap(ctx)
+	// if err != nil {
+	// 	return fmt.Errorf("bootstrap failed: %w", err)
+	// }
 
-	if err := handleExecutionResult(result, "bootstrap", logger); err != nil {
-		return fmt.Errorf("bootstrap execution failed: %w", err)
-	}
+	// if err := handleExecutionResult(result, "bootstrap", logger); err != nil {
+	// 	return fmt.Errorf("bootstrap execution failed: %w", err)
+	// }
 
 	return nil
 }
