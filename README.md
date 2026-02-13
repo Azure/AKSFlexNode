@@ -28,14 +28,19 @@ AKS Flex Node transforms any Ubuntu VM into a semi-managed AKS worker node by:
 ### Installation
 
 ```bash
+# Switch to root
+sudo su
+
 # Install aks-flex-node
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
 
 # Verify installation
 aks-flex-node version
 ```
 
 ### Usage
+
+> **Important:** All commands below assume you are running as root (`sudo su`). The agent installs and configures system-level components (containerd, kubelet, CNI) and manages systemd services, all of which require root privileges.
 
 ```bash
 # Start the agent (requires root)
