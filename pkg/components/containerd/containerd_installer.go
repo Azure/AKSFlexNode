@@ -6,13 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/renameio/v2"
 	"github.com/sirupsen/logrus"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/remoteio"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles containerd installation operations
@@ -99,7 +98,7 @@ func (i *Installer) installContainerd(ctx context.Context) error {
 		return fmt.Errorf("failed to construct containerd download URL: %w", err)
 	}
 
-	for tarFile, err := range remoteio.DecompressTarGzFromRemote(ctx, containerdURL) {
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, containerdURL) {
 		if err != nil {
 			return err
 		}
@@ -108,7 +107,7 @@ func (i *Installer) installContainerd(ctx context.Context) error {
 			continue
 		}
 
-		fileContent, err := remoteio.ReadAll1GiB(tarFile.Body)
+		fileContent, err := utilio.ReadAll1GiB(tarFile.Body)
 		if err != nil {
 			return fmt.Errorf("failed to read tar file %q content: %w", tarFile.Header.Name, err)
 		}
@@ -118,7 +117,7 @@ func (i *Installer) installContainerd(ctx context.Context) error {
 
 		i.logger.Debugf("extracting file %q to %q", tarFile.Header.Name, targetFilePath)
 
-		if err := renameio.WriteFile(targetFilePath, fileContent, 0755); err != nil {
+		if err := utilio.WriteFile(targetFilePath, fileContent, 0755); err != nil {
 			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
 		}
 	}

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/renameio/v2"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -25,6 +24,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 type nodeJoinConfig struct {
@@ -144,7 +144,7 @@ func (n *nodeJoin) writeFile(filename string, content []byte) (string, error) {
 
 	p := filepath.Join(n.baseDir, filename)
 
-	if err := renameio.WriteFile(p, content, filePerm); err != nil {
+	if err := utilio.WriteFile(p, content, filePerm); err != nil {
 		return "", err
 	}
 

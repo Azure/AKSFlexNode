@@ -8,7 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/remoteio"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles runc container runtime installation
@@ -55,7 +55,7 @@ func (i *Installer) installRunc(ctx context.Context) error {
 		return fmt.Errorf("failed to construct runc download URL: %w", err)
 	}
 
-	if err := remoteio.DownloadToLocalFile(ctx, runcDownloadURL, runcBinaryPath, 0555); err != nil {
+	if err := utilio.DownloadToLocalFile(ctx, runcDownloadURL, runcBinaryPath, 0755); err != nil {
 		return err
 	}
 

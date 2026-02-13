@@ -1,4 +1,4 @@
-package remoteio
+package utilio
 
 import (
 	"archive/tar"
@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/google/renameio/v2"
 )
 
 var remoteHTTPClient = &http.Client{
@@ -95,5 +93,5 @@ func DownloadToLocalFile(ctx context.Context, url string, filename string, perm 
 		return fmt.Errorf("failed to read downloaded content: %w", err)
 	}
 
-	return renameio.WriteFile(filename, content, perm)
+	return WriteFile(filename, content, perm)
 }

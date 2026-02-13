@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/coreos/go-systemd/v22/dbus"
-	"github.com/google/renameio/v2"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 const etcSystemdSystemDir = "/etc/systemd/system"
@@ -72,7 +72,7 @@ func (d *dbusImpl) writeSystemdFile(
 		return err
 	}
 
-	if err := renameio.WriteFile(path, content, 0600); err != nil {
+	if err := utilio.WriteFile(path, content, 0600); err != nil {
 		return err
 	}
 
