@@ -3,13 +3,13 @@ package npd
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 type Installer struct {
@@ -37,7 +37,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	}
 
 	// Install NPD
-	if err := i.installNpd(); err != nil {
+	if err := i.installNpd(ctx); err != nil {
 		return fmt.Errorf("NPD installation failed: %w", err)
 	}
 
@@ -50,64 +50,33 @@ func (i *Installer) Execute(ctx context.Context) error {
 	return nil
 }
 
-func (i *Installer) installNpd() error {
+func (i *Installer) installNpd(ctx context.Context) error {
 	// construct download URL
-	npdFileName, npdDownloadURL, err := i.getNpdDownloadURL()
+	_, npdDownloadURL, err := i.getNpdDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct NPD download URL: %w", err)
 	}
 
-	// Clean up any existing NPD files from /tmp directory to avoid conflicts
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -rf %s", tempDir)); err != nil {
-		return fmt.Errorf("failed to clean up existing NPD temp directory %s: %w", tempDir, err)
-	}
-	defer func() {
-		if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -rf %s", tempDir)); err != nil {
-			logrus.Warnf("Failed to clean up temp directory %s: %v", tempDir, err)
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, npdDownloadURL) {
+		if err != nil {
+			return err
 		}
-	}()
 
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("mkdir -p %s", tempDir)); err != nil {
-		return fmt.Errorf("failed to create NPD temp directory %s: %w", tempDir, err)
-	}
-
-	tempFile := fmt.Sprintf("%s/%s", tempDir, npdFileName)
-
-	i.logger.Debugf("Downloading NPD from %s to %s", npdDownloadURL, tempFile)
-
-	if err := utils.DownloadFile(npdDownloadURL, tempFile); err != nil {
-		return fmt.Errorf("failed to download NPD archive from %s: %w", npdDownloadURL, err)
-	}
-
-	// Extract NPD binary from tar.gz archive
-	i.logger.Info("Extracting NPD binary from archive")
-	if err := utils.RunSystemCommand("tar", "-xzf", tempFile, "-C", tempDir); err != nil {
-		return fmt.Errorf("failed to extract NPD archive: %w", err)
-	}
-
-	tempNpdPath := filepath.Join(tempDir, "bin/node-problem-detector")
-	tempNpdConfig := filepath.Join(tempDir, "config/kernel-monitor.json")
-
-	// Verify extracted binary
-	if output, err := utils.RunCommandWithOutput("file", tempNpdPath); err != nil {
-		i.logger.Warnf("Could not verify NPD binary type: %v", err)
-	} else {
-		i.logger.Debugf("Extracted NPD binary type: %s", strings.TrimSpace(output))
-		// Basic validation that it's a Linux binary
-		if !strings.Contains(output, "ELF") {
-			i.logger.Warnf("Extracted file may not be a Linux binary: %s", output)
+		switch n := tarFile.Name; n {
+		case "bin/node-problem-detector":
+			i.logger.Debugf("installing %q to %q", n, npdBinaryPath)
+			if err := utilio.InstallFile(npdBinaryPath, tarFile.Body, 0755); err != nil {
+				return fmt.Errorf("failed to install NPD binary: %w", err)
+			}
+		case "config/kernel-monitor.json":
+			i.logger.Debugf("installing %q to %q", n, npdConfigPath)
+			if err := utilio.InstallFile(npdConfigPath, tarFile.Body, 0644); err != nil {
+				return fmt.Errorf("failed to install NPD config: %w", err)
+			}
+		default:
+			// skip other files in the archive
+			continue
 		}
-	}
-
-	// Install NPD with proper permissions
-	i.logger.Infof("Installing NPD binary to %s", npdBinaryPath)
-	if err := utils.RunSystemCommand("install", "-m", "0555", tempNpdPath, npdBinaryPath); err != nil {
-		return fmt.Errorf("failed to install NPD to %s: %w", npdBinaryPath, err)
-	}
-
-	i.logger.Infof("Installing NPD configuration to %s", npdConfigPath)
-	if err := utils.RunSystemCommand("install", "-D", "-m", "0644", tempNpdConfig, npdConfigPath); err != nil {
-		return fmt.Errorf("failed to install NPD configuration to %s: %w", npdConfigPath, err)
 	}
 
 	i.logger.Infof("Node Problem Detector version %s installed successfully", i.config.Npd.Version)
@@ -150,7 +119,7 @@ RestartSec=5s
 WantedBy=multi-user.target
 `
 	// Write NPD service file atomically with proper permissions
-	if err := utils.WriteFileAtomicSystem(npdServicePath, []byte(npdService), 0644); err != nil {
+	if err := utilio.WriteFile(npdServicePath, []byte(npdService), 0644); err != nil {
 		return fmt.Errorf("failed to create NPD service file: %w", err)
 	}
 

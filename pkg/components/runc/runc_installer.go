@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles runc container runtime installation
@@ -39,7 +40,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	}
 
 	// Install runc
-	if err := i.installRunc(); err != nil {
+	if err := i.installRunc(ctx); err != nil {
 		return fmt.Errorf("runc installation failed: %w", err)
 	}
 
@@ -47,36 +48,17 @@ func (i *Installer) Execute(ctx context.Context) error {
 	return nil
 }
 
-func (i *Installer) installRunc() error {
+func (i *Installer) installRunc(ctx context.Context) error {
 	// Construct download URL
-	runcFileName, runcDownloadURL, err := i.constructRuncDownloadURL()
+	_, runcDownloadURL, err := i.constructRuncDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct runc download URL: %w", err)
 	}
 
-	tempFile := fmt.Sprintf("/tmp/%s", runcFileName)
-
-	// Clean up any existing runc temp files from /tmp directory to avoid conflicts
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
-		logrus.Warnf("Failed to clean up existing runc temp files from /tmp: %s", err)
-	}
-	defer func() {
-		if err := utils.RunCleanupCommand(tempFile); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
-		}
-	}()
-
-	i.logger.Infof("Downloading runc from %s into %s", runcDownloadURL, tempFile)
-
-	if err := utils.DownloadFile(runcDownloadURL, tempFile); err != nil {
-		return fmt.Errorf("failed to download runc from %s: %w", runcDownloadURL, err)
+	if err := utilio.DownloadToLocalFile(ctx, runcDownloadURL, runcBinaryPath, 0755); err != nil {
+		return err
 	}
 
-	// Install runc with proper permissions
-	i.logger.Infof("Installing runc binary to %s", runcBinaryPath)
-	if err := utils.RunSystemCommand("install", "-m", "0555", tempFile, runcBinaryPath); err != nil {
-		return fmt.Errorf("failed to install runc to %s: %w", runcBinaryPath, err)
-	}
 	return nil
 }
 

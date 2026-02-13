@@ -3,11 +3,14 @@ package kube_binaries
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/sirupsen/logrus"
+
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles Kube binaries installation operations
@@ -29,7 +32,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	i.logger.Infof("Installing Kube Binaries of version %s", i.config.GetKubernetesVersion())
 
 	// Download and install Kubernetes binaries
-	if err := i.installKubeBinaries(); err != nil {
+	if err := i.installKubeBinaries(ctx); err != nil {
 		return fmt.Errorf("failed to install Kubernetes: %w", err)
 	}
 
@@ -37,7 +40,7 @@ func (i *Installer) Execute(ctx context.Context) error {
 	return nil
 }
 
-func (i *Installer) installKubeBinaries() error {
+func (i *Installer) installKubeBinaries(ctx context.Context) error {
 	// Clean up any corrupted installations before proceeding
 	i.logger.Info("Cleaning up corrupted Kubernetes installation files to start fresh")
 	if err := i.cleanupExistingInstallation(); err != nil {
@@ -46,40 +49,27 @@ func (i *Installer) installKubeBinaries() error {
 	}
 
 	// Construct download URL
-	fileName, url, err := i.constructKubeBinariesDownloadURL()
+	_, url, err := i.constructKubeBinariesDownloadURL()
 	if err != nil {
 		return fmt.Errorf("failed to construct Kubernetes download URL: %w", err)
 	}
 
-	// Download the Kubernetes tar file into tmp directory
-	tempFile := fmt.Sprintf("/tmp/%s", fileName)
-	// Clean up any existing Kubernetes temp files from /tmp directory to avoid conflicts
-	if err := utils.RunSystemCommand("bash", "-c", fmt.Sprintf("rm -f %s", tempFile)); err != nil {
-		logrus.Warnf("Failed to clean up existing Kubernetes temp files from /tmp: %s", err)
-	}
-	defer func() {
-		if err := utils.RunCleanupCommand(tempFile); err != nil {
-			logrus.Warnf("Failed to clean up temp file %s: %v", tempFile, err)
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, url) {
+		if err != nil {
+			return err
 		}
-	}()
 
-	// Download Kube binaries with validation
-	i.logger.Infof("Downloading Kube binaries from %s into %s", url, tempFile)
-	if err := utils.DownloadFile(url, tempFile); err != nil {
-		return fmt.Errorf("failed to download Kube binaries from %s: %w", url, err)
-	}
+		if !strings.HasPrefix(tarFile.Name, kubernetesTarPath) {
+			continue
+		}
 
-	// Extract Kubernetes binaries directly to binDir, stripping the 'kubernetes/node/bin/' prefix
-	i.logger.Infof("Extracting Kubernetes binaries to %s", binDir)
-	if err := utils.RunSystemCommand("tar", "-C", binDir, "--strip-components=3", "-xzf", tempFile, kubernetesTarPath); err != nil {
-		return fmt.Errorf("failed to extract Kubernetes binaries: %w", err)
-	}
+		fileName := strings.TrimPrefix(tarFile.Name, kubernetesTarPath)
+		targetFilePath := filepath.Join(binDir, fileName)
 
-	// Ensure all extracted binaries are executable and have proper permissions
-	i.logger.Info("Setting executable permissions on Kubernetes binaries")
-	for _, binaryPath := range kubeBinariesPaths {
-		if err := utils.RunSystemCommand("chmod", "0755", binaryPath); err != nil {
-			return fmt.Errorf("failed to set executable permissions on Kubernetes binaries: %w", err)
+		i.logger.Debugf("extracting file %q to %q", tarFile.Name, targetFilePath)
+
+		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
+			return fmt.Errorf("failed to write file %q: %w", targetFilePath, err)
 		}
 	}
 

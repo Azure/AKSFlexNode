@@ -11,6 +11,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Context key for storing logger
@@ -184,19 +185,8 @@ func ensureLogDirectoryExists(logDir string) error {
 		return nil // Directory already exists
 	}
 
-	// Try to create directory with appropriate permissions
-	if err := os.MkdirAll(logDir, 0755); err == nil {
-		return nil // Successfully created directory
-	}
-
-	// If direct creation fails, try using system command for privileged paths
-	if err := utils.RunSystemCommand("mkdir", "-p", logDir); err != nil {
-		return fmt.Errorf("failed to create directory using system command: %w", err)
-	}
-
-	// Set appropriate permissions on the created directory
-	if err := utils.RunSystemCommand("chmod", "755", logDir); err != nil {
-		fmt.Printf("Warning: Failed to set permissions on directory %s: %v\n", logDir, err)
+	if err := os.MkdirAll(logDir, 0750); err == nil {
+		return nil
 	}
 
 	return nil
@@ -238,7 +228,7 @@ func createLogFileIfNotExists(logFilePath string) error {
 	}
 
 	// Use WriteFileAtomicSystem to create an empty log file with proper permissions
-	if err := utils.WriteFileAtomicSystem(logFilePath, []byte{}, 0644); err != nil {
+	if err := utilio.WriteFile(logFilePath, []byte{}, 0644); err != nil {
 		return err
 	}
 

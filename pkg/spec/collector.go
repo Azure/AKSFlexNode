@@ -13,7 +13,7 @@ import (
 
 	"go.goms.io/aks/AKSFlexNode/pkg/auth"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // ManagedClusterClient is the subset of the Azure SDK managed clusters client we need.
@@ -144,7 +144,7 @@ func (c *ManagedClusterSpecCollector) Collect(ctx context.Context) (*ManagedClus
 	if err := os.MkdirAll(filepath.Dir(c.outputPath), 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create spec output directory: %w", err)
 	}
-	if err := utils.WriteFileAtomicSystem(c.outputPath, data, 0o644); err != nil {
+	if err := utilio.WriteFile(c.outputPath, data, 0o644); err != nil {
 		return nil, fmt.Errorf("failed to write managed cluster spec file: %w", err)
 	}
 
