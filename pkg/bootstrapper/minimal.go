@@ -25,7 +25,7 @@ func NewMinimal(cfg *config.Config, logger *logrus.Logger) *MinimalBootstrapper 
 }
 
 func (b *MinimalBootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
-	kubeadmNodeJoin, err := kubeadm.NewNodeJoin(b.config)
+	kubeadmNodeJoin, err := kubeadm.NewNodeJoin(b.config, b.logger)
 	if err != nil {
 		return nil, err
 	}

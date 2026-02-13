@@ -3,22 +3,32 @@ package kubeadm
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/upstreamv1beta4"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+)
+
+const (
+	systemdUnitKubelet = "kubelet.service"
+	dirVarLibKubelet   = "/var/lib/kubelet"
 )
 
 type nodeJoinConfig struct {
@@ -34,12 +44,14 @@ type nodeJoinConfig struct {
 // the Kubernetes cluster using kubeadm.
 // It expects the kubeadmin binary is present in the PATH.
 type nodeJoin struct {
+	logger         *logrus.Logger
 	kubeadmCommand string // to allow overriding in unit test
 	baseDir        string // base directory for the join config
 	config         nodeJoinConfig
+	systemd        systemd.Manager
 }
 
-func NewNodeJoin(cfg *config.Config) (*nodeJoin, error) {
+func NewNodeJoin(cfg *config.Config, logger *logrus.Logger) (*nodeJoin, error) {
 	baseDir, err := os.MkdirTemp("", "aks-flex-node-kubeadm-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir for kubeadm join config: %w", err)
@@ -51,6 +63,7 @@ func NewNodeJoin(cfg *config.Config) (*nodeJoin, error) {
 	}
 
 	rv := &nodeJoin{
+		logger:  logger,
 		baseDir: baseDir,
 		config: nodeJoinConfig{
 			APIServerEndpoint: cfg.Node.Kubelet.ServerURL,
@@ -59,6 +72,7 @@ func NewNodeJoin(cfg *config.Config) (*nodeJoin, error) {
 				Token: cfg.Azure.BootstrapToken.Token,
 			},
 		},
+		systemd: systemd.New(),
 	}
 
 	return rv, nil
@@ -77,11 +91,21 @@ func (n *nodeJoin) GetName() string {
 }
 
 func (n *nodeJoin) IsCompleted(ctx context.Context) bool {
-	// return n.pollForKubeletStatus(ctx) == nil
-	return false
+	// if the kubelet directory exists,
+	// we assume the node has already joined or is in the process of joining
+	return hasDir(dirVarLibKubelet)
 }
 
 func (n *nodeJoin) Execute(ctx context.Context) error {
+	if err := n.ensureBaseDir(); err != nil {
+		return fmt.Errorf("ensure base dir: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(n.baseDir); err != nil {
+			n.logger.Warnf("remove base dir: %s", err)
+		}
+	}()
+
 	kubeadmBinary, err := n.resolveKubeadmBinary()
 	if err != nil {
 		return fmt.Errorf("resolve kubeadm binary: %w", err)
@@ -96,16 +120,23 @@ func (n *nodeJoin) Execute(ctx context.Context) error {
 		kubeadmBinary,
 		"join",
 		"--config", config,
-		"--v", "5",
+		"-v", "5",
 	); err != nil {
 		return fmt.Errorf("kubeadm join: %w", err)
 	}
 
-	if err := n.pollForKubeletStatus(ctx); err != nil {
+	if err := n.pollUntilKubeletActive(ctx); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (n *nodeJoin) ensureBaseDir() error {
+	if hasDir(n.baseDir) {
+		return nil
+	}
+	return os.MkdirAll(n.baseDir, 0700)
 }
 
 func (n *nodeJoin) writeFile(filename string, content []byte) (string, error) {
@@ -209,9 +240,34 @@ func (n *nodeJoin) writeKubeadmJoinConfig(
 	return n.writeFile("join-config.yaml", content)
 }
 
-func (n *nodeJoin) pollForKubeletStatus(ctx context.Context) error {
-	// TODO: check for kubelet systemd unit status
-	return nil
+func (n *nodeJoin) pollUntilKubeletActive(ctx context.Context) error {
+	const (
+		pollInterval = 5 * time.Second
+		waitTimeout  = 3 * time.Minute
+	)
+
+	return wait.PollUntilContextTimeout(
+		ctx,
+		pollInterval, waitTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			unit, err := n.systemd.GetUnitStatus(ctx, systemdUnitKubelet)
+			switch {
+			case errors.Is(err, systemd.ErrUnitNotFound):
+				// If the unit is not found, it likely means the kubelet hasn't started yet,
+				// so we return false to keep polling
+				return false, nil
+			case err != nil:
+				// For any other error, we should return it to stop polling and surface the issue
+				return false, err
+			default:
+				active := unit.ActiveState == systemd.UnitActiveStateActive
+				if !active {
+					n.logger.Debugf("kubelet unit status: %s", unit.ActiveState)
+				}
+				return active, nil
+			}
+		},
+	)
 }
 
 func nodeLabels(labels map[string]string) string {
@@ -222,4 +278,10 @@ func nodeLabels(labels map[string]string) string {
 	}
 
 	return strings.Join(kv, ",")
+}
+
+// hasDir checks if the given path exists and is a directory.
+func hasDir(path string) bool {
+	s, err := os.Stat(path)
+	return err == nil && s.IsDir()
 }
