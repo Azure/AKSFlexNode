@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -117,12 +116,7 @@ func (d *downloadKubeBinariesAction) constructDownloadURL(kubernetesVersion stri
 
 func hasRequiredBinaries() bool {
 	for _, binaryPath := range binariesRequired {
-		s, err := os.Stat(binaryPath)
-		if err != nil {
-			return false
-		}
-		// check if it's executable file
-		if s.IsDir() || s.Mode()&0111 == 0 {
+		if !utilio.IsExecutable(binaryPath) {
 			return false
 		}
 	}

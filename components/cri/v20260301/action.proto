@@ -1,0 +1,27 @@
+edition = "2024";
+
+package aks.flex.components.cri.v20260301;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/cri/v20260301";
+
+import "components/api/api.proto";
+
+message DownloadCRIBinaries {
+  api.Metadata metadata = 1;
+
+  DownloadCRIBinariesSpec spec = 2;
+
+  DownloadCRIBinariesStatus status = 3;
+}
+
+message DownloadCRIBinariesSpec {
+  string containerd_version = 1;
+  string runc_version = 2;
+}
+
+message DownloadCRIBinariesStatus {
+  string containerd_download_url = 1;
+  string containerd_path = 2;
+  string runc_download_url = 3;
+  string runc_path = 4;
+}
