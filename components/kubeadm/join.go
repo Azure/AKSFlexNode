@@ -218,6 +218,10 @@ func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 		return fmt.Errorf("systemd daemon reload: %w", err)
 	}
 
+	if err := n.systemd.EnableUnit(ctx, systemdUnitKubelet); err != nil {
+		return fmt.Errorf("enable kubelet unit: %w", err)
+	}
+
 	return nil
 }
 
@@ -246,8 +250,13 @@ func (n *nodeJoinAction) runJoin(
 		return status.Errorf(codes.Internal, "ensure kubelet systemd unit: %s", err)
 	}
 
+	kubeadmCommand, err := n.resolveKubeadmBinary()
+	if err != nil {
+		return status.Errorf(codes.Internal, "resolve kubeadm binary: %s", err)
+	}
+
 	if err := utils.RunSystemCommand(
-		n.kubeadmCommand,
+		kubeadmCommand,
 		"join", "--config", joinConfig, "-v", "5",
 	); err != nil {
 		return status.Errorf(codes.Internal, "kubeadm join: %s", err)

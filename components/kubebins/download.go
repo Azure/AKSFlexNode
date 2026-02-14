@@ -14,6 +14,7 @@ import (
 
 	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
@@ -23,17 +24,18 @@ import (
 const (
 	defaultKubernetesURLTemplate = "https://acs-mirror.azureedge.net/kubernetes/v%s/binaries/kubernetes-node-linux-%s.tar.gz"
 	kubernetesTarPath            = "kubernetes/node/bin/"
-
-	binDir         = "/usr/local/bin"
-	binPathKubelet = binDir + "/kubelet"
 )
 
-var binariesRequired = []string{
-	filepath.Join(binDir, "kubeadm"),
-	filepath.Join(binDir, "kubelet"),
-	filepath.Join(binDir, "kubectl"),
-	filepath.Join(binDir, "kube-proxy"),
-}
+var (
+	binPathKubelet = filepath.Join(config.DefaultBinaryPath, "kubelet")
+
+	binariesRequired = []string{
+		filepath.Join(config.DefaultBinaryPath, "kubeadm"),
+		filepath.Join(config.DefaultBinaryPath, "kubelet"),
+		filepath.Join(config.DefaultBinaryPath, "kubectl"),
+		filepath.Join(config.DefaultBinaryPath, "kube-proxy"),
+	}
+)
 
 type downloadKubeBinariesAction struct{}
 
@@ -47,20 +49,20 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	config, err := utilpb.AnyTo[*v20260301.DownloadKubeBinaries](req.GetItem())
+	settings, err := utilpb.AnyTo[*v20260301.DownloadKubeBinaries](req.GetItem())
 	if err != nil {
 		return nil, err
 	}
 
-	spec := config.GetSpec()
+	spec := settings.GetSpec()
 
 	downloadURL := d.constructDownloadURL(spec.GetKubernetesVersion())
 
 	status := v20260301.DownloadKubeBinariesStatus_builder{
 		DownloadUrl: utils.Ptr(downloadURL),
 		KubeletPath: utils.Ptr(binPathKubelet),
-		KubeadmPath: utils.Ptr(filepath.Join(binDir, "kubeadm")),
-		KubectlPath: utils.Ptr(filepath.Join(binDir, "kubectl")),
+		KubeadmPath: utils.Ptr(filepath.Join(config.DefaultBinaryPath, "kubeadm")),
+		KubectlPath: utils.Ptr(filepath.Join(config.DefaultBinaryPath, "kubectl")),
 	}
 
 	needDownload := !hasRequiredBinaries() || !kubeletVersionMatch(ctx, spec.GetKubernetesVersion())
@@ -70,9 +72,9 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 		}
 	}
 
-	config.SetStatus(status.Build())
+	settings.SetStatus(status.Build())
 
-	item, err := anypb.New(config)
+	item, err := anypb.New(settings)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +94,7 @@ func (d *downloadKubeBinariesAction) download(ctx context.Context, downloadURL s
 
 		binaryName := strings.TrimPrefix(tarFile.Name, kubernetesTarPath)
 
-		targetFilePath := filepath.Join(binDir, binaryName)
+		targetFilePath := filepath.Join(config.DefaultBinaryPath, binaryName)
 
 		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
 			return status.Errorf(codes.Internal, "install file %q: %s", targetFilePath, err)

@@ -56,7 +56,7 @@ func (h *Hub) ApplyAction(
 		return resp, err
 	}
 
-	obj, err := utilpb.AnyTo[api.Action](req.GetItem())
+	obj, err := utilpb.AnyTo[api.Action](resp.GetItem())
 	if err != nil {
 		return resp, err
 	}

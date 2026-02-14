@@ -9,3 +9,25 @@ type Action interface {
 	GetMetadata() *Metadata
 	Redact()
 }
+
+type WithDefaulting interface {
+	Defaulting()
+}
+
+type WithValidation interface {
+	Validate() error
+}
+
+func DefaultAndValidate[M any](m M) (M, error) {
+	if d, ok := any(m).(WithDefaulting); ok {
+		d.Defaulting()
+	}
+
+	if v, ok := any(m).(WithValidation); ok {
+		if err := v.Validate(); err != nil {
+			return m, err
+		}
+	}
+
+	return m, nil
+}

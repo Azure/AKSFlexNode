@@ -10,4 +10,9 @@ func init() {
 		newDownloadCRIBinariesAction,
 		&v20260301.DownloadCRIBinaries{},
 	)
+
+	actions.MustRegister(
+		newStartContainerdServiceAction,
+		&v20260301.StartContainerdService{},
+	)
 }

@@ -25,3 +25,36 @@ message DownloadCRIBinariesStatus {
   string runc_download_url = 3;
   string runc_path = 4;
 }
+
+message StartContainerdService {
+  api.Metadata metadata = 1;
+  StartContainerdServiceSpec spec = 2;
+  StartContainerdServiceStatus status = 3;
+}
+
+message StartContainerdServiceSpec {
+  // Address for containerd metrics server to listen on, e.g. 0.0.0.0:10257"
+  // Defaults to "0.0.0.0:10257". // FIXME: confirm why 0.0.0.0 is used instead of 127.0.0.1
+  string metrics_address = 1;
+
+  // Image used for sandbox container.
+  // Defaults to "mcr.microsoft.com/oss/containerd/pause:3.6".
+  string sandbox_image = 2;
+
+  // TODO: allow overriding cni config?
+  message CNIConfig {
+    // CNI plugin directory
+    // Defaults to "/opt/cni/bin"
+    string bin_dir = 1;
+
+    // CNI config directory
+    // Defaults to "/etc/cni/net.d"
+    string config_dir = 2;
+  }
+  CNIConfig cni_config = 3;
+
+  // TODO: GPU runtime settings?
+}
+
+message StartContainerdServiceStatus {
+}

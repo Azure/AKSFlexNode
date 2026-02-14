@@ -427,6 +427,423 @@ func (b0 DownloadCRIBinariesStatus_builder) Build() *DownloadCRIBinariesStatus {
 	return m0
 }
 
+type StartContainerdService struct {
+	state               protoimpl.MessageState        `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata                 `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *StartContainerdServiceSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *StartContainerdServiceStatus `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *StartContainerdService) Reset() {
+	*x = StartContainerdService{}
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartContainerdService) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartContainerdService) ProtoMessage() {}
+
+func (x *StartContainerdService) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *StartContainerdService) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *StartContainerdService) GetSpec() *StartContainerdServiceSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *StartContainerdService) GetStatus() *StartContainerdServiceStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *StartContainerdService) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *StartContainerdService) SetSpec(v *StartContainerdServiceSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *StartContainerdService) SetStatus(v *StartContainerdServiceStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *StartContainerdService) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *StartContainerdService) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *StartContainerdService) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *StartContainerdService) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *StartContainerdService) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *StartContainerdService) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type StartContainerdService_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *StartContainerdServiceSpec
+	Status   *StartContainerdServiceStatus
+}
+
+func (b0 StartContainerdService_builder) Build() *StartContainerdService {
+	m0 := &StartContainerdService{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type StartContainerdServiceSpec struct {
+	state                     protoimpl.MessageState                `protogen:"opaque.v1"`
+	xxx_hidden_MetricsAddress *string                               `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress"`
+	xxx_hidden_SandboxImage   *string                               `protobuf:"bytes,2,opt,name=sandbox_image,json=sandboxImage"`
+	xxx_hidden_CniConfig      *StartContainerdServiceSpec_CNIConfig `protobuf:"bytes,3,opt,name=cni_config,json=cniConfig"`
+	XXX_raceDetectHookData    protoimpl.RaceDetectHookData
+	XXX_presence              [1]uint32
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *StartContainerdServiceSpec) Reset() {
+	*x = StartContainerdServiceSpec{}
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartContainerdServiceSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartContainerdServiceSpec) ProtoMessage() {}
+
+func (x *StartContainerdServiceSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *StartContainerdServiceSpec) GetMetricsAddress() string {
+	if x != nil {
+		if x.xxx_hidden_MetricsAddress != nil {
+			return *x.xxx_hidden_MetricsAddress
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StartContainerdServiceSpec) GetSandboxImage() string {
+	if x != nil {
+		if x.xxx_hidden_SandboxImage != nil {
+			return *x.xxx_hidden_SandboxImage
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StartContainerdServiceSpec) GetCniConfig() *StartContainerdServiceSpec_CNIConfig {
+	if x != nil {
+		return x.xxx_hidden_CniConfig
+	}
+	return nil
+}
+
+func (x *StartContainerdServiceSpec) SetMetricsAddress(v string) {
+	x.xxx_hidden_MetricsAddress = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 3)
+}
+
+func (x *StartContainerdServiceSpec) SetSandboxImage(v string) {
+	x.xxx_hidden_SandboxImage = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
+}
+
+func (x *StartContainerdServiceSpec) SetCniConfig(v *StartContainerdServiceSpec_CNIConfig) {
+	x.xxx_hidden_CniConfig = v
+}
+
+func (x *StartContainerdServiceSpec) HasMetricsAddress() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *StartContainerdServiceSpec) HasSandboxImage() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *StartContainerdServiceSpec) HasCniConfig() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_CniConfig != nil
+}
+
+func (x *StartContainerdServiceSpec) ClearMetricsAddress() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_MetricsAddress = nil
+}
+
+func (x *StartContainerdServiceSpec) ClearSandboxImage() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_SandboxImage = nil
+}
+
+func (x *StartContainerdServiceSpec) ClearCniConfig() {
+	x.xxx_hidden_CniConfig = nil
+}
+
+type StartContainerdServiceSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// Address for containerd metrics server to listen on, e.g. 0.0.0.0:10257"
+	// Defaults to "0.0.0.0:10257". // FIXME: confirm why 0.0.0.0 is used instead of 127.0.0.1
+	MetricsAddress *string
+	// Image used for sandbox container.
+	// Defaults to "mcr.microsoft.com/oss/containerd/pause:3.6".
+	SandboxImage *string
+	CniConfig    *StartContainerdServiceSpec_CNIConfig
+}
+
+func (b0 StartContainerdServiceSpec_builder) Build() *StartContainerdServiceSpec {
+	m0 := &StartContainerdServiceSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.MetricsAddress != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 3)
+		x.xxx_hidden_MetricsAddress = b.MetricsAddress
+	}
+	if b.SandboxImage != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 3)
+		x.xxx_hidden_SandboxImage = b.SandboxImage
+	}
+	x.xxx_hidden_CniConfig = b.CniConfig
+	return m0
+}
+
+type StartContainerdServiceStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartContainerdServiceStatus) Reset() {
+	*x = StartContainerdServiceStatus{}
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartContainerdServiceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartContainerdServiceStatus) ProtoMessage() {}
+
+func (x *StartContainerdServiceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type StartContainerdServiceStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 StartContainerdServiceStatus_builder) Build() *StartContainerdServiceStatus {
+	m0 := &StartContainerdServiceStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+// TODO: allow overriding cni config?
+type StartContainerdServiceSpec_CNIConfig struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_BinDir      *string                `protobuf:"bytes,1,opt,name=bin_dir,json=binDir"`
+	xxx_hidden_ConfigDir   *string                `protobuf:"bytes,2,opt,name=config_dir,json=configDir"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) Reset() {
+	*x = StartContainerdServiceSpec_CNIConfig{}
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartContainerdServiceSpec_CNIConfig) ProtoMessage() {}
+
+func (x *StartContainerdServiceSpec_CNIConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_v20260301_action_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) GetBinDir() string {
+	if x != nil {
+		if x.xxx_hidden_BinDir != nil {
+			return *x.xxx_hidden_BinDir
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) GetConfigDir() string {
+	if x != nil {
+		if x.xxx_hidden_ConfigDir != nil {
+			return *x.xxx_hidden_ConfigDir
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) SetBinDir(v string) {
+	x.xxx_hidden_BinDir = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) SetConfigDir(v string) {
+	x.xxx_hidden_ConfigDir = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) HasBinDir() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) HasConfigDir() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) ClearBinDir() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_BinDir = nil
+}
+
+func (x *StartContainerdServiceSpec_CNIConfig) ClearConfigDir() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_ConfigDir = nil
+}
+
+type StartContainerdServiceSpec_CNIConfig_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// CNI plugin directory
+	// Defaults to "/opt/cni/bin"
+	BinDir *string
+	// CNI config directory
+	// Defaults to "/etc/cni/net.d"
+	ConfigDir *string
+}
+
+func (b0 StartContainerdServiceSpec_CNIConfig_builder) Build() *StartContainerdServiceSpec_CNIConfig {
+	m0 := &StartContainerdServiceSpec_CNIConfig{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.BinDir != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		x.xxx_hidden_BinDir = b.BinDir
+	}
+	if b.ConfigDir != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		x.xxx_hidden_ConfigDir = b.ConfigDir
+	}
+	return m0
+}
+
 var File_components_cri_v20260301_action_proto protoreflect.FileDescriptor
 
 const file_components_cri_v20260301_action_proto_rawDesc = "" +
@@ -443,24 +860,46 @@ const file_components_cri_v20260301_action_proto_rawDesc = "" +
 	"\x17containerd_download_url\x18\x01 \x01(\tR\x15containerdDownloadUrl\x12'\n" +
 	"\x0fcontainerd_path\x18\x02 \x01(\tR\x0econtainerdPath\x12*\n" +
 	"\x11runc_download_url\x18\x03 \x01(\tR\x0fruncDownloadUrl\x12\x1b\n" +
-	"\trunc_path\x18\x04 \x01(\tR\bruncPathB5Z3go.goms.io/aks/AKSFlexNode/components/cri/v20260301b\beditionsp\xe9\a"
+	"\trunc_path\x18\x04 \x01(\tR\bruncPath\"\x83\x02\n" +
+	"\x16StartContainerdService\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12Q\n" +
+	"\x04spec\x18\x02 \x01(\v2=.aks.flex.components.cri.v20260301.StartContainerdServiceSpecR\x04spec\x12W\n" +
+	"\x06status\x18\x03 \x01(\v2?.aks.flex.components.cri.v20260301.StartContainerdServiceStatusR\x06status\"\x97\x02\n" +
+	"\x1aStartContainerdServiceSpec\x12'\n" +
+	"\x0fmetrics_address\x18\x01 \x01(\tR\x0emetricsAddress\x12#\n" +
+	"\rsandbox_image\x18\x02 \x01(\tR\fsandboxImage\x12f\n" +
+	"\n" +
+	"cni_config\x18\x03 \x01(\v2G.aks.flex.components.cri.v20260301.StartContainerdServiceSpec.CNIConfigR\tcniConfig\x1aC\n" +
+	"\tCNIConfig\x12\x17\n" +
+	"\abin_dir\x18\x01 \x01(\tR\x06binDir\x12\x1d\n" +
+	"\n" +
+	"config_dir\x18\x02 \x01(\tR\tconfigDir\"\x1e\n" +
+	"\x1cStartContainerdServiceStatusB5Z3go.goms.io/aks/AKSFlexNode/components/cri/v20260301b\beditionsp\xe9\a"
 
-var file_components_cri_v20260301_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_components_cri_v20260301_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_components_cri_v20260301_action_proto_goTypes = []any{
-	(*DownloadCRIBinaries)(nil),       // 0: aks.flex.components.cri.v20260301.DownloadCRIBinaries
-	(*DownloadCRIBinariesSpec)(nil),   // 1: aks.flex.components.cri.v20260301.DownloadCRIBinariesSpec
-	(*DownloadCRIBinariesStatus)(nil), // 2: aks.flex.components.cri.v20260301.DownloadCRIBinariesStatus
-	(*api.Metadata)(nil),              // 3: aks.flex.components.api.Metadata
+	(*DownloadCRIBinaries)(nil),                  // 0: aks.flex.components.cri.v20260301.DownloadCRIBinaries
+	(*DownloadCRIBinariesSpec)(nil),              // 1: aks.flex.components.cri.v20260301.DownloadCRIBinariesSpec
+	(*DownloadCRIBinariesStatus)(nil),            // 2: aks.flex.components.cri.v20260301.DownloadCRIBinariesStatus
+	(*StartContainerdService)(nil),               // 3: aks.flex.components.cri.v20260301.StartContainerdService
+	(*StartContainerdServiceSpec)(nil),           // 4: aks.flex.components.cri.v20260301.StartContainerdServiceSpec
+	(*StartContainerdServiceStatus)(nil),         // 5: aks.flex.components.cri.v20260301.StartContainerdServiceStatus
+	(*StartContainerdServiceSpec_CNIConfig)(nil), // 6: aks.flex.components.cri.v20260301.StartContainerdServiceSpec.CNIConfig
+	(*api.Metadata)(nil),                         // 7: aks.flex.components.api.Metadata
 }
 var file_components_cri_v20260301_action_proto_depIdxs = []int32{
-	3, // 0: aks.flex.components.cri.v20260301.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
+	7, // 0: aks.flex.components.cri.v20260301.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
 	1, // 1: aks.flex.components.cri.v20260301.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.v20260301.DownloadCRIBinariesSpec
 	2, // 2: aks.flex.components.cri.v20260301.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.v20260301.DownloadCRIBinariesStatus
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	7, // 3: aks.flex.components.cri.v20260301.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
+	4, // 4: aks.flex.components.cri.v20260301.StartContainerdService.spec:type_name -> aks.flex.components.cri.v20260301.StartContainerdServiceSpec
+	5, // 5: aks.flex.components.cri.v20260301.StartContainerdService.status:type_name -> aks.flex.components.cri.v20260301.StartContainerdServiceStatus
+	6, // 6: aks.flex.components.cri.v20260301.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.v20260301.StartContainerdServiceSpec.CNIConfig
+	7, // [7:7] is the sub-list for method output_type
+	7, // [7:7] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_components_cri_v20260301_action_proto_init() }
@@ -474,7 +913,7 @@ func file_components_cri_v20260301_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_cri_v20260301_action_proto_rawDesc), len(file_components_cri_v20260301_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

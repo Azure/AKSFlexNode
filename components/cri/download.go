@@ -12,8 +12,10 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	utilexec "k8s.io/utils/exec"
 
+	"go.goms.io/aks/AKSFlexNode/components/api"
 	v20260301 "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
@@ -21,28 +23,26 @@ import (
 )
 
 const (
-	// containerd constants
-	containerdBinDir  = "/usr/local/bin"
-	containerdBinPath = containerdBinDir + "/containerd"
-
 	// containerd download URL template: version, version, arch
 	defaultContainerdURLTemplate = "https://github.com/containerd/containerd/releases/download/v%s/containerd-%s-linux-%s.tar.gz"
 	containerdTarPrefix          = "bin/"
-
-	// runc constants
-	runcBinPath = "/usr/local/bin/runc"
 
 	// runc download URL template: version, arch
 	defaultRuncURLTemplate = "https://github.com/opencontainers/runc/releases/download/v%s/runc.%s"
 )
 
-// containerdBinaries lists all binaries included in containerd releases.
-var containerdBinaries = []string{
-	"ctr",
-	"containerd",
-	"containerd-shim-runc-v2",
-	"containerd-stress",
-}
+var (
+	containerdBinPath = filepath.Join(config.DefaultBinaryPath, "containerd")
+	runcBinPath       = filepath.Join(config.DefaultBinaryPath, "runc")
+
+	// containerdBinaries lists all binaries included in containerd releases.
+	containerdBinaries = []string{
+		"ctr",
+		"containerd",
+		"containerd-shim-runc-v2",
+		"containerd-stress",
+	}
+)
 
 type downloadCRIBinariesAction struct{}
 
@@ -61,7 +61,10 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 		return nil, err
 	}
 
-	spec := config.GetSpec()
+	spec, err := api.DefaultAndValidate(config.GetSpec()) // TODO: can we move this logic to hub side?
+	if err != nil {
+		return nil, err
+	}
 
 	containerdVersion, err := semver.Parse(spec.GetContainerdVersion())
 	if err != nil {
@@ -118,7 +121,7 @@ func (d *downloadCRIBinariesAction) downloadContainerd(
 		}
 
 		binaryName := strings.TrimPrefix(tarFile.Name, containerdTarPrefix)
-		targetFilePath := filepath.Join(containerdBinDir, binaryName)
+		targetFilePath := filepath.Join(config.DefaultBinaryPath, binaryName)
 
 		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
 			return status.Errorf(codes.Internal, "install containerd file %q: %s", targetFilePath, err)
@@ -140,7 +143,7 @@ func (d *downloadCRIBinariesAction) downloadRunc(ctx context.Context, downloadUR
 // containerdVersionMatch checks if the installed containerd version matches the expected version.
 func containerdVersionMatch(expectedVersion string) bool {
 	for _, binary := range containerdBinaries {
-		binaryPath := filepath.Join(containerdBinDir, binary)
+		binaryPath := filepath.Join(config.DefaultBinaryPath, binary)
 		if !utilio.IsExecutable(binaryPath) {
 			return false
 		}
