@@ -19,4 +19,8 @@ message DownloadKubeBinariesSpec {
 }
 
 message DownloadKubeBinariesStatus {
+  string download_url = 1;
+  string kubelet_path = 2;
+  string kubeadm_path = 3;
+  string kubectl_path = 4;
 }

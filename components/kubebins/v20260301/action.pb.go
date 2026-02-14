@@ -218,9 +218,15 @@ func (b0 DownloadKubeBinariesSpec_builder) Build() *DownloadKubeBinariesSpec {
 }
 
 type DownloadKubeBinariesStatus struct {
-	state         protoimpl.MessageState `protogen:"opaque.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_DownloadUrl *string                `protobuf:"bytes,1,opt,name=download_url,json=downloadUrl"`
+	xxx_hidden_KubeletPath *string                `protobuf:"bytes,2,opt,name=kubelet_path,json=kubeletPath"`
+	xxx_hidden_KubeadmPath *string                `protobuf:"bytes,3,opt,name=kubeadm_path,json=kubeadmPath"`
+	xxx_hidden_KubectlPath *string                `protobuf:"bytes,4,opt,name=kubectl_path,json=kubectlPath"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *DownloadKubeBinariesStatus) Reset() {
@@ -248,15 +254,143 @@ func (x *DownloadKubeBinariesStatus) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
+func (x *DownloadKubeBinariesStatus) GetDownloadUrl() string {
+	if x != nil {
+		if x.xxx_hidden_DownloadUrl != nil {
+			return *x.xxx_hidden_DownloadUrl
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *DownloadKubeBinariesStatus) GetKubeletPath() string {
+	if x != nil {
+		if x.xxx_hidden_KubeletPath != nil {
+			return *x.xxx_hidden_KubeletPath
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *DownloadKubeBinariesStatus) GetKubeadmPath() string {
+	if x != nil {
+		if x.xxx_hidden_KubeadmPath != nil {
+			return *x.xxx_hidden_KubeadmPath
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *DownloadKubeBinariesStatus) GetKubectlPath() string {
+	if x != nil {
+		if x.xxx_hidden_KubectlPath != nil {
+			return *x.xxx_hidden_KubectlPath
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *DownloadKubeBinariesStatus) SetDownloadUrl(v string) {
+	x.xxx_hidden_DownloadUrl = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 4)
+}
+
+func (x *DownloadKubeBinariesStatus) SetKubeletPath(v string) {
+	x.xxx_hidden_KubeletPath = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 4)
+}
+
+func (x *DownloadKubeBinariesStatus) SetKubeadmPath(v string) {
+	x.xxx_hidden_KubeadmPath = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 4)
+}
+
+func (x *DownloadKubeBinariesStatus) SetKubectlPath(v string) {
+	x.xxx_hidden_KubectlPath = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 4)
+}
+
+func (x *DownloadKubeBinariesStatus) HasDownloadUrl() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *DownloadKubeBinariesStatus) HasKubeletPath() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *DownloadKubeBinariesStatus) HasKubeadmPath() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
+func (x *DownloadKubeBinariesStatus) HasKubectlPath() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 3)
+}
+
+func (x *DownloadKubeBinariesStatus) ClearDownloadUrl() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_DownloadUrl = nil
+}
+
+func (x *DownloadKubeBinariesStatus) ClearKubeletPath() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_KubeletPath = nil
+}
+
+func (x *DownloadKubeBinariesStatus) ClearKubeadmPath() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+	x.xxx_hidden_KubeadmPath = nil
+}
+
+func (x *DownloadKubeBinariesStatus) ClearKubectlPath() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 3)
+	x.xxx_hidden_KubectlPath = nil
+}
+
 type DownloadKubeBinariesStatus_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
+	DownloadUrl *string
+	KubeletPath *string
+	KubeadmPath *string
+	KubectlPath *string
 }
 
 func (b0 DownloadKubeBinariesStatus_builder) Build() *DownloadKubeBinariesStatus {
 	m0 := &DownloadKubeBinariesStatus{}
 	b, x := &b0, m0
 	_, _ = b, x
+	if b.DownloadUrl != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 4)
+		x.xxx_hidden_DownloadUrl = b.DownloadUrl
+	}
+	if b.KubeletPath != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 4)
+		x.xxx_hidden_KubeletPath = b.KubeletPath
+	}
+	if b.KubeadmPath != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 4)
+		x.xxx_hidden_KubeadmPath = b.KubeadmPath
+	}
+	if b.KubectlPath != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 4)
+		x.xxx_hidden_KubectlPath = b.KubectlPath
+	}
 	return m0
 }
 
@@ -270,8 +404,12 @@ const file_components_kubebins_v20260301_action_proto_rawDesc = "" +
 	"\x04spec\x18\x02 \x01(\v2@.aks.flex.components.kubebins.v20260301.DownloadKubeBinariesSpecR\x04spec\x12Z\n" +
 	"\x06status\x18\x03 \x01(\v2B.aks.flex.components.kubebins.v20260301.DownloadKubeBinariesStatusR\x06status\"I\n" +
 	"\x18DownloadKubeBinariesSpec\x12-\n" +
-	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\"\x1c\n" +
-	"\x1aDownloadKubeBinariesStatusB:Z8go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301b\beditionsp\xe9\a"
+	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\"\xa8\x01\n" +
+	"\x1aDownloadKubeBinariesStatus\x12!\n" +
+	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl\x12!\n" +
+	"\fkubelet_path\x18\x02 \x01(\tR\vkubeletPath\x12!\n" +
+	"\fkubeadm_path\x18\x03 \x01(\tR\vkubeadmPath\x12!\n" +
+	"\fkubectl_path\x18\x04 \x01(\tR\vkubectlPathB:Z8go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301b\beditionsp\xe9\a"
 
 var file_components_kubebins_v20260301_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_components_kubebins_v20260301_action_proto_goTypes = []any{

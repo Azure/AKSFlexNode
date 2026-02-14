@@ -54,14 +54,27 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 
 	spec := config.GetSpec()
 
+	downloadURL, err := d.constructDownloadURL(spec.GetKubernetesVersion())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "construct download URL: %s", err)
+	}
+
+	status := v20260301.DownloadKubeBinariesStatus_builder{
+		DownloadUrl: utils.Ptr(downloadURL),
+		KubeletPath: utils.Ptr(binPathKubelet),
+		KubeadmPath: utils.Ptr(filepath.Join(binDir, "kubeadm")),
+		KubectlPath: utils.Ptr(filepath.Join(binDir, "kubectl")),
+	}
+
 	needDownload := !hasRequiredBinaries() || !kubeletVersionMatch(ctx, spec.GetKubernetesVersion())
 	if needDownload {
-		if err := d.download(ctx, spec); err != nil {
+		if err := d.download(ctx, downloadURL); err != nil {
 			return nil, err
 		}
 	}
 
-	// TODO: capture status
+	config.SetStatus(status.Build())
+
 	item, err := anypb.New(config)
 	if err != nil {
 		return nil, err
@@ -70,16 +83,8 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
 }
 
-func (d *downloadKubeBinariesAction) download(
-	ctx context.Context,
-	spec *v20260301.DownloadKubeBinariesSpec,
-) error {
-	url, err := d.constructDownloadURL(spec.GetKubernetesVersion())
-	if err != nil {
-		return status.Errorf(codes.Internal, "construct download URL: %s", err)
-	}
-
-	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, url) {
+func (d *downloadKubeBinariesAction) download(ctx context.Context, downloadURL string) error {
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, downloadURL) {
 		if err != nil {
 			return status.Errorf(codes.Internal, "decompress tar: %s", err)
 		}
