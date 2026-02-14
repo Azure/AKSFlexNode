@@ -2,13 +2,16 @@ package kubebins
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
+	utilexec "k8s.io/utils/exec"
 
 	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
@@ -18,29 +21,18 @@ import (
 )
 
 const (
-	// Binary installation directory
-	binDir = "/usr/local/bin"
-
-	// Kubernetes binaries
-	kubeletBinary = "kubelet"
-	kubectlBinary = "kubectl"
-	kubeadmBinary = "kubeadm"
-
-	// Kubernetes binary paths
-	kubeletPath = binDir + "/" + kubeletBinary
-	kubectlPath = binDir + "/" + kubectlBinary
-	kubeadmPath = binDir + "/" + kubeadmBinary
-)
-
-var (
 	defaultKubernetesURLTemplate = "https://acs-mirror.azureedge.net/kubernetes/v%s/binaries/kubernetes-node-linux-%s.tar.gz"
 	kubernetesTarPath            = "kubernetes/node/bin/"
+
+	binDir         = "/usr/local/bin"
+	binPathKubelet = binDir + "/kubelet"
 )
 
-var kubeBinariesPaths = []string{
-	kubeletPath,
-	kubectlPath,
-	kubeadmPath,
+var binariesRequired = []string{
+	filepath.Join(binDir, "kubeadm"),
+	filepath.Join(binDir, "kubelet"),
+	filepath.Join(binDir, "kubectl"),
+	filepath.Join(binDir, "kube-proxy"),
 }
 
 type downloadKubeBinariesAction struct{}
@@ -62,7 +54,8 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 
 	spec := config.GetSpec()
 
-	if !d.canSkip(spec) {
+	needDownload := !hasRequiredBinaries() || !kubeletVersionMatch(ctx, spec.GetKubernetesVersion())
+	if needDownload {
 		if err := d.download(ctx, spec); err != nil {
 			return nil, err
 		}
@@ -77,34 +70,10 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
 }
 
-// canSkip checks if all Kube binaries are already installed with the correct version.
-func (d *downloadKubeBinariesAction) canSkip(spec *v20260301.DownloadKubeBinariesSpec) bool {
-	for _, binaryPath := range kubeBinariesPaths {
-		if !utils.FileExists(binaryPath) {
-			return false
-		}
-	}
-
-	return d.isKubeletVersionCorrect(spec.GetKubernetesVersion())
-}
-
-// isKubeletVersionCorrect checks if the installed kubelet version matches the expected version.
-func (d *downloadKubeBinariesAction) isKubeletVersionCorrect(expectedVersion string) bool {
-	output, err := utils.RunCommandWithOutput(kubeletPath, "--version")
-	if err != nil {
-		return false
-	}
-
-	return strings.Contains(output, expectedVersion)
-}
-
 func (d *downloadKubeBinariesAction) download(
 	ctx context.Context,
 	spec *v20260301.DownloadKubeBinariesSpec,
 ) error {
-	// Clean up any corrupted installations before proceeding
-	d.cleanupExistingInstallation()
-
 	url, err := d.constructDownloadURL(spec.GetKubernetesVersion())
 	if err != nil {
 		return status.Errorf(codes.Internal, "construct download URL: %s", err)
@@ -119,8 +88,9 @@ func (d *downloadKubeBinariesAction) download(
 			continue
 		}
 
-		fileName := strings.TrimPrefix(tarFile.Name, kubernetesTarPath)
-		targetFilePath := filepath.Join(binDir, fileName)
+		binaryName := strings.TrimPrefix(tarFile.Name, kubernetesTarPath)
+
+		targetFilePath := filepath.Join(binDir, binaryName)
 
 		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
 			return status.Errorf(codes.Internal, "install file %q: %s", targetFilePath, err)
@@ -128,15 +98,6 @@ func (d *downloadKubeBinariesAction) download(
 	}
 
 	return nil
-}
-
-// cleanupExistingInstallation removes any existing Kubernetes binaries that may be corrupted.
-func (d *downloadKubeBinariesAction) cleanupExistingInstallation() {
-	for _, binaryPath := range kubeBinariesPaths {
-		if utils.FileExists(binaryPath) {
-			_ = utils.RunCleanupCommand(binaryPath) //nolint:errcheck
-		}
-	}
 }
 
 // constructDownloadURL constructs the download URL for the specified Kubernetes version.
@@ -147,4 +108,36 @@ func (d *downloadKubeBinariesAction) constructDownloadURL(kubernetesVersion stri
 	}
 
 	return fmt.Sprintf(defaultKubernetesURLTemplate, kubernetesVersion, arch), nil
+}
+
+func hasRequiredBinaries() bool {
+	for _, binaryPath := range binariesRequired {
+		s, err := os.Stat(binaryPath)
+		if err != nil {
+			return false
+		}
+		// check if it's executable file
+		if s.IsDir() || s.Mode()&0111 == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func kubeletVersionMatch(ctx context.Context, version string) bool {
+	output, err := utilexec.New().
+		CommandContext(ctx, binPathKubelet, "version", "--client", "-o", "json").
+		Output()
+	if err != nil {
+		return false
+	}
+	var s struct {
+		ClientVersion struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"clientVersion"`
+	}
+	if err := json.Unmarshal(output, &s); err != nil {
+		return false
+	}
+	return s.ClientVersion.GitVersion == version
 }
