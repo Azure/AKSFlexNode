@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -66,10 +67,7 @@ func (i *Installer) installRunc(ctx context.Context) error {
 // it returns the file name and URL for downloading containerd
 func (i *Installer) constructRuncDownloadURL() (string, string, error) {
 	runcVersion := i.getRuncVersion()
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get architecture: %w", err)
-	}
+	arch := utilhost.GetArch()
 	url := fmt.Sprintf(runcDownloadURL, runcVersion, arch)
 	fileName := fmt.Sprintf(runcFileName, arch)
 	i.logger.Infof("Constructed runc download URL: %s", url)

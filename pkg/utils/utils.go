@@ -210,27 +210,6 @@ func RemoveDirectories(directories []string, logger *logrus.Logger) []error {
 	return errors
 }
 
-// GetArc retrieves the system architecture in a format matching reference scripts
-func GetArc() (string, error) {
-	// Get architecture using same logic as reference script
-	arch, err := RunCommandWithOutput("uname", "-m")
-	if err != nil {
-		return "", fmt.Errorf("failed to get architecture: %w", err)
-	}
-	arch = strings.TrimSpace(arch)
-
-	// Map architecture names to match reference script logic
-	switch arch {
-	case "armv7l", "armv7":
-		arch = "arm"
-	case "aarch64":
-		arch = "arm64"
-	case "x86_64":
-		arch = "amd64"
-	}
-	return arch, nil
-}
-
 // ExtractClusterInfo extracts server URL and CA certificate data from kubeconfig
 func ExtractClusterInfo(kubeconfigData []byte) (string, string, error) {
 	config, err := clientcmd.Load(kubeconfigData)

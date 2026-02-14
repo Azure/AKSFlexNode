@@ -15,6 +15,7 @@ import (
 	v20260301 "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
 )
@@ -70,15 +71,8 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 		return nil, status.Errorf(codes.InvalidArgument, "containerd version %q is not supported, minimum required version is 2.0.0", spec.GetContainerdVersion())
 	}
 
-	containerdURL, err := constructContainerdDownloadURL(spec.GetContainerdVersion())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "construct containerd download URL: %s", err)
-	}
-
-	runcURL, err := constructRuncDownloadURL(spec.GetRuncVersion())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "construct runc download URL: %s", err)
-	}
+	containerdURL := constructContainerdDownloadURL(spec.GetContainerdVersion())
+	runcURL := constructRuncDownloadURL(spec.GetRuncVersion())
 
 	st := v20260301.DownloadCRIBinariesStatus_builder{
 		ContainerdDownloadUrl: utils.Ptr(containerdURL),
@@ -175,21 +169,13 @@ func runcVersionMatch(expectedVersion string) bool {
 }
 
 // constructContainerdDownloadURL builds the download URL for the given containerd version.
-func constructContainerdDownloadURL(version string) (string, error) {
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", fmt.Errorf("get architecture: %w", err)
-	}
-
-	return fmt.Sprintf(defaultContainerdURLTemplate, version, version, arch), nil
+func constructContainerdDownloadURL(version string) string {
+	arch := utilhost.GetArch()
+	return fmt.Sprintf(defaultContainerdURLTemplate, version, version, arch)
 }
 
 // constructRuncDownloadURL builds the download URL for the given runc version.
-func constructRuncDownloadURL(version string) (string, error) {
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", fmt.Errorf("get architecture: %w", err)
-	}
-
-	return fmt.Sprintf(defaultRuncURLTemplate, version, arch), nil
+func constructRuncDownloadURL(version string) string {
+	arch := utilhost.GetArch()
+	return fmt.Sprintf(defaultRuncURLTemplate, version, arch)
 }

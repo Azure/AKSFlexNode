@@ -15,6 +15,7 @@ import (
 	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
 )
@@ -53,10 +54,7 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 
 	spec := config.GetSpec()
 
-	downloadURL, err := d.constructDownloadURL(spec.GetKubernetesVersion())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "construct download URL: %s", err)
-	}
+	downloadURL := d.constructDownloadURL(spec.GetKubernetesVersion())
 
 	status := v20260301.DownloadKubeBinariesStatus_builder{
 		DownloadUrl: utils.Ptr(downloadURL),
@@ -105,13 +103,9 @@ func (d *downloadKubeBinariesAction) download(ctx context.Context, downloadURL s
 }
 
 // constructDownloadURL constructs the download URL for the specified Kubernetes version.
-func (d *downloadKubeBinariesAction) constructDownloadURL(kubernetesVersion string) (string, error) {
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", fmt.Errorf("get architecture: %w", err)
-	}
-
-	return fmt.Sprintf(defaultKubernetesURLTemplate, kubernetesVersion, arch), nil
+func (d *downloadKubeBinariesAction) constructDownloadURL(kubernetesVersion string) string {
+	arch := utilhost.GetArch()
+	return fmt.Sprintf(defaultKubernetesURLTemplate, kubernetesVersion, arch)
 }
 
 func hasRequiredBinaries() bool {
