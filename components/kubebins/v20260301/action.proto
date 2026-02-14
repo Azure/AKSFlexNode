@@ -1,0 +1,22 @@
+edition = "2024";
+
+package aks.flex.components.kubebins.v20260301;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301";
+
+import "components/api/api.proto";
+
+message DownloadKubeBinaries {
+  api.Metadata metadata = 1;
+
+  DownloadKubeBinariesSpec spec = 2;
+
+  DownloadKubeBinariesStatus status = 3;
+}
+
+message DownloadKubeBinariesSpec {
+  string kubernetes_version = 1;
+}
+
+message DownloadKubeBinariesStatus {
+}

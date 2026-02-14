@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"go.goms.io/aks/AKSFlexNode/components/api"
@@ -89,12 +88,6 @@ func applyOne(ctx context.Context, conn *grpc.ClientConn, b []byte) error {
 	}
 
 	actionType := action.GetMetadata().GetType()
-
-	protoregistry.GlobalTypes.RangeMessages(func(mt protoreflect.MessageType) bool {
-		fmt.Println(mt.Descriptor().FullName())
-
-		return true
-	})
 
 	mt, err := protoregistry.GlobalTypes.FindMessageByURL(actionType)
 	if err != nil {
