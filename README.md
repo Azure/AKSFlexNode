@@ -43,8 +43,8 @@ aks-flex-node version
 > **Important:** All commands below assume you are running as root (`sudo su`). The agent installs and configures system-level components (containerd, kubelet, CNI) and manages systemd services, all of which require root privileges.
 
 ```bash
-# Start the agent (requires root)
-sudo aks-flex-node agent --config /etc/aks-flex-node/config.json
+# Start the agent
+aks-flex-node agent --config /etc/aks-flex-node/config.json
 ```
 
 For detailed setup instructions, prerequisites, requirements, and configuration options, see the **[Usage Guide](docs/usage.md)**.
