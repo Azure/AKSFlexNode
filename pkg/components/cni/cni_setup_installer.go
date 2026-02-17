@@ -9,6 +9,7 @@ import (
 
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -139,10 +140,7 @@ func (i *Installer) installCNIPlugins(ctx context.Context) error {
 	}
 
 	// Construct CNI download URL
-	_, cniDownloadURL, err := i.constructCNIDownloadURL()
-	if err != nil {
-		return fmt.Errorf("failed to construct CNI download URL: %w", err)
-	}
+	_, cniDownloadURL := i.constructCNIDownloadURL()
 
 	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, cniDownloadURL) {
 		if err != nil {
@@ -173,16 +171,13 @@ func canSkipCNIPluginInstallation() bool {
 	return true
 }
 
-func (i *Installer) constructCNIDownloadURL() (string, string, error) {
+func (i *Installer) constructCNIDownloadURL() (string, string) {
 	cniVersion := getCNIVersion(i.config)
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get architecture: %w", err)
-	}
+	arch := utilhost.GetArch()
 	url := fmt.Sprintf(cniDownLoadURL, cniVersion, arch, cniVersion)
 	fileName := fmt.Sprintf(cniFileName, arch, cniVersion)
 	i.logger.Infof("Constructed CNI download URL: %s", url)
-	return fileName, url, nil
+	return fileName, url
 }
 
 func getCNIVersion(cfg *config.Config) string {
