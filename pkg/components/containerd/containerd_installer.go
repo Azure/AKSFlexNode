@@ -11,6 +11,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -150,10 +151,7 @@ func (i *Installer) canSkipContainerdInstallation() bool {
 // it returns the file name and URL for downloading containerd
 func (i *Installer) constructContainerdDownloadURL() (string, string, error) {
 	containerdVersion := i.getContainerdVersion()
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get architecture: %w", err)
-	}
+	arch := utilhost.GetArch()
 	url := fmt.Sprintf(containerdDownloadURL, containerdVersion, containerdVersion, arch)
 	fileName := fmt.Sprintf(containerdFileName, containerdVersion, arch)
 	i.logger.Infof("Constructed containerd download URL: %s", url)

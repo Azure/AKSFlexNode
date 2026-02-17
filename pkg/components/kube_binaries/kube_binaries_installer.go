@@ -10,6 +10,7 @@ import (
 
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -152,11 +153,7 @@ func (i *Installer) cleanupExistingInstallation() error {
 // constructKubeBinariesDownloadURL constructs the download URL for the specified Kubernetes version
 // it returns the file name and URL for downloading Kube binaries
 func (i *Installer) constructKubeBinariesDownloadURL() (string, string, error) {
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get architecture: %w", err)
-	}
-
+	arch := utilhost.GetArch()
 	kubernetesVersion := i.config.GetKubernetesVersion()
 	urlTemplate := i.getKubernetesURLTemplate()
 	url := fmt.Sprintf(urlTemplate, kubernetesVersion, arch)

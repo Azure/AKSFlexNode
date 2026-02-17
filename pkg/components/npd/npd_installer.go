@@ -9,6 +9,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -186,10 +187,7 @@ func (i *Installer) cleanupExistingInstallation() error {
 
 func (i *Installer) getNpdDownloadURL() (string, string, error) {
 	npdVersion := i.getNpdVersion()
-	arch, err := utils.GetArc()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get architecture: %w", err)
-	}
+	arch := utilhost.GetArch()
 	// Construct the download URL based on the version
 	downloadURL := fmt.Sprintf(npdDownloadURL, npdVersion, npdVersion, arch)
 	fileName := fmt.Sprintf(npdFileName, npdVersion)
