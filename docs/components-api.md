@@ -115,7 +115,7 @@ In environments where pre-built VHD images are not available, the action list in
   { "metadata": { "type": "...DownloadCRIBinaries" },  "spec": { "containerdVersion": "2.0.1", "runcVersion": "1.2.4" } },
   { "metadata": { "type": "...StartContainerdService" }, "spec": { "sandboxImage": "mcr.microsoft.com/oss/containerd/pause:3.6" } },
   { "metadata": { "type": "...DownloadKubeBinaries" }, "spec": { "kubernetesVersion": "1.32.1" } },
-  { "metadata": { "type": "...KubadmNodeJoin" },       "spec": { "controlPlane": { "server": "https://cp.example.com:6443", "certificateAuthorityData": "..." }, "kubelet": { "bootstrapAuthInfo": { "token": "..." } } } }
+  { "metadata": { "type": "...KubadmNodeJoin" },       "spec": { "controlPlane": { "server": "...", "certificateAuthorityData": "..." }, "kubelet": { "bootstrapAuthInfo": { "token": "..." } } } }
 ]
 ```
 
