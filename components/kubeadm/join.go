@@ -20,12 +20,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/clientcmd/api/latest"
+	utilexec "k8s.io/utils/exec"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/upstreamv1beta4"
 
 	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
 )
@@ -255,10 +255,7 @@ func (n *nodeJoinAction) runJoin(
 		return status.Errorf(codes.Internal, "resolve kubeadm binary: %s", err)
 	}
 
-	if err := utils.RunSystemCommand(
-		kubeadmCommand,
-		"join", "--config", joinConfig, "-v", "5",
-	); err != nil {
+	if err := utilexec.New().CommandContext(ctx, kubeadmCommand, "join", "--config", joinConfig, "-v", "5").Run(); err != nil {
 		return status.Errorf(codes.Internal, "kubeadm join: %s", err)
 	}
 
