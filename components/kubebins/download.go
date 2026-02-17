@@ -2,7 +2,6 @@ package kubebins
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -121,18 +120,16 @@ func hasRequiredBinaries() bool {
 
 func kubeletVersionMatch(ctx context.Context, version string) bool {
 	output, err := utilexec.New().
-		CommandContext(ctx, binPathKubelet, "version", "--client", "-o", "json").
+		CommandContext(ctx, binPathKubelet, "--version").
 		Output()
 	if err != nil {
 		return false
 	}
-	var s struct {
-		ClientVersion struct {
-			GitVersion string `json:"gitVersion"`
-		} `json:"clientVersion"`
-	}
-	if err := json.Unmarshal(output, &s); err != nil {
+	// output example: "Kubernetes v1.27.3"
+	parts := strings.Fields(string(output))
+	if len(parts) != 2 {
 		return false
 	}
-	return s.ClientVersion.GitVersion == version
+	kubeletVersion := strings.TrimPrefix(parts[1], "v")
+	return kubeletVersion == version
 }
