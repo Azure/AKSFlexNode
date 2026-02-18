@@ -1052,3 +1052,79 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBootstrapTokenConfigured(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		expected bool
+	}{
+		{
+			name: "bootstrap token configured with valid token",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "bootstrap token not configured (nil)",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: nil,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "bootstrap token configured but empty token",
+			config: &Config{
+				Azure: AzureConfig{
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "service principal configured (not bootstrap token)",
+			config: &Config{
+				Azure: AzureConfig{
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID:     "12345678-1234-1234-1234-123456789012",
+						ClientID:     "12345678-1234-1234-1234-123456789012",
+						ClientSecret: "test-secret",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "arc enabled (not bootstrap token)",
+			config: &Config{
+				Azure: AzureConfig{
+					Arc: &ArcConfig{
+						Enabled:       true,
+						ResourceGroup: "test-rg",
+						MachineName:   "test-machine",
+						Location:      "eastus",
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.config.IsBootstrapTokenConfigured()
+			if result != tt.expected {
+				t.Errorf("IsBootstrapTokenConfigured() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}

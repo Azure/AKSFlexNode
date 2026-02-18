@@ -210,6 +210,12 @@ func (i *Installer) createKubeletDefaultsFile() error {
 		labels = append(labels, fmt.Sprintf("%s=%s", key, value))
 	}
 
+	// Add --rotate-certificates flag only for bootstrap token authentication
+	rotateCertsFlag := ""
+	if i.config.IsBootstrapTokenConfigured() {
+		rotateCertsFlag = "  --rotate-certificates=true \\\n"
+	}
+
 	kubeletDefaults := fmt.Sprintf(`KUBELET_NODE_LABELS="%s"
 KUBELET_CONFIG_FILE_FLAGS=""
 KUBELET_FLAGS="\
@@ -236,8 +242,7 @@ KUBELET_FLAGS="\
   --read-only-port=0  \
   --resolv-conf=/run/systemd/resolve/resolv.conf  \
   --streaming-connection-idle-timeout=4h  \
-  --rotate-certificates=true \
-  --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
+%s  --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
   "`,
 		strings.Join(labels, ","),
 		i.config.Node.Kubelet.Verbosity,
@@ -247,7 +252,8 @@ KUBELET_FLAGS="\
 		mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ","),
 		i.config.Node.Kubelet.ImageGCHighThreshold,
 		i.config.Node.Kubelet.ImageGCLowThreshold,
-		i.config.Node.MaxPods)
+		i.config.Node.MaxPods,
+		rotateCertsFlag)
 
 	// Ensure /etc/default directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", etcDefaultDir); err != nil {
