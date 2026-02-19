@@ -18,10 +18,17 @@ type Installer struct {
 
 // NewInstaller creates a new Kube binaries Installer
 func NewInstaller(logger *logrus.Logger) *Installer {
-	return &Installer{
-		config: config.GetConfig(),
-		logger: logger,
+	return NewInstallerWithConfig(nil, logger)
+}
+
+// NewInstallerWithConfig creates a new Kube binaries Installer using the provided config.
+//
+// If cfg is nil, it falls back to the global singleton config.
+func NewInstallerWithConfig(cfg *config.Config, logger *logrus.Logger) *Installer {
+	if cfg == nil {
+		cfg = config.GetConfig()
 	}
+	return &Installer{config: cfg, logger: logger}
 }
 
 // Execute downloads and installs Kube binaries (kubelet, kubectl, kubeadm)

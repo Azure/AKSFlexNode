@@ -26,10 +26,17 @@ type Installer struct {
 
 // NewInstaller creates a new kubelet Installer
 func NewInstaller(logger *logrus.Logger) *Installer {
-	return &Installer{
-		config: config.GetConfig(),
-		logger: logger,
+	return NewInstallerWithConfig(nil, logger)
+}
+
+// NewInstallerWithConfig creates a new kubelet Installer using the provided config.
+//
+// If cfg is nil, it falls back to the global singleton config.
+func NewInstallerWithConfig(cfg *config.Config, logger *logrus.Logger) *Installer {
+	if cfg == nil {
+		cfg = config.GetConfig()
 	}
+	return &Installer{config: cfg, logger: logger}
 }
 
 // GetName returns the step name for the executor interface
@@ -684,7 +691,7 @@ users:
 
 // setUpClients sets up Azure SDK clients for fetching cluster credentials
 func (i *Installer) setUpClients() error {
-	cred, err := auth.NewAuthProvider().UserCredential(config.GetConfig())
+	cred, err := auth.NewAuthProvider().UserCredential(i.config)
 	if err != nil {
 		return fmt.Errorf("failed to get authentication credential: %w", err)
 	}
@@ -699,9 +706,8 @@ func (i *Installer) setUpClients() error {
 
 // getClusterCredentials retrieves cluster kube admin credentials using Azure SDK
 func (i *Installer) getClusterCredentials(ctx context.Context) ([]byte, error) {
-	cfg := config.GetConfig()
-	clusterResourceGroup := cfg.GetTargetClusterResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	clusterResourceGroup := i.config.GetTargetClusterResourceGroup()
+	clusterName := i.config.GetTargetClusterName()
 	i.logger.Infof("Fetching cluster credentials for cluster %s in resource group %s using Azure SDK",
 		clusterName, clusterResourceGroup)
 
