@@ -271,6 +271,22 @@ subjects:
   name: $SP_OBJECT_ID
 EOF
 
+# Create node role binding for kubelet certificate creation
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-csr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+EOF
+
 # Create node role binding
 kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
@@ -535,8 +551,6 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
     "cloud": "AzurePublicCloud",
     "bootstrapToken": {
       "token": "$BOOTSTRAP_TOKEN",
-      "serverURL": "$SERVER_URL",
-      "caCertData": "$CA_CERT_DATA"
     },
     "arc": {
       "enabled": false
@@ -549,6 +563,10 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   "kubernetes": {
     "version": "1.30.0"
   },
+  "kubelet": {
+      "serverURL": "$SERVER_URL",
+      "caCertData": "$CA_CERT_DATA"
+    },
   "agent": {
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
