@@ -17,6 +17,7 @@ func LoadStatusFromFile(path string) (*NodeStatus, error) {
 		return nil, fmt.Errorf("status path is empty")
 	}
 
+	// #nosec G304 -- reading a local status snapshot path controlled by the agent (runtime/temp dir), not user input.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

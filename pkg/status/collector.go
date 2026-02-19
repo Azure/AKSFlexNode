@@ -233,6 +233,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 	statusFilePath := GetStatusFilePath()
 	// Try to read the status file
+	// #nosec G304 -- reading a local status snapshot path controlled by the agent (runtime/temp dir), not user input.
 	statusData, err := os.ReadFile(statusFilePath)
 	if err != nil {
 		c.logger.Info("Status file not found - bootstrap needed")
