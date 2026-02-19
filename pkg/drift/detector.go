@@ -23,7 +23,7 @@ type Finding struct {
 type RemediationAction string
 
 const (
-	RemediationActionUnspecified     RemediationAction = ""
+	RemediationActionUnspecified       RemediationAction = ""
 	RemediationActionKubernetesUpgrade RemediationAction = "kubernetes-upgrade"
 )
 
