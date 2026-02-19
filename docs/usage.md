@@ -550,7 +550,7 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
     "tenantId": "$TENANT_ID",
     "cloud": "AzurePublicCloud",
     "bootstrapToken": {
-      "token": "$BOOTSTRAP_TOKEN",
+      "token": "$BOOTSTRAP_TOKEN"
     },
     "arc": {
       "enabled": false
@@ -564,9 +564,9 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
     "version": "1.30.0"
   },
   "kubelet": {
-      "serverURL": "$SERVER_URL",
-      "caCertData": "$CA_CERT_DATA"
-    },
+    "serverURL": "$SERVER_URL",
+    "caCertData": "$CA_CERT_DATA"
+  },
   "agent": {
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
