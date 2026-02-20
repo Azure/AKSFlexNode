@@ -215,6 +215,12 @@ func (i *Installer) createKubeletDefaultsFile() error {
 	// Bootstrap token mode: true (kubelet will rotate certificates after TLS bootstrap)
 	// Other modes (Arc/SP/MSI): false (authentication is handled via exec credential provider)
 	rotateCerts := i.config.IsBootstrapTokenConfigured()
+	// Build optional node-ip flag if NodeIP is configured
+	nodeIP := ""
+	if i.config.Node.Kubelet.NodeIP != "" {
+		i.logger.Infof("Using configured node IP: %s", i.config.Node.Kubelet.NodeIP)
+		nodeIP = fmt.Sprintf("--node-ip=%s \\", i.config.Node.Kubelet.NodeIP)
+	}
 
 	kubeletDefaults := fmt.Sprintf(`KUBELET_NODE_LABELS="%s"
 KUBELET_CONFIG_FILE_FLAGS=""
@@ -244,7 +250,7 @@ KUBELET_FLAGS="\
   --streaming-connection-idle-timeout=4h  \
   --rotate-certificates=%t \
   --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
-  "`,
+  %s"`,
 		strings.Join(labels, ","),
 		i.config.Node.Kubelet.Verbosity,
 		apiserverClientCAPath,
@@ -254,7 +260,8 @@ KUBELET_FLAGS="\
 		i.config.Node.Kubelet.ImageGCHighThreshold,
 		i.config.Node.Kubelet.ImageGCLowThreshold,
 		i.config.Node.MaxPods,
-		rotateCerts)
+		rotateCerts,
+		nodeIP)
 
 	// Ensure /etc/default directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", etcDefaultDir); err != nil {

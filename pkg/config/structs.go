@@ -114,6 +114,7 @@ type KubeletConfig struct {
 	DNSServiceIP         string            `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
 	ServerURL            string            `json:"serverURL"`    // Kubernetes API server URL
 	CACertData           string            `json:"caCertData"`   // Base64-encoded CA certificate data
+	NodeIP               string            `json:"nodeIP"`       // IP address to use for kubelet --node-ip flag (optional)
 }
 
 // PathsConfig holds file system paths used by the agent for Kubernetes and CNI configurations.
