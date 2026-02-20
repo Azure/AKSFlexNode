@@ -211,6 +211,11 @@ func (i *Installer) createKubeletDefaultsFile() error {
 		labels = append(labels, fmt.Sprintf("%s=%s", key, value))
 	}
 
+	// Set --rotate-certificates based on authentication mode
+	// Bootstrap token mode: true (kubelet will rotate certificates after TLS bootstrap)
+	// Other modes (Arc/SP/MSI): false (authentication is handled via exec credential provider)
+	rotateCerts := i.config.IsBootstrapTokenConfigured()
+
 	kubeletDefaults := fmt.Sprintf(`KUBELET_NODE_LABELS="%s"
 KUBELET_CONFIG_FILE_FLAGS=""
 KUBELET_FLAGS="\
@@ -237,7 +242,7 @@ KUBELET_FLAGS="\
   --read-only-port=0  \
   --resolv-conf=/run/systemd/resolve/resolv.conf  \
   --streaming-connection-idle-timeout=4h  \
-  --rotate-certificates=true \
+  --rotate-certificates=%t \
   --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256 \
   "`,
 		strings.Join(labels, ","),
@@ -248,7 +253,8 @@ KUBELET_FLAGS="\
 		mapToKeyValuePairs(i.config.Node.Kubelet.KubeReserved, ","),
 		i.config.Node.Kubelet.ImageGCHighThreshold,
 		i.config.Node.Kubelet.ImageGCLowThreshold,
-		i.config.Node.MaxPods)
+		i.config.Node.MaxPods,
+		rotateCerts)
 
 	// Ensure /etc/default directory exists
 	if err := utils.RunSystemCommand("mkdir", "-p", etcDefaultDir); err != nil {

@@ -271,6 +271,22 @@ subjects:
   name: $SP_OBJECT_ID
 EOF
 
+# Create node role binding for kubelet certificate creation
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-csr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+EOF
+
 # Create node role binding
 kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
@@ -486,6 +502,24 @@ subjects:
   kind: Group
   name: system:bootstrappers:aks-flex-node
 EOF
+
+# Create node role binding for list and check node
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+EOF
 ```
 
 ### Installation
@@ -534,9 +568,7 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
     "tenantId": "$TENANT_ID",
     "cloud": "AzurePublicCloud",
     "bootstrapToken": {
-      "token": "$BOOTSTRAP_TOKEN",
-      "serverURL": "$SERVER_URL",
-      "caCertData": "$CA_CERT_DATA"
+      "token": "$BOOTSTRAP_TOKEN"
     },
     "arc": {
       "enabled": false
@@ -548,6 +580,12 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "kubernetes": {
     "version": "1.30.0"
+  },
+  "node": {
+    "kubelet": {
+      "serverURL": "$SERVER_URL",
+      "caCertData": "$CA_CERT_DATA"
+    }
   },
   "agent": {
     "logLevel": "info",
@@ -716,6 +754,7 @@ kubectl get secret bootstrap-token-<token-id> -n kube-system -o yaml
 # Verify RBAC bindings
 kubectl get clusterrolebinding aks-flex-node-bootstrapper
 kubectl get clusterrolebinding aks-flex-node-auto-approve-csr
+kubectl get clusterrolebinding aks-flex-node-role
 
 # Check certificate signing requests
 kubectl get csr
