@@ -259,6 +259,9 @@ func (c *Config) Validate() error {
 	if c.Azure.TenantID == "" {
 		return fmt.Errorf("azure.tenantId is required")
 	}
+	if c.Azure.TargetCluster == nil {
+		return fmt.Errorf("azure.targetCluster configuration is required")
+	}
 	if c.Azure.TargetCluster.Location == "" {
 		return fmt.Errorf("azure.targetCluster.location is required")
 	}
