@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.goms.io/aks/AKSFlexNode/pkg/cmd/apply"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
 )
@@ -30,8 +31,10 @@ func main() {
 
 	// Add commands
 	rootCmd.AddCommand(NewAgentCommand())
+	// rootCmd.AddCommand(NewApplyCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
+	rootCmd.AddCommand(apply.Command)
 
 	// Set up context with signal handling
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -41,6 +44,9 @@ func main() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for version command
 		if cmd.Name() == "version" {
+			return nil
+		}
+		if cmd.Name() == "apply" {
 			return nil
 		}
 

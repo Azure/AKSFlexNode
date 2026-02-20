@@ -1,0 +1,21 @@
+edition = "2024";
+
+package aks.flex.components.linux.v20260301;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/linux/v20260301";
+
+import "components/api/api.proto";
+
+message ConfigureBaseOS {
+  api.Metadata metadata = 1;
+
+  ConfigureBaseOSSpec spec = 2;
+
+  ConfigureBaseOSStatus status = 3;
+}
+
+message ConfigureBaseOSSpec {
+}
+
+message ConfigureBaseOSStatus {
+}
