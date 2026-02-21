@@ -7,6 +7,7 @@ linters:
   default: none
   enable:
     - errcheck
+    - gosec
     - govet
     - ineffassign
     - staticcheck
@@ -21,3 +22,7 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      # Exclude generated protobuf files from gosec
+      - path: \.pb\.go$
+        linters:
+          - gosec
