@@ -33,16 +33,16 @@ func New(cfg *config.Config, logger *logrus.Logger) *Bootstrapper {
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
 	// Define the bootstrap steps in order - using modules directly
 	steps := []Executor{
-		arc.NewInstaller(b.logger),                  // Setup Arc
-		services.NewUnInstaller(b.logger),           // Stop kubelet before setup
-		system_configuration.NewInstaller(b.logger), // Configure system (early)
-		runc.NewInstaller(b.logger),                 // Install runc
-		containerd.NewInstaller(b.logger),           // Install containerd
-		kube_binaries.NewInstaller(b.logger),        // Install k8s binaries
-		cni.NewInstaller(b.logger),                  // Setup CNI (after container runtime)
-		kubelet.NewInstaller(b.logger),              // Configure kubelet service with Arc MSI auth
-		npd.NewInstaller(b.logger),                  // Install Node Problem Detector
-		services.NewInstaller(b.logger),             // Start services
+		arc.NewInstaller(b.logger),                               // Setup Arc
+		services.NewUnInstaller(b.logger),                        // Stop kubelet before setup
+		system_configuration.NewInstaller(b.logger),              // Configure system (early)
+		runc.NewInstaller(b.logger),                              // Install runc
+		containerd.NewInstaller(b.logger),                        // Install containerd
+		kube_binaries.NewInstallerWithConfig(b.config, b.logger), // Install k8s binaries
+		cni.NewInstaller(b.logger),                               // Setup CNI (after container runtime)
+		kubelet.NewInstallerWithConfig(b.config, b.logger),       // Configure kubelet service with Arc MSI auth
+		npd.NewInstaller(b.logger),                               // Install Node Problem Detector
+		services.NewInstaller(b.logger),                          // Start services
 	}
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")

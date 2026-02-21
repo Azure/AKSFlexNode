@@ -137,8 +137,8 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 		status.RemoveStatusFileBestEffortAtPath(logger, statusFilePath)
 	}
 
-	// Always clean up any stale managed cluster spec snapshot on daemon startup.
-	// The snapshot is best-effort and should not be relied upon across sessions.
+	// Always remove managed cluster spec snapshot on daemon startup.
+	// We'll re-collect it shortly after startup and on a schedule.
 	removed, err := spec.RemoveManagedClusterSpecSnapshot()
 	if err != nil {
 		logger.Warnf("Failed to remove stale managed cluster spec snapshot: %v", err)
@@ -146,7 +146,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 		logger.Info("Removed stale managed cluster spec snapshot successfully")
 	}
 
-	logger.Info("Starting periodic status collection daemon (status: 1 minutes, bootstrap check: 2 minute， spec collection: 30 minutes)...")
+	logger.Info("Starting periodic status collection daemon (status: 1 minutes, bootstrap check: 2 minute， spec collection: 10 minutes)...")
 
 	// Protect cfg reads/writes across concurrent loops. This avoids data races when we
 	// temporarily update cfg.Kubernetes.Version to trigger drift remediation bootstrap.
@@ -176,7 +176,10 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 			cfgSnap := snapshotConfig(cfg, &cfgMu)
 			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors); err != nil {
 				logger.Warnf("Initial drift detection after spec collection failed: %v", err)
+			} else {
+				logger.Info("Initial drift detection after spec collection completed successfully")
 			}
+
 		}
 	}
 
@@ -307,7 +310,7 @@ func startNodeDriftDetectionAndRemediationLoop(
 ) {
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
@@ -357,6 +360,13 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config) error {
 	logger.Info("Node requires re-bootstrapping, initiating auto-bootstrap...")
 
 	if cfg != nil && cfg.IsDriftDetectionAndRemediationEnabled() {
+		// Best-effort: refresh the managed cluster spec snapshot before attempting to
+		// override Kubernetes version. This avoids falling back to an old static version
+		// right after reboot (we delete the snapshot at daemon startup).
+		if err := collectAndWriteManagedClusterSpec(ctx, cfg); err != nil {
+			logger.Warnf("Failed to refresh managed cluster spec before auto-bootstrap: %v", err)
+		}
+
 		// Best-effort: prefer Kubernetes version from the persisted managed cluster spec snapshot.
 		// This keeps auto-bootstrap aligned with the cluster desired version even if the static
 		// config has an older value.
