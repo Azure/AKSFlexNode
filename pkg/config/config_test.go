@@ -17,9 +17,11 @@ func TestSetDefaults(t *testing.T) {
 			name:   "empty config gets all defaults",
 			config: &Config{},
 			want: func(c *Config) bool {
+				driftEnabled := c.IsDriftDetectionAndRemediationEnabled()
 				return c.Azure.Cloud == "AzurePublicCloud" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
+					driftEnabled &&
 					c.Paths.Kubernetes.ConfigDir == "/etc/kubernetes" &&
 					c.Node.MaxPods == 110 &&
 					c.Runc.Version == "1.1.12"
@@ -39,6 +41,20 @@ func TestSetDefaults(t *testing.T) {
 			want: func(c *Config) bool {
 				return c.Agent.LogLevel == "debug" &&
 					c.Agent.LogDir == "/custom/log/dir"
+			},
+		},
+		{
+			name:   "drift detection default is enabled",
+			config: &Config{},
+			want: func(c *Config) bool {
+				return c.IsDriftDetectionAndRemediationEnabled()
+			},
+		},
+		{
+			name:   "drift detection can be disabled",
+			config: &Config{Agent: AgentConfig{EnableDriftDetectionAndRemediation: func() *bool { v := false; return &v }()}},
+			want: func(c *Config) bool {
+				return !c.IsDriftDetectionAndRemediationEnabled()
 			},
 		},
 		{

@@ -111,6 +111,10 @@ func (c *Config) setAgentDefaults() {
 	if c.Agent.LogDir == "" {
 		c.Agent.LogDir = defaultLogDir
 	}
+	if c.Agent.EnableDriftDetectionAndRemediation == nil {
+		enabled := true
+		c.Agent.EnableDriftDetectionAndRemediation = &enabled
+	}
 }
 
 func (c *Config) setPathDefaults() {

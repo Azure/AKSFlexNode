@@ -55,6 +55,7 @@ func TestManagedClusterSpecCollector_Collect_WritesFile(t *testing.T) {
 		t.Fatalf("Collect() error = %v", err)
 	}
 
+	// #nosec G304 -- test reads a temp file path created by the test harness.
 	b, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)

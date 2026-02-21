@@ -5,6 +5,11 @@ import (
 	"path/filepath"
 )
 
+// ManagedClusterSpecFilePath returns the managed cluster spec snapshot file path under a provided directory.
+func ManagedClusterSpecFilePath(specDir string) string {
+	return filepath.Join(specDir, "managedcluster-spec.json")
+}
+
 // GetSpecDir returns the appropriate directory for spec artifacts.
 // Uses /run/aks-flex-node when running as aks-flex-node user (systemd service)
 // Uses /tmp/aks-flex-node for direct user execution (testing/development)
@@ -19,5 +24,5 @@ func GetSpecDir() string {
 
 // GetManagedClusterSpecFilePath returns the path where the managed cluster spec snapshot is stored.
 func GetManagedClusterSpecFilePath() string {
-	return filepath.Join(GetSpecDir(), "managedcluster-spec.json")
+	return ManagedClusterSpecFilePath(GetSpecDir())
 }
