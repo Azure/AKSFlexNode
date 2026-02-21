@@ -52,5 +52,8 @@ config.json
 /build/
 /dist/
 
+# Downloaded toolchain binaries
+hack/bin/
+
 # qemu vm state
 .vm
