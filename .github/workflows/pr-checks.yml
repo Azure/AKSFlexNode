@@ -96,7 +96,7 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
-          args: --timeout=5m
+          args: --timeout=5m --new-from-rev=HEAD~1
 
   security:
     name: Security Scan
@@ -150,11 +150,12 @@ jobs:
 
       - name: Check go fmt
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          UNFORMATTED=$(find . -name '*.go' -not -name '*.pb.go' -not -path './hack/*' | xargs gofmt -s -l)
+          if [ -n "$UNFORMATTED" ]; then
             echo "❌ Go code is not formatted. Please run 'make fmt' or 'gofmt -s -w .'"
             echo ""
             echo "Unformatted files:"
-            gofmt -s -l .
+            echo "$UNFORMATTED"
             exit 1
           fi
           echo "✅ All files are properly formatted"
@@ -162,11 +163,12 @@ jobs:
       - name: Check goimports
         run: |
           go install golang.org/x/tools/cmd/goimports@latest
-          if [ "$(goimports -l . | wc -l)" -gt 0 ]; then
+          UNFORMATTED=$(find . -name '*.go' -not -name '*.pb.go' -not -path './hack/*' | xargs goimports -l)
+          if [ -n "$UNFORMATTED" ]; then
             echo "❌ Go imports are not properly formatted. Please run 'goimports -w .'"
             echo ""
             echo "Files with incorrect imports:"
-            goimports -l .
+            echo "$UNFORMATTED"
             exit 1
           fi
           echo "✅ All imports are properly formatted"

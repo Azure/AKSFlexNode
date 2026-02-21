@@ -17,12 +17,9 @@ linters:
       check-type-assertions: true
       check-blank: false  # Allow _ = for intentionally ignored errors in defer
   exclusions:
+    generated: lax
     rules:
       # Exclude some linters from running on test files
       - path: _test\.go
         linters:
           - errcheck
-      # Exclude generated protobuf files from gosec
-      - path: \.pb\.go$
-        linters:
-          - gosec
