@@ -1,0 +1,19 @@
+edition = "2024";
+
+package aks.flex.components.api;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/api";
+
+// Metadata represents the metadata of an action to be applied.
+message Metadata {
+  // version refers to the version of the action.
+  string version = 1;
+  // type refers to the type of action.
+  string type = 2;
+  // name refers to the name of the action.
+  string name = 3;
+}
+
+message Base {
+  Metadata metadata = 1;
+}

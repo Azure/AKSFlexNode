@@ -101,6 +101,16 @@ verify:
 	@go mod verify
 	@go mod tidy
 
+.PHONY: protoc-tools
+protoc-tools: ## Download protobuf compiler and Go/gRPC codegen plugins
+	@hack/install-protoc-tools.sh
+
+.PHONY: generate
+generate: ## Run go generate for protobuf code generation
+	@echo "Running code generation..."
+	@go generate $$(go list ./... | grep -v /hack/)
+	@echo "Code generation complete"
+
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
@@ -108,6 +118,7 @@ clean:
 	@rm -f aks-flex-node-*
 	@rm -f *.tar.gz
 	@rm -f coverage.out coverage.html
+	@rm -rf hack/bin
 
 .PHONY: update-build-metadata
 update-build-metadata:
@@ -145,6 +156,8 @@ help:
 	@echo "  verify             Verify and tidy dependencies"
 	@echo ""
 	@echo "Other Targets:"
+	@echo "  protoc-tools       Download protobuf compiler and Go/gRPC codegen plugins"
+	@echo "  generate           Run go generate for protobuf code generation"
 	@echo "  clean              Clean build artifacts"
 	@echo "  update-build-metadata Show build metadata"
 	@echo "  help               Show this help message"
