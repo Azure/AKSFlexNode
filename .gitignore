@@ -5,6 +5,7 @@
 *.so
 *.dylib
 aks-flex-node
+AKSFlexNode
 
 # Test binary, built with `go test -c`
 *.test
@@ -42,6 +43,7 @@ Thumbs.db
 
 # Config files with sensitive data (keep sample config)
 config.json
+Standard_D8pds_v6_sku.json
 
 # Environment files with secrets
 .env
