@@ -115,17 +115,17 @@ func apply(ctx context.Context, input []byte, noPrettyUI bool) error {
 // applyPlain executes actions with no progress bar or colors.
 func applyPlain(ctx context.Context, conn *grpc.ClientConn, parsed []parsedAction) error {
 	for i, pa := range parsed {
-		fmt.Fprintf(os.Stderr, "[%d/%d] applying %s\n", i+1, len(parsed), pa.name) // nosec G705
+		fmt.Fprintf(os.Stderr, "[%d/%d] applying %s\n", i+1, len(parsed), pa.name) // #nosec G705
 
 		start := time.Now()
 		_, err := actions.ApplyAction(conn, ctx, pa.message)
 		elapsed := time.Since(start)
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[%d/%d] %s failed (%s): %v\n", i+1, len(parsed), pa.name, formatDuration(elapsed), err) // nosec G705
+			fmt.Fprintf(os.Stderr, "[%d/%d] %s failed (%s): %v\n", i+1, len(parsed), pa.name, formatDuration(elapsed), err) // #nosec G705
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "[%d/%d] %s done (%s)\n", i+1, len(parsed), pa.name, formatDuration(elapsed)) // nosec G705
+		fmt.Fprintf(os.Stderr, "[%d/%d] %s done (%s)\n", i+1, len(parsed), pa.name, formatDuration(elapsed)) // #nosec G705
 	}
 	return nil
 }
