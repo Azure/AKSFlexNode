@@ -119,6 +119,20 @@ jobs:
           START_TIME=$(date +%s)
           CLUSTER_NAME="${{ steps.names.outputs.CLUSTER_NAME }}"
 
+          # Ensure resource group exists
+          if ! az group show --name ${{ secrets.E2E_RESOURCE_GROUP }} --output none 2>/dev/null; then
+            echo "Resource group '${{ secrets.E2E_RESOURCE_GROUP }}' not found, creating..."
+            az group create \
+              --name ${{ secrets.E2E_RESOURCE_GROUP }} \
+              --location ${{ secrets.E2E_LOCATION }} \
+              --tags "purpose=e2e-test" \
+              --output none
+            echo "✅ Resource group created"
+          else
+            echo "✅ Resource group already exists"
+          fi
+          echo ""
+
           az aks create \
             --resource-group ${{ secrets.E2E_RESOURCE_GROUP }} \
             --name $CLUSTER_NAME \
