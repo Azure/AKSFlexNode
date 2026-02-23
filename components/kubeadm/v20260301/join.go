@@ -283,9 +283,7 @@ func (n *nodeJoinAction) pollUntilKubeletActive(ctx context.Context) error {
 				return false, err
 			default:
 				active := unit.ActiveState == systemd.UnitActiveStateActive
-				if !active {
-					// n.logger.Debugf("kubelet unit status: %s", unit.ActiveState)
-				}
+				// TODO: log kubelet unit status when it's not active
 				return active, nil
 			}
 		},
