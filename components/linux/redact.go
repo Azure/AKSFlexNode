@@ -1,4 +1,4 @@
-package v20260301
+package linux
 
 func (x *ConfigureBaseOS) Redact() {
 }

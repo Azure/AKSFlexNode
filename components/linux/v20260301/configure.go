@@ -1,4 +1,4 @@
-package linux
+package v20260301
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	utilexec "k8s.io/utils/exec"
 
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/linux/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/linux"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
@@ -29,7 +29,7 @@ func (a *configureBaseOSAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	config, err := utilpb.AnyTo[*v20260301.ConfigureBaseOS](req.GetItem())
+	config, err := utilpb.AnyTo[*linux.ConfigureBaseOS](req.GetItem())
 	if err != nil {
 		return nil, err
 	}

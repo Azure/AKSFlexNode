@@ -1,13 +1,13 @@
-package kubeadm
+package v20260301
 
 import (
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/kubeadm"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 )
 
 func init() {
 	actions.MustRegister(
 		newNodeJoinAction,
-		&v20260301.KubadmNodeJoin{},
+		&kubeadm.KubadmNodeJoin{},
 	)
 }

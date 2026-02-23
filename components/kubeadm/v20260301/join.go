@@ -1,4 +1,4 @@
-package kubeadm
+package v20260301
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	utilexec "k8s.io/utils/exec"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/upstreamv1beta4"
 
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/kubeadm"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
@@ -49,7 +49,7 @@ func (n *nodeJoinAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	config, err := utilpb.AnyTo[*v20260301.KubadmNodeJoin](req.GetItem())
+	config, err := utilpb.AnyTo[*kubeadm.KubadmNodeJoin](req.GetItem())
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (n *nodeJoinAction) resolveKubeadmBinary() (string, error) {
 
 func (n *nodeJoinAction) writeBootstrapKubeconfig(
 	baseDir string,
-	config *v20260301.KubeadmNodeJoinSpec,
+	config *kubeadm.KubeadmNodeJoinSpec,
 ) (string, error) {
 	const (
 		cluster  = "cluster"
@@ -126,7 +126,7 @@ func (n *nodeJoinAction) writeBootstrapKubeconfig(
 
 func (n *nodeJoinAction) writeKubeadmJoinConfig(
 	baseDir string,
-	config *v20260301.KubeadmNodeJoinSpec,
+	config *kubeadm.KubeadmNodeJoinSpec,
 ) (string, error) {
 	bootstrapKubeconfig, err := n.writeBootstrapKubeconfig(baseDir, config)
 	if err != nil {
@@ -233,7 +233,7 @@ func (n *nodeJoinAction) canRun() bool {
 
 func (n *nodeJoinAction) runJoin(
 	ctx context.Context,
-	config *v20260301.KubeadmNodeJoinSpec,
+	config *kubeadm.KubeadmNodeJoinSpec,
 ) error {
 	baseDir, err := os.MkdirTemp("", "aks-flex-node-kubeadm-*") // maybe move to utilio?
 	if err != nil {

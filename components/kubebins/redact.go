@@ -1,4 +1,4 @@
-package v20260301
+package kubebins
 
 // Redact removes sensitive fields from the action.
 func (x *DownloadKubeBinaries) Redact() {

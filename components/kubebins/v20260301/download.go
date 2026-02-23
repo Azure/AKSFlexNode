@@ -1,4 +1,4 @@
-package kubebins
+package v20260301
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	utilexec "k8s.io/utils/exec"
 
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/kubebins"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
@@ -48,7 +48,7 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	settings, err := utilpb.AnyTo[*v20260301.DownloadKubeBinaries](req.GetItem())
+	settings, err := utilpb.AnyTo[*kubebins.DownloadKubeBinaries](req.GetItem())
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 
 	downloadURL := d.constructDownloadURL(spec.GetKubernetesVersion())
 
-	status := v20260301.DownloadKubeBinariesStatus_builder{
+	st := kubebins.DownloadKubeBinariesStatus_builder{
 		DownloadUrl: utils.Ptr(downloadURL),
 		KubeletPath: utils.Ptr(binPathKubelet),
 		KubeadmPath: utils.Ptr(filepath.Join(config.DefaultBinaryPath, "kubeadm")),
@@ -71,7 +71,7 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 		}
 	}
 
-	settings.SetStatus(status.Build())
+	settings.SetStatus(st.Build())
 
 	item, err := anypb.New(settings)
 	if err != nil {

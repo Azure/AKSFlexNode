@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.5
-// source: components/kubeadm/v20260301/action.proto
+// source: components/kubeadm/action.proto
 
-package v20260301
+package kubeadm
 
 import (
 	api "go.goms.io/aks/AKSFlexNode/components/api"
@@ -32,7 +32,7 @@ type KubadmNodeJoin struct {
 
 func (x *KubadmNodeJoin) Reset() {
 	*x = KubadmNodeJoin{}
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[0]
+	mi := &file_components_kubeadm_action_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +44,7 @@ func (x *KubadmNodeJoin) String() string {
 func (*KubadmNodeJoin) ProtoMessage() {}
 
 func (x *KubadmNodeJoin) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[0]
+	mi := &file_components_kubeadm_action_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -151,7 +151,7 @@ type ControlPlane struct {
 
 func (x *ControlPlane) Reset() {
 	*x = ControlPlane{}
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[1]
+	mi := &file_components_kubeadm_action_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +163,7 @@ func (x *ControlPlane) String() string {
 func (*ControlPlane) ProtoMessage() {}
 
 func (x *ControlPlane) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[1]
+	mi := &file_components_kubeadm_action_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -263,7 +263,7 @@ type Kubelet struct {
 
 func (x *Kubelet) Reset() {
 	*x = Kubelet{}
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[2]
+	mi := &file_components_kubeadm_action_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -275,7 +275,7 @@ func (x *Kubelet) String() string {
 func (*Kubelet) ProtoMessage() {}
 
 func (x *Kubelet) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[2]
+	mi := &file_components_kubeadm_action_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -376,7 +376,7 @@ type NodeAuthInfo struct {
 
 func (x *NodeAuthInfo) Reset() {
 	*x = NodeAuthInfo{}
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[3]
+	mi := &file_components_kubeadm_action_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -388,7 +388,7 @@ func (x *NodeAuthInfo) String() string {
 func (*NodeAuthInfo) ProtoMessage() {}
 
 func (x *NodeAuthInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[3]
+	mi := &file_components_kubeadm_action_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +510,7 @@ func (b0 NodeAuthInfo_builder) Build() *NodeAuthInfo {
 type case_NodeAuthInfo_AuthInfo protoreflect.FieldNumber
 
 func (x case_NodeAuthInfo_AuthInfo) String() string {
-	md := file_components_kubeadm_v20260301_action_proto_msgTypes[3].Descriptor()
+	md := file_components_kubeadm_action_proto_msgTypes[3].Descriptor()
 	if x == 0 {
 		return "not set"
 	}
@@ -543,7 +543,7 @@ type KubeadmNodeJoinSpec struct {
 
 func (x *KubeadmNodeJoinSpec) Reset() {
 	*x = KubeadmNodeJoinSpec{}
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[4]
+	mi := &file_components_kubeadm_action_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -555,7 +555,7 @@ func (x *KubeadmNodeJoinSpec) String() string {
 func (*KubeadmNodeJoinSpec) ProtoMessage() {}
 
 func (x *KubeadmNodeJoinSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[4]
+	mi := &file_components_kubeadm_action_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +634,7 @@ type KubeadmNodeJoinStatus struct {
 
 func (x *KubeadmNodeJoinStatus) Reset() {
 	*x = KubeadmNodeJoinStatus{}
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[5]
+	mi := &file_components_kubeadm_action_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -646,7 +646,7 @@ func (x *KubeadmNodeJoinStatus) String() string {
 func (*KubeadmNodeJoinStatus) ProtoMessage() {}
 
 func (x *KubeadmNodeJoinStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_v20260301_action_proto_msgTypes[5]
+	mi := &file_components_kubeadm_action_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -669,21 +669,21 @@ func (b0 KubeadmNodeJoinStatus_builder) Build() *KubeadmNodeJoinStatus {
 	return m0
 }
 
-var File_components_kubeadm_v20260301_action_proto protoreflect.FileDescriptor
+var File_components_kubeadm_action_proto protoreflect.FileDescriptor
 
-const file_components_kubeadm_v20260301_action_proto_rawDesc = "" +
+const file_components_kubeadm_action_proto_rawDesc = "" +
 	"\n" +
-	")components/kubeadm/v20260301/action.proto\x12%aks.flex.components.kubeadm.v20260301\x1a\x18components/api/api.proto\"\xf5\x01\n" +
+	"\x1fcomponents/kubeadm/action.proto\x12\x1baks.flex.components.kubeadm\x1a\x18components/api/api.proto\"\xe1\x01\n" +
 	"\x0eKubadmNodeJoin\x12=\n" +
-	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12N\n" +
-	"\x04spec\x18\x02 \x01(\v2:.aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpecR\x04spec\x12T\n" +
-	"\x06status\x18\x03 \x01(\v2<.aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinStatusR\x06status\"d\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12D\n" +
+	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.kubeadm.KubeadmNodeJoinSpecR\x04spec\x12J\n" +
+	"\x06status\x18\x03 \x01(\v22.aks.flex.components.kubeadm.KubeadmNodeJoinStatusR\x06status\"d\n" +
 	"\fControlPlane\x12\x16\n" +
 	"\x06server\x18\x01 \x01(\tR\x06server\x12<\n" +
-	"\x1acertificate_authority_data\x18\x02 \x01(\fR\x18certificateAuthorityData\"\xa7\x02\n" +
-	"\aKubelet\x12c\n" +
-	"\x13bootstrap_auth_info\x18\x01 \x01(\v23.aks.flex.components.kubeadm.v20260301.NodeAuthInfoR\x11bootstrapAuthInfo\x12_\n" +
-	"\vnode_labels\x18\x02 \x03(\v2>.aks.flex.components.kubeadm.v20260301.Kubelet.NodeLabelsEntryR\n" +
+	"\x1acertificate_authority_data\x18\x02 \x01(\fR\x18certificateAuthorityData\"\x93\x02\n" +
+	"\aKubelet\x12Y\n" +
+	"\x13bootstrap_auth_info\x18\x01 \x01(\v2).aks.flex.components.kubeadm.NodeAuthInfoR\x11bootstrapAuthInfo\x12U\n" +
+	"\vnode_labels\x18\x02 \x03(\v24.aks.flex.components.kubeadm.Kubelet.NodeLabelsEntryR\n" +
 	"nodeLabels\x12\x17\n" +
 	"\anode_ip\x18\x03 \x01(\tR\x06nodeIp\x1a=\n" +
 	"\x0fNodeLabelsEntry\x12\x10\n" +
@@ -692,31 +692,31 @@ const file_components_kubeadm_v20260301_action_proto_rawDesc = "" +
 	"\fNodeAuthInfo\x12\x16\n" +
 	"\x05token\x18\x01 \x01(\tH\x00R\x05token\x12\x14\n" +
 	"\x04exec\x18\x02 \x01(\fH\x00R\x04execB\v\n" +
-	"\tauth_info\"\xb9\x01\n" +
-	"\x13KubeadmNodeJoinSpec\x12X\n" +
-	"\rcontrol_plane\x18\x01 \x01(\v23.aks.flex.components.kubeadm.v20260301.ControlPlaneR\fcontrolPlane\x12H\n" +
-	"\akubelet\x18\x02 \x01(\v2..aks.flex.components.kubeadm.v20260301.KubeletR\akubelet\"\x17\n" +
-	"\x15KubeadmNodeJoinStatusB9Z7go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301b\beditionsp\xe9\a"
+	"\tauth_info\"\xa5\x01\n" +
+	"\x13KubeadmNodeJoinSpec\x12N\n" +
+	"\rcontrol_plane\x18\x01 \x01(\v2).aks.flex.components.kubeadm.ControlPlaneR\fcontrolPlane\x12>\n" +
+	"\akubelet\x18\x02 \x01(\v2$.aks.flex.components.kubeadm.KubeletR\akubelet\"\x17\n" +
+	"\x15KubeadmNodeJoinStatusB/Z-go.goms.io/aks/AKSFlexNode/components/kubeadmb\beditionsp\xe9\a"
 
-var file_components_kubeadm_v20260301_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
-var file_components_kubeadm_v20260301_action_proto_goTypes = []any{
-	(*KubadmNodeJoin)(nil),        // 0: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin
-	(*ControlPlane)(nil),          // 1: aks.flex.components.kubeadm.v20260301.ControlPlane
-	(*Kubelet)(nil),               // 2: aks.flex.components.kubeadm.v20260301.Kubelet
-	(*NodeAuthInfo)(nil),          // 3: aks.flex.components.kubeadm.v20260301.NodeAuthInfo
-	(*KubeadmNodeJoinSpec)(nil),   // 4: aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpec
-	(*KubeadmNodeJoinStatus)(nil), // 5: aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinStatus
-	nil,                           // 6: aks.flex.components.kubeadm.v20260301.Kubelet.NodeLabelsEntry
+var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_components_kubeadm_action_proto_goTypes = []any{
+	(*KubadmNodeJoin)(nil),        // 0: aks.flex.components.kubeadm.KubadmNodeJoin
+	(*ControlPlane)(nil),          // 1: aks.flex.components.kubeadm.ControlPlane
+	(*Kubelet)(nil),               // 2: aks.flex.components.kubeadm.Kubelet
+	(*NodeAuthInfo)(nil),          // 3: aks.flex.components.kubeadm.NodeAuthInfo
+	(*KubeadmNodeJoinSpec)(nil),   // 4: aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	(*KubeadmNodeJoinStatus)(nil), // 5: aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	nil,                           // 6: aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
 	(*api.Metadata)(nil),          // 7: aks.flex.components.api.Metadata
 }
-var file_components_kubeadm_v20260301_action_proto_depIdxs = []int32{
-	7, // 0: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 1: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpec
-	5, // 2: aks.flex.components.kubeadm.v20260301.KubadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinStatus
-	3, // 3: aks.flex.components.kubeadm.v20260301.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.v20260301.NodeAuthInfo
-	6, // 4: aks.flex.components.kubeadm.v20260301.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.v20260301.Kubelet.NodeLabelsEntry
-	1, // 5: aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.v20260301.ControlPlane
-	2, // 6: aks.flex.components.kubeadm.v20260301.KubeadmNodeJoinSpec.kubelet:type_name -> aks.flex.components.kubeadm.v20260301.Kubelet
+var file_components_kubeadm_action_proto_depIdxs = []int32{
+	7, // 0: aks.flex.components.kubeadm.KubadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
+	4, // 1: aks.flex.components.kubeadm.KubadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	5, // 2: aks.flex.components.kubeadm.KubadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	3, // 3: aks.flex.components.kubeadm.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.NodeAuthInfo
+	6, // 4: aks.flex.components.kubeadm.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
+	1, // 5: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.ControlPlane
+	2, // 6: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.kubelet:type_name -> aks.flex.components.kubeadm.Kubelet
 	7, // [7:7] is the sub-list for method output_type
 	7, // [7:7] is the sub-list for method input_type
 	7, // [7:7] is the sub-list for extension type_name
@@ -724,12 +724,12 @@ var file_components_kubeadm_v20260301_action_proto_depIdxs = []int32{
 	0, // [0:7] is the sub-list for field type_name
 }
 
-func init() { file_components_kubeadm_v20260301_action_proto_init() }
-func file_components_kubeadm_v20260301_action_proto_init() {
-	if File_components_kubeadm_v20260301_action_proto != nil {
+func init() { file_components_kubeadm_action_proto_init() }
+func file_components_kubeadm_action_proto_init() {
+	if File_components_kubeadm_action_proto != nil {
 		return
 	}
-	file_components_kubeadm_v20260301_action_proto_msgTypes[3].OneofWrappers = []any{
+	file_components_kubeadm_action_proto_msgTypes[3].OneofWrappers = []any{
 		(*nodeAuthInfo_Token)(nil),
 		(*nodeAuthInfo_Exec)(nil),
 	}
@@ -737,17 +737,17 @@ func file_components_kubeadm_v20260301_action_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubeadm_v20260301_action_proto_rawDesc), len(file_components_kubeadm_v20260301_action_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubeadm_action_proto_rawDesc), len(file_components_kubeadm_action_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_components_kubeadm_v20260301_action_proto_goTypes,
-		DependencyIndexes: file_components_kubeadm_v20260301_action_proto_depIdxs,
-		MessageInfos:      file_components_kubeadm_v20260301_action_proto_msgTypes,
+		GoTypes:           file_components_kubeadm_action_proto_goTypes,
+		DependencyIndexes: file_components_kubeadm_action_proto_depIdxs,
+		MessageInfos:      file_components_kubeadm_action_proto_msgTypes,
 	}.Build()
-	File_components_kubeadm_v20260301_action_proto = out.File
-	file_components_kubeadm_v20260301_action_proto_goTypes = nil
-	file_components_kubeadm_v20260301_action_proto_depIdxs = nil
+	File_components_kubeadm_action_proto = out.File
+	file_components_kubeadm_action_proto_goTypes = nil
+	file_components_kubeadm_action_proto_depIdxs = nil
 }

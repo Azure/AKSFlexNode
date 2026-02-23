@@ -1,4 +1,4 @@
-package v20260301
+package cri
 
 func (x *DownloadCRIBinaries) Redact() {
 	// no sensitive fields to redact

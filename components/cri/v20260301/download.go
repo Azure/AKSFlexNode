@@ -1,4 +1,4 @@
-package cri
+package v20260301
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	utilexec "k8s.io/utils/exec"
 
 	"go.goms.io/aks/AKSFlexNode/components/api"
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils"
@@ -56,7 +56,7 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	config, err := utilpb.AnyTo[*v20260301.DownloadCRIBinaries](req.GetItem())
+	config, err := utilpb.AnyTo[*cri.DownloadCRIBinaries](req.GetItem())
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 	containerdURL := constructContainerdDownloadURL(spec.GetContainerdVersion())
 	runcURL := constructRuncDownloadURL(spec.GetRuncVersion())
 
-	st := v20260301.DownloadCRIBinariesStatus_builder{
+	st := cri.DownloadCRIBinariesStatus_builder{
 		ContainerdDownloadUrl: utils.Ptr(containerdURL),
 		ContainerdPath:        utils.Ptr(containerdBinPath),
 		RuncDownloadUrl:       utils.Ptr(runcURL),

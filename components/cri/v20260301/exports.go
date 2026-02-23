@@ -1,18 +1,18 @@
-package cri
+package v20260301
 
 import (
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 )
 
 func init() {
 	actions.MustRegister(
 		newDownloadCRIBinariesAction,
-		&v20260301.DownloadCRIBinaries{},
+		&cri.DownloadCRIBinaries{},
 	)
 
 	actions.MustRegister(
 		newStartContainerdServiceAction,
-		&v20260301.StartContainerdService{},
+		&cri.StartContainerdService{},
 	)
 }

@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.5
-// source: components/kubebins/v20260301/action.proto
+// source: components/kubebins/action.proto
 
-package v20260301
+package kubebins
 
 import (
 	api "go.goms.io/aks/AKSFlexNode/components/api"
@@ -32,7 +32,7 @@ type DownloadKubeBinaries struct {
 
 func (x *DownloadKubeBinaries) Reset() {
 	*x = DownloadKubeBinaries{}
-	mi := &file_components_kubebins_v20260301_action_proto_msgTypes[0]
+	mi := &file_components_kubebins_action_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +44,7 @@ func (x *DownloadKubeBinaries) String() string {
 func (*DownloadKubeBinaries) ProtoMessage() {}
 
 func (x *DownloadKubeBinaries) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubebins_v20260301_action_proto_msgTypes[0]
+	mi := &file_components_kubebins_action_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -150,7 +150,7 @@ type DownloadKubeBinariesSpec struct {
 
 func (x *DownloadKubeBinariesSpec) Reset() {
 	*x = DownloadKubeBinariesSpec{}
-	mi := &file_components_kubebins_v20260301_action_proto_msgTypes[1]
+	mi := &file_components_kubebins_action_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -162,7 +162,7 @@ func (x *DownloadKubeBinariesSpec) String() string {
 func (*DownloadKubeBinariesSpec) ProtoMessage() {}
 
 func (x *DownloadKubeBinariesSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubebins_v20260301_action_proto_msgTypes[1]
+	mi := &file_components_kubebins_action_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +231,7 @@ type DownloadKubeBinariesStatus struct {
 
 func (x *DownloadKubeBinariesStatus) Reset() {
 	*x = DownloadKubeBinariesStatus{}
-	mi := &file_components_kubebins_v20260301_action_proto_msgTypes[2]
+	mi := &file_components_kubebins_action_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -243,7 +243,7 @@ func (x *DownloadKubeBinariesStatus) String() string {
 func (*DownloadKubeBinariesStatus) ProtoMessage() {}
 
 func (x *DownloadKubeBinariesStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubebins_v20260301_action_proto_msgTypes[2]
+	mi := &file_components_kubebins_action_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,34 +394,34 @@ func (b0 DownloadKubeBinariesStatus_builder) Build() *DownloadKubeBinariesStatus
 	return m0
 }
 
-var File_components_kubebins_v20260301_action_proto protoreflect.FileDescriptor
+var File_components_kubebins_action_proto protoreflect.FileDescriptor
 
-const file_components_kubebins_v20260301_action_proto_rawDesc = "" +
+const file_components_kubebins_action_proto_rawDesc = "" +
 	"\n" +
-	"*components/kubebins/v20260301/action.proto\x12&aks.flex.components.kubebins.v20260301\x1a\x18components/api/api.proto\"\x87\x02\n" +
+	" components/kubebins/action.proto\x12\x1caks.flex.components.kubebins\x1a\x18components/api/api.proto\"\xf3\x01\n" +
 	"\x14DownloadKubeBinaries\x12=\n" +
-	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12T\n" +
-	"\x04spec\x18\x02 \x01(\v2@.aks.flex.components.kubebins.v20260301.DownloadKubeBinariesSpecR\x04spec\x12Z\n" +
-	"\x06status\x18\x03 \x01(\v2B.aks.flex.components.kubebins.v20260301.DownloadKubeBinariesStatusR\x06status\"I\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12J\n" +
+	"\x04spec\x18\x02 \x01(\v26.aks.flex.components.kubebins.DownloadKubeBinariesSpecR\x04spec\x12P\n" +
+	"\x06status\x18\x03 \x01(\v28.aks.flex.components.kubebins.DownloadKubeBinariesStatusR\x06status\"I\n" +
 	"\x18DownloadKubeBinariesSpec\x12-\n" +
 	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\"\xa8\x01\n" +
 	"\x1aDownloadKubeBinariesStatus\x12!\n" +
 	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl\x12!\n" +
 	"\fkubelet_path\x18\x02 \x01(\tR\vkubeletPath\x12!\n" +
 	"\fkubeadm_path\x18\x03 \x01(\tR\vkubeadmPath\x12!\n" +
-	"\fkubectl_path\x18\x04 \x01(\tR\vkubectlPathB:Z8go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301b\beditionsp\xe9\a"
+	"\fkubectl_path\x18\x04 \x01(\tR\vkubectlPathB0Z.go.goms.io/aks/AKSFlexNode/components/kubebinsb\beditionsp\xe9\a"
 
-var file_components_kubebins_v20260301_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
-var file_components_kubebins_v20260301_action_proto_goTypes = []any{
-	(*DownloadKubeBinaries)(nil),       // 0: aks.flex.components.kubebins.v20260301.DownloadKubeBinaries
-	(*DownloadKubeBinariesSpec)(nil),   // 1: aks.flex.components.kubebins.v20260301.DownloadKubeBinariesSpec
-	(*DownloadKubeBinariesStatus)(nil), // 2: aks.flex.components.kubebins.v20260301.DownloadKubeBinariesStatus
+var file_components_kubebins_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_components_kubebins_action_proto_goTypes = []any{
+	(*DownloadKubeBinaries)(nil),       // 0: aks.flex.components.kubebins.DownloadKubeBinaries
+	(*DownloadKubeBinariesSpec)(nil),   // 1: aks.flex.components.kubebins.DownloadKubeBinariesSpec
+	(*DownloadKubeBinariesStatus)(nil), // 2: aks.flex.components.kubebins.DownloadKubeBinariesStatus
 	(*api.Metadata)(nil),               // 3: aks.flex.components.api.Metadata
 }
-var file_components_kubebins_v20260301_action_proto_depIdxs = []int32{
-	3, // 0: aks.flex.components.kubebins.v20260301.DownloadKubeBinaries.metadata:type_name -> aks.flex.components.api.Metadata
-	1, // 1: aks.flex.components.kubebins.v20260301.DownloadKubeBinaries.spec:type_name -> aks.flex.components.kubebins.v20260301.DownloadKubeBinariesSpec
-	2, // 2: aks.flex.components.kubebins.v20260301.DownloadKubeBinaries.status:type_name -> aks.flex.components.kubebins.v20260301.DownloadKubeBinariesStatus
+var file_components_kubebins_action_proto_depIdxs = []int32{
+	3, // 0: aks.flex.components.kubebins.DownloadKubeBinaries.metadata:type_name -> aks.flex.components.api.Metadata
+	1, // 1: aks.flex.components.kubebins.DownloadKubeBinaries.spec:type_name -> aks.flex.components.kubebins.DownloadKubeBinariesSpec
+	2, // 2: aks.flex.components.kubebins.DownloadKubeBinaries.status:type_name -> aks.flex.components.kubebins.DownloadKubeBinariesStatus
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
@@ -429,26 +429,26 @@ var file_components_kubebins_v20260301_action_proto_depIdxs = []int32{
 	0, // [0:3] is the sub-list for field type_name
 }
 
-func init() { file_components_kubebins_v20260301_action_proto_init() }
-func file_components_kubebins_v20260301_action_proto_init() {
-	if File_components_kubebins_v20260301_action_proto != nil {
+func init() { file_components_kubebins_action_proto_init() }
+func file_components_kubebins_action_proto_init() {
+	if File_components_kubebins_action_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubebins_v20260301_action_proto_rawDesc), len(file_components_kubebins_v20260301_action_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubebins_action_proto_rawDesc), len(file_components_kubebins_action_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_components_kubebins_v20260301_action_proto_goTypes,
-		DependencyIndexes: file_components_kubebins_v20260301_action_proto_depIdxs,
-		MessageInfos:      file_components_kubebins_v20260301_action_proto_msgTypes,
+		GoTypes:           file_components_kubebins_action_proto_goTypes,
+		DependencyIndexes: file_components_kubebins_action_proto_depIdxs,
+		MessageInfos:      file_components_kubebins_action_proto_msgTypes,
 	}.Build()
-	File_components_kubebins_v20260301_action_proto = out.File
-	file_components_kubebins_v20260301_action_proto_goTypes = nil
-	file_components_kubebins_v20260301_action_proto_depIdxs = nil
+	File_components_kubebins_action_proto = out.File
+	file_components_kubebins_action_proto_goTypes = nil
+	file_components_kubebins_action_proto_depIdxs = nil
 }

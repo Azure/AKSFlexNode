@@ -1,4 +1,4 @@
-package kubeadm
+package v20260301
 
 import (
 	_ "embed"

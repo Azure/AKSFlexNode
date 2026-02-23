@@ -1,4 +1,4 @@
-package cri
+package v20260301
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"text/template"
 
 	"go.goms.io/aks/AKSFlexNode/components/api"
-	v20260301 "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
+	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
@@ -45,7 +45,7 @@ func (s *startContainerdServiceAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	config, err := utilpb.AnyTo[*v20260301.StartContainerdService](req.GetItem())
+	config, err := utilpb.AnyTo[*cri.StartContainerdService](req.GetItem())
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (s *startContainerdServiceAction) ApplyAction(
 }
 
 func (s *startContainerdServiceAction) ensureContainerdConfig(
-	spec *v20260301.StartContainerdServiceSpec,
+	spec *cri.StartContainerdServiceSpec,
 ) (updated bool, err error) {
 	expectedConfig := &bytes.Buffer{}
 	if err := assetsTemplate.ExecuteTemplate(expectedConfig, "containerd.toml", map[string]any{

@@ -1,8 +1,8 @@
 package components
 
 import (
-	_ "go.goms.io/aks/AKSFlexNode/components/cri"
-	_ "go.goms.io/aks/AKSFlexNode/components/kubeadm"
-	_ "go.goms.io/aks/AKSFlexNode/components/kubebins"
-	_ "go.goms.io/aks/AKSFlexNode/components/linux"
+	_ "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
+	_ "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301"
+	_ "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301"
+	_ "go.goms.io/aks/AKSFlexNode/components/linux/v20260301"
 )

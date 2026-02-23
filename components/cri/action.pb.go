@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.5
-// source: components/cri/v20260301/action.proto
+// source: components/cri/action.proto
 
-package v20260301
+package cri
 
 import (
 	api "go.goms.io/aks/AKSFlexNode/components/api"
@@ -32,7 +32,7 @@ type DownloadCRIBinaries struct {
 
 func (x *DownloadCRIBinaries) Reset() {
 	*x = DownloadCRIBinaries{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[0]
+	mi := &file_components_cri_action_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +44,7 @@ func (x *DownloadCRIBinaries) String() string {
 func (*DownloadCRIBinaries) ProtoMessage() {}
 
 func (x *DownloadCRIBinaries) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[0]
+	mi := &file_components_cri_action_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -151,7 +151,7 @@ type DownloadCRIBinariesSpec struct {
 
 func (x *DownloadCRIBinariesSpec) Reset() {
 	*x = DownloadCRIBinariesSpec{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[1]
+	mi := &file_components_cri_action_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +163,7 @@ func (x *DownloadCRIBinariesSpec) String() string {
 func (*DownloadCRIBinariesSpec) ProtoMessage() {}
 
 func (x *DownloadCRIBinariesSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[1]
+	mi := &file_components_cri_action_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -264,7 +264,7 @@ type DownloadCRIBinariesStatus struct {
 
 func (x *DownloadCRIBinariesStatus) Reset() {
 	*x = DownloadCRIBinariesStatus{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[2]
+	mi := &file_components_cri_action_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -276,7 +276,7 @@ func (x *DownloadCRIBinariesStatus) String() string {
 func (*DownloadCRIBinariesStatus) ProtoMessage() {}
 
 func (x *DownloadCRIBinariesStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[2]
+	mi := &file_components_cri_action_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -438,7 +438,7 @@ type StartContainerdService struct {
 
 func (x *StartContainerdService) Reset() {
 	*x = StartContainerdService{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[3]
+	mi := &file_components_cri_action_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -450,7 +450,7 @@ func (x *StartContainerdService) String() string {
 func (*StartContainerdService) ProtoMessage() {}
 
 func (x *StartContainerdService) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[3]
+	mi := &file_components_cri_action_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -558,7 +558,7 @@ type StartContainerdServiceSpec struct {
 
 func (x *StartContainerdServiceSpec) Reset() {
 	*x = StartContainerdServiceSpec{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[4]
+	mi := &file_components_cri_action_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +570,7 @@ func (x *StartContainerdServiceSpec) String() string {
 func (*StartContainerdServiceSpec) ProtoMessage() {}
 
 func (x *StartContainerdServiceSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[4]
+	mi := &file_components_cri_action_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -693,7 +693,7 @@ type StartContainerdServiceStatus struct {
 
 func (x *StartContainerdServiceStatus) Reset() {
 	*x = StartContainerdServiceStatus{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[5]
+	mi := &file_components_cri_action_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -705,7 +705,7 @@ func (x *StartContainerdServiceStatus) String() string {
 func (*StartContainerdServiceStatus) ProtoMessage() {}
 
 func (x *StartContainerdServiceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[5]
+	mi := &file_components_cri_action_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -741,7 +741,7 @@ type StartContainerdServiceSpec_CNIConfig struct {
 
 func (x *StartContainerdServiceSpec_CNIConfig) Reset() {
 	*x = StartContainerdServiceSpec_CNIConfig{}
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[6]
+	mi := &file_components_cri_action_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -753,7 +753,7 @@ func (x *StartContainerdServiceSpec_CNIConfig) String() string {
 func (*StartContainerdServiceSpec_CNIConfig) ProtoMessage() {}
 
 func (x *StartContainerdServiceSpec_CNIConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_v20260301_action_proto_msgTypes[6]
+	mi := &file_components_cri_action_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,15 +844,15 @@ func (b0 StartContainerdServiceSpec_CNIConfig_builder) Build() *StartContainerdS
 	return m0
 }
 
-var File_components_cri_v20260301_action_proto protoreflect.FileDescriptor
+var File_components_cri_action_proto protoreflect.FileDescriptor
 
-const file_components_cri_v20260301_action_proto_rawDesc = "" +
+const file_components_cri_action_proto_rawDesc = "" +
 	"\n" +
-	"%components/cri/v20260301/action.proto\x12!aks.flex.components.cri.v20260301\x1a\x18components/api/api.proto\"\xfa\x01\n" +
+	"\x1bcomponents/cri/action.proto\x12\x17aks.flex.components.cri\x1a\x18components/api/api.proto\"\xe6\x01\n" +
 	"\x13DownloadCRIBinaries\x12=\n" +
-	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12N\n" +
-	"\x04spec\x18\x02 \x01(\v2:.aks.flex.components.cri.v20260301.DownloadCRIBinariesSpecR\x04spec\x12T\n" +
-	"\x06status\x18\x03 \x01(\v2<.aks.flex.components.cri.v20260301.DownloadCRIBinariesStatusR\x06status\"k\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12D\n" +
+	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.cri.DownloadCRIBinariesSpecR\x04spec\x12J\n" +
+	"\x06status\x18\x03 \x01(\v22.aks.flex.components.cri.DownloadCRIBinariesStatusR\x06status\"k\n" +
 	"\x17DownloadCRIBinariesSpec\x12-\n" +
 	"\x12containerd_version\x18\x01 \x01(\tR\x11containerdVersion\x12!\n" +
 	"\frunc_version\x18\x02 \x01(\tR\vruncVersion\"\xc5\x01\n" +
@@ -860,41 +860,41 @@ const file_components_cri_v20260301_action_proto_rawDesc = "" +
 	"\x17containerd_download_url\x18\x01 \x01(\tR\x15containerdDownloadUrl\x12'\n" +
 	"\x0fcontainerd_path\x18\x02 \x01(\tR\x0econtainerdPath\x12*\n" +
 	"\x11runc_download_url\x18\x03 \x01(\tR\x0fruncDownloadUrl\x12\x1b\n" +
-	"\trunc_path\x18\x04 \x01(\tR\bruncPath\"\x83\x02\n" +
+	"\trunc_path\x18\x04 \x01(\tR\bruncPath\"\xef\x01\n" +
 	"\x16StartContainerdService\x12=\n" +
-	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12Q\n" +
-	"\x04spec\x18\x02 \x01(\v2=.aks.flex.components.cri.v20260301.StartContainerdServiceSpecR\x04spec\x12W\n" +
-	"\x06status\x18\x03 \x01(\v2?.aks.flex.components.cri.v20260301.StartContainerdServiceStatusR\x06status\"\x97\x02\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12G\n" +
+	"\x04spec\x18\x02 \x01(\v23.aks.flex.components.cri.StartContainerdServiceSpecR\x04spec\x12M\n" +
+	"\x06status\x18\x03 \x01(\v25.aks.flex.components.cri.StartContainerdServiceStatusR\x06status\"\x8d\x02\n" +
 	"\x1aStartContainerdServiceSpec\x12'\n" +
 	"\x0fmetrics_address\x18\x01 \x01(\tR\x0emetricsAddress\x12#\n" +
-	"\rsandbox_image\x18\x02 \x01(\tR\fsandboxImage\x12f\n" +
+	"\rsandbox_image\x18\x02 \x01(\tR\fsandboxImage\x12\\\n" +
 	"\n" +
-	"cni_config\x18\x03 \x01(\v2G.aks.flex.components.cri.v20260301.StartContainerdServiceSpec.CNIConfigR\tcniConfig\x1aC\n" +
+	"cni_config\x18\x03 \x01(\v2=.aks.flex.components.cri.StartContainerdServiceSpec.CNIConfigR\tcniConfig\x1aC\n" +
 	"\tCNIConfig\x12\x17\n" +
 	"\abin_dir\x18\x01 \x01(\tR\x06binDir\x12\x1d\n" +
 	"\n" +
 	"config_dir\x18\x02 \x01(\tR\tconfigDir\"\x1e\n" +
-	"\x1cStartContainerdServiceStatusB5Z3go.goms.io/aks/AKSFlexNode/components/cri/v20260301b\beditionsp\xe9\a"
+	"\x1cStartContainerdServiceStatusB+Z)go.goms.io/aks/AKSFlexNode/components/crib\beditionsp\xe9\a"
 
-var file_components_cri_v20260301_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
-var file_components_cri_v20260301_action_proto_goTypes = []any{
-	(*DownloadCRIBinaries)(nil),                  // 0: aks.flex.components.cri.v20260301.DownloadCRIBinaries
-	(*DownloadCRIBinariesSpec)(nil),              // 1: aks.flex.components.cri.v20260301.DownloadCRIBinariesSpec
-	(*DownloadCRIBinariesStatus)(nil),            // 2: aks.flex.components.cri.v20260301.DownloadCRIBinariesStatus
-	(*StartContainerdService)(nil),               // 3: aks.flex.components.cri.v20260301.StartContainerdService
-	(*StartContainerdServiceSpec)(nil),           // 4: aks.flex.components.cri.v20260301.StartContainerdServiceSpec
-	(*StartContainerdServiceStatus)(nil),         // 5: aks.flex.components.cri.v20260301.StartContainerdServiceStatus
-	(*StartContainerdServiceSpec_CNIConfig)(nil), // 6: aks.flex.components.cri.v20260301.StartContainerdServiceSpec.CNIConfig
+var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_components_cri_action_proto_goTypes = []any{
+	(*DownloadCRIBinaries)(nil),                  // 0: aks.flex.components.cri.DownloadCRIBinaries
+	(*DownloadCRIBinariesSpec)(nil),              // 1: aks.flex.components.cri.DownloadCRIBinariesSpec
+	(*DownloadCRIBinariesStatus)(nil),            // 2: aks.flex.components.cri.DownloadCRIBinariesStatus
+	(*StartContainerdService)(nil),               // 3: aks.flex.components.cri.StartContainerdService
+	(*StartContainerdServiceSpec)(nil),           // 4: aks.flex.components.cri.StartContainerdServiceSpec
+	(*StartContainerdServiceStatus)(nil),         // 5: aks.flex.components.cri.StartContainerdServiceStatus
+	(*StartContainerdServiceSpec_CNIConfig)(nil), // 6: aks.flex.components.cri.StartContainerdServiceSpec.CNIConfig
 	(*api.Metadata)(nil),                         // 7: aks.flex.components.api.Metadata
 }
-var file_components_cri_v20260301_action_proto_depIdxs = []int32{
-	7, // 0: aks.flex.components.cri.v20260301.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
-	1, // 1: aks.flex.components.cri.v20260301.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.v20260301.DownloadCRIBinariesSpec
-	2, // 2: aks.flex.components.cri.v20260301.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.v20260301.DownloadCRIBinariesStatus
-	7, // 3: aks.flex.components.cri.v20260301.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 4: aks.flex.components.cri.v20260301.StartContainerdService.spec:type_name -> aks.flex.components.cri.v20260301.StartContainerdServiceSpec
-	5, // 5: aks.flex.components.cri.v20260301.StartContainerdService.status:type_name -> aks.flex.components.cri.v20260301.StartContainerdServiceStatus
-	6, // 6: aks.flex.components.cri.v20260301.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.v20260301.StartContainerdServiceSpec.CNIConfig
+var file_components_cri_action_proto_depIdxs = []int32{
+	7, // 0: aks.flex.components.cri.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
+	1, // 1: aks.flex.components.cri.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.DownloadCRIBinariesSpec
+	2, // 2: aks.flex.components.cri.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.DownloadCRIBinariesStatus
+	7, // 3: aks.flex.components.cri.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
+	4, // 4: aks.flex.components.cri.StartContainerdService.spec:type_name -> aks.flex.components.cri.StartContainerdServiceSpec
+	5, // 5: aks.flex.components.cri.StartContainerdService.status:type_name -> aks.flex.components.cri.StartContainerdServiceStatus
+	6, // 6: aks.flex.components.cri.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.StartContainerdServiceSpec.CNIConfig
 	7, // [7:7] is the sub-list for method output_type
 	7, // [7:7] is the sub-list for method input_type
 	7, // [7:7] is the sub-list for extension type_name
@@ -902,26 +902,26 @@ var file_components_cri_v20260301_action_proto_depIdxs = []int32{
 	0, // [0:7] is the sub-list for field type_name
 }
 
-func init() { file_components_cri_v20260301_action_proto_init() }
-func file_components_cri_v20260301_action_proto_init() {
-	if File_components_cri_v20260301_action_proto != nil {
+func init() { file_components_cri_action_proto_init() }
+func file_components_cri_action_proto_init() {
+	if File_components_cri_action_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_cri_v20260301_action_proto_rawDesc), len(file_components_cri_v20260301_action_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_cri_action_proto_rawDesc), len(file_components_cri_action_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_components_cri_v20260301_action_proto_goTypes,
-		DependencyIndexes: file_components_cri_v20260301_action_proto_depIdxs,
-		MessageInfos:      file_components_cri_v20260301_action_proto_msgTypes,
+		GoTypes:           file_components_cri_action_proto_goTypes,
+		DependencyIndexes: file_components_cri_action_proto_depIdxs,
+		MessageInfos:      file_components_cri_action_proto_msgTypes,
 	}.Build()
-	File_components_cri_v20260301_action_proto = out.File
-	file_components_cri_v20260301_action_proto_goTypes = nil
-	file_components_cri_v20260301_action_proto_depIdxs = nil
+	File_components_cri_action_proto = out.File
+	file_components_cri_action_proto_goTypes = nil
+	file_components_cri_action_proto_depIdxs = nil
 }

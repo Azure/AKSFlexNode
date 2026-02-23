@@ -1,8 +1,8 @@
 edition = "2024";
 
-package aks.flex.components.kubebins.v20260301;
+package aks.flex.components.kubebins;
 
-option go_package = "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301";
+option go_package = "go.goms.io/aks/AKSFlexNode/components/kubebins";
 
 import "components/api/api.proto";
 

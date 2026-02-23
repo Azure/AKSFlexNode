@@ -1,4 +1,4 @@
-package v20260301
+package kubeadm
 
 func (x *KubadmNodeJoin) Redact() {
 }

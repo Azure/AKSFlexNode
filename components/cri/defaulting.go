@@ -1,4 +1,4 @@
-package v20260301
+package cri
 
 import (
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
