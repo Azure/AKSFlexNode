@@ -19,7 +19,7 @@ func init() {
 
 	actions.RegisterActionsServiceServer(s, actions.Default)
 
-	go s.Serve(localConn)
+	go s.Serve(localConn) //nolint:errcheck // serve in background
 }
 
 // NewConnection creates a new gRPC client connection to the in-memory gRPC server.

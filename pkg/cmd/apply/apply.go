@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
@@ -37,7 +38,7 @@ var Command = &cobra.Command{
 		if flagActionFilePath == stdinFilePath {
 			input, err = io.ReadAll(os.Stdin)
 		} else {
-			input, err = os.ReadFile(flagActionFilePath)
+			input, err = os.ReadFile(path.Clean(flagActionFilePath))
 		}
 		if err != nil {
 			return err
