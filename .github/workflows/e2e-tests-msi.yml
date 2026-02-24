@@ -368,7 +368,7 @@ jobs:
               "logDir": "/var/log/aks-flex-node"
             },
             "kubernetes": { "version": "1.35.0" },
-            "containerd": { "version": "1.7.13" },
+            "containerd": { "version": "2.0.4" },
             "runc": { "version": "1.1.12" }
           }
           EOF
@@ -573,7 +573,13 @@ jobs:
   cleanup:
     name: Cleanup
     runs-on: [self-hosted, e2e, azure]
-    needs: [provision-infrastructure, bootstrap-flex-node, verify-integration, collect-logs]
+    needs:
+      [
+        provision-infrastructure,
+        bootstrap-flex-node,
+        verify-integration,
+        collect-logs,
+      ]
     if: always() && needs.provision-infrastructure.result == 'success' && !inputs.skip_cleanup
     timeout-minutes: 10
 
@@ -620,7 +626,14 @@ jobs:
   summary:
     name: Summary
     runs-on: [self-hosted, e2e, azure]
-    needs: [build, provision-infrastructure, grant-permissions, bootstrap-flex-node, verify-integration]
+    needs:
+      [
+        build,
+        provision-infrastructure,
+        grant-permissions,
+        bootstrap-flex-node,
+        verify-integration,
+      ]
     if: always()
     timeout-minutes: 5
 
