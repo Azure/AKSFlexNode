@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/components/arc"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
@@ -20,12 +21,19 @@ import (
 // Bootstrapper executes bootstrap steps sequentially
 type Bootstrapper struct {
 	*BaseExecutor
+
+	componentsAPIConn *grpc.ClientConn
 }
 
 // New creates a new bootstrapper
-func New(cfg *config.Config, logger *logrus.Logger) *Bootstrapper {
+func New(
+	cfg *config.Config,
+	logger *logrus.Logger,
+	componentsAPIConn *grpc.ClientConn,
+) *Bootstrapper {
 	return &Bootstrapper{
-		BaseExecutor: NewBaseExecutor(cfg, logger),
+		BaseExecutor:      NewBaseExecutor(cfg, logger),
+		componentsAPIConn: componentsAPIConn,
 	}
 }
 
@@ -36,13 +44,15 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		arc.NewInstaller(b.logger),                  // Setup Arc
 		services.NewUnInstaller(b.logger),           // Stop kubelet before setup
 		system_configuration.NewInstaller(b.logger), // Configure system (early)
-		runc.NewInstaller(b.logger),                 // Install runc
-		containerd.NewInstaller(b.logger),           // Install containerd
-		kube_binaries.NewInstaller(b.logger),        // Install k8s binaries
-		cni.NewInstaller(b.logger),                  // Setup CNI (after container runtime)
-		kubelet.NewInstaller(b.logger),              // Configure kubelet service with Arc MSI auth
-		npd.NewInstaller(b.logger),                  // Install Node Problem Detector
-		services.NewInstaller(b.logger),             // Start services
+
+		downloadCRIBinaries.Executor("download-cri-binaries", b.componentsAPIConn),
+		downloadKubeBinaries.Executor("download-kube-binaries", b.componentsAPIConn),
+		downloadNPD.Executor("download-npd", b.componentsAPIConn),
+
+		startContainerdService.Executor("start-containerd", b.componentsAPIConn),
+		startNPD.Executor("start-npd", b.componentsAPIConn),
+
+		kubelet.NewInstaller(b.logger), // Configure kubelet service with Arc MSI auth
 	}
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")
