@@ -31,7 +31,6 @@ func main() {
 
 	// Add commands
 	rootCmd.AddCommand(NewAgentCommand())
-	// rootCmd.AddCommand(NewApplyCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
 	rootCmd.AddCommand(apply.Command)
