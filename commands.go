@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	_ "go.goms.io/aks/AKSFlexNode/components"
 	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"

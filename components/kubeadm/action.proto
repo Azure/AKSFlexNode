@@ -1,0 +1,42 @@
+edition = "2024";
+
+package aks.flex.components.kubeadm;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/kubeadm";
+
+import "components/api/api.proto";
+
+message KubadmNodeJoin {
+  api.Metadata metadata = 1;
+
+  KubeadmNodeJoinSpec spec = 2;
+
+  KubeadmNodeJoinStatus status = 3;
+}
+
+message ControlPlane { // TODO: move to common place?
+  string server = 1;
+  bytes certificate_authority_data = 2;
+}
+
+message Kubelet { // TODO: move to node package
+  NodeAuthInfo bootstrap_auth_info = 1;
+  map<string, string> node_labels = 2;
+  string node_ip = 3;
+}
+
+message NodeAuthInfo { // ref: clientcmd/api.AuthInfo
+  oneof auth_info {
+    string token = 1;
+    bytes exec = 2;
+  }
+}
+
+message KubeadmNodeJoinSpec {
+  ControlPlane control_plane = 1;
+  Kubelet kubelet = 2;
+}
+
+message KubeadmNodeJoinStatus {
+
+}

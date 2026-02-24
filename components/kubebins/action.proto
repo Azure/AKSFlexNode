@@ -1,0 +1,26 @@
+edition = "2024";
+
+package aks.flex.components.kubebins;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/kubebins";
+
+import "components/api/api.proto";
+
+message DownloadKubeBinaries {
+  api.Metadata metadata = 1;
+
+  DownloadKubeBinariesSpec spec = 2;
+
+  DownloadKubeBinariesStatus status = 3;
+}
+
+message DownloadKubeBinariesSpec {
+  string kubernetes_version = 1;
+}
+
+message DownloadKubeBinariesStatus {
+  string download_url = 1;
+  string kubelet_path = 2;
+  string kubeadm_path = 3;
+  string kubectl_path = 4;
+}
