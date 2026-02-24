@@ -10,6 +10,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/components/api"
 	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/kubebins"
+	"go.goms.io/aks/AKSFlexNode/components/linux"
 	"go.goms.io/aks/AKSFlexNode/components/npd"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
@@ -72,6 +73,18 @@ func ptr[T any](value T) *T {
 
 func componentAction(name string) *api.Metadata {
 	return api.Metadata_builder{Name: &name}.Build()
+}
+
+var configureSystem resolveActionFunc[*linux.ConfigureBaseOS] = func(
+	name string,
+	cfg *config.Config,
+) (*linux.ConfigureBaseOS, error) {
+	spec := linux.ConfigureBaseOSSpec_builder{}.Build()
+
+	return linux.ConfigureBaseOS_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
 }
 
 var downloadCRIBinaries resolveActionFunc[*cri.DownloadCRIBinaries] = func(
