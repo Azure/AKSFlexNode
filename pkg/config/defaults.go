@@ -8,4 +8,6 @@ const (
 	DefaultCNIConfigDir = "/etc/cni/net.d"
 
 	DefaultBinaryPath = "/usr/local/bin"
+
+	DefaultNPDVersion = "v1.35.1"
 )

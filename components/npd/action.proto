@@ -1,0 +1,50 @@
+edition = "2024";
+
+package aks.flex.components.npd;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/npd";
+
+import "components/api/api.proto";
+
+message DownloadNodeProblemDetector {
+  api.Metadata metadata = 1;
+
+  DownloadNodeProblemDetectorSpec spec = 2;
+
+  DownloadNodeProblemDetectorStatus status = 3;
+}
+
+message DownloadNodeProblemDetectorSpec {
+  // NPD version to download.
+  // Defaults to v1.35.1 if not specified.
+  string version = 1;
+}
+
+message DownloadNodeProblemDetectorStatus {
+  // URL to download the NPD binary.
+  string download_url = 1;
+
+  // Path to the downloaded NPD binary on the node.
+  string binary_path = 2;
+
+  // Path to the NPD configuration file on the node.
+  string config_path = 3;
+}
+
+message StartNodeProblemDetector {
+  api.Metadata metadata = 1;
+
+  StartNodeProblemDetectorSpec spec = 2;
+
+  StartNodeProblemDetectorStatus status = 3;
+}
+
+message StartNodeProblemDetectorSpec {
+  // API server address for NPD to connect to.
+  string api_server = 1;
+  // Path to the kubeconfig file for NPD to connect to the API server.
+  string kube_config_path = 2;
+}
+
+message StartNodeProblemDetectorStatus {
+}
