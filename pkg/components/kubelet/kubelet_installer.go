@@ -206,6 +206,8 @@ func (i *Installer) ensureRequiredPackages() error {
 // createKubeletDefaultsFile creates the kubelet defaults configuration file
 func (i *Installer) createKubeletDefaultsFile() error {
 	// Create kubelet default config
+	i.logger.Infof("Creating kubelet defaults file with node labels: %v", i.config.Node.Labels)
+
 	labels := make([]string, 0, len(i.config.Node.Labels))
 	for key, value := range i.config.Node.Labels {
 		labels = append(labels, fmt.Sprintf("%s=%s", key, value))
