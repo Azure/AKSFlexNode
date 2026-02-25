@@ -22,11 +22,9 @@ var assets embed.FS
 var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "assets/*"))
 
 const (
-	systemdUnitKubelet      = "kubelet.service"
-	envFileKubelet          = "/etc/default/kubelet"
-	apiServerClientCAPath   = "/etc/kubernetes/pki/apiserver-client-ca.crt"
-	kubeletKubeconfigPath   = "/var/lib/kubelet/kubeconfig"
-	bootstrapKubeconfigPath = "/var/lib/kubelet/bootstrap-kubeconfig"
+	systemdUnitKubelet    = "kubelet.service"
+	envFileKubelet        = "/etc/default/kubelet"
+	apiServerClientCAPath = "/etc/kubernetes/pki/apiserver-client-ca.crt"
 )
 
 type startKubeletServiceAction struct {

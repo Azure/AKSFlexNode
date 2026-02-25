@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"go.goms.io/aks/AKSFlexNode/components/kubelet"
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 )
 
@@ -57,7 +58,8 @@ func (s *startKubeletServiceAction) createSystemdUnit(
 
 	b := &bytes.Buffer{}
 	if err := assetsTemplate.ExecuteTemplate(b, "kubelet.service", map[string]any{
-		"EnvFilePath": envFileKubelet, // prepared in ensureKubeletConfig
+		"EnvFilePath":    envFileKubelet, // prepared in ensureKubeletConfig
+		"KubeconfigPath": config.KubeletKubeconfigPath,
 	}); err != nil {
 		return err
 	}
