@@ -89,6 +89,13 @@ func (s *startKubeletServiceAction) ensureKubeletEnvFile(
 ) (bool, error) {
 	kubeletConfig := spec.GetKubeletConfig()
 
+	rotateCertificates := false
+	if spec.GetNodeAuthInfo().HasBootstrapTokenCredential() {
+		// When bootstrap token is used, kubelet client certificate is rotated by kubelet itself
+		// TODO: consider making this configurable in the spec level
+		rotateCertificates = true
+	}
+
 	// FIXME: consider migrate using kubelet config file instead of env file
 	b := &bytes.Buffer{}
 	if err := assetsTemplate.ExecuteTemplate(b, "kubelet.env", map[string]any{
@@ -101,7 +108,7 @@ func (s *startKubeletServiceAction) ensureKubeletEnvFile(
 		"ImageGCHighThreshold": kubeletConfig.GetImageGcHighThreshold(),
 		"ImageGCLowThreshold":  kubeletConfig.GetImageGcLowThreshold(),
 		"MaxPods":              kubeletConfig.GetMaxPods(),
-		"RotateCertificates":   true,
+		"RotateCertificates":   rotateCertificates,
 	}); err != nil {
 		return false, err
 	}
