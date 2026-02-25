@@ -16,7 +16,7 @@ func (x *StartContainerdServiceSpec) Defaulting() {
 	}
 
 	if !x.HasCniConfig() {
-		x.SetCniConfig(&StartContainerdServiceSpec_CNIConfig{})
+		x.SetCniConfig(&CNIConfig{})
 	}
 	x.GetCniConfig().Defaulting()
 }
@@ -36,7 +36,7 @@ func (x *StartContainerdServiceSpec) Validate() error {
 	return nil
 }
 
-func (x *StartContainerdServiceSpec_CNIConfig) Defaulting() {
+func (x *CNIConfig) Defaulting() {
 	if !x.HasBinDir() {
 		x.SetBinDir(config.DefaultCNIBinDir)
 	}
@@ -45,7 +45,7 @@ func (x *StartContainerdServiceSpec_CNIConfig) Defaulting() {
 	}
 }
 
-func (x *StartContainerdServiceSpec_CNIConfig) Validate() error {
+func (x *CNIConfig) Validate() error {
 	if !x.HasBinDir() {
 		return status.Error(codes.InvalidArgument, "CNI BinDir is required")
 	}
