@@ -123,13 +123,88 @@ func (s *startKubeletServiceAction) ensureKubeletEnvFile(
 func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	spec *kubelet.StartKubeletServiceSpec,
 ) (bool, error) {
-	if spec.GetNodeAuthInfo().HasBootstrapTokenCredential() {
+	nodeAuthInfo := spec.GetNodeAuthInfo()
+	if nodeAuthInfo.HasBootstrapTokenCredential() {
 		return false, nil // kubelet kubeconfig is not set when bootstrap token is used
 	}
 
-	// TODO: implement exec auth info for plugin based auth
+	selfBinary, err := os.Executable() // TODO: allow overriding the path in config spec
+	if err != nil {
+		return false, fmt.Errorf("get self executable path: %w", err)
+	}
 
-	return false, fmt.Errorf("unimplemented kubelet kubeconfig mode")
+	// refs:
+	// - https://github.com/Azure/kubelogin/blob/main/pkg/internal/token/options.go
+	authInfoSettings := &api.AuthInfo{
+		Exec: &api.ExecConfig{
+			Command: selfBinary,
+			Args: []string{
+				"token", "kubelogin",
+			},
+		},
+	}
+	switch {
+	case nodeAuthInfo.HasArcCredential():
+		// TODO: implement arc credential support with pop
+		return false, fmt.Errorf("arc credential is not supported yet")
+	case nodeAuthInfo.HasServicePrincipalCredential():
+		cred := nodeAuthInfo.GetServicePrincipalCredential()
+		authInfoSettings.Exec.Env = append(
+			authInfoSettings.Exec.Env,
+			api.ExecEnvVar{
+				Name:  "AAD_LOGIN_METHOD",
+				Value: "spn",
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_CLIENT_ID",
+				Value: cred.GetClientId(),
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_TENANT_ID",
+				Value: cred.GetTenantId(),
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_CLIENT_SECRET",
+				Value: cred.GetClientSecret(),
+			},
+		)
+	case nodeAuthInfo.HasMsiCredential():
+		cred := nodeAuthInfo.GetMsiCredential()
+		authInfoSettings.Exec.Env = append(
+			authInfoSettings.Exec.Env,
+			api.ExecEnvVar{
+				Name:  "AAD_LOGIN_METHOD",
+				Value: "msi",
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_CLIENT_ID",
+				Value: cred.GetClientId(),
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_TENANT_ID",
+				Value: cred.GetTenantId(),
+			},
+		)
+	default:
+		return false, fmt.Errorf("unsupported node auth info type")
+	}
+	k := kubeletKubeConfig(spec.GetControlPlane(), authInfoSettings)
+	desiredContent, err := runtime.Encode(latest.Codec, k)
+	if err != nil {
+		return false, err
+	}
+
+	if idential, err := fileHasIdenticalContent(kubeletKubeconfigPath, desiredContent); err != nil {
+		return false, err
+	} else if idential {
+		return false, nil
+	}
+
+	// FIXME: consider using 0640?
+	if err := utilio.WriteFile(kubeletKubeconfigPath, desiredContent, 0644); err != nil {
+		return false, fmt.Errorf("write %q: %w", kubeletKubeconfigPath, err)
+	}
+	return true, nil
 }
 
 func (s *startKubeletServiceAction) ensureBootstrapKubeconfig(

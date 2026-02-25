@@ -25,6 +25,7 @@ const (
 	systemdUnitKubelet      = "kubelet.service"
 	envFileKubelet          = "/etc/default/kubelet"
 	apiServerClientCAPath   = "/etc/kubernetes/pki/apiserver-client-ca.crt"
+	kubeletKubeconfigPath   = "/var/lib/kubelet/kubeconfig"
 	bootstrapKubeconfigPath = "/var/lib/kubelet/bootstrap-kubeconfig"
 )
 

@@ -297,7 +297,7 @@ type KubeletServicePrincipalCredential struct {
 	state                   protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_TenantId     *string                `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId"`
 	xxx_hidden_ClientId     *string                `protobuf:"bytes,2,opt,name=client_id,json=clientId"`
-	xxx_hidden_ClientSecret []byte                 `protobuf:"bytes,3,opt,name=client_secret,json=clientSecret"`
+	xxx_hidden_ClientSecret *string                `protobuf:"bytes,3,opt,name=client_secret,json=clientSecret"`
 	XXX_raceDetectHookData  protoimpl.RaceDetectHookData
 	XXX_presence            [1]uint32
 	unknownFields           protoimpl.UnknownFields
@@ -349,11 +349,14 @@ func (x *KubeletServicePrincipalCredential) GetClientId() string {
 	return ""
 }
 
-func (x *KubeletServicePrincipalCredential) GetClientSecret() []byte {
+func (x *KubeletServicePrincipalCredential) GetClientSecret() string {
 	if x != nil {
-		return x.xxx_hidden_ClientSecret
+		if x.xxx_hidden_ClientSecret != nil {
+			return *x.xxx_hidden_ClientSecret
+		}
+		return ""
 	}
-	return nil
+	return ""
 }
 
 func (x *KubeletServicePrincipalCredential) SetTenantId(v string) {
@@ -366,11 +369,8 @@ func (x *KubeletServicePrincipalCredential) SetClientId(v string) {
 	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
 }
 
-func (x *KubeletServicePrincipalCredential) SetClientSecret(v []byte) {
-	if v == nil {
-		v = []byte{}
-	}
-	x.xxx_hidden_ClientSecret = v
+func (x *KubeletServicePrincipalCredential) SetClientSecret(v string) {
+	x.xxx_hidden_ClientSecret = &v
 	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 3)
 }
 
@@ -415,7 +415,7 @@ type KubeletServicePrincipalCredential_builder struct {
 
 	TenantId     *string
 	ClientId     *string
-	ClientSecret []byte
+	ClientSecret *string
 }
 
 func (b0 KubeletServicePrincipalCredential_builder) Build() *KubeletServicePrincipalCredential {
@@ -1290,7 +1290,7 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"!KubeletServicePrincipalCredential\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12#\n" +
-	"\rclient_secret\x18\x03 \x01(\fR\fclientSecret\"7\n" +
+	"\rclient_secret\x18\x03 \x01(\tR\fclientSecret\"7\n" +
 	"\x1fKubeletBootstrapTokenCredential\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"d\n" +
 	"\fControlPlane\x12\x16\n" +

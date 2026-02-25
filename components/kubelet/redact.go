@@ -28,7 +28,7 @@ func (x *KubeletArcCredential) Redact() {}
 func (x *KubeletMSICredential) Redact() {}
 
 func (x *KubeletServicePrincipalCredential) Redact() {
-	x.SetClientSecret(nil)
+	x.SetClientSecret("")
 }
 
 func (x *KubeletBootstrapTokenCredential) Redact() {
