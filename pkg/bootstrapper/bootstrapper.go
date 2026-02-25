@@ -45,6 +45,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		downloadKubeBinaries.Executor("download-kube-binaries", b.componentsAPIConn),
 		downloadNPD.Executor("download-npd", b.componentsAPIConn),
 
+		configureCNI.Executor("configure-cni", b.componentsAPIConn),
 		startContainerdService.Executor("start-containerd", b.componentsAPIConn),
 		startKubelet.Executor("start-kubelet", b.componentsAPIConn),
 		startNPD.Executor("start-npd", b.componentsAPIConn),
