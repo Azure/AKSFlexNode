@@ -207,20 +207,20 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 
 	nodeAuthInfo := kubelet.NodeAuthInfo_builder{}
 	switch {
-	case cfg.Azure.Arc != nil:
+	case cfg.IsARCEnabled():
 		nodeAuthInfo.ArcCredential = kubelet.KubeletArcCredential_builder{}.Build()
-	case cfg.Azure.ServicePrincipal != nil:
+	case cfg.IsSPConfigured():
 		nodeAuthInfo.ServicePrincipalCredential = kubelet.KubeletServicePrincipalCredential_builder{
 			TenantId:     ptr(cfg.Azure.TenantID),
 			ClientId:     ptr(cfg.Azure.ServicePrincipal.ClientID),
 			ClientSecret: ptr(cfg.Azure.ServicePrincipal.ClientSecret),
 		}.Build()
-	case cfg.Azure.ManagedIdentity != nil:
+	case cfg.IsMIConfigured():
 		nodeAuthInfo.MsiCredential = kubelet.KubeletMSICredential_builder{
 			TenantId: ptr(cfg.Azure.TenantID),
 			ClientId: ptr(cfg.Azure.ManagedIdentity.ClientID),
 		}.Build()
-	case cfg.Azure.BootstrapToken != nil:
+	case cfg.IsBootstrapTokenConfigured():
 		nodeAuthInfo.BootstrapTokenCredential = kubelet.KubeletBootstrapTokenCredential_builder{
 			Token: ptr(cfg.Azure.BootstrapToken.Token),
 		}.Build()
