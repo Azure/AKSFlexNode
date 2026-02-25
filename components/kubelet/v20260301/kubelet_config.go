@@ -137,7 +137,8 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	// - https://github.com/Azure/kubelogin/blob/main/pkg/internal/token/options.go
 	authInfoSettings := &api.AuthInfo{
 		Exec: &api.ExecConfig{
-			Command: selfBinary,
+			APIVersion: "client.authentication.k8s.io/v1",
+			Command:    selfBinary,
 			Args: []string{
 				"token", "kubelogin",
 			},
