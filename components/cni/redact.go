@@ -4,3 +4,7 @@ package cni
 func (x *DownloadCNIBinaries) Redact() {
 	// no sensitive fields to redact
 }
+
+func (x *ConfigureCNI) Redact() {
+	// no sensitive fields to redact
+}

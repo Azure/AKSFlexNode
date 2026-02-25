@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	utilexec "k8s.io/utils/exec"
 
+	"go.goms.io/aks/AKSFlexNode/components/api"
 	"go.goms.io/aks/AKSFlexNode/components/cni"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
@@ -51,7 +52,10 @@ func (d *downloadCNIBinariesAction) ApplyAction(
 		return nil, err
 	}
 
-	spec := settings.GetSpec()
+	spec, err := api.DefaultAndValidate(settings.GetSpec())
+	if err != nil {
+		return nil, err
+	}
 
 	downloadURL := d.constructDownloadURL(spec.GetCniPluginsVersion())
 

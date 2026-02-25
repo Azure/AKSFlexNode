@@ -10,4 +10,8 @@ func init() {
 		newDownloadCNIBinariesAction,
 		&cni.DownloadCNIBinaries{},
 	)
+	actions.MustRegister(
+		newConfigureCNIAction,
+		&cni.ConfigureCNI{},
+	)
 }

@@ -22,3 +22,19 @@ message DownloadCNIBinariesStatus {
   string cni_plugins_download_url = 1;
   string cni_plugins_path = 2;
 }
+
+// ConfigureCNI action enables a minimal CNI settings with low priority on the node.
+// Users can override with other CNI (e.g., Cilium) by applying CNI config with higher priority.
+message ConfigureCNI {
+  api.Metadata metadata = 1;
+
+  ConfigureCNISpec spec = 2;
+
+  ConfigureCNIStatus status = 3;
+}
+
+message ConfigureCNISpec {
+  string cni_spec_version = 1;
+}
+
+message ConfigureCNIStatus {}

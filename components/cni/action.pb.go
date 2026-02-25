@@ -328,6 +328,247 @@ func (b0 DownloadCNIBinariesStatus_builder) Build() *DownloadCNIBinariesStatus {
 	return m0
 }
 
+// ConfigureCNI action enables a minimal CNI settings with low priority on the node.
+// Users can override with other CNI (e.g., Cilium) by applying CNI config with higher priority.
+type ConfigureCNI struct {
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *ConfigureCNISpec      `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *ConfigureCNIStatus    `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ConfigureCNI) Reset() {
+	*x = ConfigureCNI{}
+	mi := &file_components_cni_action_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureCNI) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureCNI) ProtoMessage() {}
+
+func (x *ConfigureCNI) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cni_action_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ConfigureCNI) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *ConfigureCNI) GetSpec() *ConfigureCNISpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *ConfigureCNI) GetStatus() *ConfigureCNIStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *ConfigureCNI) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *ConfigureCNI) SetSpec(v *ConfigureCNISpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *ConfigureCNI) SetStatus(v *ConfigureCNIStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *ConfigureCNI) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *ConfigureCNI) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *ConfigureCNI) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *ConfigureCNI) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *ConfigureCNI) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *ConfigureCNI) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type ConfigureCNI_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *ConfigureCNISpec
+	Status   *ConfigureCNIStatus
+}
+
+func (b0 ConfigureCNI_builder) Build() *ConfigureCNI {
+	m0 := &ConfigureCNI{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type ConfigureCNISpec struct {
+	state                     protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_CniSpecVersion *string                `protobuf:"bytes,1,opt,name=cni_spec_version,json=cniSpecVersion"`
+	XXX_raceDetectHookData    protoimpl.RaceDetectHookData
+	XXX_presence              [1]uint32
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *ConfigureCNISpec) Reset() {
+	*x = ConfigureCNISpec{}
+	mi := &file_components_cni_action_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureCNISpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureCNISpec) ProtoMessage() {}
+
+func (x *ConfigureCNISpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cni_action_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ConfigureCNISpec) GetCniSpecVersion() string {
+	if x != nil {
+		if x.xxx_hidden_CniSpecVersion != nil {
+			return *x.xxx_hidden_CniSpecVersion
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *ConfigureCNISpec) SetCniSpecVersion(v string) {
+	x.xxx_hidden_CniSpecVersion = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
+}
+
+func (x *ConfigureCNISpec) HasCniSpecVersion() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *ConfigureCNISpec) ClearCniSpecVersion() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_CniSpecVersion = nil
+}
+
+type ConfigureCNISpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	CniSpecVersion *string
+}
+
+func (b0 ConfigureCNISpec_builder) Build() *ConfigureCNISpec {
+	m0 := &ConfigureCNISpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.CniSpecVersion != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
+		x.xxx_hidden_CniSpecVersion = b.CniSpecVersion
+	}
+	return m0
+}
+
+type ConfigureCNIStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureCNIStatus) Reset() {
+	*x = ConfigureCNIStatus{}
+	mi := &file_components_cni_action_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureCNIStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureCNIStatus) ProtoMessage() {}
+
+func (x *ConfigureCNIStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cni_action_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ConfigureCNIStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ConfigureCNIStatus_builder) Build() *ConfigureCNIStatus {
+	m0 := &ConfigureCNIStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_cni_action_proto protoreflect.FileDescriptor
 
 const file_components_cni_action_proto_rawDesc = "" +
@@ -341,24 +582,37 @@ const file_components_cni_action_proto_rawDesc = "" +
 	"\x13cni_plugins_version\x18\x01 \x01(\tR\x11cniPluginsVersion\"~\n" +
 	"\x19DownloadCNIBinariesStatus\x127\n" +
 	"\x18cni_plugins_download_url\x18\x01 \x01(\tR\x15cniPluginsDownloadUrl\x12(\n" +
-	"\x10cni_plugins_path\x18\x02 \x01(\tR\x0ecniPluginsPathB+Z)go.goms.io/aks/AKSFlexNode/components/cnib\beditionsp\xe9\a"
+	"\x10cni_plugins_path\x18\x02 \x01(\tR\x0ecniPluginsPath\"\xd1\x01\n" +
+	"\fConfigureCNI\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12=\n" +
+	"\x04spec\x18\x02 \x01(\v2).aks.flex.components.cni.ConfigureCNISpecR\x04spec\x12C\n" +
+	"\x06status\x18\x03 \x01(\v2+.aks.flex.components.cni.ConfigureCNIStatusR\x06status\"<\n" +
+	"\x10ConfigureCNISpec\x12(\n" +
+	"\x10cni_spec_version\x18\x01 \x01(\tR\x0ecniSpecVersion\"\x14\n" +
+	"\x12ConfigureCNIStatusB+Z)go.goms.io/aks/AKSFlexNode/components/cnib\beditionsp\xe9\a"
 
-var file_components_cni_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_components_cni_action_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_components_cni_action_proto_goTypes = []any{
 	(*DownloadCNIBinaries)(nil),       // 0: aks.flex.components.cni.DownloadCNIBinaries
 	(*DownloadCNIBinariesSpec)(nil),   // 1: aks.flex.components.cni.DownloadCNIBinariesSpec
 	(*DownloadCNIBinariesStatus)(nil), // 2: aks.flex.components.cni.DownloadCNIBinariesStatus
-	(*api.Metadata)(nil),              // 3: aks.flex.components.api.Metadata
+	(*ConfigureCNI)(nil),              // 3: aks.flex.components.cni.ConfigureCNI
+	(*ConfigureCNISpec)(nil),          // 4: aks.flex.components.cni.ConfigureCNISpec
+	(*ConfigureCNIStatus)(nil),        // 5: aks.flex.components.cni.ConfigureCNIStatus
+	(*api.Metadata)(nil),              // 6: aks.flex.components.api.Metadata
 }
 var file_components_cni_action_proto_depIdxs = []int32{
-	3, // 0: aks.flex.components.cni.DownloadCNIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
+	6, // 0: aks.flex.components.cni.DownloadCNIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
 	1, // 1: aks.flex.components.cni.DownloadCNIBinaries.spec:type_name -> aks.flex.components.cni.DownloadCNIBinariesSpec
 	2, // 2: aks.flex.components.cni.DownloadCNIBinaries.status:type_name -> aks.flex.components.cni.DownloadCNIBinariesStatus
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	6, // 3: aks.flex.components.cni.ConfigureCNI.metadata:type_name -> aks.flex.components.api.Metadata
+	4, // 4: aks.flex.components.cni.ConfigureCNI.spec:type_name -> aks.flex.components.cni.ConfigureCNISpec
+	5, // 5: aks.flex.components.cni.ConfigureCNI.status:type_name -> aks.flex.components.cni.ConfigureCNIStatus
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_components_cni_action_proto_init() }
@@ -372,7 +626,7 @@ func file_components_cni_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_cni_action_proto_rawDesc), len(file_components_cni_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

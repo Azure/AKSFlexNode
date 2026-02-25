@@ -151,16 +151,24 @@ var downloadCNIBinaries resolveActionFunc[*cni.DownloadCNIBinaries] = func(
 	name string,
 	cfg *config.Config,
 ) (*cni.DownloadCNIBinaries, error) {
-	spec := cni.DownloadCNIBinariesSpec_builder{
-		CniPluginsVersion: ptrWithDefault(
-			cfg.CNI.Version,
-			config.DefaultCNIPluginsVersion,
-		),
-	}.Build()
-
 	return cni.DownloadCNIBinaries_builder{
 		Metadata: componentAction(name),
-		Spec:     spec,
+		Spec: cni.DownloadCNIBinariesSpec_builder{
+			CniPluginsVersion: ptrWithDefault(
+				cfg.CNI.Version,
+				config.DefaultCNIPluginsVersion,
+			),
+		}.Build(),
+	}.Build(), nil
+}
+
+var configureCNI resolveActionFunc[*cni.ConfigureCNI] = func(
+	name string,
+	cfg *config.Config,
+) (*cni.ConfigureCNI, error) {
+	return cni.ConfigureCNI_builder{
+		Metadata: componentAction(name),
+		Spec:     cni.ConfigureCNISpec_builder{}.Build(),
 	}.Build(), nil
 }
 
