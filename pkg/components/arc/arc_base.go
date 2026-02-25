@@ -125,8 +125,6 @@ func (ab *base) checkRequiredPermissions(ctx context.Context, principalID string
 func (ab *base) getRoleAssignments() []roleAssignment {
 	return []roleAssignment{
 		{"Reader (Target Cluster)", ab.config.GetTargetClusterID(), roleDefinitionIDs["Reader"]},
-		{"Azure Kubernetes Service RBAC Cluster Admin", ab.config.GetTargetClusterID(), roleDefinitionIDs["Azure Kubernetes Service RBAC Cluster Admin"]},
-		{"Azure Kubernetes Service Cluster Admin Role", ab.config.GetTargetClusterID(), roleDefinitionIDs["Azure Kubernetes Service Cluster Admin Role"]},
 	}
 }
 
