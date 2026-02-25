@@ -67,7 +67,7 @@ func (s *startKubeletServiceAction) ApplyAction(
 	}
 
 	needsRestart := kubeletConfigUpdated // if kubelet config is updated, we need to restart the service to pick up the new config
-	if err := s.ensureSystemdUnit(ctx, needsRestart); err != nil {
+	if err := s.ensureSystemdUnit(ctx, needsRestart, spec); err != nil {
 		return nil, err
 	}
 

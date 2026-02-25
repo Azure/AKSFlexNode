@@ -7,14 +7,19 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"go.goms.io/aks/AKSFlexNode/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 )
 
-func (s *startKubeletServiceAction) ensureSystemdUnit(ctx context.Context, needsRestart bool) error {
+func (s *startKubeletServiceAction) ensureSystemdUnit(
+	ctx context.Context,
+	needsRestart bool,
+	spec *kubelet.StartKubeletServiceSpec,
+) error {
 	_, err := s.systemd.GetUnitStatus(ctx, systemdUnitKubelet)
 	switch {
 	case errors.Is(err, systemd.ErrUnitNotFound):
-		return s.createSystemdUnit(ctx)
+		return s.createSystemdUnit(ctx, spec)
 	case err != nil:
 		return err
 	default:
@@ -22,14 +27,20 @@ func (s *startKubeletServiceAction) ensureSystemdUnit(ctx context.Context, needs
 	}
 }
 
-func (s *startKubeletServiceAction) createSystemdUnit(ctx context.Context) error {
+func (s *startKubeletServiceAction) createSystemdUnit(
+	ctx context.Context,
+	spec *kubelet.StartKubeletServiceSpec,
+) error {
 	// TODO: consider unifying the drop-in / environment file usages
 	// We don't actually need extra drop-in files for configuring containerd / tls bootstrapping flags
 	// as they are supported since day 1 in flex node.
 	systemdDropInFiles := []string{
 		"10-containerd.conf",
-		"10-tlsbootstrap.conf",
 	}
+	if spec.GetNodeAuthInfo().HasBootstrapTokenCredential() {
+		systemdDropInFiles = append(systemdDropInFiles, "10-tlsbootstrap.conf")
+	}
+
 	for _, fileName := range systemdDropInFiles {
 		dropInContent, err := assets.ReadFile(filepath.Join("assets", fileName))
 		if err != nil {
