@@ -41,11 +41,10 @@ func New(
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
 	// Define the bootstrap steps in order - using modules directly
 	steps := []Executor{
-		arc.NewInstaller(b.logger),        // Setup Arc
-		services.NewUnInstaller(b.logger), // Stop kubelet before setup
+		arc.NewInstaller(b.logger), // Setup Arc
 
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
-		system_configuration.NewInstaller(b.logger), // Configure system (early)
+		// system_configuration.NewInstaller(b.logger), // Configure system (early)
 
 		downloadCRIBinaries.Executor("download-cri-binaries", b.componentsAPIConn),
 		downloadKubeBinaries.Executor("download-kube-binaries", b.componentsAPIConn),

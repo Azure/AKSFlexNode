@@ -8,13 +8,14 @@ import (
 	"os"
 	"text/template"
 
+	"google.golang.org/protobuf/types/known/anypb"
+
 	"go.goms.io/aks/AKSFlexNode/components/api"
 	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 //go:embed assets/*

@@ -8,6 +8,9 @@ import "components/api/api.proto";
 
 message StartKubeletService {
   api.Metadata metadata = 1;
+
+  StartKubeletServiceSpec spec = 2;
+  StartKubeletServiceStatus status = 3;
 }
 
 message KubeletArcCredential {
@@ -57,6 +60,7 @@ message KubeletConfig {
   int32 image_gc_high_threshold = 4;
   int32 image_gc_low_threshold = 5;
   repeated string cluster_dns = 6;
+  int32 max_pods = 7;
 }
 
 message StartKubeletServiceSpec {

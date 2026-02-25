@@ -22,8 +22,10 @@ const (
 )
 
 type StartKubeletService struct {
-	state               protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
+	state               protoimpl.MessageState     `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata              `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *StartKubeletServiceSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *StartKubeletServiceStatus `protobuf:"bytes,3,opt,name=status"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -60,8 +62,30 @@ func (x *StartKubeletService) GetMetadata() *api.Metadata {
 	return nil
 }
 
+func (x *StartKubeletService) GetSpec() *StartKubeletServiceSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *StartKubeletService) GetStatus() *StartKubeletServiceStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
 func (x *StartKubeletService) SetMetadata(v *api.Metadata) {
 	x.xxx_hidden_Metadata = v
+}
+
+func (x *StartKubeletService) SetSpec(v *StartKubeletServiceSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *StartKubeletService) SetStatus(v *StartKubeletServiceStatus) {
+	x.xxx_hidden_Status = v
 }
 
 func (x *StartKubeletService) HasMetadata() bool {
@@ -71,14 +95,38 @@ func (x *StartKubeletService) HasMetadata() bool {
 	return x.xxx_hidden_Metadata != nil
 }
 
+func (x *StartKubeletService) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *StartKubeletService) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
 func (x *StartKubeletService) ClearMetadata() {
 	x.xxx_hidden_Metadata = nil
+}
+
+func (x *StartKubeletService) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *StartKubeletService) ClearStatus() {
+	x.xxx_hidden_Status = nil
 }
 
 type StartKubeletService_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	Metadata *api.Metadata
+	Spec     *StartKubeletServiceSpec
+	Status   *StartKubeletServiceStatus
 }
 
 func (b0 StartKubeletService_builder) Build() *StartKubeletService {
@@ -86,6 +134,8 @@ func (b0 StartKubeletService_builder) Build() *StartKubeletService {
 	b, x := &b0, m0
 	_, _ = b, x
 	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
 	return m0
 }
 
@@ -850,6 +900,7 @@ type KubeletConfig struct {
 	xxx_hidden_ImageGcHighThreshold int32                  `protobuf:"varint,4,opt,name=image_gc_high_threshold,json=imageGcHighThreshold"`
 	xxx_hidden_ImageGcLowThreshold  int32                  `protobuf:"varint,5,opt,name=image_gc_low_threshold,json=imageGcLowThreshold"`
 	xxx_hidden_ClusterDns           []string               `protobuf:"bytes,6,rep,name=cluster_dns,json=clusterDns"`
+	xxx_hidden_MaxPods              int32                  `protobuf:"varint,7,opt,name=max_pods,json=maxPods"`
 	XXX_raceDetectHookData          protoimpl.RaceDetectHookData
 	XXX_presence                    [1]uint32
 	unknownFields                   protoimpl.UnknownFields
@@ -923,6 +974,13 @@ func (x *KubeletConfig) GetClusterDns() []string {
 	return nil
 }
 
+func (x *KubeletConfig) GetMaxPods() int32 {
+	if x != nil {
+		return x.xxx_hidden_MaxPods
+	}
+	return 0
+}
+
 func (x *KubeletConfig) SetKubeReserved(v map[string]string) {
 	x.xxx_hidden_KubeReserved = v
 }
@@ -933,21 +991,26 @@ func (x *KubeletConfig) SetEvictionHard(v map[string]string) {
 
 func (x *KubeletConfig) SetVerbosity(v int32) {
 	x.xxx_hidden_Verbosity = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 6)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 7)
 }
 
 func (x *KubeletConfig) SetImageGcHighThreshold(v int32) {
 	x.xxx_hidden_ImageGcHighThreshold = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 6)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 7)
 }
 
 func (x *KubeletConfig) SetImageGcLowThreshold(v int32) {
 	x.xxx_hidden_ImageGcLowThreshold = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 6)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 7)
 }
 
 func (x *KubeletConfig) SetClusterDns(v []string) {
 	x.xxx_hidden_ClusterDns = v
+}
+
+func (x *KubeletConfig) SetMaxPods(v int32) {
+	x.xxx_hidden_MaxPods = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 7)
 }
 
 func (x *KubeletConfig) HasVerbosity() bool {
@@ -971,6 +1034,13 @@ func (x *KubeletConfig) HasImageGcLowThreshold() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
 }
 
+func (x *KubeletConfig) HasMaxPods() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 6)
+}
+
 func (x *KubeletConfig) ClearVerbosity() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
 	x.xxx_hidden_Verbosity = 0
@@ -986,6 +1056,11 @@ func (x *KubeletConfig) ClearImageGcLowThreshold() {
 	x.xxx_hidden_ImageGcLowThreshold = 0
 }
 
+func (x *KubeletConfig) ClearMaxPods() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 6)
+	x.xxx_hidden_MaxPods = 0
+}
+
 type KubeletConfig_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -995,6 +1070,7 @@ type KubeletConfig_builder struct {
 	ImageGcHighThreshold *int32
 	ImageGcLowThreshold  *int32
 	ClusterDns           []string
+	MaxPods              *int32
 }
 
 func (b0 KubeletConfig_builder) Build() *KubeletConfig {
@@ -1004,18 +1080,22 @@ func (b0 KubeletConfig_builder) Build() *KubeletConfig {
 	x.xxx_hidden_KubeReserved = b.KubeReserved
 	x.xxx_hidden_EvictionHard = b.EvictionHard
 	if b.Verbosity != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 6)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 7)
 		x.xxx_hidden_Verbosity = *b.Verbosity
 	}
 	if b.ImageGcHighThreshold != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 6)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 7)
 		x.xxx_hidden_ImageGcHighThreshold = *b.ImageGcHighThreshold
 	}
 	if b.ImageGcLowThreshold != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 6)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 7)
 		x.xxx_hidden_ImageGcLowThreshold = *b.ImageGcLowThreshold
 	}
 	x.xxx_hidden_ClusterDns = b.ClusterDns
+	if b.MaxPods != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 7)
+		x.xxx_hidden_MaxPods = *b.MaxPods
+	}
 	return m0
 }
 
@@ -1198,9 +1278,11 @@ var File_components_kubelet_action_proto protoreflect.FileDescriptor
 
 const file_components_kubelet_action_proto_rawDesc = "" +
 	"\n" +
-	"\x1fcomponents/kubelet/action.proto\x12\x1baks.flex.components.kubelet\x1a\x18components/api/api.proto\"T\n" +
+	"\x1fcomponents/kubelet/action.proto\x12\x1baks.flex.components.kubelet\x1a\x18components/api/api.proto\"\xee\x01\n" +
 	"\x13StartKubeletService\x12=\n" +
-	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\"\x16\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12H\n" +
+	"\x04spec\x18\x02 \x01(\v24.aks.flex.components.kubelet.StartKubeletServiceSpecR\x04spec\x12N\n" +
+	"\x06status\x18\x03 \x01(\v26.aks.flex.components.kubelet.StartKubeletServiceStatusR\x06status\"\x16\n" +
 	"\x14KubeletArcCredential\"P\n" +
 	"\x14KubeletMSICredential\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
@@ -1219,7 +1301,7 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x0emsi_credential\x18\x02 \x01(\v21.aks.flex.components.kubelet.KubeletMSICredentialH\x00R\rmsiCredential\x12\x82\x01\n" +
 	"\x1cservice_principal_credential\x18\x03 \x01(\v2>.aks.flex.components.kubelet.KubeletServicePrincipalCredentialH\x00R\x1aservicePrincipalCredential\x12|\n" +
 	"\x1abootstrap_token_credential\x18\x04 \x01(\v2<.aks.flex.components.kubelet.KubeletBootstrapTokenCredentialH\x00R\x18bootstrapTokenCredentialB\v\n" +
-	"\tauth_info\"\x82\x04\n" +
+	"\tauth_info\"\x9d\x04\n" +
 	"\rKubeletConfig\x12a\n" +
 	"\rkube_reserved\x18\x01 \x03(\v2<.aks.flex.components.kubelet.KubeletConfig.KubeReservedEntryR\fkubeReserved\x12a\n" +
 	"\reviction_hard\x18\x02 \x03(\v2<.aks.flex.components.kubelet.KubeletConfig.EvictionHardEntryR\fevictionHard\x12\x1c\n" +
@@ -1227,7 +1309,8 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x17image_gc_high_threshold\x18\x04 \x01(\x05R\x14imageGcHighThreshold\x123\n" +
 	"\x16image_gc_low_threshold\x18\x05 \x01(\x05R\x13imageGcLowThreshold\x12\x1f\n" +
 	"\vcluster_dns\x18\x06 \x03(\tR\n" +
-	"clusterDns\x1a?\n" +
+	"clusterDns\x12\x19\n" +
+	"\bmax_pods\x18\a \x01(\x05R\amaxPods\x1a?\n" +
 	"\x11KubeReservedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
@@ -1264,21 +1347,23 @@ var file_components_kubelet_action_proto_goTypes = []any{
 }
 var file_components_kubelet_action_proto_depIdxs = []int32{
 	13, // 0: aks.flex.components.kubelet.StartKubeletService.metadata:type_name -> aks.flex.components.api.Metadata
-	1,  // 1: aks.flex.components.kubelet.NodeAuthInfo.arc_credential:type_name -> aks.flex.components.kubelet.KubeletArcCredential
-	2,  // 2: aks.flex.components.kubelet.NodeAuthInfo.msi_credential:type_name -> aks.flex.components.kubelet.KubeletMSICredential
-	3,  // 3: aks.flex.components.kubelet.NodeAuthInfo.service_principal_credential:type_name -> aks.flex.components.kubelet.KubeletServicePrincipalCredential
-	4,  // 4: aks.flex.components.kubelet.NodeAuthInfo.bootstrap_token_credential:type_name -> aks.flex.components.kubelet.KubeletBootstrapTokenCredential
-	10, // 5: aks.flex.components.kubelet.KubeletConfig.kube_reserved:type_name -> aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
-	11, // 6: aks.flex.components.kubelet.KubeletConfig.eviction_hard:type_name -> aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
-	5,  // 7: aks.flex.components.kubelet.StartKubeletServiceSpec.control_plane:type_name -> aks.flex.components.kubelet.ControlPlane
-	6,  // 8: aks.flex.components.kubelet.StartKubeletServiceSpec.node_auth_info:type_name -> aks.flex.components.kubelet.NodeAuthInfo
-	12, // 9: aks.flex.components.kubelet.StartKubeletServiceSpec.node_labels:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
-	7,  // 10: aks.flex.components.kubelet.StartKubeletServiceSpec.kubelet_config:type_name -> aks.flex.components.kubelet.KubeletConfig
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	8,  // 1: aks.flex.components.kubelet.StartKubeletService.spec:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec
+	9,  // 2: aks.flex.components.kubelet.StartKubeletService.status:type_name -> aks.flex.components.kubelet.StartKubeletServiceStatus
+	1,  // 3: aks.flex.components.kubelet.NodeAuthInfo.arc_credential:type_name -> aks.flex.components.kubelet.KubeletArcCredential
+	2,  // 4: aks.flex.components.kubelet.NodeAuthInfo.msi_credential:type_name -> aks.flex.components.kubelet.KubeletMSICredential
+	3,  // 5: aks.flex.components.kubelet.NodeAuthInfo.service_principal_credential:type_name -> aks.flex.components.kubelet.KubeletServicePrincipalCredential
+	4,  // 6: aks.flex.components.kubelet.NodeAuthInfo.bootstrap_token_credential:type_name -> aks.flex.components.kubelet.KubeletBootstrapTokenCredential
+	10, // 7: aks.flex.components.kubelet.KubeletConfig.kube_reserved:type_name -> aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
+	11, // 8: aks.flex.components.kubelet.KubeletConfig.eviction_hard:type_name -> aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
+	5,  // 9: aks.flex.components.kubelet.StartKubeletServiceSpec.control_plane:type_name -> aks.flex.components.kubelet.ControlPlane
+	6,  // 10: aks.flex.components.kubelet.StartKubeletServiceSpec.node_auth_info:type_name -> aks.flex.components.kubelet.NodeAuthInfo
+	12, // 11: aks.flex.components.kubelet.StartKubeletServiceSpec.node_labels:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
+	7,  // 12: aks.flex.components.kubelet.StartKubeletServiceSpec.kubelet_config:type_name -> aks.flex.components.kubelet.KubeletConfig
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_components_kubelet_action_proto_init() }

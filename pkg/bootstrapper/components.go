@@ -166,7 +166,7 @@ var startNPD resolveActionFunc[*npd.StartNodeProblemDetector] = func(
 ) (*npd.StartNodeProblemDetector, error) {
 	spec := npd.StartNodeProblemDetectorSpec_builder{
 		ApiServer:      ptr(cfg.Node.Kubelet.ServerURL),
-		KubeConfigPath: ptr("FIXME"),
+		KubeConfigPath: ptr("/var/lib/kubelet/kubeconfig"), // FIXME: use a const
 	}.Build()
 
 	return npd.StartNodeProblemDetector_builder{
