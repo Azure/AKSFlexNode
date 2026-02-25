@@ -55,8 +55,12 @@ type BootstrapTokenConfig struct {
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
 type TargetClusterConfig struct {
-	ResourceID        string `json:"resourceId"` // Full resource ID of the target AKS cluster
-	Location          string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
+	ResourceID        string `json:"resourceId"`                                           // Full resource ID of the target AKS cluster
+	Location          string `json:"location"`                                             // Azure region of the cluster (e.g., "eastus", "westus2")
+	IsPrivateCluster  bool   `json:"private" mapstructure:"private"`                       // Whether this is a private AKS cluster (requires Gateway/VPN setup)
+	GatewayVMSize     string `json:"gatewayVMSize,omitempty" mapstructure:"gatewayVMSize"` // VPN Gateway VM size (defaults to "Standard_D2s_v3")
+	GatewayPort       int    `json:"gatewayPort,omitempty" mapstructure:"gatewayPort"`     // VPN Gateway port (defaults to 51820)
+	CleanupMode       string `json:"-"`                                                    // Runtime-only, set by CLI flag for unbootstrap
 	Name              string // will be populated from ResourceID
 	ResourceGroup     string // will be populated from ResourceID
 	SubscriptionID    string // will be populated from ResourceID

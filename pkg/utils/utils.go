@@ -32,6 +32,19 @@ func RunCommandWithOutput(name string, args ...string) (string, error) {
 	return string(output), err
 }
 
+// RunCommandWithOutputContext executes a command with context and returns its combined output.
+func RunCommandWithOutputContext(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- same pattern as RunCommandWithOutput
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+// RunCommandSilentContext executes a command with context and returns only whether it succeeded.
+func RunCommandSilentContext(ctx context.Context, name string, args ...string) bool {
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- same pattern as RunSystemCommand
+	return cmd.Run() == nil
+}
+
 // FileExists checks if a file exists
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
