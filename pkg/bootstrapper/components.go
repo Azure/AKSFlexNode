@@ -199,8 +199,13 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 		}.Build(),
 		NodeLabels: maps.Clone(cfg.Node.Labels),
 		KubeletConfig: kubelet.KubeletConfig_builder{
-			MaxPods:   ptr(int32(cfg.Node.MaxPods)),
-			Verbosity: ptr(int32(cfg.Node.Kubelet.Verbosity)),
+			KubeReserved:         maps.Clone(cfg.Node.Kubelet.KubeReserved),
+			EvictionHard:         maps.Clone(cfg.Node.Kubelet.EvictionHard),
+			Verbosity:            ptr(int32(cfg.Node.Kubelet.Verbosity)),
+			ImageGcHighThreshold: ptr(int32(cfg.Node.Kubelet.ImageGCHighThreshold)),
+			ImageGcLowThreshold:  ptr(int32(cfg.Node.Kubelet.ImageGCLowThreshold)),
+			ClusterDns:           []string{cfg.Node.Kubelet.DNSServiceIP},
+			MaxPods:              ptr(int32(cfg.Node.MaxPods)),
 		}.Build(),
 	}.Build()
 
