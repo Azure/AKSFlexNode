@@ -546,10 +546,11 @@ func (b0 StartContainerdService_builder) Build() *StartContainerdService {
 }
 
 type StartContainerdServiceSpec struct {
-	state                     protoimpl.MessageState                `protogen:"opaque.v1"`
-	xxx_hidden_MetricsAddress *string                               `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress"`
-	xxx_hidden_SandboxImage   *string                               `protobuf:"bytes,2,opt,name=sandbox_image,json=sandboxImage"`
-	xxx_hidden_CniConfig      *StartContainerdServiceSpec_CNIConfig `protobuf:"bytes,3,opt,name=cni_config,json=cniConfig"`
+	state                     protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_MetricsAddress *string                `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress"`
+	xxx_hidden_SandboxImage   *string                `protobuf:"bytes,2,opt,name=sandbox_image,json=sandboxImage"`
+	xxx_hidden_CniConfig      *CNIConfig             `protobuf:"bytes,3,opt,name=cni_config,json=cniConfig"`
+	xxx_hidden_GpuConfig      *GPUConfig             `protobuf:"bytes,4,opt,name=gpu_config,json=gpuConfig"`
 	XXX_raceDetectHookData    protoimpl.RaceDetectHookData
 	XXX_presence              [1]uint32
 	unknownFields             protoimpl.UnknownFields
@@ -601,25 +602,36 @@ func (x *StartContainerdServiceSpec) GetSandboxImage() string {
 	return ""
 }
 
-func (x *StartContainerdServiceSpec) GetCniConfig() *StartContainerdServiceSpec_CNIConfig {
+func (x *StartContainerdServiceSpec) GetCniConfig() *CNIConfig {
 	if x != nil {
 		return x.xxx_hidden_CniConfig
 	}
 	return nil
 }
 
+func (x *StartContainerdServiceSpec) GetGpuConfig() *GPUConfig {
+	if x != nil {
+		return x.xxx_hidden_GpuConfig
+	}
+	return nil
+}
+
 func (x *StartContainerdServiceSpec) SetMetricsAddress(v string) {
 	x.xxx_hidden_MetricsAddress = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 3)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 4)
 }
 
 func (x *StartContainerdServiceSpec) SetSandboxImage(v string) {
 	x.xxx_hidden_SandboxImage = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 4)
 }
 
-func (x *StartContainerdServiceSpec) SetCniConfig(v *StartContainerdServiceSpec_CNIConfig) {
+func (x *StartContainerdServiceSpec) SetCniConfig(v *CNIConfig) {
 	x.xxx_hidden_CniConfig = v
+}
+
+func (x *StartContainerdServiceSpec) SetGpuConfig(v *GPUConfig) {
+	x.xxx_hidden_GpuConfig = v
 }
 
 func (x *StartContainerdServiceSpec) HasMetricsAddress() bool {
@@ -643,6 +655,13 @@ func (x *StartContainerdServiceSpec) HasCniConfig() bool {
 	return x.xxx_hidden_CniConfig != nil
 }
 
+func (x *StartContainerdServiceSpec) HasGpuConfig() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_GpuConfig != nil
+}
+
 func (x *StartContainerdServiceSpec) ClearMetricsAddress() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_MetricsAddress = nil
@@ -657,6 +676,10 @@ func (x *StartContainerdServiceSpec) ClearCniConfig() {
 	x.xxx_hidden_CniConfig = nil
 }
 
+func (x *StartContainerdServiceSpec) ClearGpuConfig() {
+	x.xxx_hidden_GpuConfig = nil
+}
+
 type StartContainerdServiceSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -666,7 +689,8 @@ type StartContainerdServiceSpec_builder struct {
 	// Image used for sandbox container.
 	// Defaults to "mcr.microsoft.com/oss/containerd/pause:3.6".
 	SandboxImage *string
-	CniConfig    *StartContainerdServiceSpec_CNIConfig
+	CniConfig    *CNIConfig
+	GpuConfig    *GPUConfig
 }
 
 func (b0 StartContainerdServiceSpec_builder) Build() *StartContainerdServiceSpec {
@@ -674,14 +698,346 @@ func (b0 StartContainerdServiceSpec_builder) Build() *StartContainerdServiceSpec
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.MetricsAddress != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 3)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 4)
 		x.xxx_hidden_MetricsAddress = b.MetricsAddress
 	}
 	if b.SandboxImage != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 3)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 4)
 		x.xxx_hidden_SandboxImage = b.SandboxImage
 	}
 	x.xxx_hidden_CniConfig = b.CniConfig
+	x.xxx_hidden_GpuConfig = b.GpuConfig
+	return m0
+}
+
+// TODO: allow overriding cni config?
+type CNIConfig struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_BinDir      *string                `protobuf:"bytes,1,opt,name=bin_dir,json=binDir"`
+	xxx_hidden_ConfigDir   *string                `protobuf:"bytes,2,opt,name=config_dir,json=configDir"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *CNIConfig) Reset() {
+	*x = CNIConfig{}
+	mi := &file_components_cri_action_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CNIConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CNIConfig) ProtoMessage() {}
+
+func (x *CNIConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CNIConfig) GetBinDir() string {
+	if x != nil {
+		if x.xxx_hidden_BinDir != nil {
+			return *x.xxx_hidden_BinDir
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *CNIConfig) GetConfigDir() string {
+	if x != nil {
+		if x.xxx_hidden_ConfigDir != nil {
+			return *x.xxx_hidden_ConfigDir
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *CNIConfig) SetBinDir(v string) {
+	x.xxx_hidden_BinDir = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+}
+
+func (x *CNIConfig) SetConfigDir(v string) {
+	x.xxx_hidden_ConfigDir = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+}
+
+func (x *CNIConfig) HasBinDir() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *CNIConfig) HasConfigDir() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *CNIConfig) ClearBinDir() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_BinDir = nil
+}
+
+func (x *CNIConfig) ClearConfigDir() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_ConfigDir = nil
+}
+
+type CNIConfig_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// CNI plugin directory
+	// Defaults to "/opt/cni/bin"
+	BinDir *string
+	// CNI config directory
+	// Defaults to "/etc/cni/net.d"
+	ConfigDir *string
+}
+
+func (b0 CNIConfig_builder) Build() *CNIConfig {
+	m0 := &CNIConfig{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.BinDir != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		x.xxx_hidden_BinDir = b.BinDir
+	}
+	if b.ConfigDir != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		x.xxx_hidden_ConfigDir = b.ConfigDir
+	}
+	return m0
+}
+
+type GPUConfig struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_GpuConfig isGPUConfig_GpuConfig  `protobuf_oneof:"gpu_config"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *GPUConfig) Reset() {
+	*x = GPUConfig{}
+	mi := &file_components_cri_action_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GPUConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GPUConfig) ProtoMessage() {}
+
+func (x *GPUConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *GPUConfig) GetNvidiaCdi() *NvidiaCDI {
+	if x != nil {
+		if x, ok := x.xxx_hidden_GpuConfig.(*gPUConfig_NvidiaCdi); ok {
+			return x.NvidiaCdi
+		}
+	}
+	return nil
+}
+
+func (x *GPUConfig) SetNvidiaCdi(v *NvidiaCDI) {
+	if v == nil {
+		x.xxx_hidden_GpuConfig = nil
+		return
+	}
+	x.xxx_hidden_GpuConfig = &gPUConfig_NvidiaCdi{v}
+}
+
+func (x *GPUConfig) HasGpuConfig() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_GpuConfig != nil
+}
+
+func (x *GPUConfig) HasNvidiaCdi() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_GpuConfig.(*gPUConfig_NvidiaCdi)
+	return ok
+}
+
+func (x *GPUConfig) ClearGpuConfig() {
+	x.xxx_hidden_GpuConfig = nil
+}
+
+func (x *GPUConfig) ClearNvidiaCdi() {
+	if _, ok := x.xxx_hidden_GpuConfig.(*gPUConfig_NvidiaCdi); ok {
+		x.xxx_hidden_GpuConfig = nil
+	}
+}
+
+const GPUConfig_GpuConfig_not_set_case case_GPUConfig_GpuConfig = 0
+const GPUConfig_NvidiaCdi_case case_GPUConfig_GpuConfig = 1
+
+func (x *GPUConfig) WhichGpuConfig() case_GPUConfig_GpuConfig {
+	if x == nil {
+		return GPUConfig_GpuConfig_not_set_case
+	}
+	switch x.xxx_hidden_GpuConfig.(type) {
+	case *gPUConfig_NvidiaCdi:
+		return GPUConfig_NvidiaCdi_case
+	default:
+		return GPUConfig_GpuConfig_not_set_case
+	}
+}
+
+type GPUConfig_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// Fields of oneof xxx_hidden_GpuConfig:
+	// enable GPU support via Nvidia CDI
+	NvidiaCdi *NvidiaCDI
+	// -- end of xxx_hidden_GpuConfig
+}
+
+func (b0 GPUConfig_builder) Build() *GPUConfig {
+	m0 := &GPUConfig{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.NvidiaCdi != nil {
+		x.xxx_hidden_GpuConfig = &gPUConfig_NvidiaCdi{b.NvidiaCdi}
+	}
+	return m0
+}
+
+type case_GPUConfig_GpuConfig protoreflect.FieldNumber
+
+func (x case_GPUConfig_GpuConfig) String() string {
+	md := file_components_cri_action_proto_msgTypes[6].Descriptor()
+	if x == 0 {
+		return "not set"
+	}
+	return protoimpl.X.MessageFieldStringOf(md, protoreflect.FieldNumber(x))
+}
+
+type isGPUConfig_GpuConfig interface {
+	isGPUConfig_GpuConfig()
+}
+
+type gPUConfig_NvidiaCdi struct {
+	// enable GPU support via Nvidia CDI
+	NvidiaCdi *NvidiaCDI `protobuf:"bytes,1,opt,name=nvidia_cdi,json=nvidiaCdi,oneof"`
+}
+
+func (*gPUConfig_NvidiaCdi) isGPUConfig_GpuConfig() {}
+
+type NvidiaCDI struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NvidiaCDI) Reset() {
+	*x = NvidiaCDI{}
+	mi := &file_components_cri_action_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NvidiaCDI) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NvidiaCDI) ProtoMessage() {}
+
+func (x *NvidiaCDI) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type NvidiaCDI_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 NvidiaCDI_builder) Build() *NvidiaCDI {
+	m0 := &NvidiaCDI{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+type NvidiaRuntime struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NvidiaRuntime) Reset() {
+	*x = NvidiaRuntime{}
+	mi := &file_components_cri_action_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NvidiaRuntime) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NvidiaRuntime) ProtoMessage() {}
+
+func (x *NvidiaRuntime) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type NvidiaRuntime_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 NvidiaRuntime_builder) Build() *NvidiaRuntime {
+	m0 := &NvidiaRuntime{}
+	b, x := &b0, m0
+	_, _ = b, x
 	return m0
 }
 
@@ -693,7 +1049,7 @@ type StartContainerdServiceStatus struct {
 
 func (x *StartContainerdServiceStatus) Reset() {
 	*x = StartContainerdServiceStatus{}
-	mi := &file_components_cri_action_proto_msgTypes[5]
+	mi := &file_components_cri_action_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -705,7 +1061,7 @@ func (x *StartContainerdServiceStatus) String() string {
 func (*StartContainerdServiceStatus) ProtoMessage() {}
 
 func (x *StartContainerdServiceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_action_proto_msgTypes[5]
+	mi := &file_components_cri_action_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -725,122 +1081,6 @@ func (b0 StartContainerdServiceStatus_builder) Build() *StartContainerdServiceSt
 	m0 := &StartContainerdServiceStatus{}
 	b, x := &b0, m0
 	_, _ = b, x
-	return m0
-}
-
-// TODO: allow overriding cni config?
-type StartContainerdServiceSpec_CNIConfig struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_BinDir      *string                `protobuf:"bytes,1,opt,name=bin_dir,json=binDir"`
-	xxx_hidden_ConfigDir   *string                `protobuf:"bytes,2,opt,name=config_dir,json=configDir"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) Reset() {
-	*x = StartContainerdServiceSpec_CNIConfig{}
-	mi := &file_components_cri_action_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*StartContainerdServiceSpec_CNIConfig) ProtoMessage() {}
-
-func (x *StartContainerdServiceSpec_CNIConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_components_cri_action_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) GetBinDir() string {
-	if x != nil {
-		if x.xxx_hidden_BinDir != nil {
-			return *x.xxx_hidden_BinDir
-		}
-		return ""
-	}
-	return ""
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) GetConfigDir() string {
-	if x != nil {
-		if x.xxx_hidden_ConfigDir != nil {
-			return *x.xxx_hidden_ConfigDir
-		}
-		return ""
-	}
-	return ""
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) SetBinDir(v string) {
-	x.xxx_hidden_BinDir = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) SetConfigDir(v string) {
-	x.xxx_hidden_ConfigDir = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) HasBinDir() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) HasConfigDir() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) ClearBinDir() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_BinDir = nil
-}
-
-func (x *StartContainerdServiceSpec_CNIConfig) ClearConfigDir() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
-	x.xxx_hidden_ConfigDir = nil
-}
-
-type StartContainerdServiceSpec_CNIConfig_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-	// CNI plugin directory
-	// Defaults to "/opt/cni/bin"
-	BinDir *string
-	// CNI config directory
-	// Defaults to "/etc/cni/net.d"
-	ConfigDir *string
-}
-
-func (b0 StartContainerdServiceSpec_CNIConfig_builder) Build() *StartContainerdServiceSpec_CNIConfig {
-	m0 := &StartContainerdServiceSpec_CNIConfig{}
-	b, x := &b0, m0
-	_, _ = b, x
-	if b.BinDir != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_BinDir = b.BinDir
-	}
-	if b.ConfigDir != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
-		x.xxx_hidden_ConfigDir = b.ConfigDir
-	}
 	return m0
 }
 
@@ -864,42 +1104,56 @@ const file_components_cri_action_proto_rawDesc = "" +
 	"\x16StartContainerdService\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12G\n" +
 	"\x04spec\x18\x02 \x01(\v23.aks.flex.components.cri.StartContainerdServiceSpecR\x04spec\x12M\n" +
-	"\x06status\x18\x03 \x01(\v25.aks.flex.components.cri.StartContainerdServiceStatusR\x06status\"\x8d\x02\n" +
+	"\x06status\x18\x03 \x01(\v25.aks.flex.components.cri.StartContainerdServiceStatusR\x06status\"\xf0\x01\n" +
 	"\x1aStartContainerdServiceSpec\x12'\n" +
 	"\x0fmetrics_address\x18\x01 \x01(\tR\x0emetricsAddress\x12#\n" +
-	"\rsandbox_image\x18\x02 \x01(\tR\fsandboxImage\x12\\\n" +
+	"\rsandbox_image\x18\x02 \x01(\tR\fsandboxImage\x12A\n" +
 	"\n" +
-	"cni_config\x18\x03 \x01(\v2=.aks.flex.components.cri.StartContainerdServiceSpec.CNIConfigR\tcniConfig\x1aC\n" +
+	"cni_config\x18\x03 \x01(\v2\".aks.flex.components.cri.CNIConfigR\tcniConfig\x12A\n" +
+	"\n" +
+	"gpu_config\x18\x04 \x01(\v2\".aks.flex.components.cri.GPUConfigR\tgpuConfig\"C\n" +
 	"\tCNIConfig\x12\x17\n" +
 	"\abin_dir\x18\x01 \x01(\tR\x06binDir\x12\x1d\n" +
 	"\n" +
-	"config_dir\x18\x02 \x01(\tR\tconfigDir\"\x1e\n" +
+	"config_dir\x18\x02 \x01(\tR\tconfigDir\"^\n" +
+	"\tGPUConfig\x12C\n" +
+	"\n" +
+	"nvidia_cdi\x18\x01 \x01(\v2\".aks.flex.components.cri.NvidiaCDIH\x00R\tnvidiaCdiB\f\n" +
+	"\n" +
+	"gpu_config\"\v\n" +
+	"\tNvidiaCDI\"\x0f\n" +
+	"\rNvidiaRuntime\"\x1e\n" +
 	"\x1cStartContainerdServiceStatusB+Z)go.goms.io/aks/AKSFlexNode/components/crib\beditionsp\xe9\a"
 
-var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_components_cri_action_proto_goTypes = []any{
-	(*DownloadCRIBinaries)(nil),                  // 0: aks.flex.components.cri.DownloadCRIBinaries
-	(*DownloadCRIBinariesSpec)(nil),              // 1: aks.flex.components.cri.DownloadCRIBinariesSpec
-	(*DownloadCRIBinariesStatus)(nil),            // 2: aks.flex.components.cri.DownloadCRIBinariesStatus
-	(*StartContainerdService)(nil),               // 3: aks.flex.components.cri.StartContainerdService
-	(*StartContainerdServiceSpec)(nil),           // 4: aks.flex.components.cri.StartContainerdServiceSpec
-	(*StartContainerdServiceStatus)(nil),         // 5: aks.flex.components.cri.StartContainerdServiceStatus
-	(*StartContainerdServiceSpec_CNIConfig)(nil), // 6: aks.flex.components.cri.StartContainerdServiceSpec.CNIConfig
-	(*api.Metadata)(nil),                         // 7: aks.flex.components.api.Metadata
+	(*DownloadCRIBinaries)(nil),          // 0: aks.flex.components.cri.DownloadCRIBinaries
+	(*DownloadCRIBinariesSpec)(nil),      // 1: aks.flex.components.cri.DownloadCRIBinariesSpec
+	(*DownloadCRIBinariesStatus)(nil),    // 2: aks.flex.components.cri.DownloadCRIBinariesStatus
+	(*StartContainerdService)(nil),       // 3: aks.flex.components.cri.StartContainerdService
+	(*StartContainerdServiceSpec)(nil),   // 4: aks.flex.components.cri.StartContainerdServiceSpec
+	(*CNIConfig)(nil),                    // 5: aks.flex.components.cri.CNIConfig
+	(*GPUConfig)(nil),                    // 6: aks.flex.components.cri.GPUConfig
+	(*NvidiaCDI)(nil),                    // 7: aks.flex.components.cri.NvidiaCDI
+	(*NvidiaRuntime)(nil),                // 8: aks.flex.components.cri.NvidiaRuntime
+	(*StartContainerdServiceStatus)(nil), // 9: aks.flex.components.cri.StartContainerdServiceStatus
+	(*api.Metadata)(nil),                 // 10: aks.flex.components.api.Metadata
 }
 var file_components_cri_action_proto_depIdxs = []int32{
-	7, // 0: aks.flex.components.cri.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
-	1, // 1: aks.flex.components.cri.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.DownloadCRIBinariesSpec
-	2, // 2: aks.flex.components.cri.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.DownloadCRIBinariesStatus
-	7, // 3: aks.flex.components.cri.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 4: aks.flex.components.cri.StartContainerdService.spec:type_name -> aks.flex.components.cri.StartContainerdServiceSpec
-	5, // 5: aks.flex.components.cri.StartContainerdService.status:type_name -> aks.flex.components.cri.StartContainerdServiceStatus
-	6, // 6: aks.flex.components.cri.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.StartContainerdServiceSpec.CNIConfig
-	7, // [7:7] is the sub-list for method output_type
-	7, // [7:7] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	10, // 0: aks.flex.components.cri.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
+	1,  // 1: aks.flex.components.cri.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.DownloadCRIBinariesSpec
+	2,  // 2: aks.flex.components.cri.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.DownloadCRIBinariesStatus
+	10, // 3: aks.flex.components.cri.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
+	4,  // 4: aks.flex.components.cri.StartContainerdService.spec:type_name -> aks.flex.components.cri.StartContainerdServiceSpec
+	9,  // 5: aks.flex.components.cri.StartContainerdService.status:type_name -> aks.flex.components.cri.StartContainerdServiceStatus
+	5,  // 6: aks.flex.components.cri.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.CNIConfig
+	6,  // 7: aks.flex.components.cri.StartContainerdServiceSpec.gpu_config:type_name -> aks.flex.components.cri.GPUConfig
+	7,  // 8: aks.flex.components.cri.GPUConfig.nvidia_cdi:type_name -> aks.flex.components.cri.NvidiaCDI
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_components_cri_action_proto_init() }
@@ -907,13 +1161,16 @@ func file_components_cri_action_proto_init() {
 	if File_components_cri_action_proto != nil {
 		return
 	}
+	file_components_cri_action_proto_msgTypes[6].OneofWrappers = []any{
+		(*gPUConfig_NvidiaCdi)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_cri_action_proto_rawDesc), len(file_components_cri_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

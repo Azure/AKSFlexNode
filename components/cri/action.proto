@@ -41,19 +41,37 @@ message StartContainerdServiceSpec {
   // Defaults to "mcr.microsoft.com/oss/containerd/pause:3.6".
   string sandbox_image = 2;
 
-  // TODO: allow overriding cni config?
-  message CNIConfig {
-    // CNI plugin directory
-    // Defaults to "/opt/cni/bin"
-    string bin_dir = 1;
-
-    // CNI config directory
-    // Defaults to "/etc/cni/net.d"
-    string config_dir = 2;
-  }
   CNIConfig cni_config = 3;
 
-  // TODO: GPU runtime settings?
+  GPUConfig gpu_config = 4;
+}
+
+// TODO: allow overriding cni config?
+message CNIConfig {
+  // CNI plugin directory
+  // Defaults to "/opt/cni/bin"
+  string bin_dir = 1;
+
+  // CNI config directory
+  // Defaults to "/etc/cni/net.d"
+  string config_dir = 2;
+}
+
+message GPUConfig {
+  oneof gpu_config {
+    // enable GPU support via Nvidia CDI
+    NvidiaCDI nvidia_cdi = 1;
+    // enable GPU support via Nvidia Container Runtime
+    // NvidiaRuntime nvidia_runtime = 2;
+  }
+}
+
+message NvidiaCDI {
+
+}
+
+message NvidiaRuntime {
+
 }
 
 message StartContainerdServiceStatus {
