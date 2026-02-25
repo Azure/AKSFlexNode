@@ -216,10 +216,14 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 			ClientSecret: ptr(cfg.Azure.ServicePrincipal.ClientSecret),
 		}.Build()
 	case cfg.IsMIConfigured():
-		nodeAuthInfo.MsiCredential = kubelet.KubeletMSICredential_builder{
+		b := kubelet.KubeletMSICredential_builder{
 			TenantId: ptr(cfg.Azure.TenantID),
-			ClientId: ptr(cfg.Azure.ManagedIdentity.ClientID),
-		}.Build()
+		}
+		if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
+			// NOTE: when client id is not set, fallback to system assigned MI.
+			b.ClientId = ptr(cfg.Azure.ManagedIdentity.ClientID)
+		}
+		nodeAuthInfo.MsiCredential = b.Build()
 	case cfg.IsBootstrapTokenConfigured():
 		nodeAuthInfo.BootstrapTokenCredential = kubelet.KubeletBootstrapTokenCredential_builder{
 			Token: ptr(cfg.Azure.BootstrapToken.Token),
