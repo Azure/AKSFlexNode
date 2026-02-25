@@ -205,17 +205,36 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 		return nil, fmt.Errorf("decode CA cert data: %w", err)
 	}
 
+	nodeAuthInfo := kubelet.NodeAuthInfo_builder{}
+	switch {
+	case cfg.Azure.Arc != nil:
+		nodeAuthInfo.ArcCredential = kubelet.KubeletArcCredential_builder{}.Build()
+	case cfg.Azure.ServicePrincipal != nil:
+		nodeAuthInfo.ServicePrincipalCredential = kubelet.KubeletServicePrincipalCredential_builder{
+			TenantId:     ptr(cfg.Azure.TenantID),
+			ClientId:     ptr(cfg.Azure.ServicePrincipal.ClientID),
+			ClientSecret: ptr(cfg.Azure.ServicePrincipal.ClientSecret),
+		}.Build()
+	case cfg.Azure.ManagedIdentity != nil:
+		nodeAuthInfo.MsiCredential = kubelet.KubeletMSICredential_builder{
+			TenantId: ptr(cfg.Azure.TenantID),
+			ClientId: ptr(cfg.Azure.ManagedIdentity.ClientID),
+		}.Build()
+	case cfg.Azure.BootstrapToken != nil:
+		nodeAuthInfo.BootstrapTokenCredential = kubelet.KubeletBootstrapTokenCredential_builder{
+			Token: ptr(cfg.Azure.BootstrapToken.Token),
+		}.Build()
+	default:
+		return nil, fmt.Errorf("no valid Azure credential found for kubelet authentication")
+	}
+
 	spec := kubelet.StartKubeletServiceSpec_builder{
 		ControlPlane: kubelet.ControlPlane_builder{
 			Server:                   ptr(cfg.Node.Kubelet.ServerURL),
 			CertificateAuthorityData: caData,
 		}.Build(),
-		NodeAuthInfo: kubelet.NodeAuthInfo_builder{
-			BootstrapTokenCredential: kubelet.KubeletBootstrapTokenCredential_builder{
-				Token: ptr(cfg.Azure.BootstrapToken.Token),
-			}.Build(),
-		}.Build(),
-		NodeLabels: maps.Clone(cfg.Node.Labels),
+		NodeAuthInfo: nodeAuthInfo.Build(),
+		NodeLabels:   maps.Clone(cfg.Node.Labels),
 		KubeletConfig: kubelet.KubeletConfig_builder{
 			KubeReserved:         maps.Clone(cfg.Node.Kubelet.KubeReserved),
 			EvictionHard:         maps.Clone(cfg.Node.Kubelet.EvictionHard),
