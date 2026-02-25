@@ -51,9 +51,10 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		downloadNPD.Executor("download-npd", b.componentsAPIConn),
 
 		startContainerdService.Executor("start-containerd", b.componentsAPIConn),
+		startKubelet.Executor("start-kubelet", b.componentsAPIConn),
 		startNPD.Executor("start-npd", b.componentsAPIConn),
 
-		kubelet.NewInstaller(b.logger), // Configure kubelet service with Arc MSI auth
+		// kubelet.NewInstaller(b.logger), // Configure kubelet service with Arc MSI auth
 	}
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")

@@ -2,7 +2,9 @@ package bootstrapper
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"maps"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -10,6 +12,7 @@ import (
 	"go.goms.io/aks/AKSFlexNode/components/api"
 	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/kubebins"
+	"go.goms.io/aks/AKSFlexNode/components/kubelet"
 	"go.goms.io/aks/AKSFlexNode/components/linux"
 	"go.goms.io/aks/AKSFlexNode/components/npd"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
@@ -170,6 +173,38 @@ var startNPD resolveActionFunc[*npd.StartNodeProblemDetector] = func(
 	}.Build()
 
 	return npd.StartNodeProblemDetector_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
+}
+
+var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
+	name string,
+	cfg *config.Config,
+) (*kubelet.StartKubeletService, error) {
+	caData, err := base64.StdEncoding.DecodeString(cfg.Node.Kubelet.CACertData)
+	if err != nil {
+		return nil, fmt.Errorf("decode CA cert data: %w", err)
+	}
+
+	spec := kubelet.StartKubeletServiceSpec_builder{
+		ControlPlane: kubelet.ControlPlane_builder{
+			Server:                   ptr(cfg.Node.Kubelet.ServerURL),
+			CertificateAuthorityData: caData,
+		}.Build(),
+		NodeAuthInfo: kubelet.NodeAuthInfo_builder{
+			BootstrapTokenCredential: kubelet.KubeletBootstrapTokenCredential_builder{
+				Token: ptr(cfg.Azure.BootstrapToken.Token),
+			}.Build(),
+		}.Build(),
+		NodeLabels: maps.Clone(cfg.Node.Labels),
+		KubeletConfig: kubelet.KubeletConfig_builder{
+			MaxPods:   ptr(int32(cfg.Node.MaxPods)),
+			Verbosity: ptr(int32(cfg.Node.Kubelet.Verbosity)),
+		}.Build(),
+	}.Build()
+
+	return kubelet.StartKubeletService_builder{
 		Metadata: componentAction(name),
 		Spec:     spec,
 	}.Build(), nil
