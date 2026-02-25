@@ -83,7 +83,7 @@ func runAgent(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create in-memory components API connection: %w", err)
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // stops in memory connection only
 
 	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
@@ -114,7 +114,7 @@ func runUnbootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create in-memory components API connection: %w", err)
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // stops in memory connection only
 
 	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)

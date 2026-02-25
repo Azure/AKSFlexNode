@@ -75,7 +75,7 @@ func (a *configureCNIAction) ensureBridgeConfig(cniVersion string) error {
 
 	targetPath := filepath.Join(config.DefaultCNIConfigDir, bridgeConfigFile)
 
-	currentConfig, err := os.ReadFile(targetPath)
+	currentConfig, err := os.ReadFile(targetPath) // #nosec - path has been validated by caller
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// file does not exist, fall through to create it

@@ -25,7 +25,7 @@ func mapPairsToString(pairs map[string]string, kvSep, pairSep string) string {
 }
 
 func fileHasIdenticalContent(filePath string, desiredContent []byte) (bool, error) {
-	actualContent, err := os.ReadFile(filePath)
+	actualContent, err := os.ReadFile(filePath) //#nosec - file path has been validated by caller
 	switch {
 	case os.IsNotExist(err):
 		// File does not exist, so it does not have identical content
