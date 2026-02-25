@@ -867,12 +867,29 @@ func (x *GPUConfig) GetNvidiaCdi() *NvidiaCDI {
 	return nil
 }
 
+func (x *GPUConfig) GetNvidiaRuntime() *NvidiaRuntime {
+	if x != nil {
+		if x, ok := x.xxx_hidden_GpuConfig.(*gPUConfig_NvidiaRuntime); ok {
+			return x.NvidiaRuntime
+		}
+	}
+	return nil
+}
+
 func (x *GPUConfig) SetNvidiaCdi(v *NvidiaCDI) {
 	if v == nil {
 		x.xxx_hidden_GpuConfig = nil
 		return
 	}
 	x.xxx_hidden_GpuConfig = &gPUConfig_NvidiaCdi{v}
+}
+
+func (x *GPUConfig) SetNvidiaRuntime(v *NvidiaRuntime) {
+	if v == nil {
+		x.xxx_hidden_GpuConfig = nil
+		return
+	}
+	x.xxx_hidden_GpuConfig = &gPUConfig_NvidiaRuntime{v}
 }
 
 func (x *GPUConfig) HasGpuConfig() bool {
@@ -890,6 +907,14 @@ func (x *GPUConfig) HasNvidiaCdi() bool {
 	return ok
 }
 
+func (x *GPUConfig) HasNvidiaRuntime() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_GpuConfig.(*gPUConfig_NvidiaRuntime)
+	return ok
+}
+
 func (x *GPUConfig) ClearGpuConfig() {
 	x.xxx_hidden_GpuConfig = nil
 }
@@ -900,8 +925,15 @@ func (x *GPUConfig) ClearNvidiaCdi() {
 	}
 }
 
+func (x *GPUConfig) ClearNvidiaRuntime() {
+	if _, ok := x.xxx_hidden_GpuConfig.(*gPUConfig_NvidiaRuntime); ok {
+		x.xxx_hidden_GpuConfig = nil
+	}
+}
+
 const GPUConfig_GpuConfig_not_set_case case_GPUConfig_GpuConfig = 0
 const GPUConfig_NvidiaCdi_case case_GPUConfig_GpuConfig = 1
+const GPUConfig_NvidiaRuntime_case case_GPUConfig_GpuConfig = 2
 
 func (x *GPUConfig) WhichGpuConfig() case_GPUConfig_GpuConfig {
 	if x == nil {
@@ -910,6 +942,8 @@ func (x *GPUConfig) WhichGpuConfig() case_GPUConfig_GpuConfig {
 	switch x.xxx_hidden_GpuConfig.(type) {
 	case *gPUConfig_NvidiaCdi:
 		return GPUConfig_NvidiaCdi_case
+	case *gPUConfig_NvidiaRuntime:
+		return GPUConfig_NvidiaRuntime_case
 	default:
 		return GPUConfig_GpuConfig_not_set_case
 	}
@@ -921,6 +955,8 @@ type GPUConfig_builder struct {
 	// Fields of oneof xxx_hidden_GpuConfig:
 	// enable GPU support via Nvidia CDI
 	NvidiaCdi *NvidiaCDI
+	// enable GPU support via Nvidia Container Runtime
+	NvidiaRuntime *NvidiaRuntime
 	// -- end of xxx_hidden_GpuConfig
 }
 
@@ -930,6 +966,9 @@ func (b0 GPUConfig_builder) Build() *GPUConfig {
 	_, _ = b, x
 	if b.NvidiaCdi != nil {
 		x.xxx_hidden_GpuConfig = &gPUConfig_NvidiaCdi{b.NvidiaCdi}
+	}
+	if b.NvidiaRuntime != nil {
+		x.xxx_hidden_GpuConfig = &gPUConfig_NvidiaRuntime{b.NvidiaRuntime}
 	}
 	return m0
 }
@@ -953,7 +992,14 @@ type gPUConfig_NvidiaCdi struct {
 	NvidiaCdi *NvidiaCDI `protobuf:"bytes,1,opt,name=nvidia_cdi,json=nvidiaCdi,oneof"`
 }
 
+type gPUConfig_NvidiaRuntime struct {
+	// enable GPU support via Nvidia Container Runtime
+	NvidiaRuntime *NvidiaRuntime `protobuf:"bytes,2,opt,name=nvidia_runtime,json=nvidiaRuntime,oneof"`
+}
+
 func (*gPUConfig_NvidiaCdi) isGPUConfig_GpuConfig() {}
+
+func (*gPUConfig_NvidiaRuntime) isGPUConfig_GpuConfig() {}
 
 type NvidiaCDI struct {
 	state         protoimpl.MessageState `protogen:"opaque.v1"`
@@ -999,9 +1045,12 @@ func (b0 NvidiaCDI_builder) Build() *NvidiaCDI {
 }
 
 type NvidiaRuntime struct {
-	state         protoimpl.MessageState `protogen:"opaque.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_RuntimePath *string                `protobuf:"bytes,1,opt,name=runtime_path,json=runtimePath"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *NvidiaRuntime) Reset() {
@@ -1029,15 +1078,49 @@ func (x *NvidiaRuntime) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
+func (x *NvidiaRuntime) GetRuntimePath() string {
+	if x != nil {
+		if x.xxx_hidden_RuntimePath != nil {
+			return *x.xxx_hidden_RuntimePath
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *NvidiaRuntime) SetRuntimePath(v string) {
+	x.xxx_hidden_RuntimePath = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
+}
+
+func (x *NvidiaRuntime) HasRuntimePath() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *NvidiaRuntime) ClearRuntimePath() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_RuntimePath = nil
+}
+
 type NvidiaRuntime_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
+	// Absolute path to the nvidia-container-runtime binary.
+	// Defaults to "/usr/bin/nvidia-container-runtime".
+	RuntimePath *string
 }
 
 func (b0 NvidiaRuntime_builder) Build() *NvidiaRuntime {
 	m0 := &NvidiaRuntime{}
 	b, x := &b0, m0
 	_, _ = b, x
+	if b.RuntimePath != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
+		x.xxx_hidden_RuntimePath = b.RuntimePath
+	}
 	return m0
 }
 
@@ -1115,14 +1198,16 @@ const file_components_cri_action_proto_rawDesc = "" +
 	"\tCNIConfig\x12\x17\n" +
 	"\abin_dir\x18\x01 \x01(\tR\x06binDir\x12\x1d\n" +
 	"\n" +
-	"config_dir\x18\x02 \x01(\tR\tconfigDir\"^\n" +
+	"config_dir\x18\x02 \x01(\tR\tconfigDir\"\xaf\x01\n" +
 	"\tGPUConfig\x12C\n" +
 	"\n" +
-	"nvidia_cdi\x18\x01 \x01(\v2\".aks.flex.components.cri.NvidiaCDIH\x00R\tnvidiaCdiB\f\n" +
+	"nvidia_cdi\x18\x01 \x01(\v2\".aks.flex.components.cri.NvidiaCDIH\x00R\tnvidiaCdi\x12O\n" +
+	"\x0envidia_runtime\x18\x02 \x01(\v2&.aks.flex.components.cri.NvidiaRuntimeH\x00R\rnvidiaRuntimeB\f\n" +
 	"\n" +
 	"gpu_config\"\v\n" +
-	"\tNvidiaCDI\"\x0f\n" +
-	"\rNvidiaRuntime\"\x1e\n" +
+	"\tNvidiaCDI\"2\n" +
+	"\rNvidiaRuntime\x12!\n" +
+	"\fruntime_path\x18\x01 \x01(\tR\vruntimePath\"\x1e\n" +
 	"\x1cStartContainerdServiceStatusB+Z)go.goms.io/aks/AKSFlexNode/components/crib\beditionsp\xe9\a"
 
 var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
@@ -1149,11 +1234,12 @@ var file_components_cri_action_proto_depIdxs = []int32{
 	5,  // 6: aks.flex.components.cri.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.CNIConfig
 	6,  // 7: aks.flex.components.cri.StartContainerdServiceSpec.gpu_config:type_name -> aks.flex.components.cri.GPUConfig
 	7,  // 8: aks.flex.components.cri.GPUConfig.nvidia_cdi:type_name -> aks.flex.components.cri.NvidiaCDI
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	8,  // 9: aks.flex.components.cri.GPUConfig.nvidia_runtime:type_name -> aks.flex.components.cri.NvidiaRuntime
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_components_cri_action_proto_init() }
@@ -1163,6 +1249,7 @@ func file_components_cri_action_proto_init() {
 	}
 	file_components_cri_action_proto_msgTypes[6].OneofWrappers = []any{
 		(*gPUConfig_NvidiaCdi)(nil),
+		(*gPUConfig_NvidiaRuntime)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

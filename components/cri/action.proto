@@ -62,7 +62,7 @@ message GPUConfig {
     // enable GPU support via Nvidia CDI
     NvidiaCDI nvidia_cdi = 1;
     // enable GPU support via Nvidia Container Runtime
-    // NvidiaRuntime nvidia_runtime = 2;
+    NvidiaRuntime nvidia_runtime = 2;
   }
 }
 
@@ -71,7 +71,9 @@ message NvidiaCDI {
 }
 
 message NvidiaRuntime {
-
+  // Absolute path to the nvidia-container-runtime binary.
+  // Defaults to "/usr/bin/nvidia-container-runtime".
+  string runtime_path = 1;
 }
 
 message StartContainerdServiceStatus {

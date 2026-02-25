@@ -9,6 +9,8 @@ const (
 
 	DefaultBinaryPath = "/usr/local/bin"
 
+	DefaultNvidiaContainerRuntimePath = "/usr/bin/nvidia-container-runtime"
+
 	DefaultCNIPluginsVersion = "1.5.1"
 	DefaultNPDVersion        = "v1.35.1"
 	DefaultRunCVersion       = "1.1.12"
