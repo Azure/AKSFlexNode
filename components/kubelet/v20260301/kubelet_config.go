@@ -89,12 +89,9 @@ func (s *startKubeletServiceAction) ensureKubeletEnvFile(
 ) (bool, error) {
 	kubeletConfig := spec.GetKubeletConfig()
 
-	rotateCertificates := false
-	if spec.GetNodeAuthInfo().HasBootstrapTokenCredential() {
-		// When bootstrap token is used, kubelet client certificate is rotated by kubelet itself
-		// TODO: consider making this configurable in the spec level
-		rotateCertificates = true
-	}
+	// When bootstrap token is used, kubelet client certificate is rotated by kubelet itself
+	// TODO: consider making this configurable in the spec level
+	rotateCertificates := spec.GetNodeAuthInfo().HasBootstrapTokenCredential()
 
 	// FIXME: consider migrate using kubelet config file instead of env file
 	b := &bytes.Buffer{}
