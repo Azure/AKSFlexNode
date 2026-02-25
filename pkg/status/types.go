@@ -4,6 +4,22 @@ import (
 	"time"
 )
 
+type LastUpdatedBy string
+
+const (
+	LastUpdatedByUnspecified                  LastUpdatedBy = ""
+	LastUpdatedByStatusCollectionLoop         LastUpdatedBy = "StatusCollectionLoop"
+	LastUpdatedByDriftDetectionAndRemediation LastUpdatedBy = "DriftDetectionAndRemediation"
+)
+
+type LastUpdatedReason string
+
+const (
+	LastUpdatedReasonUnspecified            LastUpdatedReason = ""
+	LastUpdatedReasonPeriodicStatusLoop     LastUpdatedReason = "perodicStatusLoop"
+	LastUpdatedReasonKubernetesVersionDrift LastUpdatedReason = "kubernetesVersionDrift"
+)
+
 // NodeStatus represents the current status and health information of the AKS edge node
 type NodeStatus struct {
 	// Component versions
@@ -21,8 +37,10 @@ type NodeStatus struct {
 	ArcStatus ArcStatus `json:"arcStatus"`
 
 	// Metadata
-	LastUpdated  time.Time `json:"lastUpdated"`
-	AgentVersion string    `json:"agentVersion"`
+	LastUpdated       time.Time         `json:"lastUpdated"`
+	LastUpdatedBy     LastUpdatedBy     `json:"lastUpdatedBy,omitempty"`
+	LastUpdatedReason LastUpdatedReason `json:"lastUpdatedReason,omitempty"`
+	AgentVersion      string            `json:"agentVersion"`
 }
 
 // ArcStatus contains Azure Arc machine registration and connection status
