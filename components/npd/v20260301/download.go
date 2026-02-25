@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -13,7 +14,6 @@ import (
 	"go.goms.io/aks/AKSFlexNode/components/api"
 	"go.goms.io/aks/AKSFlexNode/components/npd"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
@@ -56,9 +56,9 @@ func (d *downloadNodeProblemDetectorAction) ApplyAction(
 	}
 
 	st := npd.DownloadNodeProblemDetectorStatus_builder{
-		DownloadUrl: utils.Ptr(downloadURL),
-		BinaryPath:  utils.Ptr(npdBinaryPath),
-		ConfigPath:  utils.Ptr(npdConfigPath),
+		DownloadUrl: to.Ptr(downloadURL),
+		BinaryPath:  to.Ptr(npdBinaryPath),
+		ConfigPath:  to.Ptr(npdConfigPath),
 	}
 
 	settings.SetStatus(st.Build())

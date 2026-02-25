@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/blang/semver/v4"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,7 +17,6 @@ import (
 	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
@@ -78,10 +78,10 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 	runcURL := constructRuncDownloadURL(spec.GetRuncVersion())
 
 	st := cri.DownloadCRIBinariesStatus_builder{
-		ContainerdDownloadUrl: utils.Ptr(containerdURL),
-		ContainerdPath:        utils.Ptr(containerdBinPath),
-		RuncDownloadUrl:       utils.Ptr(runcURL),
-		RuncPath:              utils.Ptr(runcBinPath),
+		ContainerdDownloadUrl: to.Ptr(containerdURL),
+		ContainerdPath:        to.Ptr(containerdBinPath),
+		RuncDownloadUrl:       to.Ptr(runcURL),
+		RuncPath:              to.Ptr(runcBinPath),
 	}
 
 	if !containerdVersionMatch(spec.GetContainerdVersion()) {

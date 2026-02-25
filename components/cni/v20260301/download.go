@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -14,7 +15,6 @@ import (
 	"go.goms.io/aks/AKSFlexNode/components/cni"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
@@ -56,8 +56,8 @@ func (d *downloadCNIBinariesAction) ApplyAction(
 	downloadURL := d.constructDownloadURL(spec.GetCniPluginsVersion())
 
 	st := cni.DownloadCNIBinariesStatus_builder{
-		CniPluginsDownloadUrl: utils.Ptr(downloadURL),
-		CniPluginsPath:        utils.Ptr(config.DefaultCNIBinDir),
+		CniPluginsDownloadUrl: to.Ptr(downloadURL),
+		CniPluginsPath:        to.Ptr(config.DefaultCNIBinDir),
 	}
 
 	needDownload := !hasRequiredPlugins() || !cniPluginsVersionMatch(ctx, spec.GetCniPluginsVersion())
