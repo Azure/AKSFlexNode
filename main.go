@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/cmd/apply"
+	"go.goms.io/aks/AKSFlexNode/pkg/cmd/token"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/logger"
 )
@@ -34,6 +35,7 @@ func main() {
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
 	rootCmd.AddCommand(apply.Command)
+	rootCmd.AddCommand(token.Command)
 
 	// Set up context with signal handling
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -46,6 +48,9 @@ func main() {
 			return nil
 		}
 		if cmd.Name() == "apply" {
+			return nil
+		}
+		if cmd.Name() == "kubelogin" {
 			return nil
 		}
 
