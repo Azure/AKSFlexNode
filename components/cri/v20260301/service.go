@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"os"
+	"path/filepath"
 	"text/template"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -24,8 +25,10 @@ var assets embed.FS
 var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "assets/*"))
 
 const (
-	systemdUnitContainerd = "containerd.service"
-	containerdConfigPath  = "/etc/containerd/config.toml"
+	systemdUnitContainerd   = "containerd.service"
+	containerdConfigPath    = "/etc/containerd/config.toml"
+	containerdConfDropInDir = "/etc/containerd/conf.d"
+	nvidiaCDIDropInName     = "99-nvidia-cdi.toml"
 )
 
 type startContainerdServiceAction struct {
@@ -61,7 +64,12 @@ func (s *startContainerdServiceAction) ApplyAction(
 		return nil, err
 	}
 
-	needsRestart := configUpdated // if config is updated, we need to restart containerd to apply new config
+	cdiUpdated, err := s.ensureNvidiaCDIConfig(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	needsRestart := configUpdated || cdiUpdated // if config is updated, we need to restart containerd to apply new config
 	if err := s.ensureSystemdUnit(ctx, needsRestart); err != nil {
 		return nil, err
 	}
@@ -153,4 +161,52 @@ func (s *startContainerdServiceAction) updateSystemdUnit(ctx context.Context, re
 	}
 
 	return nil
+}
+
+// ensureNvidiaCDIConfig writes or removes the NVIDIA CDI containerd drop-in config
+// based on whether NvidiaCDI is configured in the GPU config.
+// When enabled, it writes a low-priority (99-) drop-in to /etc/containerd/conf.d/
+// that enables CDI support and adds an nvidia runtime class.
+func (s *startContainerdServiceAction) ensureNvidiaCDIConfig(
+	spec *cri.StartContainerdServiceSpec,
+) (updated bool, err error) {
+	dropInPath := filepath.Join(containerdConfDropInDir, nvidiaCDIDropInName)
+
+	if spec.GetGpuConfig().GetNvidiaCdi() == nil {
+		// CDI not requested - remove the drop-in if it exists
+		err := os.Remove(dropInPath)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return false, nil
+		case err != nil:
+			return false, err
+		default:
+			return true, nil
+		}
+	}
+
+	// CDI requested - render and write the drop-in config
+	expectedConfig := &bytes.Buffer{}
+	if err := assetsTemplate.ExecuteTemplate(expectedConfig, nvidiaCDIDropInName, map[string]any{
+		"RuncBinaryPath": runcBinPath,
+	}); err != nil {
+		return false, err
+	}
+
+	currentConfig, err := os.ReadFile(dropInPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Drop-in doesn't exist, fall through to create it
+	case err != nil:
+		return false, err
+	default:
+		if bytes.Equal(bytes.TrimSpace(currentConfig), bytes.TrimSpace(expectedConfig.Bytes())) {
+			return false, nil
+		}
+	}
+
+	if err := utilio.InstallFile(dropInPath, expectedConfig, 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }

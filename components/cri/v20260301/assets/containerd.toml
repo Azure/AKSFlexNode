@@ -1,3 +1,5 @@
+imports = ["/etc/containerd/conf.d/*.toml"]
+
 oom_score = 0
 version = 2
 
