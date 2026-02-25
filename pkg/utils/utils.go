@@ -1,18 +1,13 @@
 package utils
 
 import (
-	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
 )
 
 // RunSystemCommand executes a system command for privileged operations.
@@ -38,12 +33,6 @@ func FileExists(path string) bool {
 	return !os.IsNotExist(err)
 }
 
-// FileExistsAndValid checks if a file exists and is not empty (useful for binaries)
-func FileExistsAndValid(path string) bool {
-	stat, err := os.Stat(path)
-	return err == nil && stat.Size() > 0
-}
-
 // IsServiceActive checks if a systemd service is active
 func IsServiceActive(serviceName string) bool {
 	output, err := RunCommandWithOutput("systemctl", "is-active", serviceName)
@@ -67,16 +56,6 @@ func StopService(serviceName string) error {
 // DisableService disables a systemd service
 func DisableService(serviceName string) error {
 	return RunSystemCommand("systemctl", "disable", serviceName)
-}
-
-// EnableAndStartService enables and starts a systemd service
-func EnableAndStartService(serviceName string) error {
-	return RunSystemCommand("systemctl", "enable", "--now", serviceName)
-}
-
-// RestartService restarts a systemd service
-func RestartService(serviceName string) error {
-	return RunSystemCommand("systemctl", "restart", serviceName)
 }
 
 // ReloadSystemd reloads systemd daemon configuration
@@ -125,35 +104,6 @@ func RunCleanupCommand(path string) error {
 	return nil
 }
 
-// WaitForService waits until a systemd service is active or timeout occurs
-func WaitForService(serviceName string, timeout time.Duration, logger *logrus.Logger) error {
-	logger.Debugf("Waiting for service %s to be active (timeout: %v)", serviceName, timeout)
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for service %s to start", serviceName)
-		case <-ticker.C:
-			// Check if service is active
-			if err := RunSystemCommand("systemctl", "is-active", serviceName); err == nil {
-				logger.Debugf("Service %s is active", serviceName)
-				return nil
-			}
-
-			// Log current status for debugging
-			if output, err := RunCommandWithOutput("systemctl", "status", serviceName); err == nil {
-				logger.Debugf("Service %s status: %s", serviceName, output)
-			}
-		}
-	}
-}
-
 // DirectoryExists checks if a directory exists
 func DirectoryExists(path string) bool {
 	info, err := os.Stat(path)
@@ -161,29 +111,6 @@ func DirectoryExists(path string) bool {
 		return false
 	}
 	return info.IsDir()
-}
-
-// BinaryExists checks if a binary exists in PATH using 'which' command
-func BinaryExists(binaryName string) bool {
-	_, err := RunCommandWithOutput("which", binaryName)
-	return err == nil
-}
-
-// RemoveFiles removes multiple files, continuing on errors and logging results
-func RemoveFiles(files []string, logger *logrus.Logger) []error {
-	var errors []error
-
-	for _, file := range files {
-		logger.Debugf("Removing file: %s", file)
-		if err := RunSystemCommand("rm", "-f", file); err != nil {
-			logger.Debugf("Failed to remove file %s: %v (may not exist)", file, err)
-			errors = append(errors, fmt.Errorf("failed to remove %s: %w", file, err))
-		} else {
-			logger.Debugf("Removed file: %s", file)
-		}
-	}
-
-	return errors
 }
 
 // RemoveDirectories removes multiple directories recursively, continuing on errors
@@ -208,42 +135,4 @@ func RemoveDirectories(directories []string, logger *logrus.Logger) []error {
 	}
 
 	return errors
-}
-
-// ExtractClusterInfo extracts server URL and CA certificate data from kubeconfig
-func ExtractClusterInfo(kubeconfigData []byte) (string, string, error) {
-	config, err := clientcmd.Load(kubeconfigData)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse kubeconfig: %w", err)
-	}
-
-	// For Azure AKS admin configs, there's typically only one cluster
-	if len(config.Clusters) == 0 {
-		return "", "", fmt.Errorf("no clusters found in kubeconfig")
-	}
-
-	// Get the first (and usually only) cluster
-	var cluster *api.Cluster
-	var clusterName string
-	for name, c := range config.Clusters {
-		cluster = c
-		clusterName = name
-		break
-	}
-
-	logrus.Debugf("Using cluster: %s\n", clusterName)
-
-	// Extract what we need
-	if cluster.Server == "" {
-		return "", "", fmt.Errorf("server URL is empty")
-	}
-
-	if len(cluster.CertificateAuthorityData) == 0 {
-		return "", "", fmt.Errorf("CA certificate data is empty")
-	}
-
-	// CertificateAuthorityData should be base64-encoded for kubeconfig
-	// The field contains raw certificate bytes, so we need to encode them
-	caCertDataB64 := base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
-	return cluster.Server, caCertDataB64, nil
 }

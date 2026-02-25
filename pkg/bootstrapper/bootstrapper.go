@@ -7,14 +7,6 @@ import (
 	"google.golang.org/grpc"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/components/arc"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/containerd"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kube_binaries"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/npd"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/runc"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/services"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
@@ -44,6 +36,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		arc.NewInstaller(b.logger), // Setup Arc
 
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
+		// FIXME: confirm if it's really needed to update the resolved config
 		// system_configuration.NewInstaller(b.logger), // Configure system (early)
 
 		// TODO: run these steps in parallel
@@ -55,8 +48,6 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		startContainerdService.Executor("start-containerd", b.componentsAPIConn),
 		startKubelet.Executor("start-kubelet", b.componentsAPIConn),
 		startNPD.Executor("start-npd", b.componentsAPIConn),
-
-		// kubelet.NewInstaller(b.logger), // Configure kubelet service with Arc MSI auth
 	}
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")
@@ -65,15 +56,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 // Unbootstrap executes all cleanup steps sequentially (in reverse order of bootstrap)
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
 	steps := []Executor{
-		services.NewUnInstaller(b.logger),             // Stop services first
-		npd.NewUnInstaller(b.logger),                  // Uninstall Node Problem Detector
-		kubelet.NewUnInstaller(b.logger),              // Clean kubelet configuration
-		cni.NewUnInstaller(b.logger),                  // Clean CNI configs
-		kube_binaries.NewUnInstaller(b.logger),        // Uninstall k8s binaries
-		containerd.NewUnInstaller(b.logger),           // Uninstall containerd binary
-		runc.NewUnInstaller(b.logger),                 // Uninstall runc binary
-		system_configuration.NewUnInstaller(b.logger), // Clean system settings
-		arc.NewUnInstaller(b.logger),                  // Uninstall Arc (after cleanup)
+		arc.NewUnInstaller(b.logger), // Uninstall Arc (after cleanup)
 	}
 
 	return b.ExecuteSteps(ctx, steps, "unbootstrap")
