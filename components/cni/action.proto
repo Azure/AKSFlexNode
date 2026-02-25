@@ -1,0 +1,24 @@
+edition = "2024";
+
+package aks.flex.components.cni;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/cni";
+
+import "components/api/api.proto";
+
+message DownloadCNIBinaries {
+  api.Metadata metadata = 1;
+
+  DownloadCNIBinariesSpec spec = 2;
+
+  DownloadCNIBinariesStatus status = 3;
+}
+
+message DownloadCNIBinariesSpec {
+  string cni_plugins_version = 1;
+}
+
+message DownloadCNIBinariesStatus {
+  string cni_plugins_download_url = 1;
+  string cni_plugins_path = 2;
+}

@@ -46,6 +46,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
 		// system_configuration.NewInstaller(b.logger), // Configure system (early)
 
+		// TODO: run these steps in parallel
+		downloadCNIBinaries.Executor("download-cni-binaries", b.componentsAPIConn),
 		downloadCRIBinaries.Executor("download-cri-binaries", b.componentsAPIConn),
 		downloadKubeBinaries.Executor("download-kube-binaries", b.componentsAPIConn),
 		downloadNPD.Executor("download-npd", b.componentsAPIConn),

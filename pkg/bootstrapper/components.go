@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"go.goms.io/aks/AKSFlexNode/components/api"
+	"go.goms.io/aks/AKSFlexNode/components/cni"
 	"go.goms.io/aks/AKSFlexNode/components/cri"
 	"go.goms.io/aks/AKSFlexNode/components/kubebins"
 	"go.goms.io/aks/AKSFlexNode/components/kubelet"
@@ -141,6 +142,23 @@ var downloadKubeBinaries resolveActionFunc[*kubebins.DownloadKubeBinaries] = fun
 	}.Build()
 
 	return kubebins.DownloadKubeBinaries_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
+}
+
+var downloadCNIBinaries resolveActionFunc[*cni.DownloadCNIBinaries] = func(
+	name string,
+	cfg *config.Config,
+) (*cni.DownloadCNIBinaries, error) {
+	spec := cni.DownloadCNIBinariesSpec_builder{
+		CniPluginsVersion: ptrWithDefault(
+			cfg.CNI.Version,
+			config.DefaultCNIPluginsVersion,
+		),
+	}.Build()
+
+	return cni.DownloadCNIBinaries_builder{
 		Metadata: componentAction(name),
 		Spec:     spec,
 	}.Build(), nil
