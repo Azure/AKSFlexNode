@@ -59,21 +59,27 @@ message CNIConfig {
 
 message GPUConfig {
   oneof gpu_config {
-    // enable GPU support via Nvidia CDI
-    NvidiaCDI nvidia_cdi = 1;
     // enable GPU support via Nvidia Container Runtime
-    NvidiaRuntime nvidia_runtime = 2;
+    NvidiaRuntime nvidia_runtime = 1;
   }
-}
-
-message NvidiaCDI {
-
 }
 
 message NvidiaRuntime {
   // Absolute path to the nvidia-container-runtime binary.
   // Defaults to "/usr/bin/nvidia-container-runtime".
   string runtime_path = 1;
+
+  // The runtime class name to use for GPU workloads.
+  // Defaults to "nvidia".
+  // NOTE: if disable_set_as_default_runtime is false, user is responsible
+  // for ensuring the runtime class name object is being created in the cluster,
+  // and the workload spec is configured to use the runtime class name,
+  // otherwise GPU workload will fail to run.
+  string runtime_class_name = 2;
+
+  // Disable the behavior of settings nvidia-container-runtime as the
+  // default runtime in containerd config.
+  bool disable_set_as_default_runtime = 3;
 }
 
 message StartContainerdServiceStatus {

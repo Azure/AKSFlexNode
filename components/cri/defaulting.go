@@ -69,11 +69,17 @@ func (x *NvidiaRuntime) Defaulting() {
 	if !x.HasRuntimePath() {
 		x.SetRuntimePath(config.DefaultNvidiaContainerRuntimePath)
 	}
+	if !x.HasRuntimeClassName() {
+		x.SetRuntimeClassName(config.DefaultNvidiaRuntimeClassName)
+	}
 }
 
 func (x *NvidiaRuntime) Validate() error {
 	if !x.HasRuntimePath() {
 		return status.Error(codes.InvalidArgument, "NvidiaRuntime RuntimePath is required")
+	}
+	if !x.HasRuntimeClassName() {
+		return status.Error(codes.InvalidArgument, "NvidiaRuntime RuntimeClassName is required")
 	}
 	return nil
 }

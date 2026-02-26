@@ -10,6 +10,7 @@ const (
 	DefaultBinaryPath = "/usr/local/bin"
 
 	DefaultNvidiaContainerRuntimePath = "/usr/bin/nvidia-container-runtime"
+	DefaultNvidiaRuntimeClassName     = "nvidia"
 
 	DefaultCNIPluginsVersion = "1.5.1"
 	DefaultCNISpecVersion    = "0.3.1"

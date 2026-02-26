@@ -28,7 +28,6 @@ const (
 	systemdUnitContainerd   = "containerd.service"
 	containerdConfigPath    = "/etc/containerd/config.toml"
 	containerdConfDropInDir = "/etc/containerd/conf.d"
-	nvidiaCDIDropInName     = "99-nvidia-cdi.toml"
 	nvidiaRuntimeDropInName = "99-nvidia-runtime.toml"
 )
 
@@ -65,12 +64,12 @@ func (s *startContainerdServiceAction) ApplyAction(
 		return nil, err
 	}
 
-	cdiUpdated, err := s.ensureGPUDropInConfigs(spec)
+	gpuUpdated, err := s.ensureGPUDropInConfigs(spec)
 	if err != nil {
 		return nil, err
 	}
 
-	needsRestart := configUpdated || cdiUpdated // if config is updated, we need to restart containerd to apply new config
+	needsRestart := configUpdated || gpuUpdated
 	if err := s.ensureSystemdUnit(ctx, needsRestart); err != nil {
 		return nil, err
 	}
@@ -165,36 +164,27 @@ func (s *startContainerdServiceAction) updateSystemdUnit(ctx context.Context, re
 }
 
 // ensureGPUDropInConfigs manages GPU-related containerd drop-in configs.
-// Based on the GPUConfig oneof, it ensures the correct drop-in is present and
-// the other is absent. The two modes are mutually exclusive:
-//   - NvidiaCDI: enables CDI device injection (modern approach)
-//   - NvidiaRuntime: uses nvidia-container-runtime binary as a runc shim (legacy approach)
-//
-// When no GPU config is set, both drop-ins are removed.
+// Based on the GPUConfig oneof, it ensures the correct drop-in is present.
+// When no GPU config is set, the drop-in is removed.
 func (s *startContainerdServiceAction) ensureGPUDropInConfigs(
 	spec *cri.StartContainerdServiceSpec,
 ) (updated bool, err error) {
 	gpuConfig := spec.GetGpuConfig()
 
-	cdiUpdated, err := s.ensureDropInConfig(
-		nvidiaCDIDropInName,
-		gpuConfig.GetNvidiaCdi() != nil,
-		map[string]any{"RuncBinaryPath": runcBinPath},
-	)
-	if err != nil {
-		return false, err
-	}
-
 	runtimeUpdated, err := s.ensureDropInConfig(
 		nvidiaRuntimeDropInName,
 		gpuConfig.GetNvidiaRuntime() != nil,
-		map[string]any{"RuntimePath": gpuConfig.GetNvidiaRuntime().GetRuntimePath()},
+		map[string]any{
+			"RuntimePath":                gpuConfig.GetNvidiaRuntime().GetRuntimePath(),
+			"RuntimeClassName":           gpuConfig.GetNvidiaRuntime().GetRuntimeClassName(),
+			"DisableSetAsDefaultRuntime": gpuConfig.GetNvidiaRuntime().GetDisableSetAsDefaultRuntime(),
+		},
 	)
 	if err != nil {
 		return false, err
 	}
 
-	return cdiUpdated || runtimeUpdated, nil
+	return runtimeUpdated, nil
 }
 
 // ensureDropInConfig writes or removes a containerd drop-in config file.
