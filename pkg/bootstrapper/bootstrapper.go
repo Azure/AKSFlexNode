@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/components/arc"
+	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
@@ -37,7 +38,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
 		// FIXME: confirm if it's really needed to update the resolved config
-		// system_configuration.NewInstaller(b.logger), // Configure system (early)
+		system_configuration.NewInstaller(b.logger), // Configure system (early)
 
 		// TODO: run these steps in parallel
 		downloadCNIBinaries.Executor("download-cni-binaries", b.componentsAPIConn),

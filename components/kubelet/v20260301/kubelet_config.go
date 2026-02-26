@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 
 	"go.goms.io/aks/AKSFlexNode/components/kubelet"
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -25,7 +26,7 @@ func mapPairsToString(pairs map[string]string, kvSep, pairSep string) string {
 }
 
 func fileHasIdenticalContent(filePath string, desiredContent []byte) (bool, error) {
-	actualContent, err := os.ReadFile(filePath)
+	actualContent, err := os.ReadFile(filePath) //#nosec - file path has been validated by caller
 	switch {
 	case os.IsNotExist(err):
 		// File does not exist, so it does not have identical content
@@ -45,11 +46,6 @@ func (s *startKubeletServiceAction) ensureKubeletConfig(
 		return false, err
 	}
 
-	kubeletEnvChanged, err := s.ensureKubeletEnvFile(spec)
-	if err != nil {
-		return false, err
-	}
-
 	bootstrapKubeConfigChanged, err := s.ensureBootstrapKubeconfig(spec)
 	if err != nil {
 		return false, err
@@ -61,7 +57,6 @@ func (s *startKubeletServiceAction) ensureKubeletConfig(
 	}
 
 	configsChanged := apiServerCAChanged ||
-		kubeletEnvChanged ||
 		bootstrapKubeConfigChanged ||
 		kubeletKubeconfigChanged
 	return configsChanged, nil
@@ -84,42 +79,6 @@ func (s *startKubeletServiceAction) ensureAPIServerCA(
 	return true, nil
 }
 
-func (s *startKubeletServiceAction) ensureKubeletEnvFile(
-	spec *kubelet.StartKubeletServiceSpec,
-) (bool, error) {
-	kubeletConfig := spec.GetKubeletConfig()
-
-	// FIXME: consider migrate using kubelet config file instead of env file
-	b := &bytes.Buffer{}
-	if err := assetsTemplate.ExecuteTemplate(b, "kubelet.env", map[string]any{
-		"NodeLabels":           mapPairsToString(spec.GetNodeLabels(), "=", ","),
-		"Verbosity":            kubeletConfig.GetVerbosity(),
-		"ClientCAFile":         apiServerClientCAPath, // prepared in ensureAPIServerCA
-		"ClusterDNS":           kubeletConfig.GetClusterDns(),
-		"EvictionHard":         mapPairsToString(kubeletConfig.GetEvictionHard(), "<", ","),
-		"KubeReserved":         mapPairsToString(kubeletConfig.GetKubeReserved(), "=", ","),
-		"ImageGCHighThreshold": kubeletConfig.GetImageGcHighThreshold(),
-		"ImageGCLowThreshold":  kubeletConfig.GetImageGcLowThreshold(),
-		"MaxPods":              kubeletConfig.GetMaxPods(),
-		"RotateCertificates":   true,
-	}); err != nil {
-		return false, err
-	}
-
-	desiredContent := b.Bytes()
-	if idential, err := fileHasIdenticalContent(envFileKubelet, desiredContent); err != nil {
-		return false, err
-	} else if idential {
-		return false, nil
-	}
-
-	// FIXME: consider using 0640?
-	if err := utilio.WriteFile(envFileKubelet, desiredContent, 0644); err != nil {
-		return false, fmt.Errorf("write %q: %w", envFileKubelet, err)
-	}
-	return true, nil
-}
-
 func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	spec *kubelet.StartKubeletServiceSpec,
 ) (bool, error) {
@@ -137,10 +96,12 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	// - https://github.com/Azure/kubelogin/blob/main/pkg/internal/token/options.go
 	authInfoSettings := &api.AuthInfo{
 		Exec: &api.ExecConfig{
-			Command: selfBinary,
+			APIVersion: "client.authentication.k8s.io/v1",
+			Command:    selfBinary,
 			Args: []string{
 				"token", "kubelogin",
 			},
+			InteractiveMode: api.NeverExecInteractiveMode,
 		},
 	}
 	switch {
@@ -194,15 +155,15 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 		return false, err
 	}
 
-	if idential, err := fileHasIdenticalContent(kubeletKubeconfigPath, desiredContent); err != nil {
+	if idential, err := fileHasIdenticalContent(config.KubeletKubeconfigPath, desiredContent); err != nil {
 		return false, err
 	} else if idential {
 		return false, nil
 	}
 
 	// FIXME: consider using 0640?
-	if err := utilio.WriteFile(kubeletKubeconfigPath, desiredContent, 0644); err != nil {
-		return false, fmt.Errorf("write %q: %w", kubeletKubeconfigPath, err)
+	if err := utilio.WriteFile(config.KubeletKubeconfigPath, desiredContent, 0644); err != nil {
+		return false, fmt.Errorf("write %q: %w", config.KubeletKubeconfigPath, err)
 	}
 	return true, nil
 }
@@ -224,15 +185,15 @@ func (s *startKubeletServiceAction) ensureBootstrapKubeconfig(
 		return false, err
 	}
 
-	if idential, err := fileHasIdenticalContent(bootstrapKubeconfigPath, desiredContent); err != nil {
+	if idential, err := fileHasIdenticalContent(config.KubeletBootstrapKubeconfigPath, desiredContent); err != nil {
 		return false, err
 	} else if idential {
 		return false, nil
 	}
 
 	// FIXME: consider using 0640?
-	if err := utilio.WriteFile(bootstrapKubeconfigPath, desiredContent, 0644); err != nil {
-		return false, fmt.Errorf("write %q: %w", bootstrapKubeconfigPath, err)
+	if err := utilio.WriteFile(config.KubeletBootstrapKubeconfigPath, desiredContent, 0644); err != nil {
+		return false, fmt.Errorf("write %q: %w", config.KubeletBootstrapKubeconfigPath, err)
 	}
 	return true, nil
 }

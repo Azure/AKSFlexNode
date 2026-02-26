@@ -22,11 +22,8 @@ var assets embed.FS
 var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "assets/*"))
 
 const (
-	systemdUnitKubelet      = "kubelet.service"
-	envFileKubelet          = "/etc/default/kubelet"
-	apiServerClientCAPath   = "/etc/kubernetes/pki/apiserver-client-ca.crt"
-	kubeletKubeconfigPath   = "/var/lib/kubelet/kubeconfig"
-	bootstrapKubeconfigPath = "/var/lib/kubelet/bootstrap-kubeconfig"
+	systemdUnitKubelet    = "kubelet.service"
+	apiServerClientCAPath = "/etc/kubernetes/pki/apiserver-client-ca.crt"
 )
 
 type startKubeletServiceAction struct {
@@ -67,7 +64,7 @@ func (s *startKubeletServiceAction) ApplyAction(
 	}
 
 	needsRestart := kubeletConfigUpdated // if kubelet config is updated, we need to restart the service to pick up the new config
-	if err := s.ensureSystemdUnit(ctx, needsRestart); err != nil {
+	if err := s.ensureSystemdUnit(ctx, needsRestart, spec); err != nil {
 		return nil, err
 	}
 
