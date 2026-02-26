@@ -46,11 +46,6 @@ func (s *startKubeletServiceAction) ensureKubeletConfig(
 		return false, err
 	}
 
-	kubeletEnvChanged, err := s.ensureKubeletEnvFile(spec)
-	if err != nil {
-		return false, err
-	}
-
 	bootstrapKubeConfigChanged, err := s.ensureBootstrapKubeconfig(spec)
 	if err != nil {
 		return false, err
@@ -62,7 +57,6 @@ func (s *startKubeletServiceAction) ensureKubeletConfig(
 	}
 
 	configsChanged := apiServerCAChanged ||
-		kubeletEnvChanged ||
 		bootstrapKubeConfigChanged ||
 		kubeletKubeconfigChanged
 	return configsChanged, nil
@@ -81,46 +75,6 @@ func (s *startKubeletServiceAction) ensureAPIServerCA(
 	// FIXME: consider using 0640?
 	if err := utilio.WriteFile(apiServerClientCAPath, desiredContent, 0644); err != nil {
 		return false, fmt.Errorf("write %q: %w", apiServerClientCAPath, err)
-	}
-	return true, nil
-}
-
-func (s *startKubeletServiceAction) ensureKubeletEnvFile(
-	spec *kubelet.StartKubeletServiceSpec,
-) (bool, error) {
-	kubeletConfig := spec.GetKubeletConfig()
-
-	// When bootstrap token is used, kubelet client certificate is rotated by kubelet itself
-	// TODO: consider making this configurable in the spec level
-	rotateCertificates := spec.GetNodeAuthInfo().HasBootstrapTokenCredential()
-
-	// FIXME: consider migrate using kubelet config file instead of env file
-	b := &bytes.Buffer{}
-	if err := assetsTemplate.ExecuteTemplate(b, "kubelet.env", map[string]any{
-		"NodeLabels":           mapPairsToString(spec.GetNodeLabels(), "=", ","),
-		"Verbosity":            kubeletConfig.GetVerbosity(),
-		"ClientCAFile":         apiServerClientCAPath, // prepared in ensureAPIServerCA
-		"ClusterDNS":           kubeletConfig.GetClusterDns(),
-		"EvictionHard":         mapPairsToString(kubeletConfig.GetEvictionHard(), "<", ","),
-		"KubeReserved":         mapPairsToString(kubeletConfig.GetKubeReserved(), "=", ","),
-		"ImageGCHighThreshold": kubeletConfig.GetImageGcHighThreshold(),
-		"ImageGCLowThreshold":  kubeletConfig.GetImageGcLowThreshold(),
-		"MaxPods":              kubeletConfig.GetMaxPods(),
-		"RotateCertificates":   rotateCertificates,
-	}); err != nil {
-		return false, err
-	}
-
-	desiredContent := b.Bytes()
-	if idential, err := fileHasIdenticalContent(envFileKubelet, desiredContent); err != nil {
-		return false, err
-	} else if idential {
-		return false, nil
-	}
-
-	// FIXME: consider using 0640?
-	if err := utilio.WriteFile(envFileKubelet, desiredContent, 0644); err != nil {
-		return false, fmt.Errorf("write %q: %w", envFileKubelet, err)
 	}
 	return true, nil
 }

@@ -23,7 +23,6 @@ var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "asset
 
 const (
 	systemdUnitKubelet    = "kubelet.service"
-	envFileKubelet        = "/etc/default/kubelet"
 	apiServerClientCAPath = "/etc/kubernetes/pki/apiserver-client-ca.crt"
 )
 
