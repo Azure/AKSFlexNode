@@ -103,14 +103,7 @@ func resolveExecCredentialFromEnv() (runtime.Object, error) {
 		)
 	}
 
-	// Explicitly convert object here so that we can return a nicer error message above for when the
-	// data represents an invalid type.
-	var execCredential clientauthentication.ExecCredential
-	if err := scheme.Convert(obj, &execCredential, nil); err != nil {
-		return nil, fmt.Errorf("cannot convert to ExecCredential: %w", err)
-	}
-
-	return &execCredential, nil
+	return obj, nil
 }
 
 func outputToken(out io.Writer, ec runtime.Object, accessToken token.AccessToken) error {
