@@ -147,6 +147,7 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 			Args: []string{
 				"token", "kubelogin",
 			},
+			InteractiveMode: api.NeverExecInteractiveMode,
 		},
 	}
 	switch {
