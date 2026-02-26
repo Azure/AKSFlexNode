@@ -11,9 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/pkg/apis/clientauthentication"
+	"k8s.io/client-go/pkg/apis/clientauthentication/install"
 	clientauthenticationv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	clientauthenticationv1beta1 "k8s.io/client-go/pkg/apis/clientauthentication/v1beta1"
-	"k8s.io/client-go/tools/auth/exec"
 )
 
 const aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
@@ -63,8 +66,17 @@ func run(ctx context.Context, out io.Writer) error {
 
 const execInfoEnv = "KUBERNETES_EXEC_INFO"
 
+var scheme = runtime.NewScheme()
+var codecs = serializer.NewCodecFactory(scheme)
+
+func init() {
+	install.Install(scheme)
+}
+
 func resolveExecCredentialFromEnv() (runtime.Object, error) {
-	if os.Getenv(execInfoEnv) == "" {
+	data := os.Getenv(execInfoEnv)
+
+	if data == "" {
 		// we allow the env var to be empty for local testing purposes
 		return &clientauthenticationv1.ExecCredential{
 			TypeMeta: metav1.TypeMeta{
@@ -74,8 +86,31 @@ func resolveExecCredentialFromEnv() (runtime.Object, error) {
 		}, nil
 	}
 
-	ec, _, err := exec.LoadExecCredentialFromEnv()
-	return ec, err
+	obj, gvk, err := codecs.UniversalDeserializer().Decode([]byte(data), nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+
+	expectedGK := schema.GroupKind{
+		Group: clientauthentication.SchemeGroupVersion.Group,
+		Kind:  "ExecCredential",
+	}
+	if gvk.GroupKind() != expectedGK {
+		return nil, fmt.Errorf(
+			"invalid group/kind: wanted %s, got %s",
+			expectedGK.String(),
+			gvk.GroupKind().String(),
+		)
+	}
+
+	// Explicitly convert object here so that we can return a nicer error message above for when the
+	// data represents an invalid type.
+	var execCredential clientauthentication.ExecCredential
+	if err := scheme.Convert(obj, &execCredential, nil); err != nil {
+		return nil, fmt.Errorf("cannot convert to ExecCredential: %w", err)
+	}
+
+	return &execCredential, nil
 }
 
 func outputToken(out io.Writer, ec runtime.Object, accessToken token.AccessToken) error {
