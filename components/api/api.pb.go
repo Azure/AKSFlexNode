@@ -7,11 +7,10 @@
 package api
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -247,7 +246,7 @@ const file_components_api_api_proto_rawDesc = "" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\"E\n" +
 	"\x04Base\x12=\n" +
-	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadataB+Z)github.com/Azure/AKSFlexNode/components/apib\beditionsp\xe9\a"
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadataB-Z+github.com/Azure/AKSFlexNode/components/apib\beditionsp\xe9\a"
 
 var file_components_api_api_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_components_api_api_proto_goTypes = []any{

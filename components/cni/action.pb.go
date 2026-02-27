@@ -7,12 +7,11 @@
 package cni
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -590,7 +589,7 @@ const file_components_cni_action_proto_rawDesc = "" +
 	"\x06status\x18\x03 \x01(\v2+.aks.flex.components.cni.ConfigureCNIStatusR\x06status\"<\n" +
 	"\x10ConfigureCNISpec\x12(\n" +
 	"\x10cni_spec_version\x18\x01 \x01(\tR\x0ecniSpecVersion\"\x14\n" +
-	"\x12ConfigureCNIStatusB+Z)github.com/Azure/AKSFlexNode/components/cnib\beditionsp\xe9\a"
+	"\x12ConfigureCNIStatusB-Z+github.com/Azure/AKSFlexNode/components/cnib\beditionsp\xe9\a"
 
 var file_components_cni_action_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_components_cni_action_proto_goTypes = []any{

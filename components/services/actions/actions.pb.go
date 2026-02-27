@@ -7,12 +7,11 @@
 package actions
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -168,7 +167,7 @@ const file_components_services_actions_actions_proto_rawDesc = "" +
 	"\x13ApplyActionResponse\x12(\n" +
 	"\x04item\x18\x01 \x01(\v2\x14.google.protobuf.AnyR\x04item2\x97\x01\n" +
 	"\x0eActionsService\x12\x84\x01\n" +
-	"\vApplyAction\x128.aks.flex.components.services.actions.ApplyActionRequest\x1a9.aks.flex.components.services.actions.ApplyActionResponse\"\x00B8Z6github.com/Azure/AKSFlexNode/components/services/actionsb\beditionsp\xe9\a"
+	"\vApplyAction\x128.aks.flex.components.services.actions.ApplyActionRequest\x1a9.aks.flex.components.services.actions.ApplyActionResponse\"\x00B:Z8github.com/Azure/AKSFlexNode/components/services/actionsb\beditionsp\xe9\a"
 
 var file_components_services_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_components_services_actions_actions_proto_goTypes = []any{

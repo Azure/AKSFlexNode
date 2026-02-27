@@ -7,12 +7,11 @@
 package linux
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -236,7 +235,7 @@ const file_components_linux_action_proto_rawDesc = "" +
 	"\x04spec\x18\x02 \x01(\v2..aks.flex.components.linux.ConfigureBaseOSSpecR\x04spec\x12H\n" +
 	"\x06status\x18\x03 \x01(\v20.aks.flex.components.linux.ConfigureBaseOSStatusR\x06status\"\x15\n" +
 	"\x13ConfigureBaseOSSpec\"\x17\n" +
-	"\x15ConfigureBaseOSStatusB-Z+github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
+	"\x15ConfigureBaseOSStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
 
 var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_components_linux_action_proto_goTypes = []any{

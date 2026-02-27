@@ -7,12 +7,11 @@
 package cri
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -875,7 +874,7 @@ const file_components_cri_action_proto_rawDesc = "" +
 	"\abin_dir\x18\x01 \x01(\tR\x06binDir\x12\x1d\n" +
 	"\n" +
 	"config_dir\x18\x02 \x01(\tR\tconfigDir\"\x1e\n" +
-	"\x1cStartContainerdServiceStatusB+Z)github.com/Azure/AKSFlexNode/components/crib\beditionsp\xe9\a"
+	"\x1cStartContainerdServiceStatusB-Z+github.com/Azure/AKSFlexNode/components/crib\beditionsp\xe9\a"
 
 var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_components_cri_action_proto_goTypes = []any{
