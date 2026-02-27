@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // Collector collects system and node status information

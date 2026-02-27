@@ -2,7 +2,7 @@ edition = "2024";
 
 package aks.flex.components.services.actions;
 
-option go_package = "go.goms.io/aks/AKSFlexNode/components/services/actions";
+option go_package = "github.com/Azure/AKSFlexNode/components/services/actions";
 
 import "google/protobuf/any.proto";
 

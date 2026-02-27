@@ -4,7 +4,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 func (x *StartContainerdServiceSpec) Defaulting() {

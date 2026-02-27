@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/coreos/go-systemd/v22/dbus"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 const etcSystemdSystemDir = "/etc/systemd/system"

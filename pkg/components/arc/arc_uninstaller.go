@@ -10,7 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/sirupsen/logrus"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils"
 )
 
 // UnInstaller handles Azure Arc cleanup operations

@@ -9,15 +9,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
-	"go.goms.io/aks/AKSFlexNode/components/api"
-	"go.goms.io/aks/AKSFlexNode/components/cni"
-	"go.goms.io/aks/AKSFlexNode/components/cri"
-	"go.goms.io/aks/AKSFlexNode/components/kubebins"
-	"go.goms.io/aks/AKSFlexNode/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/components/linux"
-	"go.goms.io/aks/AKSFlexNode/components/npd"
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/components/api"
+	"github.com/Azure/AKSFlexNode/components/cni"
+	"github.com/Azure/AKSFlexNode/components/cri"
+	"github.com/Azure/AKSFlexNode/components/kubebins"
+	"github.com/Azure/AKSFlexNode/components/kubelet"
+	"github.com/Azure/AKSFlexNode/components/linux"
+	"github.com/Azure/AKSFlexNode/components/npd"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 // componentExecutor implemens the Executor interface for components api.

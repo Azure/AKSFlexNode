@@ -1,6 +1,6 @@
 package cni
 
-import "go.goms.io/aks/AKSFlexNode/pkg/config"
+import "github.com/Azure/AKSFlexNode/pkg/config"
 
 func (x *DownloadCNIBinaries) Defaulting() {
 	if x.HasSpec() {

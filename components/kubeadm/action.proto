@@ -2,7 +2,7 @@ edition = "2024";
 
 package aks.flex.components.kubeadm;
 
-option go_package = "go.goms.io/aks/AKSFlexNode/components/kubeadm";
+option go_package = "github.com/Azure/AKSFlexNode/components/kubeadm";
 
 import "components/api/api.proto";
 

@@ -11,10 +11,10 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	utilexec "k8s.io/utils/exec"
 
-	"go.goms.io/aks/AKSFlexNode/components/linux"
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
+	"github.com/Azure/AKSFlexNode/components/linux"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 )
 
 type configureBaseOSAction struct{}

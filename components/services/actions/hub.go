@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"go.goms.io/aks/AKSFlexNode/components/api"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
+	"github.com/Azure/AKSFlexNode/components/api"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 )
 
 // Server is ActionsServiceServer without UnimplementedActionsServiceServer

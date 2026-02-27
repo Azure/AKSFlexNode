@@ -5,9 +5,9 @@ import (
 	"context"
 	"errors"
 
-	"go.goms.io/aks/AKSFlexNode/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/systemd"
+	"github.com/Azure/AKSFlexNode/components/kubelet"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/systemd"
 )
 
 func (s *startKubeletServiceAction) ensureSystemdUnit(

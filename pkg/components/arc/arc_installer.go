@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils"
 )
 
 // Installer handles Azure Arc installation operations

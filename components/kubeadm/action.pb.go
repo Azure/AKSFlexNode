@@ -7,11 +7,12 @@
 package kubeadm
 
 import (
-	api "go.goms.io/aks/AKSFlexNode/components/api"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	unsafe "unsafe"
+
+	api "github.com/Azure/AKSFlexNode/components/api"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -696,7 +697,7 @@ const file_components_kubeadm_action_proto_rawDesc = "" +
 	"\x13KubeadmNodeJoinSpec\x12N\n" +
 	"\rcontrol_plane\x18\x01 \x01(\v2).aks.flex.components.kubeadm.ControlPlaneR\fcontrolPlane\x12>\n" +
 	"\akubelet\x18\x02 \x01(\v2$.aks.flex.components.kubeadm.KubeletR\akubelet\"\x17\n" +
-	"\x15KubeadmNodeJoinStatusB/Z-go.goms.io/aks/AKSFlexNode/components/kubeadmb\beditionsp\xe9\a"
+	"\x15KubeadmNodeJoinStatusB/Z-github.com/Azure/AKSFlexNode/components/kubeadmb\beditionsp\xe9\a"
 
 var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_components_kubeadm_action_proto_goTypes = []any{

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
 // executor is a common base interface for all executors
