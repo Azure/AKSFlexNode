@@ -1,0 +1,15 @@
+[plugins."io.containerd.grpc.v1.cri"]
+cdi_spec_dirs = ["/etc/cdi", "/var/run/cdi"]
+enable_cdi = true
+
+[plugins."io.containerd.grpc.v1.cri".containerd]
+{{- if not .DisableSetAsDefaultRuntime}}
+default_runtime_name = "{{.RuntimeClassName}}"
+{{- end}}
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.{{.RuntimeClassName}}]
+runtime_type = "io.containerd.runc.v2"
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.{{.RuntimeClassName}}.options]
+BinaryName = "{{.RuntimePath}}"
+SystemdCgroup = true

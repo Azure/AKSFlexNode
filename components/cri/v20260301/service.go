@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"os"
+	"path/filepath"
 	"text/template"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -24,8 +25,10 @@ var assets embed.FS
 var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "assets/*"))
 
 const (
-	systemdUnitContainerd = "containerd.service"
-	containerdConfigPath  = "/etc/containerd/config.toml"
+	systemdUnitContainerd   = "containerd.service"
+	containerdConfigPath    = "/etc/containerd/config.toml"
+	containerdConfDropInDir = "/etc/containerd/conf.d"
+	nvidiaRuntimeDropInName = "99-nvidia-runtime.toml"
 )
 
 type startContainerdServiceAction struct {
@@ -61,7 +64,12 @@ func (s *startContainerdServiceAction) ApplyAction(
 		return nil, err
 	}
 
-	needsRestart := configUpdated // if config is updated, we need to restart containerd to apply new config
+	gpuUpdated, err := s.ensureGPUDropInConfigs(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	needsRestart := configUpdated || gpuUpdated
 	if err := s.ensureSystemdUnit(ctx, needsRestart); err != nil {
 		return nil, err
 	}
@@ -153,4 +161,73 @@ func (s *startContainerdServiceAction) updateSystemdUnit(ctx context.Context, re
 	}
 
 	return nil
+}
+
+// ensureGPUDropInConfigs manages GPU-related containerd drop-in configs.
+// Based on the GPUConfig oneof, it ensures the correct drop-in is present.
+// When no GPU config is set, the drop-in is removed.
+func (s *startContainerdServiceAction) ensureGPUDropInConfigs(
+	spec *cri.StartContainerdServiceSpec,
+) (updated bool, err error) {
+	gpuConfig := spec.GetGpuConfig()
+
+	runtimeUpdated, err := s.ensureDropInConfig(
+		nvidiaRuntimeDropInName,
+		gpuConfig.GetNvidiaRuntime() != nil,
+		map[string]any{
+			"RuntimePath":                gpuConfig.GetNvidiaRuntime().GetRuntimePath(),
+			"RuntimeClassName":           gpuConfig.GetNvidiaRuntime().GetRuntimeClassName(),
+			"DisableSetAsDefaultRuntime": gpuConfig.GetNvidiaRuntime().GetDisableSetAsDefaultRuntime(),
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+
+	return runtimeUpdated, nil
+}
+
+// ensureDropInConfig writes or removes a containerd drop-in config file.
+// If enabled is true, the template is rendered and written idempotently.
+// If enabled is false, the drop-in is removed if it exists.
+func (s *startContainerdServiceAction) ensureDropInConfig(
+	dropInName string,
+	enabled bool,
+	templateData map[string]any,
+) (updated bool, err error) {
+	dropInPath := filepath.Join(containerdConfDropInDir, dropInName)
+
+	if !enabled {
+		err := os.Remove(dropInPath)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return false, nil
+		case err != nil:
+			return false, err
+		default:
+			return true, nil
+		}
+	}
+
+	expectedConfig := &bytes.Buffer{}
+	if err := assetsTemplate.ExecuteTemplate(expectedConfig, dropInName, templateData); err != nil {
+		return false, err
+	}
+
+	currentConfig, err := os.ReadFile(dropInPath) //#nosec - trusted path constructed from constant and validated input
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Drop-in doesn't exist, fall through to create it
+	case err != nil:
+		return false, err
+	default:
+		if bytes.Equal(bytes.TrimSpace(currentConfig), bytes.TrimSpace(expectedConfig.Bytes())) {
+			return false, nil
+		}
+	}
+
+	if err := utilio.InstallFile(dropInPath, expectedConfig, 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
