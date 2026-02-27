@@ -1,0 +1,75 @@
+edition = "2024";
+
+package aks.flex.components.kubelet;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/kubelet";
+
+import "components/api/api.proto";
+
+message StartKubeletService {
+  api.Metadata metadata = 1;
+
+  StartKubeletServiceSpec spec = 2;
+  StartKubeletServiceStatus status = 3;
+}
+
+message KubeletArcCredential {
+  // TODO: ArcConfig
+}
+
+message KubeletMSICredential {
+  string tenant_id = 1;
+  string client_id = 2;
+}
+
+message KubeletServicePrincipalCredential {
+  string tenant_id = 1;
+  string client_id = 2;
+  string client_secret = 3;
+}
+
+message KubeletBootstrapTokenCredential {
+  string token = 1;
+}
+
+message ControlPlane { // TODO: move to common place?
+  string server = 1;
+  bytes certificate_authority_data = 2;
+}
+
+message NodeAuthInfo {
+  oneof auth_info {
+    KubeletArcCredential arc_credential = 1;
+    KubeletMSICredential msi_credential = 2;
+    KubeletServicePrincipalCredential service_principal_credential = 3;
+    KubeletBootstrapTokenCredential bootstrap_token_credential = 4;
+  }
+}
+
+// refs:
+// https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/
+// https://kubernetes.io/docs/tasks/administer-cluster/kubelet-config-file/
+// https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
+// TODO: consider importing kubelet config settings directly?
+// We can use drop-in to override settings, but for now we follow the AgentBaker
+// approach to declare these settings in CLI flag.
+message KubeletConfig {
+  map<string, string> kube_reserved = 1;
+  map<string, string> eviction_hard = 2;
+  int32 verbosity = 3;
+  int32 image_gc_high_threshold = 4;
+  int32 image_gc_low_threshold = 5;
+  repeated string cluster_dns = 6;
+  int32 max_pods = 7;
+}
+
+message StartKubeletServiceSpec {
+  ControlPlane control_plane = 1;
+  NodeAuthInfo node_auth_info = 2;
+  map<string, string> node_labels = 3;
+  KubeletConfig kubelet_config = 4;
+}
+
+message StartKubeletServiceStatus {
+
+}

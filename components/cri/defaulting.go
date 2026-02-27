@@ -1,9 +1,10 @@
 package cri
 
 import (
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
 func (x *StartContainerdServiceSpec) Defaulting() {

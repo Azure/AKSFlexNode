@@ -1,0 +1,40 @@
+edition = "2024";
+
+package aks.flex.components.cni;
+
+option go_package = "go.goms.io/aks/AKSFlexNode/components/cni";
+
+import "components/api/api.proto";
+
+message DownloadCNIBinaries {
+  api.Metadata metadata = 1;
+
+  DownloadCNIBinariesSpec spec = 2;
+
+  DownloadCNIBinariesStatus status = 3;
+}
+
+message DownloadCNIBinariesSpec {
+  string cni_plugins_version = 1;
+}
+
+message DownloadCNIBinariesStatus {
+  string cni_plugins_download_url = 1;
+  string cni_plugins_path = 2;
+}
+
+// ConfigureCNI action enables a minimal CNI settings with low priority on the node.
+// Users can override with other CNI (e.g., Cilium) by applying CNI config with higher priority.
+message ConfigureCNI {
+  api.Metadata metadata = 1;
+
+  ConfigureCNISpec spec = 2;
+
+  ConfigureCNIStatus status = 3;
+}
+
+message ConfigureCNISpec {
+  string cni_spec_version = 1;
+}
+
+message ConfigureCNIStatus {}

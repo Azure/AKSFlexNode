@@ -1,0 +1,230 @@
+package v20260301
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/tools/clientcmd/api/latest"
+
+	"go.goms.io/aks/AKSFlexNode/components/kubelet"
+	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
+)
+
+func mapPairsToString(pairs map[string]string, kvSep, pairSep string) string {
+	xs := make([]string, 0, len(pairs))
+	for k, v := range pairs {
+		xs = append(xs, fmt.Sprintf("%s%s%s", k, kvSep, v))
+	}
+	sort.Strings(xs)
+	return strings.Join(xs, pairSep)
+}
+
+func fileHasIdenticalContent(filePath string, desiredContent []byte) (bool, error) {
+	actualContent, err := os.ReadFile(filePath) //#nosec - file path has been validated by caller
+	switch {
+	case os.IsNotExist(err):
+		// File does not exist, so it does not have identical content
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("read %q: %w", filePath, err)
+	default:
+		return bytes.Equal(desiredContent, actualContent), nil
+	}
+}
+
+func (s *startKubeletServiceAction) ensureKubeletConfig(
+	spec *kubelet.StartKubeletServiceSpec,
+) (bool, error) {
+	apiServerCAChanged, err := s.ensureAPIServerCA(spec)
+	if err != nil {
+		return false, err
+	}
+
+	bootstrapKubeConfigChanged, err := s.ensureBootstrapKubeconfig(spec)
+	if err != nil {
+		return false, err
+	}
+
+	kubeletKubeconfigChanged, err := s.ensureKubeletKubeconfig(spec)
+	if err != nil {
+		return false, err
+	}
+
+	configsChanged := apiServerCAChanged ||
+		bootstrapKubeConfigChanged ||
+		kubeletKubeconfigChanged
+	return configsChanged, nil
+}
+
+func (s *startKubeletServiceAction) ensureAPIServerCA(
+	spec *kubelet.StartKubeletServiceSpec,
+) (bool, error) {
+	desiredContent := spec.GetControlPlane().GetCertificateAuthorityData()
+	if idential, err := fileHasIdenticalContent(apiServerClientCAPath, desiredContent); err != nil {
+		return false, err
+	} else if idential {
+		return false, nil
+	}
+
+	// FIXME: consider using 0640?
+	if err := utilio.WriteFile(apiServerClientCAPath, desiredContent, 0644); err != nil {
+		return false, fmt.Errorf("write %q: %w", apiServerClientCAPath, err)
+	}
+	return true, nil
+}
+
+func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
+	spec *kubelet.StartKubeletServiceSpec,
+) (bool, error) {
+	nodeAuthInfo := spec.GetNodeAuthInfo()
+	if nodeAuthInfo.HasBootstrapTokenCredential() {
+		return false, nil // kubelet kubeconfig is not set when bootstrap token is used
+	}
+
+	selfBinary, err := os.Executable() // TODO: allow overriding the path in config spec
+	if err != nil {
+		return false, fmt.Errorf("get self executable path: %w", err)
+	}
+
+	// refs:
+	// - https://github.com/Azure/kubelogin/blob/main/pkg/internal/token/options.go
+	authInfoSettings := &api.AuthInfo{
+		Exec: &api.ExecConfig{
+			APIVersion: "client.authentication.k8s.io/v1",
+			Command:    selfBinary,
+			Args: []string{
+				"token", "kubelogin",
+			},
+			InteractiveMode: api.NeverExecInteractiveMode,
+		},
+	}
+	switch {
+	case nodeAuthInfo.HasArcCredential():
+		// TODO: implement arc credential support with pop
+		return false, fmt.Errorf("arc credential is not supported yet")
+	case nodeAuthInfo.HasServicePrincipalCredential():
+		cred := nodeAuthInfo.GetServicePrincipalCredential()
+		authInfoSettings.Exec.Env = append(
+			authInfoSettings.Exec.Env,
+			api.ExecEnvVar{
+				Name:  "AAD_LOGIN_METHOD",
+				Value: "spn",
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_CLIENT_ID",
+				Value: cred.GetClientId(),
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_TENANT_ID",
+				Value: cred.GetTenantId(),
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_CLIENT_SECRET",
+				Value: cred.GetClientSecret(),
+			},
+		)
+	case nodeAuthInfo.HasMsiCredential():
+		cred := nodeAuthInfo.GetMsiCredential()
+		authInfoSettings.Exec.Env = append(
+			authInfoSettings.Exec.Env,
+			api.ExecEnvVar{
+				Name:  "AAD_LOGIN_METHOD",
+				Value: "msi",
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_CLIENT_ID",
+				Value: cred.GetClientId(),
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_TENANT_ID",
+				Value: cred.GetTenantId(),
+			},
+		)
+	default:
+		return false, fmt.Errorf("unsupported node auth info type")
+	}
+	k := kubeletKubeConfig(spec.GetControlPlane(), authInfoSettings)
+	desiredContent, err := runtime.Encode(latest.Codec, k)
+	if err != nil {
+		return false, err
+	}
+
+	if idential, err := fileHasIdenticalContent(config.KubeletKubeconfigPath, desiredContent); err != nil {
+		return false, err
+	} else if idential {
+		return false, nil
+	}
+
+	// FIXME: consider using 0640?
+	if err := utilio.WriteFile(config.KubeletKubeconfigPath, desiredContent, 0644); err != nil {
+		return false, fmt.Errorf("write %q: %w", config.KubeletKubeconfigPath, err)
+	}
+	return true, nil
+}
+
+func (s *startKubeletServiceAction) ensureBootstrapKubeconfig(
+	spec *kubelet.StartKubeletServiceSpec,
+) (bool, error) {
+	// NOTE: bootstrap kubconfig is used only when bootstrap token is set
+	if !spec.GetNodeAuthInfo().HasBootstrapTokenCredential() {
+		return false, nil
+	}
+
+	authInfoSettings := &api.AuthInfo{
+		Token: spec.GetNodeAuthInfo().GetBootstrapTokenCredential().GetToken(),
+	}
+	k := kubeletKubeConfig(spec.GetControlPlane(), authInfoSettings)
+	desiredContent, err := runtime.Encode(latest.Codec, k)
+	if err != nil {
+		return false, err
+	}
+
+	if idential, err := fileHasIdenticalContent(config.KubeletBootstrapKubeconfigPath, desiredContent); err != nil {
+		return false, err
+	} else if idential {
+		return false, nil
+	}
+
+	// FIXME: consider using 0640?
+	if err := utilio.WriteFile(config.KubeletBootstrapKubeconfigPath, desiredContent, 0644); err != nil {
+		return false, fmt.Errorf("write %q: %w", config.KubeletBootstrapKubeconfigPath, err)
+	}
+	return true, nil
+}
+
+func kubeletKubeConfig(
+	controlPlane *kubelet.ControlPlane,
+	authInfoSettings *api.AuthInfo,
+) *api.Config {
+	const (
+		cluster  = "cluster"
+		context  = "context"
+		authInfo = "user"
+	)
+
+	return &api.Config{
+		Kind: "Config",
+		Clusters: map[string]*api.Cluster{
+			cluster: {
+				Server:                   controlPlane.GetServer(),
+				CertificateAuthorityData: controlPlane.GetCertificateAuthorityData(),
+			},
+		},
+		CurrentContext: context,
+		Contexts: map[string]*api.Context{
+			context: {
+				Cluster:  cluster,
+				AuthInfo: authInfo,
+			},
+		},
+		AuthInfos: map[string]*api.AuthInfo{
+			authInfo: authInfoSettings,
+		},
+	}
+}

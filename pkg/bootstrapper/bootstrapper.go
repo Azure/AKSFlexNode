@@ -4,15 +4,9 @@ import (
 	"context"
 
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 
 	"go.goms.io/aks/AKSFlexNode/pkg/components/arc"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/cni"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/containerd"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kube_binaries"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/npd"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/runc"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/services"
 	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
@@ -20,12 +14,19 @@ import (
 // Bootstrapper executes bootstrap steps sequentially
 type Bootstrapper struct {
 	*BaseExecutor
+
+	componentsAPIConn *grpc.ClientConn
 }
 
 // New creates a new bootstrapper
-func New(cfg *config.Config, logger *logrus.Logger) *Bootstrapper {
+func New(
+	cfg *config.Config,
+	logger *logrus.Logger,
+	componentsAPIConn *grpc.ClientConn,
+) *Bootstrapper {
 	return &Bootstrapper{
-		BaseExecutor: NewBaseExecutor(cfg, logger),
+		BaseExecutor:      NewBaseExecutor(cfg, logger),
+		componentsAPIConn: componentsAPIConn,
 	}
 }
 
@@ -33,16 +34,22 @@ func New(cfg *config.Config, logger *logrus.Logger) *Bootstrapper {
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
 	// Define the bootstrap steps in order - using modules directly
 	steps := []Executor{
-		arc.NewInstaller(b.logger),                  // Setup Arc
-		services.NewUnInstaller(b.logger),           // Stop kubelet before setup
+		arc.NewInstaller(b.logger), // Setup Arc
+
+		configureSystem.Executor("configure-os", b.componentsAPIConn),
+		// FIXME: confirm if it's really needed to update the resolved config
 		system_configuration.NewInstaller(b.logger), // Configure system (early)
-		runc.NewInstaller(b.logger),                 // Install runc
-		containerd.NewInstaller(b.logger),           // Install containerd
-		kube_binaries.NewInstaller(b.logger),        // Install k8s binaries
-		cni.NewInstaller(b.logger),                  // Setup CNI (after container runtime)
-		kubelet.NewInstaller(b.logger),              // Configure kubelet service with Arc MSI auth
-		npd.NewInstaller(b.logger),                  // Install Node Problem Detector
-		services.NewInstaller(b.logger),             // Start services
+
+		// TODO: run these steps in parallel
+		downloadCNIBinaries.Executor("download-cni-binaries", b.componentsAPIConn),
+		downloadCRIBinaries.Executor("download-cri-binaries", b.componentsAPIConn),
+		downloadKubeBinaries.Executor("download-kube-binaries", b.componentsAPIConn),
+		downloadNPD.Executor("download-npd", b.componentsAPIConn),
+
+		configureCNI.Executor("configure-cni", b.componentsAPIConn),
+		startContainerdService.Executor("start-containerd", b.componentsAPIConn),
+		startKubelet.Executor("start-kubelet", b.componentsAPIConn),
+		startNPD.Executor("start-npd", b.componentsAPIConn),
 	}
 
 	return b.ExecuteSteps(ctx, steps, "bootstrap")
@@ -51,15 +58,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 // Unbootstrap executes all cleanup steps sequentially (in reverse order of bootstrap)
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
 	steps := []Executor{
-		services.NewUnInstaller(b.logger),             // Stop services first
-		npd.NewUnInstaller(b.logger),                  // Uninstall Node Problem Detector
-		kubelet.NewUnInstaller(b.logger),              // Clean kubelet configuration
-		cni.NewUnInstaller(b.logger),                  // Clean CNI configs
-		kube_binaries.NewUnInstaller(b.logger),        // Uninstall k8s binaries
-		containerd.NewUnInstaller(b.logger),           // Uninstall containerd binary
-		runc.NewUnInstaller(b.logger),                 // Uninstall runc binary
-		system_configuration.NewUnInstaller(b.logger), // Clean system settings
-		arc.NewUnInstaller(b.logger),                  // Uninstall Arc (after cleanup)
+		arc.NewUnInstaller(b.logger), // Uninstall Arc (after cleanup)
 	}
 
 	return b.ExecuteSteps(ctx, steps, "unbootstrap")

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -14,7 +15,6 @@ import (
 	"go.goms.io/aks/AKSFlexNode/components/kubebins"
 	"go.goms.io/aks/AKSFlexNode/components/services/actions"
 	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
@@ -58,10 +58,10 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 	downloadURL := d.constructDownloadURL(spec.GetKubernetesVersion())
 
 	st := kubebins.DownloadKubeBinariesStatus_builder{
-		DownloadUrl: utils.Ptr(downloadURL),
-		KubeletPath: utils.Ptr(binPathKubelet),
-		KubeadmPath: utils.Ptr(filepath.Join(config.DefaultBinaryPath, "kubeadm")),
-		KubectlPath: utils.Ptr(filepath.Join(config.DefaultBinaryPath, "kubectl")),
+		DownloadUrl: to.Ptr(downloadURL),
+		KubeletPath: to.Ptr(binPathKubelet),
+		KubeadmPath: to.Ptr(filepath.Join(config.DefaultBinaryPath, "kubeadm")),
+		KubectlPath: to.Ptr(filepath.Join(config.DefaultBinaryPath, "kubectl")),
 	}
 
 	needDownload := !hasRequiredBinaries() || !kubeletVersionMatch(ctx, spec.GetKubernetesVersion())
