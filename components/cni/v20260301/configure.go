@@ -11,12 +11,12 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"go.goms.io/aks/AKSFlexNode/components/api"
-	"go.goms.io/aks/AKSFlexNode/components/cni"
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
+	"github.com/Azure/AKSFlexNode/components/api"
+	"github.com/Azure/AKSFlexNode/components/cni"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 )
 
 //go:embed assets/*

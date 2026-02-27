@@ -7,7 +7,7 @@
 package kubebins
 
 import (
-	api "go.goms.io/aks/AKSFlexNode/components/api"
+	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -409,7 +409,7 @@ const file_components_kubebins_action_proto_rawDesc = "" +
 	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl\x12!\n" +
 	"\fkubelet_path\x18\x02 \x01(\tR\vkubeletPath\x12!\n" +
 	"\fkubeadm_path\x18\x03 \x01(\tR\vkubeadmPath\x12!\n" +
-	"\fkubectl_path\x18\x04 \x01(\tR\vkubectlPathB0Z.go.goms.io/aks/AKSFlexNode/components/kubebinsb\beditionsp\xe9\a"
+	"\fkubectl_path\x18\x04 \x01(\tR\vkubectlPathB2Z0github.com/Azure/AKSFlexNode/components/kubebinsb\beditionsp\xe9\a"
 
 var file_components_kubebins_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_components_kubebins_action_proto_goTypes = []any{

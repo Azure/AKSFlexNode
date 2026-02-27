@@ -11,9 +11,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 
-	"go.goms.io/aks/AKSFlexNode/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/AKSFlexNode/components/kubelet"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 func mapPairsToString(pairs map[string]string, kvSep, pairSep string) string {

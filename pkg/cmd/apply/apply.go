@@ -17,9 +17,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"go.goms.io/aks/AKSFlexNode/components/api"
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
-	"go.goms.io/aks/AKSFlexNode/components/services/inmem"
+	"github.com/Azure/AKSFlexNode/components/api"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/components/services/inmem"
 )
 
 const stdinFilePath = "-"

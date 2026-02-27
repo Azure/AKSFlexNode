@@ -3,8 +3,8 @@ package arc
 import (
 	"os/exec"
 
+	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 func isArcAgentInstalled() bool {

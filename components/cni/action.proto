@@ -2,7 +2,7 @@ edition = "2024";
 
 package aks.flex.components.cni;
 
-option go_package = "go.goms.io/aks/AKSFlexNode/components/cni";
+option go_package = "github.com/Azure/AKSFlexNode/components/cni";
 
 import "components/api/api.proto";
 

@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/cmd/apply"
-	"go.goms.io/aks/AKSFlexNode/pkg/cmd/token"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/logger"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/apply"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
 var (

@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
 // AuthProvider is a simple factory for Azure credentials

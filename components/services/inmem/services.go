@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	_ "go.goms.io/aks/AKSFlexNode/components" // register all known components
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
+	_ "github.com/Azure/AKSFlexNode/components" // register all known components
+	"github.com/Azure/AKSFlexNode/components/services/actions"
 )
 
 var localConn = bufconn.Listen(1024 * 1024)

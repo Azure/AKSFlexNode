@@ -6,9 +6,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/components/arc"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/system_configuration"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/components/arc"
+	"github.com/Azure/AKSFlexNode/pkg/components/system_configuration"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 // Bootstrapper executes bootstrap steps sequentially

@@ -3,7 +3,7 @@ package actions
 import (
 	context "context"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	anypb "google.golang.org/protobuf/types/known/anypb"

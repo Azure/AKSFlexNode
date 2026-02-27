@@ -9,9 +9,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Context key for storing logger

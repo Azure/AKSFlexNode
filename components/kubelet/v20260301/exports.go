@@ -1,8 +1,8 @@
 package v20260301
 
 import (
-	"go.goms.io/aks/AKSFlexNode/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/components/kubelet"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
 )
 
 func init() {

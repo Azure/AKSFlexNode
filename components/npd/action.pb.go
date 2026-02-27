@@ -7,7 +7,7 @@
 package npd
 
 import (
-	api "go.goms.io/aks/AKSFlexNode/components/api"
+	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -665,7 +665,7 @@ const file_components_npd_action_proto_rawDesc = "" +
 	"\n" +
 	"api_server\x18\x01 \x01(\tR\tapiServer\x12(\n" +
 	"\x10kube_config_path\x18\x02 \x01(\tR\x0ekubeConfigPath\" \n" +
-	"\x1eStartNodeProblemDetectorStatusB+Z)go.goms.io/aks/AKSFlexNode/components/npdb\beditionsp\xe9\a"
+	"\x1eStartNodeProblemDetectorStatusB-Z+github.com/Azure/AKSFlexNode/components/npdb\beditionsp\xe9\a"
 
 var file_components_npd_action_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_components_npd_action_proto_goTypes = []any{

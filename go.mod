@@ -1,4 +1,4 @@
-module go.goms.io/aks/AKSFlexNode
+module github.com/Azure/AKSFlexNode
 
 go 1.25.0
 

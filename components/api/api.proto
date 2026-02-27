@@ -2,7 +2,7 @@ edition = "2024";
 
 package aks.flex.components.api;
 
-option go_package = "go.goms.io/aks/AKSFlexNode/components/api";
+option go_package = "github.com/Azure/AKSFlexNode/components/api";
 
 // Metadata represents the metadata of an action to be applied.
 message Metadata {

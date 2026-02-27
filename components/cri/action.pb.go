@@ -7,7 +7,7 @@
 package cri
 
 import (
-	api "go.goms.io/aks/AKSFlexNode/components/api"
+	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1189,7 +1189,7 @@ const file_components_cri_action_proto_rawDesc = "" +
 	"\fruntime_path\x18\x01 \x01(\tR\vruntimePath\x12,\n" +
 	"\x12runtime_class_name\x18\x02 \x01(\tR\x10runtimeClassName\x12B\n" +
 	"\x1edisable_set_as_default_runtime\x18\x03 \x01(\bR\x1adisableSetAsDefaultRuntime\"\x1e\n" +
-	"\x1cStartContainerdServiceStatusB+Z)go.goms.io/aks/AKSFlexNode/components/crib\beditionsp\xe9\a"
+	"\x1cStartContainerdServiceStatusB-Z+github.com/Azure/AKSFlexNode/components/crib\beditionsp\xe9\a"
 
 var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_components_cri_action_proto_goTypes = []any{

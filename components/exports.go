@@ -1,11 +1,11 @@
 package components
 
 import (
-	_ "go.goms.io/aks/AKSFlexNode/components/cni/v20260301"
-	_ "go.goms.io/aks/AKSFlexNode/components/cri/v20260301"
-	_ "go.goms.io/aks/AKSFlexNode/components/kubeadm/v20260301"
-	_ "go.goms.io/aks/AKSFlexNode/components/kubebins/v20260301"
-	_ "go.goms.io/aks/AKSFlexNode/components/kubelet/v20260301"
-	_ "go.goms.io/aks/AKSFlexNode/components/linux/v20260301"
-	_ "go.goms.io/aks/AKSFlexNode/components/npd/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/cni/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/cri/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/kubeadm/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/kubebins/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/kubelet/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/linux/v20260301"
+	_ "github.com/Azure/AKSFlexNode/components/npd/v20260301"
 )

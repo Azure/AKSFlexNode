@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
 )
 
 // Installer handles system configuration installation

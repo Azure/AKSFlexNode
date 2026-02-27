@@ -12,13 +12,13 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
-	_ "go.goms.io/aks/AKSFlexNode/components"
-	"go.goms.io/aks/AKSFlexNode/components/services/inmem"
-	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/logger"
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	_ "github.com/Azure/AKSFlexNode/components"
+	"github.com/Azure/AKSFlexNode/components/services/inmem"
+	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 // Version information variables (set at build time)

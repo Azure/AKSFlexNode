@@ -12,12 +12,12 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	utilexec "k8s.io/utils/exec"
 
-	"go.goms.io/aks/AKSFlexNode/components/kubebins"
-	"go.goms.io/aks/AKSFlexNode/components/services/actions"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilhost"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilio"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils/utilpb"
+	"github.com/Azure/AKSFlexNode/components/kubebins"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 )
 
 const (

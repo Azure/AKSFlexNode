@@ -3,9 +3,9 @@ package system_configuration
 import (
 	"context"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // UnInstaller handles system configuration cleanup

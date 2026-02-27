@@ -167,7 +167,7 @@ const file_components_services_actions_actions_proto_rawDesc = "" +
 	"\x13ApplyActionResponse\x12(\n" +
 	"\x04item\x18\x01 \x01(\v2\x14.google.protobuf.AnyR\x04item2\x97\x01\n" +
 	"\x0eActionsService\x12\x84\x01\n" +
-	"\vApplyAction\x128.aks.flex.components.services.actions.ApplyActionRequest\x1a9.aks.flex.components.services.actions.ApplyActionResponse\"\x00B8Z6go.goms.io/aks/AKSFlexNode/components/services/actionsb\beditionsp\xe9\a"
+	"\vApplyAction\x128.aks.flex.components.services.actions.ApplyActionRequest\x1a9.aks.flex.components.services.actions.ApplyActionResponse\"\x00B:Z8github.com/Azure/AKSFlexNode/components/services/actionsb\beditionsp\xe9\a"
 
 var file_components_services_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_components_services_actions_actions_proto_goTypes = []any{
