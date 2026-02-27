@@ -214,7 +214,7 @@ func (s *startContainerdServiceAction) ensureDropInConfig(
 		return false, err
 	}
 
-	currentConfig, err := os.ReadFile(dropInPath)
+	currentConfig, err := os.ReadFile(dropInPath) //#nosec - trusted path constructed from constant and validated input
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// Drop-in doesn't exist, fall through to create it
