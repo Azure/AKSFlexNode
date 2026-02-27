@@ -206,7 +206,7 @@ az aks flex-node update \
 
 ## Three Key Technical Components
 
-### 4.1 Auto-Generated Configuration
+### Auto-Generated Configuration
 
 #### Current Configuration Complexity
 
@@ -272,7 +272,7 @@ The aks-flex-node currently requires a comprehensive JSON configuration file wit
 ```
 
 **Complexity Challenges:**
-- **50+ configuration fields** requiring manual population
+- **Nearly 50 configuration fields** requiring manual population
 - **Cluster-specific values** that users must discover and copy manually
 - **Version compatibility** requirements between components
 - **Path configurations** that vary by OS and installation method
@@ -294,7 +294,7 @@ The aks-flex-node currently requires a comprehensive JSON configuration file wit
 - Node-specific settings (max pods, custom labels)
 - Optional version overrides for components
 
-### 4.2 Node Bootstrap Process
+### Node Bootstrap Process
 
 #### Authentication Method Handling
 
@@ -325,7 +325,7 @@ The aks-flex-node currently requires a comprehensive JSON configuration file wit
 - **Config Addition**: Include `azure.managedIdentity.clientId` (or omit for system-assigned)
 - **User Experience**: Works only with Azure VMs - user must manage identity assignment, AKS RP handles RBAC
 
-### 4.3 Continuous Monitoring & Self-Reconciliation
+### Continuous Monitoring & Self-Reconciliation
 
 #### Supported Operations
 
@@ -353,7 +353,7 @@ Based on the technical constraints of the agent architecture, the following oper
 
 The continuous monitoring system uses efficient version-based change detection:
 
-- **Config Versioning**: Each configuration has a (Unix)timestamp-based version with natural ordering (e.g., `configVersion: "1708123456"`)
+- **Config Versioning**: Each configuration has a Unix timestamp-based version with natural ordering (e.g., `configVersion: "1708123456"`)
 - **Polling**: Agent polls every 30 seconds checking for version changes
 - **Change Detection**: When version changes (`"1708123456" → "1708127056"`), agent knows config updated
 - **Efficiency**: Agent only needs to compare timestamp strings, not entire config content
@@ -471,35 +471,40 @@ Authorization: Bearer {azure-aad-token}
 
 Response:
 {
-  "configVersion": "1708123456",
-  "lastModified": "2024-02-26T10:30:00Z",
-  "config": {
-    "azure": {
-      "subscriptionId": "auto-populated",
-      "tenantId": "auto-populated",
-      "targetCluster": {
-        "resourceId": "auto-populated",
-        "location": "auto-populated"
-      }
-    },
-    "kubernetes": {
-      "version": "1.31.0"  // Updated by customer
-    },
-    "node": {
-      "maxPods": 110,
-      "kubelet": {
-        "dnsServiceIP": "cluster-dns-service-ip",
-        "serverURL": "cluster-api-server-url",
-        "caCertData": "cluster-ca-cert-base64"
-      }
-    },
-    // ... rest of configuration
-    // Note: Authentication details not exposed in monitoring responses
+  "name": "edge-node-1",
+  "properties": {
+    "provisioningState": "Succeeded",
+    "configVersion": "1708123456",
+    "nodeStatus": "Ready",
+    "lastSeen": "2024-02-26T15:30:45Z",
+    "config": {
+      "azure": {
+        "subscriptionId": "auto-populated",
+        "tenantId": "auto-populated",
+        "targetCluster": {
+          "resourceId": "auto-populated",
+          "location": "auto-populated"
+        }
+      },
+      "kubernetes": {
+        "version": "1.31.0"  // Updated by customer
+      },
+      "node": {
+        "maxPods": 110,
+        "kubelet": {
+          "dnsServiceIP": "cluster-dns-service-ip",
+          "serverURL": "cluster-api-server-url",
+          "caCertData": "cluster-ca-cert-base64"
+        }
+      },
+      // ... rest of configuration
+      // Note: Authentication details not exposed in monitoring responses
+    }
   }
 }
 ```
 
-#### FlexNode Config List Operation
+#### FlexNode Config List Operation (Metadata Only)
 ```http
 GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig?api-version=2025-10-02-preview
 
