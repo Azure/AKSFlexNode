@@ -41,19 +41,45 @@ message StartContainerdServiceSpec {
   // Defaults to "mcr.microsoft.com/oss/containerd/pause:3.6".
   string sandbox_image = 2;
 
-  // TODO: allow overriding cni config?
-  message CNIConfig {
-    // CNI plugin directory
-    // Defaults to "/opt/cni/bin"
-    string bin_dir = 1;
-
-    // CNI config directory
-    // Defaults to "/etc/cni/net.d"
-    string config_dir = 2;
-  }
   CNIConfig cni_config = 3;
 
-  // TODO: GPU runtime settings?
+  GPUConfig gpu_config = 4;
+}
+
+// TODO: allow overriding cni config?
+message CNIConfig {
+  // CNI plugin directory
+  // Defaults to "/opt/cni/bin"
+  string bin_dir = 1;
+
+  // CNI config directory
+  // Defaults to "/etc/cni/net.d"
+  string config_dir = 2;
+}
+
+message GPUConfig {
+  oneof gpu_config {
+    // enable GPU support via Nvidia Container Runtime
+    NvidiaRuntime nvidia_runtime = 1;
+  }
+}
+
+message NvidiaRuntime {
+  // Absolute path to the nvidia-container-runtime binary.
+  // Defaults to "/usr/bin/nvidia-container-runtime".
+  string runtime_path = 1;
+
+  // The runtime class name to use for GPU workloads.
+  // Defaults to "nvidia".
+  // NOTE: if disable_set_as_default_runtime is false, user is responsible
+  // for ensuring the runtime class name object is being created in the cluster,
+  // and the workload spec is configured to use the runtime class name,
+  // otherwise GPU workload will fail to run.
+  string runtime_class_name = 2;
+
+  // Disable the behavior of settings nvidia-container-runtime as the
+  // default runtime in containerd config.
+  bool disable_set_as_default_runtime = 3;
 }
 
 message StartContainerdServiceStatus {

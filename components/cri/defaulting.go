@@ -16,9 +16,13 @@ func (x *StartContainerdServiceSpec) Defaulting() {
 	}
 
 	if !x.HasCniConfig() {
-		x.SetCniConfig(&StartContainerdServiceSpec_CNIConfig{})
+		x.SetCniConfig(&CNIConfig{})
 	}
 	x.GetCniConfig().Defaulting()
+
+	if x.GetGpuConfig().GetNvidiaRuntime() != nil {
+		x.GetGpuConfig().GetNvidiaRuntime().Defaulting()
+	}
 }
 
 func (x *StartContainerdServiceSpec) Validate() error {
@@ -33,10 +37,16 @@ func (x *StartContainerdServiceSpec) Validate() error {
 		return err
 	}
 
+	if nvidiaRuntime := x.GetGpuConfig().GetNvidiaRuntime(); nvidiaRuntime != nil {
+		if err := nvidiaRuntime.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (x *StartContainerdServiceSpec_CNIConfig) Defaulting() {
+func (x *CNIConfig) Defaulting() {
 	if !x.HasBinDir() {
 		x.SetBinDir(config.DefaultCNIBinDir)
 	}
@@ -45,12 +55,31 @@ func (x *StartContainerdServiceSpec_CNIConfig) Defaulting() {
 	}
 }
 
-func (x *StartContainerdServiceSpec_CNIConfig) Validate() error {
+func (x *CNIConfig) Validate() error {
 	if !x.HasBinDir() {
 		return status.Error(codes.InvalidArgument, "CNI BinDir is required")
 	}
 	if !x.HasConfigDir() {
 		return status.Error(codes.InvalidArgument, "CNI ConfigDir is required")
+	}
+	return nil
+}
+
+func (x *NvidiaRuntime) Defaulting() {
+	if !x.HasRuntimePath() {
+		x.SetRuntimePath(config.DefaultNvidiaContainerRuntimePath)
+	}
+	if !x.HasRuntimeClassName() {
+		x.SetRuntimeClassName(config.DefaultNvidiaRuntimeClassName)
+	}
+}
+
+func (x *NvidiaRuntime) Validate() error {
+	if !x.HasRuntimePath() {
+		return status.Error(codes.InvalidArgument, "NvidiaRuntime RuntimePath is required")
+	}
+	if !x.HasRuntimeClassName() {
+		return status.Error(codes.InvalidArgument, "NvidiaRuntime RuntimeClassName is required")
 	}
 	return nil
 }
