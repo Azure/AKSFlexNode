@@ -8,6 +8,6 @@ import (
 func init() {
 	actions.MustRegister(
 		newNodeJoinAction,
-		&kubeadm.KubadmNodeJoin{},
+		&kubeadm.KubeadmNodeJoin{},
 	)
 }

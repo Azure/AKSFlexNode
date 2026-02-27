@@ -49,7 +49,7 @@ func (n *nodeJoinAction) ApplyAction(
 	ctx context.Context,
 	req *actions.ApplyActionRequest,
 ) (*actions.ApplyActionResponse, error) {
-	config, err := utilpb.AnyTo[*kubeadm.KubadmNodeJoin](req.GetItem())
+	config, err := utilpb.AnyTo[*kubeadm.KubeadmNodeJoin](req.GetItem())
 	if err != nil {
 		return nil, err
 	}

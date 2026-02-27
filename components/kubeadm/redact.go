@@ -1,4 +1,4 @@
 package kubeadm
 
-func (x *KubadmNodeJoin) Redact() {
+func (x *KubeadmNodeJoin) Redact() {
 }

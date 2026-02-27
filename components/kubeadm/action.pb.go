@@ -21,7 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type KubadmNodeJoin struct {
+type KubeadmNodeJoin struct {
 	state               protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
 	xxx_hidden_Spec     *KubeadmNodeJoinSpec   `protobuf:"bytes,2,opt,name=spec"`
@@ -30,20 +30,20 @@ type KubadmNodeJoin struct {
 	sizeCache           protoimpl.SizeCache
 }
 
-func (x *KubadmNodeJoin) Reset() {
-	*x = KubadmNodeJoin{}
+func (x *KubeadmNodeJoin) Reset() {
+	*x = KubeadmNodeJoin{}
 	mi := &file_components_kubeadm_action_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *KubadmNodeJoin) String() string {
+func (x *KubeadmNodeJoin) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*KubadmNodeJoin) ProtoMessage() {}
+func (*KubeadmNodeJoin) ProtoMessage() {}
 
-func (x *KubadmNodeJoin) ProtoReflect() protoreflect.Message {
+func (x *KubeadmNodeJoin) ProtoReflect() protoreflect.Message {
 	mi := &file_components_kubeadm_action_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -55,73 +55,73 @@ func (x *KubadmNodeJoin) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-func (x *KubadmNodeJoin) GetMetadata() *api.Metadata {
+func (x *KubeadmNodeJoin) GetMetadata() *api.Metadata {
 	if x != nil {
 		return x.xxx_hidden_Metadata
 	}
 	return nil
 }
 
-func (x *KubadmNodeJoin) GetSpec() *KubeadmNodeJoinSpec {
+func (x *KubeadmNodeJoin) GetSpec() *KubeadmNodeJoinSpec {
 	if x != nil {
 		return x.xxx_hidden_Spec
 	}
 	return nil
 }
 
-func (x *KubadmNodeJoin) GetStatus() *KubeadmNodeJoinStatus {
+func (x *KubeadmNodeJoin) GetStatus() *KubeadmNodeJoinStatus {
 	if x != nil {
 		return x.xxx_hidden_Status
 	}
 	return nil
 }
 
-func (x *KubadmNodeJoin) SetMetadata(v *api.Metadata) {
+func (x *KubeadmNodeJoin) SetMetadata(v *api.Metadata) {
 	x.xxx_hidden_Metadata = v
 }
 
-func (x *KubadmNodeJoin) SetSpec(v *KubeadmNodeJoinSpec) {
+func (x *KubeadmNodeJoin) SetSpec(v *KubeadmNodeJoinSpec) {
 	x.xxx_hidden_Spec = v
 }
 
-func (x *KubadmNodeJoin) SetStatus(v *KubeadmNodeJoinStatus) {
+func (x *KubeadmNodeJoin) SetStatus(v *KubeadmNodeJoinStatus) {
 	x.xxx_hidden_Status = v
 }
 
-func (x *KubadmNodeJoin) HasMetadata() bool {
+func (x *KubeadmNodeJoin) HasMetadata() bool {
 	if x == nil {
 		return false
 	}
 	return x.xxx_hidden_Metadata != nil
 }
 
-func (x *KubadmNodeJoin) HasSpec() bool {
+func (x *KubeadmNodeJoin) HasSpec() bool {
 	if x == nil {
 		return false
 	}
 	return x.xxx_hidden_Spec != nil
 }
 
-func (x *KubadmNodeJoin) HasStatus() bool {
+func (x *KubeadmNodeJoin) HasStatus() bool {
 	if x == nil {
 		return false
 	}
 	return x.xxx_hidden_Status != nil
 }
 
-func (x *KubadmNodeJoin) ClearMetadata() {
+func (x *KubeadmNodeJoin) ClearMetadata() {
 	x.xxx_hidden_Metadata = nil
 }
 
-func (x *KubadmNodeJoin) ClearSpec() {
+func (x *KubeadmNodeJoin) ClearSpec() {
 	x.xxx_hidden_Spec = nil
 }
 
-func (x *KubadmNodeJoin) ClearStatus() {
+func (x *KubeadmNodeJoin) ClearStatus() {
 	x.xxx_hidden_Status = nil
 }
 
-type KubadmNodeJoin_builder struct {
+type KubeadmNodeJoin_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	Metadata *api.Metadata
@@ -129,8 +129,8 @@ type KubadmNodeJoin_builder struct {
 	Status   *KubeadmNodeJoinStatus
 }
 
-func (b0 KubadmNodeJoin_builder) Build() *KubadmNodeJoin {
-	m0 := &KubadmNodeJoin{}
+func (b0 KubeadmNodeJoin_builder) Build() *KubeadmNodeJoin {
+	m0 := &KubeadmNodeJoin{}
 	b, x := &b0, m0
 	_, _ = b, x
 	x.xxx_hidden_Metadata = b.Metadata
@@ -673,8 +673,8 @@ var File_components_kubeadm_action_proto protoreflect.FileDescriptor
 
 const file_components_kubeadm_action_proto_rawDesc = "" +
 	"\n" +
-	"\x1fcomponents/kubeadm/action.proto\x12\x1baks.flex.components.kubeadm\x1a\x18components/api/api.proto\"\xe1\x01\n" +
-	"\x0eKubadmNodeJoin\x12=\n" +
+	"\x1fcomponents/kubeadm/action.proto\x12\x1baks.flex.components.kubeadm\x1a\x18components/api/api.proto\"\xe2\x01\n" +
+	"\x0fKubeadmNodeJoin\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12D\n" +
 	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.kubeadm.KubeadmNodeJoinSpecR\x04spec\x12J\n" +
 	"\x06status\x18\x03 \x01(\v22.aks.flex.components.kubeadm.KubeadmNodeJoinStatusR\x06status\"d\n" +
@@ -700,7 +700,7 @@ const file_components_kubeadm_action_proto_rawDesc = "" +
 
 var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_components_kubeadm_action_proto_goTypes = []any{
-	(*KubadmNodeJoin)(nil),        // 0: aks.flex.components.kubeadm.KubadmNodeJoin
+	(*KubeadmNodeJoin)(nil),       // 0: aks.flex.components.kubeadm.KubeadmNodeJoin
 	(*ControlPlane)(nil),          // 1: aks.flex.components.kubeadm.ControlPlane
 	(*Kubelet)(nil),               // 2: aks.flex.components.kubeadm.Kubelet
 	(*NodeAuthInfo)(nil),          // 3: aks.flex.components.kubeadm.NodeAuthInfo
@@ -710,9 +710,9 @@ var file_components_kubeadm_action_proto_goTypes = []any{
 	(*api.Metadata)(nil),          // 7: aks.flex.components.api.Metadata
 }
 var file_components_kubeadm_action_proto_depIdxs = []int32{
-	7, // 0: aks.flex.components.kubeadm.KubadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 1: aks.flex.components.kubeadm.KubadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
-	5, // 2: aks.flex.components.kubeadm.KubadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	7, // 0: aks.flex.components.kubeadm.KubeadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
+	4, // 1: aks.flex.components.kubeadm.KubeadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	5, // 2: aks.flex.components.kubeadm.KubeadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
 	3, // 3: aks.flex.components.kubeadm.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.NodeAuthInfo
 	6, // 4: aks.flex.components.kubeadm.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
 	1, // 5: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.ControlPlane
