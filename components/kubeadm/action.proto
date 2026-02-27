@@ -6,7 +6,7 @@ option go_package = "github.com/Azure/AKSFlexNode/components/kubeadm";
 
 import "components/api/api.proto";
 
-message KubadmNodeJoin {
+message KubeadmNodeJoin {
   api.Metadata metadata = 1;
 
   KubeadmNodeJoinSpec spec = 2;
