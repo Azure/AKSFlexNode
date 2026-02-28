@@ -34,9 +34,10 @@ func (i *Installer) Execute(ctx context.Context) error {
 	}
 
 	// Configure resolv.conf
-	if err := i.configureResolvConf(); err != nil {
-		return fmt.Errorf("failed to configure resolv.conf: %w", err)
-	}
+	// FIXME: this doesn't make sense to me, so disable for now
+	// if err := i.configureResolvConf(); err != nil {
+	// 	return fmt.Errorf("failed to configure resolv.conf: %w", err)
+	// }
 
 	i.logger.Info("System configuration completed successfully")
 	return nil
