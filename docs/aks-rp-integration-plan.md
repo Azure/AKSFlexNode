@@ -158,7 +158,7 @@ az aks flex-node update \
       │                      │                  └───┬─────────────┘
 ```
 
-### Phase 2: Continuous Configuration Monitoring
+### Phase 2: Continuous Configuration Monitoring (Optional)
 ```
       │                      │                      │
       │                      │                  ┌───▼─────────────┐
@@ -296,36 +296,39 @@ The aks-flex-node currently requires a comprehensive JSON configuration file wit
 
 ### Node Bootstrap Process
 
-#### Authentication Method Handling
+#### Dual Authentication Architecture
 
-##### Bootstrap Token (`authMethod: "bootstrapToken"`)
-- **AKS RP Action**: Generate new bootstrap token for cluster automatically
-- **Config Addition**: Populate `azure.bootstrapToken.token` in initial config bundle only
-- **Config Addition**: Include `node.kubelet.serverURL` and `node.kubelet.caCertData`
-- **User Experience**: Zero setup - AKS RP handles everything
+The agent requires two separate authentication mechanisms:
 
-##### Service Principal (`authMethod: "servicePrincipal"`)
-- **User Provides SP**:
-  - **Request**: Include `servicePrincipal.clientId` and `clientSecret` in request
-  - **AKS RP Action**: Configure the agent to use provided service principal for authenticating against AKS RP
-  - **RBAC Setup**: Auto-assign necessary cluster permissions to the provided SP
-- **Config Addition**: Include complete `azure.servicePrincipal` with clientId + secret credentials
-- **User Experience**: User must provide existing SP with clientId + secret authentication, AKS RP handles RBAC
+1. **Kubernetes Authentication**: For kubelet to join the cluster
+2. **Azure Authentication**: For ongoing AKS RP communication
 
-##### Managed Identity (`authMethod: "managedIdentity"`)
-- **Prerequisite**: Only works with Azure VMs/VMSS - MSI won't work with non-Azure resources
-- **Option 1 - User-Assigned Managed Identity**:
-  - **Request**: Include `managedIdentity.clientId` in request
-  - **User Responsibility**: Create the user-assigned managed identity and assign it to their Azure VM/VMSS
-  - **RBAC Setup**: Auto-assign necessary cluster permissions to the provided MI
-- **Option 2 - System-Assigned Managed Identity**:
-  - **Request**: No `managedIdentity` section in request body (uses system-assigned identity)
-  - **User Responsibility**: Enable system-assigned managed identity on their Azure VM/VMSS
-  - **RBAC Setup**: Auto-assign necessary cluster permissions to the system-assigned MI
-- **Config Addition**: Include `azure.managedIdentity.clientId` (or omit for system-assigned)
-- **User Experience**: Works only with Azure VMs - user must manage identity assignment, AKS RP handles RBAC
+Authentication Method Support
 
-### Continuous Monitoring & Self-Reconciliation
+| Authentication Method | Kubernetes Authentication | Azure Authentication |
+|----------------------|---------------------------|---------------------|
+| **Bootstrap Token** | Works with all AKS clusters (one-time use for node joining) | Not supported |
+| **Service Principal** | Works with AAD-integrated clusters | Works on any hardware |
+| **Managed Identity (Azure VM/VMSS)** | Works with AAD-integrated clusters | Works on Azure VMs/VMSS only |
+| **Azure Arc** | Works with AAD-integrated clusters (via Arc machine identity) | Works on Arc-enabled machines (including non-Azure hardware) |
+
+### Continuous Monitoring & Self-Reconciliation (Optional)
+
+**Note**: Continuous monitoring is optional and configurable. Users can choose bootstrap-only mode for simpler setups without ongoing Azure authentication.
+
+#### Configuration Modes
+
+**Bootstrap-Only Mode**:
+- Use bootstrap token for initial node joining only
+- No ongoing AKS RP communication after bootstrap
+- Simpler setup with no Azure authentication requirements
+- Node operates independently after initial cluster join
+
+**Continuous Monitoring Mode**:
+- Requires Azure authentication (Service Principal, Managed Identity, or Azure Arc)
+- Enables ongoing configuration updates and lifecycle management
+- Provides operational visibility and automated reconciliation
+- Supports remote configuration changes via AKS RP
 
 #### Supported Operations
 
@@ -375,6 +378,8 @@ The continuous monitoring system uses efficient version-based change detection:
 The FlexNode configuration API replaces complex manual configuration with AKS RP-generated configurations that include all cluster-specific details.
 
 #### FlexNode Config Resource Creation
+
+**Example 1: Bootstrap-Only Mode (No Continuous Monitoring)**
 ```http
 PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview&configUrl=true
 
@@ -383,7 +388,79 @@ Content-Type: application/json
 
 {
   "properties": {
-    "authMethod": "bootstrapToken",
+    "continuousMonitoring": false,
+    "kubernetesAuth": {
+      "method": "bootstrapToken"
+    },
+    "versions": {
+      "kubernetes": "1.30.0",
+      "containerd": "1.7.1"
+    },
+    "nodeConfig": {
+      "maxPods": 50,
+      "labels": {
+        "environment": "prod"
+      }
+    }
+  }
+}
+```
+
+**Example 2: Continuous Monitoring Mode**
+```http
+PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview&configUrl=true
+
+Authorization: Bearer {customer-azure-token}
+Content-Type: application/json
+
+{
+  "properties": {
+    "continuousMonitoring": true,
+    "kubernetesAuth": {
+      "method": "bootstrapToken"
+    },
+    "azureAuth": {
+      "method": "servicePrincipal",
+      "servicePrincipal": {
+        "clientId": "11111111-2222-3333-4444-555555555555",
+        "clientSecret": "your-secret-here"
+      }
+    },
+    "versions": {
+      "kubernetes": "1.30.0",
+      "containerd": "1.7.1"
+    },
+    "nodeConfig": {
+      "maxPods": 50,
+      "labels": {
+        "environment": "prod"
+      }
+    }
+  }
+}
+```
+
+**Example 3: Service Principal for Both Kubernetes and Azure Auth (AAD Cluster)**
+```http
+PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview&configUrl=true
+
+Authorization: Bearer {customer-azure-token}
+Content-Type: application/json
+
+{
+  "properties": {
+    "continuousMonitoring": true,
+    "azureAuth": {
+      "method": "servicePrincipal",
+      "servicePrincipal": {
+        "clientId": "11111111-2222-3333-4444-555555555555",
+        "clientSecret": "your-secret-here"
+      }
+    },
+    "kubernetesAuth": {
+      "method": "servicePrincipal",
+      "useAzureAuth": true
+    },
     "versions": {
       "kubernetes": "1.30.0",
       "containerd": "1.7.1"
@@ -411,7 +488,7 @@ Response 201 Created:
 
 #### Configuration Bundle (Retrieved from Config URL)
 
-**Example: Bootstrap Token Authentication**
+**Example: Bootstrap-Only Mode**
 ```http
 GET https://aksconfigs.blob.core.windows.net/configs/{nodeName}-config.json?sv=2022-11-02&...
 
@@ -430,10 +507,35 @@ Response:
       }
     },
     // ... rest of config
+  }
+  // No monitoringEndpoint for bootstrap-only mode
+}
+```
+
+**Example: Continuous Monitoring Mode**
+```http
+GET https://aksconfigs.blob.core.windows.net/configs/{nodeName}-config.json?sv=2022-11-02&...
+
+Response:
+{
+  "initialConfig": {
+    "azure": {
+      "subscriptionId": "auto-populated-from-cluster",
+      "tenantId": "auto-populated-from-subscription",
+      "servicePrincipal": {
+        "clientId": "11111111-2222-3333-4444-555555555555",
+        "clientSecret": "your-secret-here"
+      },
+      "targetCluster": {
+        "resourceId": "/subscriptions/.../managedClusters/cluster-name",
+        "location": "cluster-location"
+      }
+    },
+    // ... rest of config
   },
   "monitoringEndpoint": {
     "url": "/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}",
-    "authMethod": "bootstrapToken"
+    "azureAuth": "servicePrincipal"
   }
 }
 ```
@@ -563,3 +665,67 @@ Response 200 OK:
   - Consider implementing jittered polling intervals to distribute load
   - Explore push-based notifications or webhooks as alternative to polling
   - Add regional load balancing and caching strategies for configuration delivery
+
+## Frequently Asked Questions
+
+### Q: Why does the agent need a config URL for initial startup, but call AKS RP directly afterwards?
+
+**A: This solves the bootstrap authentication challenge for third-party nodes.**
+
+The agent faces a chicken-and-egg problem:
+- **Initial Problem**: Agent on non-Azure hardware has no Azure identity to authenticate with AKS RP
+- **Config URL Solution**: Customer creates config via authenticated CLI/Portal, gets temporary SAS URL with embedded credentials
+- **After Bootstrap**: Agent uses the credentials from initial config to authenticate directly with AKS RP for ongoing monitoring
+
+### Q: How does drift detection work if someone manually changes node configuration?
+
+**A: The agent maintains local state and can detect/reconcile drift.**
+
+**Agent Local State:**
+```
+/var/lib/aks-flex-node/
+├── current-config.json          # Latest config from AKS RP
+├── applied-config.json          # What was actually applied to system
+├── config-version.txt           # Version for polling efficiency
+```
+
+**Drift Detection Scenarios:**
+
+1. **AKS RP Config Changes** (normal flow):
+   - Agent polls AKS RP, sees new `configVersion`
+   - Downloads new config, compares with `current-config.json`
+   - Applies changes, updates both local files
+
+2. **Manual Local Changes** (drift):
+   - Agent detects running config differs from `applied-config.json`
+   - Options: **Reconcile** (revert to AKS RP config) or **Alert** (report drift to AKS RP)
+   - Behavior configurable based on drift tolerance policy
+
+3. **Agent Restart**:
+   - Agent reads `current-config.json` and `config-version.txt`
+   - Resumes polling from last known version
+   - Ensures no configuration loss during downtime
+
+### Q: How are sensitive credentials handled securely?
+
+**A: Different authentication methods have different security models.**
+
+**Bootstrap Token:**
+- ✅ **Secure**: Short-lived (24h), single-use, automatically rotated
+- ✅ **Least Privilege**: Limited to node joining only
+- ⚠️ **Initial Distribution**: Via config URL (temporary exposure risk)
+
+**Service Principal:**
+- ✅ **Customer Managed**: User controls credential lifecycle
+- ✅ **Certificate Option**: Can use certs instead of secrets
+- ⚠️ **Long-lived**: Requires manual rotation
+
+**Managed Identity:**
+- ✅ **Most Secure**: No credential distribution, Azure-managed
+- ✅ **Automatic Rotation**: Azure handles credential lifecycle
+- ❌ **Azure VMs Only**: Cannot be used on non-Azure hardware
+
+**Future Security Improvements:**
+- Replace config URLs with direct API credential exchange
+- Support certificate-based authentication for all methods
+- Implement automatic credential rotation for all auth types
