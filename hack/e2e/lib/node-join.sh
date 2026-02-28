@@ -309,9 +309,39 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_join_all - Join both nodes
+# node_join_all - Join both nodes in parallel
 # ---------------------------------------------------------------------------
 node_join_all() {
-  node_join_msi
-  node_join_token
+  log_section "Joining Both Nodes (parallel)"
+  local start
+  start=$(timer_start)
+
+  local msi_pid token_pid
+  local msi_exit=0 token_exit=0
+
+  node_join_msi &
+  msi_pid=$!
+
+  node_join_token &
+  token_pid=$!
+
+  wait "${msi_pid}" || msi_exit=$?
+  wait "${token_pid}" || token_exit=$?
+
+  local duration
+  duration=$(timer_elapsed "${start}")
+
+  if [[ "${msi_exit}" -ne 0 ]]; then
+    log_error "MSI node join failed (exit ${msi_exit})"
+  fi
+  if [[ "${token_exit}" -ne 0 ]]; then
+    log_error "Token node join failed (exit ${token_exit})"
+  fi
+
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 ]]; then
+    log_error "Node joins failed (${duration}s)"
+    return 1
+  fi
+
+  log_success "Both nodes joined in ${duration}s"
 }
