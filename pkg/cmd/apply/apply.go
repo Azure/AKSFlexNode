@@ -44,7 +44,8 @@ var Command = &cobra.Command{
 			return err
 		}
 
-		return apply(cmd.Context(), input, flagNoPrettyUI)
+		isBinaryProto := isBinaryProtoContent(input)
+		return apply(cmd.Context(), input, isBinaryProto, flagNoPrettyUI)
 	},
 	SilenceUsage: true,
 }
@@ -76,35 +77,45 @@ type stepResult struct {
 	err      error
 }
 
-func apply(ctx context.Context, input []byte, noPrettyUI bool) error {
+func apply(ctx context.Context, input []byte, isBinaryProto bool, noPrettyUI bool) error {
 	conn, err := inmem.NewConnection()
 	if err != nil {
 		return err
 	}
 	defer conn.Close() //nolint:errcheck // close connection
 
-	tok, err := json.NewDecoder(bytes.NewBuffer(input)).Token()
-	if err != nil {
-		return err
-	}
+	var parsed []parsedAction
 
-	var bs []json.RawMessage
-	if tok == json.Delim('[') {
-		if err := json.Unmarshal(input, &bs); err != nil {
-			return err
-		}
-	} else {
-		bs = append(bs, input)
-	}
-
-	// Pre-parse all actions so we know the total count and names up front.
-	parsed := make([]parsedAction, 0, len(bs))
-	for _, b := range bs {
-		pa, err := parseAction(b)
+	if isBinaryProto {
+		pa, err := parseActionFromProto(input)
 		if err != nil {
 			return err
 		}
-		parsed = append(parsed, pa)
+		parsed = []parsedAction{pa}
+	} else {
+		tok, err := json.NewDecoder(bytes.NewBuffer(input)).Token()
+		if err != nil {
+			return err
+		}
+
+		var bs []json.RawMessage
+		if tok == json.Delim('[') {
+			if err := json.Unmarshal(input, &bs); err != nil {
+				return err
+			}
+		} else {
+			bs = append(bs, input)
+		}
+
+		// Pre-parse all actions so we know the total count and names up front.
+		parsed = make([]parsedAction, 0, len(bs))
+		for _, b := range bs {
+			pa, err := parseAction(b)
+			if err != nil {
+				return err
+			}
+			parsed = append(parsed, pa)
+		}
 	}
 
 	if noPrettyUI {
@@ -244,6 +255,21 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
+// isBinaryProtoContent reports whether input appears to be a binary-encoded
+// protobuf message. It inspects the first non-whitespace byte: JSON objects
+// begin with '{' and JSON arrays begin with '['; binary protobuf never starts
+// with either of those bytes, and the apply command only accepts JSON objects
+// or arrays.
+func isBinaryProtoContent(input []byte) bool {
+	for _, b := range input {
+		if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
+			continue
+		}
+		return b != '{' && b != '['
+	}
+	return false
+}
+
 func parseAction(b []byte) (parsedAction, error) {
 	base := &api.Base{}
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(b, base); err != nil {
@@ -260,6 +286,35 @@ func parseAction(b []byte) (parsedAction, error) {
 
 	m := mt.New().Interface()
 	if err := protojson.Unmarshal(b, m); err != nil {
+		return parsedAction{}, fmt.Errorf("unmarshal action %q: %w", actionType, err)
+	}
+
+	// Use the action name if available, otherwise fall back to the type URL.
+	name := actionName
+	if name == "" {
+		name = actionType
+	}
+
+	return parsedAction{name: name, message: m}, nil
+}
+
+// parseActionFromProto deserializes a single binary protobuf-encoded action.
+func parseActionFromProto(b []byte) (parsedAction, error) {
+	base := &api.Base{}
+	if err := proto.Unmarshal(b, base); err != nil {
+		return parsedAction{}, err
+	}
+
+	actionType := base.GetMetadata().GetType()
+	actionName := base.GetMetadata().GetName()
+
+	mt, err := protoregistry.GlobalTypes.FindMessageByURL(actionType)
+	if err != nil {
+		return parsedAction{}, fmt.Errorf("lookup action type %q: %w", actionType, err)
+	}
+
+	m := mt.New().Interface()
+	if err := proto.Unmarshal(b, m); err != nil {
 		return parsedAction{}, fmt.Errorf("unmarshal action %q: %w", actionType, err)
 	}
 
