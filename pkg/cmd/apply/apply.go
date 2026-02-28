@@ -44,8 +44,11 @@ var Command = &cobra.Command{
 			return err
 		}
 
-		isBinaryProto := isBinaryProtoContent(input)
-		return apply(cmd.Context(), input, isBinaryProto, flagNoPrettyUI)
+		parsed, err := parseActions(input)
+		if err != nil {
+			return err
+		}
+		return apply(cmd.Context(), parsed, flagNoPrettyUI)
 	},
 	SilenceUsage: true,
 }
@@ -77,46 +80,12 @@ type stepResult struct {
 	err      error
 }
 
-func apply(ctx context.Context, input []byte, isBinaryProto bool, noPrettyUI bool) error {
+func apply(ctx context.Context, parsed []parsedAction, noPrettyUI bool) error {
 	conn, err := inmem.NewConnection()
 	if err != nil {
 		return err
 	}
 	defer conn.Close() //nolint:errcheck // close connection
-
-	var parsed []parsedAction
-
-	if isBinaryProto {
-		pa, err := parseActionFromProto(input)
-		if err != nil {
-			return err
-		}
-		parsed = []parsedAction{pa}
-	} else {
-		tok, err := json.NewDecoder(bytes.NewBuffer(input)).Token()
-		if err != nil {
-			return err
-		}
-
-		var bs []json.RawMessage
-		if tok == json.Delim('[') {
-			if err := json.Unmarshal(input, &bs); err != nil {
-				return err
-			}
-		} else {
-			bs = append(bs, input)
-		}
-
-		// Pre-parse all actions so we know the total count and names up front.
-		parsed = make([]parsedAction, 0, len(bs))
-		for _, b := range bs {
-			pa, err := parseAction(b)
-			if err != nil {
-				return err
-			}
-			parsed = append(parsed, pa)
-		}
-	}
 
 	if noPrettyUI {
 		return applyPlain(ctx, conn, parsed)
@@ -255,19 +224,53 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-// isBinaryProtoContent reports whether input appears to be a binary-encoded
-// protobuf message. It inspects the first non-whitespace byte: JSON objects
-// begin with '{' and JSON arrays begin with '['; binary protobuf never starts
-// with either of those bytes, and the apply command only accepts JSON objects
-// or arrays.
-func isBinaryProtoContent(input []byte) bool {
+// isJSONContent reports whether input appears to be a JSON object or array.
+// It inspects the first non-whitespace byte: JSON objects begin with '{' and
+// JSON arrays begin with '['; binary protobuf never starts with either byte.
+func isJSONContent(input []byte) bool {
 	for _, b := range input {
 		if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
 			continue
 		}
-		return b != '{' && b != '['
+		return b == '{' || b == '['
 	}
 	return false
+}
+
+// parseActions detects the input format and returns the pre-parsed actions.
+func parseActions(input []byte) ([]parsedAction, error) {
+	if isJSONContent(input) {
+		tok, err := json.NewDecoder(bytes.NewBuffer(input)).Token()
+		if err != nil {
+			return nil, err
+		}
+
+		var bs []json.RawMessage
+		if tok == json.Delim('[') {
+			if err := json.Unmarshal(input, &bs); err != nil {
+				return nil, err
+			}
+		} else {
+			bs = append(bs, input)
+		}
+
+		// Pre-parse all actions so we know the total count and names up front.
+		parsed := make([]parsedAction, 0, len(bs))
+		for _, b := range bs {
+			pa, err := parseAction(b)
+			if err != nil {
+				return nil, err
+			}
+			parsed = append(parsed, pa)
+		}
+		return parsed, nil
+	}
+
+	pa, err := parseActionFromProto(input)
+	if err != nil {
+		return nil, err
+	}
+	return []parsedAction{pa}, nil
 }
 
 func parseAction(b []byte) (parsedAction, error) {

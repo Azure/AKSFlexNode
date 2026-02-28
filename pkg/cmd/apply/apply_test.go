@@ -9,26 +9,26 @@ import (
 	_ "github.com/Azure/AKSFlexNode/components/linux" // register linux action types
 )
 
-func TestIsBinaryProtoContent(t *testing.T) {
+func TestIsJSONContent(t *testing.T) {
 	tests := []struct {
 		name  string
 		input []byte
 		want  bool
 	}{
-		{name: "json object", input: []byte(`{"metadata":{}}`), want: false},
-		{name: "json array", input: []byte(`[{"metadata":{}}]`), want: false},
-		{name: "json object with leading whitespace", input: []byte("  \t\n{\"metadata\":{}}"), want: false},
-		{name: "json array with leading whitespace", input: []byte("\n  [{\"metadata\":{}}]"), want: false},
-		{name: "binary proto (non-json first byte)", input: []byte{0x0a, 0x00}, want: true},
+		{name: "json object", input: []byte(`{"metadata":{}}`), want: true},
+		{name: "json array", input: []byte(`[{"metadata":{}}]`), want: true},
+		{name: "json object with leading whitespace", input: []byte("  \t\n{\"metadata\":{}}"), want: true},
+		{name: "json array with leading whitespace", input: []byte("\n  [{\"metadata\":{}}]"), want: true},
+		{name: "binary proto (non-json first byte)", input: []byte{0x0a, 0x00}, want: false},
 		{name: "empty input", input: []byte{}, want: false},
 		{name: "whitespace only", input: []byte("   "), want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBinaryProtoContent(tt.input)
+			got := isJSONContent(tt.input)
 			if got != tt.want {
-				t.Errorf("isBinaryProtoContent(%q) = %v, want %v", tt.input, got, tt.want)
+				t.Errorf("isJSONContent(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -96,18 +96,26 @@ func TestParseActionFromProto_UnknownType(t *testing.T) {
 	}
 }
 
-func TestIsBinaryProtoContent_RoundTrip(t *testing.T) {
-	// A real serialized proto message must be detected as binary.
+func TestParseActions_BinaryProtoRoundTrip(t *testing.T) {
+	// A real serialized proto message must be routed to the binary proto parser.
 	base := &api.Base{}
 	base.SetMetadata(&api.Metadata{})
 	base.GetMetadata().SetType("aks.flex.components.linux.ConfigureBaseOS")
+	base.GetMetadata().SetName("round-trip")
 
 	b, err := proto.Marshal(base)
 	if err != nil {
 		t.Fatalf("proto.Marshal: %v", err)
 	}
 
-	if !isBinaryProtoContent(b) {
-		t.Error("expected isBinaryProtoContent to return true for a marshaled proto message")
+	parsed, err := parseActions(b)
+	if err != nil {
+		t.Fatalf("parseActions: %v", err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("len(parsed) = %d, want 1", len(parsed))
+	}
+	if parsed[0].name != "round-trip" {
+		t.Errorf("name = %q, want %q", parsed[0].name, "round-trip")
 	}
 }
