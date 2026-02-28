@@ -5,8 +5,10 @@
 //   - AKS cluster (1-node control plane)
 //   - VM with system-assigned managed identity  (MSI auth mode)
 //   - VM without managed identity               (bootstrap token auth mode)
+//   - VM without managed identity               (kubeadm apply -f auth mode)
 //
-// Both VMs run Ubuntu 22.04 LTS, have public IPs, and allow SSH ingress.
+// All flex-node VMs run Ubuntu 22.04 LTS, have public IPs, and allow SSH
+// ingress.  VM creation is delegated to the reusable modules/vm.bicep module.
 // =============================================================================
 
 @description('Azure region for all resources.')
@@ -34,11 +36,12 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
-var clusterName = 'aks-e2e-${nameSuffix}'
-var msiVmName   = 'vm-e2e-msi-${nameSuffix}'
-var tokenVmName = 'vm-e2e-token-${nameSuffix}'
-var vnetName    = 'vnet-e2e-${nameSuffix}'
-var nsgName     = 'nsg-e2e-${nameSuffix}'
+var clusterName   = 'aks-e2e-${nameSuffix}'
+var msiVmName     = 'vm-e2e-msi-${nameSuffix}'
+var tokenVmName   = 'vm-e2e-token-${nameSuffix}'
+var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
+var vnetName      = 'vnet-e2e-${nameSuffix}'
+var nsgName       = 'nsg-e2e-${nameSuffix}'
 
 var subnetAksName = 'snet-aks'
 var subnetVmName  = 'snet-vm'
@@ -136,159 +139,47 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
 }
 
 // ---------------------------------------------------------------------------
-// Public IPs for VMs
+// Flex-node VMs (via reusable module)
 // ---------------------------------------------------------------------------
-resource pipMsi 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
-  name: '${msiVmName}-pip'
-  location: location
-  tags: tags
-  sku: { name: 'Standard' }
-  properties: {
-    publicIPAllocationMethod: 'Static'
+module vmMsi 'modules/vm.bicep' = {
+  name: 'deploy-vm-msi'
+  params: {
+    location: location
+    vmName: msiVmName
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: true
+    tags: tags
   }
 }
 
-resource pipToken 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
-  name: '${tokenVmName}-pip'
-  location: location
-  tags: tags
-  sku: { name: 'Standard' }
-  properties: {
-    publicIPAllocationMethod: 'Static'
+module vmToken 'modules/vm.bicep' = {
+  name: 'deploy-vm-token'
+  params: {
+    location: location
+    vmName: tokenVmName
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: false
+    tags: tags
   }
 }
 
-// ---------------------------------------------------------------------------
-// NICs
-// ---------------------------------------------------------------------------
-resource nicMsi 'Microsoft.Network/networkInterfaces@2023-11-01' = {
-  name: '${msiVmName}-nic'
-  location: location
-  tags: tags
-  properties: {
-    ipConfigurations: [
-      {
-        name: 'ipconfig1'
-        properties: {
-          subnet: {
-            id: vnet.properties.subnets[1].id
-          }
-          publicIPAddress: {
-            id: pipMsi.id
-          }
-          privateIPAllocationMethod: 'Dynamic'
-        }
-      }
-    ]
-  }
-}
-
-resource nicToken 'Microsoft.Network/networkInterfaces@2023-11-01' = {
-  name: '${tokenVmName}-nic'
-  location: location
-  tags: tags
-  properties: {
-    ipConfigurations: [
-      {
-        name: 'ipconfig1'
-        properties: {
-          subnet: {
-            id: vnet.properties.subnets[1].id
-          }
-          publicIPAddress: {
-            id: pipToken.id
-          }
-          privateIPAllocationMethod: 'Dynamic'
-        }
-      }
-    ]
-  }
-}
-
-// ---------------------------------------------------------------------------
-// VM: MSI (system-assigned managed identity)
-// ---------------------------------------------------------------------------
-resource vmMsi 'Microsoft.Compute/virtualMachines@2024-03-01' = {
-  name: msiVmName
-  location: location
-  tags: tags
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    hardwareProfile: { vmSize: vmSize }
-    osProfile: {
-      computerName: msiVmName
-      adminUsername: adminUsername
-      linuxConfiguration: {
-        disablePasswordAuthentication: true
-        ssh: {
-          publicKeys: [
-            {
-              path: '/home/${adminUsername}/.ssh/authorized_keys'
-              keyData: sshPublicKey
-            }
-          ]
-        }
-      }
-    }
-    storageProfile: {
-      imageReference: {
-        publisher: 'Canonical'
-        offer: '0001-com-ubuntu-server-jammy'
-        sku: '22_04-lts-gen2'
-        version: 'latest'
-      }
-      osDisk: {
-        createOption: 'FromImage'
-        managedDisk: { storageAccountType: 'StandardSSD_LRS' }
-      }
-    }
-    networkProfile: {
-      networkInterfaces: [ { id: nicMsi.id } ]
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// VM: Token (no managed identity)
-// ---------------------------------------------------------------------------
-resource vmToken 'Microsoft.Compute/virtualMachines@2024-03-01' = {
-  name: tokenVmName
-  location: location
-  tags: tags
-  properties: {
-    hardwareProfile: { vmSize: vmSize }
-    osProfile: {
-      computerName: tokenVmName
-      adminUsername: adminUsername
-      linuxConfiguration: {
-        disablePasswordAuthentication: true
-        ssh: {
-          publicKeys: [
-            {
-              path: '/home/${adminUsername}/.ssh/authorized_keys'
-              keyData: sshPublicKey
-            }
-          ]
-        }
-      }
-    }
-    storageProfile: {
-      imageReference: {
-        publisher: 'Canonical'
-        offer: '0001-com-ubuntu-server-jammy'
-        sku: '22_04-lts-gen2'
-        version: 'latest'
-      }
-      osDisk: {
-        createOption: 'FromImage'
-        managedDisk: { storageAccountType: 'StandardSSD_LRS' }
-      }
-    }
-    networkProfile: {
-      networkInterfaces: [ { id: nicToken.id } ]
-    }
+module vmKubeadm 'modules/vm.bicep' = {
+  name: 'deploy-vm-kubeadm'
+  params: {
+    location: location
+    vmName: kubeadmVmName
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: false
+    tags: tags
   }
 }
 
@@ -297,10 +188,10 @@ resource vmToken 'Microsoft.Compute/virtualMachines@2024-03-01' = {
 // ---------------------------------------------------------------------------
 // Azure Kubernetes Service Cluster Admin Role
 resource roleClusterAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, vmMsi.id, 'aks-cluster-admin')
+  name: guid(aksCluster.id, msiVmName, 'aks-cluster-admin')
   scope: aksCluster
   properties: {
-    principalId: vmMsi.identity.principalId
+    principalId: vmMsi.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8')
   }
@@ -308,10 +199,10 @@ resource roleClusterAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 
 // Azure Kubernetes Service RBAC Cluster Admin
 resource roleRbacAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, vmMsi.id, 'aks-rbac-cluster-admin')
+  name: guid(aksCluster.id, msiVmName, 'aks-rbac-cluster-admin')
   scope: aksCluster
   properties: {
-    principalId: vmMsi.identity.principalId
+    principalId: vmMsi.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b')
   }
@@ -324,11 +215,15 @@ output clusterName string = aksCluster.name
 output clusterId string = aksCluster.id
 output clusterFqdn string = aksCluster.properties.fqdn
 
-output msiVmName string = vmMsi.name
-output msiVmIp string = pipMsi.properties.ipAddress
-output msiVmPrincipalId string = vmMsi.identity.principalId
+output msiVmName string = vmMsi.outputs.vmName
+output msiVmIp string = vmMsi.outputs.publicIpAddress
+output msiVmPrincipalId string = vmMsi.outputs.principalId
 
-output tokenVmName string = vmToken.name
-output tokenVmIp string = pipToken.properties.ipAddress
+output tokenVmName string = vmToken.outputs.vmName
+output tokenVmIp string = vmToken.outputs.publicIpAddress
+
+output kubeadmVmName string = vmKubeadm.outputs.vmName
+output kubeadmVmIp string = vmKubeadm.outputs.publicIpAddress
 
 output adminUsername string = adminUsername
+

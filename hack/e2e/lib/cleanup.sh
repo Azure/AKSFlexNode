@@ -43,16 +43,17 @@ _collect_vm_logs() {
 }
 
 # ---------------------------------------------------------------------------
-# collect_logs - Collect logs from both VMs
+# collect_logs - Collect logs from all VMs
 # ---------------------------------------------------------------------------
 collect_logs() {
   log_section "Collecting Logs"
 
   mkdir -p "${E2E_LOG_DIR}"
 
-  local msi_vm_ip token_vm_ip
+  local msi_vm_ip token_vm_ip kubeadm_vm_ip
   msi_vm_ip="$(state_get msi_vm_ip)"
   token_vm_ip="$(state_get token_vm_ip)"
+  kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
 
   if [[ -n "${msi_vm_ip}" ]]; then
     _collect_vm_logs "${msi_vm_ip}" "msi" || true
@@ -60,6 +61,10 @@ collect_logs() {
 
   if [[ -n "${token_vm_ip}" ]]; then
     _collect_vm_logs "${token_vm_ip}" "token" || true
+  fi
+
+  if [[ -n "${kubeadm_vm_ip}" ]]; then
+    _collect_vm_logs "${kubeadm_vm_ip}" "kubeadm" || true
   fi
 
   # Also capture cluster-side info
@@ -91,11 +96,12 @@ cleanup() {
     return 0
   fi
 
-  local resource_group cluster_name msi_vm_name token_vm_name
+  local resource_group cluster_name msi_vm_name token_vm_name kubeadm_vm_name
   resource_group="$(state_get resource_group)"
   cluster_name="$(state_get cluster_name)"
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
+  kubeadm_vm_name="$(state_get kubeadm_vm_name)"
   local deployment_name
   deployment_name="$(state_get deployment_name)"
 
@@ -105,16 +111,20 @@ cleanup() {
   fi
 
   # Delete VMs first (faster than waiting for full RG delete)
-  log_info "[1/4] Deleting MSI VM: ${msi_vm_name}..."
+  log_info "[1/5] Deleting MSI VM: ${msi_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${msi_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[2/4] Deleting Token VM: ${token_vm_name}..."
+  log_info "[2/5] Deleting Token VM: ${token_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${token_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
+  log_info "[3/5] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
+  az vm delete --resource-group "${resource_group}" --name "${kubeadm_vm_name}" \
+    --force-deletion yes --yes --no-wait 2>/dev/null || true
+
   # Clean up leftover networking resources tied to our deployment
-  log_info "[3/4] Cleaning up networking resources..."
+  log_info "[4/5] Cleaning up networking resources..."
   local run_id="${GITHUB_RUN_ID:-}"
   if [[ -n "${run_id}" ]]; then
     for res_type in networkInterfaces publicIPAddresses networkSecurityGroups disks; do
@@ -126,7 +136,7 @@ cleanup() {
     done
   fi
 
-  log_info "[4/4] Deleting AKS cluster: ${cluster_name}..."
+  log_info "[5/5] Deleting AKS cluster: ${cluster_name}..."
   az aks delete --resource-group "${resource_group}" --name "${cluster_name}" \
     --yes --no-wait 2>/dev/null || true
 
