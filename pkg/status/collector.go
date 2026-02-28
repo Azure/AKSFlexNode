@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -279,17 +278,15 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 }
 
 // GetStatusFilePath returns the appropriate status directory path
-// Uses /run/aks-flex-node/status.json when running as aks-flex-node user (systemd service)
+// Uses /run/aks-flex-node/status.json when running as systemd service (RuntimeDirectory creates this)
 // Uses /tmp/aks-flex-node/status.json for direct user execution (testing/development)
 func GetStatusFilePath() string {
-	// Running as regular user (testing/development) - use temp directory
-	statusDir := "/tmp/aks-flex-node"
-	// Check if we're running as the aks-flex-node service user
-	currentUser, err := user.Current()
-	if err == nil && currentUser.Username == "aks-flex-node" {
-		// Running as systemd service user - use runtime directory for status files
-		statusDir = "/run/aks-flex-node"
+	// Check if /run/aks-flex-node exists (created by systemd RuntimeDirectory directive)
+	runtimeDir := "/run/aks-flex-node"
+	if fi, err := os.Stat(runtimeDir); err == nil && fi.IsDir() {
+		return filepath.Join(runtimeDir, "status.json")
 	}
 
-	return filepath.Join(statusDir, "status.json")
+	// Fallback to temp directory for testing/development
+	return filepath.Join("/tmp/aks-flex-node", "status.json")
 }
