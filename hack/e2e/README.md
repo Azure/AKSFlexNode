@@ -1,7 +1,8 @@
 # AKS Flex Node E2E Tests
 
-End-to-end tests that provision an AKS cluster and two Ubuntu VMs in Azure, join
-them as flex nodes (one via MSI, one via bootstrap token), and run smoke tests.
+End-to-end tests that provision an AKS cluster and three Ubuntu VMs in Azure,
+join them as flex nodes (one via MSI, one via bootstrap token, one via kubeadm
+join using `apply -f`), and run smoke tests.
 
 ## Prerequisites
 
@@ -27,8 +28,8 @@ export E2E_LOCATION=westus2
 make e2e
 ```
 
-This will build the agent binary, deploy infrastructure via Bicep, join both
-nodes, run validations, collect logs, and tear everything down.
+This will build the agent binary, deploy infrastructure via Bicep, join all
+three nodes, run validations, collect logs, and tear everything down.
 
 ## Commands
 
@@ -38,10 +39,11 @@ omitted it defaults to `all`.
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, cleanup (default) |
-| `infra` | Deploy AKS cluster + 2 VMs via Bicep |
-| `join` | Join both nodes to the cluster |
+| `infra` | Deploy AKS cluster + 3 VMs via Bicep |
+| `join` | Join all nodes to the cluster |
 | `join-msi` | Join only the MSI-authenticated node |
 | `join-token` | Join only the bootstrap-token node |
+| `join-kubeadm` | Join only the kubeadm node (`apply -f` with `KubeadmNodeJoin`) |
 | `validate` | Verify nodes joined and run smoke tests |
 | `smoke` | Run smoke tests only (nginx pods on flex nodes) |
 | `logs` | Collect logs from VMs |
@@ -72,6 +74,21 @@ Additional environment variables:
 | `AZURE_SUBSCRIPTION_ID` | (auto-detected) | Azure subscription |
 | `AZURE_TENANT_ID` | (auto-detected) | Azure tenant |
 
+## Node Join Modes
+
+The E2E suite tests three node join methods:
+
+| VM | Auth Mode | Join Method |
+|----|-----------|-------------|
+| `vm-e2e-msi-*` | Managed Identity (MSI) | `aks-flex-node agent --config config.json` |
+| `vm-e2e-token-*` | Bootstrap Token | `aks-flex-node agent --config config.json` |
+| `vm-e2e-kubeadm-*` | Bootstrap Token | `aks-flex-node apply -f kubeadm-join.json` |
+
+The kubeadm VM uses the `apply -f` command with a JSON action file that
+contains a sequence of component actions (configure OS, download CRI/kube/CNI
+binaries, start containerd, then `KubeadmNodeJoin`) to join the cluster using
+the kubeadm join flow.
+
 ## Iterative Development
 
 The subcommands make it easy to deploy infrastructure once and iterate on the
@@ -84,6 +101,7 @@ join or validation steps without re-provisioning every time.
 # Iterate on the join logic
 ./hack/e2e/run.sh join-msi
 ./hack/e2e/run.sh join-token
+./hack/e2e/run.sh join-kubeadm
 
 # Run validation
 ./hack/e2e/run.sh validate
@@ -114,11 +132,11 @@ make e2e-cleanup  # Tear down resources
 hack/e2e/
   run.sh              Main entry point / orchestrator
   infra/
-    main.bicep        Bicep template (AKS + VNet + NSG + 2 VMs + role assignments)
+    main.bicep        Bicep template (AKS + VNet + NSG + 3 VMs + role assignments)
   lib/
     common.sh         Logging, prereqs, config, state management, SSH helpers
     infra.sh          Bicep deployment, output extraction, kubeconfig fetch
-    node-join.sh      MSI and token node join logic
+    node-join.sh      MSI, token, and kubeadm node join logic
     validate.sh       Node-ready checks and smoke tests (nginx pods)
     cleanup.sh        Log collection and Azure resource teardown
 ```
@@ -135,7 +153,10 @@ previous one left off. Use `run.sh status` to inspect it.
   your SSH key is available (defaults to `~/.ssh/id_rsa.pub`). Check the state
   file for the correct VM public IPs with `run.sh status`.
 - **Node not joining**: Run `run.sh logs` to pull `journalctl` and agent logs
-  from both VMs. Logs are saved to `$E2E_WORK_DIR/logs/`.
+  from all VMs. Logs are saved to `$E2E_WORK_DIR/logs/`.
+- **Kubeadm join failures**: Check `kubeadm-agent-journal.log` and
+  `kubeadm-kubelet.log` in the logs directory. The `apply -f` approach runs
+  sequentially; each action step must succeed before the next one starts.
 - **Timeouts**: Adjust `E2E_SSH_WAIT_TIMEOUT`, `E2E_NODE_JOIN_TIMEOUT`, or
   `E2E_POD_READY_TIMEOUT` environment variables (in seconds).
 - **Leftover resources**: If a previous run didn't clean up, run

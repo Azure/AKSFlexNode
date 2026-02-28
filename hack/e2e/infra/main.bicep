@@ -34,11 +34,12 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
-var clusterName = 'aks-e2e-${nameSuffix}'
-var msiVmName   = 'vm-e2e-msi-${nameSuffix}'
-var tokenVmName = 'vm-e2e-token-${nameSuffix}'
-var vnetName    = 'vnet-e2e-${nameSuffix}'
-var nsgName     = 'nsg-e2e-${nameSuffix}'
+var clusterName   = 'aks-e2e-${nameSuffix}'
+var msiVmName     = 'vm-e2e-msi-${nameSuffix}'
+var tokenVmName   = 'vm-e2e-token-${nameSuffix}'
+var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
+var vnetName      = 'vnet-e2e-${nameSuffix}'
+var nsgName       = 'nsg-e2e-${nameSuffix}'
 
 var subnetAksName = 'snet-aks'
 var subnetVmName  = 'snet-vm'
@@ -158,6 +159,16 @@ resource pipToken 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
   }
 }
 
+resource pipKubeadm 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
+  name: '${kubeadmVmName}-pip'
+  location: location
+  tags: tags
+  sku: { name: 'Standard' }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // NICs
 // ---------------------------------------------------------------------------
@@ -197,6 +208,28 @@ resource nicToken 'Microsoft.Network/networkInterfaces@2023-11-01' = {
           }
           publicIPAddress: {
             id: pipToken.id
+          }
+          privateIPAllocationMethod: 'Dynamic'
+        }
+      }
+    ]
+  }
+}
+
+resource nicKubeadm 'Microsoft.Network/networkInterfaces@2023-11-01' = {
+  name: '${kubeadmVmName}-nic'
+  location: location
+  tags: tags
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          subnet: {
+            id: vnet.properties.subnets[1].id
+          }
+          publicIPAddress: {
+            id: pipKubeadm.id
           }
           privateIPAllocationMethod: 'Dynamic'
         }
@@ -293,6 +326,48 @@ resource vmToken 'Microsoft.Compute/virtualMachines@2024-03-01' = {
 }
 
 // ---------------------------------------------------------------------------
+// VM: Kubeadm (no managed identity - uses apply -f with kubeadm join flow)
+// ---------------------------------------------------------------------------
+resource vmKubeadm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
+  name: kubeadmVmName
+  location: location
+  tags: tags
+  properties: {
+    hardwareProfile: { vmSize: vmSize }
+    osProfile: {
+      computerName: kubeadmVmName
+      adminUsername: adminUsername
+      linuxConfiguration: {
+        disablePasswordAuthentication: true
+        ssh: {
+          publicKeys: [
+            {
+              path: '/home/${adminUsername}/.ssh/authorized_keys'
+              keyData: sshPublicKey
+            }
+          ]
+        }
+      }
+    }
+    storageProfile: {
+      imageReference: {
+        publisher: 'Canonical'
+        offer: '0001-com-ubuntu-server-jammy'
+        sku: '22_04-lts-gen2'
+        version: 'latest'
+      }
+      osDisk: {
+        createOption: 'FromImage'
+        managedDisk: { storageAccountType: 'StandardSSD_LRS' }
+      }
+    }
+    networkProfile: {
+      networkInterfaces: [ { id: nicKubeadm.id } ]
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Role assignments: grant MSI VM permissions on the AKS cluster
 // ---------------------------------------------------------------------------
 // Azure Kubernetes Service Cluster Admin Role
@@ -330,5 +405,8 @@ output msiVmPrincipalId string = vmMsi.identity.principalId
 
 output tokenVmName string = vmToken.name
 output tokenVmIp string = pipToken.properties.ipAddress
+
+output kubeadmVmName string = vmKubeadm.name
+output kubeadmVmIp string = pipKubeadm.properties.ipAddress
 
 output adminUsername string = adminUsername

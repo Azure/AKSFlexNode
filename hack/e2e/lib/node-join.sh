@@ -3,13 +3,15 @@
 # hack/e2e/lib/node-join.sh - Bootstrap flex nodes into the AKS cluster
 #
 # Functions:
-#   node_join_msi   - Install Azure CLI + MSI auth, deploy binary, run agent
-#   node_join_token - Create bootstrap token/RBAC, deploy binary, run agent
-#   node_join_all   - Join both nodes (MSI first, then token)
+#   node_join_msi      - Install Azure CLI + MSI auth, deploy binary, run agent
+#   node_join_token    - Create bootstrap token/RBAC, deploy binary, run agent
+#   node_join_kubeadm  - Create bootstrap token, deploy binary, run apply -f
+#                        with a KubeadmNodeJoin action (kubeadm join flow)
+#   node_join_all      - Join all nodes (MSI, token, and kubeadm) in parallel
 #
 # Each function:
-#   1. Generates the appropriate config.json
-#   2. SCPs the binary + config onto the VM
+#   1. Generates the appropriate config / action file
+#   2. SCPs the binary + config/action file onto the VM
 #   3. Starts the agent via systemd-run
 #   4. Waits for kubelet to report running
 # =============================================================================
@@ -309,15 +311,231 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_join_all - Join both nodes in parallel
+# node_join_kubeadm - Join the Kubeadm VM using apply -f with KubeadmNodeJoin
 # ---------------------------------------------------------------------------
-node_join_all() {
-  log_section "Joining Both Nodes (parallel)"
+node_join_kubeadm() {
+  log_section "Joining Kubeadm Node (apply -f)"
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid
-  local msi_exit=0 token_exit=0
+  local vm_ip
+  vm_ip="$(state_get kubeadm_vm_ip)"
+  local server_url
+  server_url="$(state_get server_url)"
+  local ca_cert_data
+  ca_cert_data="$(state_get ca_cert_data)"
+
+  # Step 1: Create bootstrap token & RBAC in the cluster
+  log_info "Creating bootstrap token and RBAC resources for kubeadm join..."
+  local token_id token_secret bootstrap_token expiration
+
+  token_id="$(openssl rand -hex 3)"
+  token_secret="$(openssl rand -hex 8)"
+  bootstrap_token="${token_id}.${token_secret}"
+
+  # Use a portable date command for expiration (24h from now)
+  if date --version &>/dev/null; then
+    # GNU date
+    expiration="$(date -u -d "+24 hours" +"%Y-%m-%dT%H:%M:%SZ")"
+  else
+    # BSD/macOS date
+    expiration="$(date -u -v+24H +"%Y-%m-%dT%H:%M:%SZ")"
+  fi
+
+  log_info "Token ID: ${token_id} | Expires: ${expiration}"
+
+  # Create the bootstrap token secret
+  kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-token-${token_id}
+  namespace: kube-system
+type: bootstrap.kubernetes.io/token
+stringData:
+  description: "AKS Flex Node E2E kubeadm bootstrap token"
+  token-id: "${token_id}"
+  token-secret: "${token_secret}"
+  expiration: "${expiration}"
+  usage-bootstrap-authentication: "true"
+  usage-bootstrap-signing: "true"
+  auth-extra-groups: "system:bootstrappers:aks-flex-node"
+EOF
+
+  # Create RBAC bindings for TLS bootstrapping (idempotent)
+  kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-bootstrapper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node-bootstrapper
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-csr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+EOF
+
+  log_success "Bootstrap token and RBAC configured"
+  state_set "kubeadm_bootstrap_token" "${bootstrap_token}"
+
+  # Step 2: Generate the apply -f action file (JSON array of all bootstrap steps
+  #         ending with the KubeadmNodeJoin action)
+  local action_file="${E2E_WORK_DIR}/kubeadm-join.json"
+  cat > "${action_file}" <<EOF
+[
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.linux.ConfigureBaseOS",
+      "name": "configure-os"
+    },
+    "spec": {}
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.cri.DownloadCRIBinaries",
+      "name": "download-cri-binaries"
+    },
+    "spec": {
+      "containerdVersion": "${E2E_CONTAINERD_VERSION}",
+      "runcVersion": "${E2E_RUNC_VERSION}"
+    }
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.kubebins.DownloadKubeBinaries",
+      "name": "download-kube-binaries"
+    },
+    "spec": {
+      "kubernetesVersion": "${E2E_KUBERNETES_VERSION}"
+    }
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.cni.DownloadCNIBinaries",
+      "name": "download-cni-binaries"
+    },
+    "spec": {}
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.cni.ConfigureCNI",
+      "name": "configure-cni"
+    },
+    "spec": {}
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.cri.StartContainerdService",
+      "name": "start-containerd"
+    },
+    "spec": {}
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.kubeadm.KubeadmNodeJoin",
+      "name": "kubeadm-node-join"
+    },
+    "spec": {
+      "controlPlane": {
+        "server": "${server_url}",
+        "certificateAuthorityData": "${ca_cert_data}"
+      },
+      "kubelet": {
+        "bootstrapAuthInfo": {
+          "token": "${bootstrap_token}"
+        }
+      }
+    }
+  }
+]
+EOF
+
+  # Step 3: Upload binary and action file, then run apply -f via systemd
+  local unit_name="aks-flex-node-kubeadm"
+
+  log_info "Uploading binary and action file to ${vm_ip}..."
+  remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
+  remote_copy "${action_file}" "${vm_ip}" "/tmp/kubeadm-join.json"
+
+  log_info "Starting kubeadm join via apply -f on ${vm_ip}..."
+  remote_exec "${vm_ip}" 'bash -s' <<REMOTE
+set -euo pipefail
+
+sudo cp /tmp/aks-flex-node-binary /usr/local/bin/aks-flex-node
+sudo chmod +x /usr/local/bin/aks-flex-node
+aks-flex-node version
+
+sudo mkdir -p /etc/aks-flex-node /var/log/aks-flex-node
+sudo cp /tmp/kubeadm-join.json /etc/aks-flex-node/
+
+sudo systemd-run \
+  --unit=${unit_name} \
+  --description="AKS Flex Node E2E kubeadm join (${unit_name})" \
+  --remain-after-exit \
+  /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kubeadm-join.json
+
+echo "Waiting ${E2E_BOOTSTRAP_SETTLE_TIME}s for bootstrap to complete..."
+sleep ${E2E_BOOTSTRAP_SETTLE_TIME}
+
+if systemctl is-active --quiet ${unit_name}; then
+  echo "Apply service is running"
+else
+  echo "Apply service failed:"
+  sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+  exit 1
+fi
+
+sleep 10
+if systemctl is-active --quiet kubelet; then
+  echo "kubelet is running"
+else
+  echo "kubelet status:"
+  systemctl status kubelet --no-pager -l 2>&1 || true
+fi
+REMOTE
+
+  log_success "Kubeadm node joined via apply -f in $(timer_elapsed "${start}")s"
+}
+
+# ---------------------------------------------------------------------------
+# node_join_all - Join all nodes in parallel
+# ---------------------------------------------------------------------------
+node_join_all() {
+  log_section "Joining All Nodes (parallel)"
+  local start
+  start=$(timer_start)
+
+  local msi_pid token_pid kubeadm_pid
+  local msi_exit=0 token_exit=0 kubeadm_exit=0
 
   node_join_msi &
   msi_pid=$!
@@ -325,8 +543,12 @@ node_join_all() {
   node_join_token &
   token_pid=$!
 
+  node_join_kubeadm &
+  kubeadm_pid=$!
+
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
+  wait "${kubeadm_pid}" || kubeadm_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
@@ -337,11 +559,14 @@ node_join_all() {
   if [[ "${token_exit}" -ne 0 ]]; then
     log_error "Token node join failed (exit ${token_exit})"
   fi
+  if [[ "${kubeadm_exit}" -ne 0 ]]; then
+    log_error "Kubeadm node join failed (exit ${kubeadm_exit})"
+  fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Node joins failed (${duration}s)"
     return 1
   fi
 
-  log_success "Both nodes joined in ${duration}s"
+  log_success "All nodes joined in ${duration}s"
 }

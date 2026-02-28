@@ -4,9 +4,9 @@
 #
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
-#   validate_all_nodes                - Verify both MSI and token nodes joined
+#   validate_all_nodes                - Verify MSI, token, and kubeadm nodes joined
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
-#   smoke_test_all                    - Run smoke tests on both nodes
+#   smoke_test_all                    - Run smoke tests on all nodes
 # =============================================================================
 set -euo pipefail
 
@@ -47,7 +47,7 @@ validate_node_joined() {
 }
 
 # ---------------------------------------------------------------------------
-# validate_all_nodes - Check both MSI and token VMs joined
+# validate_all_nodes - Check all MSI, token, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
   log_section "Validating Node Join"
@@ -63,13 +63,15 @@ validate_all_nodes() {
     --overwrite-existing \
     --admin
 
-  local msi_vm_name token_vm_name
+  local msi_vm_name token_vm_name kubeadm_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
+  kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
   local failed=0
   validate_node_joined "${msi_vm_name}" || failed=1
   validate_node_joined "${token_vm_name}" || failed=1
+  validate_node_joined "${kubeadm_vm_name}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
@@ -79,7 +81,7 @@ validate_all_nodes() {
   echo ""
   log_info "All cluster nodes:"
   kubectl get nodes -o wide
-  log_success "Both nodes verified in cluster"
+  log_success "All nodes verified in cluster"
 }
 
 # ---------------------------------------------------------------------------
@@ -133,18 +135,20 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# smoke_test_all - Run smoke tests on both nodes
+# smoke_test_all - Run smoke tests on all nodes
 # ---------------------------------------------------------------------------
 smoke_test_all() {
   log_section "Running Smoke Tests"
 
-  local msi_vm_name token_vm_name
+  local msi_vm_name token_vm_name kubeadm_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
+  kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
   local failed=0
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1
+  smoke_test "${kubeadm_vm_name}" "kubeadm" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more smoke tests failed"
