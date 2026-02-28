@@ -188,7 +188,7 @@ module vmKubeadm 'modules/vm.bicep' = {
 // ---------------------------------------------------------------------------
 // Azure Kubernetes Service Cluster Admin Role
 resource roleClusterAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, vmMsi.outputs.principalId, 'aks-cluster-admin')
+  name: guid(aksCluster.id, msiVmName, 'aks-cluster-admin')
   scope: aksCluster
   properties: {
     principalId: vmMsi.outputs.principalId
@@ -199,7 +199,7 @@ resource roleClusterAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 
 // Azure Kubernetes Service RBAC Cluster Admin
 resource roleRbacAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, vmMsi.outputs.principalId, 'aks-rbac-cluster-admin')
+  name: guid(aksCluster.id, msiVmName, 'aks-rbac-cluster-admin')
   scope: aksCluster
   properties: {
     principalId: vmMsi.outputs.principalId
