@@ -134,11 +134,14 @@ hack/e2e/
   infra/
     main.bicep        Bicep template (AKS + VNet + NSG + 3 VMs + role assignments)
   lib/
-    common.sh         Logging, prereqs, config, state management, SSH helpers
-    infra.sh          Bicep deployment, output extraction, kubeconfig fetch
-    node-join.sh      MSI, token, and kubeadm node join logic
-    validate.sh       Node-ready checks and smoke tests (nginx pods)
-    cleanup.sh        Log collection and Azure resource teardown
+    common.sh             Logging, prereqs, config, state management, SSH helpers
+    infra.sh              Bicep deployment, output extraction, kubeconfig fetch
+    node-join.sh          Shared helper (_deploy_and_start_agent) + node_join_all orchestration
+    node-join-msi.sh      MSI auth node join (node_join_msi)
+    node-join-token.sh    Bootstrap token node join (node_join_token)
+    node-join-kubeadm.sh  Kubeadm apply -f node join (node_join_kubeadm)
+    validate.sh           Node-ready checks and smoke tests (nginx pods)
+    cleanup.sh            Log collection and Azure resource teardown
 ```
 
 ## State File
