@@ -1,20 +1,21 @@
 package spec
 
 import (
-	"os/user"
+	"os"
 	"path/filepath"
 )
 
 // GetSpecDir returns the appropriate directory for spec artifacts.
-// Uses /run/aks-flex-node when running as aks-flex-node user (systemd service)
+// Uses /run/aks-flex-node when running as systemd service (RuntimeDirectory creates this)
 // Uses /tmp/aks-flex-node for direct user execution (testing/development)
 func GetSpecDir() string {
-	specDir := "/tmp/aks-flex-node"
-	currentUser, err := user.Current()
-	if err == nil && currentUser.Username == "aks-flex-node" {
-		specDir = "/run/aks-flex-node"
+	// Check if /run/aks-flex-node exists (created by systemd RuntimeDirectory directive)
+	runtimeDir := "/run/aks-flex-node"
+	if fi, err := os.Stat(runtimeDir); err == nil && fi.IsDir() {
+		return runtimeDir
 	}
-	return specDir
+	// Fallback to temp directory for testing/development
+	return "/tmp/aks-flex-node"
 }
 
 // GetManagedClusterSpecFilePath returns the path where the managed cluster spec snapshot is stored.
