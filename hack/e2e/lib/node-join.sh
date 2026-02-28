@@ -362,7 +362,11 @@ stringData:
   auth-extra-groups: "system:bootstrappers:aks-flex-node"
 EOF
 
-  # Create RBAC bindings for TLS bootstrapping (idempotent)
+  # Create RBAC bindings for TLS bootstrapping (idempotent).
+  # These three bindings mirror what kubeadm init normally sets up:
+  #  1. system:node-bootstrapper          – allows nodes to create CSRs
+  #  2. nodeclient auto-approval          – auto-approves initial node certs
+  #  3. selfnodeclient auto-approval      – auto-approves certificate rotations
   kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -402,6 +406,19 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-certificate-rotation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:selfnodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:nodes
 EOF
 
   log_success "Bootstrap token and RBAC configured"
@@ -479,14 +496,12 @@ EOF
 ]
 EOF
 
-  # Step 3: Upload binary and action file, then run apply -f via systemd
-  local unit_name="aks-flex-node-kubeadm"
-
+  # Step 3: Upload binary and action file, then run apply -f directly
   log_info "Uploading binary and action file to ${vm_ip}..."
   remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
   remote_copy "${action_file}" "${vm_ip}" "/tmp/kubeadm-join.json"
 
-  log_info "Starting kubeadm join via apply -f on ${vm_ip}..."
+  log_info "Running kubeadm join via apply -f on ${vm_ip}..."
   remote_exec "${vm_ip}" 'bash -s' <<REMOTE
 set -euo pipefail
 
@@ -497,24 +512,9 @@ aks-flex-node version
 sudo mkdir -p /etc/aks-flex-node /var/log/aks-flex-node
 sudo cp /tmp/kubeadm-join.json /etc/aks-flex-node/
 
-sudo systemd-run \
-  --unit=${unit_name} \
-  --description="AKS Flex Node E2E kubeadm join (${unit_name})" \
-  --remain-after-exit \
-  /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kubeadm-join.json
+sudo /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kubeadm-join.json \
+  2>&1 | sudo tee /var/log/aks-flex-node/aks-flex-node.log
 
-echo "Waiting ${E2E_BOOTSTRAP_SETTLE_TIME}s for bootstrap to complete..."
-sleep ${E2E_BOOTSTRAP_SETTLE_TIME}
-
-if systemctl is-active --quiet ${unit_name}; then
-  echo "Apply service is running"
-else
-  echo "Apply service failed:"
-  sudo journalctl -u ${unit_name} -n 50 --no-pager || true
-  exit 1
-fi
-
-sleep 10
 if systemctl is-active --quiet kubelet; then
   echo "kubelet is running"
 else
