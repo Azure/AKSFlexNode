@@ -1,7 +1,8 @@
 // =============================================================================
 // modules/vm.bicep - Reusable Ubuntu flex-node VM module
 //
-// Creates a public IP, NIC, and Ubuntu 22.04 VM in the given subnet.
+// Creates a public IP, NIC, and Ubuntu VM in the given subnet.
+// The VHD image defaults to Ubuntu 24.04 LTS (Noble) but can be overridden.
 // =============================================================================
 
 @description('Azure region for all resources.')
@@ -25,6 +26,18 @@ param subnetId string
 
 @description('Whether to assign a system-assigned managed identity to the VM.')
 param assignManagedIdentity bool = false
+
+@description('Marketplace image publisher.')
+param imagePublisher string = 'Canonical'
+
+@description('Marketplace image offer.')
+param imageOffer string = 'ubuntu-24_04-lts'
+
+@description('Marketplace image SKU.')
+param imageSku string = 'server'
+
+@description('Marketplace image version.')
+param imageVersion string = 'latest'
 
 @description('Tags applied to all resources in this module.')
 param tags object = {}
@@ -98,10 +111,10 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
     }
     storageProfile: {
       imageReference: {
-        publisher: 'Canonical'
-        offer: '0001-com-ubuntu-server-jammy'
-        sku: '22_04-lts-gen2'
-        version: 'latest'
+        publisher: imagePublisher
+        offer: imageOffer
+        sku: imageSku
+        version: imageVersion
       }
       osDisk: {
         createOption: 'FromImage'

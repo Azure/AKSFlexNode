@@ -363,10 +363,13 @@ stringData:
 EOF
 
   # Create RBAC bindings for TLS bootstrapping (idempotent).
-  # These three bindings mirror what kubeadm init normally sets up:
-  #  1. system:node-bootstrapper          – allows nodes to create CSRs
-  #  2. nodeclient auto-approval          – auto-approves initial node certs
-  #  3. selfnodeclient auto-approval      – auto-approves certificate rotations
+  # Mirrors the full set of resources that kubeadm init sets up:
+  #  - ClusterRoleBindings for CSR creation and auto-approval
+  #  - Roles/RoleBindings granting bootstrappers read access to kubeadm config
+  #    and kubelet config (required by kubeadm join's preflight phase)
+  #  - ClusterRole/ClusterRoleBinding for bootstrappers to GET nodes
+  #  - ConfigMaps: cluster-info (kube-public), kubeadm-config and
+  #    kubelet-config (kube-system) consumed by kubeadm join
   kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -397,6 +400,19 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
+  name: aks-flex-node-auto-approve-certificate-rotation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:selfnodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:nodes
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
   name: aks-flex-node-role
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -408,17 +424,123 @@ subjects:
   name: system:bootstrappers:aks-flex-node
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: kube-system
+  name: kubeadm:nodes-kubeadm-config
+rules:
+- verbs: ["get"]
+  apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["kubeadm-config"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: kube-system
+  name: kubeadm:nodes-kubeadm-config
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubeadm:nodes-kubeadm-config
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: kube-system
+  name: kubeadm:kubelet-config
+rules:
+- verbs: ["get"]
+  apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["kubelet-config"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: kube-system
+  name: kubeadm:kubelet-config
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubeadm:kubelet-config
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeadm:get-nodes
+rules:
+- verbs: ["get"]
+  apiGroups: [""]
+  resources: ["nodes"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: aks-flex-node-auto-approve-certificate-rotation
+  name: kubeadm:get-nodes
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: system:certificates.k8s.io:certificatesigningrequests:selfnodeclient
+  name: kubeadm:get-nodes
 subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:nodes
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:bootstrappers:aks-flex-node
+EOF
+
+  # Publish the ConfigMaps that kubeadm join reads during its preflight phase.
+  # cluster-info goes into kube-public (publicly readable).
+  # kubeadm-config and kubelet-config go into kube-system (bootstrapper-readable).
+  kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: kube-public
+  name: cluster-info
+data:
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - cluster:
+        certificate-authority-data: ${ca_cert_data}
+        server: ${server_url}
+      name: ""
+    contexts: []
+    current-context: ""
+    preferences: {}
+    users: []
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: kube-system
+  name: kubeadm-config
+data:
+  ClusterConfiguration: |
+    apiVersion: kubeadm.k8s.io/v1beta4
+    kind: ClusterConfiguration
+    kubernetesVersion: ${E2E_KUBERNETES_VERSION}
+    networking:
+      serviceSubnet: 10.0.0.0/16
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: kube-system
+  name: kubelet-config
+data:
+  kubelet: |
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
 EOF
 
   log_success "Bootstrap token and RBAC configured"
