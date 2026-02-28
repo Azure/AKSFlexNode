@@ -1,0 +1,75 @@
+name: E2E Tests
+
+# End-to-end tests for both authentication modes (MSI + Bootstrap Token).
+# Deploys a single AKS cluster with two VMs via Bicep, joins one via MSI and
+# one via bootstrap token, verifies both nodes appear in the cluster, and runs
+# smoke tests scheduling pods on each flex node.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_cleanup:
+        description: "Skip cleanup (keep resources for debugging)"
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    tags:
+      - "v*"
+
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+env:
+  E2E_RESOURCE_GROUP: ${{ secrets.E2E_RESOURCE_GROUP }}
+  E2E_LOCATION: ${{ secrets.E2E_LOCATION }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  GITHUB_RUN_ID: ${{ github.run_id }}
+
+jobs:
+  e2e:
+    name: E2E Tests (MSI + Token)
+    runs-on: [self-hosted, e2e, azure]
+    timeout-minutes: 45
+    environment: e2e-testing
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run E2E tests
+        env:
+          E2E_SKIP_CLEANUP: "1"  # Cleanup handled in dedicated step below
+        run: |
+          set -euo pipefail
+          ./hack/e2e/run.sh all
+
+      - name: Collect logs
+        if: always()
+        run: ./hack/e2e/run.sh logs
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-logs-${{ github.run_id }}
+          path: /tmp/aks-flex-node-e2e/logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        env:
+          E2E_SKIP_CLEANUP: ${{ inputs.skip_cleanup && '1' || '0' }}
+        run: ./hack/e2e/run.sh cleanup

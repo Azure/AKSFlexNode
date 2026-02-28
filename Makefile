@@ -111,6 +111,18 @@ generate: ## Run go generate for protobuf code generation
 	@go generate $$(go list ./... | grep -v /hack/)
 	@echo "Code generation complete"
 
+.PHONY: e2e
+e2e: ## Run E2E tests (requires E2E_RESOURCE_GROUP and E2E_LOCATION)
+	@hack/e2e/run.sh all
+
+.PHONY: e2e-infra
+e2e-infra: ## Deploy E2E infrastructure only
+	@hack/e2e/run.sh infra
+
+.PHONY: e2e-cleanup
+e2e-cleanup: ## Clean up E2E test resources
+	@hack/e2e/run.sh cleanup
+
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
@@ -154,6 +166,11 @@ help:
 	@echo "  vet                Run go vet"
 	@echo "  check              Run fmt-all, vet, lint, and test"
 	@echo "  verify             Verify and tidy dependencies"
+	@echo ""
+	@echo "E2E Targets:"
+	@echo "  e2e                Run full E2E test suite"
+	@echo "  e2e-infra          Deploy E2E infrastructure only"
+	@echo "  e2e-cleanup        Clean up E2E test resources"
 	@echo ""
 	@echo "Other Targets:"
 	@echo "  protoc-tools       Download protobuf compiler and Go/gRPC codegen plugins"
