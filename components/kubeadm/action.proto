@@ -19,10 +19,18 @@ message ControlPlane { // TODO: move to common place?
   bytes certificate_authority_data = 2;
 }
 
+message Taint {
+  string key = 1;
+  string value = 2;
+  string effect = 3;
+}
+
 message Kubelet { // TODO: move to node package
   NodeAuthInfo bootstrap_auth_info = 1;
   map<string, string> node_labels = 2;
   string node_ip = 3;
+  // List of taints to assign using the kubelet flag, in the format "key=value:effect"
+  repeated Taint register_with_taints = 4;
 }
 
 message NodeAuthInfo { // ref: clientcmd/api.AuthInfo

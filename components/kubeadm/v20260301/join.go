@@ -133,12 +133,12 @@ func (n *nodeJoinAction) writeKubeadmJoinConfig(
 		return "", err
 	}
 
-	scheme := runtime.NewScheme()
+	kubeletConfig := config.GetKubelet()
 
+	scheme := runtime.NewScheme()
 	scheme.AddKnownTypes(upstreamv1beta4.GroupVersion,
 		&upstreamv1beta4.JoinConfiguration{},
 	)
-
 	codec := serializer.NewCodecFactory(scheme).CodecForVersions(
 		json.NewYAMLSerializer(json.DefaultMetaFactory, scheme, scheme),
 		nil,
@@ -150,7 +150,7 @@ func (n *nodeJoinAction) writeKubeadmJoinConfig(
 	var kubeletArgs []upstreamv1beta4.Arg
 
 	// Add static node labels
-	if l := config.GetKubelet().GetNodeLabels(); len(l) > 0 {
+	if l := kubeletConfig.GetNodeLabels(); len(l) > 0 {
 		kubeletArgs = append(kubeletArgs, upstreamv1beta4.Arg{
 			Name:  "node-labels",
 			Value: nodeLabels(l),
@@ -158,10 +158,10 @@ func (n *nodeJoinAction) writeKubeadmJoinConfig(
 	}
 
 	// Add --node-ip if configured (to advertise a different node IP)
-	if config.GetKubelet().HasNodeIp() {
+	if nodeIP := kubeletConfig.GetNodeIp(); nodeIP != "" {
 		kubeletArgs = append(kubeletArgs, upstreamv1beta4.Arg{
 			Name:  "node-ip",
-			Value: config.GetKubelet().GetNodeIp(),
+			Value: nodeIP,
 		})
 	}
 
@@ -173,6 +173,7 @@ func (n *nodeJoinAction) writeKubeadmJoinConfig(
 		},
 		NodeRegistration: upstreamv1beta4.NodeRegistrationOptions{
 			KubeletExtraArgs: kubeletArgs,
+			Taints:           kubeletConfig.GetK8SRegisterTaints(),
 		},
 	})
 	if err != nil {
@@ -239,7 +240,9 @@ func (n *nodeJoinAction) runJoin(
 	if err != nil {
 		return status.Errorf(codes.Internal, "create temp dir for kubeadm join config: %s", err)
 	}
-	_ = os.RemoveAll(baseDir) //nolint:errcheck // clean up temp dir
+	defer func() {
+		_ = os.RemoveAll(baseDir) //nolint:errcheck // clean up temp dir
+	}()
 
 	joinConfig, err := n.writeKubeadmJoinConfig(baseDir, config)
 	if err != nil {

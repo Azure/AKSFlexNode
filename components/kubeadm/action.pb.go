@@ -250,20 +250,165 @@ func (b0 ControlPlane_builder) Build() *ControlPlane {
 	return m0
 }
 
+type Taint struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Key         *string                `protobuf:"bytes,1,opt,name=key"`
+	xxx_hidden_Value       *string                `protobuf:"bytes,2,opt,name=value"`
+	xxx_hidden_Effect      *string                `protobuf:"bytes,3,opt,name=effect"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *Taint) Reset() {
+	*x = Taint{}
+	mi := &file_components_kubeadm_action_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Taint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Taint) ProtoMessage() {}
+
+func (x *Taint) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubeadm_action_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *Taint) GetKey() string {
+	if x != nil {
+		if x.xxx_hidden_Key != nil {
+			return *x.xxx_hidden_Key
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *Taint) GetValue() string {
+	if x != nil {
+		if x.xxx_hidden_Value != nil {
+			return *x.xxx_hidden_Value
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *Taint) GetEffect() string {
+	if x != nil {
+		if x.xxx_hidden_Effect != nil {
+			return *x.xxx_hidden_Effect
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *Taint) SetKey(v string) {
+	x.xxx_hidden_Key = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 3)
+}
+
+func (x *Taint) SetValue(v string) {
+	x.xxx_hidden_Value = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
+}
+
+func (x *Taint) SetEffect(v string) {
+	x.xxx_hidden_Effect = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 3)
+}
+
+func (x *Taint) HasKey() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *Taint) HasValue() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *Taint) HasEffect() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
+func (x *Taint) ClearKey() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_Key = nil
+}
+
+func (x *Taint) ClearValue() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_Value = nil
+}
+
+func (x *Taint) ClearEffect() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+	x.xxx_hidden_Effect = nil
+}
+
+type Taint_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Key    *string
+	Value  *string
+	Effect *string
+}
+
+func (b0 Taint_builder) Build() *Taint {
+	m0 := &Taint{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.Key != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 3)
+		x.xxx_hidden_Key = b.Key
+	}
+	if b.Value != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 3)
+		x.xxx_hidden_Value = b.Value
+	}
+	if b.Effect != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 3)
+		x.xxx_hidden_Effect = b.Effect
+	}
+	return m0
+}
+
 type Kubelet struct {
-	state                        protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_BootstrapAuthInfo *NodeAuthInfo          `protobuf:"bytes,1,opt,name=bootstrap_auth_info,json=bootstrapAuthInfo"`
-	xxx_hidden_NodeLabels        map[string]string      `protobuf:"bytes,2,rep,name=node_labels,json=nodeLabels" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	xxx_hidden_NodeIp            *string                `protobuf:"bytes,3,opt,name=node_ip,json=nodeIp"`
-	XXX_raceDetectHookData       protoimpl.RaceDetectHookData
-	XXX_presence                 [1]uint32
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	state                         protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_BootstrapAuthInfo  *NodeAuthInfo          `protobuf:"bytes,1,opt,name=bootstrap_auth_info,json=bootstrapAuthInfo"`
+	xxx_hidden_NodeLabels         map[string]string      `protobuf:"bytes,2,rep,name=node_labels,json=nodeLabels" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	xxx_hidden_NodeIp             *string                `protobuf:"bytes,3,opt,name=node_ip,json=nodeIp"`
+	xxx_hidden_RegisterWithTaints *[]*Taint              `protobuf:"bytes,4,rep,name=register_with_taints,json=registerWithTaints"`
+	XXX_raceDetectHookData        protoimpl.RaceDetectHookData
+	XXX_presence                  [1]uint32
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *Kubelet) Reset() {
 	*x = Kubelet{}
-	mi := &file_components_kubeadm_action_proto_msgTypes[2]
+	mi := &file_components_kubeadm_action_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -275,7 +420,7 @@ func (x *Kubelet) String() string {
 func (*Kubelet) ProtoMessage() {}
 
 func (x *Kubelet) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_action_proto_msgTypes[2]
+	mi := &file_components_kubeadm_action_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -310,6 +455,15 @@ func (x *Kubelet) GetNodeIp() string {
 	return ""
 }
 
+func (x *Kubelet) GetRegisterWithTaints() []*Taint {
+	if x != nil {
+		if x.xxx_hidden_RegisterWithTaints != nil {
+			return *x.xxx_hidden_RegisterWithTaints
+		}
+	}
+	return nil
+}
+
 func (x *Kubelet) SetBootstrapAuthInfo(v *NodeAuthInfo) {
 	x.xxx_hidden_BootstrapAuthInfo = v
 }
@@ -320,7 +474,11 @@ func (x *Kubelet) SetNodeLabels(v map[string]string) {
 
 func (x *Kubelet) SetNodeIp(v string) {
 	x.xxx_hidden_NodeIp = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 3)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 4)
+}
+
+func (x *Kubelet) SetRegisterWithTaints(v []*Taint) {
+	x.xxx_hidden_RegisterWithTaints = &v
 }
 
 func (x *Kubelet) HasBootstrapAuthInfo() bool {
@@ -352,6 +510,8 @@ type Kubelet_builder struct {
 	BootstrapAuthInfo *NodeAuthInfo
 	NodeLabels        map[string]string
 	NodeIp            *string
+	// List of taints to assign using the kubelet flag, in the format "key=value:effect"
+	RegisterWithTaints []*Taint
 }
 
 func (b0 Kubelet_builder) Build() *Kubelet {
@@ -361,9 +521,10 @@ func (b0 Kubelet_builder) Build() *Kubelet {
 	x.xxx_hidden_BootstrapAuthInfo = b.BootstrapAuthInfo
 	x.xxx_hidden_NodeLabels = b.NodeLabels
 	if b.NodeIp != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 3)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 4)
 		x.xxx_hidden_NodeIp = b.NodeIp
 	}
+	x.xxx_hidden_RegisterWithTaints = &b.RegisterWithTaints
 	return m0
 }
 
@@ -376,7 +537,7 @@ type NodeAuthInfo struct {
 
 func (x *NodeAuthInfo) Reset() {
 	*x = NodeAuthInfo{}
-	mi := &file_components_kubeadm_action_proto_msgTypes[3]
+	mi := &file_components_kubeadm_action_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -388,7 +549,7 @@ func (x *NodeAuthInfo) String() string {
 func (*NodeAuthInfo) ProtoMessage() {}
 
 func (x *NodeAuthInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_action_proto_msgTypes[3]
+	mi := &file_components_kubeadm_action_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +671,7 @@ func (b0 NodeAuthInfo_builder) Build() *NodeAuthInfo {
 type case_NodeAuthInfo_AuthInfo protoreflect.FieldNumber
 
 func (x case_NodeAuthInfo_AuthInfo) String() string {
-	md := file_components_kubeadm_action_proto_msgTypes[3].Descriptor()
+	md := file_components_kubeadm_action_proto_msgTypes[4].Descriptor()
 	if x == 0 {
 		return "not set"
 	}
@@ -543,7 +704,7 @@ type KubeadmNodeJoinSpec struct {
 
 func (x *KubeadmNodeJoinSpec) Reset() {
 	*x = KubeadmNodeJoinSpec{}
-	mi := &file_components_kubeadm_action_proto_msgTypes[4]
+	mi := &file_components_kubeadm_action_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -555,7 +716,7 @@ func (x *KubeadmNodeJoinSpec) String() string {
 func (*KubeadmNodeJoinSpec) ProtoMessage() {}
 
 func (x *KubeadmNodeJoinSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_action_proto_msgTypes[4]
+	mi := &file_components_kubeadm_action_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +795,7 @@ type KubeadmNodeJoinStatus struct {
 
 func (x *KubeadmNodeJoinStatus) Reset() {
 	*x = KubeadmNodeJoinStatus{}
-	mi := &file_components_kubeadm_action_proto_msgTypes[5]
+	mi := &file_components_kubeadm_action_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -646,7 +807,7 @@ func (x *KubeadmNodeJoinStatus) String() string {
 func (*KubeadmNodeJoinStatus) ProtoMessage() {}
 
 func (x *KubeadmNodeJoinStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_components_kubeadm_action_proto_msgTypes[5]
+	mi := &file_components_kubeadm_action_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -680,12 +841,17 @@ const file_components_kubeadm_action_proto_rawDesc = "" +
 	"\x06status\x18\x03 \x01(\v22.aks.flex.components.kubeadm.KubeadmNodeJoinStatusR\x06status\"d\n" +
 	"\fControlPlane\x12\x16\n" +
 	"\x06server\x18\x01 \x01(\tR\x06server\x12<\n" +
-	"\x1acertificate_authority_data\x18\x02 \x01(\fR\x18certificateAuthorityData\"\x93\x02\n" +
+	"\x1acertificate_authority_data\x18\x02 \x01(\fR\x18certificateAuthorityData\"G\n" +
+	"\x05Taint\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x12\x16\n" +
+	"\x06effect\x18\x03 \x01(\tR\x06effect\"\xe9\x02\n" +
 	"\aKubelet\x12Y\n" +
 	"\x13bootstrap_auth_info\x18\x01 \x01(\v2).aks.flex.components.kubeadm.NodeAuthInfoR\x11bootstrapAuthInfo\x12U\n" +
 	"\vnode_labels\x18\x02 \x03(\v24.aks.flex.components.kubeadm.Kubelet.NodeLabelsEntryR\n" +
 	"nodeLabels\x12\x17\n" +
-	"\anode_ip\x18\x03 \x01(\tR\x06nodeIp\x1a=\n" +
+	"\anode_ip\x18\x03 \x01(\tR\x06nodeIp\x12T\n" +
+	"\x14register_with_taints\x18\x04 \x03(\v2\".aks.flex.components.kubeadm.TaintR\x12registerWithTaints\x1a=\n" +
 	"\x0fNodeLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"I\n" +
@@ -698,30 +864,32 @@ const file_components_kubeadm_action_proto_rawDesc = "" +
 	"\akubelet\x18\x02 \x01(\v2$.aks.flex.components.kubeadm.KubeletR\akubelet\"\x17\n" +
 	"\x15KubeadmNodeJoinStatusB1Z/github.com/Azure/AKSFlexNode/components/kubeadmb\beditionsp\xe9\a"
 
-var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_components_kubeadm_action_proto_goTypes = []any{
 	(*KubeadmNodeJoin)(nil),       // 0: aks.flex.components.kubeadm.KubeadmNodeJoin
 	(*ControlPlane)(nil),          // 1: aks.flex.components.kubeadm.ControlPlane
-	(*Kubelet)(nil),               // 2: aks.flex.components.kubeadm.Kubelet
-	(*NodeAuthInfo)(nil),          // 3: aks.flex.components.kubeadm.NodeAuthInfo
-	(*KubeadmNodeJoinSpec)(nil),   // 4: aks.flex.components.kubeadm.KubeadmNodeJoinSpec
-	(*KubeadmNodeJoinStatus)(nil), // 5: aks.flex.components.kubeadm.KubeadmNodeJoinStatus
-	nil,                           // 6: aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
-	(*api.Metadata)(nil),          // 7: aks.flex.components.api.Metadata
+	(*Taint)(nil),                 // 2: aks.flex.components.kubeadm.Taint
+	(*Kubelet)(nil),               // 3: aks.flex.components.kubeadm.Kubelet
+	(*NodeAuthInfo)(nil),          // 4: aks.flex.components.kubeadm.NodeAuthInfo
+	(*KubeadmNodeJoinSpec)(nil),   // 5: aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	(*KubeadmNodeJoinStatus)(nil), // 6: aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	nil,                           // 7: aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
+	(*api.Metadata)(nil),          // 8: aks.flex.components.api.Metadata
 }
 var file_components_kubeadm_action_proto_depIdxs = []int32{
-	7, // 0: aks.flex.components.kubeadm.KubeadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 1: aks.flex.components.kubeadm.KubeadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
-	5, // 2: aks.flex.components.kubeadm.KubeadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
-	3, // 3: aks.flex.components.kubeadm.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.NodeAuthInfo
-	6, // 4: aks.flex.components.kubeadm.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
-	1, // 5: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.ControlPlane
-	2, // 6: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.kubelet:type_name -> aks.flex.components.kubeadm.Kubelet
-	7, // [7:7] is the sub-list for method output_type
-	7, // [7:7] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	8, // 0: aks.flex.components.kubeadm.KubeadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
+	5, // 1: aks.flex.components.kubeadm.KubeadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	6, // 2: aks.flex.components.kubeadm.KubeadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	4, // 3: aks.flex.components.kubeadm.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.NodeAuthInfo
+	7, // 4: aks.flex.components.kubeadm.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
+	2, // 5: aks.flex.components.kubeadm.Kubelet.register_with_taints:type_name -> aks.flex.components.kubeadm.Taint
+	1, // 6: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.ControlPlane
+	3, // 7: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.kubelet:type_name -> aks.flex.components.kubeadm.Kubelet
+	8, // [8:8] is the sub-list for method output_type
+	8, // [8:8] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_components_kubeadm_action_proto_init() }
@@ -729,7 +897,7 @@ func file_components_kubeadm_action_proto_init() {
 	if File_components_kubeadm_action_proto != nil {
 		return
 	}
-	file_components_kubeadm_action_proto_msgTypes[3].OneofWrappers = []any{
+	file_components_kubeadm_action_proto_msgTypes[4].OneofWrappers = []any{
 		(*nodeAuthInfo_Token)(nil),
 		(*nodeAuthInfo_Exec)(nil),
 	}
@@ -739,7 +907,7 @@ func file_components_kubeadm_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubeadm_action_proto_rawDesc), len(file_components_kubeadm_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
