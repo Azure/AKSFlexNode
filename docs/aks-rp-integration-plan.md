@@ -91,7 +91,7 @@ aks-flex-node agent --config-url "$CONFIG_URL"
 # - Fetches complete auto-generated configuration
 # - Joins cluster with proper authentication
 # - Starts continuous monitoring for updates
-# - Handles certificate rotation automatically
+# - Detects and applies configuration changes
 
 # 2. Runtime updates are automatic
 az aks flex-node update \
@@ -118,8 +118,8 @@ az aks flex-node update \
                          ┌─────▼──────┐          ┌────────▼──────┐
                          │    Blob    │          │   Config      │
                          │  Storage   │          │  Monitor &    │
-                         │+ Config    │          │  Reconciler   │
-                         │ Delivery   │          │               │
+                         │ + Config   │          │  Reconcile    │
+                         │  Delivery  │          │               │
                          └────────────┘          └───────────────┘
 ```
 
@@ -142,7 +142,7 @@ az aks flex-node update \
       │                  │    - Bootstrap token created           │
       │                  │    - Complete config generated         │
       │                  │    - Store in blob with SAS token      │
-      │                  │    - Return temp URL (24h expiry)      │
+      │                  │    - Return temp URL (tied to token)   │
       │                  └───┬────────────────────────────────────┘
       │                      │                      │
   ┌───▼────────────────────────────────────────────────────────────┐
@@ -170,7 +170,7 @@ az aks flex-node update \
       │                      │                  ┌───▼─────────────┐
       │                      │                  │ 6. Agent: Poll  │
       │                      │◄─────────────────┤    for config   │
-      │                      │  (agent checks for updates)        │
+      │                      │                  │     updates     │
       │                      │                  └───┬─────────────┘
       │                      │                      │
       │                  ┌───▼────────────────────────────────────┐
@@ -206,7 +206,7 @@ az aks flex-node update \
 
 ## Three Key Technical Components
 
-### Auto-Generated Configuration
+### 1. Auto-Generated Configuration
 
 #### Current Configuration Complexity
 
@@ -216,66 +216,6 @@ The aks-flex-node currently requires a comprehensive JSON configuration file wit
 - **Node Configuration**: Kubelet settings, DNS service IP, API server URL, CA certificates
 - **Component Versions**: Kubernetes, containerd, runc, CNI, NPD versions
 - **System Paths**: Various Kubernetes component paths and directories
-
-**Example Current Manual Configuration:**
-```json
-{
-  "azure": {
-    "subscriptionId": "12345678-1234-1234-1234-123456789abc",
-    "tenantId": "87654321-4321-4321-4321-cba987654321",
-    "servicePrincipal": {
-      "tenantId": "87654321-4321-4321-4321-cba987654321",
-      "clientId": "11111111-2222-3333-4444-555555555555",
-      "clientSecret": "your-secret-here"
-    },
-    "targetCluster": {
-      "resourceId": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/my-rg/providers/Microsoft.ContainerService/managedClusters/my-cluster",
-      "location": "eastus"
-    }
-  },
-  "kubernetes": {
-    "version": "1.30.0"
-  },
-  "node": {
-    "maxPods": 110,
-    "kubelet": {
-      "dnsServiceIP": "10.0.0.10",
-      "serverURL": "https://my-cluster-abcd1234.hcp.eastus.azmk8s.io:443",
-      "caCertData": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t..."
-    },
-    "labels": {
-      "node.kubernetes.io/instance-type": "edge-node",
-      "environment": "production"
-    }
-  },
-  "components": {
-    "containerd": {
-      "version": "1.7.1",
-      "configPath": "/etc/containerd/config.toml"
-    },
-    "runc": {
-      "version": "1.1.8",
-      "path": "/usr/local/sbin/runc"
-    },
-    "cni": {
-      "version": "1.3.0",
-      "configDir": "/etc/cni/net.d",
-      "binDir": "/opt/cni/bin"
-    }
-  },
-  "systemPaths": {
-    "kubeletDir": "/var/lib/kubelet",
-    "podManifestPath": "/etc/kubernetes/manifests",
-    "kubeConfigPath": "/etc/kubernetes/kubelet/kubeconfig"
-  }
-}
-```
-
-**Complexity Challenges:**
-- **Nearly 50 configuration fields** requiring manual population
-- **Cluster-specific values** that users must discover and copy manually
-- **Version compatibility** requirements between components
-- **Path configurations** that vary by OS and installation method
 
 #### AKS RP Auto-Generation Capabilities
 
@@ -294,7 +234,7 @@ The aks-flex-node currently requires a comprehensive JSON configuration file wit
 - Node-specific settings (max pods, custom labels)
 - Optional version overrides for components
 
-### Node Bootstrap Process
+### 2. Node Bootstrap Process
 
 #### Dual Authentication Architecture
 
@@ -312,7 +252,7 @@ Authentication Method Support
 | **Managed Identity (Azure VM/VMSS)** | Works with AAD-integrated clusters | Works on Azure VMs/VMSS only |
 | **Azure Arc** | Works with AAD-integrated clusters (via Arc machine identity) | Works on Arc-enabled machines (including non-Azure hardware) |
 
-### Continuous Monitoring & Self-Reconciliation (Optional)
+### 3. Continuous Monitoring & Self-Reconciliation (Optional)
 
 **Note**: Continuous monitoring is optional and configurable. Users can choose bootstrap-only mode for simpler setups without ongoing Azure authentication.
 
@@ -332,44 +272,67 @@ Authentication Method Support
 
 #### Supported Operations
 
-Based on the technical constraints of the agent architecture, the following operations are realistically supported:
+The AKS RP integration introduces a new ARM resource type: **flexNodeConfig**.
 
-##### ✅ Feasible Operations
+**FlexNodeConfig Resource Overview:**
+The `flexNodeConfig` is a new ARM resource that represents the configuration and lifecycle management for a single flex node. It serves as the bridge between Azure Resource Manager and the aks-flex-node agent running on edge hardware.
 
-1. **Update/Patch/Upgrade Operations**
+**Key Characteristics:**
+- **ARM Resource Type**: `Microsoft.ContainerService/managedClusters/flexNodeConfig`
+- **Scope**: Sub-resource of an AKS managed cluster
+- **Purpose**: Stores configuration, authentication details, and operational state for one flex node
+- **Lifecycle**: Independent of the physical machine - can exist before/after the actual hardware
+- **Management**: Fully managed through standard Azure APIs, CLI, Portal, and ARM templates
+
+**Resource Relationship:**
+```
+AKS Managed Cluster (parent)
+├── Agent Pools (existing)
+├── FlexNode Configs (new) ← One per flex node
+│   ├── edge-node-1
+│   ├── edge-node-2
+│   └── edge-node-N
+└── Other cluster resources
+```
+
+**What flexNodeConfig Contains:**
+- Authentication configuration (bootstrap tokens, service principals, managed identity)
+- Node-specific settings (labels, kubelet configuration, resource limits)
+- Component versions (Kubernetes, containerd, runtime versions)
+- Operational state (last seen, health status, configuration version)
+
+**What flexNodeConfig Does NOT Contain:**
+- The actual physical/virtual machine
+- Runtime state of the node (that's in Kubernetes)
+- Hardware-specific configuration
+
+Based on the technical constraints of the agent architecture, the following operations are realistically supported for flexNodeConfig resources:
+
+##### Supported Operations
+
+1. **Create/Update Operations**
 
    `PUT .../flexNodeConfig/{nodeName}`
+   - FlexNodeConfig resource creation and updates
    - Node configuration changes (labels, taints, kubelet settings)
    - Kubernetes version upgrades (with controlled kubelet restart)
    - Container runtime updates (containerd/runc)
-   - Non-disruptive configuration changes
+   - Authentication credential updates
 
-2. **Registration & Discovery**
+2. **Get/List Operations**
 
-   `GET .../flexNodeConfig/{nodeName}` for config & status,
-   `GET .../flexNodeConfig` for list
-   - Node registration with AKS RP for management visibility
-   - **Logical** Machine resource creation (represents the flex-node, not an Azure VM)
-   - Operation result confirmation (success/failure of reconciliation attempts)
+   | Endpoint | Purpose | Audience |
+   |----------|---------|----------|
+   | `GET .../flexNodeConfig/{nodeName}` | Full resource with config + status | Customers & Agents |
+   | `GET .../flexNodeConfig` | List all resources with metadata + status | Customers |
 
-#### Version-Based Change Detection
+3. **Delete Operations**
 
-The continuous monitoring system uses efficient version-based change detection:
-
-- **Config Versioning**: Each configuration has a Unix timestamp-based version with natural ordering (e.g., `configVersion: "1708123456"`)
-- **Polling**: Agent polls every 30 seconds checking for version changes
-- **Change Detection**: When version changes (`"1708123456" → "1708127056"`), agent knows config updated
-- **Efficiency**: Agent only needs to compare timestamp strings, not entire config content
-
-##### ❌ Not Feasible Operations
-
-1. **Stop/Start Operations**
-   - **Problem**: If agent stops the machine manually, it cannot receive start commands
-   - **Alternative**: Use reboot operations for restarts, external orchestration for stop/start
-
-2. **Create/Delete Operations**
-   - **Problem**: Agent cannot create or destroy its own host machine
-   - **Alternative**: Machine provisioning/deprovisioning handled outside of AKS RP integration
+   `DELETE .../flexNodeConfig/{nodeName}`
+   - FlexNodeConfig ARM resource cleanup and removal
+   - Bootstrap token and config URL revocation
+   - Monitoring termination (stops accepting polls from deleted node)
+   - Does NOT affect the physical machine or remove node from Kubernetes cluster
 
 ## API Design & Implementation Details
 
@@ -377,72 +340,18 @@ The continuous monitoring system uses efficient version-based change detection:
 
 The FlexNode configuration API replaces complex manual configuration with AKS RP-generated configurations that include all cluster-specific details.
 
-#### FlexNode Config Resource Creation
+#### FlexNode Config Resource Creation and Updates
 
-**Example 1: Bootstrap-Only Mode (No Continuous Monitoring)**
+**API Design Note: CREATE vs UPDATE Semantics**
+The FlexNode Config API follows ARM's idempotent PUT pattern where the same endpoint handles both resource creation and updates. The RP implementation must:
+- Return **201 Created** for new resource creation
+- Return **200 OK** for existing resource updates
+- Handle `configUrl` regeneration policy: **Always regenerate** config URLs on PUT operations (both create and update) to ensure fresh bootstrap credentials and maintain security best practices
+- Maintain **full resource schema** for all PUT operations (no partial updates) to ensure consistent ARM behavior
+
+**Example: Service Principal for Both Kubernetes and Azure Auth (AAD Cluster)**
 ```http
-PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview&configUrl=true
-
-Authorization: Bearer {customer-azure-token}
-Content-Type: application/json
-
-{
-  "properties": {
-    "continuousMonitoring": false,
-    "kubernetesAuth": {
-      "method": "bootstrapToken"
-    },
-    "versions": {
-      "kubernetes": "1.30.0",
-      "containerd": "1.7.1"
-    },
-    "nodeConfig": {
-      "maxPods": 50,
-      "labels": {
-        "environment": "prod"
-      }
-    }
-  }
-}
-```
-
-**Example 2: Continuous Monitoring Mode**
-```http
-PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview&configUrl=true
-
-Authorization: Bearer {customer-azure-token}
-Content-Type: application/json
-
-{
-  "properties": {
-    "continuousMonitoring": true,
-    "kubernetesAuth": {
-      "method": "bootstrapToken"
-    },
-    "azureAuth": {
-      "method": "servicePrincipal",
-      "servicePrincipal": {
-        "clientId": "11111111-2222-3333-4444-555555555555",
-        "clientSecret": "your-secret-here"
-      }
-    },
-    "versions": {
-      "kubernetes": "1.30.0",
-      "containerd": "1.7.1"
-    },
-    "nodeConfig": {
-      "maxPods": 50,
-      "labels": {
-        "environment": "prod"
-      }
-    }
-  }
-}
-```
-
-**Example 3: Service Principal for Both Kubernetes and Azure Auth (AAD Cluster)**
-```http
-PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview&configUrl=true
+PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2026-05-01-preview&configUrl=true
 
 Authorization: Bearer {customer-azure-token}
 Content-Type: application/json
@@ -454,11 +363,11 @@ Content-Type: application/json
       "method": "servicePrincipal",
       "servicePrincipal": {
         "clientId": "11111111-2222-3333-4444-555555555555",
-        "clientSecret": "your-secret-here"
+        "clientSecret": "your-secret-here",
+        "clientTenant": "your-tenant-here"
       }
     },
     "kubernetesAuth": {
-      "method": "servicePrincipal",
       "useAzureAuth": true
     },
     "versions": {
@@ -480,37 +389,12 @@ Response 201 Created:
     "provisioningState": "Succeeded",
     "configVersion": "1708123456",
     "configUrl": "https://aksconfigs.blob.core.windows.net/configs/{nodeName}-config.json?sv=2022-11-02&ss=b&srt=o&sp=r&se=2024-02-27T10:00:00Z&sig=xyz123",
-    "configUrlExpires": "2024-02-27T10:00:00Z",
-    "monitoringEndpoint": "/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}"
+    "configUrlExpires": "2024-02-27T10:00:00Z"  // Revoked when bootstrap token consumed
   }
 }
 ```
 
 #### Configuration Bundle (Retrieved from Config URL)
-
-**Example: Bootstrap-Only Mode**
-```http
-GET https://aksconfigs.blob.core.windows.net/configs/{nodeName}-config.json?sv=2022-11-02&...
-
-Response:
-{
-  "initialConfig": {
-    "azure": {
-      "subscriptionId": "auto-populated-from-cluster",
-      "tenantId": "auto-populated-from-subscription",
-      "bootstrapToken": {
-        "token": "abcdef.0123456789abcdef"  // Generated by AKS RP
-      },
-      "targetCluster": {
-        "resourceId": "/subscriptions/.../managedClusters/cluster-name",
-        "location": "cluster-location"
-      }
-    },
-    // ... rest of config
-  }
-  // No monitoringEndpoint for bootstrap-only mode
-}
-```
 
 **Example: Continuous Monitoring Mode**
 ```http
@@ -518,58 +402,132 @@ GET https://aksconfigs.blob.core.windows.net/configs/{nodeName}-config.json?sv=2
 
 Response:
 {
-  "initialConfig": {
+  "config": {
+    "continuousMonitoring": true,
     "azure": {
       "subscriptionId": "auto-populated-from-cluster",
       "tenantId": "auto-populated-from-subscription",
       "servicePrincipal": {
         "clientId": "11111111-2222-3333-4444-555555555555",
-        "clientSecret": "your-secret-here"
+        "clientSecret": "your-secret-here",
+        "clientTenant": "your-tenant-here"
       },
       "targetCluster": {
         "resourceId": "/subscriptions/.../managedClusters/cluster-name",
         "location": "cluster-location"
       }
     },
-    // ... rest of config
-  },
-  "monitoringEndpoint": {
-    "url": "/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}",
-    "azureAuth": "servicePrincipal"
+    "kubernetes": {
+      "version": "1.30.0"
+    },
+    "node": {
+      "maxPods": 50,
+      "kubelet": {
+        "dnsServiceIP": "cluster-dns-service-ip",
+        "serverURL": "cluster-api-server-url",
+        "caCertData": "cluster-ca-cert-base64"
+      }
+    }
+    // ... rest of complete configuration
   }
 }
 ```
 
+**Agent Polling Logic:**
+The agent constructs the monitoring URL using the cluster information from the config:
+- **Pattern**: `/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.ContainerService/managedClusters/{clusterName}/flexNodeConfig/{nodeName}`
+- **Authentication**: Uses the Azure credentials provided in the config
+
 #### Configuration Updates (Customer-Initiated)
+
+**Example: k8s version Update**
 ```http
-PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview
+PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2026-05-01-preview
 
 Authorization: Bearer {customer-azure-token}
 Content-Type: application/json
 
 {
   "properties": {
-    "kubernetes": {
-      "version": "1.31.0"
+    "continuousMonitoring": true,
+    "azureAuth": {
+      "method": "servicePrincipal",
+      "servicePrincipal": {
+        "clientId": "11111111-2222-3333-4444-555555555555",
+        "clientSecret": "your-secret-here",
+        "clientTenant": "your-tenant-here"
+      }
     },
-    "containerd": {
-      "version": "1.7.2"
+    "kubernetesAuth": {
+      "useAzureAuth": true
+    },
+    "versions": {
+      "kubernetes": "1.31.0",  // Updated version
+      "containerd": "1.7.2"    // Updated version
+    },
+    "nodeConfig": {
+      "maxPods": 50,
+      "labels": {
+        "environment": "prod"
+      }
     }
   }
 }
+```
 
-Response 200 OK:
+**Response 200 OK:**
+```json
 {
-  "configVersion": "1708127056",
-  "lastModified": "2024-02-26T11:00:00Z"
+  "name": "edge-node-1",
+  "properties": {
+    "provisioningState": "Succeeded",
+    "configVersion": "1708127056",
+    "continuousMonitoring": true,
+    "azureAuth": {
+      "method": "servicePrincipal",
+      "servicePrincipal": {
+        "clientId": "11111111-2222-3333-4444-555555555555",
+        // clientSecret omitted from responses for security
+        "clientTenant": "your-tenant-here"
+      }
+    },
+    "kubernetesAuth": {
+      "useAzureAuth": true
+    },
+    "versions": {
+      "kubernetes": "1.31.0",  // Updated version applied
+      "containerd": "1.7.2"    // Updated version applied
+    },
+    "nodeConfig": {
+      "maxPods": 50,
+      "labels": {
+        "environment": "prod"
+      }
+    }
+  }
 }
 ```
 
-#### Continuous Configuration Monitoring
-```http
-GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2025-10-02-preview
+#### Configuration and Status Retrieval
 
-Authorization: Bearer {azure-aad-token}
+Version-Based Change Detection with Jittered Polling
+
+The continuous monitoring system uses version-based change detection with distributed polling to prevent thundering herd scenarios:
+
+- **Config Versioning**: Each configuration has a Unix timestamp-based version with natural ordering (e.g., `configVersion: "1708123456"`)
+- **Jittered Polling**: Agent polls at "30 seconds ± random(0-10s)" intervals to distribute load
+  - **Base Interval**: 30 seconds target polling frequency
+  - **Jitter Range**: ±10 second random offset per agent (33% jitter)
+  - **Effective Range**: 20-40 second actual polling intervals
+  - **Load Distribution**: Prevents all agents from polling simultaneously during RP restarts or network recovery
+- **Change Detection**: When version changes (`"1708123456" → "1708127056"`), agent knows config updated
+- **Efficiency**: Agent only needs to compare timestamp strings, not entire config content
+
+**Single Resource Endpoint - Contains both configuration and status information:**
+```http
+GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2026-05-01-preview
+
+Authorization: Bearer {customer-or-agent-azure-token}
 
 Response:
 {
@@ -577,8 +535,8 @@ Response:
   "properties": {
     "provisioningState": "Succeeded",
     "configVersion": "1708123456",
-    "nodeStatus": "Ready",
-    "lastSeen": "2024-02-26T15:30:45Z",
+
+    // Configuration (for agents)
     "config": {
       "azure": {
         "subscriptionId": "auto-populated",
@@ -589,7 +547,7 @@ Response:
         }
       },
       "kubernetes": {
-        "version": "1.31.0"  // Updated by customer
+        "version": "1.31.0"
       },
       "node": {
         "maxPods": 110,
@@ -598,17 +556,64 @@ Response:
           "serverURL": "cluster-api-server-url",
           "caCertData": "cluster-ca-cert-base64"
         }
-      },
-      // ... rest of configuration
-      // Note: Authentication details not exposed in monitoring responses
+      }
+      // ... full configuration without sensitive auth details
+    },
+
+    // Status
+    "status": {
+      "conditions": [
+        {
+          "type": "Ready",
+          "status": "True",
+          "lastTransitionTime": "2024-02-26T15:30:45Z"
+        }
+      ],
+      "lastConfigApplied": "2024-02-26T14:00:00Z",
+      "appliedConfigVersion": "1708123456"
     }
   }
 }
 ```
 
-#### FlexNode Config List Operation (Metadata Only)
+#### FlexNode Config Resource Deletion
+
+**DELETE Operation for Resource Cleanup**
 ```http
-GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig?api-version=2025-10-02-preview
+DELETE /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}?api-version=2026-05-01-preview
+
+Authorization: Bearer {customer-azure-token}
+
+Response 200 OK:
+{
+  "status": "Deleted",
+  "cleanup": {
+    "configUrlRevoked": true,
+    "bootstrapTokenRevoked": true,
+    "monitoringDisabled": true
+  },
+  "note": "ARM resource deleted. Node machine lifecycle (stop/start/destroy) must be managed separately."
+}
+```
+
+**DELETE Operation Behavior:**
+- **ARM Resource Cleanup**: Removes the flexNodeConfig ARM resource from Azure Resource Manager
+- **Credential Revocation**: Invalidates any associated bootstrap tokens and config URLs
+- **Monitoring Termination**: Stops accepting monitoring polls from the deleted node
+- **Agent Unbootstrap Trigger**: Agent detects missing flexNodeConfig during next poll cycle and initiates unbootstrap sequence
+- **Agent Cleanup Responsibilities**: Agent removes node from Kubernetes cluster, cleans up Azure resources (Arc machine identity, etc.), and stops local services
+- **Node Machine Preservation**: Does NOT stop, restart, or destroy the actual physical/virtual machine hardware
+
+**Important Notes:**
+- **Graceful Unbootstrap**: Agent automatically detects flexNodeConfig deletion and performs graceful cleanup
+- **Cleanup Sequence**: Agent removes itself from Kubernetes cluster → cleans up Azure RBAC permissions → stops services → remains available for re-bootstrap
+- **Physical Machine Preservation**: Hardware/VM remains running and available for potential re-joining with new flexNodeConfig
+- **Re-bootstrap Capability**: Node can rejoin cluster by creating a new flexNodeConfig resource
+
+#### FlexNode Config List Operation
+
+```http
+GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig?api-version=2026-05-01-preview
 
 Authorization: Bearer {customer-azure-token}
 
@@ -619,52 +624,47 @@ Response 200 OK:
       "name": "edge-node-1",
       "properties": {
         "provisioningState": "Succeeded",
-        "nodeStatus": "Ready",
-        "lastSeen": "2024-02-26T15:30:45Z",
         "configVersion": "1708123456",
+        "status": {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "lastTransitionTime": "2024-02-26T15:30:45Z"
+            }
+          ],
+          "lastConfigApplied": "2024-02-26T14:00:00Z",
+          "appliedConfigVersion": "1708123456"
+        }
       }
     },
     {
       "name": "edge-node-2",
       "properties": {
         "provisioningState": "Succeeded",
-        "nodeStatus": "NotReady",
-        "lastSeen": null,
         "configVersion": "1708120000",
-      }
-    },
-    {
-      "name": "edge-node-3",
-      "properties": {
-        "provisioningState": "Succeeded",
-        "nodeStatus": "Ready",
-        "lastSeen": "2024-02-26T15:29:12Z",
-        "configVersion": "1708125000",
+        "status": {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "lastTransitionTime": "2024-02-26T10:00:00Z",
+              "reason": "KubeletNotReady"
+            }
+          ],
+          "lastConfigApplied": "2024-02-26T08:00:00Z",
+          "appliedConfigVersion": "1708120000"
+        }
       }
     }
   ]
 }
 ```
 
-
-## Future Improvements
-
-### Rollback Strategy
-- **Current Gap**: No mechanism for handling failed configuration updates or rolling back to previous known-good configurations
-- **Future Enhancement**: Implement configuration rollback capabilities with version history and automatic failure detection
-- **Considerations**:
-  - Maintain configuration version history for rollback scenarios
-  - Define failure detection criteria (e.g., agent health checks, Kubernetes node status)
-  - Provide manual rollback commands for emergency situations
-
-### Scale Limits and Optimization
-- **Current Gap**: No analysis of polling frequency impact when managing hundreds or thousands of flex nodes
-- **Future Enhancement**: Implement scalable polling strategies and load balancing
-- **Considerations**:
-  - Evaluate AKS RP load capacity with high node counts (1000+ nodes polling every 30s = 33 RPS)
-  - Consider implementing jittered polling intervals to distribute load
-  - Explore push-based notifications or webhooks as alternative to polling
-  - Add regional load balancing and caching strategies for configuration delivery
+**Benefits:**
+- **Dashboard Ready**: List provides status overview perfect for monitoring dashboards
+- **ARM Consistent**: Standard ARM list pattern with embedded resource status
+- **Single API Surface**: Reduces API complexity while providing full functionality
 
 ## Frequently Asked Questions
 
@@ -696,36 +696,72 @@ The agent faces a chicken-and-egg problem:
    - Downloads new config, compares with `current-config.json`
    - Applies changes, updates both local files
 
-2. **Manual Local Changes** (drift):
-   - Agent detects running config differs from `applied-config.json`
-   - Options: **Reconcile** (revert to AKS RP config) or **Alert** (report drift to AKS RP)
-   - Behavior configurable based on drift tolerance policy
+2. **Manual System Changes**:
+   - Agent periodically validates critical system state against `applied-config.json`
+   - **Detectable Changes**: kubelet config files, systemd units, container runtime settings, certificates
+   - **Detection Methods**: File checksums, systemctl status checks, process validation
+   - **Response**: Log drift events, optionally reconcile by reapplying configuration from AKS RP
 
 3. **Agent Restart**:
    - Agent reads `current-config.json` and `config-version.txt`
    - Resumes polling from last known version
    - Ensures no configuration loss during downtime
 
-### Q: How are sensitive credentials handled securely?
+### Q: How are bootstrap token failures and retries handled?
 
-**A: Different authentication methods have different security models.**
+**A: The RP implements automatic token reissue for failed bootstrap scenarios.**
 
-**Bootstrap Token:**
-- ✅ **Secure**: Short-lived (24h), single-use, automatically rotated
-- ✅ **Least Privilege**: Limited to node joining only
-- ⚠️ **Initial Distribution**: Via config URL (temporary exposure risk)
+**Bootstrap Token Lifecycle:**
+- **Initial Token**: Generated on flexNodeConfig creation, valid for 24 hours, single-use
+- **Config URL Lifetime**: Tied to bootstrap token consumption - both become invalid once bootstrap is attempted
+- **Consumption Trigger**: Token consumed on first kubelet authentication attempt (successful or failed)
+- **Automatic Revocation**: Config URL is immediately revoked when bootstrap token is consumed, regardless of join success
 
-**Service Principal:**
-- ✅ **Customer Managed**: User controls credential lifecycle
-- ✅ **Certificate Option**: Can use certs instead of secrets
-- ⚠️ **Long-lived**: Requires manual rotation
+**Failure Scenarios & Recovery:**
 
-**Managed Identity:**
-- ✅ **Most Secure**: No credential distribution, Azure-managed
-- ✅ **Automatic Rotation**: Azure handles credential lifecycle
-- ❌ **Azure VMs Only**: Cannot be used on non-Azure hardware
+1. **Agent Crash Before Join**:
+   ```
+   Agent fetches config → crashes → restarts → token still valid → proceeds normally
+   ```
 
-**Future Security Improvements:**
-- Replace config URLs with direct API credential exchange
-- Support certificate-based authentication for all methods
-- Implement automatic credential rotation for all auth types
+2. **Agent Crash After Bootstrap Attempt**:
+   ```
+   Agent starts join → token consumed → config URL revoked → crashes → restarts → BOTH INVALID
+   ```
+   **Recovery**: Agent must request new bootstrap token + config URL via re-PUT operation
+
+3. **Network Issues During Join**:
+   ```
+   Agent starts join → network timeout → token consumed → config URL revoked → RETRY FAILS
+   ```
+   **Recovery**: Both credentials invalid - request new token + config URL
+
+**Token Reissue Flow:**
+```http
+# Customer detects join failure, requests new token via ARM action
+POST /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerService/managedClusters/{cluster}/flexNodeConfig/{nodeName}/regenerateToken?api-version=2026-05-01-preview
+
+Authorization: Bearer {customer-azure-token}
+Content-Type: application/json
+
+{}
+
+# RP generates fresh bootstrap token and new config URL
+Response 200 OK:
+{
+  "configVersion": "1708127890",
+  "configUrl": "https://aksconfigs.blob.core.windows.net/configs/{nodeName}-config-v2.json?...",
+  "configUrlExpires": "2024-02-27T11:00:00Z"  // Revoked when bootstrap token consumed
+}
+```
+
+**Agent Implementation Requirements:**
+- **Persist Join State**: Track whether cluster join was successful
+- **Detect Join Failures**: Identify when bootstrap token was consumed but join failed
+- **Request New Tokens**: Surface clear error messages directing users to regenerate config
+- **Graceful Degradation**: Continue operating if already joined, even if monitoring fails
+
+**RP Implementation Requirements:**
+- **Token State Tracking**: Monitor bootstrap token consumption and join success
+- **Automatic Cleanup**: Clean up unused/expired tokens and config URLs
+- **Action Endpoint**: Support `/regenerateToken` POST action for explicit reissue scenarios
