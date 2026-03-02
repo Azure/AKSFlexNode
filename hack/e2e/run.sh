@@ -6,16 +6,17 @@
 #   ./hack/e2e/run.sh [command] [options]
 #
 # Commands:
-#   all        Run the full E2E flow (default): build, infra, join, validate, cleanup
-#   infra      Deploy infrastructure only (Bicep: AKS + 2 VMs)
-#   join       Join both nodes to the cluster (requires prior infra)
-#   join-msi   Join only the MSI node
-#   join-token Join only the token node
-#   validate   Verify nodes joined + run smoke tests
-#   smoke      Run smoke tests only (pods on flex nodes)
-#   logs       Collect logs from VMs
-#   cleanup    Tear down Azure resources
-#   status     Show current state (deployment outputs)
+#   all           Run the full E2E flow (default): build, infra, join, validate, cleanup
+#   infra         Deploy infrastructure only (Bicep: AKS + 3 VMs)
+#   join          Join all nodes to the cluster (requires prior infra)
+#   join-msi      Join only the MSI node
+#   join-token    Join only the token node
+#   join-kubeadm  Join only the kubeadm node (apply -f with KubeadmNodeJoin)
+#   validate      Verify nodes joined + run smoke tests
+#   smoke         Run smoke tests only (pods on flex nodes)
+#   logs          Collect logs from VMs
+#   cleanup       Tear down Azure resources
+#   status        Show current state (deployment outputs)
 #
 # Options:
 #   -g, --resource-group  Azure resource group      (or E2E_RESOURCE_GROUP env)
@@ -55,6 +56,9 @@
 #   ./hack/e2e/run.sh infra
 #   ./hack/e2e/run.sh join
 #   ./hack/e2e/run.sh validate
+#
+#   # Test only the kubeadm join flow (apply -f)
+#   ./hack/e2e/run.sh join-kubeadm
 #
 #   # Use a pre-built binary
 #   ./hack/e2e/run.sh --binary ./aks-flex-node all
@@ -101,7 +105,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|validate|smoke|logs|cleanup|status)
+      all|infra|join|join-msi|join-token|join-kubeadm|validate|smoke|logs|cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -212,6 +216,10 @@ main() {
     join-token)
       ensure_binary
       node_join_token
+      ;;
+    join-kubeadm)
+      ensure_binary
+      node_join_kubeadm
       ;;
     validate)
       validate_all_nodes

@@ -105,7 +105,7 @@ infra_deploy() {
     -o json)
 
   local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_principal_id
-  local token_vm_name token_vm_ip admin_username
+  local token_vm_name token_vm_ip kubeadm_vm_name kubeadm_vm_ip admin_username
 
   cluster_name=$(echo "${outputs}"    | jq -r '.clusterName.value')
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
@@ -114,6 +114,8 @@ infra_deploy() {
   msi_vm_principal_id=$(echo "${outputs}" | jq -r '.msiVmPrincipalId.value')
   token_vm_name=$(echo "${outputs}"   | jq -r '.tokenVmName.value')
   token_vm_ip=$(echo "${outputs}"     | jq -r '.tokenVmIp.value')
+  kubeadm_vm_name=$(echo "${outputs}" | jq -r '.kubeadmVmName.value')
+  kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
 
   # Persist to state
@@ -124,6 +126,8 @@ infra_deploy() {
   state_set "msi_vm_principal_id"  "${msi_vm_principal_id}"
   state_set "token_vm_name"        "${token_vm_name}"
   state_set "token_vm_ip"          "${token_vm_ip}"
+  state_set "kubeadm_vm_name"      "${kubeadm_vm_name}"
+  state_set "kubeadm_vm_ip"        "${kubeadm_vm_ip}"
   state_set "admin_username"       "${admin_username}"
   state_set "resource_group"       "${E2E_RESOURCE_GROUP}"
   state_set "location"             "${E2E_LOCATION}"
@@ -131,23 +135,27 @@ infra_deploy() {
   state_set "tenant_id"            "${AZURE_TENANT_ID}"
   state_set "deployment_name"      "${deployment_name}"
 
-  log_info "Cluster:   ${cluster_name} (${cluster_id})"
-  log_info "MSI VM:    ${msi_vm_name} @ ${msi_vm_ip}"
-  log_info "Token VM:  ${token_vm_name} @ ${token_vm_ip}"
+  log_info "Cluster:     ${cluster_name} (${cluster_id})"
+  log_info "MSI VM:      ${msi_vm_name} @ ${msi_vm_ip}"
+  log_info "Token VM:    ${token_vm_name} @ ${token_vm_ip}"
+  log_info "Kubeadm VM:  ${kubeadm_vm_name} @ ${kubeadm_vm_ip}"
 
   # Get kubeconfig and extract cluster info
   infra_get_kubeconfig
 
-  # Wait for SSH on both VMs (in parallel)
-  log_info "Waiting for SSH on both VMs..."
+  # Wait for SSH on all VMs (in parallel)
+  log_info "Waiting for SSH on all VMs..."
   wait_for_ssh "${msi_vm_ip}" &
   local pid_msi=$!
   wait_for_ssh "${token_vm_ip}" &
   local pid_token=$!
+  wait_for_ssh "${kubeadm_vm_ip}" &
+  local pid_kubeadm=$!
 
   local ssh_failed=0
   wait "${pid_msi}" || ssh_failed=1
   wait "${pid_token}" || ssh_failed=1
+  wait "${pid_kubeadm}" || ssh_failed=1
 
   if [[ "${ssh_failed}" -eq 1 ]]; then
     log_error "One or more VMs not reachable via SSH"
