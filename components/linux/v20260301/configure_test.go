@@ -136,7 +136,7 @@ func TestCommentOutSwapInFstab(t *testing.T) {
 				t.Errorf("expected no backup file, but %s exists", backupPath)
 			}
 			if tt.wantBackup && backupExists {
-				backup, err := os.ReadFile(backupPath)
+				backup, err := os.ReadFile(backupPath) // #nosec - path has been validated by caller
 				if err != nil {
 					t.Fatalf("failed to read backup file: %v", err)
 				}
@@ -173,7 +173,7 @@ func TestCommentOutSwapInFstab_Idempotent(t *testing.T) {
 # /dev/sda2 none swap sw 0 0
 `
 
-	if err := os.WriteFile(fstab, []byte(input), 0644); err != nil {
+	if err := os.WriteFile(fstab, []byte(input), 0600); err != nil {
 		t.Fatalf("failed to write test fstab: %v", err)
 	}
 
