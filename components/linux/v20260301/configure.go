@@ -144,18 +144,18 @@ func (a *configureBaseOSAction) disableSwap(ctx context.Context) error {
 		return err
 	}
 
-	if err := a.commentOutSwapInFstab(); err != nil {
+	if err := a.commentOutSwapInFstab(fstabPath); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// commentOutSwapInFstab reads /etc/fstab, comments out any uncommented lines
-// containing "swap", and writes the result back. A backup of the original file
-// is saved to /etc/fstab.bak before any modifications are made.
-func (a *configureBaseOSAction) commentOutSwapInFstab() error {
-	content, err := os.ReadFile(fstabPath)
+// commentOutSwapInFstab reads the fstab file at the given path, comments out
+// any uncommented lines containing "swap", and writes the result back. A backup
+// of the original file is saved to <path>.bak before any modifications are made.
+func (a *configureBaseOSAction) commentOutSwapInFstab(path string) error {
+	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// no fstab, nothing to do
@@ -183,12 +183,12 @@ func (a *configureBaseOSAction) commentOutSwapInFstab() error {
 	}
 
 	// back up the original fstab before writing changes
-	if err := utilio.WriteFile(fstabPath+".bak", content, 0644); err != nil {
+	if err := utilio.WriteFile(path+".bak", content, 0644); err != nil {
 		return err
 	}
 
 	newContent := []byte(strings.Join(lines, "\n"))
-	if err := utilio.WriteFile(fstabPath, newContent, 0644); err != nil {
+	if err := utilio.WriteFile(path, newContent, 0644); err != nil {
 		return err
 	}
 
