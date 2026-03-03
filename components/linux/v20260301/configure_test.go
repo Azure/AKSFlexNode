@@ -195,7 +195,7 @@ func TestCommentOutSwapInFstab_Idempotent(t *testing.T) {
 	if err := a.commentOutSwapInFstab(fstab); err != nil {
 		t.Fatalf("second call returned error: %v", err)
 	}
-	got2, err := os.ReadFile(fstab)
+	got2, err := os.ReadFile(fstab) // #nosec - path has been validated by caller
 	if err != nil {
 		t.Fatalf("failed to read fstab: %v", err)
 	}
