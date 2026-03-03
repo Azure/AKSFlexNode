@@ -42,7 +42,9 @@ func (a *configureBaseOSAction) ApplyAction(
 		return nil, err
 	}
 
-	// TODO: configure swap
+	if err := a.disableSwap(ctx); err != nil {
+		return nil, err
+	}
 
 	item, err := anypb.New(config)
 	if err != nil {
@@ -129,6 +131,64 @@ func (a *configureBaseOSAction) ensureSysctlConfig(ctx context.Context) error {
 		return err
 	}
 	if err := utilexec.New().CommandContext(ctx, "sysctl", "--system").Run(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+const fstabPath = "/etc/fstab"
+
+func (a *configureBaseOSAction) disableSwap(ctx context.Context) error {
+	if err := utilexec.New().CommandContext(ctx, "swapoff", "-a").Run(); err != nil {
+		return err
+	}
+
+	if err := a.commentOutSwapInFstab(fstabPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// commentOutSwapInFstab reads the fstab file at the given path, comments out
+// any uncommented lines containing "swap", and writes the result back. A backup
+// of the original file is saved to <path>.bak before any modifications are made.
+func (a *configureBaseOSAction) commentOutSwapInFstab(path string) error {
+	content, err := os.ReadFile(path) // #nosec - path has been validated by caller
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// no fstab, nothing to do
+			return nil
+		}
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	modified := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// skip empty lines and already-commented lines
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, "swap") {
+			lines[i] = "# " + line
+			modified = true
+		}
+	}
+
+	if !modified {
+		return nil
+	}
+
+	// back up the original fstab before writing changes
+	if err := utilio.WriteFile(path+".bak", content, 0644); err != nil {
+		return err
+	}
+
+	newContent := []byte(strings.Join(lines, "\n"))
+	if err := utilio.WriteFile(path, newContent, 0644); err != nil {
 		return err
 	}
 
