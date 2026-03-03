@@ -37,8 +37,12 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		arc.NewInstaller(b.logger), // Setup Arc
 
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
-		// FIXME: confirm if it's really needed to update the resolved config
 		system_configuration.NewInstaller(b.logger), // Configure system (early)
+
+		// Fetch serverURL and caCertData from AKS cluster admin credentials for
+		// non-bootstrap-token auth modes (Arc, SP, MI). Must run before startKubelet
+		// and startNPD which require these fields.
+		newClusterConfigEnricher(b.logger),
 
 		// TODO: run these steps in parallel
 		downloadCNIBinaries.Executor("download-cni-binaries", b.componentsAPIConn),
