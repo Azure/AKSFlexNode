@@ -225,6 +225,210 @@ func (b0 ConfigureBaseOSStatus_builder) Build() *ConfigureBaseOSStatus {
 	return m0
 }
 
+type DisableDocker struct {
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *DisableDockerSpec     `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *DisableDockerStatus   `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *DisableDocker) Reset() {
+	*x = DisableDocker{}
+	mi := &file_components_linux_action_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DisableDocker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DisableDocker) ProtoMessage() {}
+
+func (x *DisableDocker) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *DisableDocker) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *DisableDocker) GetSpec() *DisableDockerSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *DisableDocker) GetStatus() *DisableDockerStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *DisableDocker) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *DisableDocker) SetSpec(v *DisableDockerSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *DisableDocker) SetStatus(v *DisableDockerStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *DisableDocker) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *DisableDocker) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *DisableDocker) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *DisableDocker) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *DisableDocker) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *DisableDocker) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type DisableDocker_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *DisableDockerSpec
+	Status   *DisableDockerStatus
+}
+
+func (b0 DisableDocker_builder) Build() *DisableDocker {
+	m0 := &DisableDocker{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type DisableDockerSpec struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DisableDockerSpec) Reset() {
+	*x = DisableDockerSpec{}
+	mi := &file_components_linux_action_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DisableDockerSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DisableDockerSpec) ProtoMessage() {}
+
+func (x *DisableDockerSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type DisableDockerSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 DisableDockerSpec_builder) Build() *DisableDockerSpec {
+	m0 := &DisableDockerSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+type DisableDockerStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DisableDockerStatus) Reset() {
+	*x = DisableDockerStatus{}
+	mi := &file_components_linux_action_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DisableDockerStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DisableDockerStatus) ProtoMessage() {}
+
+func (x *DisableDockerStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type DisableDockerStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 DisableDockerStatus_builder) Build() *DisableDockerStatus {
+	m0 := &DisableDockerStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_linux_action_proto protoreflect.FileDescriptor
 
 const file_components_linux_action_proto_rawDesc = "" +
@@ -235,24 +439,36 @@ const file_components_linux_action_proto_rawDesc = "" +
 	"\x04spec\x18\x02 \x01(\v2..aks.flex.components.linux.ConfigureBaseOSSpecR\x04spec\x12H\n" +
 	"\x06status\x18\x03 \x01(\v20.aks.flex.components.linux.ConfigureBaseOSStatusR\x06status\"\x15\n" +
 	"\x13ConfigureBaseOSSpec\"\x17\n" +
-	"\x15ConfigureBaseOSStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
+	"\x15ConfigureBaseOSStatus\"\xd8\x01\n" +
+	"\rDisableDocker\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12@\n" +
+	"\x04spec\x18\x02 \x01(\v2,.aks.flex.components.linux.DisableDockerSpecR\x04spec\x12F\n" +
+	"\x06status\x18\x03 \x01(\v2..aks.flex.components.linux.DisableDockerStatusR\x06status\"\x13\n" +
+	"\x11DisableDockerSpec\"\x15\n" +
+	"\x13DisableDockerStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
 
-var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_components_linux_action_proto_goTypes = []any{
 	(*ConfigureBaseOS)(nil),       // 0: aks.flex.components.linux.ConfigureBaseOS
 	(*ConfigureBaseOSSpec)(nil),   // 1: aks.flex.components.linux.ConfigureBaseOSSpec
 	(*ConfigureBaseOSStatus)(nil), // 2: aks.flex.components.linux.ConfigureBaseOSStatus
-	(*api.Metadata)(nil),          // 3: aks.flex.components.api.Metadata
+	(*DisableDocker)(nil),         // 3: aks.flex.components.linux.DisableDocker
+	(*DisableDockerSpec)(nil),     // 4: aks.flex.components.linux.DisableDockerSpec
+	(*DisableDockerStatus)(nil),   // 5: aks.flex.components.linux.DisableDockerStatus
+	(*api.Metadata)(nil),          // 6: aks.flex.components.api.Metadata
 }
 var file_components_linux_action_proto_depIdxs = []int32{
-	3, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
+	6, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
 	1, // 1: aks.flex.components.linux.ConfigureBaseOS.spec:type_name -> aks.flex.components.linux.ConfigureBaseOSSpec
 	2, // 2: aks.flex.components.linux.ConfigureBaseOS.status:type_name -> aks.flex.components.linux.ConfigureBaseOSStatus
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	6, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
+	4, // 4: aks.flex.components.linux.DisableDocker.spec:type_name -> aks.flex.components.linux.DisableDockerSpec
+	5, // 5: aks.flex.components.linux.DisableDocker.status:type_name -> aks.flex.components.linux.DisableDockerStatus
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_components_linux_action_proto_init() }
@@ -266,7 +482,7 @@ func file_components_linux_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_linux_action_proto_rawDesc), len(file_components_linux_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
