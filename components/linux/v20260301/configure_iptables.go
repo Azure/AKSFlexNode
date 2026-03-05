@@ -67,8 +67,8 @@ func (a *configureIPTablesAction) ApplyAction(
 	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
 }
 
-// ensureIPTablesClearRules idempotently writes the iptables-restore rules file
-// to /etc/aks-flex/iptables-clear. The file resets all tables (mangle, raw, filter,
+// ensureIPTablesClearRules writes the iptables-restore rules file
+// to <config.ConfigDir>/iptables-clear. The file resets all tables (mangle, raw, filter,
 // security, nat) to their default ACCEPT policies with empty chains.
 func (a *configureIPTablesAction) ensureIPTablesClearRules() error {
 	return a.ensureIPTablesClearRulesAt(iptablesClearPath)
@@ -79,7 +79,7 @@ func (a *configureIPTablesAction) ensureIPTablesClearRulesAt(path string) error 
 	return utilio.WriteFile(path, iptablesClearRules, 0600)
 }
 
-// ensureIPTablesFlushUnit idempotently installs and enables the
+// ensureIPTablesFlushUnit installs and enables the
 // iptables-flush.service oneshot unit. The unit runs iptables-restore with the
 // clean rules file before kubelet.service starts.
 func (a *configureIPTablesAction) ensureIPTablesFlushUnit(ctx context.Context) error {

@@ -1,7 +1,6 @@
 package v20260301
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,13 +76,13 @@ func (a *disableDockerAction) ensureDockerDisabled(ctx context.Context) error {
 	return nil
 }
 
-// ensureDaemonConfig idempotently ensures /etc/docker/daemon.json contains
+// ensureDaemonConfig ensures /etc/docker/daemon.json contains
 // "iptables": false.
 func (a *disableDockerAction) ensureDaemonConfig() error {
 	return a.ensureDaemonConfigAt(daemonConfigPath)
 }
 
-// ensureDaemonConfigAt idempotently ensures the daemon.json at the given path
+// ensureDaemonConfigAt ensures the daemon.json at the given path
 // contains "iptables": false. If the file already exists, the existing
 // configuration is preserved and only the iptables key is set. If the file does
 // not exist, a new one is created.
@@ -102,18 +101,10 @@ func (a *disableDockerAction) ensureDaemonConfigAt(path string) error {
 		}
 	}
 
-	// Check if iptables is already set to false (idempotency).
 	if val, ok := config["iptables"]; ok {
-		if boolVal, isBool := val.(bool); isBool && !boolVal {
-			// Already configured correctly. Verify the serialized form matches
-			// to avoid spurious rewrites from key reordering.
-			desired, err := marshalDaemonConfig(config)
-			if err != nil {
-				return err
-			}
-			if bytes.Equal(bytes.TrimSpace(existing), bytes.TrimSpace(desired)) {
-				return nil
-			}
+		if enabled, isBool := val.(bool); isBool && !enabled {
+			// iptables is already set to false, nothing to do
+			return nil
 		}
 	}
 
@@ -134,7 +125,6 @@ func marshalDaemonConfig(config map[string]any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshaling daemon config: %w", err)
 	}
-	// Append a trailing newline for POSIX compliance.
 	data = append(data, '\n')
 	return data, nil
 }
