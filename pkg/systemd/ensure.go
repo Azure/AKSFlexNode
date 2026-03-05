@@ -44,3 +44,32 @@ func EnsureUnitRunning(
 		return nil
 	}
 }
+
+// EnsureUnitMasked idempotently stops, disables, and masks a systemd unit.
+// It is a no-op if the unit does not exist.
+func EnsureUnitMasked(
+	ctx context.Context,
+	m Manager,
+	unitName string,
+) error {
+	status, err := m.GetUnitStatus(ctx, unitName)
+	switch {
+	case errors.Is(err, ErrUnitNotFound):
+		// unit does not exist, nothing to do
+		return nil
+	case err != nil:
+		return err
+	default:
+		if status.ActiveState == UnitActiveStateActive {
+			if err := m.StopUnit(ctx, unitName); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := m.DisableUnit(ctx, unitName); err != nil {
+		return err
+	}
+
+	return m.MaskUnit(ctx, unitName)
+}

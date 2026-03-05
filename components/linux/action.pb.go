@@ -429,6 +429,210 @@ func (b0 DisableDockerStatus_builder) Build() *DisableDockerStatus {
 	return m0
 }
 
+type ConfigureIPTables struct {
+	state               protoimpl.MessageState   `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata            `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *ConfigureIPTablesSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *ConfigureIPTablesStatus `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ConfigureIPTables) Reset() {
+	*x = ConfigureIPTables{}
+	mi := &file_components_linux_action_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureIPTables) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureIPTables) ProtoMessage() {}
+
+func (x *ConfigureIPTables) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ConfigureIPTables) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *ConfigureIPTables) GetSpec() *ConfigureIPTablesSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *ConfigureIPTables) GetStatus() *ConfigureIPTablesStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *ConfigureIPTables) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *ConfigureIPTables) SetSpec(v *ConfigureIPTablesSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *ConfigureIPTables) SetStatus(v *ConfigureIPTablesStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *ConfigureIPTables) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *ConfigureIPTables) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *ConfigureIPTables) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *ConfigureIPTables) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *ConfigureIPTables) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *ConfigureIPTables) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type ConfigureIPTables_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *ConfigureIPTablesSpec
+	Status   *ConfigureIPTablesStatus
+}
+
+func (b0 ConfigureIPTables_builder) Build() *ConfigureIPTables {
+	m0 := &ConfigureIPTables{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type ConfigureIPTablesSpec struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureIPTablesSpec) Reset() {
+	*x = ConfigureIPTablesSpec{}
+	mi := &file_components_linux_action_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureIPTablesSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureIPTablesSpec) ProtoMessage() {}
+
+func (x *ConfigureIPTablesSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ConfigureIPTablesSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ConfigureIPTablesSpec_builder) Build() *ConfigureIPTablesSpec {
+	m0 := &ConfigureIPTablesSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+type ConfigureIPTablesStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureIPTablesStatus) Reset() {
+	*x = ConfigureIPTablesStatus{}
+	mi := &file_components_linux_action_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureIPTablesStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureIPTablesStatus) ProtoMessage() {}
+
+func (x *ConfigureIPTablesStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ConfigureIPTablesStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ConfigureIPTablesStatus_builder) Build() *ConfigureIPTablesStatus {
+	m0 := &ConfigureIPTablesStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_linux_action_proto protoreflect.FileDescriptor
 
 const file_components_linux_action_proto_rawDesc = "" +
@@ -445,30 +649,42 @@ const file_components_linux_action_proto_rawDesc = "" +
 	"\x04spec\x18\x02 \x01(\v2,.aks.flex.components.linux.DisableDockerSpecR\x04spec\x12F\n" +
 	"\x06status\x18\x03 \x01(\v2..aks.flex.components.linux.DisableDockerStatusR\x06status\"\x13\n" +
 	"\x11DisableDockerSpec\"\x15\n" +
-	"\x13DisableDockerStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
+	"\x13DisableDockerStatus\"\xe4\x01\n" +
+	"\x11ConfigureIPTables\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12D\n" +
+	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.linux.ConfigureIPTablesSpecR\x04spec\x12J\n" +
+	"\x06status\x18\x03 \x01(\v22.aks.flex.components.linux.ConfigureIPTablesStatusR\x06status\"\x17\n" +
+	"\x15ConfigureIPTablesSpec\"\x19\n" +
+	"\x17ConfigureIPTablesStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
 
-var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_components_linux_action_proto_goTypes = []any{
-	(*ConfigureBaseOS)(nil),       // 0: aks.flex.components.linux.ConfigureBaseOS
-	(*ConfigureBaseOSSpec)(nil),   // 1: aks.flex.components.linux.ConfigureBaseOSSpec
-	(*ConfigureBaseOSStatus)(nil), // 2: aks.flex.components.linux.ConfigureBaseOSStatus
-	(*DisableDocker)(nil),         // 3: aks.flex.components.linux.DisableDocker
-	(*DisableDockerSpec)(nil),     // 4: aks.flex.components.linux.DisableDockerSpec
-	(*DisableDockerStatus)(nil),   // 5: aks.flex.components.linux.DisableDockerStatus
-	(*api.Metadata)(nil),          // 6: aks.flex.components.api.Metadata
+	(*ConfigureBaseOS)(nil),         // 0: aks.flex.components.linux.ConfigureBaseOS
+	(*ConfigureBaseOSSpec)(nil),     // 1: aks.flex.components.linux.ConfigureBaseOSSpec
+	(*ConfigureBaseOSStatus)(nil),   // 2: aks.flex.components.linux.ConfigureBaseOSStatus
+	(*DisableDocker)(nil),           // 3: aks.flex.components.linux.DisableDocker
+	(*DisableDockerSpec)(nil),       // 4: aks.flex.components.linux.DisableDockerSpec
+	(*DisableDockerStatus)(nil),     // 5: aks.flex.components.linux.DisableDockerStatus
+	(*ConfigureIPTables)(nil),       // 6: aks.flex.components.linux.ConfigureIPTables
+	(*ConfigureIPTablesSpec)(nil),   // 7: aks.flex.components.linux.ConfigureIPTablesSpec
+	(*ConfigureIPTablesStatus)(nil), // 8: aks.flex.components.linux.ConfigureIPTablesStatus
+	(*api.Metadata)(nil),            // 9: aks.flex.components.api.Metadata
 }
 var file_components_linux_action_proto_depIdxs = []int32{
-	6, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
+	9, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
 	1, // 1: aks.flex.components.linux.ConfigureBaseOS.spec:type_name -> aks.flex.components.linux.ConfigureBaseOSSpec
 	2, // 2: aks.flex.components.linux.ConfigureBaseOS.status:type_name -> aks.flex.components.linux.ConfigureBaseOSStatus
-	6, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
+	9, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
 	4, // 4: aks.flex.components.linux.DisableDocker.spec:type_name -> aks.flex.components.linux.DisableDockerSpec
 	5, // 5: aks.flex.components.linux.DisableDocker.status:type_name -> aks.flex.components.linux.DisableDockerStatus
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	9, // 6: aks.flex.components.linux.ConfigureIPTables.metadata:type_name -> aks.flex.components.api.Metadata
+	7, // 7: aks.flex.components.linux.ConfigureIPTables.spec:type_name -> aks.flex.components.linux.ConfigureIPTablesSpec
+	8, // 8: aks.flex.components.linux.ConfigureIPTables.status:type_name -> aks.flex.components.linux.ConfigureIPTablesStatus
+	9, // [9:9] is the sub-list for method output_type
+	9, // [9:9] is the sub-list for method input_type
+	9, // [9:9] is the sub-list for extension type_name
+	9, // [9:9] is the sub-list for extension extendee
+	0, // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_components_linux_action_proto_init() }
@@ -482,7 +698,7 @@ func file_components_linux_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_linux_action_proto_rawDesc), len(file_components_linux_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

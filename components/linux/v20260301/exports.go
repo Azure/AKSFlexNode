@@ -10,4 +10,12 @@ func init() {
 		newConfigureBaseOSAction,
 		&linux.ConfigureBaseOS{},
 	)
+	actions.MustRegister(
+		newDisableDockerAction,
+		&linux.DisableDocker{},
+	)
+	actions.MustRegister(
+		newConfigureIPTablesAction,
+		&linux.ConfigureIPTables{},
+	)
 }

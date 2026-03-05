@@ -33,3 +33,17 @@ message DisableDockerSpec {
 
 message DisableDockerStatus {
 }
+
+message ConfigureIPTables {
+  api.Metadata metadata = 1;
+
+  ConfigureIPTablesSpec spec = 2;
+
+  ConfigureIPTablesStatus status = 3;
+}
+
+message ConfigureIPTablesSpec {
+}
+
+message ConfigureIPTablesStatus {
+}

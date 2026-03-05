@@ -1,0 +1,11 @@
+[Unit]
+Description=Flush iptables rules to a clean ACCEPT state
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iptables-restore -cv /etc/aks-flex/iptables-clear
+RemainAfterExit=no
+
+[Install]
+RequiredBy=kubelet.service

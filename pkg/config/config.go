@@ -9,6 +9,10 @@ import (
 )
 
 const (
+	// ConfigDir is the base directory for AKS Flex Node configuration files
+	// installed on the host.
+	ConfigDir = "/etc/aks-flex"
+
 	// Default configuration values
 	defaultConfigPath = "/etc/aks-flex-node/config.json"
 	defaultLogDir     = "/var/log/aks-flex-node"

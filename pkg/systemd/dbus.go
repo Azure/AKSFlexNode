@@ -60,6 +60,36 @@ func (d *dbusImpl) EnableUnit(ctx context.Context, unitName string) error {
 	return nil
 }
 
+func (d *dbusImpl) DisableUnit(ctx context.Context, unitName string) error {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	_, err = conn.DisableUnitFilesContext(ctx, []string{unitName}, false)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *dbusImpl) MaskUnit(ctx context.Context, unitName string) error {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	_, err = conn.MaskUnitFilesContext(ctx, []string{unitName}, false, true)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (d *dbusImpl) StartUnit(ctx context.Context, unitName string) error {
 	conn, err := dbus.NewSystemConnectionContext(ctx)
 	if err != nil {
@@ -74,6 +104,20 @@ func (d *dbusImpl) StartUnit(ctx context.Context, unitName string) error {
 		return err
 	}
 	return drainChan(ctx, "start", unitName, resultChan)
+}
+
+func (d *dbusImpl) StopUnit(ctx context.Context, unitName string) error {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	resultChan := make(chan string, 1)
+	if _, err := conn.StopUnitContext(ctx, unitName, "replace", resultChan); err != nil {
+		return err
+	}
+	return drainChan(ctx, "stop", unitName, resultChan)
 }
 
 func (d *dbusImpl) ReloadOrRestartUnit(ctx context.Context, unitName string) error {
