@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/utils"
 )
 
 // Collector collects system and node status information
@@ -203,7 +201,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 	// Readiness condition status is one of: True, False, Unknown
 	args := []string{
 		"--kubeconfig",
-		kubelet.KubeletKubeconfigPath,
+		config.KubeletKubeconfigPath,
 		"get",
 		"node",
 		hostName,
@@ -213,8 +211,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 
 	output, err := utils.RunCommandWithOutput("kubectl", args...)
 	if err != nil {
-		// Common in dev: agent runs as ubuntu and can't read root:aks-flex-node 0640 kubeconfig.
-		// Retry with sudo (non-interactive) if we see a permissions failure.
+		// Log the kubectl error for debugging.
 		c.logger.Errorf("kubectl command failed: %v with output: %s", err, output)
 		return "Unknown"
 	}
@@ -282,17 +279,15 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 }
 
 // GetStatusFilePath returns the appropriate status directory path
-// Uses /run/aks-flex-node/status.json when running as aks-flex-node user (systemd service)
+// Uses /run/aks-flex-node/status.json when running as systemd service (RuntimeDirectory creates this)
 // Uses /tmp/aks-flex-node/status.json for direct user execution (testing/development)
 func GetStatusFilePath() string {
-	// Running as regular user (testing/development) - use temp directory
-	statusDir := "/tmp/aks-flex-node"
-	// Check if we're running as the aks-flex-node service user
-	currentUser, err := user.Current()
-	if err == nil && currentUser.Username == "aks-flex-node" {
-		// Running as systemd service user - use runtime directory for status files
-		statusDir = "/run/aks-flex-node"
+	// Check if /run/aks-flex-node exists (created by systemd RuntimeDirectory directive)
+	runtimeDir := "/run/aks-flex-node"
+	if fi, err := os.Stat(runtimeDir); err == nil && fi.IsDir() {
+		return filepath.Join(runtimeDir, "status.json")
 	}
 
-	return filepath.Join(statusDir, "status.json")
+	// Fallback to temp directory for testing/development
+	return filepath.Join("/tmp/aks-flex-node", "status.json")
 }

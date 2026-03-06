@@ -43,11 +43,10 @@ confirm_uninstall() {
     echo "This will remove the following components:"
     echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
     echo "• Systemd service (aks-flex-node-agent.service)"
-    echo "• Service user ($SERVICE_USER)"
+    echo "• Service user ($SERVICE_USER) (if exists from previous installation)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
-    echo "• Sudo permissions (/etc/sudoers.d/aks-flex-node)"
     echo "• Azure CLI"
     echo ""
     echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node unbootstrap' to clean up cluster and Arc resources.${NC}"
@@ -152,17 +151,6 @@ remove_systemd_service() {
     log_success "Systemd daemon reloaded"
 }
 
-remove_sudo_permissions() {
-    log_info "Removing sudo permissions..."
-
-    if [[ -f "/etc/sudoers.d/aks-flex-node" ]]; then
-        rm -f "/etc/sudoers.d/aks-flex-node"
-        log_success "Removed sudo permissions file"
-    else
-        log_info "Sudo permissions file not found"
-    fi
-}
-
 remove_service_user() {
     log_info "Removing service user..."
 
@@ -238,7 +226,6 @@ show_completion_message() {
     echo "✅ Service user and permissions"
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
-    echo "✅ Sudo permissions"
     echo "✅ Azure CLI"
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"
@@ -265,7 +252,6 @@ main() {
     # Uninstall components in reverse order of installation
     stop_and_disable_services
     remove_systemd_service
-    remove_sudo_permissions
     remove_service_user
     remove_directories
     remove_binary

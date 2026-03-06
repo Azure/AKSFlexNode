@@ -1,78 +1,28 @@
 package utils
 
 import (
-	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
 )
 
-// sudoCommandLists holds the command lists for sudo determination
-var (
-	alwaysNeedsSudo = []string{"apt", "apt-get", "dpkg", "systemctl", "mount", "umount", "modprobe", "sysctl", "azcmagent", "usermod", "kubectl", "swapoff"}
-	conditionalSudo = []string{"mkdir", "cp", "chmod", "chown", "mv", "tar", "rm", "bash", "install", "ln", "cat"}
-	systemPaths     = []string{"/etc/", "/usr/", "/var/", "/opt/", "/boot/", "/sys/"}
-)
-
-// requiresSudoAccess determines if a command needs sudo based on command name and arguments
-func requiresSudoAccess(name string, args []string) bool {
-	// Check if this command always needs sudo
-	for _, sudoCmd := range alwaysNeedsSudo {
-		if name == sudoCmd {
-			return true
-		}
-	}
-
-	// Check if this command needs sudo based on the paths involved
-	for _, sudoCmd := range conditionalSudo {
-		if name == sudoCmd {
-			// Check if any argument involves system paths
-			for _, arg := range args {
-				for _, sysPath := range systemPaths {
-					if strings.HasPrefix(arg, sysPath) {
-						return true
-					}
-				}
-			}
-			break
-		}
-	}
-
-	return false
-}
-
-// createCommand creates an exec.Cmd with appropriate sudo handling
-func createCommand(name string, args []string) *exec.Cmd {
-	if requiresSudoAccess(name, args) && os.Geteuid() != 0 {
-		allArgs := append([]string{"-E", name}, args...)
-		return exec.Command("sudo", allArgs...)
-	}
-	// Run directly (either doesn't need sudo or already running as root)
-	return exec.Command(name, args...)
-}
-
-// RunSystemCommand executes a system command with sudo when needed for privileged operations
+// RunSystemCommand executes a system command for privileged operations.
+// The agent runs as root, so no sudo wrapping is needed.
 func RunSystemCommand(name string, args ...string) error {
-	cmd := createCommand(name, args)
+	cmd := exec.Command(name, args...) // #nosec - will be addressed in the next refactor PR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-// RunCommandWithOutput executes a command and returns output with sudo when needed
+// RunCommandWithOutput executes a command and returns its combined output.
+// The agent runs as root, so no sudo wrapping is needed.
 func RunCommandWithOutput(name string, args ...string) (string, error) {
-	cmd := createCommand(name, args)
+	cmd := exec.Command(name, args...) // #nosec - will be addressed in the next refactor PR
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
@@ -81,12 +31,6 @@ func RunCommandWithOutput(name string, args ...string) (string, error) {
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return !os.IsNotExist(err)
-}
-
-// FileExistsAndValid checks if a file exists and is not empty (useful for binaries)
-func FileExistsAndValid(path string) bool {
-	stat, err := os.Stat(path)
-	return err == nil && stat.Size() > 0
 }
 
 // IsServiceActive checks if a systemd service is active
@@ -112,16 +56,6 @@ func StopService(serviceName string) error {
 // DisableService disables a systemd service
 func DisableService(serviceName string) error {
 	return RunSystemCommand("systemctl", "disable", serviceName)
-}
-
-// EnableAndStartService enables and starts a systemd service
-func EnableAndStartService(serviceName string) error {
-	return RunSystemCommand("systemctl", "enable", "--now", serviceName)
-}
-
-// RestartService restarts a systemd service
-func RestartService(serviceName string) error {
-	return RunSystemCommand("systemctl", "restart", serviceName)
 }
 
 // ReloadSystemd reloads systemd daemon configuration
@@ -156,7 +90,7 @@ func shouldIgnoreCleanupError(err error) bool {
 // RunCleanupCommand removes a file or directory using rm -f, ignoring "not found" errors
 // This is specifically designed for cleanup operations where missing files should not be treated as errors
 func RunCleanupCommand(path string) error {
-	cmd := createCommand("rm", []string{"-f", path})
+	cmd := exec.Command("rm", "-f", path) // #nosec - will be addressed in the next refactor PR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -170,190 +104,6 @@ func RunCleanupCommand(path string) error {
 	return nil
 }
 
-// CreateTempFile creates a temporary file with given pattern and content
-func CreateTempFile(pattern string, content []byte) (*os.File, error) {
-	tempFile, err := os.CreateTemp("", pattern)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary file: %w", err)
-	}
-
-	if _, err := tempFile.Write(content); err != nil {
-		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to close temporary file: %w", err)
-	}
-
-	// Reopen for reading
-	reopened, err := os.Open(tempFile.Name())
-	if err != nil {
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to reopen temporary file: %w", err)
-	}
-
-	return reopened, nil
-}
-
-// CleanupTempFile removes a temporary file
-func CleanupTempFile(filePath string) {
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		logrus.Warnf("Failed to cleanup temporary file %s: %v", filePath, err)
-	}
-}
-
-// WriteFileAtomic writes data to a file atomically using a temporary file and rename operation
-// This prevents partial writes and corruption during system failures
-func WriteFileAtomic(filename string, data []byte, perm os.FileMode) error {
-	// Create temporary file in the same directory as the target file
-	dir := filepath.Dir(filename)
-	tmpFile, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(filename)+"-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %w", err)
-	}
-
-	tmpPath := tmpFile.Name()
-	defer func() {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath) // Clean up temp file on error
-	}()
-
-	// Write data to temporary file
-	if _, err := tmpFile.Write(data); err != nil {
-		return fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	// Ensure data is flushed to disk
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync temporary file: %w", err)
-	}
-
-	// Close the temporary file
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temporary file: %w", err)
-	}
-
-	// Set the correct permissions
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return fmt.Errorf("failed to set file permissions: %w", err)
-	}
-
-	// Atomic rename to final location
-	if err := os.Rename(tmpPath, filename); err != nil {
-		return fmt.Errorf("failed to rename temporary file: %w", err)
-	}
-
-	return nil
-}
-
-// WriteFileAtomicSystem writes data to a file atomically with system-level permissions
-// Uses sudo for privileged paths that require elevated permissions
-func WriteFileAtomicSystem(filename string, data []byte, perm os.FileMode) error {
-	// For system paths, use the temporary file approach with sudo copy/move
-	if requiresSudoAccess("cp", []string{filename}) {
-		// Create temp file in user-writable location
-		tempFile, err := CreateTempFile("atomic-write-*.tmp", data)
-		if err != nil {
-			return fmt.Errorf("failed to create temporary file: %w", err)
-		}
-		defer CleanupTempFile(tempFile.Name())
-
-		// Close the temp file before sudo operations
-		_ = tempFile.Close()
-
-		// Create temporary file in target directory using sudo
-		tempPath := filename + ".tmp"
-		if err := RunSystemCommand("cp", tempFile.Name(), tempPath); err != nil {
-			return fmt.Errorf("failed to copy to temporary location: %w", err)
-		}
-
-		// Set proper permissions
-		if err := RunSystemCommand("chmod", fmt.Sprintf("%o", perm), tempPath); err != nil {
-			return fmt.Errorf("failed to set permissions: %w", err)
-		}
-
-		// Atomic rename
-		if err := RunSystemCommand("mv", tempPath, filename); err != nil {
-			return fmt.Errorf("failed to rename to final location: %w", err)
-		}
-
-		return nil
-	}
-
-	// For non-privileged paths, use regular atomic write
-	return WriteFileAtomic(filename, data, perm)
-}
-
-// WaitForService waits until a systemd service is active or timeout occurs
-func WaitForService(serviceName string, timeout time.Duration, logger *logrus.Logger) error {
-	logger.Debugf("Waiting for service %s to be active (timeout: %v)", serviceName, timeout)
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for service %s to start", serviceName)
-		case <-ticker.C:
-			// Check if service is active
-			if err := RunSystemCommand("systemctl", "is-active", serviceName); err == nil {
-				logger.Debugf("Service %s is active", serviceName)
-				return nil
-			}
-
-			// Log current status for debugging
-			if output, err := RunCommandWithOutput("systemctl", "status", serviceName); err == nil {
-				logger.Debugf("Service %s status: %s", serviceName, output)
-			}
-		}
-	}
-}
-
-// DownloadFile downloads a file from URL to destination
-func DownloadFile(url, destination string) error {
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 10 * time.Minute,
-	}
-
-	// Make request
-	resp, err := client.Get(url)
-	if err != nil {
-		return fmt.Errorf("failed to download from %s: %w", url, err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status %d for %s", resp.StatusCode, url)
-	}
-
-	// Create destination file
-	out, err := os.Create(destination)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", destination, err)
-	}
-	defer func() {
-		_ = out.Close()
-	}()
-
-	// Copy response body to file
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to write file %s: %w", destination, err)
-	}
-
-	return nil
-}
-
 // DirectoryExists checks if a directory exists
 func DirectoryExists(path string) bool {
 	info, err := os.Stat(path)
@@ -361,29 +111,6 @@ func DirectoryExists(path string) bool {
 		return false
 	}
 	return info.IsDir()
-}
-
-// BinaryExists checks if a binary exists in PATH using 'which' command
-func BinaryExists(binaryName string) bool {
-	_, err := RunCommandWithOutput("which", binaryName)
-	return err == nil
-}
-
-// RemoveFiles removes multiple files, continuing on errors and logging results
-func RemoveFiles(files []string, logger *logrus.Logger) []error {
-	var errors []error
-
-	for _, file := range files {
-		logger.Debugf("Removing file: %s", file)
-		if err := RunSystemCommand("rm", "-f", file); err != nil {
-			logger.Debugf("Failed to remove file %s: %v (may not exist)", file, err)
-			errors = append(errors, fmt.Errorf("failed to remove %s: %w", file, err))
-		} else {
-			logger.Debugf("Removed file: %s", file)
-		}
-	}
-
-	return errors
 }
 
 // RemoveDirectories removes multiple directories recursively, continuing on errors
@@ -399,7 +126,7 @@ func RemoveDirectories(directories []string, logger *logrus.Logger) []error {
 			continue
 		}
 
-		if err := RunSystemCommand("sudo", "rm", "-rf", dir); err != nil {
+		if err := RunSystemCommand("rm", "-rf", dir); err != nil {
 			logger.Errorf("Failed to remove directory %s: %v", dir, err)
 			errors = append(errors, fmt.Errorf("failed to remove %s: %w", dir, err))
 		} else {
@@ -408,63 +135,4 @@ func RemoveDirectories(directories []string, logger *logrus.Logger) []error {
 	}
 
 	return errors
-}
-
-// GetArc retrieves the system architecture in a format matching reference scripts
-func GetArc() (string, error) {
-	// Get architecture using same logic as reference script
-	arch, err := RunCommandWithOutput("uname", "-m")
-	if err != nil {
-		return "", fmt.Errorf("failed to get architecture: %w", err)
-	}
-	arch = strings.TrimSpace(arch)
-
-	// Map architecture names to match reference script logic
-	switch arch {
-	case "armv7l", "armv7":
-		arch = "arm"
-	case "aarch64":
-		arch = "arm64"
-	case "x86_64":
-		arch = "amd64"
-	}
-	return arch, nil
-}
-
-// ExtractClusterInfo extracts server URL and CA certificate data from kubeconfig
-func ExtractClusterInfo(kubeconfigData []byte) (string, string, error) {
-	config, err := clientcmd.Load(kubeconfigData)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse kubeconfig: %w", err)
-	}
-
-	// For Azure AKS admin configs, there's typically only one cluster
-	if len(config.Clusters) == 0 {
-		return "", "", fmt.Errorf("no clusters found in kubeconfig")
-	}
-
-	// Get the first (and usually only) cluster
-	var cluster *api.Cluster
-	var clusterName string
-	for name, c := range config.Clusters {
-		cluster = c
-		clusterName = name
-		break
-	}
-
-	logrus.Debugf("Using cluster: %s\n", clusterName)
-
-	// Extract what we need
-	if cluster.Server == "" {
-		return "", "", fmt.Errorf("server URL is empty")
-	}
-
-	if len(cluster.CertificateAuthorityData) == 0 {
-		return "", "", fmt.Errorf("CA certificate data is empty")
-	}
-
-	// CertificateAuthorityData should be base64-encoded for kubeconfig
-	// The field contains raw certificate bytes, so we need to encode them
-	caCertDataB64 := base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
-	return cluster.Server, caCertDataB64, nil
 }

@@ -14,7 +14,6 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
-SERVICE_USER="aks-flex-node"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
@@ -169,18 +168,6 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
-setup_service_user() {
-    log_info "Setting up service user..."
-
-    # Create service user
-    if ! id "$SERVICE_USER" &>/dev/null; then
-        useradd --system --shell /bin/false --home-dir "$DATA_DIR" --create-home "$SERVICE_USER"
-        log_success "Created service user: $SERVICE_USER"
-    else
-        log_info "Service user $SERVICE_USER already exists"
-    fi
-}
-
 install_azure_cli() {
     log_info "Installing Azure CLI..."
 
@@ -262,27 +249,15 @@ check_azure_cli_auth() {
 setup_permissions() {
     log_info "Setting up permissions..."
 
-    # Configure Azure CLI access for service user
+    # Configure Azure CLI access - since the service runs as root,
+    # we just need to verify the .azure directory is accessible
     local current_user
     current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
     local current_user_home
     current_user_home=$(eval echo "~$current_user")
 
     if [[ -d "$current_user_home/.azure" ]]; then
-        # Add service user to current user's group for Azure CLI access
-        usermod -a -G "$current_user" "$SERVICE_USER"
-
-        # Set group ownership and permissions on Azure CLI directory
-        chgrp -R "$current_user" "$current_user_home/.azure"
-
-        # Set group read/write/execute permissions on directory and subdirectories
-        # Use setgid bit (g+s) so new files inherit the group ownership
-        find "$current_user_home/.azure" -type d -exec chmod g+rwxs {} \;
-
-        # Set group read/write permissions on all existing files
-        find "$current_user_home/.azure" -type f -exec chmod g+rw {} \; 
-
-    log_success "Azure CLI access configured for service user (user: $current_user)"
+        log_success "Azure CLI configuration found at: $current_user_home/.azure (user: $current_user)"
     else
         log_warning "Azure CLI not found at $current_user_home/.azure - skipping CLI access setup"
     fi
@@ -310,58 +285,15 @@ setup_directories() {
     # Create directories
     mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
     chown root:root "$CONFIG_DIR"
-    chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$LOG_DIR"
+    chown root:root "$DATA_DIR" "$LOG_DIR"
     chmod 755 "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
 
     # Ensure log file can be created with correct permissions
     touch "$LOG_DIR/aks-flex-node.log"
-    chown "$SERVICE_USER:$SERVICE_USER" "$LOG_DIR/aks-flex-node.log"
+    chown root:root "$LOG_DIR/aks-flex-node.log"
     chmod 644 "$LOG_DIR/aks-flex-node.log"
 
     log_success "Directories created successfully"
-}
-
-setup_sudo_permissions() {
-    log_info "Setting up sudo permissions for service user..."
-
-    # Download sudoers file from repository
-    local temp_dir
-    temp_dir=$(mktemp -d)
-    local sudoers_url="https://raw.githubusercontent.com/${REPO}/${version}/aks-flex-node-sudoers"
-
-    if command -v curl &> /dev/null; then
-        if ! curl -L -f -o "$temp_dir/aks-flex-node-sudoers" "$sudoers_url"; then
-            log_error "Failed to download sudoers configuration"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-    elif command -v wget &> /dev/null; then
-        if ! wget -O "$temp_dir/aks-flex-node-sudoers" "$sudoers_url"; then
-            log_error "Failed to download sudoers configuration"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-    else
-        log_error "Neither curl nor wget is available for downloading sudoers configuration"
-        return 1
-    fi
-
-    # Install sudoers file
-    cp "$temp_dir/aks-flex-node-sudoers" /etc/sudoers.d/aks-flex-node
-    chmod 440 /etc/sudoers.d/aks-flex-node
-    chown root:root /etc/sudoers.d/aks-flex-node
-
-    # Validate sudoers syntax
-    if ! visudo -c -f /etc/sudoers.d/aks-flex-node; then
-        log_error "Invalid sudoers configuration. Removing..."
-        rm -f /etc/sudoers.d/aks-flex-node
-        rm -rf "$temp_dir"
-        return 1
-    fi
-
-    rm -rf "$temp_dir"
-    log_success "Sudo permissions configured successfully"
-    return 0
 }
 
 setup_systemd_service() {
@@ -524,7 +456,6 @@ main() {
     install_binary "$binary_path"
 
     # Setup service components
-    setup_service_user
     install_azure_cli
     check_azure_cli_auth
     setup_permissions
@@ -532,7 +463,7 @@ main() {
     setup_directories
 
     # Setup systemd service components
-    if setup_sudo_permissions && setup_systemd_service; then
+    if setup_systemd_service; then
         log_success "Systemd service setup completed successfully"
         SERVICE_SETUP_SUCCESS=true
     else

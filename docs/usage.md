@@ -34,7 +34,7 @@ Use this comparison to choose the deployment path that best fits your requiremen
   - **Recommended:** 40GB free space
   - **Production:** 50GB+ free space
 - **Network:** Outbound internet connectivity (see Network Requirements below)
-- **Privileges:** Root/sudo access required
+- **Privileges:** **Must be run as root.** The agent installs and configures system-level components (containerd, kubelet, CNI) and manages systemd services, all of which require root privileges. Switch to root with `sudo su` before running any commands below.
 
 ### Storage Breakdown
 - **Base components:** ~3GB (containerd, runc, Kubernetes binaries, CNI plugins, Arc agent if enabled)
@@ -92,8 +92,11 @@ az aks create \
 ### Installation
 
 ```bash
+# Switch to root
+sudo su
+
 # Install aks-flex-node
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
 
 # Verify installation
 aks-flex-node version
@@ -104,7 +107,7 @@ aks-flex-node version
 Create the configuration file with Arc enabled:
 
 ```bash
-sudo tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
+tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
 {
   "azure": {
     "subscriptionId": "your-subscription-id",
@@ -159,12 +162,14 @@ aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 ### Running the Agent
 
+> **Important:** All commands in this guide assume you are running as root (`sudo su`). The agent installs system packages, writes to protected directories, and manages systemd services.
+
 ```bash
 # Direct execution
 aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 # Or using systemd
-sudo systemctl enable --now aks-flex-node-agent
+systemctl enable --now aks-flex-node-agent
 journalctl -u aks-flex-node-agent -f
 ```
 
@@ -267,6 +272,22 @@ subjects:
   name: $SP_OBJECT_ID
 EOF
 
+# Create node role binding for kubelet certificate creation
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-csr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+EOF
+
 # Create node role binding
 kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
@@ -287,8 +308,11 @@ EOF
 ### Installation
 
 ```bash
+# Switch to root
+sudo su
+
 # Install aks-flex-node
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
 
 # Verify installation
 aks-flex-node version
@@ -303,7 +327,7 @@ Create the configuration file with Service Principal credentials:
 SUBSCRIPTION=$(az account show --query id -o tsv)
 
 # Create config file
-sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
+tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 {
   "azure": {
     "subscriptionId": "$SUBSCRIPTION",
@@ -335,12 +359,14 @@ EOF
 
 ### Running the Agent
 
+> **Important:** All commands in this guide assume you are running as root (`sudo su`). The agent installs system packages, writes to protected directories, and manages systemd services.
+
 ```bash
 # Direct execution
 aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 # Or using systemd
-sudo systemctl enable --now aks-flex-node-agent
+systemctl enable --now aks-flex-node-agent
 journalctl -u aks-flex-node-agent -f
 ```
 
@@ -478,13 +504,34 @@ subjects:
   kind: Group
   name: system:bootstrappers:aks-flex-node
 EOF
+
+# Create node role binding for list and check node
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+EOF
 ```
 
 ### Installation
 
 ```bash
+# Switch to root
+sudo su
+
 # Install aks-flex-node
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
 
 # Verify installation
 aks-flex-node version
@@ -516,16 +563,14 @@ CA_CERT_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].clu
 # Create config file (with bootstrap token)
 
 ```
-sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
+tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 {
   "azure": {
     "subscriptionId": "$SUBSCRIPTION",
     "tenantId": "$TENANT_ID",
     "cloud": "AzurePublicCloud",
     "bootstrapToken": {
-      "token": "$BOOTSTRAP_TOKEN",
-      "serverURL": "$SERVER_URL",
-      "caCertData": "$CA_CERT_DATA"
+      "token": "$BOOTSTRAP_TOKEN"
     },
     "arc": {
       "enabled": false
@@ -537,6 +582,12 @@ sudo tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "kubernetes": {
     "version": "1.30.0"
+  },
+  "node": {
+    "kubelet": {
+      "serverURL": "$SERVER_URL",
+      "caCertData": "$CA_CERT_DATA"
+    }
   },
   "agent": {
     "logLevel": "info",
@@ -559,12 +610,14 @@ You can disable automated drift detection and remediation if you prefer to self-
 
 ### Running the Agent
 
+> **Important:** All commands in this guide assume you are running as root (`sudo su`). The agent installs system packages, writes to protected directories, and manages systemd services.
+
 ```bash
 # Direct execution
 aks-flex-node agent --config /etc/aks-flex-node/config.json
 
 # Or using systemd
-sudo systemctl enable --now aks-flex-node-agent
+systemctl enable --now aks-flex-node-agent
 journalctl -u aks-flex-node-agent -f
 ```
 
@@ -657,12 +710,11 @@ kubectl get nodes
 ### Complete Removal
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | bash
 ```
 
 The uninstall script will:
 - Stop and disable aks-flex-node agent service
-- Remove the service user and permissions
 - Clean up all directories and configuration files
 - Remove the binary and systemd service files
 
@@ -670,7 +722,7 @@ The uninstall script will:
 
 ```bash
 # Non-interactive mode
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | sudo bash -s -- --force
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | bash -s -- --force
 ```
 
 ## Troubleshooting
@@ -679,13 +731,13 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/unin
 
 ```bash
 # Check Arc agent status
-sudo systemctl status himds
+systemctl status himds
 
 # Check Arc connection
 azcmagent show
 
 # View Arc agent logs
-sudo journalctl -u himds -f
+journalctl -u himds -f
 ```
 
 ### Service Principal Mode Issues
@@ -715,6 +767,7 @@ kubectl get secret bootstrap-token-<token-id> -n kube-system -o yaml
 # Verify RBAC bindings
 kubectl get clusterrolebinding aks-flex-node-bootstrapper
 kubectl get clusterrolebinding aks-flex-node-auto-approve-csr
+kubectl get clusterrolebinding aks-flex-node-role
 
 # Check certificate signing requests
 kubectl get csr
@@ -727,11 +780,11 @@ kubectl certificate approve <csr-name>
 
 ```bash
 # Check kubelet status
-sudo systemctl status kubelet
+systemctl status kubelet
 
 # View kubelet logs
-sudo journalctl -u kubelet -f
+journalctl -u kubelet -f
 
 # Check kubelet configuration
-sudo cat /var/lib/kubelet/kubeconfig
+cat /var/lib/kubelet/kubeconfig
 ```

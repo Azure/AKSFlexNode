@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
 	"github.com/sirupsen/logrus"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
 )
 
 // mockRoleAssignmentsClient is a mock implementation for testing

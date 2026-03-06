@@ -15,8 +15,9 @@ TimeoutStopSec=60
 # Restart configuration for daemon resilience
 Restart=on-failure
 RestartSec=30
-User=aks-flex-node
-Group=aks-flex-node
+# TODO: review the settings and permission here
+User=root
+Group=root
 SupplementaryGroups=PLACEHOLDER_USER_GROUP
 Environment=AZURE_CONFIG_DIR=PLACEHOLDER_AZURE_CONFIG_DIR
 RuntimeDirectory=aks-flex-node
@@ -24,9 +25,7 @@ RuntimeDirectoryMode=0755
 StandardOutput=journal
 StandardError=journal
 
-# Security hardening (runs as non-root user with sudo access for Arc installation)
-# Disabled AmbientCapabilities to allow sudo execution
-# AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN
+# Security hardening (runs as root for system-level Kubernetes node operations)
 NoNewPrivileges=false
 ProtectSystem=false
 ProtectHome=false

@@ -11,13 +11,16 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/drift"
-	"go.goms.io/aks/AKSFlexNode/pkg/logger"
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	_ "github.com/Azure/AKSFlexNode/components"
+	"github.com/Azure/AKSFlexNode/components/services/inmem"
+	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/drift"
+	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 // Version information variables (set at build time)
@@ -78,7 +81,13 @@ func runAgent(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
-	bootstrapExecutor := bootstrapper.New(cfg, logger)
+	conn, err := inmem.NewConnection()
+	if err != nil {
+		return fmt.Errorf("failed to create in-memory components API connection: %w", err)
+	}
+	defer conn.Close() //nolint:errcheck // stops in memory connection only
+
+	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		return err
@@ -91,7 +100,7 @@ func runAgent(ctx context.Context) error {
 
 	// After successful bootstrap, transition to daemon mode
 	logger.Info("Bootstrap completed successfully, transitioning to daemon mode...")
-	return runDaemonLoop(ctx, cfg)
+	return runDaemonLoop(ctx, cfg, conn)
 }
 
 // runUnbootstrap executes the unbootstrap process
@@ -103,7 +112,13 @@ func runUnbootstrap(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 	}
 
-	bootstrapExecutor := bootstrapper.New(cfg, logger)
+	conn, err := inmem.NewConnection()
+	if err != nil {
+		return fmt.Errorf("failed to create in-memory components API connection: %w", err)
+	}
+	defer conn.Close() //nolint:errcheck // stops in memory connection only
+
+	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {
 		return err
@@ -122,7 +137,7 @@ func runVersion() {
 }
 
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
-func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
+func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn) error {
 	logger := logger.GetLoggerFromContext(ctx)
 	// Create status file directory - using runtime directory for service or temp for development
 	statusFilePath := status.GetStatusFilePath()
@@ -179,7 +194,6 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config) error {
 			} else {
 				logger.Info("Initial drift detection after spec collection completed successfully")
 			}
-
 		}
 	}
 
@@ -287,7 +301,7 @@ func startBootstrapHealthCheckLoop(
 				func() {
 					defer atomic.StoreInt32(bootstrapInProgress, 0)
 					cfgSnap := snapshotConfig(cfg, cfgMu)
-					err := checkAndBootstrap(ctx, cfgSnap)
+					err := checkAndBootstrap(ctx, cfgSnap, conn)
 					if err != nil {
 						logger.Errorf("Auto-bootstrap check failed at %s: %v", now.Format("2006-01-02 15:04:05"), err)
 						return
@@ -346,7 +360,7 @@ func collectAndWriteManagedClusterSpec(ctx context.Context, cfg *config.Config) 
 }
 
 // checkAndBootstrap checks if the node needs re-bootstrapping and performs it if necessary
-func checkAndBootstrap(ctx context.Context, cfg *config.Config) error {
+func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn) error {
 	logger := logger.GetLoggerFromContext(ctx)
 	// Create status collector to check bootstrap requirements
 	collector := status.NewCollector(cfg, logger, Version)
@@ -376,7 +390,7 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config) error {
 	}
 
 	// Perform bootstrap
-	bootstrapExecutor := bootstrapper.New(cfg, logger)
+	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		// Bootstrap failed - remove status file so next check will detect the problem

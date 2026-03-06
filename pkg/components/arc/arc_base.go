@@ -10,8 +10,8 @@ import (
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/sirupsen/logrus"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/auth"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/auth"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 // RoleAssignment represents a role assignment configuration

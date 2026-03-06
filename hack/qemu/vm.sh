@@ -15,10 +15,14 @@
 #   -m, --memory      Memory in MB (default: 2048)
 #   -c, --cpus        Number of CPUs (default: 2)
 #   -d, --disk-size   Disk size (default: 20G)
-#   -p, --ssh-port    Host port forwarded to guest SSH (default: 2222)
+#   -p, --ssh-port    Host port forwarded to guest SSH (default: 2222, Linux only)
 #   -i, --image       Path to Ubuntu cloud image (downloaded if not present)
 #   -u, --user-data   Path to cloud-init user-data file (default: hack/qemu/user-data.yaml)
 #       --no-snapshot  Use the base image directly instead of creating a snapshot
+#
+# Networking:
+#   macOS:  vmnet-shared (native L2, requires sudo). VM gets a real IP via DHCP.
+#   Linux:  SLIRP user-mode networking with TCP port forwarding.
 #
 # Stop options:
 #   -n, --name   VM name (default: flexnode-vm)
@@ -92,10 +96,14 @@ Start options:
   -m, --memory      Memory in MB (default: 2048)
   -c, --cpus        Number of CPUs (default: 2)
   -d, --disk-size   Disk size (default: 20G)
-  -p, --ssh-port    Host port forwarded to guest SSH (default: 2222)
+  -p, --ssh-port    Host port forwarded to guest SSH (default: 2222, Linux only)
   -i, --image       Path to Ubuntu cloud image (downloaded if not present)
   -u, --user-data   Path to cloud-init user-data file (default: hack/qemu/user-data.yaml)
       --no-snapshot  Use the base image directly instead of creating a snapshot
+
+Networking:
+  macOS:  vmnet-shared (native L2, requires sudo). VM gets a real IP via DHCP.
+  Linux:  SLIRP user-mode networking with TCP port forwarding.
 
 Stop options:
   -n, --name   VM name (default: flexnode-vm)
@@ -206,7 +214,7 @@ cmd_start() {
     # Download Ubuntu cloud image if needed
     # ---------------------------------------------------------------
     if [[ -z "${IMAGE_FILE}" ]]; then
-        IMAGE_FILE="${VM_DIR}/ubuntu-cloud.img"
+        IMAGE_FILE="${VM_DIR}/ubuntu-cloud-${GUEST_ARCH}.img"
     fi
 
     if [[ ! -f "${IMAGE_FILE}" ]]; then
@@ -263,6 +271,7 @@ cmd_start() {
         # Remove the placeholder line entirely if no key is available
         sed '/__SSH_PUBLIC_KEY__/d' "${USER_DATA}" > "${RENDERED_USER_DATA}"
     fi
+
     info "Rendered user-data: ${RENDERED_USER_DATA}"
 
     # ---------------------------------------------------------------
@@ -279,6 +288,34 @@ EOF
 
     info "Creating cloud-init seed ISO: ${SEED_ISO}"
     create_seed_iso "${SEED_ISO}" "${RENDERED_USER_DATA}" "${META_DATA}"
+
+    # ---------------------------------------------------------------
+    # Configure networking
+    # ---------------------------------------------------------------
+    # macOS: use vmnet-shared for native L2 networking (proper UDP support).
+    #        SLIRP's user-mode NAT silently drops UDP packets on macOS,
+    #        breaking DNS resolution. vmnet-shared gives the guest a real
+    #        IP on the host network via DHCP. Requires sudo (vmnet framework).
+    # Linux: use SLIRP user-mode networking with port forwarding.
+    NET_ARGS=""
+    VM_SSH_TARGET=""
+    VM_SSH_PORT="22"
+    NEEDS_SUDO=false
+
+    case "$(uname -s)" in
+        Darwin)
+            # Generate a stable MAC address derived from the VM name so the
+            # same VM always gets the same DHCP lease.
+            VM_MAC="52:54:00:$(echo -n "${VM_NAME}" | md5 | sed 's/\(..\)/\1:/g' | cut -c1-8)"
+            NET_ARGS="-netdev vmnet-shared,id=net0 -device virtio-net-pci,netdev=net0,mac=${VM_MAC}"
+            NEEDS_SUDO=true
+            ;;
+        *)
+            NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${SSH_PORT}-:22,dns=1.1.1.1 -device virtio-net-pci,netdev=net0"
+            VM_SSH_TARGET="localhost"
+            VM_SSH_PORT="${SSH_PORT}"
+            ;;
+    esac
 
     # ---------------------------------------------------------------
     # Determine QEMU binary, accelerator, and machine type
@@ -337,27 +374,42 @@ EOF
     info "  Memory:       ${MEMORY} MB"
     info "  CPUs:         ${CPUS}"
     info "  Disk:         ${VM_DISK}"
-    info "  SSH port:     ${SSH_PORT} -> 22"
+    if [[ "${NEEDS_SUDO}" == true ]]; then
+        info "  Network:      vmnet-shared (MAC: ${VM_MAC})"
+    else
+        info "  SSH port:     ${SSH_PORT} -> 22"
+    fi
     info "  Mount:        ${REPO_ROOT} -> /flex-node"
     info "  Log:          ${QEMU_LOG}"
     info "  PID file:     ${QEMU_PID_FILE}"
     info "============================================"
 
-    # shellcheck disable=SC2086
-    "${QEMU_BIN}" \
-        ${MACHINE_ARGS} \
-        ${ACCEL} \
-        -m "${MEMORY}" \
-        -smp "${CPUS}" \
-        -drive file="${VM_DISK}",format=qcow2,if=virtio \
-        -drive file="${SEED_ISO}",format=raw,if=virtio \
-        -netdev user,id=net0,hostfwd=tcp::"${SSH_PORT}"-:22 \
-        -device virtio-net-pci,netdev=net0 \
-        -virtfs local,path="${REPO_ROOT}",mount_tag=flexnode,security_model=mapped-xattr,id=flexnode0 \
-        -daemonize \
-        -pidfile "${QEMU_PID_FILE}" \
-        -serial file:"${QEMU_LOG}" \
+    QEMU_CMD=("${QEMU_BIN}"
+        ${MACHINE_ARGS}
+        ${ACCEL}
+        -m "${MEMORY}"
+        -smp "${CPUS}"
+        -drive "file=${VM_DISK},format=qcow2,if=virtio"
+        -drive "file=${SEED_ISO},format=raw,if=virtio"
+        ${NET_ARGS}
+        -virtfs "local,path=${REPO_ROOT},mount_tag=flexnode,security_model=mapped-xattr,id=flexnode0"
+        -daemonize
+        -pidfile "${QEMU_PID_FILE}"
+        -serial "file:${QEMU_LOG}"
         -display none
+    )
+
+    # shellcheck disable=SC2086
+    if [[ "${NEEDS_SUDO}" == true ]]; then
+        info "vmnet-shared requires root — requesting sudo..."
+        sudo "${QEMU_CMD[@]}"
+        # QEMU ran as root so its outputs (pid, log) are root-owned.
+        # Fix ownership so the rest of the script (and stop/logs commands)
+        # can read and remove them without sudo.
+        sudo chown "$(id -u):$(id -g)" "${QEMU_PID_FILE}" "${QEMU_LOG}"
+    else
+        "${QEMU_CMD[@]}"
+    fi
 
     QEMU_PID="$(cat "${QEMU_PID_FILE}")"
     info "VM started in background (PID: ${QEMU_PID})"
@@ -365,21 +417,65 @@ EOF
     # ---------------------------------------------------------------
     # Wait for SSH to become available
     # ---------------------------------------------------------------
-    info "Waiting for SSH to become available on localhost:${SSH_PORT}..."
+
+    # On macOS with vmnet-shared the guest gets a DHCP address on the
+    # host LAN. We discover it by scanning the ARP table for the VM's
+    # MAC address once the guest has booted far enough to have sent a
+    # DHCP request.
+    if [[ -z "${VM_SSH_TARGET}" ]]; then
+        info "Waiting for VM to obtain an IP via DHCP (MAC: ${VM_MAC})..."
+        VM_IP=""
+        MAX_ARP_ATTEMPTS=60
+        ARP_ATTEMPT=0
+        while [[ ${ARP_ATTEMPT} -lt ${MAX_ARP_ATTEMPTS} ]]; do
+            ARP_ATTEMPT=$((ARP_ATTEMPT + 1))
+
+            if ! ps -p "${QEMU_PID}" >/dev/null 2>&1; then
+                echo ""
+                error "QEMU process exited unexpectedly. Check log: ${QEMU_LOG}"
+            fi
+
+            # macOS arp strips leading zeros from MAC octets (e.g. 00 -> 0),
+            # so build a regex that matches with or without leading zeros.
+            local mac_pattern
+            mac_pattern="$(echo "${VM_MAC}" | sed 's/0\([0-9a-fA-F]\)/0\?\1/g')"
+            VM_IP="$(arp -an 2>/dev/null | grep -iE "${mac_pattern}" | awk -F'[()]' '{print $2}' | head -1 || true)"
+            if [[ -n "${VM_IP}" ]]; then
+                break
+            fi
+
+            printf "."
+            sleep 3
+        done
+        echo ""
+
+        if [[ -z "${VM_IP}" ]]; then
+            error "Could not discover VM IP address after ${MAX_ARP_ATTEMPTS} attempts. Check log: ${QEMU_LOG}"
+        fi
+
+        info "VM IP address: ${VM_IP}"
+        VM_SSH_TARGET="${VM_IP}"
+        # Persist the IP so the stop command and the user can reference it.
+        echo "${VM_IP}" > "${VM_DIR}/${VM_NAME}.ip"
+    fi
+
+    info "Waiting for SSH to become available on ${VM_SSH_TARGET}:${VM_SSH_PORT}..."
 
     MAX_ATTEMPTS=60
     ATTEMPT=0
     while [[ ${ATTEMPT} -lt ${MAX_ATTEMPTS} ]]; do
         ATTEMPT=$((ATTEMPT + 1))
 
-        # Check that the QEMU process is still alive
-        if ! kill -0 "${QEMU_PID}" 2>/dev/null; then
+        # Check that the QEMU process is still alive.
+        # Use ps(1) instead of kill -0 because the process runs as root
+        # (vmnet-shared requires sudo) and sudo credentials may have expired.
+        if ! ps -p "${QEMU_PID}" >/dev/null 2>&1; then
             echo ""
             error "QEMU process exited unexpectedly. Check log: ${QEMU_LOG}"
         fi
 
         if ssh -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=no \
-               -o UserKnownHostsFile=/dev/null -p "${SSH_PORT}" ubuntu@localhost \
+               -o UserKnownHostsFile=/dev/null -p "${VM_SSH_PORT}" "ubuntu@${VM_SSH_TARGET}" \
                "true" 2>/dev/null; then
             break
         fi
@@ -395,7 +491,7 @@ EOF
         echo ""
         echo "You can try connecting manually:"
         echo ""
-        echo "  ssh -o StrictHostKeyChecking=no -p ${SSH_PORT} ubuntu@localhost"
+        echo "  ssh -o StrictHostKeyChecking=no -p ${VM_SSH_PORT} ubuntu@${VM_SSH_TARGET}"
         echo ""
         echo "To stop the VM:"
         echo "  ./hack/qemu/vm.sh stop -n ${VM_NAME}"
@@ -404,7 +500,7 @@ EOF
 
     info "VM is ready!"
     echo ""
-    echo "  ssh -o StrictHostKeyChecking=no -p ${SSH_PORT} ubuntu@localhost"
+    echo "  ssh -o StrictHostKeyChecking=no -p ${VM_SSH_PORT} ubuntu@${VM_SSH_TARGET}"
     echo ""
     echo "To stop the VM:"
     echo "  ./hack/qemu/vm.sh stop -n ${VM_NAME}"
@@ -431,34 +527,41 @@ cmd_stop() {
         error "PID file not found: ${pid_file}. Is the VM running?"
     fi
 
-    local pid
-    pid="$(cat "${pid_file}")"
+    # On macOS the QEMU process runs as root (vmnet-shared requires sudo),
+    # so we may need sudo to read the PID file and signal the process.
+    local SUDO=""
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        SUDO="sudo"
+    fi
 
-    if ! kill -0 "${pid}" 2>/dev/null; then
+    local pid
+    pid="$(${SUDO} cat "${pid_file}")"
+
+    if ! ${SUDO} kill -0 "${pid}" 2>/dev/null; then
         warn "Process ${pid} is not running. Cleaning up stale PID file."
-        rm -f "${pid_file}"
+        ${SUDO} rm -f "${pid_file}"
     else
         if [[ "${FORCE}" == true ]]; then
             info "Force killing VM '${VM_NAME}' (PID: ${pid})..."
-            kill -9 "${pid}"
+            ${SUDO} kill -9 "${pid}"
         else
             info "Stopping VM '${VM_NAME}' (PID: ${pid})..."
-            kill "${pid}"
+            ${SUDO} kill "${pid}"
 
             # Wait for process to exit
             local timeout=15
-            while kill -0 "${pid}" 2>/dev/null && [[ ${timeout} -gt 0 ]]; do
+            while ${SUDO} kill -0 "${pid}" 2>/dev/null && [[ ${timeout} -gt 0 ]]; do
                 sleep 1
                 timeout=$((timeout - 1))
             done
 
-            if kill -0 "${pid}" 2>/dev/null; then
+            if ${SUDO} kill -0 "${pid}" 2>/dev/null; then
                 warn "VM did not stop gracefully, sending SIGKILL..."
-                kill -9 "${pid}" 2>/dev/null || true
+                ${SUDO} kill -9 "${pid}" 2>/dev/null || true
             fi
         fi
 
-        rm -f "${pid_file}"
+        ${SUDO} rm -f "${pid_file}"
         info "VM '${VM_NAME}' stopped."
     fi
 
@@ -467,6 +570,7 @@ cmd_stop() {
         rm -f "${VM_DIR}/${VM_NAME}.qcow2"
         rm -f "${VM_DIR}/${VM_NAME}-seed.iso"
         rm -f "${VM_DIR}/${VM_NAME}.log"
+        rm -f "${VM_DIR}/${VM_NAME}.ip"
         rm -f "${VM_DIR}/user-data.yaml"
         rm -f "${VM_DIR}/meta-data"
         info "Cleanup complete."

@@ -9,8 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/logger"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/apply"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
 var (
@@ -32,6 +34,8 @@ func main() {
 	rootCmd.AddCommand(NewAgentCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
 	rootCmd.AddCommand(NewVersionCommand())
+	rootCmd.AddCommand(apply.Command)
+	rootCmd.AddCommand(token.Command)
 
 	// Set up context with signal handling
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -41,6 +45,12 @@ func main() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for version command
 		if cmd.Name() == "version" {
+			return nil
+		}
+		if cmd.Name() == "apply" {
+			return nil
+		}
+		if cmd.Name() == "kubelogin" {
 			return nil
 		}
 
