@@ -19,3 +19,31 @@ message ConfigureBaseOSSpec {
 
 message ConfigureBaseOSStatus {
 }
+
+message DisableDocker {
+  api.Metadata metadata = 1;
+
+  DisableDockerSpec spec = 2;
+
+  DisableDockerStatus status = 3;
+}
+
+message DisableDockerSpec {
+}
+
+message DisableDockerStatus {
+}
+
+message ConfigureIPTables {
+  api.Metadata metadata = 1;
+
+  ConfigureIPTablesSpec spec = 2;
+
+  ConfigureIPTablesStatus status = 3;
+}
+
+message ConfigureIPTablesSpec {
+}
+
+message ConfigureIPTablesStatus {
+}

@@ -91,6 +91,30 @@ var configureSystem resolveActionFunc[*linux.ConfigureBaseOS] = func(
 	}.Build(), nil
 }
 
+var disableDocker resolveActionFunc[*linux.DisableDocker] = func(
+	name string,
+	cfg *config.Config,
+) (*linux.DisableDocker, error) {
+	spec := linux.DisableDockerSpec_builder{}.Build()
+
+	return linux.DisableDocker_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
+}
+
+var configureIPTables resolveActionFunc[*linux.ConfigureIPTables] = func(
+	name string,
+	cfg *config.Config,
+) (*linux.ConfigureIPTables, error) {
+	spec := linux.ConfigureIPTablesSpec_builder{}.Build()
+
+	return linux.ConfigureIPTables_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
+}
+
 var downloadCRIBinaries resolveActionFunc[*cri.DownloadCRIBinaries] = func(
 	name string,
 	cfg *config.Config,

@@ -22,8 +22,15 @@ type Manager interface {
 
 	// EnableUnit enables a systemd unit by name, allowing it to start on boot.
 	EnableUnit(ctx context.Context, unitName string) error
+	// DisableUnit disables a systemd unit by name, preventing it from starting on boot.
+	DisableUnit(ctx context.Context, unitName string) error
+	// MaskUnit masks a systemd unit, preventing it from being started by any means.
+	MaskUnit(ctx context.Context, unitName string) error
+
 	// StartUnit starts a systemd unit by name.
 	StartUnit(ctx context.Context, unitName string) error
+	// StopUnit stops a systemd unit by name.
+	StopUnit(ctx context.Context, unitName string) error
 	// ReloadOrRestartUnit reloads or restarts a systemd unit by name.
 	ReloadOrRestartUnit(ctx context.Context, unitName string) error
 

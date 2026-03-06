@@ -36,6 +36,9 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		arc.NewInstaller(b.logger), // Setup Arc
 
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
+		// Some environments might have docker pre-installed which can interfere with Kubernetes networking.
+		// This step disables the docker services and configures the docker daemon to not manage iptables rules.
+		disableDocker.Executor("disable-docker", b.componentsAPIConn),
 
 		// Fetch serverURL and caCertData from AKS cluster admin credentials for
 		// non-bootstrap-token auth modes (Arc, SP, MI). Must run before startKubelet
@@ -50,6 +53,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 
 		configureCNI.Executor("configure-cni", b.componentsAPIConn),
 		startContainerdService.Executor("start-containerd", b.componentsAPIConn),
+		// Configure iptables rules before kubelet starts to prevent conflicts with Kubernetes networking
+		configureIPTables.Executor("configure-iptables", b.componentsAPIConn),
 		startKubelet.Executor("start-kubelet", b.componentsAPIConn),
 		startNPD.Executor("start-npd", b.componentsAPIConn),
 	}
