@@ -3,6 +3,9 @@ package systemd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 )
 
 // EnsureUnitRunning ensures a systemd unit is active.
@@ -69,6 +72,18 @@ func EnsureUnitMasked(
 
 	if err := m.DisableUnit(ctx, unitName); err != nil {
 		return err
+	}
+
+	// Remove the unit file and drop-in directory so MaskUnit can create
+	// the /dev/null symlink. The dbus MaskUnitFiles "force" flag only
+	// replaces existing symlinks, not regular files, so a unit file
+	// written by a prior operation (e.g. EnsureUnitFile) would block it.
+	unitPath := filepath.Join(etcSystemdSystemDir, unitName)
+	if err := os.Remove(unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove unit file before mask: %w", err)
+	}
+	if err := os.RemoveAll(unitPath + ".d"); err != nil {
+		return fmt.Errorf("remove drop-in dir before mask: %w", err)
 	}
 
 	return m.MaskUnit(ctx, unitName)
