@@ -79,6 +79,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/node-join-token.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-kubeadm.sh"
 
 # ---------------------------------------------------------------------------
+# _kubeadm_scenario - Sequential join → unjoin → rejoin cycle
+# ---------------------------------------------------------------------------
+_kubeadm_scenario() {
+  node_join_kubeadm
+  node_unjoin_kubeadm
+  node_join_kubeadm
+}
+
+# ---------------------------------------------------------------------------
 # node_join_all - Join all nodes in parallel
 # ---------------------------------------------------------------------------
 node_join_all() {
@@ -95,7 +104,9 @@ node_join_all() {
   node_join_token &
   token_pid=$!
 
-  node_join_kubeadm &
+  # The kubeadm path runs a full join → reset → rejoin cycle to verify
+  # that KubeadmNodeReset leaves the node in a clean state.
+  _kubeadm_scenario &
   kubeadm_pid=$!
 
   wait "${msi_pid}" || msi_exit=$?

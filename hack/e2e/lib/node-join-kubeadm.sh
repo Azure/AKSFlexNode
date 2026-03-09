@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# hack/e2e/lib/node-join-kubeadm.sh - Join an AKS flex node using the kubeadm join flow
+# hack/e2e/lib/node-join-kubeadm.sh - Join / unjoin an AKS flex node via kubeadm
 #
 # Functions:
-#   node_join_kubeadm  - Create bootstrap token, generate action file,
-#                        run aks-flex-node apply -f (KubeadmNodeJoin)
+#   node_join_kubeadm   - Create bootstrap token & RBAC, generate action file,
+#                         run aks-flex-node apply -f (KubeadmNodeJoin)
+#   node_unjoin_kubeadm - Reset the node (KubeadmNodeReset) and delete the
+#                         stale node object from the cluster
 # =============================================================================
 set -euo pipefail
 
@@ -15,58 +17,15 @@ readonly _E2E_NODE_JOIN_KUBEADM_LOADED=1
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ---------------------------------------------------------------------------
-# node_join_kubeadm - Join the Kubeadm VM using apply -f with KubeadmNodeJoin
+# _kubeadm_ensure_rbac - Create / update RBAC and ConfigMaps (idempotent)
 # ---------------------------------------------------------------------------
-node_join_kubeadm() {
-  log_section "Joining Kubeadm Node (apply -f)"
-  local start
-  start=$(timer_start)
+_kubeadm_ensure_rbac() {
+  local server_url="$1"
+  local ca_cert_data="$2"
 
-  local vm_ip
-  vm_ip="$(state_get kubeadm_vm_ip)"
-  local server_url
-  server_url="$(state_get server_url)"
-  local ca_cert_data
-  ca_cert_data="$(state_get ca_cert_data)"
+  log_info "Ensuring bootstrap RBAC and ConfigMap resources..."
 
-  # Step 1: Create bootstrap token & RBAC in the cluster
-  log_info "Creating bootstrap token and RBAC resources for kubeadm join..."
-  local token_id token_secret bootstrap_token expiration
-
-  token_id="$(openssl rand -hex 3)"
-  token_secret="$(openssl rand -hex 8)"
-  bootstrap_token="${token_id}.${token_secret}"
-
-  # Use a portable date command for expiration (24h from now)
-  if date --version &>/dev/null; then
-    # GNU date
-    expiration="$(date -u -d "+24 hours" +"%Y-%m-%dT%H:%M:%SZ")"
-  else
-    # BSD/macOS date
-    expiration="$(date -u -v+24H +"%Y-%m-%dT%H:%M:%SZ")"
-  fi
-
-  log_info "Token ID: ${token_id} | Expires: ${expiration}"
-
-  # Create the bootstrap token secret
-  kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: bootstrap-token-${token_id}
-  namespace: kube-system
-type: bootstrap.kubernetes.io/token
-stringData:
-  description: "AKS Flex Node E2E kubeadm bootstrap token"
-  token-id: "${token_id}"
-  token-secret: "${token_secret}"
-  expiration: "${expiration}"
-  usage-bootstrap-authentication: "true"
-  usage-bootstrap-signing: "true"
-  auth-extra-groups: "system:bootstrappers:aks-flex-node"
-EOF
-
-  # Create RBAC bindings for TLS bootstrapping (idempotent).
+  # RBAC bindings for TLS bootstrapping (idempotent).
   # Mirrors the full set of resources that kubeadm init sets up:
   #  - ClusterRoleBindings for CSR creation and auto-approval
   #  - Roles/RoleBindings granting bootstrappers read access to kubeadm config
@@ -247,11 +206,75 @@ data:
     kind: KubeletConfiguration
 EOF
 
-  log_success "Bootstrap token and RBAC configured"
+  log_success "Bootstrap RBAC and ConfigMaps configured"
+}
+
+# ---------------------------------------------------------------------------
+# _kubeadm_create_bootstrap_token - Create a token and print it to stdout
+# ---------------------------------------------------------------------------
+_kubeadm_create_bootstrap_token() {
+  local token_id token_secret bootstrap_token expiration
+
+  token_id="$(openssl rand -hex 3)"
+  token_secret="$(openssl rand -hex 8)"
+  bootstrap_token="${token_id}.${token_secret}"
+
+  # Use a portable date command for expiration (24h from now)
+  if date --version &>/dev/null; then
+    # GNU date
+    expiration="$(date -u -d "+24 hours" +"%Y-%m-%dT%H:%M:%SZ")"
+  else
+    # BSD/macOS date
+    expiration="$(date -u -v+24H +"%Y-%m-%dT%H:%M:%SZ")"
+  fi
+
+  log_info "Token ID: ${token_id} | Expires: ${expiration}" >&2
+
+  kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-token-${token_id}
+  namespace: kube-system
+type: bootstrap.kubernetes.io/token
+stringData:
+  description: "AKS Flex Node E2E kubeadm bootstrap token"
+  token-id: "${token_id}"
+  token-secret: "${token_secret}"
+  expiration: "${expiration}"
+  usage-bootstrap-authentication: "true"
+  usage-bootstrap-signing: "true"
+  auth-extra-groups: "system:bootstrappers:aks-flex-node"
+EOF
+
+  echo "${bootstrap_token}"
+}
+
+# ---------------------------------------------------------------------------
+# node_join_kubeadm - Join the Kubeadm VM using apply -f with KubeadmNodeJoin
+# ---------------------------------------------------------------------------
+node_join_kubeadm() {
+  log_section "Joining Kubeadm Node (apply -f)"
+  local start
+  start=$(timer_start)
+
+  local vm_ip
+  vm_ip="$(state_get kubeadm_vm_ip)"
+  local server_url
+  server_url="$(state_get server_url)"
+  local ca_cert_data
+  ca_cert_data="$(state_get ca_cert_data)"
+
+  # Step 1: Ensure RBAC / ConfigMaps and create a bootstrap token
+  _kubeadm_ensure_rbac "${server_url}" "${ca_cert_data}"
+
+  log_info "Creating bootstrap token..."
+  local bootstrap_token
+  bootstrap_token="$(_kubeadm_create_bootstrap_token)"
   state_set "kubeadm_bootstrap_token" "${bootstrap_token}"
 
-  # Step 2: Generate the apply -f action file (JSON array of all bootstrap steps
-  #         ending with the KubeadmNodeJoin action)
+  # Step 2: Generate the apply -f action file (JSON array of all bootstrap
+  #         steps ending with the KubeadmNodeJoin action)
   local action_file="${E2E_WORK_DIR}/kubeadm-join.json"
   cat > "${action_file}" <<EOF
 [
@@ -350,4 +373,54 @@ fi
 REMOTE
 
   log_success "Kubeadm node joined via apply -f in $(timer_elapsed "${start}")s"
+}
+
+# ---------------------------------------------------------------------------
+# node_unjoin_kubeadm - Reset the node and remove it from the cluster
+# ---------------------------------------------------------------------------
+node_unjoin_kubeadm() {
+  log_section "Resetting Kubeadm Node (apply -f)"
+  local start
+  start=$(timer_start)
+
+  local vm_ip
+  vm_ip="$(state_get kubeadm_vm_ip)"
+  local kubeadm_vm_name
+  kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+
+  # Step 1: Run KubeadmNodeReset on the VM
+  local reset_action_file="${E2E_WORK_DIR}/kubeadm-reset.json"
+  cat > "${reset_action_file}" <<EOF
+[
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.kubeadm.KubeadmNodeReset",
+      "name": "kubeadm-node-reset"
+    },
+    "spec": {}
+  }
+]
+EOF
+
+  remote_copy "${reset_action_file}" "${vm_ip}" "/tmp/kubeadm-reset.json"
+
+  log_info "Running kubeadm reset via apply -f on ${vm_ip}..."
+  remote_exec "${vm_ip}" 'bash -s' <<REMOTE
+set -euo pipefail
+
+sudo cp /tmp/kubeadm-reset.json /etc/aks-flex-node/
+
+sudo /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kubeadm-reset.json \
+  2>&1 | sudo tee -a /var/log/aks-flex-node/aks-flex-node.log
+
+echo "kubelet status after reset:"
+systemctl is-active kubelet 2>&1 || true
+REMOTE
+
+  # Step 2: Remove the stale node object from the cluster so a subsequent
+  #         join starts fresh (kubeadm reset only cleans local state).
+  log_info "Deleting stale node '${kubeadm_vm_name}' from cluster..."
+  kubectl delete node "${kubeadm_vm_name}" --ignore-not-found --wait=true
+
+  log_success "Kubeadm node reset in $(timer_elapsed "${start}")s"
 }

@@ -139,7 +139,7 @@ hack/e2e/
     node-join.sh          Shared helper (_deploy_and_start_agent) + node_join_all orchestration
     node-join-msi.sh      MSI auth node join (node_join_msi)
     node-join-token.sh    Bootstrap token node join (node_join_token)
-    node-join-kubeadm.sh  Kubeadm apply -f node join (node_join_kubeadm)
+    node-join-kubeadm.sh  Kubeadm join/unjoin (node_join_kubeadm, node_unjoin_kubeadm)
     validate.sh           Node-ready checks and smoke tests (nginx pods)
     cleanup.sh            Log collection and Azure resource teardown
 ```

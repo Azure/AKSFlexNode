@@ -12,6 +12,7 @@
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
 #   join-kubeadm  Join only the kubeadm node (apply -f with KubeadmNodeJoin)
+#   unjoin-kubeadm Reset the kubeadm node and remove it from the cluster
 #   validate      Verify nodes joined + run smoke tests
 #   smoke         Run smoke tests only (pods on flex nodes)
 #   logs          Collect logs from VMs
@@ -220,6 +221,9 @@ main() {
     join-kubeadm)
       ensure_binary
       node_join_kubeadm
+      ;;
+    unjoin-kubeadm)
+      node_unjoin_kubeadm
       ;;
     validate)
       validate_all_nodes
