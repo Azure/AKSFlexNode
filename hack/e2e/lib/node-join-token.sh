@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# hack/e2e/lib/node-join-token.sh - Join an AKS flex node using bootstrap token auth
+# hack/e2e/lib/node-join-token.sh - Join / unjoin an AKS flex node using
+#                                    bootstrap token auth
 #
 # Functions:
-#   node_join_token  - Create bootstrap token/RBAC, deploy binary, run agent
+#   node_join_token   - Create bootstrap token/RBAC, deploy binary, run agent
+#   node_unjoin_token - Stop agent, run unbootstrap, delete node from cluster
 # =============================================================================
 set -euo pipefail
 
@@ -155,4 +157,12 @@ EOF
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-token"
 
   log_success "Token node joined in $(timer_elapsed "${start}")s"
+}
+
+# ---------------------------------------------------------------------------
+# node_unjoin_token - Stop the agent, run unbootstrap, remove node from cluster
+# TODO: Not implemented yet.
+# ---------------------------------------------------------------------------
+node_unjoin_token() {
+  log_warn "node_unjoin_token: not implemented yet, skipping"
 }

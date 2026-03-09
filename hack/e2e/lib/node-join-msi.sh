@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# hack/e2e/lib/node-join-msi.sh - Join an AKS flex node using MSI auth
+# hack/e2e/lib/node-join-msi.sh - Join / unjoin an AKS flex node using MSI auth
 #
 # Functions:
-#   node_join_msi  - Install Azure CLI + MSI auth, deploy binary, run agent
+#   node_join_msi   - Install Azure CLI + MSI auth, deploy binary, run agent
+#   node_unjoin_msi - Stop agent, run unbootstrap, delete node from cluster
 # =============================================================================
 set -euo pipefail
 
@@ -101,4 +102,12 @@ EOF
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-msi"
 
   log_success "MSI node joined in $(timer_elapsed "${start}")s"
+}
+
+# ---------------------------------------------------------------------------
+# node_unjoin_msi - Stop the agent, run unbootstrap, remove node from cluster
+# TODO: Not implemented yet.
+# ---------------------------------------------------------------------------
+node_unjoin_msi() {
+  log_warn "node_unjoin_msi: not implemented yet, skipping"
 }
