@@ -5,6 +5,8 @@
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
 #   validate_all_nodes                - Verify MSI, token, and kubeadm nodes joined
+#   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
+#   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
 #   smoke_test_all                    - Run smoke tests on all nodes
 # =============================================================================
@@ -82,6 +84,59 @@ validate_all_nodes() {
   log_info "All cluster nodes:"
   kubectl get nodes -o wide
   log_success "All nodes verified in cluster"
+}
+
+# ---------------------------------------------------------------------------
+# validate_node_absent - Wait for a node to disappear from the cluster
+# ---------------------------------------------------------------------------
+validate_node_absent() {
+  local vm_name="$1"
+  local timeout="${E2E_NODE_JOIN_TIMEOUT}"
+  local elapsed=0
+
+  log_info "Waiting for node '${vm_name}' to leave cluster (timeout: ${timeout}s)..."
+
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    if ! kubectl get node "${vm_name}" &>/dev/null; then
+      log_success "Node '${vm_name}' is no longer in the cluster"
+      return 0
+    fi
+    sleep 10
+    elapsed=$((elapsed + 10))
+    log_debug "Waiting for ${vm_name} to disappear... (${elapsed}/${timeout}s)"
+  done
+
+  log_error "Node '${vm_name}' still present in cluster after ${timeout}s"
+  log_error "Current nodes:"
+  kubectl get nodes 2>&1 || true
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# validate_all_nodes_absent - Check all flex nodes are gone after unjoin
+# ---------------------------------------------------------------------------
+validate_all_nodes_absent() {
+  log_section "Validating Nodes Absent After Unjoin"
+
+  local msi_vm_name token_vm_name kubeadm_vm_name
+  msi_vm_name="$(state_get msi_vm_name)"
+  token_vm_name="$(state_get token_vm_name)"
+  kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+
+  local failed=0
+  validate_node_absent "${msi_vm_name}" || failed=1
+  validate_node_absent "${token_vm_name}" || failed=1
+  validate_node_absent "${kubeadm_vm_name}" || failed=1
+
+  if [[ "${failed}" -eq 1 ]]; then
+    log_error "One or more nodes still present after unjoin"
+    return 1
+  fi
+
+  echo ""
+  log_info "All cluster nodes:"
+  kubectl get nodes -o wide
+  log_success "All flex nodes confirmed absent"
 }
 
 # ---------------------------------------------------------------------------

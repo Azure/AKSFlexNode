@@ -3,12 +3,13 @@
 # hack/e2e/lib/node-join.sh - Bootstrap flex nodes into the AKS cluster
 #
 # Sources:
-#   node-join-msi.sh     - MSI auth node join     (node_join_msi)
-#   node-join-token.sh   - Bootstrap token join   (node_join_token)
-#   node-join-kubeadm.sh - Kubeadm apply -f join  (node_join_kubeadm)
+#   node-join-msi.sh     - MSI auth node join/unjoin     (node_join_msi, node_unjoin_msi)
+#   node-join-token.sh   - Bootstrap token join/unjoin   (node_join_token, node_unjoin_token)
+#   node-join-kubeadm.sh - Kubeadm apply -f join/unjoin  (node_join_kubeadm, node_unjoin_kubeadm)
 #
 # Functions:
-#   node_join_all  - Join all nodes (MSI, token, and kubeadm) in parallel
+#   node_join_all   - Join all nodes (MSI, token, and kubeadm) in parallel
+#   node_unjoin_all - Unjoin all nodes in parallel
 # =============================================================================
 set -euo pipefail
 
@@ -79,15 +80,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/node-join-token.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-kubeadm.sh"
 
 # ---------------------------------------------------------------------------
-# _kubeadm_scenario - Sequential join → unjoin → rejoin cycle
-# ---------------------------------------------------------------------------
-_kubeadm_scenario() {
-  node_join_kubeadm
-  node_unjoin_kubeadm
-  node_join_kubeadm
-}
-
-# ---------------------------------------------------------------------------
 # node_join_all - Join all nodes in parallel
 # ---------------------------------------------------------------------------
 node_join_all() {
@@ -104,9 +96,7 @@ node_join_all() {
   node_join_token &
   token_pid=$!
 
-  # The kubeadm path runs a full join → reset → rejoin cycle to verify
-  # that KubeadmNodeReset leaves the node in a clean state.
-  _kubeadm_scenario &
+  node_join_kubeadm &
   kubeadm_pid=$!
 
   wait "${msi_pid}" || msi_exit=$?
@@ -132,4 +122,49 @@ node_join_all() {
   fi
 
   log_success "All nodes joined in ${duration}s"
+}
+
+# ---------------------------------------------------------------------------
+# node_unjoin_all - Unjoin all nodes in parallel
+# ---------------------------------------------------------------------------
+node_unjoin_all() {
+  log_section "Unjoining All Nodes (parallel)"
+  local start
+  start=$(timer_start)
+
+  local msi_pid token_pid kubeadm_pid
+  local msi_exit=0 token_exit=0 kubeadm_exit=0
+
+  node_unjoin_msi &
+  msi_pid=$!
+
+  node_unjoin_token &
+  token_pid=$!
+
+  node_unjoin_kubeadm &
+  kubeadm_pid=$!
+
+  wait "${msi_pid}" || msi_exit=$?
+  wait "${token_pid}" || token_exit=$?
+  wait "${kubeadm_pid}" || kubeadm_exit=$?
+
+  local duration
+  duration=$(timer_elapsed "${start}")
+
+  if [[ "${msi_exit}" -ne 0 ]]; then
+    log_error "MSI node unjoin failed (exit ${msi_exit})"
+  fi
+  if [[ "${token_exit}" -ne 0 ]]; then
+    log_error "Token node unjoin failed (exit ${token_exit})"
+  fi
+  if [[ "${kubeadm_exit}" -ne 0 ]]; then
+    log_error "Kubeadm node unjoin failed (exit ${kubeadm_exit})"
+  fi
+
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+    log_error "Node unjoins failed (${duration}s)"
+    return 1
+  fi
+
+  log_success "All nodes unjoined in ${duration}s"
 }

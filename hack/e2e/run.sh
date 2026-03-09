@@ -6,14 +6,19 @@
 #   ./hack/e2e/run.sh [command] [options]
 #
 # Commands:
-#   all           Run the full E2E flow (default): build, infra, join, validate, cleanup
+#   all           Run the full E2E flow (default): build, infra, join, validate,
+#                 unjoin, validate-absent, rejoin, validate, cleanup
 #   infra         Deploy infrastructure only (Bicep: AKS + 3 VMs)
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
 #   join-kubeadm  Join only the kubeadm node (apply -f with KubeadmNodeJoin)
+#   unjoin        Unjoin all nodes from the cluster
+#   unjoin-msi    Unjoin only the MSI node
+#   unjoin-token  Unjoin only the token node
 #   unjoin-kubeadm Reset the kubeadm node and remove it from the cluster
 #   validate      Verify nodes joined + run smoke tests
+#   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
@@ -106,7 +111,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-kubeadm|validate|smoke|logs|cleanup|status)
+      all|infra|join|join-msi|join-token|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|validate|validate-absent|smoke|logs|cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -149,10 +154,23 @@ cmd_all() {
   # Infrastructure
   infra_deploy
 
-  # Join nodes
+  # ── First join ──────────────────────────────────────────────────────
   node_join_all
 
-  # Validate + smoke tests
+  # Validate + smoke tests (first pass)
+  validate_all_nodes
+  smoke_test_all || exit_code=1
+
+  # ── Unjoin ──────────────────────────────────────────────────────────
+  node_unjoin_all
+
+  # Validate nodes are gone
+  validate_all_nodes_absent
+
+  # ── Rejoin ──────────────────────────────────────────────────────────
+  node_join_all
+
+  # Validate + smoke tests (second pass)
   validate_all_nodes
   smoke_test_all || exit_code=1
 
@@ -222,12 +240,24 @@ main() {
       ensure_binary
       node_join_kubeadm
       ;;
+    unjoin)
+      node_unjoin_all
+      ;;
+    unjoin-msi)
+      node_unjoin_msi
+      ;;
+    unjoin-token)
+      node_unjoin_token
+      ;;
     unjoin-kubeadm)
       node_unjoin_kubeadm
       ;;
     validate)
       validate_all_nodes
       smoke_test_all
+      ;;
+    validate-absent)
+      validate_all_nodes_absent
       ;;
     smoke)
       smoke_test_all
