@@ -230,7 +230,7 @@ _kubeadm_create_bootstrap_token() {
 
   log_info "Token ID: ${token_id} | Expires: ${expiration}" >&2
 
-  kubectl apply -f - <<EOF
+  kubectl apply -f - >&2 <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
