@@ -53,6 +53,9 @@ func main() {
 		if cmd.Name() == "kubelogin" {
 			return nil
 		}
+		if cmd.Name() == "arc-credential" {
+			return nil
+		}
 
 		// For other commands, config is required
 		if configPath == "" {

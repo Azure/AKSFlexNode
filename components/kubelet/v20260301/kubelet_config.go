@@ -106,8 +106,12 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	}
 	switch {
 	case nodeAuthInfo.HasArcCredential():
-		// TODO: implement arc credential support with pop
-		return false, fmt.Errorf("arc credential is not supported yet")
+		// Arc credential uses custom Arc token provider that handles Arc MSI directly
+		// This bypasses kubelogin's limitation with Arc authentication
+		authInfoSettings.Exec.Args = []string{
+			"token", "arc-credential",
+		}
+		// No additional environment variables needed - Arc token provider handles authentication internally
 	case nodeAuthInfo.HasServicePrincipalCredential():
 		cred := nodeAuthInfo.GetServicePrincipalCredential()
 		authInfoSettings.Exec.Env = append(

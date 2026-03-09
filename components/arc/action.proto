@@ -1,0 +1,45 @@
+edition = "2024";
+
+package aks.flex.components.arc;
+
+option go_package = "github.com/Azure/AKSFlexNode/components/arc";
+
+import "components/api/api.proto";
+
+message InstallArc {
+  api.Metadata metadata = 1;
+
+  InstallArcSpec spec = 2;
+
+  InstallArcStatus status = 3;
+}
+
+message InstallArcSpec {
+  // Azure subscription ID
+  string subscription_id = 1;
+  // Azure tenant ID
+  string tenant_id = 2;
+  // Azure resource group for Arc machine
+  string resource_group = 3;
+  // Azure location for Arc machine
+  string location = 4;
+  // Arc machine name
+  string machine_name = 5;
+  // Arc tags (key-value pairs)
+  map<string, string> tags = 6;
+  // Target AKS cluster name for RBAC assignments
+  string aks_cluster_name = 7;
+}
+
+message InstallArcStatus {
+  // Installation phase (validation, installation, registration, rbac, completed)
+  string phase = 1;
+  // Success status
+  bool success = 2;
+  // Error message if failed
+  string error_message = 3;
+  // Arc machine resource ID once registered
+  string machine_resource_id = 4;
+  // Managed identity principal ID
+  string principal_id = 5;
+}

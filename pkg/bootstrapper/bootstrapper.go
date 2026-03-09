@@ -33,8 +33,7 @@ func New(
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
 	// Define the bootstrap steps in order - using modules directly
 	steps := []Executor{
-		arc.NewInstaller(b.logger), // Setup Arc
-
+		installArc.Executor("install-arc", b.componentsAPIConn),
 		configureSystem.Executor("configure-os", b.componentsAPIConn),
 		// Some environments might have docker pre-installed which can interfere with Kubernetes networking.
 		// This step disables the docker services and configures the docker daemon to not manage iptables rules.
