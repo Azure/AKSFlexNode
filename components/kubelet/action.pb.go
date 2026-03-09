@@ -1274,6 +1274,210 @@ func (b0 StartKubeletServiceStatus_builder) Build() *StartKubeletServiceStatus {
 	return m0
 }
 
+type ResetKubelet struct {
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *ResetKubeletSpec      `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *ResetKubeletStatus    `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ResetKubelet) Reset() {
+	*x = ResetKubelet{}
+	mi := &file_components_kubelet_action_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetKubelet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetKubelet) ProtoMessage() {}
+
+func (x *ResetKubelet) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubelet_action_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResetKubelet) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *ResetKubelet) GetSpec() *ResetKubeletSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *ResetKubelet) GetStatus() *ResetKubeletStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *ResetKubelet) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *ResetKubelet) SetSpec(v *ResetKubeletSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *ResetKubelet) SetStatus(v *ResetKubeletStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *ResetKubelet) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *ResetKubelet) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *ResetKubelet) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *ResetKubelet) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *ResetKubelet) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *ResetKubelet) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type ResetKubelet_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *ResetKubeletSpec
+	Status   *ResetKubeletStatus
+}
+
+func (b0 ResetKubelet_builder) Build() *ResetKubelet {
+	m0 := &ResetKubelet{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type ResetKubeletSpec struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetKubeletSpec) Reset() {
+	*x = ResetKubeletSpec{}
+	mi := &file_components_kubelet_action_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetKubeletSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetKubeletSpec) ProtoMessage() {}
+
+func (x *ResetKubeletSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubelet_action_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ResetKubeletSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ResetKubeletSpec_builder) Build() *ResetKubeletSpec {
+	m0 := &ResetKubeletSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+type ResetKubeletStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetKubeletStatus) Reset() {
+	*x = ResetKubeletStatus{}
+	mi := &file_components_kubelet_action_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetKubeletStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetKubeletStatus) ProtoMessage() {}
+
+func (x *ResetKubeletStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubelet_action_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ResetKubeletStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ResetKubeletStatus_builder) Build() *ResetKubeletStatus {
+	m0 := &ResetKubeletStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_kubelet_action_proto protoreflect.FileDescriptor
 
 const file_components_kubelet_action_proto_rawDesc = "" +
@@ -1326,9 +1530,15 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x0fNodeLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1b\n" +
-	"\x19StartKubeletServiceStatusB1Z/github.com/Azure/AKSFlexNode/components/kubeletb\beditionsp\xe9\a"
+	"\x19StartKubeletServiceStatus\"\xd9\x01\n" +
+	"\fResetKubelet\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12A\n" +
+	"\x04spec\x18\x02 \x01(\v2-.aks.flex.components.kubelet.ResetKubeletSpecR\x04spec\x12G\n" +
+	"\x06status\x18\x03 \x01(\v2/.aks.flex.components.kubelet.ResetKubeletStatusR\x06status\"\x12\n" +
+	"\x10ResetKubeletSpec\"\x14\n" +
+	"\x12ResetKubeletStatusB1Z/github.com/Azure/AKSFlexNode/components/kubeletb\beditionsp\xe9\a"
 
-var file_components_kubelet_action_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_components_kubelet_action_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_components_kubelet_action_proto_goTypes = []any{
 	(*StartKubeletService)(nil),               // 0: aks.flex.components.kubelet.StartKubeletService
 	(*KubeletArcCredential)(nil),              // 1: aks.flex.components.kubelet.KubeletArcCredential
@@ -1340,30 +1550,36 @@ var file_components_kubelet_action_proto_goTypes = []any{
 	(*KubeletConfig)(nil),                     // 7: aks.flex.components.kubelet.KubeletConfig
 	(*StartKubeletServiceSpec)(nil),           // 8: aks.flex.components.kubelet.StartKubeletServiceSpec
 	(*StartKubeletServiceStatus)(nil),         // 9: aks.flex.components.kubelet.StartKubeletServiceStatus
-	nil,                                       // 10: aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
-	nil,                                       // 11: aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
-	nil,                                       // 12: aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
-	(*api.Metadata)(nil),                      // 13: aks.flex.components.api.Metadata
+	(*ResetKubelet)(nil),                      // 10: aks.flex.components.kubelet.ResetKubelet
+	(*ResetKubeletSpec)(nil),                  // 11: aks.flex.components.kubelet.ResetKubeletSpec
+	(*ResetKubeletStatus)(nil),                // 12: aks.flex.components.kubelet.ResetKubeletStatus
+	nil,                                       // 13: aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
+	nil,                                       // 14: aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
+	nil,                                       // 15: aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
+	(*api.Metadata)(nil),                      // 16: aks.flex.components.api.Metadata
 }
 var file_components_kubelet_action_proto_depIdxs = []int32{
-	13, // 0: aks.flex.components.kubelet.StartKubeletService.metadata:type_name -> aks.flex.components.api.Metadata
+	16, // 0: aks.flex.components.kubelet.StartKubeletService.metadata:type_name -> aks.flex.components.api.Metadata
 	8,  // 1: aks.flex.components.kubelet.StartKubeletService.spec:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec
 	9,  // 2: aks.flex.components.kubelet.StartKubeletService.status:type_name -> aks.flex.components.kubelet.StartKubeletServiceStatus
 	1,  // 3: aks.flex.components.kubelet.NodeAuthInfo.arc_credential:type_name -> aks.flex.components.kubelet.KubeletArcCredential
 	2,  // 4: aks.flex.components.kubelet.NodeAuthInfo.msi_credential:type_name -> aks.flex.components.kubelet.KubeletMSICredential
 	3,  // 5: aks.flex.components.kubelet.NodeAuthInfo.service_principal_credential:type_name -> aks.flex.components.kubelet.KubeletServicePrincipalCredential
 	4,  // 6: aks.flex.components.kubelet.NodeAuthInfo.bootstrap_token_credential:type_name -> aks.flex.components.kubelet.KubeletBootstrapTokenCredential
-	10, // 7: aks.flex.components.kubelet.KubeletConfig.kube_reserved:type_name -> aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
-	11, // 8: aks.flex.components.kubelet.KubeletConfig.eviction_hard:type_name -> aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
+	13, // 7: aks.flex.components.kubelet.KubeletConfig.kube_reserved:type_name -> aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
+	14, // 8: aks.flex.components.kubelet.KubeletConfig.eviction_hard:type_name -> aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
 	5,  // 9: aks.flex.components.kubelet.StartKubeletServiceSpec.control_plane:type_name -> aks.flex.components.kubelet.ControlPlane
 	6,  // 10: aks.flex.components.kubelet.StartKubeletServiceSpec.node_auth_info:type_name -> aks.flex.components.kubelet.NodeAuthInfo
-	12, // 11: aks.flex.components.kubelet.StartKubeletServiceSpec.node_labels:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
+	15, // 11: aks.flex.components.kubelet.StartKubeletServiceSpec.node_labels:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
 	7,  // 12: aks.flex.components.kubelet.StartKubeletServiceSpec.kubelet_config:type_name -> aks.flex.components.kubelet.KubeletConfig
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	16, // 13: aks.flex.components.kubelet.ResetKubelet.metadata:type_name -> aks.flex.components.api.Metadata
+	11, // 14: aks.flex.components.kubelet.ResetKubelet.spec:type_name -> aks.flex.components.kubelet.ResetKubeletSpec
+	12, // 15: aks.flex.components.kubelet.ResetKubelet.status:type_name -> aks.flex.components.kubelet.ResetKubeletStatus
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_components_kubelet_action_proto_init() }
@@ -1383,7 +1599,7 @@ func file_components_kubelet_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubelet_action_proto_rawDesc), len(file_components_kubelet_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -4,6 +4,8 @@ func (x *StartKubeletService) Redact() {
 
 }
 
+func (x *ResetKubelet) Redact() {}
+
 func (x *StartKubeletServiceSpec) Redact() {
 	x.GetNodeAuthInfo().Redact()
 }

@@ -10,4 +10,8 @@ func init() {
 		newStartKubeletServiceAction,
 		&kubelet.StartKubeletService{},
 	)
+	actions.MustRegister(
+		newResetKubeletAction,
+		&kubelet.ResetKubelet{},
+	)
 }

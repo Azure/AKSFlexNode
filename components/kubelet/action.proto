@@ -73,3 +73,14 @@ message StartKubeletServiceSpec {
 message StartKubeletServiceStatus {
 
 }
+
+message ResetKubelet {
+  api.Metadata metadata = 1;
+
+  ResetKubeletSpec spec = 2;
+  ResetKubeletStatus status = 3;
+}
+
+message ResetKubeletSpec {}
+
+message ResetKubeletStatus {}
