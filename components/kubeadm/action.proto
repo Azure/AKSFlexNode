@@ -29,7 +29,7 @@ message Kubelet { // TODO: move to node package
   NodeAuthInfo bootstrap_auth_info = 1;
   map<string, string> node_labels = 2;
   string node_ip = 3;
-  // List of taints to assign using the kubelet flag, in the format "key=value:effect"
+  // List of taints to assign using the kubelet flag
   repeated Taint register_with_taints = 4;
 }
 
@@ -48,3 +48,16 @@ message KubeadmNodeJoinSpec {
 message KubeadmNodeJoinStatus {
 
 }
+
+message KubeadmNodeReset {
+  api.Metadata metadata = 1;
+
+  KubeadmNodeResetSpec spec = 2;
+
+  KubeadmNodeResetStatus status = 3;
+}
+
+
+message KubeadmNodeResetSpec {}
+
+message KubeadmNodeResetStatus {}

@@ -510,7 +510,7 @@ type Kubelet_builder struct {
 	BootstrapAuthInfo *NodeAuthInfo
 	NodeLabels        map[string]string
 	NodeIp            *string
-	// List of taints to assign using the kubelet flag, in the format "key=value:effect"
+	// List of taints to assign using the kubelet flag
 	RegisterWithTaints []*Taint
 }
 
@@ -830,6 +830,210 @@ func (b0 KubeadmNodeJoinStatus_builder) Build() *KubeadmNodeJoinStatus {
 	return m0
 }
 
+type KubeadmNodeReset struct {
+	state               protoimpl.MessageState  `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata           `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *KubeadmNodeResetSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *KubeadmNodeResetStatus `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *KubeadmNodeReset) Reset() {
+	*x = KubeadmNodeReset{}
+	mi := &file_components_kubeadm_action_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KubeadmNodeReset) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KubeadmNodeReset) ProtoMessage() {}
+
+func (x *KubeadmNodeReset) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubeadm_action_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *KubeadmNodeReset) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *KubeadmNodeReset) GetSpec() *KubeadmNodeResetSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *KubeadmNodeReset) GetStatus() *KubeadmNodeResetStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *KubeadmNodeReset) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *KubeadmNodeReset) SetSpec(v *KubeadmNodeResetSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *KubeadmNodeReset) SetStatus(v *KubeadmNodeResetStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *KubeadmNodeReset) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *KubeadmNodeReset) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *KubeadmNodeReset) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *KubeadmNodeReset) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *KubeadmNodeReset) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *KubeadmNodeReset) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type KubeadmNodeReset_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *KubeadmNodeResetSpec
+	Status   *KubeadmNodeResetStatus
+}
+
+func (b0 KubeadmNodeReset_builder) Build() *KubeadmNodeReset {
+	m0 := &KubeadmNodeReset{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type KubeadmNodeResetSpec struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KubeadmNodeResetSpec) Reset() {
+	*x = KubeadmNodeResetSpec{}
+	mi := &file_components_kubeadm_action_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KubeadmNodeResetSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KubeadmNodeResetSpec) ProtoMessage() {}
+
+func (x *KubeadmNodeResetSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubeadm_action_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type KubeadmNodeResetSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 KubeadmNodeResetSpec_builder) Build() *KubeadmNodeResetSpec {
+	m0 := &KubeadmNodeResetSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+type KubeadmNodeResetStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KubeadmNodeResetStatus) Reset() {
+	*x = KubeadmNodeResetStatus{}
+	mi := &file_components_kubeadm_action_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KubeadmNodeResetStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KubeadmNodeResetStatus) ProtoMessage() {}
+
+func (x *KubeadmNodeResetStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_kubeadm_action_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type KubeadmNodeResetStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 KubeadmNodeResetStatus_builder) Build() *KubeadmNodeResetStatus {
+	m0 := &KubeadmNodeResetStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_kubeadm_action_proto protoreflect.FileDescriptor
 
 const file_components_kubeadm_action_proto_rawDesc = "" +
@@ -862,34 +1066,46 @@ const file_components_kubeadm_action_proto_rawDesc = "" +
 	"\x13KubeadmNodeJoinSpec\x12N\n" +
 	"\rcontrol_plane\x18\x01 \x01(\v2).aks.flex.components.kubeadm.ControlPlaneR\fcontrolPlane\x12>\n" +
 	"\akubelet\x18\x02 \x01(\v2$.aks.flex.components.kubeadm.KubeletR\akubelet\"\x17\n" +
-	"\x15KubeadmNodeJoinStatusB1Z/github.com/Azure/AKSFlexNode/components/kubeadmb\beditionsp\xe9\a"
+	"\x15KubeadmNodeJoinStatus\"\xe5\x01\n" +
+	"\x10KubeadmNodeReset\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12E\n" +
+	"\x04spec\x18\x02 \x01(\v21.aks.flex.components.kubeadm.KubeadmNodeResetSpecR\x04spec\x12K\n" +
+	"\x06status\x18\x03 \x01(\v23.aks.flex.components.kubeadm.KubeadmNodeResetStatusR\x06status\"\x16\n" +
+	"\x14KubeadmNodeResetSpec\"\x18\n" +
+	"\x16KubeadmNodeResetStatusB1Z/github.com/Azure/AKSFlexNode/components/kubeadmb\beditionsp\xe9\a"
 
-var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_components_kubeadm_action_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_components_kubeadm_action_proto_goTypes = []any{
-	(*KubeadmNodeJoin)(nil),       // 0: aks.flex.components.kubeadm.KubeadmNodeJoin
-	(*ControlPlane)(nil),          // 1: aks.flex.components.kubeadm.ControlPlane
-	(*Taint)(nil),                 // 2: aks.flex.components.kubeadm.Taint
-	(*Kubelet)(nil),               // 3: aks.flex.components.kubeadm.Kubelet
-	(*NodeAuthInfo)(nil),          // 4: aks.flex.components.kubeadm.NodeAuthInfo
-	(*KubeadmNodeJoinSpec)(nil),   // 5: aks.flex.components.kubeadm.KubeadmNodeJoinSpec
-	(*KubeadmNodeJoinStatus)(nil), // 6: aks.flex.components.kubeadm.KubeadmNodeJoinStatus
-	nil,                           // 7: aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
-	(*api.Metadata)(nil),          // 8: aks.flex.components.api.Metadata
+	(*KubeadmNodeJoin)(nil),        // 0: aks.flex.components.kubeadm.KubeadmNodeJoin
+	(*ControlPlane)(nil),           // 1: aks.flex.components.kubeadm.ControlPlane
+	(*Taint)(nil),                  // 2: aks.flex.components.kubeadm.Taint
+	(*Kubelet)(nil),                // 3: aks.flex.components.kubeadm.Kubelet
+	(*NodeAuthInfo)(nil),           // 4: aks.flex.components.kubeadm.NodeAuthInfo
+	(*KubeadmNodeJoinSpec)(nil),    // 5: aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	(*KubeadmNodeJoinStatus)(nil),  // 6: aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	(*KubeadmNodeReset)(nil),       // 7: aks.flex.components.kubeadm.KubeadmNodeReset
+	(*KubeadmNodeResetSpec)(nil),   // 8: aks.flex.components.kubeadm.KubeadmNodeResetSpec
+	(*KubeadmNodeResetStatus)(nil), // 9: aks.flex.components.kubeadm.KubeadmNodeResetStatus
+	nil,                            // 10: aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
+	(*api.Metadata)(nil),           // 11: aks.flex.components.api.Metadata
 }
 var file_components_kubeadm_action_proto_depIdxs = []int32{
-	8, // 0: aks.flex.components.kubeadm.KubeadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
-	5, // 1: aks.flex.components.kubeadm.KubeadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
-	6, // 2: aks.flex.components.kubeadm.KubeadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
-	4, // 3: aks.flex.components.kubeadm.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.NodeAuthInfo
-	7, // 4: aks.flex.components.kubeadm.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
-	2, // 5: aks.flex.components.kubeadm.Kubelet.register_with_taints:type_name -> aks.flex.components.kubeadm.Taint
-	1, // 6: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.ControlPlane
-	3, // 7: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.kubelet:type_name -> aks.flex.components.kubeadm.Kubelet
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	11, // 0: aks.flex.components.kubeadm.KubeadmNodeJoin.metadata:type_name -> aks.flex.components.api.Metadata
+	5,  // 1: aks.flex.components.kubeadm.KubeadmNodeJoin.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinSpec
+	6,  // 2: aks.flex.components.kubeadm.KubeadmNodeJoin.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeJoinStatus
+	4,  // 3: aks.flex.components.kubeadm.Kubelet.bootstrap_auth_info:type_name -> aks.flex.components.kubeadm.NodeAuthInfo
+	10, // 4: aks.flex.components.kubeadm.Kubelet.node_labels:type_name -> aks.flex.components.kubeadm.Kubelet.NodeLabelsEntry
+	2,  // 5: aks.flex.components.kubeadm.Kubelet.register_with_taints:type_name -> aks.flex.components.kubeadm.Taint
+	1,  // 6: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.control_plane:type_name -> aks.flex.components.kubeadm.ControlPlane
+	3,  // 7: aks.flex.components.kubeadm.KubeadmNodeJoinSpec.kubelet:type_name -> aks.flex.components.kubeadm.Kubelet
+	11, // 8: aks.flex.components.kubeadm.KubeadmNodeReset.metadata:type_name -> aks.flex.components.api.Metadata
+	8,  // 9: aks.flex.components.kubeadm.KubeadmNodeReset.spec:type_name -> aks.flex.components.kubeadm.KubeadmNodeResetSpec
+	9,  // 10: aks.flex.components.kubeadm.KubeadmNodeReset.status:type_name -> aks.flex.components.kubeadm.KubeadmNodeResetStatus
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_components_kubeadm_action_proto_init() }
@@ -907,7 +1123,7 @@ func file_components_kubeadm_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_kubeadm_action_proto_rawDesc), len(file_components_kubeadm_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
