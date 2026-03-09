@@ -125,6 +125,16 @@ func (n *nodeJoinAction) writeBootstrapKubeconfig(
 	return dest, nil
 }
 
+func (n *nodeJoinAction) ensureRuntimeFolders() error {
+	// create static pod dir -- this dir is not managed by kubeadm as we don't create any static pod
+	// ref: https://github.com/kubernetes/kubernetes/blob/147a9ee31545188a1a53ad64ed12add16e95f04a/cmd/kubeadm/app/util/staticpod/utils.go#L191-L192
+	if err := os.MkdirAll(config.KubeletStaticPodPath, 0700); err != nil {
+		return nil
+	}
+
+	return nil
+}
+
 func (n *nodeJoinAction) writeKubeadmJoinConfig(
 	baseDir string,
 	config *kubeadm.KubeadmNodeJoinSpec,
@@ -239,6 +249,10 @@ func (n *nodeJoinAction) runJoin(
 	defer func() {
 		_ = os.RemoveAll(baseDir) //nolint:errcheck // clean up temp dir
 	}()
+
+	if err := n.ensureRuntimeFolders(); err != nil {
+		return status.Errorf(codes.Internal, "ensure runtime folder: %s", err)
+	}
 
 	joinConfig, err := n.writeKubeadmJoinConfig(baseDir, config)
 	if err != nil {
