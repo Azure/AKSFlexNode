@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/AKSFlexNode/components/api"
 	"github.com/Azure/AKSFlexNode/components/cni"
 	"github.com/Azure/AKSFlexNode/components/cri"
+	"github.com/Azure/AKSFlexNode/components/kubeadm"
 	"github.com/Azure/AKSFlexNode/components/kubebins"
 	"github.com/Azure/AKSFlexNode/components/kubelet"
 	"github.com/Azure/AKSFlexNode/components/linux"
@@ -285,5 +286,25 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 	return kubelet.StartKubeletService_builder{
 		Metadata: componentAction(name),
 		Spec:     spec,
+	}.Build(), nil
+}
+
+var resetKubeadmNode resolveActionFunc[*kubeadm.KubeadmNodeReset] = func(
+	name string,
+	cfg *config.Config,
+) (*kubeadm.KubeadmNodeReset, error) {
+	return kubeadm.KubeadmNodeReset_builder{
+		Metadata: componentAction(name),
+		Spec:     kubeadm.KubeadmNodeResetSpec_builder{}.Build(),
+	}.Build(), nil
+}
+
+var resetKubelet resolveActionFunc[*kubelet.ResetKubelet] = func(
+	name string,
+	cfg *config.Config,
+) (*kubelet.ResetKubelet, error) {
+	return kubelet.ResetKubelet_builder{
+		Metadata: componentAction(name),
+		Spec:     kubelet.ResetKubeletSpec_builder{}.Build(),
 	}.Build(), nil
 }
