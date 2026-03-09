@@ -22,6 +22,7 @@ const (
 
 // refs:
 // - https://kubernetes.io/docs/reference/node/kubelet-files/
+// - https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-reset/
 const (
 	SystemdUnitKubelet = "kubelet.service"
 
@@ -29,4 +30,8 @@ const (
 	KubeletKubeconfigPath          = KubeletRoot + "/kubelet/kubeconfig"
 	KubeletBootstrapKubeconfigPath = KubeletRoot + "/bootstrap-kubeconfig"
 	KubeletStaticPodPath           = "/etc/kubernetes/manifests"
+
+	KubernetesConfigDir = "/etc/kubernetes"
+	KubernetesRunDir    = "/var/run/kubernetes"
+	CNIStateDir         = "/var/lib/cni"
 )

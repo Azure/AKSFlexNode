@@ -10,4 +10,8 @@ func init() {
 		newNodeJoinAction,
 		&kubeadm.KubeadmNodeJoin{},
 	)
+	actions.MustRegister(
+		newNodeResetAction,
+		&kubeadm.KubeadmNodeReset{},
+	)
 }

@@ -1,5 +1,7 @@
 package kubeadm
 
+func (x *KubeadmNodeReset) Redact() {}
+
 func (x *KubeadmNodeJoin) Redact() {
 	if x == nil {
 		return
