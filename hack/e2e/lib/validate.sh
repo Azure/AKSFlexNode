@@ -118,14 +118,11 @@ validate_node_absent() {
 validate_all_nodes_absent() {
   log_section "Validating Nodes Absent After Unjoin"
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
-  msi_vm_name="$(state_get msi_vm_name)"
-  token_vm_name="$(state_get token_vm_name)"
+  local kubeadm_vm_name
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
+  # Only kubeadm unjoin is implemented today; MSI/token unjoin are stubs.
   local failed=0
-  validate_node_absent "${msi_vm_name}" || failed=1
-  validate_node_absent "${token_vm_name}" || failed=1
   validate_node_absent "${kubeadm_vm_name}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
@@ -136,7 +133,7 @@ validate_all_nodes_absent() {
   echo ""
   log_info "All cluster nodes:"
   kubectl get nodes -o wide
-  log_success "All flex nodes confirmed absent"
+  log_success "Kubeadm flex node confirmed absent"
 }
 
 # ---------------------------------------------------------------------------
