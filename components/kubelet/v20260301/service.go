@@ -21,10 +21,7 @@ var assets embed.FS
 
 var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "assets/*"))
 
-const (
-	systemdUnitKubelet    = "kubelet.service"
-	apiServerClientCAPath = "/etc/kubernetes/pki/apiserver-client-ca.crt"
-)
+const apiServerClientCAPath = "/etc/kubernetes/pki/apiserver-client-ca.crt"
 
 type startKubeletServiceAction struct {
 	systemd systemd.Manager

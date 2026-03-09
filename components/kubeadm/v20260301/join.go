@@ -25,6 +25,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/components/kubeadm"
 	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/systemd"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
@@ -191,7 +192,7 @@ func (n *nodeJoinAction) writeKubeadmJoinConfig(
 func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 	unitUpdated, err := n.systemd.EnsureUnitFile(
 		ctx,
-		systemdUnitKubelet,
+		config.SystemdUnitKubelet,
 		systemdUnitKubeletFile,
 	)
 	if err != nil {
@@ -200,7 +201,7 @@ func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 
 	dropInUpdated, err := n.systemd.EnsureDropInFile(
 		ctx,
-		systemdUnitKubelet,
+		config.SystemdUnitKubelet,
 		systemdDropInKubeadm,
 		systemdDropInKubeadmFile,
 	)
@@ -214,7 +215,7 @@ func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 		}
 	}
 
-	if err := n.systemd.EnableUnit(ctx, systemdUnitKubelet); err != nil {
+	if err := n.systemd.EnableUnit(ctx, config.SystemdUnitKubelet); err != nil {
 		return fmt.Errorf("enable kubelet unit: %w", err)
 	}
 
@@ -224,7 +225,7 @@ func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 func (n *nodeJoinAction) canRun() bool {
 	// if the kubelet directory exists,
 	// we assume the node has already joined or is in the process of joining
-	return !hasDir(dirVarLibKubelet)
+	return !hasDir(config.KubeletRoot)
 }
 
 func (n *nodeJoinAction) runJoin(
@@ -270,7 +271,7 @@ func (n *nodeJoinAction) pollUntilKubeletActive(ctx context.Context) error {
 		ctx,
 		pollInterval, waitTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			unit, err := n.systemd.GetUnitStatus(ctx, systemdUnitKubelet)
+			unit, err := n.systemd.GetUnitStatus(ctx, config.SystemdUnitKubelet)
 			switch {
 			case errors.Is(err, systemd.ErrUnitNotFound):
 				// If the unit is not found, it likely means the kubelet hasn't started yet,

@@ -48,10 +48,10 @@ func (s *startKubeletServiceAction) ensureSystemdUnit(
 		return err
 	}
 
-	unitUpdated, err := s.systemd.EnsureUnitFile(ctx, systemdUnitKubelet, b.Bytes())
+	unitUpdated, err := s.systemd.EnsureUnitFile(ctx, config.SystemdUnitKubelet, b.Bytes())
 	if err != nil {
 		return err
 	}
 
-	return systemd.EnsureUnitRunning(ctx, s.systemd, systemdUnitKubelet, unitUpdated, needsRestart || unitUpdated)
+	return systemd.EnsureUnitRunning(ctx, s.systemd, config.SystemdUnitKubelet, unitUpdated, needsRestart || unitUpdated)
 }
