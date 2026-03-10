@@ -84,3 +84,15 @@ message NvidiaRuntime {
 
 message StartContainerdServiceStatus {
 }
+
+message ResetContainerdService {
+  api.Metadata metadata = 1;
+  ResetContainerdServiceSpec spec = 2;
+  ResetContainerdServiceStatus status = 3;
+}
+
+message ResetContainerdServiceSpec {
+}
+
+message ResetContainerdServiceStatus {
+}

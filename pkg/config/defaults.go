@@ -12,6 +12,10 @@ const (
 	DefaultNvidiaContainerRuntimePath = "/usr/bin/nvidia-container-runtime"
 	DefaultNvidiaRuntimeClassName     = "nvidia"
 
+	SystemdUnitContainerd   = "containerd.service"
+	ContainerdConfigPath    = "/etc/containerd/config.toml"
+	ContainerdConfDropInDir = "/etc/containerd/conf.d"
+
 	DefaultCNIPluginsVersion = "1.5.1"
 	DefaultCNISpecVersion    = "0.3.1"
 	DefaultNPDVersion        = "v1.35.1"

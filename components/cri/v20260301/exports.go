@@ -15,4 +15,9 @@ func init() {
 		newStartContainerdServiceAction,
 		&cri.StartContainerdService{},
 	)
+
+	actions.MustRegister(
+		newResetContainerdServiceAction,
+		&cri.ResetContainerdService{},
+	)
 }

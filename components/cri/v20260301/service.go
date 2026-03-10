@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/components/api"
 	"github.com/Azure/AKSFlexNode/components/cri"
 	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/systemd"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
@@ -25,9 +26,6 @@ var assets embed.FS
 var assetsTemplate = template.Must(template.New("assets").ParseFS(assets, "assets/*"))
 
 const (
-	systemdUnitContainerd   = "containerd.service"
-	containerdConfigPath    = "/etc/containerd/config.toml"
-	containerdConfDropInDir = "/etc/containerd/conf.d"
 	nvidiaRuntimeDropInName = "99-nvidia-runtime.toml"
 )
 
@@ -96,7 +94,7 @@ func (s *startContainerdServiceAction) ensureContainerdConfig(
 		return false, err
 	}
 
-	currentConfig, err := os.ReadFile(containerdConfigPath)
+	currentConfig, err := os.ReadFile(config.ContainerdConfigPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// Config file doesn't exist, fall through to create new config file
@@ -110,7 +108,7 @@ func (s *startContainerdServiceAction) ensureContainerdConfig(
 		}
 	}
 
-	if err := utilio.InstallFile(containerdConfigPath, expectedConfig, 0644); err != nil {
+	if err := utilio.InstallFile(config.ContainerdConfigPath, expectedConfig, 0644); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -124,12 +122,12 @@ func (s *startContainerdServiceAction) ensureSystemdUnit(ctx context.Context, re
 		return err
 	}
 
-	unitUpdated, err := s.systemd.EnsureUnitFile(ctx, systemdUnitContainerd, b.Bytes())
+	unitUpdated, err := s.systemd.EnsureUnitFile(ctx, config.SystemdUnitContainerd, b.Bytes())
 	if err != nil {
 		return err
 	}
 
-	return systemd.EnsureUnitRunning(ctx, s.systemd, systemdUnitContainerd, unitUpdated, restart || unitUpdated)
+	return systemd.EnsureUnitRunning(ctx, s.systemd, config.SystemdUnitContainerd, unitUpdated, restart || unitUpdated)
 }
 
 // ensureGPUDropInConfigs manages GPU-related containerd drop-in configs.
@@ -164,7 +162,7 @@ func (s *startContainerdServiceAction) ensureDropInConfig(
 	enabled bool,
 	templateData map[string]any,
 ) (updated bool, err error) {
-	dropInPath := filepath.Join(containerdConfDropInDir, dropInName)
+	dropInPath := filepath.Join(config.ContainerdConfDropInDir, dropInName)
 
 	if !enabled {
 		err := os.Remove(dropInPath)

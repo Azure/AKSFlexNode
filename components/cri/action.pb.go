@@ -1149,6 +1149,210 @@ func (b0 StartContainerdServiceStatus_builder) Build() *StartContainerdServiceSt
 	return m0
 }
 
+type ResetContainerdService struct {
+	state               protoimpl.MessageState        `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata                 `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *ResetContainerdServiceSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *ResetContainerdServiceStatus `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ResetContainerdService) Reset() {
+	*x = ResetContainerdService{}
+	mi := &file_components_cri_action_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetContainerdService) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetContainerdService) ProtoMessage() {}
+
+func (x *ResetContainerdService) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResetContainerdService) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *ResetContainerdService) GetSpec() *ResetContainerdServiceSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *ResetContainerdService) GetStatus() *ResetContainerdServiceStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *ResetContainerdService) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *ResetContainerdService) SetSpec(v *ResetContainerdServiceSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *ResetContainerdService) SetStatus(v *ResetContainerdServiceStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *ResetContainerdService) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *ResetContainerdService) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *ResetContainerdService) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *ResetContainerdService) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *ResetContainerdService) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *ResetContainerdService) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type ResetContainerdService_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *ResetContainerdServiceSpec
+	Status   *ResetContainerdServiceStatus
+}
+
+func (b0 ResetContainerdService_builder) Build() *ResetContainerdService {
+	m0 := &ResetContainerdService{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type ResetContainerdServiceSpec struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetContainerdServiceSpec) Reset() {
+	*x = ResetContainerdServiceSpec{}
+	mi := &file_components_cri_action_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetContainerdServiceSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetContainerdServiceSpec) ProtoMessage() {}
+
+func (x *ResetContainerdServiceSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ResetContainerdServiceSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ResetContainerdServiceSpec_builder) Build() *ResetContainerdServiceSpec {
+	m0 := &ResetContainerdServiceSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+type ResetContainerdServiceStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetContainerdServiceStatus) Reset() {
+	*x = ResetContainerdServiceStatus{}
+	mi := &file_components_cri_action_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetContainerdServiceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetContainerdServiceStatus) ProtoMessage() {}
+
+func (x *ResetContainerdServiceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_cri_action_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ResetContainerdServiceStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ResetContainerdServiceStatus_builder) Build() *ResetContainerdServiceStatus {
+	m0 := &ResetContainerdServiceStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_cri_action_proto protoreflect.FileDescriptor
 
 const file_components_cri_action_proto_rawDesc = "" +
@@ -1189,9 +1393,15 @@ const file_components_cri_action_proto_rawDesc = "" +
 	"\fruntime_path\x18\x01 \x01(\tR\vruntimePath\x12,\n" +
 	"\x12runtime_class_name\x18\x02 \x01(\tR\x10runtimeClassName\x12B\n" +
 	"\x1edisable_set_as_default_runtime\x18\x03 \x01(\bR\x1adisableSetAsDefaultRuntime\"\x1e\n" +
-	"\x1cStartContainerdServiceStatusB-Z+github.com/Azure/AKSFlexNode/components/crib\beditionsp\xe9\a"
+	"\x1cStartContainerdServiceStatus\"\xef\x01\n" +
+	"\x16ResetContainerdService\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12G\n" +
+	"\x04spec\x18\x02 \x01(\v23.aks.flex.components.cri.ResetContainerdServiceSpecR\x04spec\x12M\n" +
+	"\x06status\x18\x03 \x01(\v25.aks.flex.components.cri.ResetContainerdServiceStatusR\x06status\"\x1c\n" +
+	"\x1aResetContainerdServiceSpec\"\x1e\n" +
+	"\x1cResetContainerdServiceStatusB-Z+github.com/Azure/AKSFlexNode/components/crib\beditionsp\xe9\a"
 
-var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_components_cri_action_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_components_cri_action_proto_goTypes = []any{
 	(*DownloadCRIBinaries)(nil),          // 0: aks.flex.components.cri.DownloadCRIBinaries
 	(*DownloadCRIBinariesSpec)(nil),      // 1: aks.flex.components.cri.DownloadCRIBinariesSpec
@@ -1202,23 +1412,29 @@ var file_components_cri_action_proto_goTypes = []any{
 	(*GPUConfig)(nil),                    // 6: aks.flex.components.cri.GPUConfig
 	(*NvidiaRuntime)(nil),                // 7: aks.flex.components.cri.NvidiaRuntime
 	(*StartContainerdServiceStatus)(nil), // 8: aks.flex.components.cri.StartContainerdServiceStatus
-	(*api.Metadata)(nil),                 // 9: aks.flex.components.api.Metadata
+	(*ResetContainerdService)(nil),       // 9: aks.flex.components.cri.ResetContainerdService
+	(*ResetContainerdServiceSpec)(nil),   // 10: aks.flex.components.cri.ResetContainerdServiceSpec
+	(*ResetContainerdServiceStatus)(nil), // 11: aks.flex.components.cri.ResetContainerdServiceStatus
+	(*api.Metadata)(nil),                 // 12: aks.flex.components.api.Metadata
 }
 var file_components_cri_action_proto_depIdxs = []int32{
-	9, // 0: aks.flex.components.cri.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
-	1, // 1: aks.flex.components.cri.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.DownloadCRIBinariesSpec
-	2, // 2: aks.flex.components.cri.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.DownloadCRIBinariesStatus
-	9, // 3: aks.flex.components.cri.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 4: aks.flex.components.cri.StartContainerdService.spec:type_name -> aks.flex.components.cri.StartContainerdServiceSpec
-	8, // 5: aks.flex.components.cri.StartContainerdService.status:type_name -> aks.flex.components.cri.StartContainerdServiceStatus
-	5, // 6: aks.flex.components.cri.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.CNIConfig
-	6, // 7: aks.flex.components.cri.StartContainerdServiceSpec.gpu_config:type_name -> aks.flex.components.cri.GPUConfig
-	7, // 8: aks.flex.components.cri.GPUConfig.nvidia_runtime:type_name -> aks.flex.components.cri.NvidiaRuntime
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	12, // 0: aks.flex.components.cri.DownloadCRIBinaries.metadata:type_name -> aks.flex.components.api.Metadata
+	1,  // 1: aks.flex.components.cri.DownloadCRIBinaries.spec:type_name -> aks.flex.components.cri.DownloadCRIBinariesSpec
+	2,  // 2: aks.flex.components.cri.DownloadCRIBinaries.status:type_name -> aks.flex.components.cri.DownloadCRIBinariesStatus
+	12, // 3: aks.flex.components.cri.StartContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
+	4,  // 4: aks.flex.components.cri.StartContainerdService.spec:type_name -> aks.flex.components.cri.StartContainerdServiceSpec
+	8,  // 5: aks.flex.components.cri.StartContainerdService.status:type_name -> aks.flex.components.cri.StartContainerdServiceStatus
+	5,  // 6: aks.flex.components.cri.StartContainerdServiceSpec.cni_config:type_name -> aks.flex.components.cri.CNIConfig
+	6,  // 7: aks.flex.components.cri.StartContainerdServiceSpec.gpu_config:type_name -> aks.flex.components.cri.GPUConfig
+	7,  // 8: aks.flex.components.cri.GPUConfig.nvidia_runtime:type_name -> aks.flex.components.cri.NvidiaRuntime
+	12, // 9: aks.flex.components.cri.ResetContainerdService.metadata:type_name -> aks.flex.components.api.Metadata
+	10, // 10: aks.flex.components.cri.ResetContainerdService.spec:type_name -> aks.flex.components.cri.ResetContainerdServiceSpec
+	11, // 11: aks.flex.components.cri.ResetContainerdService.status:type_name -> aks.flex.components.cri.ResetContainerdServiceStatus
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_components_cri_action_proto_init() }
@@ -1235,7 +1451,7 @@ func file_components_cri_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_cri_action_proto_rawDesc), len(file_components_cri_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

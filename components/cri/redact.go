@@ -7,3 +7,7 @@ func (x *DownloadCRIBinaries) Redact() {
 func (x *StartContainerdService) Redact() {
 	// no sensitive fields to redact
 }
+
+func (x *ResetContainerdService) Redact() {
+	// no sensitive fields to redact
+}
