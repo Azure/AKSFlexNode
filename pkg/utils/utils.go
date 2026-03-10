@@ -58,12 +58,6 @@ func DisableService(serviceName string) error {
 	return RunSystemCommand("systemctl", "disable", serviceName)
 }
 
-// EnableAndStartService enables and starts a systemd service.
-func EnableAndStartService(serviceName string) error {
-	// --now avoids a separate start call and is idempotent.
-	return RunSystemCommand("systemctl", "enable", "--now", serviceName)
-}
-
 // ReloadSystemd reloads systemd daemon configuration
 func ReloadSystemd() error {
 	return RunSystemCommand("systemctl", "daemon-reload")
