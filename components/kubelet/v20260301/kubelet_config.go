@@ -118,7 +118,6 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 		}
 
 		authInfoSettings.Exec.Args = append(authInfoSettings.Exec.Args,
-			"--server-id", "6dae42f8-4368-4678-94ff-3960e28e3630", // Standard AKS AAD Server ID (same as used elsewhere)
 			"--pop-enabled",
 			"--pop-claims", fmt.Sprintf("u=%s", clusterResourceID),
 		)
@@ -126,7 +125,7 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 			authInfoSettings.Exec.Env,
 			api.ExecEnvVar{
 				Name:  "AAD_LOGIN_METHOD",
-				Value: "msi", // Use managed service identity for Arc machines (daemon mode)
+				Value: "msi",
 			},
 			api.ExecEnvVar{
 				Name:  "AZURE_TENANT_ID",

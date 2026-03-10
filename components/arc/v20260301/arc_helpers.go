@@ -24,9 +24,8 @@ const (
 var (
 	// Map role names to role definition IDs
 	roleDefinitionIDs = map[string]string{
-		"Reader":              "acdd72a7-3385-48ef-bd42-f606fba81ae7",
-		"Network Contributor": "4d97b98b-1d4f-4787-a291-c67834d212e7",
-		"Contributor":         "b24988ac-6180-42a0-ab88-20f7382dd24c",
+		"Reader":      "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+		"Contributor": "b24988ac-6180-42a0-ab88-20f7382dd24c",
 		"Azure Kubernetes Service RBAC Cluster Admin": "b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b",
 		"Azure Kubernetes Service Cluster Admin Role": "0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8",
 	}
@@ -119,13 +118,13 @@ func (a *installArcAction) installArcAgentBinary(ctx context.Context) error {
 	}
 
 	// Make script executable
-	if err := os.Chmod(installScriptPath, 0o755); err != nil {
+	if err := os.Chmod(installScriptPath, 0o755); err != nil { //#nosec G302 - script needs to be executable
 		return fmt.Errorf("failed to make installation script executable: %w", err)
 	}
 
 	// Execute installation script
 	a.logger.Info("Running Azure Arc agent installation script...")
-	installCmd := exec.CommandContext(ctx, "bash", installScriptPath)
+	installCmd := exec.CommandContext(ctx, "bash", installScriptPath) //#nosec G204 - installScriptPath is validated by caller
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
 	if err := installCmd.Run(); err != nil {
@@ -139,7 +138,7 @@ func (a *installArcAction) installArcAgentBinary(ctx context.Context) error {
 func (a *installArcAction) downloadArcInstallScript(ctx context.Context, destPath string) error {
 	// Try curl first
 	if _, err := exec.LookPath("curl"); err == nil {
-		cmd := exec.CommandContext(ctx, "curl", "-L", "-o", destPath, arcInstallScriptURL)
+		cmd := exec.CommandContext(ctx, "curl", "-L", "-o", destPath, arcInstallScriptURL) //#nosec G204 - destPath is validated by caller
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("curl download failed: %w", err)
 		}
@@ -148,7 +147,7 @@ func (a *installArcAction) downloadArcInstallScript(ctx context.Context, destPat
 
 	// Try wget as fallback
 	if _, err := exec.LookPath("wget"); err == nil {
-		cmd := exec.CommandContext(ctx, "wget", "-O", destPath, arcInstallScriptURL)
+		cmd := exec.CommandContext(ctx, "wget", "-O", destPath, arcInstallScriptURL) //#nosec G204 - destPath is validated by caller
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("wget download failed: %w", err)
 		}

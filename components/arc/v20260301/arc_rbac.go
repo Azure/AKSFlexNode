@@ -72,11 +72,6 @@ func (a *installArcAction) getRoleAssignments(spec *arc.InstallArcSpec) []roleAs
 			roleID:   roleDefinitionIDs["Reader"],
 		},
 		{
-			roleName: "Network Contributor",
-			scope:    resourceGroupScope,
-			roleID:   roleDefinitionIDs["Network Contributor"],
-		},
-		{
 			roleName: "Contributor",
 			scope:    resourceGroupScope,
 			roleID:   roleDefinitionIDs["Contributor"],
