@@ -389,7 +389,9 @@ node_unjoin_kubeadm() {
   local vm_ip
   vm_ip="$(state_get kubeadm_vm_ip)"
 
-  # Run KubeadmNodeReset on the VM
+  # Run KubeadmNodeReset followed by ResetContainerdService on the VM.
+  # Order matters: kubeadm reset requires containerd to clean up pods/containers,
+  # so the CRI reset must come after the kubeadm reset.
   local reset_action_file="${E2E_WORK_DIR}/kubeadm-reset.json"
   cat > "${reset_action_file}" <<EOF
 [
@@ -397,6 +399,13 @@ node_unjoin_kubeadm() {
     "metadata": {
       "type": "type.googleapis.com/aks.flex.components.kubeadm.KubeadmNodeReset",
       "name": "kubeadm-node-reset"
+    },
+    "spec": {}
+  },
+  {
+    "metadata": {
+      "type": "type.googleapis.com/aks.flex.components.cri.ResetContainerdService",
+      "name": "reset-containerd"
     },
     "spec": {}
   }
@@ -416,6 +425,8 @@ sudo /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kube
 
 echo "kubelet status after reset:"
 systemctl is-active kubelet 2>&1 || true
+echo "containerd status after reset:"
+systemctl is-active containerd 2>&1 || true
 REMOTE
 
   # Note: we intentionally do NOT delete the node object from the API server.
