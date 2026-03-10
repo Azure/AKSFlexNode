@@ -385,10 +385,8 @@ node_unjoin_kubeadm() {
 
   local vm_ip
   vm_ip="$(state_get kubeadm_vm_ip)"
-  local kubeadm_vm_name
-  kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
-  # Step 1: Run KubeadmNodeReset on the VM
+  # Run KubeadmNodeReset on the VM
   local reset_action_file="${E2E_WORK_DIR}/kubeadm-reset.json"
   cat > "${reset_action_file}" <<EOF
 [
@@ -417,10 +415,8 @@ echo "kubelet status after reset:"
 systemctl is-active kubelet 2>&1 || true
 REMOTE
 
-  # Step 2: Remove the stale node object from the cluster so a subsequent
-  #         join starts fresh (kubeadm reset only cleans local state).
-  log_info "Deleting stale node '${kubeadm_vm_name}' from cluster..."
-  kubectl delete node "${kubeadm_vm_name}" --ignore-not-found --wait=true
+  # Note: we intentionally do NOT delete the node object from the API server.
+  # Kubelet re-registration on rejoin will update the existing node object.
 
   log_success "Kubeadm node reset in $(timer_elapsed "${start}")s"
 }
