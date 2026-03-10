@@ -160,7 +160,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_token - Unjoin the token node from the cluster.
+# node_unjoin_token - Stop the agent, run unbootstrap, remove node from cluster
 # TODO: Not implemented yet.
 # ---------------------------------------------------------------------------
 node_unjoin_token() {

@@ -36,6 +36,7 @@ const (
 	KubeletStaticPodPath           = "/etc/kubernetes/manifests"
 
 	KubernetesConfigDir = "/etc/kubernetes"
+	KubernetesPKIDir    = KubernetesConfigDir + "/pki"
 	KubernetesRunDir    = "/var/run/kubernetes"
 	CNIStateDir         = "/var/lib/cni"
 )
