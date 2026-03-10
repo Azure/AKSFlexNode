@@ -49,6 +49,17 @@ func TestParseMajorMinor(t *testing.T) {
 	}
 }
 
+func TestParseMajorMinor_Overflow(t *testing.T) {
+	t.Parallel()
+
+	// Larger than max int on both 32-bit and 64-bit platforms.
+	// semver parsing stores major/minor as uint64; we must not blindly cast.
+	_, _, ok := parseMajorMinor("9223372036854775808.1.0")
+	if ok {
+		t.Fatalf("parseMajorMinor(overflow) ok=true, want false")
+	}
+}
+
 func TestCompareMajorMinor(t *testing.T) {
 	t.Parallel()
 

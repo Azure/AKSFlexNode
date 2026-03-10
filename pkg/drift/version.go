@@ -7,6 +7,14 @@ import (
 	"github.com/blang/semver/v4"
 )
 
+func safeUint64ToInt(v uint64) (int, bool) {
+	maxInt := uint64(^uint(0) >> 1)
+	if v > maxInt {
+		return 0, false
+	}
+	return int(v), true
+}
+
 func majorMinor(version string) string {
 	maj, min, ok := parseMajorMinor(version)
 	if ok {
@@ -27,13 +35,27 @@ func parseMajorMinor(version string) (major int, minor int, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	return int(v.Major), int(v.Minor), true
+
+	maj, ok := safeUint64ToInt(v.Major)
+	if !ok {
+		return 0, 0, false
+	}
+	min, ok := safeUint64ToInt(v.Minor)
+	if !ok {
+		return 0, 0, false
+	}
+	return maj, min, true
 }
 
 func parseTolerantSemver(version string) (semver.Version, error) {
 	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if v == "" {
 		return semver.Version{}, fmt.Errorf("empty version")
+	}
+	// Preserve legacy expectations: require at least major.minor.
+	// semver.ParseTolerant accepts "1" as "1.0.0", but callers rely on "1" being treated as non-semver.
+	if strings.Count(v, ".") == 0 {
+		return semver.Version{}, fmt.Errorf("missing minor version")
 	}
 	// semver requires major.minor.patch; tolerate "major.minor" by appending ".0".
 	if strings.Count(v, ".") == 1 {
