@@ -57,3 +57,6 @@ hack/bin/
 
 # qemu vm state
 .vm
+
+# local dev
+*.kubeconfig
