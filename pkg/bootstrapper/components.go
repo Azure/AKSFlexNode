@@ -12,7 +12,6 @@ import (
 	"github.com/Azure/AKSFlexNode/components/api"
 	"github.com/Azure/AKSFlexNode/components/cni"
 	"github.com/Azure/AKSFlexNode/components/cri"
-	"github.com/Azure/AKSFlexNode/components/kubeadm"
 	"github.com/Azure/AKSFlexNode/components/kubebins"
 	"github.com/Azure/AKSFlexNode/components/kubelet"
 	"github.com/Azure/AKSFlexNode/components/linux"
@@ -158,6 +157,18 @@ var startContainerdService resolveActionFunc[*cri.StartContainerdService] = func
 	}.Build(), nil
 }
 
+var resetContainerdService resolveActionFunc[*cri.ResetContainerdService] = func(
+	name string,
+	cfg *config.Config,
+) (*cri.ResetContainerdService, error) {
+	spec := cri.ResetContainerdServiceSpec_builder{}.Build()
+
+	return cri.ResetContainerdService_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
+}
+
 var downloadKubeBinaries resolveActionFunc[*kubebins.DownloadKubeBinaries] = func(
 	name string,
 	cfg *config.Config,
@@ -286,16 +297,6 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 	return kubelet.StartKubeletService_builder{
 		Metadata: componentAction(name),
 		Spec:     spec,
-	}.Build(), nil
-}
-
-var resetKubeadmNode resolveActionFunc[*kubeadm.KubeadmNodeReset] = func(
-	name string,
-	cfg *config.Config,
-) (*kubeadm.KubeadmNodeReset, error) {
-	return kubeadm.KubeadmNodeReset_builder{
-		Metadata: componentAction(name),
-		Spec:     kubeadm.KubeadmNodeResetSpec_builder{}.Build(),
 	}.Build(), nil
 }
 

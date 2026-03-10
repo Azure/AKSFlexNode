@@ -65,14 +65,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 // Unbootstrap executes all cleanup steps sequentially (in reverse order of bootstrap)
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
 	steps := []Executor{
-		// Reset the node via kubeadm: runs kubeadm reset --force, stops
-		// and masks kubelet, removes Kubernetes directories.
-		resetKubeadmNode.Executor("reset-kubeadm-node", b.componentsAPIConn),
-		// Reset kubelet state: stops and masks kubelet (idempotent),
-		// unmounts bind mounts below /var/lib/kubelet, removes
-		// Kubernetes directories (idempotent).
 		resetKubelet.Executor("reset-kubelet", b.componentsAPIConn),
-
+		resetContainerdService.Executor("reset-containerd", b.componentsAPIConn),
 		arc.NewUnInstaller(b.logger), // Uninstall Arc (after cleanup)
 	}
 
