@@ -14,7 +14,8 @@ message StartKubeletService {
 }
 
 message KubeletArcCredential {
-  // TODO: ArcConfig
+  string cluster_resource_id = 1; // ARM resource ID of the target AKS cluster for PoP token u-claim
+  string tenant_id = 2; // Azure tenant ID for Arc authentication
 }
 
 message KubeletMSICredential {

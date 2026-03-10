@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Azure/AKSFlexNode/components/api"
+	"github.com/Azure/AKSFlexNode/components/arc"
 	"github.com/Azure/AKSFlexNode/components/cni"
 	"github.com/Azure/AKSFlexNode/components/cri"
 	"github.com/Azure/AKSFlexNode/components/kubebins"
@@ -252,7 +253,10 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 	nodeAuthInfo := kubelet.NodeAuthInfo_builder{}
 	switch {
 	case cfg.IsARCEnabled():
-		nodeAuthInfo.ArcCredential = kubelet.KubeletArcCredential_builder{}.Build()
+		nodeAuthInfo.ArcCredential = kubelet.KubeletArcCredential_builder{
+			ClusterResourceId: ptr(cfg.GetTargetClusterID()),
+			TenantId:          ptr(cfg.GetTenantID()),
+		}.Build()
 	case cfg.IsSPConfigured():
 		nodeAuthInfo.ServicePrincipalCredential = kubelet.KubeletServicePrincipalCredential_builder{
 			TenantId:     ptr(cfg.Azure.ServicePrincipal.TenantID),
@@ -307,5 +311,25 @@ var resetKubelet resolveActionFunc[*kubelet.ResetKubelet] = func(
 	return kubelet.ResetKubelet_builder{
 		Metadata: componentAction(name),
 		Spec:     kubelet.ResetKubeletSpec_builder{}.Build(),
+	}.Build(), nil
+}
+
+var installArc resolveActionFunc[*arc.InstallArc] = func(
+	name string,
+	cfg *config.Config,
+) (*arc.InstallArc, error) {
+	spec := arc.InstallArcSpec_builder{
+		SubscriptionId: &cfg.Azure.SubscriptionID,
+		TenantId:       &cfg.Azure.TenantID,
+		ResourceGroup:  ptrWithDefault(cfg.GetArcResourceGroup(), ""),
+		Location:       ptrWithDefault(cfg.GetArcLocation(), ""),
+		MachineName:    ptrWithDefault(cfg.GetArcMachineName(), ""),
+		Tags:           cfg.GetArcTags(),
+		AksClusterName: ptrWithDefault(cfg.GetTargetClusterName(), ""),
+	}.Build()
+
+	return arc.InstallArc_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
 	}.Build(), nil
 }

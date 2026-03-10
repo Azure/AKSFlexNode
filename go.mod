@@ -20,10 +20,12 @@ require (
 	github.com/spf13/viper v1.21.0
 	google.golang.org/grpc v1.72.3
 	google.golang.org/protobuf v1.36.8
+	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/cluster-api v1.12.2
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -89,7 +91,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250303144028-a0af3efb3deb // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.35.0 // indirect
 	k8s.io/apiextensions-apiserver v0.34.3 // indirect
 	k8s.io/cluster-bootstrap v0.34.2 // indirect
 	k8s.io/component-base v0.34.3 // indirect
@@ -99,5 +100,4 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )

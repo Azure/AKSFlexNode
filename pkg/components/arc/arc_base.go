@@ -89,77 +89,12 @@ func (ab *base) getArcMachine(ctx context.Context) (*armhybridcompute.Machine, e
 	return &result.Machine, nil
 }
 
-func (ab *base) getAKSCluster(ctx context.Context) (*armcontainerservice.ManagedCluster, error) {
-	clusterName := ab.config.GetTargetClusterName()
-	clusterResourceGroup := ab.config.GetTargetClusterResourceGroup()
-
-	ab.logger.Infof("Getting AKS cluster info for: %s in resource group: %s", clusterName, clusterResourceGroup)
-	result, err := ab.mcClient.Get(ctx, clusterResourceGroup, clusterName, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get AKS cluster info via SDK: %w", err)
-	}
-	cluster := result.ManagedCluster
-	ab.logger.Infof("Successfully retrieved AKS cluster info: %s (ID: %s)", to.String(cluster.Name), to.String(cluster.ID))
-	return &result.ManagedCluster, nil
-}
-
-// checkRequiredPermissions verifies if the Arc managed identity has all required permissions by querying role assignments using user credentials
-func (ab *base) checkRequiredPermissions(ctx context.Context, principalID string) (bool, error) {
-	// Check each required role assignment
-	requiredRoles := ab.getRoleAssignments()
-	for _, required := range requiredRoles {
-		hasRole, err := ab.checkRoleAssignment(ctx, principalID, required.roleID, required.scope)
-		if err != nil {
-			return false, fmt.Errorf("error checking role %s on scope %s: %w", required.roleName, required.scope, err)
-		}
-		if !hasRole {
-			ab.logger.Infof("❌ Missing role assignment: %s on %s", required.roleName, required.scope)
-			return false, nil
-		}
-		ab.logger.Infof("✅ Found role assignment: %s on %s", required.roleName, required.scope)
-	}
-
-	return true, nil
-}
-
 func (ab *base) getRoleAssignments() []roleAssignment {
 	return []roleAssignment{
 		{"Reader (Target Cluster)", ab.config.GetTargetClusterID(), roleDefinitionIDs["Reader"]},
 		{"Azure Kubernetes Service RBAC Cluster Admin", ab.config.GetTargetClusterID(), roleDefinitionIDs["Azure Kubernetes Service RBAC Cluster Admin"]},
 		{"Azure Kubernetes Service Cluster Admin Role", ab.config.GetTargetClusterID(), roleDefinitionIDs["Azure Kubernetes Service Cluster Admin Role"]},
 	}
-}
-
-// checkRoleAssignment checks if a principal has a specific role assignment on a scope
-func (ab *base) checkRoleAssignment(ctx context.Context, principalID, roleDefinitionID, scope string) (bool, error) {
-	// Build the full role definition ID
-	fullRoleDefinitionID := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s",
-		ab.config.Azure.SubscriptionID, roleDefinitionID)
-
-	// List role assignments for the scope
-	pager := ab.roleAssignmentsClient.NewListForScopePager(scope, &armauthorization.RoleAssignmentsClientListForScopeOptions{
-		Filter: nil, // We'll filter programmatically
-	})
-
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			return false, fmt.Errorf("failed to list role assignments for scope %s: %w", scope, err)
-		}
-
-		// Check each role assignment
-		for _, assignment := range page.Value {
-			if assignment.Properties != nil &&
-				assignment.Properties.PrincipalID != nil &&
-				assignment.Properties.RoleDefinitionID != nil &&
-				*assignment.Properties.PrincipalID == principalID &&
-				*assignment.Properties.RoleDefinitionID == fullRoleDefinitionID {
-				return true, nil
-			}
-		}
-	}
-
-	return false, nil
 }
 
 // ensureAuthentication ensures the appropriate authentication (SP or CLI) method is set up

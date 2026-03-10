@@ -12,8 +12,9 @@ ExecStartPre=/bin/mount --make-shared /var/lib/kubelet
 ExecStartPre=-/sbin/ebtables -t nat --list
 ExecStartPre=-/sbin/iptables -t nat --numeric --list
 ExecStart=/usr/local/bin/kubelet \
+        --config="" \
         --enable-server \
-        --node-labels="${.NodeLabels}" \
+        --node-labels="{{.NodeLabels}}" \
         --volume-plugin-dir=/etc/kubernetes/volumeplugins \
         --pod-manifest-path=/etc/kubernetes/manifests/ \
         --runtime-request-timeout=15m \
