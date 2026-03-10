@@ -3,7 +3,7 @@ package spec
 import (
 	"strings"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 // DesiredKubernetesVersion returns the preferred Kubernetes version from a managed cluster spec.

@@ -189,7 +189,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientCon
 			logger.Warnf("Failed to collect initial managed cluster spec: %v", err)
 		} else {
 			cfgSnap := snapshotConfig(cfg, &cfgMu)
-			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors); err != nil {
+			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors, conn); err != nil {
 				logger.Warnf("Initial drift detection after spec collection failed: %v", err)
 			} else {
 				logger.Info("Initial drift detection after spec collection completed successfully")
@@ -198,7 +198,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientCon
 	}
 
 	var wg sync.WaitGroup
-	startDaemonLoops(ctx, cfg, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg)
+	startDaemonLoops(ctx, cfg, conn, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg)
 
 	<-ctx.Done()
 	logger.Info("Daemon shutting down due to context cancellation")
@@ -209,6 +209,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientCon
 func startDaemonLoops(
 	ctx context.Context,
 	cfg *config.Config,
+	conn *grpc.ClientConn,
 	statusFilePath string,
 	logger *logrus.Logger,
 	cfgMu *sync.RWMutex,
@@ -226,9 +227,9 @@ func startDaemonLoops(
 		wg.Add(2)
 	}
 	startStatusCollectionLoop(ctx, cfg, statusFilePath, logger, cfgMu, wg)
-	startBootstrapHealthCheckLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, wg)
+	startBootstrapHealthCheckLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, wg)
 	if driftEnabled {
-		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, detectors, wg)
+		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, detectors, wg)
 	}
 }
 
@@ -277,6 +278,7 @@ func startStatusCollectionLoop(
 func startBootstrapHealthCheckLoop(
 	ctx context.Context,
 	cfg *config.Config,
+	conn *grpc.ClientConn,
 	logger *logrus.Logger,
 	cfgMu *sync.RWMutex,
 	bootstrapInProgress *int32,
@@ -316,6 +318,7 @@ func startBootstrapHealthCheckLoop(
 func startNodeDriftDetectionAndRemediationLoop(
 	ctx context.Context,
 	cfg *config.Config,
+	conn *grpc.ClientConn,
 	logger *logrus.Logger,
 	cfgMu *sync.RWMutex,
 	bootstrapInProgress *int32,
@@ -342,7 +345,7 @@ func startNodeDriftDetectionAndRemediationLoop(
 				logger.Infof("Managed cluster spec collection completed at %s", time.Now().Format("2006-01-02 15:04:05"))
 
 				// Run drift detection immediately after spec is updated so we don't wait.
-				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors); err != nil {
+				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors, conn); err != nil {
 					logger.Warnf("Drift detection after spec collection failed at %s: %v", time.Now().Format("2006-01-02 15:04:05"), err)
 				} else {
 					logger.Infof("Drift detection after spec collection completed at %s", time.Now().Format("2006-01-02 15:04:05"))

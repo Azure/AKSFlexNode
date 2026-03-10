@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 // Finding represents a detected drift between desired spec and current node state.

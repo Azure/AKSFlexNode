@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 type detectorFunc struct {

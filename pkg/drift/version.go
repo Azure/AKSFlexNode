@@ -1,11 +1,19 @@
 package drift
 
 import (
-	"strconv"
+	"fmt"
 	"strings"
+
+	"github.com/blang/semver/v4"
 )
 
 func majorMinor(version string) string {
+	maj, min, ok := parseMajorMinor(version)
+	if ok {
+		return fmt.Sprintf("%d.%d", maj, min)
+	}
+
+	// Best-effort fallback to preserve legacy behavior for weird strings.
 	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	parts := strings.Split(v, ".")
 	if len(parts) < 2 {
@@ -15,20 +23,23 @@ func majorMinor(version string) string {
 }
 
 func parseMajorMinor(version string) (major int, minor int, ok bool) {
+	v, err := parseTolerantSemver(version)
+	if err != nil {
+		return 0, 0, false
+	}
+	return int(v.Major), int(v.Minor), true
+}
+
+func parseTolerantSemver(version string) (semver.Version, error) {
 	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
-	parts := strings.Split(v, ".")
-	if len(parts) < 2 {
-		return 0, 0, false
+	if v == "" {
+		return semver.Version{}, fmt.Errorf("empty version")
 	}
-	maj, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, 0, false
+	// semver requires major.minor.patch; tolerate "major.minor" by appending ".0".
+	if strings.Count(v, ".") == 1 {
+		v = v + ".0"
 	}
-	min, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, 0, false
-	}
-	return maj, min, true
+	return semver.ParseTolerant(v)
 }
 
 // compareMajorMinor compares versions by major.minor only.

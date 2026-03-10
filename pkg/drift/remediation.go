@@ -8,14 +8,12 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/bootstrapper"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kube_binaries"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/kubelet"
-	"go.goms.io/aks/AKSFlexNode/pkg/components/services"
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 const driftKubernetesUpgradeOperation = "drift-kubernetes-upgrade"
@@ -29,6 +27,9 @@ const maxManagedClusterSpecAge = 2 * time.Hour
 // and (if needed) performs remediation.
 //
 // Remediation attempts are guarded by bootstrapInProgress to avoid concurrent executions.
+//
+// conn must be a usable components API connection; drift remediation never creates its own
+// in-memory connection.
 func DetectAndRemediateFromFiles(
 	ctx context.Context,
 	// cfg must be an immutable snapshot for the duration of this call.
@@ -38,6 +39,7 @@ func DetectAndRemediateFromFiles(
 	logger *logrus.Logger,
 	bootstrapInProgress *int32,
 	detectors []Detector,
+	conn *grpc.ClientConn,
 ) error {
 	if logger == nil {
 		logger = logrus.New()
@@ -54,7 +56,7 @@ func DetectAndRemediateFromFiles(
 		return err
 	}
 
-	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus)
+	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus, conn)
 }
 
 func detectAndRemediate(
@@ -65,6 +67,7 @@ func detectAndRemediate(
 	detectors []Detector,
 	specSnap *spec.ManagedClusterSpec,
 	statusSnap *status.NodeStatus,
+	conn *grpc.ClientConn,
 ) error {
 	if specSnap == nil || statusSnap == nil {
 		return nil
@@ -116,7 +119,7 @@ func detectAndRemediate(
 	// Run remediation.
 	switch plan.Action {
 	case RemediationActionKubernetesUpgrade:
-		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger)
+		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger, conn)
 		if upgradeErr != nil {
 			status.MarkKubeletUnhealthyBestEffort(logger)
 			return fmt.Errorf("kubernetes upgrade remediation failed: %w", upgradeErr)
@@ -196,6 +199,7 @@ func runKubernetesUpgradeRemediation(
 	ctx context.Context,
 	cfg *config.Config,
 	logger *logrus.Logger,
+	conn *grpc.ClientConn,
 ) (*bootstrapper.ExecutionResult, error) {
 	// runKubernetesUpgradeRemediation performs a targeted Kubernetes upgrade with minimal disruption.
 	//
@@ -204,15 +208,17 @@ func runKubernetesUpgradeRemediation(
 	//     binaries or config (avoids flapping, crash loops, and nondeterministic behavior).
 	//   - Do not stop/restart containerd to keep disruption lower and avoid impacting running pods
 	//     more than necessary.
+	if conn == nil {
+		return nil, errors.New("components API connection is required")
+	}
+
 	steps := []bootstrapper.Executor{
-		// Stop/disable kubelet only so it cannot restart mid-upgrade.
-		services.NewKubeletOnlyUnInstaller(logger),
+		// Stop/disable kubelet so it cannot restart mid-upgrade.
+		bootstrapper.NewSystemdUnitStopDisableExecutor("stop-kubelet", "kubelet.service", logger),
 		// Install the desired kube binaries version.
-		kube_binaries.NewInstallerWithConfig(cfg, logger),
-		// Reconfigure kubelet to match the upgraded bits.
-		kubelet.NewInstallerWithConfig(cfg, logger),
-		// Enable/start kubelet only and wait for it to be active.
-		services.NewKubeletOnlyInstaller(logger),
+		bootstrapper.DownloadKubeBinariesExecutor("download-kube-binaries", conn, cfg),
+		// Reconfigure + start kubelet to match the upgraded bits.
+		bootstrapper.StartKubeletExecutor("start-kubelet", conn, cfg),
 	}
 
 	be := bootstrapper.NewBaseExecutor(cfg, logger)

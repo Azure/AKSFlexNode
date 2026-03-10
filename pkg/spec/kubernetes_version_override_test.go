@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 func TestDesiredKubernetesVersion(t *testing.T) {

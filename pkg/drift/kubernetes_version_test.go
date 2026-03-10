@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 func TestKubernetesVersionDetector_Detect_RespectsContextCancellation(t *testing.T) {

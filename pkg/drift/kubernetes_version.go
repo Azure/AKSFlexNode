@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"go.goms.io/aks/AKSFlexNode/pkg/config"
-	"go.goms.io/aks/AKSFlexNode/pkg/spec"
-	"go.goms.io/aks/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/status"
 )
 
 const KubernetesVersionFindingID = "kubernetes-version"
@@ -52,20 +52,14 @@ func (d *KubernetesVersionDetector) Detect(
 	}
 
 	cmp, ok := compareMajorMinor(current, desired)
-	if ok {
-		// Never downgrade via drift remediation. If the node is already newer than the desired
-		// version, treat it as non-actionable drift.
-		if cmp >= 0 {
-			return nil, nil
-		}
-	} else {
-		// If we can't parse versions, fall back to string major.minor comparison.
-		// This keeps the detector safe (won't trigger if they look equal) while still working
-		// for common version formats.
-		if majorMinor(current) == majorMinor(desired) {
-			return nil, nil
-		}
+	if !ok {
 		// If we can't compare ordering, don't remediate automatically (avoid accidental downgrade).
+		return nil, nil
+	}
+
+	// Never downgrade via drift remediation. If the node is already newer than the desired
+	// version, treat it as non-actionable drift.
+	if cmp >= 0 {
 		return nil, nil
 	}
 
