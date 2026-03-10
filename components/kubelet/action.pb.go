@@ -140,9 +140,13 @@ func (b0 StartKubeletService_builder) Build() *StartKubeletService {
 }
 
 type KubeletArcCredential struct {
-	state         protoimpl.MessageState `protogen:"opaque.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                        protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ClusterResourceId *string                `protobuf:"bytes,1,opt,name=cluster_resource_id,json=clusterResourceId"`
+	xxx_hidden_TenantId          *string                `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId"`
+	XXX_raceDetectHookData       protoimpl.RaceDetectHookData
+	XXX_presence                 [1]uint32
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
 }
 
 func (x *KubeletArcCredential) Reset() {
@@ -170,15 +174,79 @@ func (x *KubeletArcCredential) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
+func (x *KubeletArcCredential) GetClusterResourceId() string {
+	if x != nil {
+		if x.xxx_hidden_ClusterResourceId != nil {
+			return *x.xxx_hidden_ClusterResourceId
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *KubeletArcCredential) GetTenantId() string {
+	if x != nil {
+		if x.xxx_hidden_TenantId != nil {
+			return *x.xxx_hidden_TenantId
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *KubeletArcCredential) SetClusterResourceId(v string) {
+	x.xxx_hidden_ClusterResourceId = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+}
+
+func (x *KubeletArcCredential) SetTenantId(v string) {
+	x.xxx_hidden_TenantId = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+}
+
+func (x *KubeletArcCredential) HasClusterResourceId() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *KubeletArcCredential) HasTenantId() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *KubeletArcCredential) ClearClusterResourceId() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_ClusterResourceId = nil
+}
+
+func (x *KubeletArcCredential) ClearTenantId() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_TenantId = nil
+}
+
 type KubeletArcCredential_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
+	ClusterResourceId *string
+	TenantId          *string
 }
 
 func (b0 KubeletArcCredential_builder) Build() *KubeletArcCredential {
 	m0 := &KubeletArcCredential{}
 	b, x := &b0, m0
 	_, _ = b, x
+	if b.ClusterResourceId != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		x.xxx_hidden_ClusterResourceId = b.ClusterResourceId
+	}
+	if b.TenantId != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		x.xxx_hidden_TenantId = b.TenantId
+	}
 	return m0
 }
 
@@ -1282,8 +1350,10 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x13StartKubeletService\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12H\n" +
 	"\x04spec\x18\x02 \x01(\v24.aks.flex.components.kubelet.StartKubeletServiceSpecR\x04spec\x12N\n" +
-	"\x06status\x18\x03 \x01(\v26.aks.flex.components.kubelet.StartKubeletServiceStatusR\x06status\"\x16\n" +
-	"\x14KubeletArcCredential\"P\n" +
+	"\x06status\x18\x03 \x01(\v26.aks.flex.components.kubelet.StartKubeletServiceStatusR\x06status\"c\n" +
+	"\x14KubeletArcCredential\x12.\n" +
+	"\x13cluster_resource_id\x18\x01 \x01(\tR\x11clusterResourceId\x12\x1b\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"P\n" +
 	"\x14KubeletMSICredential\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\"\x82\x01\n" +

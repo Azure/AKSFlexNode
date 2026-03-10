@@ -106,8 +106,33 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	}
 	switch {
 	case nodeAuthInfo.HasArcCredential():
-		// TODO: implement arc credential support with pop
-		return false, fmt.Errorf("arc credential is not supported yet")
+		// use pop-based auth for Arc connected cluster
+		cred := nodeAuthInfo.GetArcCredential()
+		clusterResourceID := cred.GetClusterResourceId()
+		if clusterResourceID == "" {
+			return false, fmt.Errorf("cluster resource ID is required for Arc PoP token authentication")
+		}
+		tenantID := cred.GetTenantId()
+		if tenantID == "" {
+			return false, fmt.Errorf("tenant ID is required for Arc PoP token authentication")
+		}
+
+		authInfoSettings.Exec.Args = append(authInfoSettings.Exec.Args,
+			"--pop-enabled",
+			"--pop-claims", fmt.Sprintf("u=%s", clusterResourceID),
+		)
+		authInfoSettings.Exec.Env = append(
+			authInfoSettings.Exec.Env,
+			api.ExecEnvVar{
+				Name:  "AAD_LOGIN_METHOD",
+				Value: "msi",
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_TENANT_ID",
+				Value: tenantID,
+			},
+		)
+
 	case nodeAuthInfo.HasServicePrincipalCredential():
 		cred := nodeAuthInfo.GetServicePrincipalCredential()
 		authInfoSettings.Exec.Env = append(
