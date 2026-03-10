@@ -105,7 +105,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_msi - Stop the agent, run unbootstrap, remove node from cluster
+# node_unjoin_msi - Unjoin the MSI node from the cluster.
 # TODO: Not implemented yet.
 # ---------------------------------------------------------------------------
 node_unjoin_msi() {

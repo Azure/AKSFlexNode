@@ -161,18 +161,21 @@ cmd_all() {
   validate_all_nodes
   smoke_test_all || exit_code=1
 
-  # ── Unjoin ──────────────────────────────────────────────────────────
-  node_unjoin_all
+  # ── Kubeadm unjoin / rejoin cycle ──────────────────────────────────
+  # Only kubeadm supports full unjoin today; MSI/token unjoin is not
+  # yet implemented, so we exercise the reset → rejoin path for kubeadm
+  # only.
+  node_unjoin_kubeadm
 
-  # Validate nodes are gone
+  # Validate kubeadm node is gone
   validate_all_nodes_absent
 
-  # ── Rejoin ──────────────────────────────────────────────────────────
-  node_join_all
+  # Rejoin kubeadm node
+  node_join_kubeadm
 
-  # Validate + smoke tests (second pass)
-  validate_all_nodes
-  smoke_test_all || exit_code=1
+  # Validate kubeadm node is back + smoke test it
+  validate_node_joined "$(state_get kubeadm_vm_name)"
+  smoke_test "$(state_get kubeadm_vm_name)" "kubeadm" || exit_code=1
 
   # Collect logs (always, even if tests fail)
   collect_logs || true

@@ -125,46 +125,28 @@ node_join_all() {
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_all - Unjoin all nodes in parallel
+# node_unjoin_all - Unjoin all nodes
+#
+# Only kubeadm unjoin is implemented today. MSI/token unjoin stubs log a
+# warning and return immediately.
 # ---------------------------------------------------------------------------
 node_unjoin_all() {
-  log_section "Unjoining All Nodes (parallel)"
+  log_section "Unjoining All Nodes"
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
-
-  node_unjoin_msi &
-  msi_pid=$!
-
-  node_unjoin_token &
-  token_pid=$!
-
-  node_unjoin_kubeadm &
-  kubeadm_pid=$!
-
-  wait "${msi_pid}" || msi_exit=$?
-  wait "${token_pid}" || token_exit=$?
-  wait "${kubeadm_pid}" || kubeadm_exit=$?
+  local failed=0
+  node_unjoin_msi || failed=1
+  node_unjoin_token || failed=1
+  node_unjoin_kubeadm || failed=1
 
   local duration
   duration=$(timer_elapsed "${start}")
 
-  if [[ "${msi_exit}" -ne 0 ]]; then
-    log_error "MSI node unjoin failed (exit ${msi_exit})"
-  fi
-  if [[ "${token_exit}" -ne 0 ]]; then
-    log_error "Token node unjoin failed (exit ${token_exit})"
-  fi
-  if [[ "${kubeadm_exit}" -ne 0 ]]; then
-    log_error "Kubeadm node unjoin failed (exit ${kubeadm_exit})"
-  fi
-
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${failed}" -ne 0 ]]; then
     log_error "Node unjoins failed (${duration}s)"
     return 1
   fi
 
-  log_success "All nodes unjoined in ${duration}s"
+  log_success "All node unjoins completed in ${duration}s"
 }
