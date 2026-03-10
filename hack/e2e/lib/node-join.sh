@@ -42,6 +42,10 @@ aks-flex-node version
 sudo mkdir -p /etc/aks-flex-node /var/log/aks-flex-node
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
+# Clean up any leftover transient unit from a previous run
+sudo systemctl stop ${unit_name} 2>/dev/null || true
+sudo systemctl reset-failed ${unit_name} 2>/dev/null || true
+
 sudo systemd-run \
   --unit=${unit_name} \
   --description="AKS Flex Node E2E (${unit_name})" \
