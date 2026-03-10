@@ -78,21 +78,21 @@ func (be *BaseExecutor) ExecuteSteps(ctx context.Context, steps []Executor, step
 		result.StepResults = append(result.StepResults, stepResult)
 
 		if !stepResult.Success {
-			if stepType == "bootstrap" {
-				// Bootstrap fails fast on first error
+			if stepType != "unbootstrap" {
+				// All operations except unbootstrap fail fast on first error.
 				result.Success = false
 				result.Error = stepResult.Error
 				result.Duration = time.Since(startTime)
 				result.StepCount = len(result.StepResults)
 
-				be.logger.Errorf("Bootstrap failed at step %s: %s (completedSteps: %d, totalSteps: %d)",
-					stepResult.StepName, stepResult.Error, len(result.StepResults), len(steps))
+				be.logger.Errorf("%s failed at step %s: %s (completedSteps: %d, totalSteps: %d)",
+					stepType, stepResult.StepName, stepResult.Error, len(result.StepResults), len(steps))
 
-				return result, fmt.Errorf("bootstrap failed at step %s: %w", stepResult.StepName, errors.New(stepResult.Error))
+				return result, fmt.Errorf("%s failed at step %s: %w", stepType, stepResult.StepName, errors.New(stepResult.Error))
 			}
 			// Unbootstrap continues even if some steps fail for best effort cleanup
-			be.logger.Warnf("Cleanup step %s failed: %s (continuing with remaining steps)",
-				stepResult.StepName, stepResult.Error)
+			be.logger.Warnf("%s step %s failed: %s (continuing with remaining steps)",
+				stepType, stepResult.StepName, stepResult.Error)
 		}
 	}
 

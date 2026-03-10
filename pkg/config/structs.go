@@ -76,6 +76,24 @@ type ArcConfig struct {
 type AgentConfig struct {
 	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
 	LogDir   string `json:"logDir"`   // Directory for log files
+
+	// EnableDriftDetectionAndRemediation controls whether the agent performs drift detection
+	// and automated remediation (e.g., Kubernetes version drift upgrades).
+	//
+	// When omitted from config, the default is true.
+	EnableDriftDetectionAndRemediation *bool `json:"enableDriftDetectionAndRemediation,omitempty"`
+}
+
+// IsDriftDetectionAndRemediationEnabled returns whether automated drift detection/remediation
+// is enabled. For backward compatibility, a nil setting is treated as enabled.
+func (cfg *Config) IsDriftDetectionAndRemediationEnabled() bool {
+	if cfg == nil {
+		return false
+	}
+	if cfg.Agent.EnableDriftDetectionAndRemediation == nil {
+		return true
+	}
+	return *cfg.Agent.EnableDriftDetectionAndRemediation
 }
 
 // KubernetesConfig holds configuration settings for Kubernetes components.

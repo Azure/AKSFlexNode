@@ -134,7 +134,8 @@ tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node"
+    "logDir": "/var/log/aks-flex-node",
+    "enableDriftDetectionAndRemediation": true
   }
 }
 EOF
@@ -349,7 +350,8 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node"
+    "logDir": "/var/log/aks-flex-node",
+    "enableDriftDetectionAndRemediation": true
   }
 }
 EOF
@@ -589,10 +591,21 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node"
+    "logDir": "/var/log/aks-flex-node",
+    "enableDriftDetectionAndRemediation": true
   }
 }
 EOF
+
+You can disable automated drift detection and remediation if you prefer to self-managed node updates:
+
+```json
+{
+  "agent": {
+    "enableDriftDetectionAndRemediation": false
+  }
+}
+```
 ```
 
 ### Running the Agent

@@ -53,12 +53,12 @@ func (c *componentExecutor[M]) IsCompleted(ctx context.Context) bool {
 
 type resolveActionFunc[M proto.Message] func(name string, cfg *config.Config) (M, error)
 
-func (r resolveActionFunc[M]) Executor(name string, conn *grpc.ClientConn) Executor {
+func (r resolveActionFunc[M]) Executor(name string, conn *grpc.ClientConn, cfg *config.Config) Executor {
 	return &componentExecutor[M]{
 		Name:          name,
 		ResolveAction: r,
 		conn:          conn,
-		cfg:           config.GetConfig(),
+		cfg:           cfg,
 	}
 }
 
