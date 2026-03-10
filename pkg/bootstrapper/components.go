@@ -241,7 +241,10 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 	nodeAuthInfo := kubelet.NodeAuthInfo_builder{}
 	switch {
 	case cfg.IsARCEnabled():
-		nodeAuthInfo.ArcCredential = kubelet.KubeletArcCredential_builder{}.Build()
+		nodeAuthInfo.ArcCredential = kubelet.KubeletArcCredential_builder{
+			ClusterResourceId: ptr(cfg.GetTargetClusterID()),
+			TenantId:          ptr(cfg.GetTenantID()),
+		}.Build()
 	case cfg.IsSPConfigured():
 		nodeAuthInfo.ServicePrincipalCredential = kubelet.KubeletServicePrincipalCredential_builder{
 			TenantId:     ptr(cfg.Azure.ServicePrincipal.TenantID),

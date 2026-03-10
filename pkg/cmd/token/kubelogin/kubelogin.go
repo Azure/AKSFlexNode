@@ -22,6 +22,8 @@ import (
 const aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
 
 var flagServerID string
+var flagPopEnabled bool
+var flagPopClaims string
 
 var Command = &cobra.Command{
 	Use:          "kubelogin",
@@ -37,6 +39,14 @@ func init() {
 		&flagServerID, "server-id", aksAADServerID,
 		"The server ID to use when requesting the token.",
 	)
+	Command.Flags().BoolVar(
+		&flagPopEnabled, "pop-enabled", false,
+		"Enable PoP (Proof of Possession) token authentication.",
+	)
+	Command.Flags().StringVar(
+		&flagPopClaims, "pop-claims", "",
+		"Comma-separated list of key=value claims to include in the PoP token (e.g., 'u=cluster-resource-id').",
+	)
 }
 
 func run(ctx context.Context, out io.Writer) error {
@@ -51,6 +61,8 @@ func run(ctx context.Context, out io.Writer) error {
 
 	tokOpts := token.OptionsWithEnv()
 	tokOpts.ServerID = flagServerID
+	tokOpts.IsPoPTokenEnabled = flagPopEnabled
+	tokOpts.PoPTokenClaims = flagPopClaims
 	// TODO: logging to show login details
 	provider, err := token.GetTokenProvider(tokOpts)
 	if err != nil {

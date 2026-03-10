@@ -106,12 +106,34 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 	}
 	switch {
 	case nodeAuthInfo.HasArcCredential():
-		// Arc credential uses custom Arc token provider that handles Arc MSI directly
-		// This bypasses kubelogin's limitation with Arc authentication
-		authInfoSettings.Exec.Args = []string{
-			"token", "arc-credential",
+		// use pop-based auth for Arc connected cluster
+		cred := nodeAuthInfo.GetArcCredential()
+		clusterResourceID := cred.GetClusterResourceId()
+		if clusterResourceID == "" {
+			return false, fmt.Errorf("cluster resource ID is required for Arc PoP token authentication")
 		}
-		// No additional environment variables needed - Arc token provider handles authentication internally
+		tenantID := cred.GetTenantId()
+		if tenantID == "" {
+			return false, fmt.Errorf("tenant ID is required for Arc PoP token authentication")
+		}
+
+		authInfoSettings.Exec.Args = append(authInfoSettings.Exec.Args,
+			"--server-id", "6dae42f8-4368-4678-94ff-3960e28e3630", // Standard AKS AAD Server ID (same as used elsewhere)
+			"--pop-enabled",
+			"--pop-claims", fmt.Sprintf("u=%s", clusterResourceID),
+		)
+		authInfoSettings.Exec.Env = append(
+			authInfoSettings.Exec.Env,
+			api.ExecEnvVar{
+				Name:  "AAD_LOGIN_METHOD",
+				Value: "msi", // Use managed service identity for Arc machines (daemon mode)
+			},
+			api.ExecEnvVar{
+				Name:  "AZURE_TENANT_ID",
+				Value: tenantID,
+			},
+		)
+
 	case nodeAuthInfo.HasServicePrincipalCredential():
 		cred := nodeAuthInfo.GetServicePrincipalCredential()
 		authInfoSettings.Exec.Env = append(
