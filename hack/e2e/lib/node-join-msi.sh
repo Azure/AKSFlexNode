@@ -106,8 +106,38 @@ EOF
 
 # ---------------------------------------------------------------------------
 # node_unjoin_msi - Stop the agent, run unbootstrap, remove node from cluster
-# TODO: Not implemented yet.
 # ---------------------------------------------------------------------------
 node_unjoin_msi() {
-  log_warn "node_unjoin_msi: not implemented yet, skipping"
+  log_section "Unjoining MSI Node"
+  local start
+  start=$(timer_start)
+
+  local vm_ip vm_name
+  vm_ip="$(state_get msi_vm_ip)"
+  vm_name="$(state_get msi_vm_name)"
+
+  # Step 1: Stop the agent service and run unbootstrap on the VM.
+  # The unbootstrap command runs best-effort: ResetKubelet, ResetContainerdService,
+  # and ArcUnbootstrap (in that order). It does not delete the node object.
+  log_info "Stopping agent and running unbootstrap on ${vm_ip}..."
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+
+sudo systemctl stop aks-flex-node-msi 2>/dev/null || true
+
+sudo /usr/local/bin/aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json \
+  2>&1 | sudo tee -a /var/log/aks-flex-node/aks-flex-node.log
+
+echo "kubelet status after unbootstrap:"
+systemctl is-active kubelet 2>&1 || true
+echo "containerd status after unbootstrap:"
+systemctl is-active containerd 2>&1 || true
+REMOTE
+
+  # Step 2: Delete the node object from the API server so validation passes
+  # without waiting for the node controller to evict it.
+  log_info "Deleting node '${vm_name}' from cluster..."
+  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
+
+  log_success "MSI node unjoined in $(timer_elapsed "${start}")s"
 }

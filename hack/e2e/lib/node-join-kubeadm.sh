@@ -429,8 +429,12 @@ echo "containerd status after reset:"
 systemctl is-active containerd 2>&1 || true
 REMOTE
 
-  # Note: we intentionally do NOT delete the node object from the API server.
-  # Kubelet re-registration on rejoin will update the existing node object.
+  # Delete the node object from the API server so validation passes
+  # without waiting for the node controller to evict it.
+  local vm_name
+  vm_name="$(state_get kubeadm_vm_name)"
+  log_info "Deleting node '${vm_name}' from cluster..."
+  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
 
   log_success "Kubeadm node reset in $(timer_elapsed "${start}")s"
 }
