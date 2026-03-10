@@ -338,6 +338,9 @@ node_join_kubeadm() {
       "kubelet": {
         "bootstrapAuthInfo": {
           "token": "${bootstrap_token}"
+        },
+        "node_labels": {
+          "kubernetes.azure.com/managed": "false"
         }
       }
     }
