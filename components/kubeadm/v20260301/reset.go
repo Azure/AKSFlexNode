@@ -46,8 +46,8 @@ func (n *nodeResetAction) ApplyAction(
 		return nil, err
 	}
 
-	if err := kubeadm.RemoveKubernetesDirs(); err != nil {
-		return nil, status.Errorf(codes.Internal, "%s", err)
+	if err := kubeadm.CleanKubernetesDirs(); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	item, err := anypb.New(msg)

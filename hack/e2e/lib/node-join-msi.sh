@@ -3,7 +3,7 @@
 # hack/e2e/lib/node-join-msi.sh - Join / unjoin an AKS flex node using MSI auth
 #
 # Functions:
-#   node_join_msi   - Install Azure CLI + MSI auth, deploy binary, run agent
+#   node_join_msi   - Generate MSI config, deploy binary, run agent
 #   node_unjoin_msi - Stop agent, run unbootstrap, delete node from cluster
 # =============================================================================
 set -euo pipefail
@@ -37,38 +37,7 @@ node_join_msi() {
   local ca_cert_data
   ca_cert_data="$(state_get ca_cert_data)"
 
-  # Step 1: Install Azure CLI on VM and log in with MSI
-  log_info "Installing Azure CLI on MSI VM (${vm_ip})..."
-  remote_exec "${vm_ip}" 'bash -s' <<'AZURECLI'
-set -euo pipefail
-
-MAX_RETRIES=5
-RETRY_DELAY=15
-for attempt in $(seq 1 $MAX_RETRIES); do
-  while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-    sleep 5
-  done
-
-  if sudo apt-get update -qq && curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash; then
-    echo "Azure CLI installed"
-    break
-  fi
-
-  if [ "$attempt" -lt "$MAX_RETRIES" ]; then
-    sudo dpkg --configure -a 2>/dev/null || true
-    sleep $RETRY_DELAY
-  else
-    echo "Azure CLI installation failed after ${MAX_RETRIES} attempts"
-    exit 1
-  fi
-done
-
-az login --identity --output none
-sudo az login --identity --output none
-echo "Azure CLI authenticated with managed identity"
-AZURECLI
-
-  # Step 2: Generate MSI config
+  # Step 1: Generate MSI config
   local config_file="${E2E_WORK_DIR}/config-msi.json"
   cat > "${config_file}" <<EOF
 {
@@ -98,7 +67,7 @@ AZURECLI
 }
 EOF
 
-  # Step 3: Deploy and start
+  # Step 2: Deploy and start
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-msi"
 
   log_success "MSI node joined in $(timer_elapsed "${start}")s"
