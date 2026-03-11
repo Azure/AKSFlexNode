@@ -85,3 +85,14 @@ message ResetKubelet {
 message ResetKubeletSpec {}
 
 message ResetKubeletStatus {}
+
+message StopKubeletService {
+  api.Metadata metadata = 1;
+
+  StopKubeletServiceSpec spec = 2;
+  StopKubeletServiceStatus status = 3;
+}
+
+message StopKubeletServiceSpec {}
+
+message StopKubeletServiceStatus {}

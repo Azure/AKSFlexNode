@@ -9,8 +9,8 @@ import (
 // Component action executors exported for reuse by other packages (e.g. drift remediation).
 //
 // These wrap unexported component action resolvers defined in components.go.
-func ResetKubeletExecutor(name string, conn *grpc.ClientConn, cfg *config.Config) Executor {
-	return resetKubelet.Executor(name, conn, cfg)
+func StopKubeletExecutor(name string, conn *grpc.ClientConn, cfg *config.Config) Executor {
+	return stopKubeletService.Executor(name, conn, cfg)
 }
 
 func DownloadKubeBinariesExecutor(name string, conn *grpc.ClientConn, cfg *config.Config) Executor {
