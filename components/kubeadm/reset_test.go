@@ -11,7 +11,7 @@ func TestRemoveDirContents_RemovesChildrenKeepsRoot(t *testing.T) {
 
 	dir := t.TempDir()
 	root := filepath.Join(dir, "kubelet")
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		t.Fatalf("mkdir root: %v", err)
 	}
 
@@ -21,7 +21,7 @@ func TestRemoveDirContents_RemovesChildrenKeepsRoot(t *testing.T) {
 	}
 
 	childDir := filepath.Join(root, "subdir")
-	if err := os.MkdirAll(childDir, 0o755); err != nil {
+	if err := os.MkdirAll(childDir, 0o750); err != nil {
 		t.Fatalf("mkdir child dir: %v", err)
 	}
 
