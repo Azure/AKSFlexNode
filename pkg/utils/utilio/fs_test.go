@@ -54,7 +54,7 @@ func TestCleanDir(t *testing.T) {
 			setup: func(t *testing.T) string {
 				dir := t.TempDir()
 				for _, name := range []string{"a.txt", "b.txt", "c.log"} {
-					if err := os.WriteFile(filepath.Join(dir, name), []byte("content"), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte("content"), 0600); err != nil {
 						t.Fatalf("setup: %v", err)
 					}
 				}
@@ -75,10 +75,10 @@ func TestCleanDir(t *testing.T) {
 			setup: func(t *testing.T) string {
 				dir := t.TempDir()
 				nested := filepath.Join(dir, "sub", "deep")
-				if err := os.MkdirAll(nested, 0755); err != nil {
+				if err := os.MkdirAll(nested, 0750); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
-				if err := os.WriteFile(filepath.Join(nested, "file.txt"), []byte("deep"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(nested, "file.txt"), []byte("deep"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				return dir
@@ -98,19 +98,19 @@ func TestCleanDir(t *testing.T) {
 			setup: func(t *testing.T) string {
 				dir := t.TempDir()
 				// create files
-				if err := os.WriteFile(filepath.Join(dir, "root.txt"), []byte("root"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "root.txt"), []byte("root"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				// create subdirectory with files
 				sub := filepath.Join(dir, "subdir")
-				if err := os.MkdirAll(sub, 0755); err != nil {
+				if err := os.MkdirAll(sub, 0750); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
-				if err := os.WriteFile(filepath.Join(sub, "nested.txt"), []byte("nested"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(sub, "nested.txt"), []byte("nested"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				// create empty subdirectory
-				if err := os.MkdirAll(filepath.Join(dir, "empty-sub"), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Join(dir, "empty-sub"), 0750); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				return dir
@@ -129,7 +129,7 @@ func TestCleanDir(t *testing.T) {
 			name: "preserves the directory itself",
 			setup: func(t *testing.T) string {
 				dir := t.TempDir()
-				if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				return dir
@@ -180,7 +180,7 @@ func TestCleanDir(t *testing.T) {
 			setup: func(t *testing.T) string {
 				dir := t.TempDir()
 				fname := filepath.Join(dir, "notadir.txt")
-				if err := os.WriteFile(fname, []byte("I am a file"), 0644); err != nil {
+				if err := os.WriteFile(fname, []byte("I am a file"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				return fname
@@ -191,10 +191,10 @@ func TestCleanDir(t *testing.T) {
 			name: "removes hidden dotfiles",
 			setup: func(t *testing.T) string {
 				dir := t.TempDir()
-				if err := os.WriteFile(filepath.Join(dir, ".hidden"), []byte("secret"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, ".hidden"), []byte("secret"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, "visible.txt"), []byte("public"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "visible.txt"), []byte("public"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				return dir
@@ -215,7 +215,7 @@ func TestCleanDir(t *testing.T) {
 				dir := t.TempDir()
 				// create a target file outside the directory
 				target := filepath.Join(t.TempDir(), "target.txt")
-				if err := os.WriteFile(target, []byte("target"), 0644); err != nil {
+				if err := os.WriteFile(target, []byte("target"), 0600); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				// create a symlink inside the directory
