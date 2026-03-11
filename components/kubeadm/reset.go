@@ -1,10 +1,11 @@
 package kubeadm
 
 import (
+	"errors"
 	"fmt"
-	"os"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 // kubernetesDirs are directories created during a kubeadm join that must be
@@ -20,22 +21,17 @@ var kubernetesDirs = []string{
 	config.CNIStateDir,         // /var/lib/cni — CNI state data
 }
 
-// RemoveKubernetesDirs removes directories created during a kubeadm join.
-// Removal is best-effort across all paths: every directory is attempted
-// even if earlier ones fail. The first error encountered is returned.
+// CleanKubernetesDirs removes files under the kubernetes directories.
+// It aggregates errors for all directories.
 //
 // FIXME: find a better place to put this function for reusing with kubelet component
-func RemoveKubernetesDirs() error {
-	var errs []error
+func CleanKubernetesDirs() error {
+	var cleanErr error
 	for _, dir := range kubernetesDirs {
-		if err := os.RemoveAll(dir); err != nil {
-			errs = append(errs, fmt.Errorf("remove %s: %w", dir, err))
+		if err := utilio.CleanDir(dir); err != nil {
+			cleanErr = errors.Join(cleanErr, fmt.Errorf("remove %s: %w", dir, err))
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("cleanup kubernetes directories: %w", errs[0])
-	}
-
-	return nil
+	return cleanErr
 }

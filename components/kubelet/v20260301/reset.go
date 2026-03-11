@@ -2,6 +2,7 @@ package v20260301
 
 import (
 	"context"
+	"path/filepath"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,25 +38,21 @@ func (r *resetKubeletAction) ApplyAction(
 	}
 
 	// Step 1: Stop and mask the kubelet service.
-	//         [reset] Stopping the kubelet service
 	if err := r.stopAndMaskKubelet(ctx); err != nil {
 		return nil, err
 	}
 
 	// Step 2: Unmount all mount points under /var/lib/kubelet.
-	//         [reset] Unmounting mounted directories in "/var/lib/kubelet"
-	if err := unmountBelow(config.KubeletRoot); err != nil {
-		return nil, status.Errorf(codes.Internal, "unmount kubelet directories: %s", err)
+	kubeletRoot, err := filepath.EvalSymlinks(config.KubeletRoot)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolve kubelet root: %s", err)
+	}
+	if err := unmountBelow(kubeletRoot); err != nil {
+		return nil, status.Errorf(codes.Internal, "unmount kubelet root %q: %s", kubeletRoot, err)
 	}
 
-	// Step 3: Remove kubernetes directories and files.
-	//         [reset] Deleting contents of directories: [...]
-	//         [reset] Deleting files: [...]
-	//
-	// RemoveKubernetesDirs removes /var/lib/kubelet, /etc/kubernetes
-	// (which includes pki/, manifests/, and all .conf files),
-	// /etc/cni/net.d, /var/run/kubernetes, and /var/lib/cni.
-	if err := kubeadm.RemoveKubernetesDirs(); err != nil {
+	// Step 3: Clean upkubernetes directories and files.
+	if err := kubeadm.CleanKubernetesDirs(); err != nil {
 		return nil, status.Errorf(codes.Internal, "%s", err)
 	}
 
