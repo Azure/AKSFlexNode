@@ -233,9 +233,8 @@ func (n *nodeJoinAction) ensureKubeletUnit(ctx context.Context) error {
 }
 
 func (n *nodeJoinAction) canRun() bool {
-	// if the kubelet directory exists,
-	// we assume the node has already joined or is in the process of joining
-	return !hasDir(config.KubeletRoot)
+	// If kubelet config file exists, we assume the node has already joined or is in the process of joining.
+	return !hasFile(filepath.Join(config.KubeletRoot, "config.yaml"))
 }
 
 func (n *nodeJoinAction) runJoin(
@@ -303,9 +302,9 @@ func (n *nodeJoinAction) pollUntilKubeletActive(ctx context.Context) error {
 	)
 }
 
-func hasDir(path string) bool {
+func hasFile(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	return err == nil && !info.IsDir()
 }
 
 func nodeLabels(labels map[string]string) string {
