@@ -314,6 +314,16 @@ var resetKubelet resolveActionFunc[*kubelet.ResetKubelet] = func(
 	}.Build(), nil
 }
 
+var stopKubeletService resolveActionFunc[*kubelet.StopKubeletService] = func(
+	name string,
+	cfg *config.Config,
+) (*kubelet.StopKubeletService, error) {
+	return kubelet.StopKubeletService_builder{
+		Metadata: componentAction(name),
+		Spec:     kubelet.StopKubeletServiceSpec_builder{}.Build(),
+	}.Build(), nil
+}
+
 var installArc resolveActionFunc[*arc.InstallArc] = func(
 	name string,
 	cfg *config.Config,

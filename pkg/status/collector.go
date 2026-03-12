@@ -250,7 +250,7 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 	}
 
 	// Check if Arc status is unhealthy (if configured)
-	if c.config != nil && c.config.GetArcMachineName() != "" {
+	if c.config != nil && c.config.IsARCEnabled() && c.config.GetArcMachineName() != "" {
 		if !nodeStatus.ArcStatus.Connected {
 			c.logger.Info("Status file indicates Arc agent not connected - bootstrap needed")
 			return true

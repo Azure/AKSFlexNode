@@ -213,8 +213,8 @@ func runKubernetesUpgradeRemediation(
 	}
 
 	steps := []bootstrapper.Executor{
-		// Stop/disable kubelet so it cannot restart mid-upgrade.
-		bootstrapper.NewSystemdUnitStopDisableExecutor("stop-kubelet", "kubelet.service", logger),
+		// Stop/disable kubelet around the upgrade so we don't run kubelet against partially-updated bits.
+		bootstrapper.StopKubeletExecutor("stop-kubelet", conn, cfg),
 		// Install the desired kube binaries version.
 		bootstrapper.DownloadKubeBinariesExecutor("download-kube-binaries", conn, cfg),
 		// Reconfigure + start kubelet to match the upgraded bits.
