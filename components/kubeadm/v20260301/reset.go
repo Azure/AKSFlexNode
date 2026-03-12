@@ -75,10 +75,10 @@ func (n *nodeResetAction) runReset(ctx context.Context) error {
 	// --force skips the interactive confirmation prompt and proceeds even
 	// when the node is unreachable by the control plane.
 	// -v 5 provides verbose output for debugging.
-	if err := utilexec.New().CommandContext(
+	if output, err := utilexec.New().CommandContext(
 		ctx, kubeadmBinary, "reset", "--force", "-v", "5",
-	).Run(); err != nil {
-		return status.Errorf(codes.Internal, "kubeadm reset: %s", err)
+	).CombinedOutput(); err != nil {
+		return status.Errorf(codes.Internal, "kubeadm reset: %s\n%s", err, string(output))
 	}
 
 	return nil

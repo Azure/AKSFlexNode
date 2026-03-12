@@ -267,8 +267,8 @@ func (n *nodeJoinAction) runJoin(
 		return status.Errorf(codes.Internal, "resolve kubeadm binary: %s", err)
 	}
 
-	if err := utilexec.New().CommandContext(ctx, kubeadmCommand, "join", "--config", joinConfig, "-v", "5").Run(); err != nil {
-		return status.Errorf(codes.Internal, "kubeadm join: %s", err)
+	if output, err := utilexec.New().CommandContext(ctx, kubeadmCommand, "join", "--config", joinConfig, "-v", "5").CombinedOutput(); err != nil {
+		return status.Errorf(codes.Internal, "kubeadm join: %s\n%s", err, string(output))
 	}
 
 	return nil
