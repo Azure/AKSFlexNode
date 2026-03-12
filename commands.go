@@ -492,14 +492,14 @@ func getBootTime() (time.Time, error) {
 }
 
 func getNodeName() (string, error) {
-	data, err := os.ReadFile("/etc/hostname")
+	host, err := os.Hostname()
 	if err != nil {
-		return "", fmt.Errorf("failed to read /etc/hostname: %w", err)
+		return "", fmt.Errorf("failed to get hostname: %w", err)
 	}
 
-	nodeName := strings.TrimSpace(string(data))
+	nodeName := strings.TrimSpace(host)
 	if nodeName == "" {
-		return "", fmt.Errorf("node name is empty in /etc/hostname")
+		return "", fmt.Errorf("node name is empty")
 	}
 
 	return nodeName, nil
