@@ -553,6 +553,7 @@ func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *log
 				node, err := clientset.CoreV1().Nodes().Get(ctxWithTimeout, nodeName, metav1.GetOptions{})
 				if err != nil {
 					logger.Errorf("failed to get node %s: %s", nodeName, err.Error())
+					continue
 				}
 
 				hostBootTime, err := getBootTime()
