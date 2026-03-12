@@ -519,6 +519,27 @@ func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *log
 		defer wg.Done()
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
+
+		// Build the REST config and clientset once; they are recreated only when an error occurs.
+		var clientset kubernetes.Interface
+		buildClientset := func() bool {
+			kubeConfig, err := clientcmd.BuildConfigFromFlags("", config.KubeletKubeconfigPath)
+			if err != nil {
+				logger.Errorf("failed to load kubeconfig: %s", err.Error())
+				return false
+			}
+			cs, err := kubernetes.NewForConfig(kubeConfig)
+			if err != nil {
+				logger.Errorf("failed to create clientset: %s", err.Error())
+				return false
+			}
+			clientset = cs
+			return true
+		}
+		if !buildClientset() {
+			logger.Infof("Initial clientset creation failed; will retry on first tick")
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -527,36 +548,30 @@ func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *log
 				now := time.Now()
 				logger.Infof("Starting node condition check at %s...", now.Format("2006-01-02 15:04:05"))
 
-				// Load kubeconfig
-				kubeConfig, err := clientcmd.BuildConfigFromFlags("", config.KubeletKubeconfigPath)
-				if err != nil {
-					logger.Errorf("failed to load kubeconfig: %s", err.Error())
-					return
-				}
-
-				// Create Kubernetes clientset
-				clientset, err := kubernetes.NewForConfig(kubeConfig)
-				if err != nil {
-					logger.Errorf("failed to create clientset: %s", err.Error())
-					return
+				// Recreate config and clientset only if a previous error invalidated them.
+				if clientset == nil && !buildClientset() {
+					continue
 				}
 
 				nodeName, err := getNodeName()
 				if err != nil {
 					logger.Errorf("failed to get node name: %s", err.Error())
-					return
+					continue
 				}
 
 				// Get the node
 				node, err := clientset.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 				if err != nil {
 					logger.Errorf("failed to get node %s: %s", nodeName, err.Error())
+					// Invalidate the clientset so it is recreated on the next tick.
+					clientset = nil
+					continue
 				}
 
 				hostBootTime, err := getBootTime()
 				if err != nil {
 					logger.Errorf("failed to get host boot time: %s", err.Error())
-					return
+					continue
 				}
 
 				for _, condition := range node.Status.Conditions {
