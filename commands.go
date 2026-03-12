@@ -528,14 +528,14 @@ func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *log
 				logger.Infof("Starting node condition check at %s...", now.Format("2006-01-02 15:04:05"))
 
 				// Load kubeconfig
-				config, err := clientcmd.BuildConfigFromFlags("", "/var/lib/kubelet/kubelet/kubeconfig")
+				kubeConfig, err := clientcmd.BuildConfigFromFlags("", config.KubeletKubeconfigPath)
 				if err != nil {
 					logger.Errorf("failed to load kubeconfig: %s", err.Error())
 					return
 				}
 
 				// Create Kubernetes clientset
-				clientset, err := kubernetes.NewForConfig(config)
+				clientset, err := kubernetes.NewForConfig(kubeConfig)
 				if err != nil {
 					logger.Errorf("failed to create clientset: %s", err.Error())
 					return
