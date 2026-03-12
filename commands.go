@@ -534,23 +534,24 @@ func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *log
 					return
 				}
 
+					continue
+				}
+
 				// Create Kubernetes clientset
 				clientset, err := kubernetes.NewForConfig(kubeConfig)
 				if err != nil {
 					logger.Errorf("failed to create clientset: %s", err.Error())
-					return
+					continue
 				}
 
 				nodeName, err := getNodeName()
 				if err != nil {
 					logger.Errorf("failed to get node name: %s", err.Error())
-					return
+					continue
 				}
 
 				// Get the node
-				ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				node, err := clientset.CoreV1().Nodes().Get(ctxWithTimeout, nodeName, metav1.GetOptions{})
+				node, err := clientset.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 				if err != nil {
 					logger.Errorf("failed to get node %s: %s", nodeName, err.Error())
 					continue
@@ -559,7 +560,7 @@ func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *log
 				hostBootTime, err := getBootTime()
 				if err != nil {
 					logger.Errorf("failed to get host boot time: %s", err.Error())
-					return
+					continue
 				}
 
 				for _, condition := range node.Status.Conditions {
