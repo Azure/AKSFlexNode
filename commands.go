@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +15,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	_ "github.com/Azure/AKSFlexNode/components"
 	"github.com/Azure/AKSFlexNode/components/services/inmem"
@@ -231,6 +237,7 @@ func startDaemonLoops(
 	if driftEnabled {
 		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, detectors, wg)
 	}
+	startNodeConditionLoop(ctx, cfg, logger, wg)
 }
 
 func snapshotConfig(cfg *config.Config, cfgMu *sync.RWMutex) *config.Config {
@@ -459,4 +466,121 @@ func handleExecutionResult(result *bootstrapper.ExecutionResult, operation strin
 
 	// For bootstrap, return error on failure
 	return fmt.Errorf("%s failed: %s", operation, result.Error)
+}
+
+func getBootTime() (time.Time, error) {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to read /proc/uptime: %w", err)
+	}
+
+	// /proc/uptime contains two numbers: uptime in seconds and idle time
+	// We only need the first number
+	fields := strings.Fields(string(data))
+	if len(fields) < 1 {
+		return time.Time{}, fmt.Errorf("invalid /proc/uptime format")
+	}
+
+	uptimeSeconds, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse uptime: %w", err)
+	}
+
+	// Calculate boot time: current time - uptime
+	bootTime := time.Now().Add(-time.Duration(uptimeSeconds * float64(time.Second)))
+	return bootTime, nil
+}
+
+func getNodeName() (string, error) {
+	host, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to get hostname: %w", err)
+	}
+
+	nodeName := strings.TrimSpace(host)
+	if nodeName == "" {
+		return "", fmt.Errorf("node name is empty")
+	}
+
+	return nodeName, nil
+}
+
+func rebootNode() error {
+	rebootCmd := exec.Command("/usr/bin/nsenter", "-m/proc/1/ns/mnt",
+		"/bin/bash", "-c", "echo b > /proc/sysrq-trigger")
+
+	return rebootCmd.Run()
+}
+
+func startNodeConditionLoop(ctx context.Context, cfg *config.Config, logger *logrus.Logger, wg *sync.WaitGroup) {
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				logger.Infof("Starting node condition check at %s...", now.Format("2006-01-02 15:04:05"))
+
+				// Load kubeconfig
+				kubeConfig, err := clientcmd.BuildConfigFromFlags("", config.KubeletKubeconfigPath)
+				if err != nil {
+					logger.Errorf("failed to load kubeconfig: %s", err.Error())
+					return
+				}
+
+					continue
+				}
+
+				// Create Kubernetes clientset
+				clientset, err := kubernetes.NewForConfig(kubeConfig)
+				if err != nil {
+					logger.Errorf("failed to create clientset: %s", err.Error())
+					continue
+				}
+
+				nodeName, err := getNodeName()
+				if err != nil {
+					logger.Errorf("failed to get node name: %s", err.Error())
+					continue
+				}
+
+				// Get the node
+				node, err := clientset.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+				if err != nil {
+					logger.Errorf("failed to get node %s: %s", nodeName, err.Error())
+					continue
+				}
+
+				hostBootTime, err := getBootTime()
+				if err != nil {
+					logger.Errorf("failed to get host boot time: %s", err.Error())
+					continue
+				}
+
+				for _, condition := range node.Status.Conditions {
+					switch condition.Type {
+					case "KernelDeadlock":
+						if condition.Status == "True" && condition.LastTransitionTime.Time.After(hostBootTime) {
+							logger.Infof("Node has a kernel deadlock since %s, rebooting...",
+								condition.LastTransitionTime.Time.Format("2006-01-02 15:04:05"))
+
+							// Reboot the node
+							err := rebootNode()
+							if err != nil {
+								logger.Errorf("failed to reboot node: %s", err.Error())
+							}
+						}
+					}
+				}
+
+				logger.Infof("Node condition check completed successfully at %s", time.Now().Format("2006-01-02 15:04:05"))
+			}
+		}
+	}()
 }
