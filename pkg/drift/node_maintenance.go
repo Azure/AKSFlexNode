@@ -81,6 +81,10 @@ func (m *kubeNodeMaintenance) Drain(ctx context.Context, nodeName string) error 
 				h2 := m.drainHelper(ctx, cs2)
 				return drain.RunNodeDrain(h2, nodeName)
 			}
+			// Log failure to obtain admin clientset before returning the original error.
+			m.logger.WithError(adminErr).WithField("node", nodeName).Warn(
+				"failed to get admin clientset for drain retry; returning original error",
+			)
 		}
 		return err
 	}
@@ -111,6 +115,10 @@ func (m *kubeNodeMaintenance) cordonOrUncordon(ctx context.Context, nodeName str
 				err2 = drain.RunCordonOrUncordon(h2, n2, cordon)
 				return err2
 			}
+			// Log failure to obtain admin clientset before returning the original error.
+			m.logger.WithError(adminErr).WithField("node", nodeName).Warn(
+				"failed to get admin clientset for cordon/uncordon retry; returning original error",
+			)
 		}
 		return err
 	}
@@ -132,7 +140,7 @@ func (m *kubeNodeMaintenance) drainHelper(ctx context.Context, cs *kubernetes.Cl
 		Force:               false,
 		GracePeriodSeconds:  -1,
 		IgnoreAllDaemonSets: true,
-		DeleteEmptyDirData:  true,
+		DeleteEmptyDirData:  false,
 		Timeout:             defaultDrainTimeout,
 		Out:                 out,
 		ErrOut:              errOut,
@@ -150,15 +158,15 @@ func (m *kubeNodeMaintenance) clientset(ctx context.Context) (*kubernetes.Client
 	// Prefer an admin client for maintenance operations (cordon/drain) because
 	// the kubelet/node identity is subject to NodeRestriction and may be unable
 	// to evict or even read pods once they are being deleted.
-	// if m.cfg != nil {
-	// 	cs, err := m.forceAdminClientset(ctx)
-	// 	if err == nil {
-	// 		return cs, nil
-	// 	}
-	// 	if m.logger != nil {
-	// 		m.logger.WithError(err).Debug("Failed to create admin clientset for node maintenance; falling back to kubelet kubeconfig")
-	// 	}
-	// }
+	if m.cfg != nil {
+		cs, err := m.forceAdminClientset(ctx)
+		if err == nil {
+			return cs, nil
+		}
+		if m.logger != nil {
+			m.logger.WithError(err).Debug("Failed to create admin clientset for node maintenance; falling back to kubelet kubeconfig")
+		}
+	}
 
 	// Fall back to the local kubelet kubeconfig if present.
 	if utils.FileExists(config.KubeletKubeconfigPath) {

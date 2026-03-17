@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -213,13 +214,13 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 	}
 
 	for _, cond := range n.Status.Conditions {
-		if cond.Type != "Ready" {
+		if cond.Type != corev1.NodeReady {
 			continue
 		}
-		switch string(cond.Status) {
-		case "True":
+		switch cond.Status {
+		case corev1.ConditionTrue:
 			return "Ready"
-		case "False":
+		case corev1.ConditionFalse:
 			return "NotReady"
 		default:
 			return "Unknown"
