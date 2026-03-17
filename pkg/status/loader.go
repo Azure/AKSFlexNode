@@ -13,6 +13,10 @@ func LoadStatus() (*NodeStatus, error) {
 
 // LoadStatusFromFile loads the node status snapshot from a JSON file.
 func LoadStatusFromFile(path string) (*NodeStatus, error) {
+	return loadStatusFromFileUnlocked(path)
+}
+
+func loadStatusFromFileUnlocked(path string) (*NodeStatus, error) {
 	if path == "" {
 		return nil, fmt.Errorf("status path is empty")
 	}

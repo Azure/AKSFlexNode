@@ -10,6 +10,12 @@ import (
 // WriteStatusToFile persists the node status snapshot to a JSON file.
 // It writes atomically to avoid partial writes.
 func WriteStatusToFile(path string, nodeStatus *NodeStatus) error {
+	return withStatusFileLock(func() error {
+		return writeStatusToFileUnlocked(path, nodeStatus)
+	})
+}
+
+func writeStatusToFileUnlocked(path string, nodeStatus *NodeStatus) error {
 	if path == "" {
 		return fmt.Errorf("status path is empty")
 	}

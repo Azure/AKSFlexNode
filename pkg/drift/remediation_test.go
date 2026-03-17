@@ -3,12 +3,14 @@ package drift
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
@@ -173,5 +175,46 @@ func TestDetectAndRemediate_ReturnsDetectErrorIfNoFindings(t *testing.T) {
 	}
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err=%v, want to contain %v", err, wantErr)
+	}
+}
+
+func TestShouldMarkKubeletUnhealthyAfterUpgradeFailure(t *testing.T) {
+	t.Parallel()
+
+	makeResultFailingAt := func(step string) *bootstrapper.ExecutionResult {
+		return &bootstrapper.ExecutionResult{
+			StepResults: []bootstrapper.StepResult{
+				{StepName: step, Success: false, Error: "boom"},
+			},
+			Error: fmt.Sprintf("failed at %s", step),
+		}
+	}
+
+	err := errors.New("boom")
+
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepCordonAndDrain), err); got {
+		t.Fatalf("cordon-and-drain failure marked unhealthy=true, want false")
+	}
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepUncordon), err); got {
+		t.Fatalf("uncordon failure marked unhealthy=true, want false")
+	}
+
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepStopKubelet), err); !got {
+		t.Fatalf("stop-kubelet failure marked unhealthy=false, want true")
+	}
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepDownloadKubeBinaries), err); !got {
+		t.Fatalf("download-kube-binaries failure marked unhealthy=false, want true")
+	}
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepStartKubelet), err); !got {
+		t.Fatalf("start-kubelet failure marked unhealthy=false, want true")
+	}
+
+	// Unknown step -> conservative true.
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt("something-else"), err); !got {
+		t.Fatalf("unknown step marked unhealthy=false, want true")
+	}
+	// No error -> never mark.
+	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepStopKubelet), nil); got {
+		t.Fatalf("nil error marked unhealthy=true, want false")
 	}
 }
