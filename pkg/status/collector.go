@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Collector collects system and node status information
@@ -198,32 +200,32 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 		return "Unknown"
 	}
 
-	// Readiness condition status is one of: True, False, Unknown
-	args := []string{
-		"--kubeconfig",
-		config.KubeletKubeconfigPath,
-		"get",
-		"node",
-		hostName,
-		"-o",
-		"jsonpath={.status.conditions[?(@.type==\"Ready\")].status}",
-	}
-
-	output, err := utils.RunCommandWithOutput("kubectl", args...)
+	cs, err := kube.KubeletClientset()
 	if err != nil {
-		// Log the kubectl error for debugging.
-		c.logger.Errorf("kubectl command failed: %v with output: %s", err, output)
+		c.logger.Warnf("Failed to create kubelet clientset for readiness: %v", err)
 		return "Unknown"
 	}
 
-	switch strings.TrimSpace(output) {
-	case "True":
-		return "Ready"
-	case "False":
-		return "NotReady"
-	default:
+	n, err := cs.CoreV1().Nodes().Get(ctx, hostName, metav1.GetOptions{})
+	if err != nil {
+		c.logger.Warnf("Failed to get node %s for readiness: %v", hostName, err)
 		return "Unknown"
 	}
+
+	for _, cond := range n.Status.Conditions {
+		if cond.Type != "Ready" {
+			continue
+		}
+		switch string(cond.Status) {
+		case "True":
+			return "Ready"
+		case "False":
+			return "NotReady"
+		default:
+			return "Unknown"
+		}
+	}
+	return "Unknown"
 }
 
 // NeedsBootstrap checks if the node needs to be (re)bootstrapped based on status file

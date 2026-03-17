@@ -212,13 +212,20 @@ func runKubernetesUpgradeRemediation(
 		return nil, errors.New("components API connection is required")
 	}
 
+	// For kubelet upgrades we cordon+drain the node first to minimize disruption.
+	// We only uncordon if we cordoned the node in this remediation run.
+	nodeOps := newKubeNodeMaintenance(cfg, logger)
+	cordonState := &cordonDrainState{}
+
 	steps := []bootstrapper.Executor{
+		newCordonAndDrainExecutor("cordon-and-drain", logger, nodeOps, cordonState),
 		// Stop/disable kubelet around the upgrade so we don't run kubelet against partially-updated bits.
 		bootstrapper.StopKubeletExecutor("stop-kubelet", conn, cfg),
 		// Install the desired kube binaries version.
 		bootstrapper.DownloadKubeBinariesExecutor("download-kube-binaries", conn, cfg),
 		// Reconfigure + start kubelet to match the upgraded bits.
 		bootstrapper.StartKubeletExecutor("start-kubelet", conn, cfg),
+		newUncordonExecutor("uncordon", logger, nodeOps, cordonState),
 	}
 
 	be := bootstrapper.NewBaseExecutor(cfg, logger)
