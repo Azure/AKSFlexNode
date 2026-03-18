@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
 )
@@ -143,6 +144,8 @@ func detectAndRemediate(
 		}
 		// Best-effort: reflect the successful upgrade immediately in the status snapshot so
 		// subsequent health checks don't rely solely on the periodic status collector.
+		// Also invalidate any cached kubelet clientset so readiness checks pick up rotated kubeconfig/certs.
+		kube.InvalidateKubeletClientset()
 		kubeletVersion := plan.DesiredKubernetesVersion
 		if kubeletVersion == "" && cfg != nil {
 			kubeletVersion = cfg.Kubernetes.Version
