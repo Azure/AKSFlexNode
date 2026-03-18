@@ -222,6 +222,16 @@ func TestShouldRetryWithAdmin(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "x509 cert expired",
+			err:  errors.New("Get \"https://10.0.0.1:443\": x509: certificate has expired or is not yet valid"),
+			want: true,
+		},
+		{
+			name: "tls bad certificate",
+			err:  errors.New("remote error: tls: bad certificate"),
+			want: true,
+		},
+		{
 			name: "other error",
 			err:  errors.New("context deadline exceeded"),
 			want: false,

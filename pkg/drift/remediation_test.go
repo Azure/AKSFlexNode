@@ -209,7 +209,7 @@ func TestShouldMarkKubeletUnhealthyAfterUpgradeFailure(t *testing.T) {
 		t.Fatalf("start-kubelet failure marked unhealthy=false, want true")
 	}
 
-	// Unknown step -> conservative true.
+	// Unknown step -> dont mark kubelet unhealthy
 	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt("something-else"), err); got {
 		t.Fatalf("unknown step marked unhealthy=true, want false")
 	}

@@ -17,7 +17,6 @@ import (
 var (
 	kubeletMu     sync.Mutex
 	kubeletClient *kubernetes.Clientset
-	kubeletErr    error
 )
 
 // KubeletClientset returns a cached client-go clientset constructed from the
@@ -35,18 +34,28 @@ func KubeletClientset() (*kubernetes.Clientset, error) {
 
 	restCfg, err := clientcmd.BuildConfigFromFlags("", config.KubeletKubeconfigPath)
 	if err != nil {
-		kubeletErr = fmt.Errorf("build rest config from kubelet kubeconfig: %w", err)
-		return nil, kubeletErr
+		return nil, fmt.Errorf("build rest config from kubelet kubeconfig: %w", err)
 	}
 	cs, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
-		kubeletErr = fmt.Errorf("create clientset from kubelet kubeconfig: %w", err)
-		return nil, kubeletErr
+		return nil, fmt.Errorf("create clientset from kubelet kubeconfig: %w", err)
 	}
 
 	kubeletClient = cs
-	kubeletErr = nil
 	return kubeletClient, nil
+}
+
+// InvalidateKubeletClientset clears the cached kubelet clientset.
+//
+// This is useful if the kubelet kubeconfig on disk has rotated (cert renewal,
+// bootstrap regeneration, etc.) and callers want subsequent operations to pick
+// up the new credentials.
+//
+// It is safe to call concurrently.
+func InvalidateKubeletClientset() {
+	kubeletMu.Lock()
+	defer kubeletMu.Unlock()
+	kubeletClient = nil
 }
 
 // AdminClientset returns a client-go clientset constructed from the AKS cluster

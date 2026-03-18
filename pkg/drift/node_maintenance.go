@@ -215,7 +215,15 @@ func shouldRetryWithAdmin(err error) bool {
 	}
 	// ...but kubectl drain frequently wraps StatusErrors into plain strings.
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "forbidden") || strings.Contains(msg, "unauthorized")
+	if strings.Contains(msg, "forbidden") || strings.Contains(msg, "unauthorized") {
+		return true
+	}
+	// Admin kubeconfigs/certs can expire; transport-layer TLS failures won't be classified
+	// as apierrors.*. Treat these as signals to refresh credentials and retry.
+	if strings.Contains(msg, "x509:") || strings.Contains(msg, "tls:") {
+		return true
+	}
+	return false
 }
 
 type cordonDrainState struct {
