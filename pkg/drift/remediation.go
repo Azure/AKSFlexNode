@@ -305,7 +305,7 @@ func shouldMarkKubeletUnhealthyAfterUpgradeFailure(result *bootstrapper.Executio
 	case upgradeStepStopKubelet, upgradeStepDownloadKubeBinaries, upgradeStepStartKubelet:
 		return true
 	default:
-		// Unknown step; be conservative and trigger auto-bootstrap.
-		return true
+		// Unknown step; avoid unnecessary auto-bootstrap unless we can positively identify a kubelet/binary issue.
+		return false
 	}
 }

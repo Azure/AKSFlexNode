@@ -207,7 +207,10 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 		return "Unknown"
 	}
 
-	n, err := cs.CoreV1().Nodes().Get(ctx, hostName, metav1.GetOptions{})
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	n, err := cs.CoreV1().Nodes().Get(timeoutCtx, hostName, metav1.GetOptions{})
 	if err != nil {
 		c.logger.Warnf("Failed to get node %s for readiness: %v", hostName, err)
 		return "Unknown"
