@@ -29,11 +29,16 @@ const (
 
 	// runc download URL template: version, arch
 	defaultRuncURLTemplate = "https://github.com/opencontainers/runc/releases/download/v%s/runc.%s"
+
+	// crictl download URL template: version, version, arch
+	// FIXME: confirm correct download endpoint
+	defaultCrictlURLTemplate = "https://github.com/kubernetes-sigs/cri-tools/releases/download/v%s/crictl-v%s-linux-%s.tar.gz"
 )
 
 var (
 	containerdBinPath = filepath.Join(config.DefaultBinaryPath, "containerd")
 	runcBinPath       = filepath.Join(config.DefaultBinaryPath, "runc")
+	crictlBinPath     = filepath.Join(config.DefaultBinaryPath, "crictl")
 
 	// containerdBinaries lists all binaries included in containerd releases.
 	containerdBinaries = []string{
@@ -76,12 +81,15 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 
 	containerdURL := constructContainerdDownloadURL(spec.GetContainerdVersion())
 	runcURL := constructRuncDownloadURL(spec.GetRuncVersion())
+	crictlURL := constructCrictlDownloadURL(spec.GetCrictlVersion())
 
 	st := cri.DownloadCRIBinariesStatus_builder{
 		ContainerdDownloadUrl: to.Ptr(containerdURL),
 		ContainerdPath:        to.Ptr(containerdBinPath),
 		RuncDownloadUrl:       to.Ptr(runcURL),
 		RuncPath:              to.Ptr(runcBinPath),
+		CrictlDownloadUrl:     to.Ptr(crictlURL),
+		CrictlPath:            to.Ptr(crictlBinPath),
 	}
 
 	if !containerdVersionMatch(spec.GetContainerdVersion()) {
@@ -92,6 +100,12 @@ func (d *downloadCRIBinariesAction) ApplyAction(
 
 	if !runcVersionMatch(spec.GetRuncVersion()) {
 		if err := d.downloadRunc(ctx, runcURL); err != nil {
+			return nil, err
+		}
+	}
+
+	if !crictlVersionMatch(spec.GetCrictlVersion()) {
+		if err := d.downloadCrictl(ctx, crictlURL); err != nil {
 			return nil, err
 		}
 	}
@@ -140,6 +154,32 @@ func (d *downloadCRIBinariesAction) downloadRunc(ctx context.Context, downloadUR
 	return nil
 }
 
+// downloadCrictl downloads and extracts the crictl binary from a tar.gz archive.
+func (d *downloadCRIBinariesAction) downloadCrictl(ctx context.Context, downloadURL string) error {
+	installed := false
+	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, downloadURL) {
+		if err != nil {
+			return status.Errorf(codes.Internal, "decompress crictl tar: %s", err)
+		}
+
+		if tarFile.Name != "crictl" {
+			continue
+		}
+
+		if err := utilio.InstallFile(crictlBinPath, tarFile.Body, 0755); err != nil {
+			return status.Errorf(codes.Internal, "install crictl: %s", err)
+		}
+		installed = true
+		break
+	}
+
+	if !installed {
+		return status.Errorf(codes.Internal, "crictl binary not found in archive %s", downloadURL)
+	}
+
+	return nil
+}
+
 // containerdVersionMatch checks if the installed containerd version matches the expected version.
 func containerdVersionMatch(expectedVersion string) bool {
 	for _, binary := range containerdBinaries {
@@ -171,6 +211,20 @@ func runcVersionMatch(expectedVersion string) bool {
 	return strings.Contains(string(output), expectedVersion) // FIXME: this is not a robust way
 }
 
+// crictlVersionMatch checks if the installed crictl version matches the expected version.
+func crictlVersionMatch(expectedVersion string) bool {
+	if !utilio.IsExecutable(crictlBinPath) {
+		return false
+	}
+
+	output, err := utilexec.New().Command(crictlBinPath, "--version").Output()
+	if err != nil {
+		return false
+	}
+
+	return strings.Contains(string(output), expectedVersion) // FIXME: this is not a robust way
+}
+
 // constructContainerdDownloadURL builds the download URL for the given containerd version.
 func constructContainerdDownloadURL(version string) string {
 	arch := utilhost.GetArch()
@@ -181,4 +235,10 @@ func constructContainerdDownloadURL(version string) string {
 func constructRuncDownloadURL(version string) string {
 	arch := utilhost.GetArch()
 	return fmt.Sprintf(defaultRuncURLTemplate, version, arch)
+}
+
+// constructCrictlDownloadURL builds the download URL for the given crictl version.
+func constructCrictlDownloadURL(version string) string {
+	arch := utilhost.GetArch()
+	return fmt.Sprintf(defaultCrictlURLTemplate, version, version, arch)
 }
