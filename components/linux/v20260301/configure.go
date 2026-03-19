@@ -120,12 +120,13 @@ kernel.panic = 10
 kernel.panic_on_oops = 1
 `
 
-const sysctlConfigPath = "/etc/sysctl.d/999-sysctl-aks.conf"
+const sysctlAKSConfigPath = "/etc/sysctl.d/999-sysctl-aks.conf"
+const sysctlConfigPath = "/etc/sysctl.conf"
 
 func (a *configureBaseOSAction) ensureSysctlConfig(ctx context.Context) error {
 	expectedConfig := []byte(strings.TrimSpace(sysctlSettings))
 
-	currentConfig, err := os.ReadFile(sysctlConfigPath)
+	currentConfig, err := os.ReadFile(sysctlAKSConfigPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// file does not exist, will create later
@@ -138,14 +139,46 @@ func (a *configureBaseOSAction) ensureSysctlConfig(ctx context.Context) error {
 		}
 	}
 
-	if err := utilio.WriteFile(sysctlConfigPath, expectedConfig, 0644); err != nil {
+	if err := utilio.WriteFile(sysctlAKSConfigPath, expectedConfig, 0644); err != nil {
 		return err
 	}
+
+	// sysctl --system loads /etc/sysctl.conf AFTER all /etc/sysctl.d/*.conf
+	// files, so any conflicting settings in /etc/sysctl.conf will override
+	// our 999-sysctl-aks.conf. Comment out conflicting lines before applying.
+	if err := a.sanitizeSysctlConf(sysctlConfigPath); err != nil {
+		return err
+	}
+
 	if err := utilexec.New().CommandContext(ctx, "sysctl", "--system").Run(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// sanitizeSysctlConf reads /etc/sysctl.conf and comments out any uncommented
+// lines that set keys also present in sysctlSettings. This prevents
+// /etc/sysctl.conf (loaded last by sysctl --system) from overriding the
+// settings written to 999-sysctl-aks.conf.
+func (a *configureBaseOSAction) sanitizeSysctlConf(path string) error {
+	// extract sysctl keys from our managed settings
+	managedKeys := make(map[string]bool)
+	for _, line := range strings.Split(sysctlSettings, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, _, ok := strings.Cut(line, "=")
+		if ok {
+			managedKeys[strings.TrimSpace(key)] = true
+		}
+	}
+
+	return commentOutMatchingLines(path, func(trimmedLine string) bool {
+		key, _, ok := strings.Cut(trimmedLine, "=")
+		return ok && managedKeys[strings.TrimSpace(key)]
+	})
 }
 
 const fstabPath = "/etc/fstab"
@@ -162,14 +195,23 @@ func (a *configureBaseOSAction) disableSwap(ctx context.Context) error {
 	return nil
 }
 
-// commentOutSwapInFstab reads the fstab file at the given path, comments out
-// any uncommented lines containing "swap", and writes the result back. A backup
-// of the original file is saved to <path>.bak before any modifications are made.
+// commentOutSwapInFstab comments out any uncommented fstab lines containing
+// "swap". A backup is saved to <path>.bak before any modifications.
 func (a *configureBaseOSAction) commentOutSwapInFstab(path string) error {
+	return commentOutMatchingLines(path, func(trimmedLine string) bool {
+		return strings.Contains(trimmedLine, "swap")
+	})
+}
+
+// commentOutMatchingLines reads the file at path, comments out any uncommented
+// lines for which shouldComment returns true (called with the trimmed line),
+// and writes the result back. A backup of the original file is saved to
+// <path>.bak before any modifications are made. If the file does not exist,
+// it returns nil.
+func commentOutMatchingLines(path string, shouldComment func(trimmedLine string) bool) error {
 	content, err := os.ReadFile(path) // #nosec - path has been validated by caller
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// no fstab, nothing to do
 			return nil
 		}
 		return err
@@ -179,11 +221,10 @@ func (a *configureBaseOSAction) commentOutSwapInFstab(path string) error {
 	modified := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		// skip empty lines and already-commented lines
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if strings.Contains(trimmed, "swap") {
+		if shouldComment(trimmed) {
 			lines[i] = "# " + line
 			modified = true
 		}
@@ -193,7 +234,6 @@ func (a *configureBaseOSAction) commentOutSwapInFstab(path string) error {
 		return nil
 	}
 
-	// back up the original fstab before writing changes
 	if err := utilio.WriteFile(path+".bak", content, 0644); err != nil {
 		return err
 	}
