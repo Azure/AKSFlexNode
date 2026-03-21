@@ -293,7 +293,8 @@ func runRebootRemediation(
 	if err := checkCmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			logger.WithError(exitErr).Warn("aks-flex-node-agent is not running as a systemd service; skipping reboot")
-			return fmt.Errorf("agent not managed by systemd, reboot skipped")
+			// Not running under systemd is an expected scenario (e.g., dev/test); treat as a no-op, not an error.
+			return nil
 		}
 		logger.WithError(err).Warn("Failed to check systemd service status; skipping reboot")
 		return fmt.Errorf("failed to check systemd service status: %w", err)
