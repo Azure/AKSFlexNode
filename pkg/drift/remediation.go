@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -154,6 +155,13 @@ func detectAndRemediate(
 		logger.Info("Kubernetes upgrade remediation completed successfully")
 		return detectErr
 
+	case RemediationActionReboot:
+		if err := runRebootRemediation(ctx, logger); err != nil {
+			return fmt.Errorf("reboot remediation failed: %w", err)
+		}
+		logger.Info("Node reboot initiated successfully")
+		return detectErr
+
 	default:
 		return fmt.Errorf("unsupported drift remediation action: %q", plan.Action)
 	}
@@ -265,6 +273,43 @@ func runKubernetesUpgradeRemediation(
 		}
 	}
 	return result, err
+}
+
+func runRebootRemediation(
+	ctx context.Context,
+	logger *logrus.Logger,
+) error {
+	// Key design points:
+	//   - Only reboot if aks-flex-node-agent is running as a systemd service
+	//   - If not running under systemd, skip reboot (agent may be running in development/test mode)
+	//   - Use systemctl reboot for a clean shutdown
+	if logger == nil {
+		logger = logrus.New()
+	}
+
+	// Check if aks-flex-node-agent is managed by systemd.
+	// We use 'systemctl is-active' to check if the service is running under systemd.
+	checkCmd := exec.CommandContext(ctx, "systemctl", "is-active", "aks-flex-node-agent.service")
+	if err := checkCmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			logger.WithError(exitErr).Warn("aks-flex-node-agent is not running as a systemd service; skipping reboot")
+			return fmt.Errorf("agent not managed by systemd, reboot skipped")
+		}
+		logger.WithError(err).Warn("Failed to check systemd service status; skipping reboot")
+		return fmt.Errorf("failed to check systemd service status: %w", err)
+	}
+
+	logger.Info("Initiating system reboot via systemctl")
+
+	// Use systemctl reboot for a clean shutdown.
+	// This will gracefully stop services and sync filesystems before rebooting.
+	cmd := exec.CommandContext(ctx, "systemctl", "reboot")
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to initiate reboot: %w", err)
+	}
+
+	// Don't wait for the command to complete; the system will be shutting down.
+	return nil
 }
 
 // handleExecutionResult mirrors main's handleExecutionResult but lives in drift so remediation
