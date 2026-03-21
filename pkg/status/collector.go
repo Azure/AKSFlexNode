@@ -357,8 +357,12 @@ func (c *Collector) checkRebootNeeded(ctx context.Context) bool {
 		c.logger.Errorf("failed to get kubelet clientset: %s", err.Error())
 		return false
 	}
-	// Get the node
-	node, err := clientset.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+
+	// Get the node with a timeout and respecting the passed-in context
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	node, err := clientset.CoreV1().Nodes().Get(ctxWithTimeout, nodeName, metav1.GetOptions{})
 	if err != nil {
 		c.logger.Errorf("failed to get node: %s", err.Error())
 		return false
