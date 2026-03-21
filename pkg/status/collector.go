@@ -371,7 +371,7 @@ func (c *Collector) checkRebootNeeded(ctx context.Context) bool {
 	for _, condition := range node.Status.Conditions {
 		switch condition.Type {
 		case "KernelDeadlock":
-			if condition.Status == "True" && condition.LastTransitionTime.After(hostBootTime) {
+			if condition.Status == corev1.ConditionTrue && condition.LastTransitionTime.Time.After(hostBootTime) {
 				c.logger.Infof("Node has a kernel deadlock since %s, rebooting...",
 					condition.LastTransitionTime.Format("2006-01-02 15:04:05"))
 				return true
