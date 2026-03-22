@@ -2,9 +2,10 @@
 
 A Go agent that extends Azure Kubernetes Service (AKS) to non-Azure VMs, enabling hybrid and edge computing scenarios. Optionally integrates with Azure Arc for enhanced cloud management capabilities.
 
-**Status:** Work In Progress
-**Platform:** Ubuntu 22.04 LTS, Ubuntu 24.04 LTS
-**Architecture:** x86_64 (amd64), arm64
+**Alpha Release**
+
+Runs on Ubuntu 22.04 & 24.04 (x86_64, arm64)  
+Deploy anywhere: Azure, AWS, GCP, OCI, Nebius, Tensorwave or NVIDIA DGX Spark
 
 ## Overview
 
