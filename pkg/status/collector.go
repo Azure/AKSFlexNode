@@ -3,9 +3,11 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +61,9 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 		c.logger.Warnf("Failed to collect Arc status: %v", err)
 	}
 	status.ArcStatus = arcStatus
+
+	// Check if reboot is needed node condition
+	status.NeedReboot = c.checkRebootNeeded(ctx)
 
 	return status, nil
 }
@@ -296,4 +301,82 @@ func GetStatusFilePath() string {
 
 	// Fallback to temp directory for testing/development
 	return filepath.Join("/tmp/aks-flex-node", "status.json")
+}
+
+func getBootTime() (time.Time, error) {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to read /proc/uptime: %w", err)
+	}
+
+	// /proc/uptime contains two numbers: uptime in seconds and idle time
+	// We only need the first number
+	fields := strings.Fields(string(data))
+	if len(fields) < 1 {
+		return time.Time{}, fmt.Errorf("invalid /proc/uptime format")
+	}
+
+	uptimeSeconds, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse uptime: %w", err)
+	}
+
+	// Calculate boot time: current time - uptime
+	bootTime := time.Now().Add(-time.Duration(uptimeSeconds * float64(time.Second)))
+	return bootTime, nil
+}
+
+func getNodeName() (string, error) {
+	host, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to get hostname: %w", err)
+	}
+
+	nodeName := strings.TrimSpace(host)
+	if nodeName == "" {
+		return "", fmt.Errorf("node name is empty")
+	}
+
+	return nodeName, nil
+}
+
+func (c *Collector) checkRebootNeeded(ctx context.Context) bool {
+	hostBootTime, err := getBootTime()
+	if err != nil {
+		c.logger.Warnf("Failed to get boot time: %v", err)
+		return false
+	}
+	nodeName, err := getNodeName()
+	if err != nil {
+		c.logger.Errorf("failed to get node name: %s", err.Error())
+		return false
+	}
+
+	clientset, err := kube.KubeletClientset()
+	if err != nil {
+		c.logger.Errorf("failed to get kubelet clientset: %s", err.Error())
+		return false
+	}
+
+	// Get the node with a timeout and respecting the passed-in context
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	node, err := clientset.CoreV1().Nodes().Get(ctxWithTimeout, nodeName, metav1.GetOptions{})
+	if err != nil {
+		c.logger.Errorf("failed to get node: %s", err.Error())
+		return false
+	}
+
+	for _, condition := range node.Status.Conditions {
+		switch condition.Type {
+		case "KernelDeadlock":
+			if condition.Status == corev1.ConditionTrue && condition.LastTransitionTime.After(hostBootTime) {
+				c.logger.Infof("Node has a kernel deadlock since %s, rebooting...",
+					condition.LastTransitionTime.Format("2006-01-02 15:04:05"))
+				return true
+			}
+		}
+	}
+	return false
 }

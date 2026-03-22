@@ -41,6 +41,8 @@ type NodeStatus struct {
 	LastUpdatedBy     LastUpdatedBy     `json:"lastUpdatedBy,omitempty"`
 	LastUpdatedReason LastUpdatedReason `json:"lastUpdatedReason,omitempty"`
 	AgentVersion      string            `json:"agentVersion"`
+
+	NeedReboot bool `json:"needReboot,omitempty"`
 }
 
 // ArcStatus contains Azure Arc machine registration and connection status
