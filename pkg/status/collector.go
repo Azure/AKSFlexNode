@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -304,25 +304,15 @@ func GetStatusFilePath() string {
 }
 
 func getBootTime() (time.Time, error) {
-	data, err := os.ReadFile("/proc/uptime")
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to read /proc/uptime: %w", err)
-	}
-
-	// /proc/uptime contains two numbers: uptime in seconds and idle time
-	// We only need the first number
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
-		return time.Time{}, fmt.Errorf("invalid /proc/uptime format")
-	}
-
-	uptimeSeconds, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse uptime: %w", err)
+	var sysinfo unix.Sysinfo_t
+	if err := unix.Sysinfo(&sysinfo); err != nil {
+		return time.Time{}, fmt.Errorf("failed to get system info: %w", err)
 	}
 
 	// Calculate boot time: current time - uptime
-	bootTime := time.Now().Add(-time.Duration(uptimeSeconds * float64(time.Second)))
+	// Sysinfo.Uptime is in seconds since boot
+	uptimeSeconds := time.Duration(sysinfo.Uptime) * time.Second
+	bootTime := time.Now().Add(-uptimeSeconds)
 	return bootTime, nil
 }
 
@@ -332,7 +322,7 @@ func getNodeName() (string, error) {
 		return "", fmt.Errorf("failed to get hostname: %w", err)
 	}
 
-	nodeName := strings.TrimSpace(host)
+	nodeName := strings.ToLower(strings.TrimSpace(host))
 	if nodeName == "" {
 		return "", fmt.Errorf("node name is empty")
 	}
