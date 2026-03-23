@@ -11,6 +11,7 @@ type Config struct {
 	Kubernetes KubernetesConfig `json:"kubernetes"`
 	CNI        CNIConfig        `json:"cni"`
 	Runc       RuncConfig       `json:"runc"`
+	Crictl     CrictlConfig     `json:"crictl"`
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
@@ -104,6 +105,12 @@ type KubernetesConfig struct {
 
 // RuncConfig holds configuration settings for the container runtime (runc).
 type RuncConfig struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+}
+
+// CrictlConfig holds configuration settings for the crictl CLI tool.
+type CrictlConfig struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
 }
