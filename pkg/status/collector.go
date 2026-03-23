@@ -311,8 +311,8 @@ func getBootTime() (time.Time, error) {
 
 	// Calculate boot time: current time - uptime
 	// Sysinfo.Uptime is in seconds since boot
-	uptimeSeconds := time.Duration(sysinfo.Uptime) * time.Second
-	bootTime := time.Now().Add(-uptimeSeconds)
+	uptime := time.Duration(sysinfo.Uptime) * time.Second
+	bootTime := time.Now().Add(-uptime)
 	return bootTime, nil
 }
 
