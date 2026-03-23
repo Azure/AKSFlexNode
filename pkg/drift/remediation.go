@@ -300,7 +300,7 @@ func runRebootRemediation(
 			// Not running under systemd is an expected scenario (e.g., dev/test); treat as a no-op, not an error.
 			return nil
 		}
-		logger.WithError(err).Warn("Failed to check systemd service status; skipping reboot")
+		logger.WithError(err).Warn("Failed to check systemd service status; aborting reboot remediation")
 		return fmt.Errorf("failed to check systemd service status: %w", err)
 	}
 
