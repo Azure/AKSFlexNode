@@ -314,12 +314,28 @@ func runRebootRemediation(
 
 	// Use systemctl reboot for a clean shutdown.
 	// This will gracefully stop services and sync filesystems before rebooting.
-	cmd := exec.CommandContext(ctx, "systemctl", "reboot")
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to initiate reboot: %w", err)
+	// To avoid silently ignoring immediate failures (e.g., DBus unavailable), run the
+	// command and check its exit status, using a short timeout if no deadline is set.
+	rebootCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		rebootCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
 	}
 
-	// Don't wait for the command to complete; the system will be shutting down.
+	cmd := exec.CommandContext(rebootCtx, "systemctl", "reboot")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If the context was canceled or timed out, surface that information explicitly.
+		if errors.Is(rebootCtx.Err(), context.DeadlineExceeded) {
+			logger.WithError(err).WithField("output", string(output)).
+				Error("systemctl reboot timed out")
+			return fmt.Errorf("systemctl reboot timed out: %w", err)
+		}
+		logger.WithError(err).WithField("output", string(output)).
+			Error("systemctl reboot failed")
+		return fmt.Errorf("systemctl reboot failed: %w", err)
+	}
 	return nil
 }
 
