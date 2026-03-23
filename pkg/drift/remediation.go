@@ -162,7 +162,7 @@ func detectAndRemediate(
 		if err := runRebootRemediation(ctx, logger); err != nil {
 			return fmt.Errorf("reboot remediation failed: %w", err)
 		}
-		logger.Info("Node reboot initiated successfully")
+		logger.Info("Reboot remediation completed without error")
 		return detectErr
 
 	default:
