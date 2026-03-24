@@ -7,11 +7,12 @@
 package arc
 
 import (
+	reflect "reflect"
+	unsafe "unsafe"
+
 	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	reflect "reflect"
-	unsafe "unsafe"
 )
 
 const (
