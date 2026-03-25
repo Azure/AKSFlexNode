@@ -327,8 +327,13 @@ var stopKubeletService resolveActionFunc[*kubelet.StopKubeletService] = func(
 
 // ensureMachine is not yet wired into the bootstrap steps; it will be enabled
 // once the AKS RP Machine API change is live. See the TODO in bootstrapper.go.
-//
-//nolint:unused
+// The blank-identifier refs below prevent unused-symbol warnings from both
+// golangci-lint and staticcheck until the step is activated.
+var (
+	_ = ensureMachine
+	_ = buildAzureCredential
+)
+
 var ensureMachine resolveActionFunc[*aksmachine.EnsureMachine] = func(
 	name string,
 	cfg *config.Config,
@@ -367,8 +372,6 @@ var ensureMachine resolveActionFunc[*aksmachine.EnsureMachine] = func(
 // buildAzureCredential constructs the proto AzureCredential from the agent config.
 // Returns nil when CLI credential fallback is appropriate (no SP or MI configured).
 // Unused until ensureMachine is wired into the bootstrap steps.
-//
-//nolint:unused
 func buildAzureCredential(cfg *config.Config) *aksmachine.AzureCredential {
 	if cfg.IsSPConfigured() {
 		sp := aksmachine.AzureServicePrincipalCredential_builder{
