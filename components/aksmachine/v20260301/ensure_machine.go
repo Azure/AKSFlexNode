@@ -184,6 +184,9 @@ func (a *ensureMachineAction) ensureMachine(ctx context.Context, cred azcore.Tok
 		return fmt.Errorf("begin create or update machine %q: %w", machineName, err)
 	}
 
+	// if the ARM server returns a synchronous 2xx response
+	// with no Azure-AsyncOperation / Operation-Location / Location header, the SDK treats it as synchronously
+	// complete and PollUntilDone returns right away with the response body — no looping occurs.
 	if _, err = poller.PollUntilDone(ctx, nil); err != nil {
 		return fmt.Errorf("wait for machine %q: %w", machineName, err)
 	}
