@@ -242,18 +242,21 @@ func buildK8sProfile(spec *aksmachine.EnsureMachineSpec) *armcontainerservice.Ma
 // credentialFromSpec resolves an Azure ARM credential from the proto AzureCredential field.
 // Falls back to Azure CLI credential when the field is absent or empty.
 func credentialFromSpec(cred *aksmachine.AzureCredential) (azcore.TokenCredential, error) {
-	if sp := cred.GetServicePrincipal(); sp != nil {
-		return azidentity.NewClientSecretCredential(sp.GetTenantId(), sp.GetClientId(), sp.GetClientSecret(), nil)
-	}
-	if mi := cred.GetManagedIdentity(); mi != nil {
-		opts := &azidentity.ManagedIdentityCredentialOptions{}
-		if id := mi.GetClientId(); id != "" {
-			opts.ID = azidentity.ClientID(id)
+	// Prefer explicitly configured credentials when present.
+	if cred != nil {
+		if sp := cred.GetServicePrincipal(); sp != nil {
+			return azidentity.NewClientSecretCredential(sp.GetTenantId(), sp.GetClientId(), sp.GetClientSecret(), nil)
 		}
-		return azidentity.NewManagedIdentityCredential(opts)
+		if mi := cred.GetManagedIdentity(); mi != nil {
+			opts := &azidentity.ManagedIdentityCredentialOptions{}
+			if id := mi.GetClientId(); id != "" {
+				opts.ID = azidentity.ClientID(id)
+			}
+			return azidentity.NewManagedIdentityCredential(opts)
+		}
 	}
-	// return azidentity.NewAzureCLICredential(nil)
-	return nil, nil
+	// Fall back to Azure CLI credential when no explicit credential is configured.
+	return azidentity.NewAzureCLICredential(nil)
 }
 
 // buildARMClientOptions returns ARM client options that redirect all calls to
