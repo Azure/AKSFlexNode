@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/systemd"
 )
 
 const driftKubernetesUpgradeOperation = "drift-kubernetes-upgrade"
@@ -27,6 +29,8 @@ const (
 	upgradeStepStartKubelet         = "start-kubelet"
 	upgradeStepUncordon             = "uncordon"
 )
+
+const agentServiceName = "aks-flex-node-agent.service"
 
 // maxManagedClusterSpecAge is a safety guard to avoid acting on very stale spec snapshots.
 // In normal operation we run drift immediately after a successful spec collection, so this
@@ -154,6 +158,13 @@ func detectAndRemediate(
 		logger.Info("Kubernetes upgrade remediation completed successfully")
 		return detectErr
 
+	case RemediationActionReboot:
+		if err := runRebootRemediation(ctx, logger); err != nil {
+			return fmt.Errorf("reboot remediation failed: %w", err)
+		}
+		logger.Info("Reboot remediation completed without error")
+		return detectErr
+
 	default:
 		return fmt.Errorf("unsupported drift remediation action: %q", plan.Action)
 	}
@@ -265,6 +276,67 @@ func runKubernetesUpgradeRemediation(
 		}
 	}
 	return result, err
+}
+
+func runRebootRemediation(
+	ctx context.Context,
+	logger *logrus.Logger,
+) error {
+	// Key design points:
+	//   - Only reboot if aks-flex-node-agent is running as a systemd service
+	//   - If not running under systemd, skip reboot (agent may be running in development/test mode)
+	//   - Use systemctl reboot for a clean shutdown
+	if logger == nil {
+		logger = logrus.New()
+	}
+
+	// Check if aks-flex-node-agent is managed by systemd.
+	// We use GetUnitStatus to check if the service is active and running under systemd.
+	mgr := systemd.New()
+	status, err := mgr.GetUnitStatus(ctx, agentServiceName)
+	if err != nil {
+		if errors.Is(err, systemd.ErrUnitNotFound) {
+			logger.Warn("aks-flex-node-agent is not running as a systemd service; skipping reboot")
+			// Not running under systemd is an expected scenario (e.g., dev/test); treat as a no-op, not an error.
+			return nil
+		}
+		logger.WithError(err).Warn("Failed to check systemd service status; aborting reboot remediation")
+		return fmt.Errorf("failed to check systemd service status: %w", err)
+	}
+
+	// Only reboot if the service is active
+	if status.ActiveState != systemd.UnitActiveStateActive {
+		logger.Warnf("aks-flex-node-agent service is not active (state: %s); skipping reboot", status.ActiveState)
+		return nil
+	}
+
+	logger.Info("Initiating system reboot via systemctl")
+
+	// Use systemctl reboot for a clean shutdown.
+	// This will gracefully stop services and sync filesystems before rebooting.
+	// To avoid silently ignoring immediate failures (e.g., DBus unavailable), run the
+	// command and check its exit status, using a short timeout if no deadline is set.
+	rebootCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		rebootCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(rebootCtx, "systemctl", "reboot")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If the context was canceled or timed out, surface that information explicitly.
+		if errors.Is(rebootCtx.Err(), context.DeadlineExceeded) {
+			logger.WithError(err).WithField("output", string(output)).
+				Error("systemctl reboot timed out")
+			return fmt.Errorf("systemctl reboot timed out: %w", err)
+		}
+		logger.WithError(err).WithField("output", string(output)).
+			Error("systemctl reboot failed")
+		return fmt.Errorf("systemctl reboot failed: %w", err)
+	}
+	return nil
 }
 
 // handleExecutionResult mirrors main's handleExecutionResult but lives in drift so remediation
