@@ -26,6 +26,9 @@ func (d *RebootDetector) Detect(
 	_ *spec.ManagedClusterSpec,
 	statusSnap *status.NodeStatus,
 ) ([]Finding, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	if statusSnap == nil {
 		return nil, nil
