@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/Azure/AKSFlexNode/components/aksmachine"
 	"github.com/Azure/AKSFlexNode/components/api"
 	"github.com/Azure/AKSFlexNode/components/arc"
 	"github.com/Azure/AKSFlexNode/components/cni"
@@ -324,6 +325,72 @@ var stopKubeletService resolveActionFunc[*kubelet.StopKubeletService] = func(
 	}.Build(), nil
 }
 
+// ensureMachine is not yet wired into the bootstrap steps; it will be enabled
+// once the AKS RP Machine API change is live. See the TODO in bootstrapper.go.
+// The blank-identifier refs below prevent unused-symbol warnings from both
+// golangci-lint and staticcheck until the step is activated.
+var (
+	_ = ensureMachine
+	_ = buildAzureCredential
+)
+
+var ensureMachine resolveActionFunc[*aksmachine.EnsureMachine] = func(
+	name string,
+	cfg *config.Config,
+) (*aksmachine.EnsureMachine, error) {
+	machineName := cfg.GetArcMachineName()
+	if machineName == "" {
+		return nil, fmt.Errorf("machine name is empty: set azure.arc.machineName in config or ensure hostname is resolvable")
+	}
+
+	kubeletCfg := aksmachine.MachineKubeletConfig_builder{
+		ImageGcHighThreshold: ptr(int32(cfg.Node.Kubelet.ImageGCHighThreshold)),
+		ImageGcLowThreshold:  ptr(int32(cfg.Node.Kubelet.ImageGCLowThreshold)),
+	}.Build()
+
+	azureCred := buildAzureCredential(cfg)
+
+	spec := aksmachine.EnsureMachineSpec_builder{
+		SubscriptionId:    ptr(cfg.GetTargetClusterSubscriptionID()),
+		ResourceGroup:     ptr(cfg.GetTargetClusterResourceGroup()),
+		ClusterName:       ptr(cfg.GetTargetClusterName()),
+		MachineName:       ptr(machineName),
+		KubernetesVersion: ptr(cfg.Kubernetes.Version),
+		MaxPods:           ptr(int32(cfg.Node.MaxPods)),
+		NodeLabels:        maps.Clone(cfg.Node.Labels),
+		KubeletConfig:     kubeletCfg,
+		Enabled:           ptr(cfg.IsDriftDetectionAndRemediationEnabled()),
+		AzureCredential:   azureCred,
+	}.Build()
+
+	return aksmachine.EnsureMachine_builder{
+		Metadata: componentAction(name),
+		Spec:     spec,
+	}.Build(), nil
+}
+
+// buildAzureCredential constructs the proto AzureCredential from the agent config.
+// Returns nil when CLI credential fallback is appropriate (no SP or MI configured).
+// Unused until ensureMachine is wired into the bootstrap steps.
+func buildAzureCredential(cfg *config.Config) *aksmachine.AzureCredential {
+	if cfg.IsSPConfigured() {
+		sp := aksmachine.AzureServicePrincipalCredential_builder{
+			TenantId:     ptr(cfg.Azure.ServicePrincipal.TenantID),
+			ClientId:     ptr(cfg.Azure.ServicePrincipal.ClientID),
+			ClientSecret: ptr(cfg.Azure.ServicePrincipal.ClientSecret),
+		}.Build()
+		return aksmachine.AzureCredential_builder{ServicePrincipal: sp}.Build()
+	}
+	if cfg.IsMIConfigured() {
+		mi := aksmachine.AzureMSICredential_builder{}
+		if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
+			mi.ClientId = ptr(cfg.Azure.ManagedIdentity.ClientID)
+		}
+		return aksmachine.AzureCredential_builder{ManagedIdentity: mi.Build()}.Build()
+	}
+	return nil
+}
+
 var installArc resolveActionFunc[*arc.InstallArc] = func(
 	name string,
 	cfg *config.Config,
@@ -336,6 +403,7 @@ var installArc resolveActionFunc[*arc.InstallArc] = func(
 		MachineName:    ptrWithDefault(cfg.GetArcMachineName(), ""),
 		Tags:           cfg.GetArcTags(),
 		AksClusterName: ptrWithDefault(cfg.GetTargetClusterName(), ""),
+		Enabled:        ptr(cfg.IsARCEnabled()),
 	}.Build()
 
 	return arc.InstallArc_builder{
