@@ -25,10 +25,10 @@ import (
 const (
 	aksFlexNodePoolName = "aksflexnodes"
 	// flexNodeTagKey is the tag that identifies this machine as an AKS flex node.
-	flexNodeTagKey = "aks.azure.com/flex-node"
+	flexNodeTagKey = "aks-flex-node"
 
-	// TODO: remove before merging — redirects ARM calls to a local test server.
-	armEndpointOverride = "http://localhost:8080"
+	// ARM calls to a local test server. It is for testing only and should not be set in production.
+	armEndpointOverride = ""
 )
 
 type ensureMachineAction struct {
