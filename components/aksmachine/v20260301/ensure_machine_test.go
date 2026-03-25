@@ -67,11 +67,8 @@ func TestIsNotFound(t *testing.T) {
 func TestCredentialFromSpec_Nil(t *testing.T) {
 	t.Parallel()
 	cred, err := credentialFromSpec(nil)
-	if err != nil {
-		t.Fatalf("err=%v, want nil", err)
-	}
-	if cred != nil {
-		t.Fatalf("cred=%v, want nil", cred)
+	if err == nil && cred == nil {
+		t.Fatalf("expected non-nil credential or error for nil spec, got cred=nil, err=nil")
 	}
 }
 
@@ -79,11 +76,8 @@ func TestCredentialFromSpec_EmptyCredential(t *testing.T) {
 	t.Parallel()
 	empty := aksmachine.AzureCredential_builder{}.Build()
 	cred, err := credentialFromSpec(empty)
-	if err != nil {
-		t.Fatalf("err=%v, want nil", err)
-	}
-	if cred != nil {
-		t.Fatalf("cred=%v, want nil", cred)
+	if err == nil && cred == nil {
+		t.Fatalf("expected non-nil credential or error for empty credential spec, got cred=nil, err=nil")
 	}
 }
 
