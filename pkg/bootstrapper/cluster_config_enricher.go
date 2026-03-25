@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"github.com/sirupsen/logrus"
 	"sigs.k8s.io/yaml"
 
@@ -32,10 +32,11 @@ func (e *clusterConfigEnricher) GetName() string {
 	return "enrich-cluster-config"
 }
 
-// IsCompleted returns true if ServerURL is already populated (either from config
-// file or from a previous execution of this step).
+// IsCompleted returns true if both ServerURL and CACertData are already
+// populated (either from the config file or a previous execution of this step),
+// making the ARM fetch unnecessary.
 func (e *clusterConfigEnricher) IsCompleted(_ context.Context) bool {
-	return e.cfg.Node.Kubelet.ServerURL != ""
+	return e.cfg.Node.Kubelet.ServerURL != "" && e.cfg.Node.Kubelet.CACertData != ""
 }
 
 // Execute fetches cluster admin credentials from the AKS management plane and

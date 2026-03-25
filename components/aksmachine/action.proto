@@ -1,0 +1,80 @@
+edition = "2024";
+
+package aks.flex.components.aksmachine;
+
+option go_package = "github.com/Azure/AKSFlexNode/components/aksmachine";
+
+import "components/api/api.proto";
+
+message AzureServicePrincipalCredential {
+  string tenant_id = 1;
+  string client_id = 2;
+  string client_secret = 3; // sensitive: must be redacted before logging
+}
+
+message AzureMSICredential {
+  // Client ID of the managed identity; empty means system-assigned MI.
+  string client_id = 1;
+}
+
+// AzureCredential carries the ARM authentication credential for the action.
+// If neither field is set the action falls back to Azure CLI credential.
+message AzureCredential {
+  oneof credential {
+    AzureServicePrincipalCredential service_principal = 1;
+    AzureMSICredential managed_identity = 2;
+  }
+}
+
+message EnsureMachine {
+  api.Metadata metadata = 1;
+
+  EnsureMachineSpec spec = 2;
+
+  EnsureMachineStatus status = 3;
+}
+
+message EnsureMachineSpec {
+  // Azure subscription ID of the target AKS cluster
+  string subscription_id = 1;
+  // Azure resource group of the target AKS cluster
+  string resource_group = 2;
+  // Name of the target AKS cluster
+  string cluster_name = 3;
+  // Name of the machine (hostname of the local machine)
+  string machine_name = 4;
+
+  // Kubernetes version to join (e.g. "1.30" or "1.30.6")
+  string kubernetes_version = 5;
+  // Maximum number of pods that can run on the node
+  int32 max_pods = 6;
+  // Node labels
+  map<string, string> node_labels = 7;
+  // Node taints (reconciled by AKS)
+  repeated string node_taints = 8;
+  // Node initialization taints (not reconciled by AKS, removable via kubectl)
+  repeated string node_initialization_taints = 9;
+
+  // Kubelet configuration
+  MachineKubeletConfig kubelet_config = 10;
+
+  // enabled controls whether the action performs Azure operations.
+  // Set to false when drift detection and remediation is disabled.
+  bool enabled = 11;
+
+  // azure_credential is used to authenticate against the Azure ARM API.
+  // If unset the action falls back to Azure CLI credential.
+  AzureCredential azure_credential = 12;
+}
+
+// MachineKubeletConfig holds the subset of kubelet settings sent to AKS on
+// the PUT machine request.
+message MachineKubeletConfig {
+  // Percent of disk usage above which image GC always runs (default 85)
+  int32 image_gc_high_threshold = 1;
+  // Percent of disk usage below which image GC never runs (default 80)
+  int32 image_gc_low_threshold = 2;
+}
+
+message EnsureMachineStatus {
+}

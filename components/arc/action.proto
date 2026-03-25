@@ -29,6 +29,9 @@ message InstallArcSpec {
   map<string, string> tags = 6;
   // Target AKS cluster name for RBAC assignments
   string aks_cluster_name = 7;
+  // enabled controls whether Arc installation is performed.
+  // Set to false when azure.arc.enabled is false in the agent config.
+  bool enabled = 8;
 }
 
 message InstallArcStatus {
