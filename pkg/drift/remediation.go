@@ -278,9 +278,27 @@ func runKubernetesUpgradeRemediation(
 	return result, err
 }
 
+// rebootCommandRunner is a function that executes the reboot command and returns combined output.
+// It is a field type to allow injection in tests.
+type rebootCommandRunner func(ctx context.Context) ([]byte, error)
+
+func defaultRebootRunner(ctx context.Context) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "systemctl", "reboot") // #nosec G204 -- fixed command, no user input
+	return cmd.CombinedOutput()
+}
+
 func runRebootRemediation(
 	ctx context.Context,
 	logger *logrus.Logger,
+) error {
+	return runRebootRemediationWithDeps(ctx, logger, systemd.New(), defaultRebootRunner)
+}
+
+func runRebootRemediationWithDeps(
+	ctx context.Context,
+	logger *logrus.Logger,
+	mgr systemd.Manager,
+	runner rebootCommandRunner,
 ) error {
 	// Key design points:
 	//   - Only reboot if aks-flex-node-agent is running as a systemd service
@@ -292,8 +310,7 @@ func runRebootRemediation(
 
 	// Check if aks-flex-node-agent is managed by systemd.
 	// We use GetUnitStatus to check if the service is active and running under systemd.
-	mgr := systemd.New()
-	status, err := mgr.GetUnitStatus(ctx, agentServiceName)
+	unitStatus, err := mgr.GetUnitStatus(ctx, agentServiceName)
 	if err != nil {
 		if errors.Is(err, systemd.ErrUnitNotFound) {
 			logger.Warn("aks-flex-node-agent is not running as a systemd service; skipping reboot")
@@ -305,8 +322,8 @@ func runRebootRemediation(
 	}
 
 	// Only reboot if the service is active
-	if status.ActiveState != systemd.UnitActiveStateActive {
-		logger.Warnf("aks-flex-node-agent service is not active (state: %s); skipping reboot", status.ActiveState)
+	if unitStatus.ActiveState != systemd.UnitActiveStateActive {
+		logger.Warnf("aks-flex-node-agent service is not active (state: %s); skipping reboot", unitStatus.ActiveState)
 		return nil
 	}
 
@@ -323,8 +340,7 @@ func runRebootRemediation(
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(rebootCtx, "systemctl", "reboot")
-	output, err := cmd.CombinedOutput()
+	output, err := runner(rebootCtx)
 	if err != nil {
 		// If the context was canceled or timed out, surface that information explicitly.
 		if errors.Is(rebootCtx.Err(), context.DeadlineExceeded) {

@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/sirupsen/logrus"
 
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
+	"github.com/Azure/AKSFlexNode/pkg/systemd"
 )
 
 type countingDetector struct {
@@ -216,5 +218,151 @@ func TestShouldMarkKubeletUnhealthyAfterUpgradeFailure(t *testing.T) {
 	// No error -> never mark.
 	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepStopKubelet), nil); got {
 		t.Fatalf("nil error marked unhealthy=true, want false")
+	}
+}
+
+// stubSystemdManager is a test double for systemd.Manager.
+type stubSystemdManager struct {
+	getUnitStatusResult dbus.UnitStatus
+	getUnitStatusErr    error
+}
+
+var _ systemd.Manager = (*stubSystemdManager)(nil)
+
+func (s *stubSystemdManager) DaemonReload(_ context.Context) error                  { return nil }
+func (s *stubSystemdManager) EnableUnit(_ context.Context, _ string) error          { return nil }
+func (s *stubSystemdManager) DisableUnit(_ context.Context, _ string) error         { return nil }
+func (s *stubSystemdManager) MaskUnit(_ context.Context, _ string) error            { return nil }
+func (s *stubSystemdManager) StartUnit(_ context.Context, _ string) error           { return nil }
+func (s *stubSystemdManager) StopUnit(_ context.Context, _ string) error            { return nil }
+func (s *stubSystemdManager) ReloadOrRestartUnit(_ context.Context, _ string) error { return nil }
+
+func (s *stubSystemdManager) GetUnitStatus(_ context.Context, _ string) (dbus.UnitStatus, error) {
+	return s.getUnitStatusResult, s.getUnitStatusErr
+}
+
+func (s *stubSystemdManager) EnsureUnitFile(_ context.Context, _ string, _ []byte) (bool, error) {
+	return false, nil
+}
+
+func (s *stubSystemdManager) EnsureDropInFile(_ context.Context, _ string, _ string, _ []byte) (bool, error) {
+	return false, nil
+}
+
+// stubRebootRunner records whether it was called and returns a configurable result.
+type stubRebootRunner struct {
+	called bool
+	output []byte
+	err    error
+}
+
+func (s *stubRebootRunner) run(_ context.Context) ([]byte, error) {
+	s.called = true
+	return s.output, s.err
+}
+
+func TestRunRebootRemediationWithDeps(t *testing.T) {
+	t.Parallel()
+
+	statusActive := dbus.UnitStatus{ActiveState: systemd.UnitActiveStateActive}
+	statusInactive := dbus.UnitStatus{ActiveState: systemd.UnitActiveStateInactive}
+	dbusErr := errors.New("dbus connection refused")
+	rebootErr := errors.New("exit status 1")
+	timeoutErr := errors.New("signal: killed")
+
+	// pastDeadlineCtx returns a context whose deadline has already elapsed so that
+	// runRebootRemediationWithDeps receives a context with hasDeadline==true and
+	// ctx.Err()==DeadlineExceeded, exercising the timeout error path.
+	pastDeadlineCtx := func() (context.Context, context.CancelFunc) {
+		return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	}
+
+	tests := []struct {
+		name             string
+		mgr              *stubSystemdManager
+		runner           *stubRebootRunner
+		makeCtx          func() (context.Context, context.CancelFunc)
+		wantErr          error
+		wantErrWrapped   bool // whether wantErr should be wrapped inside the returned error
+		wantRunnerCalled bool
+	}{
+		{
+			name:             "unit-not-found/no-op",
+			mgr:              &stubSystemdManager{getUnitStatusErr: systemd.ErrUnitNotFound},
+			runner:           &stubRebootRunner{},
+			wantRunnerCalled: false,
+		},
+		{
+			name:             "inactive/no-op",
+			mgr:              &stubSystemdManager{getUnitStatusResult: statusInactive},
+			runner:           &stubRebootRunner{},
+			wantRunnerCalled: false,
+		},
+		{
+			name:             "active/executes-reboot",
+			mgr:              &stubSystemdManager{getUnitStatusResult: statusActive},
+			runner:           &stubRebootRunner{},
+			wantRunnerCalled: true,
+		},
+		{
+			name:             "get-unit-status-error/surfaced",
+			mgr:              &stubSystemdManager{getUnitStatusErr: dbusErr},
+			runner:           &stubRebootRunner{},
+			wantErr:          dbusErr,
+			wantErrWrapped:   true,
+			wantRunnerCalled: false,
+		},
+		{
+			name:             "reboot-command-fails/surfaced",
+			mgr:              &stubSystemdManager{getUnitStatusResult: statusActive},
+			runner:           &stubRebootRunner{err: rebootErr},
+			wantErr:          rebootErr,
+			wantErrWrapped:   true,
+			wantRunnerCalled: true,
+		},
+		{
+			name:             "reboot-command-times-out/surfaced",
+			mgr:              &stubSystemdManager{getUnitStatusResult: statusActive},
+			runner:           &stubRebootRunner{err: timeoutErr},
+			makeCtx:          pastDeadlineCtx,
+			wantErr:          timeoutErr,
+			wantErrWrapped:   true,
+			wantRunnerCalled: true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if tc.makeCtx != nil {
+				ctx, cancel = tc.makeCtx()
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+			}
+			defer cancel()
+
+			err := runRebootRemediationWithDeps(ctx, logrus.New(), tc.mgr, tc.runner.run)
+
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("err=%v, want nil", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("err=nil, want error wrapping %v", tc.wantErr)
+				}
+				if tc.wantErrWrapped && !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err=%v, want to wrap %v", err, tc.wantErr)
+				}
+			}
+
+			if tc.wantRunnerCalled != tc.runner.called {
+				t.Fatalf("runner.called=%v, want %v", tc.runner.called, tc.wantRunnerCalled)
+			}
+		})
 	}
 }
