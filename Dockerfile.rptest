@@ -1,0 +1,12 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl systemd && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/aks-flex-node
+
+# Copy the test binary
+COPY rptest /opt/aks-flex-node/rptest
+
+ENTRYPOINT ["/opt/aks-flex-node/rptest"]

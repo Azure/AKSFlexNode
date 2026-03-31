@@ -1,0 +1,29 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
+
+# Install systemd + minimal tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    systemd systemd-sysv \
+    ca-certificates curl iptables iproute2 kmod \
+    conntrack ebtables ethtool socat \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Mask units that don't work in a container
+RUN systemctl mask \
+    systemd-resolved.service \
+    systemd-networkd.service \
+    systemd-logind.service \
+    getty@.service \
+    serial-getty@.service \
+    console-getty.service
+
+# Copy our binaries
+COPY e2ebootstrap /usr/local/bin/e2ebootstrap
+COPY aks-flex-node-linux-amd64 /usr/local/bin/aks-flex-node
+
+RUN chmod +x /usr/local/bin/e2ebootstrap /usr/local/bin/aks-flex-node
+
+STOPSIGNAL SIGRTMIN+3
+ENTRYPOINT ["/sbin/init"]
