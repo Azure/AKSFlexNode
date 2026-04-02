@@ -9,7 +9,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v5"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -45,6 +45,16 @@ func (a *installArcAction) ApplyAction(
 	config, err := utilpb.AnyTo[*arc.InstallArc](req.GetItem())
 	if err != nil {
 		return nil, err
+	}
+
+	// Skip installation when Arc is disabled in the agent config.
+	if !config.GetSpec().GetEnabled() {
+		a.logger.Info("InstallArc: Arc is disabled, skipping")
+		item, err := anypb.New(config)
+		if err != nil {
+			return nil, err
+		}
+		return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
 	}
 
 	// Apply defaults and validate the configuration

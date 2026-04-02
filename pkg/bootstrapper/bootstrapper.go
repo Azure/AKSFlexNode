@@ -44,6 +44,12 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// and startNPD which require these fields.
 		newClusterConfigEnricher(b.logger),
 
+		// TODO: enable this step after RP machine api change is live
+		// // Ensure the "aksflexnodes" agent pool and register this host as a
+		// // machine within it. The action skips all Azure operations if drift
+		// // detection and remediation is disabled in the agent config.
+		// ensureMachine.Executor("ensure-machine", b.componentsAPIConn, b.config),
+
 		// TODO: run these steps in parallel
 		downloadCNIBinaries.Executor("download-cni-binaries", b.componentsAPIConn, b.config),
 		downloadCRIBinaries.Executor("download-cri-binaries", b.componentsAPIConn, b.config),

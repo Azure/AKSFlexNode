@@ -149,6 +149,7 @@ type InstallArcSpec struct {
 	xxx_hidden_MachineName    *string                `protobuf:"bytes,5,opt,name=machine_name,json=machineName"`
 	xxx_hidden_Tags           map[string]string      `protobuf:"bytes,6,rep,name=tags" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	xxx_hidden_AksClusterName *string                `protobuf:"bytes,7,opt,name=aks_cluster_name,json=aksClusterName"`
+	xxx_hidden_Enabled        bool                   `protobuf:"varint,8,opt,name=enabled"`
 	XXX_raceDetectHookData    protoimpl.RaceDetectHookData
 	XXX_presence              [1]uint32
 	unknownFields             protoimpl.UnknownFields
@@ -247,29 +248,36 @@ func (x *InstallArcSpec) GetAksClusterName() string {
 	return ""
 }
 
+func (x *InstallArcSpec) GetEnabled() bool {
+	if x != nil {
+		return x.xxx_hidden_Enabled
+	}
+	return false
+}
+
 func (x *InstallArcSpec) SetSubscriptionId(v string) {
 	x.xxx_hidden_SubscriptionId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 8)
 }
 
 func (x *InstallArcSpec) SetTenantId(v string) {
 	x.xxx_hidden_TenantId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 8)
 }
 
 func (x *InstallArcSpec) SetResourceGroup(v string) {
 	x.xxx_hidden_ResourceGroup = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 8)
 }
 
 func (x *InstallArcSpec) SetLocation(v string) {
 	x.xxx_hidden_Location = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 8)
 }
 
 func (x *InstallArcSpec) SetMachineName(v string) {
 	x.xxx_hidden_MachineName = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 8)
 }
 
 func (x *InstallArcSpec) SetTags(v map[string]string) {
@@ -278,7 +286,12 @@ func (x *InstallArcSpec) SetTags(v map[string]string) {
 
 func (x *InstallArcSpec) SetAksClusterName(v string) {
 	x.xxx_hidden_AksClusterName = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 8)
+}
+
+func (x *InstallArcSpec) SetEnabled(v bool) {
+	x.xxx_hidden_Enabled = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 7, 8)
 }
 
 func (x *InstallArcSpec) HasSubscriptionId() bool {
@@ -323,6 +336,13 @@ func (x *InstallArcSpec) HasAksClusterName() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 6)
 }
 
+func (x *InstallArcSpec) HasEnabled() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 7)
+}
+
 func (x *InstallArcSpec) ClearSubscriptionId() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_SubscriptionId = nil
@@ -353,6 +373,11 @@ func (x *InstallArcSpec) ClearAksClusterName() {
 	x.xxx_hidden_AksClusterName = nil
 }
 
+func (x *InstallArcSpec) ClearEnabled() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 7)
+	x.xxx_hidden_Enabled = false
+}
+
 type InstallArcSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -370,6 +395,9 @@ type InstallArcSpec_builder struct {
 	Tags map[string]string
 	// Target AKS cluster name for RBAC assignments
 	AksClusterName *string
+	// enabled controls whether Arc installation is performed.
+	// Set to false when azure.arc.enabled is false in the agent config.
+	Enabled *bool
 }
 
 func (b0 InstallArcSpec_builder) Build() *InstallArcSpec {
@@ -377,29 +405,33 @@ func (b0 InstallArcSpec_builder) Build() *InstallArcSpec {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.SubscriptionId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 8)
 		x.xxx_hidden_SubscriptionId = b.SubscriptionId
 	}
 	if b.TenantId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 8)
 		x.xxx_hidden_TenantId = b.TenantId
 	}
 	if b.ResourceGroup != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 8)
 		x.xxx_hidden_ResourceGroup = b.ResourceGroup
 	}
 	if b.Location != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 8)
 		x.xxx_hidden_Location = b.Location
 	}
 	if b.MachineName != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 8)
 		x.xxx_hidden_MachineName = b.MachineName
 	}
 	x.xxx_hidden_Tags = b.Tags
 	if b.AksClusterName != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 8)
 		x.xxx_hidden_AksClusterName = b.AksClusterName
+	}
+	if b.Enabled != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 7, 8)
+		x.xxx_hidden_Enabled = *b.Enabled
 	}
 	return m0
 }
@@ -625,7 +657,7 @@ const file_components_arc_action_proto_rawDesc = "" +
 	"InstallArc\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12;\n" +
 	"\x04spec\x18\x02 \x01(\v2'.aks.flex.components.arc.InstallArcSpecR\x04spec\x12A\n" +
-	"\x06status\x18\x03 \x01(\v2).aks.flex.components.arc.InstallArcStatusR\x06status\"\xe6\x02\n" +
+	"\x06status\x18\x03 \x01(\v2).aks.flex.components.arc.InstallArcStatusR\x06status\"\x80\x03\n" +
 	"\x0eInstallArcSpec\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\tR\x0esubscriptionId\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12%\n" +
@@ -633,7 +665,8 @@ const file_components_arc_action_proto_rawDesc = "" +
 	"\blocation\x18\x04 \x01(\tR\blocation\x12!\n" +
 	"\fmachine_name\x18\x05 \x01(\tR\vmachineName\x12E\n" +
 	"\x04tags\x18\x06 \x03(\v21.aks.flex.components.arc.InstallArcSpec.TagsEntryR\x04tags\x12(\n" +
-	"\x10aks_cluster_name\x18\a \x01(\tR\x0eaksClusterName\x1a7\n" +
+	"\x10aks_cluster_name\x18\a \x01(\tR\x0eaksClusterName\x12\x18\n" +
+	"\aenabled\x18\b \x01(\bR\aenabled\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xba\x01\n" +
