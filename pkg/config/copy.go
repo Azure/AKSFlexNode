@@ -45,6 +45,9 @@ func (cfg *Config) DeepCopy() *Config {
 
 	// Copy node-level maps.
 	out.Node.Labels = cloneStringMap(cfg.Node.Labels)
+	if cfg.Node.Taints != nil {
+		out.Node.Taints = append([]string(nil), cfg.Node.Taints...)
+	}
 	out.Node.Kubelet.KubeReserved = cloneStringMap(cfg.Node.Kubelet.KubeReserved)
 	out.Node.Kubelet.EvictionHard = cloneStringMap(cfg.Node.Kubelet.EvictionHard)
 

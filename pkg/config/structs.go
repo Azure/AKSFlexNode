@@ -119,7 +119,11 @@ type ContainerdConfig struct {
 type NodeConfig struct {
 	MaxPods int               `json:"maxPods"`
 	Labels  map[string]string `json:"labels"`
-	Kubelet KubeletConfig     `json:"kubelet"`
+	// Taints to apply at node registration time via --register-with-taints.
+	// Each entry must use the kubelet taint format: "key=value:Effect" or "key:Effect"
+	// (e.g. "dedicated=infra:NoSchedule", "gpu:NoExecute").
+	Taints  []string      `json:"taints,omitempty"`
+	Kubelet KubeletConfig `json:"kubelet"`
 }
 
 // KubeletConfig holds kubelet-specific configuration settings.
