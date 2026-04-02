@@ -69,6 +69,7 @@ message StartKubeletServiceSpec {
   NodeAuthInfo node_auth_info = 2;
   map<string, string> node_labels = 3;
   KubeletConfig kubelet_config = 4;
+  string node_ip = 5;
 }
 
 message StartKubeletServiceStatus {
