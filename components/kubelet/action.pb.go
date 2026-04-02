@@ -862,13 +862,11 @@ func (x *NodeAuthInfo) ClearBootstrapTokenCredential() {
 	}
 }
 
-const (
-	NodeAuthInfo_AuthInfo_not_set_case           case_NodeAuthInfo_AuthInfo = 0
-	NodeAuthInfo_ArcCredential_case              case_NodeAuthInfo_AuthInfo = 1
-	NodeAuthInfo_MsiCredential_case              case_NodeAuthInfo_AuthInfo = 2
-	NodeAuthInfo_ServicePrincipalCredential_case case_NodeAuthInfo_AuthInfo = 3
-	NodeAuthInfo_BootstrapTokenCredential_case   case_NodeAuthInfo_AuthInfo = 4
-)
+const NodeAuthInfo_AuthInfo_not_set_case case_NodeAuthInfo_AuthInfo = 0
+const NodeAuthInfo_ArcCredential_case case_NodeAuthInfo_AuthInfo = 1
+const NodeAuthInfo_MsiCredential_case case_NodeAuthInfo_AuthInfo = 2
+const NodeAuthInfo_ServicePrincipalCredential_case case_NodeAuthInfo_AuthInfo = 3
+const NodeAuthInfo_BootstrapTokenCredential_case case_NodeAuthInfo_AuthInfo = 4
 
 func (x *NodeAuthInfo) WhichAuthInfo() case_NodeAuthInfo_AuthInfo {
 	if x == nil {
@@ -1171,13 +1169,14 @@ func (b0 KubeletConfig_builder) Build() *KubeletConfig {
 }
 
 type StartKubeletServiceSpec struct {
-	state                    protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ControlPlane  *ControlPlane          `protobuf:"bytes,1,opt,name=control_plane,json=controlPlane"`
-	xxx_hidden_NodeAuthInfo  *NodeAuthInfo          `protobuf:"bytes,2,opt,name=node_auth_info,json=nodeAuthInfo"`
-	xxx_hidden_NodeLabels    map[string]string      `protobuf:"bytes,3,rep,name=node_labels,json=nodeLabels" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	xxx_hidden_KubeletConfig *KubeletConfig         `protobuf:"bytes,4,opt,name=kubelet_config,json=kubeletConfig"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	state                         protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ControlPlane       *ControlPlane          `protobuf:"bytes,1,opt,name=control_plane,json=controlPlane"`
+	xxx_hidden_NodeAuthInfo       *NodeAuthInfo          `protobuf:"bytes,2,opt,name=node_auth_info,json=nodeAuthInfo"`
+	xxx_hidden_NodeLabels         map[string]string      `protobuf:"bytes,3,rep,name=node_labels,json=nodeLabels" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	xxx_hidden_KubeletConfig      *KubeletConfig         `protobuf:"bytes,4,opt,name=kubelet_config,json=kubeletConfig"`
+	xxx_hidden_RegisterWithTaints []string               `protobuf:"bytes,5,rep,name=register_with_taints,json=registerWithTaints"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *StartKubeletServiceSpec) Reset() {
@@ -1233,6 +1232,13 @@ func (x *StartKubeletServiceSpec) GetKubeletConfig() *KubeletConfig {
 	return nil
 }
 
+func (x *StartKubeletServiceSpec) GetRegisterWithTaints() []string {
+	if x != nil {
+		return x.xxx_hidden_RegisterWithTaints
+	}
+	return nil
+}
+
 func (x *StartKubeletServiceSpec) SetControlPlane(v *ControlPlane) {
 	x.xxx_hidden_ControlPlane = v
 }
@@ -1247,6 +1253,10 @@ func (x *StartKubeletServiceSpec) SetNodeLabels(v map[string]string) {
 
 func (x *StartKubeletServiceSpec) SetKubeletConfig(v *KubeletConfig) {
 	x.xxx_hidden_KubeletConfig = v
+}
+
+func (x *StartKubeletServiceSpec) SetRegisterWithTaints(v []string) {
+	x.xxx_hidden_RegisterWithTaints = v
 }
 
 func (x *StartKubeletServiceSpec) HasControlPlane() bool {
@@ -1289,6 +1299,9 @@ type StartKubeletServiceSpec_builder struct {
 	NodeAuthInfo  *NodeAuthInfo
 	NodeLabels    map[string]string
 	KubeletConfig *KubeletConfig
+	// Taints to register the node with via --register-with-taints.
+	// Each entry must use the kubelet taint format: "key=value:Effect" or "key:Effect".
+	RegisterWithTaints []string
 }
 
 func (b0 StartKubeletServiceSpec_builder) Build() *StartKubeletServiceSpec {
@@ -1299,6 +1312,7 @@ func (b0 StartKubeletServiceSpec_builder) Build() *StartKubeletServiceSpec {
 	x.xxx_hidden_NodeAuthInfo = b.NodeAuthInfo
 	x.xxx_hidden_NodeLabels = b.NodeLabels
 	x.xxx_hidden_KubeletConfig = b.KubeletConfig
+	x.xxx_hidden_RegisterWithTaints = b.RegisterWithTaints
 	return m0
 }
 
@@ -1335,6 +1349,7 @@ func (x *StartKubeletServiceStatus) ProtoReflect() protoreflect.Message {
 
 type StartKubeletServiceStatus_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
 }
 
 func (b0 StartKubeletServiceStatus_builder) Build() *StartKubeletServiceStatus {
@@ -1495,6 +1510,7 @@ func (x *ResetKubeletSpec) ProtoReflect() protoreflect.Message {
 
 type ResetKubeletSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
 }
 
 func (b0 ResetKubeletSpec_builder) Build() *ResetKubeletSpec {
@@ -1537,6 +1553,7 @@ func (x *ResetKubeletStatus) ProtoReflect() protoreflect.Message {
 
 type ResetKubeletStatus_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
 }
 
 func (b0 ResetKubeletStatus_builder) Build() *ResetKubeletStatus {
@@ -1697,6 +1714,7 @@ func (x *StopKubeletServiceSpec) ProtoReflect() protoreflect.Message {
 
 type StopKubeletServiceSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
 }
 
 func (b0 StopKubeletServiceSpec_builder) Build() *StopKubeletServiceSpec {
@@ -1739,6 +1757,7 @@ func (x *StopKubeletServiceStatus) ProtoReflect() protoreflect.Message {
 
 type StopKubeletServiceStatus_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
 }
 
 func (b0 StopKubeletServiceStatus_builder) Build() *StopKubeletServiceStatus {
@@ -1792,13 +1811,14 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
 	"\x11EvictionHardEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe5\x03\n" +
 	"\x17StartKubeletServiceSpec\x12N\n" +
 	"\rcontrol_plane\x18\x01 \x01(\v2).aks.flex.components.kubelet.ControlPlaneR\fcontrolPlane\x12O\n" +
 	"\x0enode_auth_info\x18\x02 \x01(\v2).aks.flex.components.kubelet.NodeAuthInfoR\fnodeAuthInfo\x12e\n" +
 	"\vnode_labels\x18\x03 \x03(\v2D.aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntryR\n" +
 	"nodeLabels\x12Q\n" +
-	"\x0ekubelet_config\x18\x04 \x01(\v2*.aks.flex.components.kubelet.KubeletConfigR\rkubeletConfig\x1a=\n" +
+	"\x0ekubelet_config\x18\x04 \x01(\v2*.aks.flex.components.kubelet.KubeletConfigR\rkubeletConfig\x120\n" +
+	"\x14register_with_taints\x18\x05 \x03(\tR\x12registerWithTaints\x1a=\n" +
 	"\x0fNodeLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1b\n" +
@@ -1816,31 +1836,29 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x16StopKubeletServiceSpec\"\x1a\n" +
 	"\x18StopKubeletServiceStatusB1Z/github.com/Azure/AKSFlexNode/components/kubeletb\beditionsp\xe9\a"
 
-var (
-	file_components_kubelet_action_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
-	file_components_kubelet_action_proto_goTypes  = []any{
-		(*StartKubeletService)(nil),               // 0: aks.flex.components.kubelet.StartKubeletService
-		(*KubeletArcCredential)(nil),              // 1: aks.flex.components.kubelet.KubeletArcCredential
-		(*KubeletMSICredential)(nil),              // 2: aks.flex.components.kubelet.KubeletMSICredential
-		(*KubeletServicePrincipalCredential)(nil), // 3: aks.flex.components.kubelet.KubeletServicePrincipalCredential
-		(*KubeletBootstrapTokenCredential)(nil),   // 4: aks.flex.components.kubelet.KubeletBootstrapTokenCredential
-		(*ControlPlane)(nil),                      // 5: aks.flex.components.kubelet.ControlPlane
-		(*NodeAuthInfo)(nil),                      // 6: aks.flex.components.kubelet.NodeAuthInfo
-		(*KubeletConfig)(nil),                     // 7: aks.flex.components.kubelet.KubeletConfig
-		(*StartKubeletServiceSpec)(nil),           // 8: aks.flex.components.kubelet.StartKubeletServiceSpec
-		(*StartKubeletServiceStatus)(nil),         // 9: aks.flex.components.kubelet.StartKubeletServiceStatus
-		(*ResetKubelet)(nil),                      // 10: aks.flex.components.kubelet.ResetKubelet
-		(*ResetKubeletSpec)(nil),                  // 11: aks.flex.components.kubelet.ResetKubeletSpec
-		(*ResetKubeletStatus)(nil),                // 12: aks.flex.components.kubelet.ResetKubeletStatus
-		(*StopKubeletService)(nil),                // 13: aks.flex.components.kubelet.StopKubeletService
-		(*StopKubeletServiceSpec)(nil),            // 14: aks.flex.components.kubelet.StopKubeletServiceSpec
-		(*StopKubeletServiceStatus)(nil),          // 15: aks.flex.components.kubelet.StopKubeletServiceStatus
-		nil,                                       // 16: aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
-		nil,                                       // 17: aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
-		nil,                                       // 18: aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
-		(*api.Metadata)(nil),                      // 19: aks.flex.components.api.Metadata
-	}
-)
+var file_components_kubelet_action_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_components_kubelet_action_proto_goTypes = []any{
+	(*StartKubeletService)(nil),               // 0: aks.flex.components.kubelet.StartKubeletService
+	(*KubeletArcCredential)(nil),              // 1: aks.flex.components.kubelet.KubeletArcCredential
+	(*KubeletMSICredential)(nil),              // 2: aks.flex.components.kubelet.KubeletMSICredential
+	(*KubeletServicePrincipalCredential)(nil), // 3: aks.flex.components.kubelet.KubeletServicePrincipalCredential
+	(*KubeletBootstrapTokenCredential)(nil),   // 4: aks.flex.components.kubelet.KubeletBootstrapTokenCredential
+	(*ControlPlane)(nil),                      // 5: aks.flex.components.kubelet.ControlPlane
+	(*NodeAuthInfo)(nil),                      // 6: aks.flex.components.kubelet.NodeAuthInfo
+	(*KubeletConfig)(nil),                     // 7: aks.flex.components.kubelet.KubeletConfig
+	(*StartKubeletServiceSpec)(nil),           // 8: aks.flex.components.kubelet.StartKubeletServiceSpec
+	(*StartKubeletServiceStatus)(nil),         // 9: aks.flex.components.kubelet.StartKubeletServiceStatus
+	(*ResetKubelet)(nil),                      // 10: aks.flex.components.kubelet.ResetKubelet
+	(*ResetKubeletSpec)(nil),                  // 11: aks.flex.components.kubelet.ResetKubeletSpec
+	(*ResetKubeletStatus)(nil),                // 12: aks.flex.components.kubelet.ResetKubeletStatus
+	(*StopKubeletService)(nil),                // 13: aks.flex.components.kubelet.StopKubeletService
+	(*StopKubeletServiceSpec)(nil),            // 14: aks.flex.components.kubelet.StopKubeletServiceSpec
+	(*StopKubeletServiceStatus)(nil),          // 15: aks.flex.components.kubelet.StopKubeletServiceStatus
+	nil,                                       // 16: aks.flex.components.kubelet.KubeletConfig.KubeReservedEntry
+	nil,                                       // 17: aks.flex.components.kubelet.KubeletConfig.EvictionHardEntry
+	nil,                                       // 18: aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntry
+	(*api.Metadata)(nil),                      // 19: aks.flex.components.api.Metadata
+}
 var file_components_kubelet_action_proto_depIdxs = []int32{
 	19, // 0: aks.flex.components.kubelet.StartKubeletService.metadata:type_name -> aks.flex.components.api.Metadata
 	8,  // 1: aks.flex.components.kubelet.StartKubeletService.spec:type_name -> aks.flex.components.kubelet.StartKubeletServiceSpec

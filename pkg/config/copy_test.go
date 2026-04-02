@@ -52,6 +52,7 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 		Agent: AgentConfig{EnableDriftDetectionAndRemediation: &falseVal},
 		Node: NodeConfig{
 			Labels: map[string]string{"l": "1"},
+			Taints: []string{"dedicated=infra:NoSchedule"},
 			Kubelet: KubeletConfig{
 				KubeReserved: map[string]string{"cpu": "100m"},
 				EvictionHard: map[string]string{"memory.available": "200Mi"},
@@ -101,6 +102,15 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	copy.Node.Labels["l"] = "copy"
 	if cfg.Node.Labels["l"] != "orig" {
 		t.Fatalf("Node.Labels shared; orig=%q, want %q", cfg.Node.Labels["l"], "orig")
+	}
+
+	// Taints slice should not be shared.
+	if len(copy.Node.Taints) != 1 || copy.Node.Taints[0] != "dedicated=infra:NoSchedule" {
+		t.Fatalf("Node.Taints copy=%v, want [dedicated=infra:NoSchedule]", copy.Node.Taints)
+	}
+	cfg.Node.Taints[0] = "mutated:NoExecute"
+	if copy.Node.Taints[0] != "dedicated=infra:NoSchedule" {
+		t.Fatalf("Node.Taints shares backing array; copy=%q, want %q", copy.Node.Taints[0], "dedicated=infra:NoSchedule")
 	}
 
 	cfg.Node.Kubelet.KubeReserved["cpu"] = "200m"
