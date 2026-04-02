@@ -70,6 +70,7 @@ message StartKubeletServiceSpec {
   map<string, string> node_labels = 3;
   KubeletConfig kubelet_config = 4;
   repeated string register_with_taints = 5;
+  string node_ip = 6;
 }
 
 message StartKubeletServiceStatus {

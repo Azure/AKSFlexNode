@@ -77,6 +77,15 @@ func ptr[T any](value T) *T {
 	return &value
 }
 
+// ptrOrNil returns nil if value is the zero value for T, otherwise returns a pointer to value.
+func ptrOrNil[T comparable](value T) *T {
+	var zero T
+	if value == zero {
+		return nil
+	}
+	return &value
+}
+
 func componentAction(name string) *api.Metadata {
 	return api.Metadata_builder{Name: &name}.Build()
 }
@@ -298,6 +307,7 @@ var startKubelet resolveActionFunc[*kubelet.StartKubeletService] = func(
 			ClusterDns:           []string{cfg.Node.Kubelet.DNSServiceIP},
 			MaxPods:              ptr(int32(cfg.Node.MaxPods)),
 		}.Build(),
+		NodeIp: ptrOrNil(cfg.Node.Kubelet.NodeIP),
 	}.Build()
 
 	return kubelet.StartKubeletService_builder{

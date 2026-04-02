@@ -81,6 +81,7 @@ func (s *startKubeletServiceAction) ensureSystemdUnit(
 		"ImageGCHighThreshold": kubeletConfig.GetImageGcHighThreshold(),
 		"ImageGCLowThreshold":  kubeletConfig.GetImageGcLowThreshold(),
 		"MaxPods":              kubeletConfig.GetMaxPods(),
+		"NodeIP":               spec.GetNodeIp(),
 	})
 	if err != nil {
 		return err
