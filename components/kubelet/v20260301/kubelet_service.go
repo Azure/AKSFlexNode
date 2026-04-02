@@ -3,6 +3,7 @@ package v20260301
 import (
 	"bytes"
 	"context"
+	"strings"
 
 	"github.com/Azure/AKSFlexNode/components/kubelet"
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -74,6 +75,7 @@ func (s *startKubeletServiceAction) ensureSystemdUnit(
 		"Verbosity":            kubeletConfig.GetVerbosity(),
 		"ClientCAFile":         apiServerClientCAPath, // prepared in ensureAPIServerCA
 		"ClusterDNS":           kubeletConfig.GetClusterDns(),
+		"RegisterWithTaints":   strings.Join(spec.GetRegisterWithTaints(), ","),
 		"EvictionHard":         mapPairsToString(kubeletConfig.GetEvictionHard(), "<", ","),
 		"KubeReserved":         mapPairsToString(kubeletConfig.GetKubeReserved(), "=", ","),
 		"ImageGCHighThreshold": kubeletConfig.GetImageGcHighThreshold(),

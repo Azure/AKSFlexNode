@@ -7,12 +7,11 @@
 package kubelet
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -1169,16 +1168,17 @@ func (b0 KubeletConfig_builder) Build() *KubeletConfig {
 }
 
 type StartKubeletServiceSpec struct {
-	state                    protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ControlPlane  *ControlPlane          `protobuf:"bytes,1,opt,name=control_plane,json=controlPlane"`
-	xxx_hidden_NodeAuthInfo  *NodeAuthInfo          `protobuf:"bytes,2,opt,name=node_auth_info,json=nodeAuthInfo"`
-	xxx_hidden_NodeLabels    map[string]string      `protobuf:"bytes,3,rep,name=node_labels,json=nodeLabels" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	xxx_hidden_KubeletConfig *KubeletConfig         `protobuf:"bytes,4,opt,name=kubelet_config,json=kubeletConfig"`
-	xxx_hidden_NodeIp        *string                `protobuf:"bytes,5,opt,name=node_ip,json=nodeIp"`
-	XXX_raceDetectHookData   protoimpl.RaceDetectHookData
-	XXX_presence             [1]uint32
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	state                         protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ControlPlane       *ControlPlane          `protobuf:"bytes,1,opt,name=control_plane,json=controlPlane"`
+	xxx_hidden_NodeAuthInfo       *NodeAuthInfo          `protobuf:"bytes,2,opt,name=node_auth_info,json=nodeAuthInfo"`
+	xxx_hidden_NodeLabels         map[string]string      `protobuf:"bytes,3,rep,name=node_labels,json=nodeLabels" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	xxx_hidden_KubeletConfig      *KubeletConfig         `protobuf:"bytes,4,opt,name=kubelet_config,json=kubeletConfig"`
+	xxx_hidden_RegisterWithTaints []string               `protobuf:"bytes,5,rep,name=register_with_taints,json=registerWithTaints"`
+	xxx_hidden_NodeIp             *string                `protobuf:"bytes,6,opt,name=node_ip,json=nodeIp"`
+	XXX_raceDetectHookData        protoimpl.RaceDetectHookData
+	XXX_presence                  [1]uint32
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *StartKubeletServiceSpec) Reset() {
@@ -1234,6 +1234,13 @@ func (x *StartKubeletServiceSpec) GetKubeletConfig() *KubeletConfig {
 	return nil
 }
 
+func (x *StartKubeletServiceSpec) GetRegisterWithTaints() []string {
+	if x != nil {
+		return x.xxx_hidden_RegisterWithTaints
+	}
+	return nil
+}
+
 func (x *StartKubeletServiceSpec) GetNodeIp() string {
 	if x != nil {
 		if x.xxx_hidden_NodeIp != nil {
@@ -1260,9 +1267,13 @@ func (x *StartKubeletServiceSpec) SetKubeletConfig(v *KubeletConfig) {
 	x.xxx_hidden_KubeletConfig = v
 }
 
+func (x *StartKubeletServiceSpec) SetRegisterWithTaints(v []string) {
+	x.xxx_hidden_RegisterWithTaints = v
+}
+
 func (x *StartKubeletServiceSpec) SetNodeIp(v string) {
 	x.xxx_hidden_NodeIp = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 6)
 }
 
 func (x *StartKubeletServiceSpec) HasControlPlane() bool {
@@ -1290,7 +1301,7 @@ func (x *StartKubeletServiceSpec) HasNodeIp() bool {
 	if x == nil {
 		return false
 	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
 }
 
 func (x *StartKubeletServiceSpec) ClearControlPlane() {
@@ -1306,18 +1317,19 @@ func (x *StartKubeletServiceSpec) ClearKubeletConfig() {
 }
 
 func (x *StartKubeletServiceSpec) ClearNodeIp() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 4)
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
 	x.xxx_hidden_NodeIp = nil
 }
 
 type StartKubeletServiceSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	ControlPlane  *ControlPlane
-	NodeAuthInfo  *NodeAuthInfo
-	NodeLabels    map[string]string
-	KubeletConfig *KubeletConfig
-	NodeIp        *string
+	ControlPlane       *ControlPlane
+	NodeAuthInfo       *NodeAuthInfo
+	NodeLabels         map[string]string
+	KubeletConfig      *KubeletConfig
+	RegisterWithTaints []string
+	NodeIp             *string
 }
 
 func (b0 StartKubeletServiceSpec_builder) Build() *StartKubeletServiceSpec {
@@ -1328,8 +1340,9 @@ func (b0 StartKubeletServiceSpec_builder) Build() *StartKubeletServiceSpec {
 	x.xxx_hidden_NodeAuthInfo = b.NodeAuthInfo
 	x.xxx_hidden_NodeLabels = b.NodeLabels
 	x.xxx_hidden_KubeletConfig = b.KubeletConfig
+	x.xxx_hidden_RegisterWithTaints = b.RegisterWithTaints
 	if b.NodeIp != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 6)
 		x.xxx_hidden_NodeIp = b.NodeIp
 	}
 	return m0
@@ -1830,14 +1843,15 @@ const file_components_kubelet_action_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
 	"\x11EvictionHardEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfe\x03\n" +
 	"\x17StartKubeletServiceSpec\x12N\n" +
 	"\rcontrol_plane\x18\x01 \x01(\v2).aks.flex.components.kubelet.ControlPlaneR\fcontrolPlane\x12O\n" +
 	"\x0enode_auth_info\x18\x02 \x01(\v2).aks.flex.components.kubelet.NodeAuthInfoR\fnodeAuthInfo\x12e\n" +
 	"\vnode_labels\x18\x03 \x03(\v2D.aks.flex.components.kubelet.StartKubeletServiceSpec.NodeLabelsEntryR\n" +
 	"nodeLabels\x12Q\n" +
-	"\x0ekubelet_config\x18\x04 \x01(\v2*.aks.flex.components.kubelet.KubeletConfigR\rkubeletConfig\x12\x17\n" +
-	"\anode_ip\x18\x05 \x01(\tR\x06nodeIp\x1a=\n" +
+	"\x0ekubelet_config\x18\x04 \x01(\v2*.aks.flex.components.kubelet.KubeletConfigR\rkubeletConfig\x120\n" +
+	"\x14register_with_taints\x18\x05 \x03(\tR\x12registerWithTaints\x12\x17\n" +
+	"\anode_ip\x18\x06 \x01(\tR\x06nodeIp\x1a=\n" +
 	"\x0fNodeLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1b\n" +

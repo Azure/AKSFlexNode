@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"os"
 	"os/exec"
 	"text/template"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Azure/AKSFlexNode/components/api"
 	"github.com/Azure/AKSFlexNode/components/kubelet"
 	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/systemd"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 )
@@ -55,6 +57,10 @@ func (s *startKubeletServiceAction) ApplyAction(
 		return nil, err
 	}
 
+	if err := s.ensureRuntimeFolders(); err != nil {
+		return nil, err
+	}
+
 	kubeletConfigUpdated, err := s.ensureKubeletConfig(spec)
 	if err != nil {
 		return nil, err
@@ -86,5 +92,16 @@ func (s *startKubeletServiceAction) systemPreflightCheck() error {
 		}
 	}
 
+	return nil
+}
+
+// ensureRuntimeFolders creates directories that must exist before kubelet
+// starts but are not managed by kubelet itself.
+func (s *startKubeletServiceAction) ensureRuntimeFolders() error {
+	// create static pod dir -- kubelet expects this directory to exist for --pod-manifest-path
+	// ref: https://github.com/kubernetes/kubernetes/blob/147a9ee31545188a1a53ad64ed12add16e95f04a/cmd/kubeadm/app/util/staticpod/utils.go#L191-L192
+	if err := os.MkdirAll(config.KubeletStaticPodPath, 0700); err != nil {
+		return fmt.Errorf("create runtime folder %q: %w", config.KubeletStaticPodPath, err)
+	}
 	return nil
 }
