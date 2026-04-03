@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -15,26 +17,28 @@ import (
 	"github.com/Azure/AKSFlexNode/components/kubebins"
 	"github.com/Azure/AKSFlexNode/components/services/actions"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilpb"
 )
 
 const (
-	defaultKubernetesURLTemplate = "https://acs-mirror.azureedge.net/kubernetes/v%s/binaries/kubernetes-node-linux-%s.tar.gz"
-	kubernetesTarPath            = "kubernetes/node/bin/"
+	// kubernetesBinaryURLTemplate is the download URL template for individual Kubernetes binaries
+	// from the official Kubernetes release CDN (https://dl.k8s.io).
+	// Parameters: version, arch, binary name.
+	kubernetesBinaryURLTemplate = "https://dl.k8s.io/v%s/bin/linux/%s/%s"
 )
 
-var (
-	binPathKubelet = filepath.Join(config.DefaultBinaryPath, "kubelet")
+// requiredBinaries lists the Kubernetes binaries that must be present for a valid installation.
+var requiredBinaries = []string{
+	"kubeadm",
+	"kubelet",
+	"kubectl",
+	"kube-proxy",
+}
 
-	binariesRequired = []string{
-		filepath.Join(config.DefaultBinaryPath, "kubeadm"),
-		filepath.Join(config.DefaultBinaryPath, "kubelet"),
-		filepath.Join(config.DefaultBinaryPath, "kubectl"),
-		filepath.Join(config.DefaultBinaryPath, "kube-proxy"),
-	}
-)
+var binPathKubelet = filepath.Join(config.DefaultBinaryPath, "kubelet")
 
 type downloadKubeBinariesAction struct{}
 
@@ -55,18 +59,23 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 
 	spec := settings.GetSpec()
 
-	downloadURL := d.constructDownloadURL(spec.GetKubernetesVersion())
+	version := spec.GetKubernetesVersion()
+	arch := utilhost.GetArch()
 
 	st := kubebins.DownloadKubeBinariesStatus_builder{
-		DownloadUrl: to.Ptr(downloadURL),
-		KubeletPath: to.Ptr(binPathKubelet),
-		KubeadmPath: to.Ptr(filepath.Join(config.DefaultBinaryPath, "kubeadm")),
-		KubectlPath: to.Ptr(filepath.Join(config.DefaultBinaryPath, "kubectl")),
+		KubeletPath:          to.Ptr(binPathKubelet),
+		KubeadmPath:          to.Ptr(filepath.Join(config.DefaultBinaryPath, "kubeadm")),
+		KubectlPath:          to.Ptr(filepath.Join(config.DefaultBinaryPath, "kubectl")),
+		KubeProxyPath:        to.Ptr(filepath.Join(config.DefaultBinaryPath, "kube-proxy")),
+		KubeletDownloadUrl:   to.Ptr(fmt.Sprintf(kubernetesBinaryURLTemplate, version, arch, "kubelet")),
+		KubeadmDownloadUrl:   to.Ptr(fmt.Sprintf(kubernetesBinaryURLTemplate, version, arch, "kubeadm")),
+		KubectlDownloadUrl:   to.Ptr(fmt.Sprintf(kubernetesBinaryURLTemplate, version, arch, "kubectl")),
+		KubeProxyDownloadUrl: to.Ptr(fmt.Sprintf(kubernetesBinaryURLTemplate, version, arch, "kube-proxy")),
 	}
 
-	needDownload := !hasRequiredBinaries() || !kubeletVersionMatch(ctx, spec.GetKubernetesVersion())
+	needDownload := !hasRequiredBinaries() || !kubeletVersionMatch(ctx, version)
 	if needDownload {
-		if err := d.download(ctx, downloadURL); err != nil {
+		if err := d.download(ctx, version); err != nil {
 			return nil, err
 		}
 	}
@@ -81,36 +90,39 @@ func (d *downloadKubeBinariesAction) ApplyAction(
 	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
 }
 
-func (d *downloadKubeBinariesAction) download(ctx context.Context, downloadURL string) error {
-	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, downloadURL) {
-		if err != nil {
-			return status.Errorf(codes.Internal, "decompress tar: %s", err)
-		}
+// download fetches all required Kubernetes binaries in parallel from dl.k8s.io.
+func (d *downloadKubeBinariesAction) download(ctx context.Context, kubernetesVersion string) error {
+	arch := utilhost.GetArch()
+	log := logger.GetLoggerFromContext(ctx)
 
-		if !strings.HasPrefix(tarFile.Name, kubernetesTarPath) {
-			continue
-		}
+	eg, ctx := errgroup.WithContext(ctx)
 
-		binaryName := strings.TrimPrefix(tarFile.Name, kubernetesTarPath)
+	for _, binary := range requiredBinaries {
+		binaryURL := fmt.Sprintf(kubernetesBinaryURLTemplate, kubernetesVersion, arch, binary)
+		targetFilePath := filepath.Join(config.DefaultBinaryPath, binary)
 
-		targetFilePath := filepath.Join(config.DefaultBinaryPath, binaryName)
+		eg.Go(func() error {
+			log.WithField("binary", binary).WithField("url", binaryURL).Info("downloading kubernetes binary")
 
-		if err := utilio.InstallFile(targetFilePath, tarFile.Body, 0755); err != nil {
-			return status.Errorf(codes.Internal, "install file %q: %s", targetFilePath, err)
-		}
+			start := time.Now()
+
+			if err := utilio.DownloadToLocalFile(ctx, binaryURL, targetFilePath, 0755); err != nil {
+				return status.Errorf(codes.Internal, "download kubernetes binary %q: %s", binary, err)
+			}
+
+			log.WithField("binary", binary).WithField("duration", time.Since(start)).Info("downloaded kubernetes binary")
+
+			return nil
+		})
 	}
 
-	return nil
+	return eg.Wait()
 }
 
-// constructDownloadURL constructs the download URL for the specified Kubernetes version.
-func (d *downloadKubeBinariesAction) constructDownloadURL(kubernetesVersion string) string {
-	arch := utilhost.GetArch()
-	return fmt.Sprintf(defaultKubernetesURLTemplate, kubernetesVersion, arch)
-}
-
+// hasRequiredBinaries checks if all required Kubernetes binaries are installed and executable.
 func hasRequiredBinaries() bool {
-	for _, binaryPath := range binariesRequired {
+	for _, binary := range requiredBinaries {
+		binaryPath := filepath.Join(config.DefaultBinaryPath, binary)
 		if !utilio.IsExecutable(binaryPath) {
 			return false
 		}
@@ -118,6 +130,7 @@ func hasRequiredBinaries() bool {
 	return true
 }
 
+// kubeletVersionMatch checks if the installed kubelet version matches the expected version.
 func kubeletVersionMatch(ctx context.Context, version string) bool {
 	output, err := utilexec.New().
 		CommandContext(ctx, binPathKubelet, "--version").
