@@ -7,5 +7,6 @@ package drift
 func DefaultDetectors() []Detector {
 	return []Detector{
 		NewKubernetesVersionDetector(),
+		NewRebootDetector(),
 	}
 }

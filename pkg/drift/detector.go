@@ -25,6 +25,7 @@ type RemediationAction string
 const (
 	RemediationActionUnspecified       RemediationAction = ""
 	RemediationActionKubernetesUpgrade RemediationAction = "kubernetes-upgrade"
+	RemediationActionReboot            RemediationAction = "reboot"
 )
 
 // Remediation describes what the agent should do to address a drift.
