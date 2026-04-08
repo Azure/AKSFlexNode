@@ -144,6 +144,7 @@ type DownloadCRIBinariesSpec struct {
 	state                        protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_ContainerdVersion *string                `protobuf:"bytes,1,opt,name=containerd_version,json=containerdVersion"`
 	xxx_hidden_RuncVersion       *string                `protobuf:"bytes,2,opt,name=runc_version,json=runcVersion"`
+	xxx_hidden_CrictlVersion     *string                `protobuf:"bytes,3,opt,name=crictl_version,json=crictlVersion"`
 	XXX_raceDetectHookData       protoimpl.RaceDetectHookData
 	XXX_presence                 [1]uint32
 	unknownFields                protoimpl.UnknownFields
@@ -195,14 +196,29 @@ func (x *DownloadCRIBinariesSpec) GetRuncVersion() string {
 	return ""
 }
 
+func (x *DownloadCRIBinariesSpec) GetCrictlVersion() string {
+	if x != nil {
+		if x.xxx_hidden_CrictlVersion != nil {
+			return *x.xxx_hidden_CrictlVersion
+		}
+		return ""
+	}
+	return ""
+}
+
 func (x *DownloadCRIBinariesSpec) SetContainerdVersion(v string) {
 	x.xxx_hidden_ContainerdVersion = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 3)
 }
 
 func (x *DownloadCRIBinariesSpec) SetRuncVersion(v string) {
 	x.xxx_hidden_RuncVersion = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
+}
+
+func (x *DownloadCRIBinariesSpec) SetCrictlVersion(v string) {
+	x.xxx_hidden_CrictlVersion = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 3)
 }
 
 func (x *DownloadCRIBinariesSpec) HasContainerdVersion() bool {
@@ -219,6 +235,13 @@ func (x *DownloadCRIBinariesSpec) HasRuncVersion() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
 }
 
+func (x *DownloadCRIBinariesSpec) HasCrictlVersion() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
 func (x *DownloadCRIBinariesSpec) ClearContainerdVersion() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_ContainerdVersion = nil
@@ -229,11 +252,17 @@ func (x *DownloadCRIBinariesSpec) ClearRuncVersion() {
 	x.xxx_hidden_RuncVersion = nil
 }
 
+func (x *DownloadCRIBinariesSpec) ClearCrictlVersion() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+	x.xxx_hidden_CrictlVersion = nil
+}
+
 type DownloadCRIBinariesSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	ContainerdVersion *string
 	RuncVersion       *string
+	CrictlVersion     *string
 }
 
 func (b0 DownloadCRIBinariesSpec_builder) Build() *DownloadCRIBinariesSpec {
@@ -241,12 +270,16 @@ func (b0 DownloadCRIBinariesSpec_builder) Build() *DownloadCRIBinariesSpec {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.ContainerdVersion != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 3)
 		x.xxx_hidden_ContainerdVersion = b.ContainerdVersion
 	}
 	if b.RuncVersion != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 3)
 		x.xxx_hidden_RuncVersion = b.RuncVersion
+	}
+	if b.CrictlVersion != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 3)
+		x.xxx_hidden_CrictlVersion = b.CrictlVersion
 	}
 	return m0
 }
@@ -257,6 +290,8 @@ type DownloadCRIBinariesStatus struct {
 	xxx_hidden_ContainerdPath        *string                `protobuf:"bytes,2,opt,name=containerd_path,json=containerdPath"`
 	xxx_hidden_RuncDownloadUrl       *string                `protobuf:"bytes,3,opt,name=runc_download_url,json=runcDownloadUrl"`
 	xxx_hidden_RuncPath              *string                `protobuf:"bytes,4,opt,name=runc_path,json=runcPath"`
+	xxx_hidden_CrictlDownloadUrl     *string                `protobuf:"bytes,5,opt,name=crictl_download_url,json=crictlDownloadUrl"`
+	xxx_hidden_CrictlPath            *string                `protobuf:"bytes,6,opt,name=crictl_path,json=crictlPath"`
 	XXX_raceDetectHookData           protoimpl.RaceDetectHookData
 	XXX_presence                     [1]uint32
 	unknownFields                    protoimpl.UnknownFields
@@ -328,24 +363,54 @@ func (x *DownloadCRIBinariesStatus) GetRuncPath() string {
 	return ""
 }
 
+func (x *DownloadCRIBinariesStatus) GetCrictlDownloadUrl() string {
+	if x != nil {
+		if x.xxx_hidden_CrictlDownloadUrl != nil {
+			return *x.xxx_hidden_CrictlDownloadUrl
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *DownloadCRIBinariesStatus) GetCrictlPath() string {
+	if x != nil {
+		if x.xxx_hidden_CrictlPath != nil {
+			return *x.xxx_hidden_CrictlPath
+		}
+		return ""
+	}
+	return ""
+}
+
 func (x *DownloadCRIBinariesStatus) SetContainerdDownloadUrl(v string) {
 	x.xxx_hidden_ContainerdDownloadUrl = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 4)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 6)
 }
 
 func (x *DownloadCRIBinariesStatus) SetContainerdPath(v string) {
 	x.xxx_hidden_ContainerdPath = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 4)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 6)
 }
 
 func (x *DownloadCRIBinariesStatus) SetRuncDownloadUrl(v string) {
 	x.xxx_hidden_RuncDownloadUrl = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 4)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 6)
 }
 
 func (x *DownloadCRIBinariesStatus) SetRuncPath(v string) {
 	x.xxx_hidden_RuncPath = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 4)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 6)
+}
+
+func (x *DownloadCRIBinariesStatus) SetCrictlDownloadUrl(v string) {
+	x.xxx_hidden_CrictlDownloadUrl = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 6)
+}
+
+func (x *DownloadCRIBinariesStatus) SetCrictlPath(v string) {
+	x.xxx_hidden_CrictlPath = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 6)
 }
 
 func (x *DownloadCRIBinariesStatus) HasContainerdDownloadUrl() bool {
@@ -376,6 +441,20 @@ func (x *DownloadCRIBinariesStatus) HasRuncPath() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 3)
 }
 
+func (x *DownloadCRIBinariesStatus) HasCrictlDownloadUrl() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
+}
+
+func (x *DownloadCRIBinariesStatus) HasCrictlPath() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
+}
+
 func (x *DownloadCRIBinariesStatus) ClearContainerdDownloadUrl() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_ContainerdDownloadUrl = nil
@@ -396,6 +475,16 @@ func (x *DownloadCRIBinariesStatus) ClearRuncPath() {
 	x.xxx_hidden_RuncPath = nil
 }
 
+func (x *DownloadCRIBinariesStatus) ClearCrictlDownloadUrl() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 4)
+	x.xxx_hidden_CrictlDownloadUrl = nil
+}
+
+func (x *DownloadCRIBinariesStatus) ClearCrictlPath() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
+	x.xxx_hidden_CrictlPath = nil
+}
+
 type DownloadCRIBinariesStatus_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -403,6 +492,8 @@ type DownloadCRIBinariesStatus_builder struct {
 	ContainerdPath        *string
 	RuncDownloadUrl       *string
 	RuncPath              *string
+	CrictlDownloadUrl     *string
+	CrictlPath            *string
 }
 
 func (b0 DownloadCRIBinariesStatus_builder) Build() *DownloadCRIBinariesStatus {
@@ -410,20 +501,28 @@ func (b0 DownloadCRIBinariesStatus_builder) Build() *DownloadCRIBinariesStatus {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.ContainerdDownloadUrl != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 4)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 6)
 		x.xxx_hidden_ContainerdDownloadUrl = b.ContainerdDownloadUrl
 	}
 	if b.ContainerdPath != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 4)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 6)
 		x.xxx_hidden_ContainerdPath = b.ContainerdPath
 	}
 	if b.RuncDownloadUrl != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 4)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 6)
 		x.xxx_hidden_RuncDownloadUrl = b.RuncDownloadUrl
 	}
 	if b.RuncPath != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 4)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 6)
 		x.xxx_hidden_RuncPath = b.RuncPath
+	}
+	if b.CrictlDownloadUrl != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 6)
+		x.xxx_hidden_CrictlDownloadUrl = b.CrictlDownloadUrl
+	}
+	if b.CrictlPath != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 6)
+		x.xxx_hidden_CrictlPath = b.CrictlPath
 	}
 	return m0
 }
@@ -1362,15 +1461,19 @@ const file_components_cri_action_proto_rawDesc = "" +
 	"\x13DownloadCRIBinaries\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12D\n" +
 	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.cri.DownloadCRIBinariesSpecR\x04spec\x12J\n" +
-	"\x06status\x18\x03 \x01(\v22.aks.flex.components.cri.DownloadCRIBinariesStatusR\x06status\"k\n" +
+	"\x06status\x18\x03 \x01(\v22.aks.flex.components.cri.DownloadCRIBinariesStatusR\x06status\"\x92\x01\n" +
 	"\x17DownloadCRIBinariesSpec\x12-\n" +
 	"\x12containerd_version\x18\x01 \x01(\tR\x11containerdVersion\x12!\n" +
-	"\frunc_version\x18\x02 \x01(\tR\vruncVersion\"\xc5\x01\n" +
+	"\frunc_version\x18\x02 \x01(\tR\vruncVersion\x12%\n" +
+	"\x0ecrictl_version\x18\x03 \x01(\tR\rcrictlVersion\"\x96\x02\n" +
 	"\x19DownloadCRIBinariesStatus\x126\n" +
 	"\x17containerd_download_url\x18\x01 \x01(\tR\x15containerdDownloadUrl\x12'\n" +
 	"\x0fcontainerd_path\x18\x02 \x01(\tR\x0econtainerdPath\x12*\n" +
 	"\x11runc_download_url\x18\x03 \x01(\tR\x0fruncDownloadUrl\x12\x1b\n" +
-	"\trunc_path\x18\x04 \x01(\tR\bruncPath\"\xef\x01\n" +
+	"\trunc_path\x18\x04 \x01(\tR\bruncPath\x12.\n" +
+	"\x13crictl_download_url\x18\x05 \x01(\tR\x11crictlDownloadUrl\x12\x1f\n" +
+	"\vcrictl_path\x18\x06 \x01(\tR\n" +
+	"crictlPath\"\xef\x01\n" +
 	"\x16StartContainerdService\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12G\n" +
 	"\x04spec\x18\x02 \x01(\v23.aks.flex.components.cri.StartContainerdServiceSpecR\x04spec\x12M\n" +
