@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 )
@@ -43,7 +44,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("config file path is required")
 	}
 
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file at %s: %w", configPath, err)
 	}
