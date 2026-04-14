@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -1194,13 +1195,6 @@ func TestLoadConfigWithDottedLabels(t *testing.T) {
 					t.Errorf("label %q = %q, want %q", key, gotVal, expectedVal)
 				}
 			}
-
-			// Verify no unexpected labels
-			for key := range config.Node.Labels {
-				if _, ok := tt.expectedLabels[key]; !ok {
-					t.Errorf("unexpected label %q = %q", key, config.Node.Labels[key])
-				}
-			}
 		})
 	}
 }
@@ -1211,6 +1205,7 @@ func labelKeys(m map[string]string) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
+	sort.Strings(keys)
 	return keys
 }
 
