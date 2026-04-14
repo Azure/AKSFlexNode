@@ -1126,10 +1126,10 @@ func TestLoadConfigNodeLabels(t *testing.T) {
 			},
 		},
 		{
-			name:       "real-world customer label: cleanroom.azure.com/flexnode",
-			labelsJSON: `{"cleanroom.azure.com/flexnode": "true"}`,
+			name:       "label key with three dot segments (org.example.com prefix)",
+			labelsJSON: `{"org.example.com/myLabel": "true"}`,
 			expectedLabels: map[string]string{
-				"cleanroom.azure.com/flexnode": "true",
+				"org.example.com/myLabel": "true",
 			},
 		},
 		{
