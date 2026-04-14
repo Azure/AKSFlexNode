@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -1067,6 +1069,128 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// baseAzureJSON is the minimal valid azure config block shared across label tests.
+const baseAzureJSON = `{
+	"azure": {
+		"subscriptionId": "12345678-1234-1234-1234-123456789012",
+		"tenantId": "12345678-1234-1234-1234-123456789012",
+		"cloud": "AzurePublicCloud",
+		"bootstrapToken": { "token": "abcdef.0123456789abcdef" },
+		"targetCluster": {
+			"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+			"location": "eastus"
+		}
+	},
+	"node": {
+		"kubelet": {
+			"serverURL": "https://test-cluster.hcp.eastus.azmk8s.io:443",
+			"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t"
+		},
+		"labels": %s
+	}
+}`
+
+// TestLoadConfigNodeLabels verifies that node label keys are preserved exactly
+// as written in the config file. This is the root motivation: Kubernetes label
+// keys such as "cleanroom.azure.com/flexnode" or "topology.kubernetes.io/zone"
+// contain dots, which Viper's default "." key-path delimiter misinterpreted as
+// nested JSON keys, silently dropping the labels on load.
+func TestLoadConfigNodeLabels(t *testing.T) {
+	tests := []struct {
+		name           string
+		labelsJSON     string
+		expectedLabels map[string]string // only the user-supplied labels; defaults are checked separately
+	}{
+		{
+			name:       "plain labels without dots",
+			labelsJSON: `{"env": "production", "team": "platform"}`,
+			expectedLabels: map[string]string{
+				"env":  "production",
+				"team": "platform",
+			},
+		},
+		{
+			name:       "label key with a single dot segment (kubernetes.io prefix)",
+			labelsJSON: `{"kubernetes.io/nodeReady": "true"}`,
+			expectedLabels: map[string]string{
+				"kubernetes.io/nodeReady": "true",
+			},
+		},
+		{
+			name:       "label key with multiple dot segments (topology prefix)",
+			labelsJSON: `{"topology.kubernetes.io/zone": "eastus-1"}`,
+			expectedLabels: map[string]string{
+				"topology.kubernetes.io/zone": "eastus-1",
+			},
+		},
+		{
+			name:       "label key with three dot segments (org.example.com prefix)",
+			labelsJSON: `{"org.example.com/myLabel": "true"}`,
+			expectedLabels: map[string]string{
+				"org.example.com/myLabel": "true",
+			},
+		},
+		{
+			name: "mixed dotted and plain labels all preserved",
+			labelsJSON: `{
+				"env": "staging",
+				"topology.kubernetes.io/zone": "eastus-1",
+				"cleanroom.azure.com/flexnode": "true",
+				"disktype": "ssd"
+			}`,
+			expectedLabels: map[string]string{
+				"env":                          "staging",
+				"topology.kubernetes.io/zone":  "eastus-1",
+				"cleanroom.azure.com/flexnode": "true",
+				"disktype":                     "ssd",
+			},
+		},
+		{
+			name:       "label value containing dots is preserved",
+			labelsJSON: `{"version": "1.2.3"}`,
+			expectedLabels: map[string]string{
+				"version": "1.2.3",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configJSON := fmt.Sprintf(baseAzureJSON, tt.labelsJSON)
+			configFile := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+				t.Fatalf("os.WriteFile: %v", err)
+			}
+
+			config, err := LoadConfig(configFile)
+			if err != nil {
+				t.Fatalf("LoadConfig() unexpected error: %v", err)
+			}
+
+			for key, want := range tt.expectedLabels {
+				got, ok := config.Node.Labels[key]
+				if !ok {
+					t.Errorf("label %q not found; got keys: %v", key, labelKeys(config.Node.Labels))
+				} else if got != want {
+					t.Errorf("label %q = %q, want %q", key, got, want)
+				}
+			}
+		})
+	}
+}
+
+// labelKeys returns sorted keys of a map for use in test diagnostics.
+func labelKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func TestIsBootstrapTokenConfigured(t *testing.T) {
