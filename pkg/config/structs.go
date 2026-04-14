@@ -172,7 +172,6 @@ func (cfg *Config) IsSPConfigured() bool {
 }
 
 // IsMIConfigured checks if managed identity configuration is provided in the configuration
-// Uses internal flag set during config loading to handle viper's empty object behavior
 func (cfg *Config) IsMIConfigured() bool {
 	return cfg.isMIExplicitlySet
 }

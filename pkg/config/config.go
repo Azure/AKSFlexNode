@@ -1,11 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"sync"
-
-	"github.com/spf13/viper"
 )
 
 const (
@@ -18,9 +18,6 @@ const (
 	defaultLogDir     = "/var/log/aks-flex-node"
 	defaultLogLevel   = "info"
 	defaultAzureCloud = "AzurePublicCloud"
-
-	// Environment variable prefix
-	envPrefix = "AKS_NODE_CONTROLLER"
 )
 
 // Singleton instance for configuration
@@ -38,38 +35,27 @@ func GetConfig() *Config {
 	return configInstance
 }
 
-// LoadConfig loads configuration from a JSON file and environment variables.
+// LoadConfig loads configuration from a JSON file.
 // The configPath parameter is required and cannot be empty.
-// Environment variables can override config file values using the AKS_NODE_CONTROLLER_ prefix.
-// For example: AKS_NODE_CONTROLLER_AZURE_LOCATION=westus2
 func LoadConfig(configPath string) (*Config, error) {
 	// Require config path to be specified
 	if configPath == "" {
 		return nil, fmt.Errorf("config file path is required")
 	}
 
-	// Set up viper
-	v := viper.New()
-	v.SetConfigType("json")
-	v.AutomaticEnv()
-	v.SetEnvPrefix(envPrefix)
-
-	// Load the specified config file
-	v.SetConfigFile(configPath)
-	if err := v.ReadInConfig(); err != nil {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read config file at %s: %w", configPath, err)
 	}
 
-	// Unmarshal config
 	config := &Config{}
-	if err := v.Unmarshal(config); err != nil {
+	if err := json.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
-	// Track if managedIdentity was explicitly set in config
-	// This is necessary because viper unmarshals empty JSON objects {} as nil pointers
-	// Using viper.IsSet() correctly detects if the key was present in the config file
-	config.isMIExplicitlySet = v.IsSet("azure.managedIdentity")
+	// encoding/json deserializes "managedIdentity": {} into a non-nil pointer, so
+	// presence can be detected directly — unlike Viper which decoded it as nil.
+	config.isMIExplicitlySet = config.Azure.ManagedIdentity != nil
 
 	// Set defaults for any missing values
 	config.SetDefaults()
