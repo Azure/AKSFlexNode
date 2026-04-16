@@ -325,15 +325,32 @@ setup_systemd_service() {
     cp "$temp_dir/aks-flex-node-agent.service" /etc/systemd/system/
     chmod 644 /etc/systemd/system/aks-flex-node-agent.service
 
-    # Update the service file with the correct user path for Azure CLI access
+    # Copy Azure CLI config to a root-owned directory so the root service never reads
+    # from an unprivileged user's home directory (prevents local privilege escalation
+    # via malicious CLI extensions planted in ~/.azure/cliextensions/).
     local current_user
     current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
     local current_user_home
     current_user_home=$(eval echo "~$current_user")
 
-    log_info "Configuring service file for current user ($current_user)..."
-    sed -i "s|PLACEHOLDER_AZURE_CONFIG_DIR|$current_user_home/.azure|g" /etc/systemd/system/aks-flex-node-agent.service
-    sed -i "s|PLACEHOLDER_USER_GROUP|$current_user|g" /etc/systemd/system/aks-flex-node-agent.service
+    local azure_config_dir="/etc/aks-flex-node/azure"
+    mkdir -p "$azure_config_dir"
+    chmod 700 "$azure_config_dir"
+    chown root:root "$azure_config_dir"
+
+    # Copy only the authentication-related files (token cache, profile), never extensions
+    for f in azureProfile.json msal_token_cache.json msal_token_cache.bin clouds.config; do
+        if [ -f "$current_user_home/.azure/$f" ]; then
+            cp "$current_user_home/.azure/$f" "$azure_config_dir/"
+            chmod 600 "$azure_config_dir/$f"
+            chown root:root "$azure_config_dir/$f"
+        fi
+    done
+
+    log_info "Configuring service file with root-owned Azure config directory ($azure_config_dir)..."
+    sed -i "s|PLACEHOLDER_AZURE_CONFIG_DIR|$azure_config_dir|g" /etc/systemd/system/aks-flex-node-agent.service
+    # Remove SupplementaryGroups placeholder — no longer needed since we don't read from user's home
+    sed -i "s|^SupplementaryGroups=PLACEHOLDER_USER_GROUP|# SupplementaryGroups removed for security|g" /etc/systemd/system/aks-flex-node-agent.service
 
     # Reload systemd
     systemctl daemon-reload

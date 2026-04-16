@@ -15,37 +15,16 @@ TimeoutStopSec=60
 # Restart configuration for daemon resilience
 Restart=on-failure
 RestartSec=30
-# TODO: review the settings and permission here
 User=root
 Group=root
-SupplementaryGroups=PLACEHOLDER_USER_GROUP
+# AZURE_CONFIG_DIR points to a root-owned copy under /etc/aks-flex-node/azure,
+# NOT the installing user's ~/.azure (which would allow local privilege escalation
+# via malicious CLI extensions). See scripts/install.sh for the copy logic.
 Environment=AZURE_CONFIG_DIR=PLACEHOLDER_AZURE_CONFIG_DIR
 RuntimeDirectory=aks-flex-node
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
 StandardOutput=journal
 StandardError=journal
-
-# Security hardening (runs as root for system-level Kubernetes node operations)
-NoNewPrivileges=false
-ProtectSystem=false
-ProtectHome=false
-PrivateTmp=false
-PrivateDevices=false
-ProtectHostname=false
-ProtectClock=false
-ProtectKernelTunables=false
-ProtectKernelModules=false
-ProtectKernelLogs=false
-ProtectControlGroups=false
-RestrictNamespaces=false
-LockPersonality=false
-MemoryDenyWriteExecute=false
-RestrictRealtime=false
-RestrictSUIDSGID=false
-RemoveIPC=false
-
-# Allow access to specific paths that need modification (- prefix makes paths optional)
-ReadWritePaths=-/etc/kubernetes -/var/lib/kubelet -/var/lib/containerd -/etc/containerd -/opt/cni -/etc/cni -/etc/systemd/system -/etc/sysctl.d -/etc/modules-load.d -/var/log/aks-flex-node -/tmp -/etc/aks-flex-node -/run/aks-flex-node
 
 [Install]
 WantedBy=multi-user.target
