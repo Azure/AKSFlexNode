@@ -347,10 +347,7 @@ setup_systemd_service() {
         fi
     done
 
-    log_info "Configuring service file with root-owned Azure config directory ($azure_config_dir)..."
-    sed -i "s|PLACEHOLDER_AZURE_CONFIG_DIR|$azure_config_dir|g" /etc/systemd/system/aks-flex-node-agent.service
-    # Remove SupplementaryGroups placeholder — no longer needed since we don't read from user's home
-    sed -i "s|^SupplementaryGroups=PLACEHOLDER_USER_GROUP|# SupplementaryGroups removed for security|g" /etc/systemd/system/aks-flex-node-agent.service
+    log_info "Azure CLI auth files copied to root-owned $azure_config_dir"
 
     # Reload systemd
     systemctl daemon-reload
