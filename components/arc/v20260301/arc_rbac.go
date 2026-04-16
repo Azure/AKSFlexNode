@@ -65,6 +65,19 @@ func (a *installArcAction) getRoleAssignments(spec *arc.InstallArcSpec) []roleAs
 	clusterScope := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerService/managedClusters/%s", subscriptionID, resourceGroup, clusterName)
 
 	// Define required role assignments
+	//
+	// TODO(security): These roles are over-privileged for a worker node identity and should be
+	// restricted once the design is confirmed. Current grants defeat Kubernetes NodeRestriction
+	// because the node MSI is mapped to cluster-admin by Azure RBAC. Planned changes:
+	//   - Replace "AKS RBAC Cluster Admin" with "AKS RBAC Writer" (or a custom role) scoped to
+	//     the cluster, sufficient for kubelet node/pod/lease operations.
+	//   - Remove "AKS Cluster Admin Role" — listClusterAdminCredentials is only needed by the
+	//     operator's bootstrap credential, not the node identity.
+	//   - Replace RG-wide "Contributor" with "Reader" scoped to the Arc machine resource.
+	// Note: "Reader" is intentionally scoped at the subscription level to avoid hitting
+	// Azure's per-resource role assignment count limits when many flex nodes are registered.
+	// See: https://learn.microsoft.com/en-us/azure/aks/manage-azure-rbac
+	// See: https://learn.microsoft.com/en-us/azure/role-based-access-control/troubleshoot-limits?tabs=default#symptom---no-more-role-assignments-can-be-created
 	assignments := []roleAssignment{
 		{
 			roleName: "Reader",
