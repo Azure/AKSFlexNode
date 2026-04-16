@@ -89,6 +89,8 @@ func (ab *base) getArcMachine(ctx context.Context) (*armhybridcompute.Machine, e
 	return &result.Machine, nil
 }
 
+// TODO(security): These roles are over-privileged — see components/arc/v20260301/arc_rbac.go for details.
+// Will be restricted to least-privilege once the node auth design is confirmed.
 func (ab *base) getRoleAssignments() []roleAssignment {
 	return []roleAssignment{
 		{"Reader (Target Cluster)", ab.config.GetTargetClusterID(), roleDefinitionIDs["Reader"]},
