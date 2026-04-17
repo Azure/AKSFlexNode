@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/Azure/AKSFlexNode/pkg/spec"
 )
 
 // LoadStatus loads the node status snapshot from the default path.
 func LoadStatus() (*NodeStatus, error) {
-	return LoadStatusFromFile(GetStatusFilePath())
+	return LoadStatusFromFile(spec.StatusFilePath)
 }
 
 // LoadStatusFromFile loads the node status snapshot from a JSON file.

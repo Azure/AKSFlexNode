@@ -27,7 +27,7 @@ func DesiredKubernetesVersion(specSnap *ManagedClusterSpec) string {
 //
 // This is best-effort: callers may choose to ignore errors if the spec file doesn't exist yet.
 func OverrideKubernetesVersionFromManagedClusterSpec(cfg *config.Config) (changed bool, oldVersion, newVersion string, err error) {
-	return OverrideKubernetesVersionFromManagedClusterSpecFile(cfg, GetManagedClusterSpecFilePath())
+	return OverrideKubernetesVersionFromManagedClusterSpecFile(cfg, ManagedClusterSpecPath)
 }
 
 // OverrideKubernetesVersionFromManagedClusterSpecFile loads the spec snapshot from the given file path
