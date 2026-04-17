@@ -164,7 +164,13 @@ func (a *installArcAction) addAuthenticationArgs(ctx context.Context, args *[]st
 		return fmt.Errorf("failed to get access token: %w", err)
 	}
 
-	// Add access token to azcmagent arguments
+	// TODO(security): The access token is passed on the command line and is therefore visible
+	// to all local users via /proc/<pid>/cmdline for the lifetime of the azcmagent process.
+	// The token is short-lived (~60 minutes) which limits the exposure window, but it is
+	// still observable during the registration process. azcmagent does not currently support
+	// reading the token from stdin or an environment variable.
+	// TODO: Check if we can let azcmagent discover auth settings on its own (e.g. --use-azcli
+	// or VM MSI) instead of fetching a token ourselves and passing it on the command line.
 	*args = append(*args, "--access-token", accessToken)
 
 	a.logger.Debug("Authentication arguments added to Arc agent command")

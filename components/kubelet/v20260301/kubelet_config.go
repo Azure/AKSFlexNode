@@ -186,8 +186,8 @@ func (s *startKubeletServiceAction) ensureKubeletKubeconfig(
 		return false, nil
 	}
 
-	// FIXME: consider using 0640?
-	if err := utilio.WriteFile(config.KubeletKubeconfigPath, desiredContent, 0644); err != nil {
+	// Write kubeconfig with restricted permissions — contains credentials (SP secret / MSI config)
+	if err := utilio.WriteFile(config.KubeletKubeconfigPath, desiredContent, 0600); err != nil {
 		return false, fmt.Errorf("write %q: %w", config.KubeletKubeconfigPath, err)
 	}
 	return true, nil
@@ -216,8 +216,8 @@ func (s *startKubeletServiceAction) ensureBootstrapKubeconfig(
 		return false, nil
 	}
 
-	// FIXME: consider using 0640?
-	if err := utilio.WriteFile(config.KubeletBootstrapKubeconfigPath, desiredContent, 0644); err != nil {
+	// Write bootstrap kubeconfig with restricted permissions — contains bootstrap token
+	if err := utilio.WriteFile(config.KubeletBootstrapKubeconfigPath, desiredContent, 0600); err != nil {
 		return false, fmt.Errorf("write %q: %w", config.KubeletBootstrapKubeconfigPath, err)
 	}
 	return true, nil
