@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilexec "k8s.io/utils/exec"
 )
 
 // Collector collects system and node status information
@@ -22,6 +22,7 @@ type Collector struct {
 	config       *config.Config
 	logger       *logrus.Logger
 	agentVersion string
+	exec         utilexec.Interface
 }
 
 // NewCollector creates a new status collector
@@ -30,6 +31,7 @@ func NewCollector(cfg *config.Config, logger *logrus.Logger, agentVersion string
 		config:       cfg,
 		logger:       logger,
 		agentVersion: agentVersion,
+		exec:         utilexec.New(),
 	}
 }
 
@@ -144,7 +146,7 @@ func (c *Collector) runCommand(ctx context.Context, name string, args ...string)
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(timeoutCtx, name, args...)
+	cmd := c.exec.CommandContext(timeoutCtx, name, args...)
 	output, err := cmd.Output()
 	return string(output), err
 }
