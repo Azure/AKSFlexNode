@@ -4,20 +4,24 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	utilexec "k8s.io/utils/exec"
 )
 
 // AuthProvider is a simple factory for Azure credentials
-type AuthProvider struct{}
+type AuthProvider struct {
+	exec utilexec.Interface
+}
 
 // NewAuthProvider creates a new authentication provider
 func NewAuthProvider() *AuthProvider {
-	return &AuthProvider{}
+	return &AuthProvider{
+		exec: utilexec.New(),
+	}
 }
 
 // ArcCredential returns Azure Arc managed identity credential
@@ -101,13 +105,13 @@ func (a *AuthProvider) GetAccessTokenForResource(ctx context.Context, cred azcor
 // CheckCLIAuthStatus checks if user is logged in to Azure CLI and if the token is valid
 func (a *AuthProvider) CheckCLIAuthStatus(ctx context.Context) error {
 	// Try to get account information - this will fail if not logged in or token expired
-	cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
+	cmd := a.exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("azure CLI authentication check failed: %w", err)
 	}
 
 	// Try to get an access token to verify it's not expired
-	cmd = exec.CommandContext(ctx, "az", "account", "get-access-token", "--output", "json")
+	cmd = a.exec.CommandContext(ctx, "az", "account", "get-access-token", "--output", "json")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("azure CLI token validation failed: %w", err)
 	}
@@ -121,12 +125,12 @@ func (a *AuthProvider) InteractiveAzLogin(ctx context.Context, tenantID string) 
 	args := []string{"login", "--tenant", tenantID}
 
 	// Create command with proper console I/O tunneling
-	cmd := exec.CommandContext(ctx, "az", args...)
+	cmd := a.exec.CommandContext(ctx, "az", args...)
 
 	// Connect stdin, stdout, stderr to allow interactive prompts
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.SetStdin(os.Stdin)
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
 
 	// Run the interactive login command
 	if err := cmd.Run(); err != nil {
