@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,6 +75,10 @@ func NewVersionCommand() *cobra.Command {
 func runAgent(ctx context.Context) error {
 	logger := logger.GetLoggerFromContext(ctx)
 
+	if err := spec.EnsureRuntimeDir(); err != nil {
+		return err
+	}
+
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config from %s: %w", configPath, err)
@@ -106,6 +109,10 @@ func runAgent(ctx context.Context) error {
 // runUnbootstrap executes the unbootstrap process
 func runUnbootstrap(ctx context.Context) error {
 	logger := logger.GetLoggerFromContext(ctx)
+
+	if err := spec.EnsureRuntimeDir(); err != nil {
+		return err
+	}
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -139,12 +146,8 @@ func runVersion() {
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
 func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn) error {
 	logger := logger.GetLoggerFromContext(ctx)
-	// Create status file directory - using runtime directory for service or temp for development
-	statusFilePath := status.GetStatusFilePath()
-	statusDir := filepath.Dir(statusFilePath)
-	if err := os.MkdirAll(statusDir, 0o750); err != nil {
-		return fmt.Errorf("failed to create status directory %s: %w", statusDir, err)
-	}
+	// Runtime directory already ensured by runAgent; get status file path.
+	statusFilePath := spec.StatusFilePath
 
 	// Clean up any stale status file on daemon startup
 	if _, err := os.Stat(statusFilePath); err == nil {

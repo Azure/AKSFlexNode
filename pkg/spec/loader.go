@@ -8,7 +8,7 @@ import (
 
 // LoadManagedClusterSpec loads the managed cluster spec snapshot from the default path.
 func LoadManagedClusterSpec() (*ManagedClusterSpec, error) {
-	return LoadManagedClusterSpecFromFile(GetManagedClusterSpecFilePath())
+	return LoadManagedClusterSpecFromFile(ManagedClusterSpecPath)
 }
 
 // LoadManagedClusterSpecFromFile loads the managed cluster spec snapshot from a JSON file.

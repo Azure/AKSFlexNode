@@ -47,7 +47,7 @@ func NewManagedClusterSpecCollector(cfg *config.Config, logger *logrus.Logger) *
 		cfg:          cfg,
 		logger:       logger,
 		authProvider: auth.NewAuthProvider(),
-		outputPath:   GetManagedClusterSpecFilePath(),
+		outputPath:   ManagedClusterSpecPath,
 	}
 	// Keep KubernetesVersion, fqdn required for now; more enrichers can be added over time.
 	c.enrichers = []ManagedClusterSpecEnricher{enrichKubernetesVersionRequired, enrichFQDNRequired}

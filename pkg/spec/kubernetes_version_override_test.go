@@ -3,6 +3,7 @@ package spec
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestDesiredKubernetesVersion(t *testing.T) {
 
 func TestOverrideKubernetesVersionFromManagedClusterSpec(t *testing.T) {
 	dir := t.TempDir()
-	path := ManagedClusterSpecFilePath(dir)
+	path := filepath.Join(dir, "managedcluster-spec.json")
 
 	// Missing spec file: should return an error from LoadManagedClusterSpec.
 	cfg := &config.Config{Kubernetes: config.KubernetesConfig{Version: "1.29.0"}}
