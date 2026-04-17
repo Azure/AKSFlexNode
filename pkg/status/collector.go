@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kube"
+	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/utils"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
@@ -234,9 +234,9 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 
 // NeedsBootstrap checks if the node needs to be (re)bootstrapped based on status file
 func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
-	statusFilePath := GetStatusFilePath()
+	statusFilePath := spec.StatusFilePath
 	// Try to read the status file
-	// #nosec G304 -- reading a local status snapshot path controlled by the agent (runtime/temp dir), not user input.
+	// #nosec G304 -- reading a local status snapshot path controlled by the agent, not user input.
 	statusData, err := os.ReadFile(statusFilePath)
 	if err != nil {
 		c.logger.Info("Status file not found - bootstrap needed")
@@ -282,18 +282,4 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 
 	c.logger.Debug("Status file indicates healthy state - no bootstrap needed")
 	return false
-}
-
-// GetStatusFilePath returns the appropriate status directory path
-// Uses /run/aks-flex-node/status.json when running as systemd service (RuntimeDirectory creates this)
-// Uses /tmp/aks-flex-node/status.json for direct user execution (testing/development)
-func GetStatusFilePath() string {
-	// Check if /run/aks-flex-node exists (created by systemd RuntimeDirectory directive)
-	runtimeDir := "/run/aks-flex-node"
-	if fi, err := os.Stat(runtimeDir); err == nil && fi.IsDir() {
-		return filepath.Join(runtimeDir, "status.json")
-	}
-
-	// Fallback to temp directory for testing/development
-	return filepath.Join("/tmp/aks-flex-node", "status.json")
 }

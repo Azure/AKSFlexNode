@@ -1,29 +1,27 @@
 package spec
 
 import (
+	"fmt"
 	"os"
-	"path/filepath"
 )
 
-// ManagedClusterSpecFilePath returns the managed cluster spec snapshot file path under a provided directory.
-func ManagedClusterSpecFilePath(specDir string) string {
-	return filepath.Join(specDir, "managedcluster-spec.json")
-}
+// RuntimeDir is the single runtime directory used for spec and status artifacts.
+// Under systemd, RuntimeDirectory=aks-flex-node creates this before ExecStart.
+// For CLI invocations, call EnsureRuntimeDir early to create it.
+const RuntimeDir = "/run/aks-flex-node"
 
-// GetSpecDir returns the appropriate directory for spec artifacts.
-// Uses /run/aks-flex-node when running as systemd service (RuntimeDirectory creates this)
-// Uses /tmp/aks-flex-node for direct user execution (testing/development)
-func GetSpecDir() string {
-	// Check if /run/aks-flex-node exists (created by systemd RuntimeDirectory directive)
-	runtimeDir := "/run/aks-flex-node"
-	if fi, err := os.Stat(runtimeDir); err == nil && fi.IsDir() {
-		return runtimeDir
+// StatusFilePath is the path to the node status snapshot file.
+const StatusFilePath = RuntimeDir + "/status.json"
+
+// ManagedClusterSpecPath is the path to the managed cluster spec snapshot file.
+const ManagedClusterSpecPath = RuntimeDir + "/managedcluster-spec.json"
+
+// EnsureRuntimeDir creates the runtime directory with restricted permissions.
+// Call this once at process startup before any code that reads or writes
+// spec/status files. Returns an error if the directory cannot be created.
+func EnsureRuntimeDir() error {
+	if err := os.MkdirAll(RuntimeDir, 0700); err != nil {
+		return fmt.Errorf("failed to create runtime directory %s: %w", RuntimeDir, err)
 	}
-	// Fallback to temp directory for testing/development
-	return "/tmp/aks-flex-node"
-}
-
-// GetManagedClusterSpecFilePath returns the path where the managed cluster spec snapshot is stored.
-func GetManagedClusterSpecFilePath() string {
-	return ManagedClusterSpecFilePath(GetSpecDir())
+	return nil
 }

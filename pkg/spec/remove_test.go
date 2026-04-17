@@ -2,12 +2,13 @@ package spec
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestRemoveManagedClusterSpecSnapshot(t *testing.T) {
 	dir := t.TempDir()
-	path := ManagedClusterSpecFilePath(dir)
+	path := filepath.Join(dir, "managedcluster-spec.json")
 
 	// No file: should be (removed=false, err=nil).
 	removed, err := RemoveManagedClusterSpecSnapshotAtPath(path)

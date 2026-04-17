@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/sirupsen/logrus"
 )
 
@@ -12,7 +13,7 @@ import (
 // It is intentionally best-effort: failure to remove the file should not crash the agent,
 // but it helps ensure subsequent health checks re-collect status from scratch.
 func RemoveStatusFileBestEffort(logger *logrus.Logger) {
-	RemoveStatusFileBestEffortAtPath(logger, GetStatusFilePath())
+	RemoveStatusFileBestEffortAtPath(logger, spec.StatusFilePath)
 }
 
 func RemoveStatusFileBestEffortAtPath(logger *logrus.Logger, statusFilePath string) {

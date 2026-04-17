@@ -3,6 +3,7 @@ package status
 import (
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,7 +16,7 @@ func MarkKubeletUnhealthyBestEffort(logger *logrus.Logger) {
 		logger = logrus.New()
 	}
 
-	statusFilePath := GetStatusFilePath()
+	statusFilePath := spec.StatusFilePath
 	MarkKubeletUnhealthyBestEffortAtPath(logger, statusFilePath, time.Time{})
 }
 
@@ -67,7 +68,7 @@ func MarkKubeletHealthyAfterUpgradeBestEffort(logger *logrus.Logger, kubeletVers
 		logger = logrus.New()
 	}
 
-	statusFilePath := GetStatusFilePath()
+	statusFilePath := spec.StatusFilePath
 	MarkKubeletHealthyAfterUpgradeBestEffortAtPath(logger, statusFilePath, kubeletVersion, time.Time{})
 }
 
