@@ -9,8 +9,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/Azure/AKSFlexNode/pkg/utils"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/sirupsen/logrus"
 )
 
@@ -153,25 +151,9 @@ func setupLogFileWriter(logDir string) (io.Writer, error) {
 
 	logFilePath := filepath.Join(logDir, "aks-flex-node.log")
 
-	// Create the log file if it doesn't exist
-	if err := createLogFileIfNotExists(logFilePath); err != nil {
-		return nil, fmt.Errorf("failed to create log file '%s': %w", logFilePath, err)
-	}
-
-	// Try to open log file for writing, handle permission issues
-	file, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0666)
+	// Open log file for appending, creating it with 0600 if it doesn't exist
+	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) //#nosec G304 - logFilePath is from trusted agent config
 	if err != nil {
-		// If it's a permission error and we're not running as root, try to fix permissions
-		if os.IsPermission(err) {
-			// Try to fix permissions using system command
-			if fixErr := utils.RunSystemCommand("chmod", "666", logFilePath); fixErr == nil {
-				// Retry opening the file after fixing permissions
-				file, err = os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0666)
-				if err == nil {
-					return file, nil
-				}
-			}
-		}
 		return nil, fmt.Errorf("failed to open log file '%s': %w", logFilePath, err)
 	}
 
@@ -204,45 +186,6 @@ func setupLogFile(logger *logrus.Logger, logDir string) error {
 		return err
 	}
 	logger.SetOutput(writer)
-	return nil
-}
-
-// createLogFileIfNotExists creates a log file using appropriate method based on path privileges
-func createLogFileIfNotExists(logFilePath string) error {
-	// Check if file already exists
-	if utils.FileExists(logFilePath) {
-		return nil
-	}
-
-	// For systemd services, try direct file creation first since the service
-	// should have the correct user/group and the log directory should already exist
-	if isRunningUnderSystemd() {
-		// Try direct file creation with appropriate permissions
-		file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY, 0644)
-		if err == nil {
-			_ = file.Close()
-			return nil
-		}
-		// If direct creation fails, fall through to the system method
-		fmt.Printf("Warning: Direct log file creation failed (%v), trying system method...\n", err)
-	}
-
-	// Use WriteFileAtomicSystem to create an empty log file with proper permissions
-	if err := utilio.WriteFile(logFilePath, []byte{}, 0644); err != nil {
-		return err
-	}
-
-	// Ensure proper ownership for the current user after file creation
-	// Skip this for systemd services as they should already have correct ownership
-	if !isRunningUnderSystemd() {
-		currentUser := os.Getenv("USER")
-		if currentUser != "" {
-			if err := utils.RunSystemCommand("chown", currentUser+":"+currentUser, logFilePath); err != nil {
-				fmt.Printf("Warning: Failed to change ownership of %s to %s: %v\n", logFilePath, currentUser, err)
-			}
-		}
-	}
-
 	return nil
 }
 

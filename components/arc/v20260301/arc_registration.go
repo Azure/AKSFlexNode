@@ -169,8 +169,8 @@ func (a *installArcAction) addAuthenticationArgs(ctx context.Context, args *[]st
 	// The token is short-lived (~60 minutes) which limits the exposure window, but it is
 	// still observable during the registration process. azcmagent does not currently support
 	// reading the token from stdin or an environment variable.
-	// Consider switching to --service-principal-cert or --use-azcli when feasible.
-	// See: https://learn.microsoft.com/en-us/azure/azure-arc/servers/azcmagent-connect
+	// TODO: Check if we can let azcmagent discover auth settings on its own (e.g. --use-azcli
+	// or VM MSI) instead of fetching a token ourselves and passing it on the command line.
 	*args = append(*args, "--access-token", accessToken)
 
 	a.logger.Debug("Authentication arguments added to Arc agent command")
