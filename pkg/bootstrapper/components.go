@@ -139,6 +139,10 @@ var downloadCRIBinaries resolveActionFunc[*cri.DownloadCRIBinaries] = func(
 			cfg.Runc.Version,
 			config.DefaultRunCVersion,
 		),
+		CrictlVersion: ptrWithDefault(
+			cfg.Crictl.Version,
+			config.DefaultCrictlVersion,
+		),
 	}.Build()
 
 	return cri.DownloadCRIBinaries_builder{

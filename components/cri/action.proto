@@ -17,6 +17,7 @@ message DownloadCRIBinaries {
 message DownloadCRIBinariesSpec {
   string containerd_version = 1;
   string runc_version = 2;
+  string crictl_version = 3;
 }
 
 message DownloadCRIBinariesStatus {
@@ -24,6 +25,8 @@ message DownloadCRIBinariesStatus {
   string containerd_path = 2;
   string runc_download_url = 3;
   string runc_path = 4;
+  string crictl_download_url = 5;
+  string crictl_path = 6;
 }
 
 message StartContainerdService {
