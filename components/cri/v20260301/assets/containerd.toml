@@ -1,35 +1,37 @@
 imports = ["/etc/containerd/conf.d/*.toml"]
 
 oom_score = 0
-version = 2
+version = 3
 
-[plugins."io.containerd.grpc.v1.cri"]
+[plugins.'io.containerd.cri.v1.runtime']
 sandbox_image = "{{.SandboxImage}}"
 
-[plugins."io.containerd.grpc.v1.cri".containerd]
+[plugins.'io.containerd.cri.v1.runtime'.containerd]
 default_runtime_name = "runc"
 
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
 runtime_type = "io.containerd.runc.v2"
 
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
 BinaryName = "{{.RuncBinaryPath}}"
 SystemdCgroup = true
 
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.untrusted]
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.untrusted]
 runtime_type = "io.containerd.runc.v2"
 
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.untrusted.options]
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.untrusted.options]
 BinaryName = "{{.RuncBinaryPath}}"
 
-[plugins."io.containerd.grpc.v1.cri".cni]
+[plugins.'io.containerd.cri.v1.runtime'.cni]
 bin_dir = "{{.CNIBinDir}}"
 conf_dir = "{{.CNIConfDir}}"
 
-[plugins."io.containerd.grpc.v1.cri".registry]
+[plugins.'io.containerd.cri.v1.images']
+
+[plugins.'io.containerd.cri.v1.images'.registry]
 config_path = "/etc/containerd/certs.d"
 
-[plugins."io.containerd.grpc.v1.cri".registry.headers]
+[plugins.'io.containerd.cri.v1.images'.registry.headers]
 X-Meta-Source-Client = ["azure/aks"]
 
 [metrics]
