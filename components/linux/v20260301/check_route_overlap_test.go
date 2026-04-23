@@ -128,3 +128,39 @@ func TestRenderCheckRouteOverlapScriptDefaultExitInGuard(t *testing.T) {
 		t.Errorf("STRICT mode missing exit-1 in no-default-route guard\nscript:\n%s", got)
 	}
 }
+
+func TestValidateCheckRouteOverlapSpec(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		spec    *linux.CheckRouteOverlapSpec
+		wantErr bool
+	}{
+		{
+			name:    "nil spec is rejected",
+			spec:    nil,
+			wantErr: true,
+		},
+		{
+			name: "non-nil spec is accepted",
+			spec: linux.CheckRouteOverlapSpec_builder{
+				ExpectedCidrs: []string{"172.16.0.0/16"},
+			}.Build(),
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateCheckRouteOverlapSpec(tc.spec)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}

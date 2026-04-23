@@ -4,7 +4,6 @@ DefaultDependencies=no
 After=network-online.target static-routes.service
 Wants=network-online.target
 Before=kubelet.service
-RequiredBy=kubelet.service
 
 [Service]
 Type=oneshot
@@ -14,4 +13,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+RequiredBy=kubelet.service

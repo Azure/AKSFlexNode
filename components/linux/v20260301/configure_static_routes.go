@@ -62,6 +62,17 @@ func (a *configureStaticRoutesAction) ApplyAction(
 	}
 
 	routes := spec.GetRoutes()
+	if len(routes) == 0 {
+		if err := systemd.EnsureUnitStoppedAndDisabled(ctx, a.systemd, staticRoutesUnit); err != nil {
+			return nil, fmt.Errorf("disabling static-routes service: %w", err)
+		}
+		item, err := anypb.New(settings)
+		if err != nil {
+			return nil, err
+		}
+		return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
+	}
+
 	script, err := renderStaticRoutesScript(routes)
 	if err != nil {
 		return nil, fmt.Errorf("rendering static-routes script: %w", err)

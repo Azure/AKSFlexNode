@@ -58,6 +58,9 @@ func (a *checkRouteOverlapAction) ApplyAction(
 	}
 
 	spec := settings.GetSpec()
+	if err := validateCheckRouteOverlapSpec(spec); err != nil {
+		return nil, fmt.Errorf("validating CheckRouteOverlap spec: %w", err)
+	}
 	mode := spec.GetMode()
 	if mode == linux.CheckRouteOverlapSpec_MODE_UNSPECIFIED {
 		mode = linux.CheckRouteOverlapSpec_WARN
@@ -82,6 +85,13 @@ func (a *checkRouteOverlapAction) ApplyAction(
 		return nil, err
 	}
 	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
+}
+
+func validateCheckRouteOverlapSpec(spec *linux.CheckRouteOverlapSpec) error {
+	if spec == nil {
+		return fmt.Errorf("spec is required")
+	}
+	return nil
 }
 
 func (a *checkRouteOverlapAction) ensureCheckRouteOverlapUnit(ctx context.Context, scriptUpdated bool) error {

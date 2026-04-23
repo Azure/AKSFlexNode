@@ -1,14 +1,19 @@
 package v20260301
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/coreos/go-systemd/v22/dbus"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/Azure/AKSFlexNode/components/linux"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/systemd"
 )
 
 func TestRenderStaticRoutesScript(t *testing.T) {
@@ -185,6 +190,12 @@ func TestValidateConfigureStaticRoutesSpec(t *testing.T) {
 				Enabled: to.Ptr(false),
 			}.Build(),
 		},
+		{
+			name: "no routes with opt-in enabled is allowed",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(true),
+			}.Build(),
+		},
 	}
 
 	for _, tc := range tests {
@@ -198,6 +209,47 @@ func TestValidateConfigureStaticRoutesSpec(t *testing.T) {
 				t.Fatalf("expected no error, got: %v", err)
 			}
 		})
+	}
+}
+
+func TestApplyActionWithNoRoutesDisablesUnit(t *testing.T) {
+	t.Parallel()
+
+	manager := &fakeSystemdManager{
+		unitStatus: dbus.UnitStatus{
+			Name:        staticRoutesUnit,
+			ActiveState: systemd.UnitActiveStateActive,
+		},
+	}
+	action := &configureStaticRoutesAction{systemd: manager}
+
+	item, err := anypb.New(
+		linux.ConfigureStaticRoutes_builder{
+			Spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(false),
+			}.Build(),
+		}.Build(),
+	)
+	if err != nil {
+		t.Fatalf("marshal action: %v", err)
+	}
+
+	_, err = action.ApplyAction(context.Background(), actions.ApplyActionRequest_builder{Item: item}.Build())
+	if err != nil {
+		t.Fatalf("ApplyAction returned error: %v", err)
+	}
+
+	if !manager.stopCalled {
+		t.Fatalf("expected StopUnit to be called for empty routes")
+	}
+	if !manager.disableCalled {
+		t.Fatalf("expected DisableUnit to be called for empty routes")
+	}
+	if manager.ensureUnitFileCalled {
+		t.Fatalf("did not expect EnsureUnitFile to be called for empty routes")
+	}
+	if manager.enableCalled {
+		t.Fatalf("did not expect EnableUnit to be called for empty routes")
 	}
 }
 
@@ -290,4 +342,44 @@ func TestWriteScriptIfChanged(t *testing.T) {
 	if string(got) != "goodbye" {
 		t.Errorf("file content = %q, want %q", got, "goodbye")
 	}
+}
+
+type fakeSystemdManager struct {
+	unitStatusErr error
+	unitStatus    dbus.UnitStatus
+
+	ensureUnitFileCalled bool
+	enableCalled         bool
+	stopCalled           bool
+	disableCalled        bool
+}
+
+func (f *fakeSystemdManager) DaemonReload(_ context.Context) error { return nil }
+func (f *fakeSystemdManager) EnableUnit(_ context.Context, _ string) error {
+	f.enableCalled = true
+	return nil
+}
+func (f *fakeSystemdManager) DisableUnit(_ context.Context, _ string) error {
+	f.disableCalled = true
+	return nil
+}
+func (f *fakeSystemdManager) MaskUnit(_ context.Context, _ string) error  { return nil }
+func (f *fakeSystemdManager) StartUnit(_ context.Context, _ string) error { return nil }
+func (f *fakeSystemdManager) StopUnit(_ context.Context, _ string) error {
+	f.stopCalled = true
+	return nil
+}
+func (f *fakeSystemdManager) ReloadOrRestartUnit(_ context.Context, _ string) error { return nil }
+func (f *fakeSystemdManager) GetUnitStatus(_ context.Context, _ string) (dbus.UnitStatus, error) {
+	if f.unitStatusErr != nil {
+		return dbus.UnitStatus{}, f.unitStatusErr
+	}
+	return f.unitStatus, nil
+}
+func (f *fakeSystemdManager) EnsureUnitFile(_ context.Context, _ string, _ []byte) (bool, error) {
+	f.ensureUnitFileCalled = true
+	return true, nil
+}
+func (f *fakeSystemdManager) EnsureDropInFile(_ context.Context, _, _ string, _ []byte) (bool, error) {
+	return false, nil
 }
