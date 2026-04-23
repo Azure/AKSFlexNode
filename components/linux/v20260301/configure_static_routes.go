@@ -56,7 +56,12 @@ func (a *configureStaticRoutesAction) ApplyAction(
 		return nil, err
 	}
 
-	routes := settings.GetSpec().GetRoutes()
+	spec := settings.GetSpec()
+	if err := validateConfigureStaticRoutesSpec(spec); err != nil {
+		return nil, fmt.Errorf("validating ConfigureStaticRoutes spec: %w", err)
+	}
+
+	routes := spec.GetRoutes()
 	script, err := renderStaticRoutesScript(routes)
 	if err != nil {
 		return nil, fmt.Errorf("rendering static-routes script: %w", err)
@@ -76,6 +81,16 @@ func (a *configureStaticRoutesAction) ApplyAction(
 		return nil, err
 	}
 	return actions.ApplyActionResponse_builder{Item: item}.Build(), nil
+}
+
+func validateConfigureStaticRoutesSpec(spec *linux.ConfigureStaticRoutesSpec) error {
+	if spec == nil {
+		return fmt.Errorf("spec is required")
+	}
+	if len(spec.GetRoutes()) > 0 && !spec.GetEnabled() {
+		return fmt.Errorf("routes were provided but spec.enabled=false; set spec.enabled=true to apply static routes")
+	}
+	return nil
 }
 
 // ensureStaticRoutesUnit installs, enables, and (re)starts the

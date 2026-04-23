@@ -803,10 +803,13 @@ func (b0 ConfigureStaticRoutes_builder) Build() *ConfigureStaticRoutes {
 }
 
 type ConfigureStaticRoutesSpec struct {
-	state             protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Routes *[]*StaticRoute        `protobuf:"bytes,1,rep,name=routes"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Enabled     bool                   `protobuf:"varint,2,opt,name=enabled"`
+	xxx_hidden_Routes      *[]*StaticRoute        `protobuf:"bytes,1,rep,name=routes"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ConfigureStaticRoutesSpec) Reset() {
@@ -834,6 +837,13 @@ func (x *ConfigureStaticRoutesSpec) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
+func (x *ConfigureStaticRoutesSpec) GetEnabled() bool {
+	if x != nil {
+		return x.xxx_hidden_Enabled
+	}
+	return false
+}
+
 func (x *ConfigureStaticRoutesSpec) GetRoutes() []*StaticRoute {
 	if x != nil {
 		if x.xxx_hidden_Routes != nil {
@@ -843,13 +853,35 @@ func (x *ConfigureStaticRoutesSpec) GetRoutes() []*StaticRoute {
 	return nil
 }
 
+func (x *ConfigureStaticRoutesSpec) SetEnabled(v bool) {
+	x.xxx_hidden_Enabled = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+}
+
 func (x *ConfigureStaticRoutesSpec) SetRoutes(v []*StaticRoute) {
 	x.xxx_hidden_Routes = &v
+}
+
+func (x *ConfigureStaticRoutesSpec) HasEnabled() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *ConfigureStaticRoutesSpec) ClearEnabled() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_Enabled = false
 }
 
 type ConfigureStaticRoutesSpec_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
+	// enabled must be explicitly set to true before any routes are applied.
+	// This makes static-route injection an intentional opt-in: operators should
+	// only enable it after confirming a real routing overlap (for example, an
+	// IB /16 colliding with cluster/VNet CIDRs).
+	Enabled *bool
 	// routes is the list of static routes to install. Order is preserved but
 	// does not affect kernel selection (longest-prefix-match wins).
 	Routes []*StaticRoute
@@ -859,6 +891,10 @@ func (b0 ConfigureStaticRoutesSpec_builder) Build() *ConfigureStaticRoutesSpec {
 	m0 := &ConfigureStaticRoutesSpec{}
 	b, x := &b0, m0
 	_, _ = b, x
+	if b.Enabled != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		x.xxx_hidden_Enabled = *b.Enabled
+	}
 	x.xxx_hidden_Routes = &b.Routes
 	return m0
 }
@@ -1390,8 +1426,9 @@ const file_components_linux_action_proto_rawDesc = "" +
 	"\x15ConfigureStaticRoutes\x12=\n" +
 	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12H\n" +
 	"\x04spec\x18\x02 \x01(\v24.aks.flex.components.linux.ConfigureStaticRoutesSpecR\x04spec\x12N\n" +
-	"\x06status\x18\x03 \x01(\v26.aks.flex.components.linux.ConfigureStaticRoutesStatusR\x06status\"[\n" +
-	"\x19ConfigureStaticRoutesSpec\x12>\n" +
+	"\x06status\x18\x03 \x01(\v26.aks.flex.components.linux.ConfigureStaticRoutesStatusR\x06status\"u\n" +
+	"\x19ConfigureStaticRoutesSpec\x12\x18\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\x12>\n" +
 	"\x06routes\x18\x01 \x03(\v2&.aks.flex.components.linux.StaticRouteR\x06routes\"\x1d\n" +
 	"\x1bConfigureStaticRoutesStatus\"s\n" +
 	"\vStaticRoute\x12 \n" +

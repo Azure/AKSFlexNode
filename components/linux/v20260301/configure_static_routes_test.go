@@ -148,6 +148,59 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 	}
 }
 
+func TestValidateConfigureStaticRoutesSpec(t *testing.T) {
+	t.Parallel()
+
+	routes := []*linux.StaticRoute{
+		linux.StaticRoute_builder{Destination: to.Ptr("172.16.1.0/24"), Gateway: to.Ptr("172.18.1.1")}.Build(),
+	}
+
+	tests := []struct {
+		name    string
+		spec    *linux.ConfigureStaticRoutesSpec
+		wantErr bool
+	}{
+		{
+			name:    "nil spec is rejected",
+			spec:    nil,
+			wantErr: true,
+		},
+		{
+			name: "routes without explicit opt-in are rejected",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Routes: routes,
+			}.Build(),
+			wantErr: true,
+		},
+		{
+			name: "routes with explicit opt-in are accepted",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(true),
+				Routes:  routes,
+			}.Build(),
+		},
+		{
+			name: "no routes with opt-in disabled is allowed",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(false),
+			}.Build(),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConfigureStaticRoutesSpec(tc.spec)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestRenderStaticRoutesScriptIsDeterministic(t *testing.T) {
 	t.Parallel()
 	routes := []*linux.StaticRoute{
