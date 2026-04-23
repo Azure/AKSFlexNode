@@ -167,17 +167,21 @@ func renderCheckRouteOverlapScript(cidrs []string, mode linux.CheckRouteOverlapS
 	}
 
 	b.WriteString("bad=0\n")
+	b.WriteString("while IFS='|' read -r CIDR PROBE; do\n")
+	b.WriteString("  [ -z \"$CIDR\" ] && continue\n")
+	b.WriteString("  ACTUAL=$(ip -4 route get \"$PROBE\" 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i==\"dev\") {print $(i+1); exit}}')\n")
+	b.WriteString("  if [ -z \"$ACTUAL\" ]; then ACTUAL=\"<no-route>\"; fi\n")
+	b.WriteString("  if [ \"$ACTUAL\" != \"$DEFAULT_DEV\" ]; then\n")
+	b.WriteString("    msg=\"OVERLAP: expected CIDR $CIDR (probe $PROBE) routes via $ACTUAL, expected $DEFAULT_DEV\"\n")
+	b.WriteString("    echo \"$msg\" >&2\n")
+	b.WriteString("    echo \"$msg\" >> /run/aks-flex-node/route-overlap.detected\n")
+	b.WriteString("    bad=1\n")
+	b.WriteString("  fi\n")
+	b.WriteString("done <<'EOF'\n")
 	for _, e := range entries {
-		fmt.Fprintf(&b, "# expected: %s (probe %s)\n", e.cidr, e.probe)
-		fmt.Fprintf(&b, "ACTUAL=$(ip -4 route get %s 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i==\"dev\") {print $(i+1); exit}}')\n", e.probe)
-		b.WriteString("if [ -z \"$ACTUAL\" ]; then ACTUAL=\"<no-route>\"; fi\n")
-		b.WriteString("if [ \"$ACTUAL\" != \"$DEFAULT_DEV\" ]; then\n")
-		fmt.Fprintf(&b, "  msg=\"OVERLAP: expected CIDR %s (probe %s) routes via $ACTUAL, expected $DEFAULT_DEV\"\n", e.cidr, e.probe)
-		b.WriteString("  echo \"$msg\" >&2\n")
-		b.WriteString("  echo \"$msg\" >> /run/aks-flex-node/route-overlap.detected\n")
-		b.WriteString("  bad=1\n")
-		b.WriteString("fi\n\n")
+		fmt.Fprintf(&b, "%s|%s\n", e.cidr, e.probe)
 	}
+	b.WriteString("EOF\n\n")
 
 	b.WriteString("if [ \"$bad\" -eq 1 ]; then\n")
 	b.WriteString("  cat >&2 <<'EOF'\n")

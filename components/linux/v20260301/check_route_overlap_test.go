@@ -35,8 +35,9 @@ func TestRenderCheckRouteOverlapScript(t *testing.T) {
 			mode:  linux.CheckRouteOverlapSpec_WARN,
 			wantContains: []string{
 				"mode=WARN",
-				"ip -4 route get 172.16.0.1",
-				`msg="OVERLAP: expected CIDR 172.16.0.0/16 (probe 172.16.0.1) routes via $ACTUAL, expected $DEFAULT_DEV"`,
+				`ACTUAL=$(ip -4 route get "$PROBE"`,
+				`msg="OVERLAP: expected CIDR $CIDR (probe $PROBE) routes via $ACTUAL, expected $DEFAULT_DEV"`,
+				"172.16.0.0/16|172.16.0.1",
 				"if [ \"$bad\" -eq 1 ]; then",
 				"  exit 0",
 			},
@@ -47,8 +48,8 @@ func TestRenderCheckRouteOverlapScript(t *testing.T) {
 			mode:  linux.CheckRouteOverlapSpec_STRICT,
 			wantContains: []string{
 				"mode=STRICT",
-				"ip -4 route get 172.16.0.1",
-				"ip -4 route get 10.0.0.1",
+				"172.16.0.0/16|172.16.0.1",
+				"10.0.0.0/8|10.0.0.1",
 				"if [ \"$bad\" -eq 1 ]; then",
 				"  exit 1",
 			},
@@ -79,7 +80,7 @@ func TestRenderCheckRouteOverlapScript(t *testing.T) {
 			cidrs: []string{"169.254.169.254/32"},
 			mode:  linux.CheckRouteOverlapSpec_STRICT,
 			wantContains: []string{
-				"ip -4 route get 169.254.169.254",
+				"169.254.169.254/32|169.254.169.254",
 			},
 		},
 		{

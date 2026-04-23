@@ -44,9 +44,8 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 				}.Build(),
 			},
 			wantContains: []string{
-				`DEV="eth0"`,
-				`GW="172.18.1.1"`,
-				`ip -4 route replace 172.16.1.0/24 via "$GW" dev "$DEV"`,
+				`172.16.1.0/24|eth0|172.18.1.1|0`,
+				`ip -4 route replace "$DEST" via "$GW" dev "$DEV"`,
 			},
 		},
 		{
@@ -57,10 +56,10 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 				}.Build(),
 			},
 			wantContains: []string{
-				`DEV=$(resolve_default_dev)`,
-				`GW=$(resolve_default_gw "$DEV")`,
-				"cannot install route 172.16.2.0/24",
-				`ip -4 route replace 172.16.2.0/24 via "$GW" dev "$DEV"`,
+				`resolve_default_dev_cached`,
+				`172.16.2.0/24|@@AUTO_DEV@@|@@AUTO_GW@@|0`,
+				`cannot install route $DEST`,
+				`ip -4 route replace "$DEST" via "$GW" dev "$DEV"`,
 			},
 		},
 		{
@@ -72,7 +71,10 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 					Metric:      to.Ptr[uint32](100),
 				}.Build(),
 			},
-			wantContains: []string{"metric 100"},
+			wantContains: []string{
+				`10.0.0.0/8|@@AUTO_DEV@@|10.1.0.1|100`,
+				`metric "$METRIC"`,
+			},
 		},
 		{
 			name: "rejects invalid destination",
