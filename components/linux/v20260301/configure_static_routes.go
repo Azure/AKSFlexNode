@@ -119,9 +119,10 @@ func writeScriptIfChanged(path string, content []byte) (bool, error) {
 }
 
 // renderStaticRoutesScript produces an idempotent bash script that applies
-// each route via `ip route replace`. Routes without an explicit gateway
-// resolve to the default gateway on `dev` (or eth0 if `dev` is empty) at
-// script runtime.
+// each route via `ip -4 route replace`. When `dev` is empty the script
+// resolves the outbound interface from the default IPv4 route at boot time.
+// When `gateway` is empty the script resolves the default gateway on that
+// dev. Both lookups retry briefly to survive DHCP races.
 func renderStaticRoutesScript(routes []*linux.StaticRoute) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
@@ -136,6 +137,17 @@ func renderStaticRoutesScript(routes []*linux.StaticRoute) (string, error) {
 	b.WriteString("  for i in $(seq 1 30); do\n")
 	b.WriteString("    gw=$(ip -4 route show default dev \"$dev\" 2>/dev/null | awk '/^default via/ {print $3; exit}')\n")
 	b.WriteString("    if [ -n \"$gw\" ]; then echo \"$gw\"; return 0; fi\n")
+	b.WriteString("    sleep 1\n")
+	b.WriteString("  done\n")
+	b.WriteString("  return 1\n")
+	b.WriteString("}\n\n")
+	b.WriteString(`# resolve_default_dev: prints the outbound interface of the IPv4 default` + "\n")
+	b.WriteString(`# route (e.g. eth0, ens3, enp0s6). Retries up to ~30s for DHCP.` + "\n")
+	b.WriteString("resolve_default_dev() {\n")
+	b.WriteString("  local i dev\n")
+	b.WriteString("  for i in $(seq 1 30); do\n")
+	b.WriteString("    dev=$(ip -4 route show default 2>/dev/null | awk '/^default via/ {for (i=1;i<=NF;i++) if ($i==\"dev\") {print $(i+1); exit}}')\n")
+	b.WriteString("    if [ -n \"$dev\" ]; then echo \"$dev\"; return 0; fi\n")
 	b.WriteString("    sleep 1\n")
 	b.WriteString("  done\n")
 	b.WriteString("  return 1\n")
@@ -170,21 +182,23 @@ func renderStaticRoutesScript(routes []*linux.StaticRoute) (string, error) {
 		}
 
 		dev := r.GetDev()
-		if dev == "" {
-			dev = "eth0"
-		}
 		gw := r.GetGateway()
 
 		fmt.Fprintf(&b, "# route %d: %s\n", i, dest)
+		if dev == "" {
+			fmt.Fprintf(&b, "DEV=$(resolve_default_dev) || { echo \"no default IPv4 route; cannot install route %s\" >&2; exit 1; }\n", dest)
+		} else {
+			fmt.Fprintf(&b, "DEV=%q\n", dev)
+		}
 		if gw == "" {
 			// Fail fast if the default gateway never appears. The alternative
 			// is a silently-successful oneshot that leaves kubelet booting
 			// with the bad routing we were trying to fix.
-			fmt.Fprintf(&b, "GW=$(resolve_default_gw %q) || { echo \"no default gateway on %s after 30s; cannot install route %s\" >&2; exit 1; }\n", dev, dev, dest)
+			fmt.Fprintf(&b, "GW=$(resolve_default_gw \"$DEV\") || { echo \"no default gateway on $DEV after 30s; cannot install route %s\" >&2; exit 1; }\n", dest)
 		} else {
 			fmt.Fprintf(&b, "GW=%q\n", gw)
 		}
-		cmd := fmt.Sprintf("ip route replace %s via \"$GW\" dev %q", dest, dev)
+		cmd := fmt.Sprintf("ip -4 route replace %s via \"$GW\" dev \"$DEV\"", dest)
 		if r.GetMetric() > 0 {
 			cmd += fmt.Sprintf(" metric %d", r.GetMetric())
 		}

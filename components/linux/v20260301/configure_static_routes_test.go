@@ -39,8 +39,9 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 				}.Build(),
 			},
 			wantContains: []string{
+				`DEV="eth0"`,
 				`GW="172.18.1.1"`,
-				`ip route replace 172.16.1.0/24 via "$GW" dev "eth0"`,
+				`ip -4 route replace 172.16.1.0/24 via "$GW" dev "$DEV"`,
 			},
 		},
 		{
@@ -51,9 +52,10 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 				}.Build(),
 			},
 			wantContains: []string{
-				`GW=$(resolve_default_gw "eth0")`,
+				`DEV=$(resolve_default_dev)`,
+				`GW=$(resolve_default_gw "$DEV")`,
 				"cannot install route 172.16.2.0/24",
-				`ip route replace 172.16.2.0/24 via "$GW" dev "eth0"`,
+				`ip -4 route replace 172.16.2.0/24 via "$GW" dev "$DEV"`,
 			},
 		},
 		{

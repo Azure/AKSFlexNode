@@ -1017,8 +1017,10 @@ type StaticRoute_builder struct {
 	// gateway does not appear within the retry window, the oneshot fails
 	// and kubelet will not start.
 	Gateway *string
-	// dev is the outbound interface (e.g. "eth0"). Defaults to "eth0" when
-	// empty. Must match [A-Za-z0-9_.-]{1,15}.
+	// dev is the outbound interface (e.g. "eth0"). When empty the oneshot
+	// resolves the outbound interface of the IPv4 default route at boot
+	// time — works with both classic (eth0) and predictable (ens*, enp*)
+	// interface names. Must match [A-Za-z0-9_.-]{1,15} when set.
 	Dev *string
 	// metric sets the route metric for tie-breaking. 0 means default.
 	Metric *uint32
