@@ -47,3 +47,44 @@ message ConfigureIPTablesSpec {
 
 message ConfigureIPTablesStatus {
 }
+
+// ConfigureStaticRoutes installs one or more static IPv4 routes on the node
+// via a systemd oneshot unit that runs `ip route replace` before kubelet
+// starts. This is intended for cases where the VM provider's default routing
+// is wrong for the cluster — for example, Azure ND-isr SKUs install connected
+// /16 routes for the InfiniBand fabric that can shadow legitimate cluster
+// CIDRs. More-specific /24 routes added via this action win over the IB /16
+// without disturbing peer-to-peer IB traffic.
+message ConfigureStaticRoutes {
+  api.Metadata metadata = 1;
+
+  ConfigureStaticRoutesSpec spec = 2;
+
+  ConfigureStaticRoutesStatus status = 3;
+}
+
+message ConfigureStaticRoutesSpec {
+  // routes is the list of static routes to install. Order is preserved but
+  // does not affect kernel selection (longest-prefix-match wins).
+  repeated StaticRoute routes = 1;
+}
+
+message ConfigureStaticRoutesStatus {
+}
+
+// StaticRoute describes a single IPv4 route.
+message StaticRoute {
+  // destination is an IPv4 CIDR (e.g. "172.16.1.0/24"). Required.
+  string destination = 1;
+
+  // gateway is the next-hop IPv4 address. When empty the oneshot resolves
+  // the default gateway on `dev` (or eth0 if `dev` is empty) at boot time.
+  string gateway = 2;
+
+  // dev is the outbound interface (e.g. "eth0"). Optional; when empty the
+  // kernel picks based on gateway reachability.
+  string dev = 3;
+
+  // metric sets the route metric for tie-breaking. 0 means default.
+  uint32 metric = 4;
+}

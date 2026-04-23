@@ -634,6 +634,416 @@ func (b0 ConfigureIPTablesStatus_builder) Build() *ConfigureIPTablesStatus {
 	return m0
 }
 
+// ConfigureStaticRoutes installs one or more static IPv4 routes on the node
+// via a systemd oneshot unit that runs `ip route replace` before kubelet
+// starts. This is intended for cases where the VM provider's default routing
+// is wrong for the cluster — for example, Azure ND-isr SKUs install connected
+// /16 routes for the InfiniBand fabric that can shadow legitimate cluster
+// CIDRs. More-specific /24 routes added via this action win over the IB /16
+// without disturbing peer-to-peer IB traffic.
+type ConfigureStaticRoutes struct {
+	state               protoimpl.MessageState       `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata                `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *ConfigureStaticRoutesSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *ConfigureStaticRoutesStatus `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ConfigureStaticRoutes) Reset() {
+	*x = ConfigureStaticRoutes{}
+	mi := &file_components_linux_action_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureStaticRoutes) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureStaticRoutes) ProtoMessage() {}
+
+func (x *ConfigureStaticRoutes) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ConfigureStaticRoutes) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *ConfigureStaticRoutes) GetSpec() *ConfigureStaticRoutesSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *ConfigureStaticRoutes) GetStatus() *ConfigureStaticRoutesStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *ConfigureStaticRoutes) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *ConfigureStaticRoutes) SetSpec(v *ConfigureStaticRoutesSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *ConfigureStaticRoutes) SetStatus(v *ConfigureStaticRoutesStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *ConfigureStaticRoutes) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *ConfigureStaticRoutes) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *ConfigureStaticRoutes) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *ConfigureStaticRoutes) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *ConfigureStaticRoutes) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *ConfigureStaticRoutes) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type ConfigureStaticRoutes_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *ConfigureStaticRoutesSpec
+	Status   *ConfigureStaticRoutesStatus
+}
+
+func (b0 ConfigureStaticRoutes_builder) Build() *ConfigureStaticRoutes {
+	m0 := &ConfigureStaticRoutes{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type ConfigureStaticRoutesSpec struct {
+	state             protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Routes *[]*StaticRoute        `protobuf:"bytes,1,rep,name=routes"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ConfigureStaticRoutesSpec) Reset() {
+	*x = ConfigureStaticRoutesSpec{}
+	mi := &file_components_linux_action_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureStaticRoutesSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureStaticRoutesSpec) ProtoMessage() {}
+
+func (x *ConfigureStaticRoutesSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ConfigureStaticRoutesSpec) GetRoutes() []*StaticRoute {
+	if x != nil {
+		if x.xxx_hidden_Routes != nil {
+			return *x.xxx_hidden_Routes
+		}
+	}
+	return nil
+}
+
+func (x *ConfigureStaticRoutesSpec) SetRoutes(v []*StaticRoute) {
+	x.xxx_hidden_Routes = &v
+}
+
+type ConfigureStaticRoutesSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// routes is the list of static routes to install. Order is preserved but
+	// does not affect kernel selection (longest-prefix-match wins).
+	Routes []*StaticRoute
+}
+
+func (b0 ConfigureStaticRoutesSpec_builder) Build() *ConfigureStaticRoutesSpec {
+	m0 := &ConfigureStaticRoutesSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Routes = &b.Routes
+	return m0
+}
+
+type ConfigureStaticRoutesStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureStaticRoutesStatus) Reset() {
+	*x = ConfigureStaticRoutesStatus{}
+	mi := &file_components_linux_action_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureStaticRoutesStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureStaticRoutesStatus) ProtoMessage() {}
+
+func (x *ConfigureStaticRoutesStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type ConfigureStaticRoutesStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 ConfigureStaticRoutesStatus_builder) Build() *ConfigureStaticRoutesStatus {
+	m0 := &ConfigureStaticRoutesStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+// StaticRoute describes a single IPv4 route.
+type StaticRoute struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Destination *string                `protobuf:"bytes,1,opt,name=destination"`
+	xxx_hidden_Gateway     *string                `protobuf:"bytes,2,opt,name=gateway"`
+	xxx_hidden_Dev         *string                `protobuf:"bytes,3,opt,name=dev"`
+	xxx_hidden_Metric      uint32                 `protobuf:"varint,4,opt,name=metric"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *StaticRoute) Reset() {
+	*x = StaticRoute{}
+	mi := &file_components_linux_action_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StaticRoute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StaticRoute) ProtoMessage() {}
+
+func (x *StaticRoute) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *StaticRoute) GetDestination() string {
+	if x != nil {
+		if x.xxx_hidden_Destination != nil {
+			return *x.xxx_hidden_Destination
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StaticRoute) GetGateway() string {
+	if x != nil {
+		if x.xxx_hidden_Gateway != nil {
+			return *x.xxx_hidden_Gateway
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StaticRoute) GetDev() string {
+	if x != nil {
+		if x.xxx_hidden_Dev != nil {
+			return *x.xxx_hidden_Dev
+		}
+		return ""
+	}
+	return ""
+}
+
+func (x *StaticRoute) GetMetric() uint32 {
+	if x != nil {
+		return x.xxx_hidden_Metric
+	}
+	return 0
+}
+
+func (x *StaticRoute) SetDestination(v string) {
+	x.xxx_hidden_Destination = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 4)
+}
+
+func (x *StaticRoute) SetGateway(v string) {
+	x.xxx_hidden_Gateway = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 4)
+}
+
+func (x *StaticRoute) SetDev(v string) {
+	x.xxx_hidden_Dev = &v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 4)
+}
+
+func (x *StaticRoute) SetMetric(v uint32) {
+	x.xxx_hidden_Metric = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 4)
+}
+
+func (x *StaticRoute) HasDestination() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *StaticRoute) HasGateway() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *StaticRoute) HasDev() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
+func (x *StaticRoute) HasMetric() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 3)
+}
+
+func (x *StaticRoute) ClearDestination() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_Destination = nil
+}
+
+func (x *StaticRoute) ClearGateway() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_Gateway = nil
+}
+
+func (x *StaticRoute) ClearDev() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+	x.xxx_hidden_Dev = nil
+}
+
+func (x *StaticRoute) ClearMetric() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 3)
+	x.xxx_hidden_Metric = 0
+}
+
+type StaticRoute_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// destination is an IPv4 CIDR (e.g. "172.16.1.0/24"). Required.
+	Destination *string
+	// gateway is the next-hop IPv4 address. When empty the oneshot resolves
+	// the default gateway on `dev` (or eth0 if `dev` is empty) at boot time.
+	Gateway *string
+	// dev is the outbound interface (e.g. "eth0"). Optional; when empty the
+	// kernel picks based on gateway reachability.
+	Dev *string
+	// metric sets the route metric for tie-breaking. 0 means default.
+	Metric *uint32
+}
+
+func (b0 StaticRoute_builder) Build() *StaticRoute {
+	m0 := &StaticRoute{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.Destination != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 4)
+		x.xxx_hidden_Destination = b.Destination
+	}
+	if b.Gateway != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 4)
+		x.xxx_hidden_Gateway = b.Gateway
+	}
+	if b.Dev != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 4)
+		x.xxx_hidden_Dev = b.Dev
+	}
+	if b.Metric != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 4)
+		x.xxx_hidden_Metric = *b.Metric
+	}
+	return m0
+}
+
 var File_components_linux_action_proto protoreflect.FileDescriptor
 
 const file_components_linux_action_proto_rawDesc = "" +
@@ -656,36 +1066,56 @@ const file_components_linux_action_proto_rawDesc = "" +
 	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.linux.ConfigureIPTablesSpecR\x04spec\x12J\n" +
 	"\x06status\x18\x03 \x01(\v22.aks.flex.components.linux.ConfigureIPTablesStatusR\x06status\"\x17\n" +
 	"\x15ConfigureIPTablesSpec\"\x19\n" +
-	"\x17ConfigureIPTablesStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
+	"\x17ConfigureIPTablesStatus\"\xf0\x01\n" +
+	"\x15ConfigureStaticRoutes\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12H\n" +
+	"\x04spec\x18\x02 \x01(\v24.aks.flex.components.linux.ConfigureStaticRoutesSpecR\x04spec\x12N\n" +
+	"\x06status\x18\x03 \x01(\v26.aks.flex.components.linux.ConfigureStaticRoutesStatusR\x06status\"[\n" +
+	"\x19ConfigureStaticRoutesSpec\x12>\n" +
+	"\x06routes\x18\x01 \x03(\v2&.aks.flex.components.linux.StaticRouteR\x06routes\"\x1d\n" +
+	"\x1bConfigureStaticRoutesStatus\"s\n" +
+	"\vStaticRoute\x12 \n" +
+	"\vdestination\x18\x01 \x01(\tR\vdestination\x12\x18\n" +
+	"\agateway\x18\x02 \x01(\tR\agateway\x12\x10\n" +
+	"\x03dev\x18\x03 \x01(\tR\x03dev\x12\x16\n" +
+	"\x06metric\x18\x04 \x01(\rR\x06metricB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
 
-var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_components_linux_action_proto_goTypes = []any{
-	(*ConfigureBaseOS)(nil),         // 0: aks.flex.components.linux.ConfigureBaseOS
-	(*ConfigureBaseOSSpec)(nil),     // 1: aks.flex.components.linux.ConfigureBaseOSSpec
-	(*ConfigureBaseOSStatus)(nil),   // 2: aks.flex.components.linux.ConfigureBaseOSStatus
-	(*DisableDocker)(nil),           // 3: aks.flex.components.linux.DisableDocker
-	(*DisableDockerSpec)(nil),       // 4: aks.flex.components.linux.DisableDockerSpec
-	(*DisableDockerStatus)(nil),     // 5: aks.flex.components.linux.DisableDockerStatus
-	(*ConfigureIPTables)(nil),       // 6: aks.flex.components.linux.ConfigureIPTables
-	(*ConfigureIPTablesSpec)(nil),   // 7: aks.flex.components.linux.ConfigureIPTablesSpec
-	(*ConfigureIPTablesStatus)(nil), // 8: aks.flex.components.linux.ConfigureIPTablesStatus
-	(*api.Metadata)(nil),            // 9: aks.flex.components.api.Metadata
+	(*ConfigureBaseOS)(nil),             // 0: aks.flex.components.linux.ConfigureBaseOS
+	(*ConfigureBaseOSSpec)(nil),         // 1: aks.flex.components.linux.ConfigureBaseOSSpec
+	(*ConfigureBaseOSStatus)(nil),       // 2: aks.flex.components.linux.ConfigureBaseOSStatus
+	(*DisableDocker)(nil),               // 3: aks.flex.components.linux.DisableDocker
+	(*DisableDockerSpec)(nil),           // 4: aks.flex.components.linux.DisableDockerSpec
+	(*DisableDockerStatus)(nil),         // 5: aks.flex.components.linux.DisableDockerStatus
+	(*ConfigureIPTables)(nil),           // 6: aks.flex.components.linux.ConfigureIPTables
+	(*ConfigureIPTablesSpec)(nil),       // 7: aks.flex.components.linux.ConfigureIPTablesSpec
+	(*ConfigureIPTablesStatus)(nil),     // 8: aks.flex.components.linux.ConfigureIPTablesStatus
+	(*ConfigureStaticRoutes)(nil),       // 9: aks.flex.components.linux.ConfigureStaticRoutes
+	(*ConfigureStaticRoutesSpec)(nil),   // 10: aks.flex.components.linux.ConfigureStaticRoutesSpec
+	(*ConfigureStaticRoutesStatus)(nil), // 11: aks.flex.components.linux.ConfigureStaticRoutesStatus
+	(*StaticRoute)(nil),                 // 12: aks.flex.components.linux.StaticRoute
+	(*api.Metadata)(nil),                // 13: aks.flex.components.api.Metadata
 }
 var file_components_linux_action_proto_depIdxs = []int32{
-	9, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
-	1, // 1: aks.flex.components.linux.ConfigureBaseOS.spec:type_name -> aks.flex.components.linux.ConfigureBaseOSSpec
-	2, // 2: aks.flex.components.linux.ConfigureBaseOS.status:type_name -> aks.flex.components.linux.ConfigureBaseOSStatus
-	9, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
-	4, // 4: aks.flex.components.linux.DisableDocker.spec:type_name -> aks.flex.components.linux.DisableDockerSpec
-	5, // 5: aks.flex.components.linux.DisableDocker.status:type_name -> aks.flex.components.linux.DisableDockerStatus
-	9, // 6: aks.flex.components.linux.ConfigureIPTables.metadata:type_name -> aks.flex.components.api.Metadata
-	7, // 7: aks.flex.components.linux.ConfigureIPTables.spec:type_name -> aks.flex.components.linux.ConfigureIPTablesSpec
-	8, // 8: aks.flex.components.linux.ConfigureIPTables.status:type_name -> aks.flex.components.linux.ConfigureIPTablesStatus
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	13, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
+	1,  // 1: aks.flex.components.linux.ConfigureBaseOS.spec:type_name -> aks.flex.components.linux.ConfigureBaseOSSpec
+	2,  // 2: aks.flex.components.linux.ConfigureBaseOS.status:type_name -> aks.flex.components.linux.ConfigureBaseOSStatus
+	13, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
+	4,  // 4: aks.flex.components.linux.DisableDocker.spec:type_name -> aks.flex.components.linux.DisableDockerSpec
+	5,  // 5: aks.flex.components.linux.DisableDocker.status:type_name -> aks.flex.components.linux.DisableDockerStatus
+	13, // 6: aks.flex.components.linux.ConfigureIPTables.metadata:type_name -> aks.flex.components.api.Metadata
+	7,  // 7: aks.flex.components.linux.ConfigureIPTables.spec:type_name -> aks.flex.components.linux.ConfigureIPTablesSpec
+	8,  // 8: aks.flex.components.linux.ConfigureIPTables.status:type_name -> aks.flex.components.linux.ConfigureIPTablesStatus
+	13, // 9: aks.flex.components.linux.ConfigureStaticRoutes.metadata:type_name -> aks.flex.components.api.Metadata
+	10, // 10: aks.flex.components.linux.ConfigureStaticRoutes.spec:type_name -> aks.flex.components.linux.ConfigureStaticRoutesSpec
+	11, // 11: aks.flex.components.linux.ConfigureStaticRoutes.status:type_name -> aks.flex.components.linux.ConfigureStaticRoutesStatus
+	12, // 12: aks.flex.components.linux.ConfigureStaticRoutesSpec.routes:type_name -> aks.flex.components.linux.StaticRoute
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_components_linux_action_proto_init() }
@@ -699,7 +1129,7 @@ func file_components_linux_action_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_linux_action_proto_rawDesc), len(file_components_linux_action_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
