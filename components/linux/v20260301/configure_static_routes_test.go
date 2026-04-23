@@ -1,6 +1,8 @@
 package v20260301
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,7 +52,7 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 			},
 			wantContains: []string{
 				`GW=$(resolve_default_gw "eth0")`,
-				`if [ -z "$GW" ]; then`,
+				"cannot install route 172.16.2.0/24",
 				`ip route replace 172.16.2.0/24 via "$GW" dev "eth0"`,
 			},
 		},
@@ -81,6 +83,34 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 				}.Build(),
 			},
 			wantErr: true,
+		},
+		{
+			name: "rejects IPv6 destination",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{Destination: to.Ptr("2001:db8::/32")}.Build(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects IPv6 gateway",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("172.16.1.0/24"),
+					Gateway:     to.Ptr("2001:db8::1"),
+				}.Build(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "auto-resolve fails hard when gateway never appears",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{Destination: to.Ptr("172.16.2.0/24")}.Build(),
+			},
+			wantContains: []string{
+				"resolve_default_gw",
+				"|| { echo",
+				"exit 1",
+			},
 		},
 		{
 			name: "rejects shell-meta in dev name",
@@ -152,5 +182,57 @@ func TestIsSafeIfaceName(t *testing.T) {
 		if got := isSafeIfaceName(in); got != want {
 			t.Errorf("isSafeIfaceName(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+func TestWriteScriptIfChanged(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "script.sh")
+
+	// First write.
+	changed, err := writeScriptIfChanged(path, []byte("hello"))
+	if err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if !changed {
+		t.Errorf("first write: expected changed=true")
+	}
+
+	// Identical content.
+	info1, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	changed, err = writeScriptIfChanged(path, []byte("hello"))
+	if err != nil {
+		t.Fatalf("noop write: %v", err)
+	}
+	if changed {
+		t.Errorf("noop write: expected changed=false")
+	}
+	info2, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !info1.ModTime().Equal(info2.ModTime()) {
+		t.Errorf("noop write touched the file (mtime changed)")
+	}
+
+	// Different content.
+	changed, err = writeScriptIfChanged(path, []byte("goodbye"))
+	if err != nil {
+		t.Fatalf("update write: %v", err)
+	}
+	if !changed {
+		t.Errorf("update write: expected changed=true")
+	}
+	got, err := os.ReadFile(path) // #nosec G304 -- path is t.TempDir()-scoped
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "goodbye" {
+		t.Errorf("file content = %q, want %q", got, "goodbye")
 	}
 }

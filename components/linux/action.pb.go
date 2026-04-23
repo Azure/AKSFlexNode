@@ -7,12 +7,11 @@
 package linux
 
 import (
-	reflect "reflect"
-	unsafe "unsafe"
-
 	api "github.com/Azure/AKSFlexNode/components/api"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	unsafe "unsafe"
 )
 
 const (
@@ -863,7 +862,8 @@ func (b0 ConfigureStaticRoutesStatus_builder) Build() *ConfigureStaticRoutesStat
 	return m0
 }
 
-// StaticRoute describes a single IPv4 route.
+// StaticRoute describes a single IPv4 route. IPv6 is intentionally not
+// supported; validation rejects non-IPv4 destinations and gateways.
 type StaticRoute struct {
 	state                  protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_Destination *string                `protobuf:"bytes,1,opt,name=destination"`
@@ -1012,10 +1012,13 @@ type StaticRoute_builder struct {
 	// destination is an IPv4 CIDR (e.g. "172.16.1.0/24"). Required.
 	Destination *string
 	// gateway is the next-hop IPv4 address. When empty the oneshot resolves
-	// the default gateway on `dev` (or eth0 if `dev` is empty) at boot time.
+	// the default gateway on `dev` at boot time (with a bounded retry, since
+	// DHCP may not have installed the default route yet). If the default
+	// gateway does not appear within the retry window, the oneshot fails
+	// and kubelet will not start.
 	Gateway *string
-	// dev is the outbound interface (e.g. "eth0"). Optional; when empty the
-	// kernel picks based on gateway reachability.
+	// dev is the outbound interface (e.g. "eth0"). Defaults to "eth0" when
+	// empty. Must match [A-Za-z0-9_.-]{1,15}.
 	Dev *string
 	// metric sets the route metric for tie-breaking. 0 means default.
 	Metric *uint32
