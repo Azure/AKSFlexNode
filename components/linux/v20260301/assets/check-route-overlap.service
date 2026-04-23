@@ -1,0 +1,17 @@
+[Unit]
+Description=AKSFlexNode IPv4 route overlap pre-flight check
+DefaultDependencies=no
+After=network-online.target static-routes.service
+Wants=network-online.target
+Before=kubelet.service
+RequiredBy=kubelet.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /etc/aks-flex-node/check-route-overlap.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

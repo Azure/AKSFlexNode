@@ -94,3 +94,44 @@ message StaticRoute {
   // metric sets the route metric for tie-breaking. 0 means default.
   uint32 metric = 4;
 }
+
+// CheckRouteOverlap verifies at boot, before kubelet starts, that a list
+// of expected IPv4 CIDRs (typically the cluster pod CIDR, service CIDR,
+// and API server) actually route via the same interface as the IPv4
+// default route. When a CIDR resolves out a different interface — the
+// classic symptom is the H200 IB driver shadowing a customer VNet CIDR
+// with a connected /16 on ib0 — the check either logs a warning or
+// fails the boot, depending on `mode`.
+message CheckRouteOverlap {
+  api.Metadata metadata = 1;
+
+  CheckRouteOverlapSpec spec = 2;
+
+  CheckRouteOverlapStatus status = 3;
+}
+
+message CheckRouteOverlapSpec {
+  // expected_cidrs are IPv4 CIDRs that kubelet, kube-proxy, and pods
+  // must be able to reach via the IPv4 default route's outbound
+  // interface. Typically populated by the controller from the cluster's
+  // pod CIDR, service CIDR, and API server endpoint.
+  repeated string expected_cidrs = 1;
+
+  // mode controls what happens when an overlap is detected.
+  //   WARN   : log + write /run/aks-flex-node/route-overlap.detected;
+  //            kubelet starts anyway.
+  //   STRICT : same logging, then exit 1 — kubelet does not start
+  //            (the unit is RequiredBy=kubelet.service). Use STRICT in
+  //            production where a misrouted node is worse than a node
+  //            that won't join.
+  Mode mode = 2;
+
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    WARN = 1;
+    STRICT = 2;
+  }
+}
+
+message CheckRouteOverlapStatus {
+}

@@ -22,4 +22,8 @@ func init() {
 		newConfigureStaticRoutesAction,
 		&linux.ConfigureStaticRoutes{},
 	)
+	actions.MustRegister(
+		newCheckRouteOverlapAction,
+		&linux.CheckRouteOverlap{},
+	)
 }

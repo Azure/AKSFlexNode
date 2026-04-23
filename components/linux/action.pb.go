@@ -21,6 +21,50 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type CheckRouteOverlapSpec_Mode int32
+
+const (
+	CheckRouteOverlapSpec_MODE_UNSPECIFIED CheckRouteOverlapSpec_Mode = 0
+	CheckRouteOverlapSpec_WARN             CheckRouteOverlapSpec_Mode = 1
+	CheckRouteOverlapSpec_STRICT           CheckRouteOverlapSpec_Mode = 2
+)
+
+// Enum value maps for CheckRouteOverlapSpec_Mode.
+var (
+	CheckRouteOverlapSpec_Mode_name = map[int32]string{
+		0: "MODE_UNSPECIFIED",
+		1: "WARN",
+		2: "STRICT",
+	}
+	CheckRouteOverlapSpec_Mode_value = map[string]int32{
+		"MODE_UNSPECIFIED": 0,
+		"WARN":             1,
+		"STRICT":           2,
+	}
+)
+
+func (x CheckRouteOverlapSpec_Mode) Enum() *CheckRouteOverlapSpec_Mode {
+	p := new(CheckRouteOverlapSpec_Mode)
+	*p = x
+	return p
+}
+
+func (x CheckRouteOverlapSpec_Mode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CheckRouteOverlapSpec_Mode) Descriptor() protoreflect.EnumDescriptor {
+	return file_components_linux_action_proto_enumTypes[0].Descriptor()
+}
+
+func (CheckRouteOverlapSpec_Mode) Type() protoreflect.EnumType {
+	return &file_components_linux_action_proto_enumTypes[0]
+}
+
+func (x CheckRouteOverlapSpec_Mode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
 type ConfigureBaseOS struct {
 	state               protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_Metadata *api.Metadata          `protobuf:"bytes,1,opt,name=metadata"`
@@ -1049,6 +1093,277 @@ func (b0 StaticRoute_builder) Build() *StaticRoute {
 	return m0
 }
 
+// CheckRouteOverlap verifies at boot, before kubelet starts, that a list
+// of expected IPv4 CIDRs (typically the cluster pod CIDR, service CIDR,
+// and API server) actually route via the same interface as the IPv4
+// default route. When a CIDR resolves out a different interface — the
+// classic symptom is the H200 IB driver shadowing a customer VNet CIDR
+// with a connected /16 on ib0 — the check either logs a warning or
+// fails the boot, depending on `mode`.
+type CheckRouteOverlap struct {
+	state               protoimpl.MessageState   `protogen:"opaque.v1"`
+	xxx_hidden_Metadata *api.Metadata            `protobuf:"bytes,1,opt,name=metadata"`
+	xxx_hidden_Spec     *CheckRouteOverlapSpec   `protobuf:"bytes,2,opt,name=spec"`
+	xxx_hidden_Status   *CheckRouteOverlapStatus `protobuf:"bytes,3,opt,name=status"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *CheckRouteOverlap) Reset() {
+	*x = CheckRouteOverlap{}
+	mi := &file_components_linux_action_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckRouteOverlap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckRouteOverlap) ProtoMessage() {}
+
+func (x *CheckRouteOverlap) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CheckRouteOverlap) GetMetadata() *api.Metadata {
+	if x != nil {
+		return x.xxx_hidden_Metadata
+	}
+	return nil
+}
+
+func (x *CheckRouteOverlap) GetSpec() *CheckRouteOverlapSpec {
+	if x != nil {
+		return x.xxx_hidden_Spec
+	}
+	return nil
+}
+
+func (x *CheckRouteOverlap) GetStatus() *CheckRouteOverlapStatus {
+	if x != nil {
+		return x.xxx_hidden_Status
+	}
+	return nil
+}
+
+func (x *CheckRouteOverlap) SetMetadata(v *api.Metadata) {
+	x.xxx_hidden_Metadata = v
+}
+
+func (x *CheckRouteOverlap) SetSpec(v *CheckRouteOverlapSpec) {
+	x.xxx_hidden_Spec = v
+}
+
+func (x *CheckRouteOverlap) SetStatus(v *CheckRouteOverlapStatus) {
+	x.xxx_hidden_Status = v
+}
+
+func (x *CheckRouteOverlap) HasMetadata() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Metadata != nil
+}
+
+func (x *CheckRouteOverlap) HasSpec() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Spec != nil
+}
+
+func (x *CheckRouteOverlap) HasStatus() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Status != nil
+}
+
+func (x *CheckRouteOverlap) ClearMetadata() {
+	x.xxx_hidden_Metadata = nil
+}
+
+func (x *CheckRouteOverlap) ClearSpec() {
+	x.xxx_hidden_Spec = nil
+}
+
+func (x *CheckRouteOverlap) ClearStatus() {
+	x.xxx_hidden_Status = nil
+}
+
+type CheckRouteOverlap_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Metadata *api.Metadata
+	Spec     *CheckRouteOverlapSpec
+	Status   *CheckRouteOverlapStatus
+}
+
+func (b0 CheckRouteOverlap_builder) Build() *CheckRouteOverlap {
+	m0 := &CheckRouteOverlap{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Metadata = b.Metadata
+	x.xxx_hidden_Spec = b.Spec
+	x.xxx_hidden_Status = b.Status
+	return m0
+}
+
+type CheckRouteOverlapSpec struct {
+	state                    protoimpl.MessageState     `protogen:"opaque.v1"`
+	xxx_hidden_ExpectedCidrs []string                   `protobuf:"bytes,1,rep,name=expected_cidrs,json=expectedCidrs"`
+	xxx_hidden_Mode          CheckRouteOverlapSpec_Mode `protobuf:"varint,2,opt,name=mode,enum=aks.flex.components.linux.CheckRouteOverlapSpec_Mode"`
+	XXX_raceDetectHookData   protoimpl.RaceDetectHookData
+	XXX_presence             [1]uint32
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *CheckRouteOverlapSpec) Reset() {
+	*x = CheckRouteOverlapSpec{}
+	mi := &file_components_linux_action_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckRouteOverlapSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckRouteOverlapSpec) ProtoMessage() {}
+
+func (x *CheckRouteOverlapSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CheckRouteOverlapSpec) GetExpectedCidrs() []string {
+	if x != nil {
+		return x.xxx_hidden_ExpectedCidrs
+	}
+	return nil
+}
+
+func (x *CheckRouteOverlapSpec) GetMode() CheckRouteOverlapSpec_Mode {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 1) {
+			return x.xxx_hidden_Mode
+		}
+	}
+	return CheckRouteOverlapSpec_MODE_UNSPECIFIED
+}
+
+func (x *CheckRouteOverlapSpec) SetExpectedCidrs(v []string) {
+	x.xxx_hidden_ExpectedCidrs = v
+}
+
+func (x *CheckRouteOverlapSpec) SetMode(v CheckRouteOverlapSpec_Mode) {
+	x.xxx_hidden_Mode = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+}
+
+func (x *CheckRouteOverlapSpec) HasMode() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *CheckRouteOverlapSpec) ClearMode() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_Mode = CheckRouteOverlapSpec_MODE_UNSPECIFIED
+}
+
+type CheckRouteOverlapSpec_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// expected_cidrs are IPv4 CIDRs that kubelet, kube-proxy, and pods
+	// must be able to reach via the IPv4 default route's outbound
+	// interface. Typically populated by the controller from the cluster's
+	// pod CIDR, service CIDR, and API server endpoint.
+	ExpectedCidrs []string
+	// mode controls what happens when an overlap is detected.
+	//
+	//	WARN   : log + write /run/aks-flex-node/route-overlap.detected;
+	//	         kubelet starts anyway.
+	//	STRICT : same logging, then exit 1 — kubelet does not start
+	//	         (the unit is RequiredBy=kubelet.service). Use STRICT in
+	//	         production where a misrouted node is worse than a node
+	//	         that won't join.
+	Mode *CheckRouteOverlapSpec_Mode
+}
+
+func (b0 CheckRouteOverlapSpec_builder) Build() *CheckRouteOverlapSpec {
+	m0 := &CheckRouteOverlapSpec{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_ExpectedCidrs = b.ExpectedCidrs
+	if b.Mode != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		x.xxx_hidden_Mode = *b.Mode
+	}
+	return m0
+}
+
+type CheckRouteOverlapStatus struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckRouteOverlapStatus) Reset() {
+	*x = CheckRouteOverlapStatus{}
+	mi := &file_components_linux_action_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckRouteOverlapStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckRouteOverlapStatus) ProtoMessage() {}
+
+func (x *CheckRouteOverlapStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_components_linux_action_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type CheckRouteOverlapStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 CheckRouteOverlapStatus_builder) Build() *CheckRouteOverlapStatus {
+	m0 := &CheckRouteOverlapStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 var File_components_linux_action_proto protoreflect.FileDescriptor
 
 const file_components_linux_action_proto_rawDesc = "" +
@@ -1083,44 +1398,66 @@ const file_components_linux_action_proto_rawDesc = "" +
 	"\vdestination\x18\x01 \x01(\tR\vdestination\x12\x18\n" +
 	"\agateway\x18\x02 \x01(\tR\agateway\x12\x10\n" +
 	"\x03dev\x18\x03 \x01(\tR\x03dev\x12\x16\n" +
-	"\x06metric\x18\x04 \x01(\rR\x06metricB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
+	"\x06metric\x18\x04 \x01(\rR\x06metric\"\xe4\x01\n" +
+	"\x11CheckRouteOverlap\x12=\n" +
+	"\bmetadata\x18\x01 \x01(\v2!.aks.flex.components.api.MetadataR\bmetadata\x12D\n" +
+	"\x04spec\x18\x02 \x01(\v20.aks.flex.components.linux.CheckRouteOverlapSpecR\x04spec\x12J\n" +
+	"\x06status\x18\x03 \x01(\v22.aks.flex.components.linux.CheckRouteOverlapStatusR\x06status\"\xbd\x01\n" +
+	"\x15CheckRouteOverlapSpec\x12%\n" +
+	"\x0eexpected_cidrs\x18\x01 \x03(\tR\rexpectedCidrs\x12I\n" +
+	"\x04mode\x18\x02 \x01(\x0e25.aks.flex.components.linux.CheckRouteOverlapSpec.ModeR\x04mode\"2\n" +
+	"\x04Mode\x12\x14\n" +
+	"\x10MODE_UNSPECIFIED\x10\x00\x12\b\n" +
+	"\x04WARN\x10\x01\x12\n" +
+	"\n" +
+	"\x06STRICT\x10\x02\"\x19\n" +
+	"\x17CheckRouteOverlapStatusB/Z-github.com/Azure/AKSFlexNode/components/linuxb\beditionsp\xe9\a"
 
-var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_components_linux_action_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_components_linux_action_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_components_linux_action_proto_goTypes = []any{
-	(*ConfigureBaseOS)(nil),             // 0: aks.flex.components.linux.ConfigureBaseOS
-	(*ConfigureBaseOSSpec)(nil),         // 1: aks.flex.components.linux.ConfigureBaseOSSpec
-	(*ConfigureBaseOSStatus)(nil),       // 2: aks.flex.components.linux.ConfigureBaseOSStatus
-	(*DisableDocker)(nil),               // 3: aks.flex.components.linux.DisableDocker
-	(*DisableDockerSpec)(nil),           // 4: aks.flex.components.linux.DisableDockerSpec
-	(*DisableDockerStatus)(nil),         // 5: aks.flex.components.linux.DisableDockerStatus
-	(*ConfigureIPTables)(nil),           // 6: aks.flex.components.linux.ConfigureIPTables
-	(*ConfigureIPTablesSpec)(nil),       // 7: aks.flex.components.linux.ConfigureIPTablesSpec
-	(*ConfigureIPTablesStatus)(nil),     // 8: aks.flex.components.linux.ConfigureIPTablesStatus
-	(*ConfigureStaticRoutes)(nil),       // 9: aks.flex.components.linux.ConfigureStaticRoutes
-	(*ConfigureStaticRoutesSpec)(nil),   // 10: aks.flex.components.linux.ConfigureStaticRoutesSpec
-	(*ConfigureStaticRoutesStatus)(nil), // 11: aks.flex.components.linux.ConfigureStaticRoutesStatus
-	(*StaticRoute)(nil),                 // 12: aks.flex.components.linux.StaticRoute
-	(*api.Metadata)(nil),                // 13: aks.flex.components.api.Metadata
+	(CheckRouteOverlapSpec_Mode)(0),     // 0: aks.flex.components.linux.CheckRouteOverlapSpec.Mode
+	(*ConfigureBaseOS)(nil),             // 1: aks.flex.components.linux.ConfigureBaseOS
+	(*ConfigureBaseOSSpec)(nil),         // 2: aks.flex.components.linux.ConfigureBaseOSSpec
+	(*ConfigureBaseOSStatus)(nil),       // 3: aks.flex.components.linux.ConfigureBaseOSStatus
+	(*DisableDocker)(nil),               // 4: aks.flex.components.linux.DisableDocker
+	(*DisableDockerSpec)(nil),           // 5: aks.flex.components.linux.DisableDockerSpec
+	(*DisableDockerStatus)(nil),         // 6: aks.flex.components.linux.DisableDockerStatus
+	(*ConfigureIPTables)(nil),           // 7: aks.flex.components.linux.ConfigureIPTables
+	(*ConfigureIPTablesSpec)(nil),       // 8: aks.flex.components.linux.ConfigureIPTablesSpec
+	(*ConfigureIPTablesStatus)(nil),     // 9: aks.flex.components.linux.ConfigureIPTablesStatus
+	(*ConfigureStaticRoutes)(nil),       // 10: aks.flex.components.linux.ConfigureStaticRoutes
+	(*ConfigureStaticRoutesSpec)(nil),   // 11: aks.flex.components.linux.ConfigureStaticRoutesSpec
+	(*ConfigureStaticRoutesStatus)(nil), // 12: aks.flex.components.linux.ConfigureStaticRoutesStatus
+	(*StaticRoute)(nil),                 // 13: aks.flex.components.linux.StaticRoute
+	(*CheckRouteOverlap)(nil),           // 14: aks.flex.components.linux.CheckRouteOverlap
+	(*CheckRouteOverlapSpec)(nil),       // 15: aks.flex.components.linux.CheckRouteOverlapSpec
+	(*CheckRouteOverlapStatus)(nil),     // 16: aks.flex.components.linux.CheckRouteOverlapStatus
+	(*api.Metadata)(nil),                // 17: aks.flex.components.api.Metadata
 }
 var file_components_linux_action_proto_depIdxs = []int32{
-	13, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
-	1,  // 1: aks.flex.components.linux.ConfigureBaseOS.spec:type_name -> aks.flex.components.linux.ConfigureBaseOSSpec
-	2,  // 2: aks.flex.components.linux.ConfigureBaseOS.status:type_name -> aks.flex.components.linux.ConfigureBaseOSStatus
-	13, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
-	4,  // 4: aks.flex.components.linux.DisableDocker.spec:type_name -> aks.flex.components.linux.DisableDockerSpec
-	5,  // 5: aks.flex.components.linux.DisableDocker.status:type_name -> aks.flex.components.linux.DisableDockerStatus
-	13, // 6: aks.flex.components.linux.ConfigureIPTables.metadata:type_name -> aks.flex.components.api.Metadata
-	7,  // 7: aks.flex.components.linux.ConfigureIPTables.spec:type_name -> aks.flex.components.linux.ConfigureIPTablesSpec
-	8,  // 8: aks.flex.components.linux.ConfigureIPTables.status:type_name -> aks.flex.components.linux.ConfigureIPTablesStatus
-	13, // 9: aks.flex.components.linux.ConfigureStaticRoutes.metadata:type_name -> aks.flex.components.api.Metadata
-	10, // 10: aks.flex.components.linux.ConfigureStaticRoutes.spec:type_name -> aks.flex.components.linux.ConfigureStaticRoutesSpec
-	11, // 11: aks.flex.components.linux.ConfigureStaticRoutes.status:type_name -> aks.flex.components.linux.ConfigureStaticRoutesStatus
-	12, // 12: aks.flex.components.linux.ConfigureStaticRoutesSpec.routes:type_name -> aks.flex.components.linux.StaticRoute
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	17, // 0: aks.flex.components.linux.ConfigureBaseOS.metadata:type_name -> aks.flex.components.api.Metadata
+	2,  // 1: aks.flex.components.linux.ConfigureBaseOS.spec:type_name -> aks.flex.components.linux.ConfigureBaseOSSpec
+	3,  // 2: aks.flex.components.linux.ConfigureBaseOS.status:type_name -> aks.flex.components.linux.ConfigureBaseOSStatus
+	17, // 3: aks.flex.components.linux.DisableDocker.metadata:type_name -> aks.flex.components.api.Metadata
+	5,  // 4: aks.flex.components.linux.DisableDocker.spec:type_name -> aks.flex.components.linux.DisableDockerSpec
+	6,  // 5: aks.flex.components.linux.DisableDocker.status:type_name -> aks.flex.components.linux.DisableDockerStatus
+	17, // 6: aks.flex.components.linux.ConfigureIPTables.metadata:type_name -> aks.flex.components.api.Metadata
+	8,  // 7: aks.flex.components.linux.ConfigureIPTables.spec:type_name -> aks.flex.components.linux.ConfigureIPTablesSpec
+	9,  // 8: aks.flex.components.linux.ConfigureIPTables.status:type_name -> aks.flex.components.linux.ConfigureIPTablesStatus
+	17, // 9: aks.flex.components.linux.ConfigureStaticRoutes.metadata:type_name -> aks.flex.components.api.Metadata
+	11, // 10: aks.flex.components.linux.ConfigureStaticRoutes.spec:type_name -> aks.flex.components.linux.ConfigureStaticRoutesSpec
+	12, // 11: aks.flex.components.linux.ConfigureStaticRoutes.status:type_name -> aks.flex.components.linux.ConfigureStaticRoutesStatus
+	13, // 12: aks.flex.components.linux.ConfigureStaticRoutesSpec.routes:type_name -> aks.flex.components.linux.StaticRoute
+	17, // 13: aks.flex.components.linux.CheckRouteOverlap.metadata:type_name -> aks.flex.components.api.Metadata
+	15, // 14: aks.flex.components.linux.CheckRouteOverlap.spec:type_name -> aks.flex.components.linux.CheckRouteOverlapSpec
+	16, // 15: aks.flex.components.linux.CheckRouteOverlap.status:type_name -> aks.flex.components.linux.CheckRouteOverlapStatus
+	0,  // 16: aks.flex.components.linux.CheckRouteOverlapSpec.mode:type_name -> aks.flex.components.linux.CheckRouteOverlapSpec.Mode
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_components_linux_action_proto_init() }
@@ -1133,13 +1470,14 @@ func file_components_linux_action_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_components_linux_action_proto_rawDesc), len(file_components_linux_action_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   13,
+			NumEnums:      1,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_components_linux_action_proto_goTypes,
 		DependencyIndexes: file_components_linux_action_proto_depIdxs,
+		EnumInfos:         file_components_linux_action_proto_enumTypes,
 		MessageInfos:      file_components_linux_action_proto_msgTypes,
 	}.Build()
 	File_components_linux_action_proto = out.File
