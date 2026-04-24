@@ -201,11 +201,8 @@ smoke_test_all() {
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
-  # TODO: Smoke tests skipped until unbounded-net-node DaemonSet is deployed
-  # in the E2E cluster. Without it, CNI config (/etc/cni/net.d/10-unbounded.conflist)
-  # is never written, so nodes stay NetworkNotReady and pods can't be scheduled.
-  # UPDATE: A default bridge CNI config (99-bridge.conf) is now written during
-  # bootstrap, which should make nodes Ready. Re-enabling smoke tests.
+  # A default bridge CNI config (99-bridge.conf) is written during bootstrap,
+  # making nodes Ready without requiring unbounded-net-node DaemonSet.
   local failed=0
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1
