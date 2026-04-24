@@ -1,7 +1,7 @@
 package config
 
 import (
-	agentconfig "github.com/Azure/unbounded/agent/config"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 )
 
 // ToAgentConfig converts a FlexNode Config to the shared agent library's

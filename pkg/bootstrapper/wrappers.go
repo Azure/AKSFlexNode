@@ -12,7 +12,7 @@ import (
 	"github.com/Azure/AKSFlexNode/components/services/actions"
 	pkgarc "github.com/Azure/AKSFlexNode/pkg/components/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/unbounded/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 // gRPC action task wrappers

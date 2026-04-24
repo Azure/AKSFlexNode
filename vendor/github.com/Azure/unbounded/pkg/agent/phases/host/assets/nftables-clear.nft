@@ -1,0 +1,6 @@
+#!/usr/sbin/nft -f
+# Reset nftables to a clean state with no rules.
+# nftables defaults to accept when no rules are loaded, so flushing the
+# entire ruleset is equivalent to setting all iptables chains to ACCEPT
+# with empty rules.
+flush ruleset

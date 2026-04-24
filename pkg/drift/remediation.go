@@ -17,12 +17,12 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
-	"github.com/Azure/unbounded/agent/goalstates"
-	"github.com/Azure/unbounded/agent/phases"
-	"github.com/Azure/unbounded/agent/phases/host"
-	"github.com/Azure/unbounded/agent/phases/nodestart"
-	"github.com/Azure/unbounded/agent/phases/nodestop"
-	"github.com/Azure/unbounded/agent/phases/rootfs"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/host"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 const driftKubernetesUpgradeOperation = "drift-kubernetes-upgrade"

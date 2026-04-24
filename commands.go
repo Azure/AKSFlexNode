@@ -21,7 +21,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
-	"github.com/Azure/unbounded/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 // Version information variables (set at build time)

@@ -9,13 +9,13 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/unbounded/agent/goalstates"
-	"github.com/Azure/unbounded/agent/phases"
-	"github.com/Azure/unbounded/agent/phases/host"
-	"github.com/Azure/unbounded/agent/phases/nodestart"
-	"github.com/Azure/unbounded/agent/phases/nodestop"
-	"github.com/Azure/unbounded/agent/phases/reset"
-	"github.com/Azure/unbounded/agent/phases/rootfs"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/host"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
+	"github.com/Azure/unbounded/pkg/agent/phases/reset"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 // Bootstrapper orchestrates the bootstrap and unbootstrap sequences using
