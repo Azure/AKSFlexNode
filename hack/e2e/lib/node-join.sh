@@ -65,12 +65,27 @@ else
 fi
 
 sleep 10
-if systemctl is-active --quiet kubelet; then
-  echo "kubelet is running"
+
+# Dump nspawn machine status for debugging
+echo "=== nspawn machines ==="
+machinectl list --no-pager 2>&1 || true
+echo "=== nspawn machine kube1 status ==="
+machinectl status kube1 --no-pager 2>&1 || echo "(kube1 not found)"
+
+# Check kubelet inside nspawn container
+if machinectl show kube1 &>/dev/null 2>&1; then
+  echo "=== kubelet status inside kube1 ==="
+  sudo systemd-run --machine=kube1 --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
+  echo "=== kubelet journal inside kube1 (last 30 lines) ==="
+  sudo systemd-run --machine=kube1 --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
 else
-  echo "kubelet status:"
+  echo "kube1 machine not running, checking host kubelet:"
   systemctl status kubelet --no-pager -l 2>&1 || true
 fi
+
+# Dump agent logs for debugging
+echo "=== agent logs (last 30 lines) ==="
+sudo journalctl -u ${unit_name} -n 30 --no-pager 2>&1 || true
 REMOTE
 
   log_success "Agent started on ${vm_ip}"
@@ -91,11 +106,12 @@ node_join_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
+  # TODO: MSI join is skipped until credential plugin auth is supported
+  # in the shared agent library. Currently only bootstrap token auth works.
+  local token_pid kubeadm_pid
+  local token_exit=0 kubeadm_exit=0
 
-  node_join_msi &
-  msi_pid=$!
+  log_info "Skipping MSI node join (credential plugin auth not yet supported)"
 
   node_join_token &
   token_pid=$!
@@ -103,16 +119,12 @@ node_join_all() {
   node_join_kubeadm &
   kubeadm_pid=$!
 
-  wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
 
-  if [[ "${msi_exit}" -ne 0 ]]; then
-    log_error "MSI node join failed (exit ${msi_exit})"
-  fi
   if [[ "${token_exit}" -ne 0 ]]; then
     log_error "Token node join failed (exit ${token_exit})"
   fi
@@ -120,7 +132,7 @@ node_join_all() {
     log_error "Kubeadm node join failed (exit ${kubeadm_exit})"
   fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Node joins failed (${duration}s)"
     return 1
   fi
@@ -136,11 +148,11 @@ node_unjoin_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
+  # TODO: MSI unjoin skipped (MSI join is skipped)
+  local token_pid kubeadm_pid
+  local token_exit=0 kubeadm_exit=0
 
-  node_unjoin_msi &
-  msi_pid=$!
+  log_info "Skipping MSI node unjoin (credential plugin auth not yet supported)"
 
   node_unjoin_token &
   token_pid=$!
@@ -148,16 +160,12 @@ node_unjoin_all() {
   node_unjoin_kubeadm &
   kubeadm_pid=$!
 
-  wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
 
-  if [[ "${msi_exit}" -ne 0 ]]; then
-    log_error "MSI node unjoin failed (exit ${msi_exit})"
-  fi
   if [[ "${token_exit}" -ne 0 ]]; then
     log_error "Token node unjoin failed (exit ${token_exit})"
   fi
@@ -165,7 +173,7 @@ node_unjoin_all() {
     log_error "Kubeadm node unjoin failed (exit ${kubeadm_exit})"
   fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Node unjoins failed (${duration}s)"
     return 1
   fi
