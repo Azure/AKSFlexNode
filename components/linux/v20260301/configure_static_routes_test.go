@@ -1,0 +1,388 @@
+package v20260301
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/coreos/go-systemd/v22/dbus"
+	"google.golang.org/protobuf/types/known/anypb"
+
+	"github.com/Azure/AKSFlexNode/components/linux"
+	"github.com/Azure/AKSFlexNode/components/services/actions"
+	"github.com/Azure/AKSFlexNode/pkg/systemd"
+)
+
+func TestRenderStaticRoutesScript(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		routes       []*linux.StaticRoute
+		wantContains []string
+		wantErr      bool
+	}{
+		{
+			name:   "empty is no-op",
+			routes: nil,
+			wantContains: []string{
+				"#!/bin/bash",
+				"No routes configured",
+				"exit 0",
+			},
+		},
+		{
+			name: "single route with explicit gateway",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("172.16.1.0/24"),
+					Gateway:     to.Ptr("172.18.1.1"),
+					Dev:         to.Ptr("eth0"),
+				}.Build(),
+			},
+			wantContains: []string{
+				`172.16.1.0/24|eth0|172.18.1.1|0`,
+				`ip -4 route replace "$DEST" via "$GW" dev "$DEV"`,
+			},
+		},
+		{
+			name: "auto-resolve gateway when empty",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("172.16.2.0/24"),
+				}.Build(),
+			},
+			wantContains: []string{
+				`resolve_default_dev_cached`,
+				`awk '/^default / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}'`,
+				`172.16.2.0/24|@@AUTO_DEV@@|@@AUTO_GW@@|0`,
+				`cannot install route $DEST`,
+				`ip -4 route replace "$DEST" via "$GW" dev "$DEV"`,
+			},
+		},
+		{
+			name: "metric included when nonzero",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("10.0.0.0/8"),
+					Gateway:     to.Ptr("10.1.0.1"),
+					Metric:      to.Ptr[uint32](100),
+				}.Build(),
+			},
+			wantContains: []string{
+				`10.0.0.0/8|@@AUTO_DEV@@|10.1.0.1|100`,
+				`metric "$METRIC"`,
+			},
+		},
+		{
+			name: "rejects invalid destination",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{Destination: to.Ptr("not-a-cidr")}.Build(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects invalid gateway",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("172.16.1.0/24"),
+					Gateway:     to.Ptr("not-an-ip"),
+				}.Build(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects IPv6 destination",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{Destination: to.Ptr("2001:db8::/32")}.Build(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects IPv6 gateway",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("172.16.1.0/24"),
+					Gateway:     to.Ptr("2001:db8::1"),
+				}.Build(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "auto-resolve fails hard when gateway never appears",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{Destination: to.Ptr("172.16.2.0/24")}.Build(),
+			},
+			wantContains: []string{
+				"resolve_default_gw",
+				"|| { echo",
+				"exit 1",
+			},
+		},
+		{
+			name: "rejects shell-meta in dev name",
+			routes: []*linux.StaticRoute{
+				linux.StaticRoute_builder{
+					Destination: to.Ptr("172.16.1.0/24"),
+					Dev:         to.Ptr("eth0; rm -rf /"),
+				}.Build(),
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := renderStaticRoutesScript(tc.routes)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got script:\n%s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("script missing %q\nscript:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateConfigureStaticRoutesSpec(t *testing.T) {
+	t.Parallel()
+
+	routes := []*linux.StaticRoute{
+		linux.StaticRoute_builder{Destination: to.Ptr("172.16.1.0/24"), Gateway: to.Ptr("172.18.1.1")}.Build(),
+	}
+
+	tests := []struct {
+		name    string
+		spec    *linux.ConfigureStaticRoutesSpec
+		wantErr bool
+	}{
+		{
+			name:    "nil spec is rejected",
+			spec:    nil,
+			wantErr: true,
+		},
+		{
+			name: "routes without explicit opt-in are rejected",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Routes: routes,
+			}.Build(),
+			wantErr: true,
+		},
+		{
+			name: "routes with explicit opt-in are accepted",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(true),
+				Routes:  routes,
+			}.Build(),
+		},
+		{
+			name: "no routes with opt-in disabled is allowed",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(false),
+			}.Build(),
+		},
+		{
+			name: "no routes with opt-in enabled is allowed",
+			spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(true),
+			}.Build(),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConfigureStaticRoutesSpec(tc.spec)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestApplyActionWithNoRoutesDisablesUnit(t *testing.T) {
+	t.Parallel()
+
+	manager := &fakeSystemdManager{
+		unitStatus: dbus.UnitStatus{
+			Name:        staticRoutesUnit,
+			ActiveState: systemd.UnitActiveStateActive,
+		},
+	}
+	action := &configureStaticRoutesAction{systemd: manager}
+
+	item, err := anypb.New(
+		linux.ConfigureStaticRoutes_builder{
+			Spec: linux.ConfigureStaticRoutesSpec_builder{
+				Enabled: to.Ptr(false),
+			}.Build(),
+		}.Build(),
+	)
+	if err != nil {
+		t.Fatalf("marshal action: %v", err)
+	}
+
+	_, err = action.ApplyAction(context.Background(), actions.ApplyActionRequest_builder{Item: item}.Build())
+	if err != nil {
+		t.Fatalf("ApplyAction returned error: %v", err)
+	}
+
+	if !manager.stopCalled {
+		t.Fatalf("expected StopUnit to be called for empty routes")
+	}
+	if !manager.disableCalled {
+		t.Fatalf("expected DisableUnit to be called for empty routes")
+	}
+	if manager.ensureUnitFileCalled {
+		t.Fatalf("did not expect EnsureUnitFile to be called for empty routes")
+	}
+	if manager.enableCalled {
+		t.Fatalf("did not expect EnableUnit to be called for empty routes")
+	}
+}
+
+func TestRenderStaticRoutesScriptIsDeterministic(t *testing.T) {
+	t.Parallel()
+	routes := []*linux.StaticRoute{
+		linux.StaticRoute_builder{Destination: to.Ptr("172.16.1.0/24"), Gateway: to.Ptr("172.18.1.1")}.Build(),
+		linux.StaticRoute_builder{Destination: to.Ptr("172.16.2.0/24")}.Build(),
+	}
+	first, err := renderStaticRoutesScript(routes)
+	if err != nil {
+		t.Fatalf("first render: %v", err)
+	}
+	second, err := renderStaticRoutesScript(routes)
+	if err != nil {
+		t.Fatalf("second render: %v", err)
+	}
+	if first != second {
+		t.Errorf("non-deterministic output.\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+func TestIsSafeIfaceName(t *testing.T) {
+	t.Parallel()
+	tests := map[string]bool{
+		"eth0":              true,
+		"ib6":               true,
+		"bond0.100":         true,
+		"veth-foo_bar":      true,
+		"":                  false,
+		"toolong123456789a": false,
+		"eth0; rm -rf /":    false,
+		"$(whoami)":         false,
+		"eth0 eth1":         false,
+	}
+	for in, want := range tests {
+		if got := isSafeIfaceName(in); got != want {
+			t.Errorf("isSafeIfaceName(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestWriteScriptIfChanged(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "script.sh")
+
+	// First write.
+	changed, err := writeScriptIfChanged(path, []byte("hello"))
+	if err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if !changed {
+		t.Errorf("first write: expected changed=true")
+	}
+
+	// Identical content.
+	info1, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	changed, err = writeScriptIfChanged(path, []byte("hello"))
+	if err != nil {
+		t.Fatalf("noop write: %v", err)
+	}
+	if changed {
+		t.Errorf("noop write: expected changed=false")
+	}
+	info2, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !info1.ModTime().Equal(info2.ModTime()) {
+		t.Errorf("noop write touched the file (mtime changed)")
+	}
+
+	// Different content.
+	changed, err = writeScriptIfChanged(path, []byte("goodbye"))
+	if err != nil {
+		t.Fatalf("update write: %v", err)
+	}
+	if !changed {
+		t.Errorf("update write: expected changed=true")
+	}
+	got, err := os.ReadFile(path) // #nosec G304 -- path is t.TempDir()-scoped
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "goodbye" {
+		t.Errorf("file content = %q, want %q", got, "goodbye")
+	}
+}
+
+type fakeSystemdManager struct {
+	unitStatusErr error
+	unitStatus    dbus.UnitStatus
+
+	ensureUnitFileCalled bool
+	enableCalled         bool
+	stopCalled           bool
+	disableCalled        bool
+}
+
+func (f *fakeSystemdManager) DaemonReload(_ context.Context) error { return nil }
+func (f *fakeSystemdManager) EnableUnit(_ context.Context, _ string) error {
+	f.enableCalled = true
+	return nil
+}
+func (f *fakeSystemdManager) DisableUnit(_ context.Context, _ string) error {
+	f.disableCalled = true
+	return nil
+}
+func (f *fakeSystemdManager) MaskUnit(_ context.Context, _ string) error  { return nil }
+func (f *fakeSystemdManager) StartUnit(_ context.Context, _ string) error { return nil }
+func (f *fakeSystemdManager) StopUnit(_ context.Context, _ string) error {
+	f.stopCalled = true
+	return nil
+}
+func (f *fakeSystemdManager) ReloadOrRestartUnit(_ context.Context, _ string) error { return nil }
+func (f *fakeSystemdManager) GetUnitStatus(_ context.Context, _ string) (dbus.UnitStatus, error) {
+	if f.unitStatusErr != nil {
+		return dbus.UnitStatus{}, f.unitStatusErr
+	}
+	return f.unitStatus, nil
+}
+func (f *fakeSystemdManager) EnsureUnitFile(_ context.Context, _ string, _ []byte) (bool, error) {
+	f.ensureUnitFileCalled = true
+	return true, nil
+}
+func (f *fakeSystemdManager) EnsureDropInFile(_ context.Context, _, _ string, _ []byte) (bool, error) {
+	return false, nil
+}

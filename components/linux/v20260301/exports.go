@@ -18,4 +18,12 @@ func init() {
 		newConfigureIPTablesAction,
 		&linux.ConfigureIPTables{},
 	)
+	actions.MustRegister(
+		newConfigureStaticRoutesAction,
+		&linux.ConfigureStaticRoutes{},
+	)
+	actions.MustRegister(
+		newCheckRouteOverlapAction,
+		&linux.CheckRouteOverlap{},
+	)
 }

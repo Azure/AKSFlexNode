@@ -47,3 +47,97 @@ message ConfigureIPTablesSpec {
 
 message ConfigureIPTablesStatus {
 }
+
+// ConfigureStaticRoutes installs one or more static IPv4 routes on the node
+// via a systemd oneshot unit that runs `ip route replace` before kubelet
+// starts. This is intended for cases where the VM provider's default routing
+// is wrong for the cluster — for example, Azure ND-isr SKUs install connected
+// /16 routes for the InfiniBand fabric that can shadow legitimate cluster
+// CIDRs. More-specific /24 routes added via this action win over the IB /16
+// without disturbing peer-to-peer IB traffic.
+message ConfigureStaticRoutes {
+  api.Metadata metadata = 1;
+
+  ConfigureStaticRoutesSpec spec = 2;
+
+  ConfigureStaticRoutesStatus status = 3;
+}
+
+message ConfigureStaticRoutesSpec {
+  // enabled must be explicitly set to true before any routes are applied.
+  // This makes static-route injection an intentional opt-in: operators should
+  // only enable it after confirming a real routing overlap (for example, an
+  // IB /16 colliding with cluster/VNet CIDRs).
+  bool enabled = 2;
+
+  // routes is the list of static routes to install. Order is preserved but
+  // does not affect kernel selection (longest-prefix-match wins).
+  repeated StaticRoute routes = 1;
+}
+
+message ConfigureStaticRoutesStatus {
+}
+
+// StaticRoute describes a single IPv4 route. IPv6 is intentionally not
+// supported; validation rejects non-IPv4 destinations and gateways.
+message StaticRoute {
+  // destination is an IPv4 CIDR (e.g. "172.16.1.0/24"). Required.
+  string destination = 1;
+
+  // gateway is the next-hop IPv4 address. When empty the oneshot resolves
+  // the default gateway on `dev` at boot time (with a bounded retry, since
+  // DHCP may not have installed the default route yet). If the default
+  // gateway does not appear within the retry window, the oneshot fails
+  // and kubelet will not start.
+  string gateway = 2;
+
+  // dev is the outbound interface (e.g. "eth0"). When empty the oneshot
+  // resolves the outbound interface of the IPv4 default route at boot
+  // time — works with both classic (eth0) and predictable (ens*, enp*)
+  // interface names. Must match [A-Za-z0-9_.-]{1,15} when set.
+  string dev = 3;
+
+  // metric sets the route metric for tie-breaking. 0 means default.
+  uint32 metric = 4;
+}
+
+// CheckRouteOverlap verifies at boot, before kubelet starts, that a list
+// of expected IPv4 CIDRs (typically the cluster pod CIDR, service CIDR,
+// and API server) actually route via the same interface as the IPv4
+// default route. When a CIDR resolves out a different interface — the
+// classic symptom is the H200 IB driver shadowing a customer VNet CIDR
+// with a connected /16 on ib0 — the check either logs a warning or
+// fails the boot, depending on `mode`.
+message CheckRouteOverlap {
+  api.Metadata metadata = 1;
+
+  CheckRouteOverlapSpec spec = 2;
+
+  CheckRouteOverlapStatus status = 3;
+}
+
+message CheckRouteOverlapSpec {
+  // expected_cidrs are IPv4 CIDRs that kubelet, kube-proxy, and pods
+  // must be able to reach via the IPv4 default route's outbound
+  // interface. Typically populated by the controller from the cluster's
+  // pod CIDR, service CIDR, and API server endpoint.
+  repeated string expected_cidrs = 1;
+
+  // mode controls what happens when an overlap is detected.
+  //   WARN   : log + write /run/aks-flex-node/route-overlap.detected;
+  //            kubelet starts anyway.
+  //   STRICT : same logging, then exit 1 — kubelet does not start
+  //            (the unit is RequiredBy=kubelet.service). Use STRICT in
+  //            production where a misrouted node is worse than a node
+  //            that won't join.
+  Mode mode = 2;
+
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    WARN = 1;
+    STRICT = 2;
+  }
+}
+
+message CheckRouteOverlapStatus {
+}
