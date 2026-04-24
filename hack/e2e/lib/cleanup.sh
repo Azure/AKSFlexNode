@@ -31,13 +31,27 @@ _collect_vm_logs() {
     "sudo journalctl -u 'aks-flex-node-*' -n 500 --no-pager 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-agent-journal.log" 2>/dev/null || true
 
+  # Kubelet and containerd run inside the nspawn machine (kube1 or kube2).
+  # Try nspawn first; fall back to host journal for non-nspawn setups.
   remote_exec "${vm_ip}" \
-    "sudo journalctl -u kubelet -n 500 --no-pager 2>/dev/null" \
+    "sudo machinectl shell kube1 /usr/bin/journalctl -u kubelet -n 500 --no-pager 2>/dev/null \
+     || sudo journalctl -u kubelet -n 500 --no-pager 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-kubelet.log" 2>/dev/null || true
 
   remote_exec "${vm_ip}" \
-    "sudo journalctl -u containerd -n 200 --no-pager 2>/dev/null" \
+    "sudo machinectl shell kube1 /usr/bin/journalctl -u containerd -n 200 --no-pager 2>/dev/null \
+     || sudo journalctl -u containerd -n 200 --no-pager 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
+
+  # Collect CNI config and nspawn machine state for networking diagnostics
+  remote_exec "${vm_ip}" \
+    "echo '=== nspawn machines ===' && sudo machinectl list --no-pager 2>/dev/null; \
+     echo '=== CNI config (kube1) ===' && sudo machinectl shell kube1 /bin/ls -la /etc/cni/net.d/ 2>/dev/null; \
+     sudo machinectl shell kube1 /bin/cat /etc/cni/net.d/10-containerd-net.conflist 2>/dev/null; \
+     sudo machinectl shell kube1 /bin/cat /etc/cni/net.d/10-unbounded.conflist 2>/dev/null; \
+     echo '=== CNI binaries (kube1) ===' && sudo machinectl shell kube1 /bin/ls -la /opt/cni/bin/ 2>/dev/null; \
+     echo '=== containerd config ===' && sudo machinectl shell kube1 /bin/cat /etc/containerd/config.toml 2>/dev/null" \
+    > "${E2E_LOG_DIR}/${prefix}-nspawn-diagnostics.log" 2>/dev/null || true
 
   log_info "Logs saved to ${E2E_LOG_DIR}/${prefix}-*.log"
 }
