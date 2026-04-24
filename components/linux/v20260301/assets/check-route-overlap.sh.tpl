@@ -21,7 +21,11 @@ while IFS='|' read -r CIDR PROBE; do
   ACTUAL=$(ip -4 route get "$PROBE" 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
   if [ -z "$ACTUAL" ]; then ACTUAL="<no-route>"; fi
   if [ "$ACTUAL" != "$DEFAULT_DEV" ]; then
-    msg="OVERLAP: expected CIDR $CIDR (probe $PROBE) routes via $ACTUAL, expected $DEFAULT_DEV"
+    if [ "$ACTUAL" = "<no-route>" ]; then
+      msg="NO-ROUTE: expected CIDR $CIDR (probe $PROBE) has no IPv4 route; expected via $DEFAULT_DEV"
+    else
+      msg="OVERLAP: expected CIDR $CIDR (probe $PROBE) routes via $ACTUAL, expected $DEFAULT_DEV"
+    fi
     echo "$msg" >&2
     echo "$msg" >> /run/aks-flex-node/route-overlap.detected
     bad=1
@@ -34,7 +38,8 @@ if [ "$bad" -eq 1 ]; then
   cat >&2 <<'EOF'
 Action: configure spec.staticRoutes on the NodeClass with more-specific
 routes for the affected CIDRs, or rebuild the cluster on a non-overlapping
-VNet CIDR. See AKSFlexNode/components/linux/v20260301/configure_static_routes.go.
+VNet CIDR. For each affected CIDR, add a spec.staticRoutes entry with the
+destination CIDR and next-hop/default gateway for the node's normal outbound interface.
 EOF
   exit {{ .FailExit }}
 fi

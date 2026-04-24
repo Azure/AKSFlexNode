@@ -36,9 +36,11 @@ func TestRenderCheckRouteOverlapScript(t *testing.T) {
 			wantContains: []string{
 				"mode=WARN",
 				`ACTUAL=$(ip -4 route get "$PROBE"`,
+				`msg="NO-ROUTE: expected CIDR $CIDR (probe $PROBE) has no IPv4 route; expected via $DEFAULT_DEV"`,
 				`msg="OVERLAP: expected CIDR $CIDR (probe $PROBE) routes via $ACTUAL, expected $DEFAULT_DEV"`,
 				"172.16.0.0/16|172.16.0.1",
 				"if [ \"$bad\" -eq 1 ]; then",
+				"For each affected CIDR, add a spec.staticRoutes entry with the",
 				"  exit 0",
 			},
 		},
@@ -136,6 +138,17 @@ func TestRenderCheckRouteOverlapScriptDefaultExitInGuard(t *testing.T) {
 	guard := "echo \"no-default-route\" > /run/aks-flex-node/route-overlap.detected\n  exit 1\n"
 	if !strings.Contains(got, guard) {
 		t.Errorf("STRICT mode missing exit-1 in no-default-route guard\nscript:\n%s", got)
+	}
+}
+
+func TestRenderCheckRouteOverlapScriptAvoidsRepoSourcePathInGuidance(t *testing.T) {
+	t.Parallel()
+	got, err := renderCheckRouteOverlapScript([]string{"172.16.0.0/24"}, linux.CheckRouteOverlapSpec_WARN)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got, "AKSFlexNode/components/linux/v20260301/configure_static_routes.go") {
+		t.Fatalf("runtime guidance must not reference repository source paths:\n%s", got)
 	}
 }
 
