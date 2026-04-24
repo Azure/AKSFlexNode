@@ -57,6 +57,7 @@ func TestRenderStaticRoutesScript(t *testing.T) {
 			},
 			wantContains: []string{
 				`resolve_default_dev_cached`,
+				`awk '/^default / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}'`,
 				`172.16.2.0/24|@@AUTO_DEV@@|@@AUTO_GW@@|0`,
 				`cannot install route $DEST`,
 				`ip -4 route replace "$DEST" via "$GW" dev "$DEV"`,

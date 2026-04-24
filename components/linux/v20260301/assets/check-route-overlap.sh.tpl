@@ -7,7 +7,7 @@ mkdir -p /run/aks-flex-node
 rm -f /run/aks-flex-node/route-overlap.detected
 rm -f /run/aks-flex-node/route-overlap.ok
 
-DEFAULT_DEV=$(ip -4 route show default 2>/dev/null | awk '/^default via/ {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+DEFAULT_DEV=$(ip -4 route show default 2>/dev/null | awk '/^default / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
 if [ -z "$DEFAULT_DEV" ]; then
   echo "check-route-overlap: no IPv4 default route; cannot determine outbound interface" >&2
   echo "no-default-route" > /run/aks-flex-node/route-overlap.detected

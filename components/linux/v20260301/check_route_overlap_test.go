@@ -88,8 +88,17 @@ func TestRenderCheckRouteOverlapScript(t *testing.T) {
 			cidrs: []string{"172.16.0.0/24"},
 			mode:  linux.CheckRouteOverlapSpec_STRICT,
 			wantContains: []string{
+				`awk '/^default / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}'`,
 				"no IPv4 default route; cannot determine outbound interface",
 				`echo "no-default-route" > /run/aks-flex-node/route-overlap.detected`,
+			},
+		},
+		{
+			name:  "non-network-aligned prefix probes inside the CIDR",
+			cidrs: []string{"10.0.0.255/24"},
+			mode:  linux.CheckRouteOverlapSpec_WARN,
+			wantContains: []string{
+				"10.0.0.255/24|10.0.0.1",
 			},
 		},
 	}

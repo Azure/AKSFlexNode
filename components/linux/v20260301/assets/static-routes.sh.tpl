@@ -21,7 +21,7 @@ resolve_default_gw() {
 resolve_default_dev() {
   local i dev
   for i in $(seq 1 30); do
-    dev=$(ip -4 route show default 2>/dev/null | awk '/^default via/ {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+    dev=$(ip -4 route show default 2>/dev/null | awk '/^default / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
     if [ -n "$dev" ]; then echo "$dev"; return 0; fi
     sleep 1
   done

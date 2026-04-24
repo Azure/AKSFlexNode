@@ -142,11 +142,17 @@ func renderCheckRouteOverlapScript(cidrs []string, mode linux.CheckRouteOverlapS
 		if !prefix.Addr().Is4() {
 			return "", fmt.Errorf("expected_cidrs[%d]: %q is not IPv4", i, c)
 		}
+		maskedPrefix := prefix.Masked()
 		// Probe with first usable address (network address + 1). Works for
 		// any prefix shorter than /32; for /32 we just probe the address.
-		probe := prefix.Addr()
-		if prefix.Bits() < 32 {
-			probe = probe.Next()
+		// Use the masked/network form so the probe stays inside the CIDR even
+		// when the provided prefix is not network-aligned.
+		probe := maskedPrefix.Addr()
+		if maskedPrefix.Bits() < 32 {
+			next := probe.Next()
+			if maskedPrefix.Contains(next) {
+				probe = next
+			}
 		}
 		entries = append(entries, entry{cidr: c, probe: probe.String()})
 	}
