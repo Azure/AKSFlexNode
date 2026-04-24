@@ -1,6 +1,5 @@
 [Unit]
 Description=AKSFlexNode IPv4 route overlap pre-flight check
-DefaultDependencies=no
 After=network-online.target static-routes.service
 Wants=network-online.target
 Before=kubelet.service

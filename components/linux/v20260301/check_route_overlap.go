@@ -91,7 +91,17 @@ func validateCheckRouteOverlapSpec(spec *linux.CheckRouteOverlapSpec) error {
 	if spec == nil {
 		return fmt.Errorf("spec is required")
 	}
-	return nil
+	switch spec.GetMode() {
+	case linux.CheckRouteOverlapSpec_MODE_UNSPECIFIED,
+		linux.CheckRouteOverlapSpec_WARN,
+		linux.CheckRouteOverlapSpec_STRICT:
+		return nil
+	default:
+		return fmt.Errorf(
+			"invalid mode %d: must be one of MODE_UNSPECIFIED(0), WARN(1), or STRICT(2)",
+			spec.GetMode(),
+		)
+	}
 }
 
 func (a *checkRouteOverlapAction) ensureCheckRouteOverlapUnit(ctx context.Context, scriptUpdated bool) error {

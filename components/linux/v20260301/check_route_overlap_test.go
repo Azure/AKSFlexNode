@@ -150,6 +150,16 @@ func TestValidateCheckRouteOverlapSpec(t *testing.T) {
 			}.Build(),
 			wantErr: false,
 		},
+		{
+			name: "unknown mode is rejected",
+			spec: func() *linux.CheckRouteOverlapSpec {
+				mode := linux.CheckRouteOverlapSpec_Mode(99)
+				return linux.CheckRouteOverlapSpec_builder{
+					Mode: &mode,
+				}.Build()
+			}(),
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {
