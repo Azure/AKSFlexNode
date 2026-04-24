@@ -35,7 +35,6 @@ env:
 jobs:
   e2e:
     name: E2E Tests (MSI + Token)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, e2e, azure]
     timeout-minutes: 45
     environment: e2e-testing
