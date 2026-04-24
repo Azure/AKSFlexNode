@@ -24,6 +24,8 @@ const (
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName: machineName,
+		// TODO: remove pin once the default OCI image in the library is updated.
+		OCIImage: "ghcr.io/azure/agent-ubuntu2404:cd4449f94aa4bb3e2ef80f37f09c2c128f2f4ebf",
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Node.Kubelet.DNSServiceIP,
