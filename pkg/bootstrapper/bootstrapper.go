@@ -2,78 +2,153 @@ package bootstrapper
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"time"
 
-	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	"github.com/Azure/AKSFlexNode/pkg/components/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/agent/goalstates"
+	"github.com/Azure/unbounded/agent/phases"
+	"github.com/Azure/unbounded/agent/phases/host"
+	"github.com/Azure/unbounded/agent/phases/nodestart"
+	"github.com/Azure/unbounded/agent/phases/nodestop"
+	"github.com/Azure/unbounded/agent/phases/reset"
+	"github.com/Azure/unbounded/agent/phases/rootfs"
 )
 
-// Bootstrapper executes bootstrap steps sequentially
+// Bootstrapper orchestrates the bootstrap and unbootstrap sequences using
+// the shared unbounded agent library for Kubernetes operations and wrapped
+// gRPC actions for Azure-specific components.
 type Bootstrapper struct {
-	*BaseExecutor
-
+	cfg               *config.Config
+	logger            *slog.Logger
 	componentsAPIConn *grpc.ClientConn
+	machineName       string
 }
 
-// New creates a new bootstrapper
+// New creates a new bootstrapper. machineName is the nspawn machine name
+// (e.g. goalstates.NSpawnMachineKube1).
 func New(
 	cfg *config.Config,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 	componentsAPIConn *grpc.ClientConn,
+	machineName string,
 ) *Bootstrapper {
 	return &Bootstrapper{
-		BaseExecutor:      NewBaseExecutor(cfg, logger),
+		cfg:               cfg,
+		logger:            logger,
 		componentsAPIConn: componentsAPIConn,
+		machineName:       machineName,
 	}
 }
 
-// Bootstrap executes all bootstrap steps sequentially
+// Bootstrap executes all bootstrap steps to transform a bare VM into a
+// Kubernetes worker node running inside an nspawn machine.
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
-	// Define the bootstrap steps in order - using modules directly
-	steps := []Executor{
-		installArc.Executor("install-arc", b.componentsAPIConn, b.config),
-		configureSystem.Executor("configure-os", b.componentsAPIConn, b.config),
-		// Some environments might have docker pre-installed which can interfere with Kubernetes networking.
-		// This step disables the docker services and configures the docker daemon to not manage iptables rules.
-		disableDocker.Executor("disable-docker", b.componentsAPIConn, b.config),
+	log := b.logger
+	cfg := b.cfg
+	conn := b.componentsAPIConn
 
-		// Fetch serverURL and caCertData from AKS cluster admin credentials for
-		// non-bootstrap-token auth modes (Arc, SP, MI). Must run before startKubelet
-		// and startNPD which require these fields.
-		newClusterConfigEnricher(b.logger),
-
-		// TODO: enable this step after RP machine api change is live
-		// // Ensure the "aksflexnodes" agent pool and register this host as a
-		// // machine within it. The action skips all Azure operations if drift
-		// // detection and remediation is disabled in the agent config.
-		// ensureMachine.Executor("ensure-machine", b.componentsAPIConn, b.config),
-
-		// TODO: run these steps in parallel
-		downloadCNIBinaries.Executor("download-cni-binaries", b.componentsAPIConn, b.config),
-		downloadCRIBinaries.Executor("download-cri-binaries", b.componentsAPIConn, b.config),
-		downloadKubeBinaries.Executor("download-kube-binaries", b.componentsAPIConn, b.config),
-		downloadNPD.Executor("download-npd", b.componentsAPIConn, b.config),
-
-		configureCNI.Executor("configure-cni", b.componentsAPIConn, b.config),
-		startContainerdService.Executor("start-containerd", b.componentsAPIConn, b.config),
-		// Configure iptables rules before kubelet starts to prevent conflicts with Kubernetes networking
-		configureIPTables.Executor("configure-iptables", b.componentsAPIConn, b.config),
-		startKubelet.Executor("start-kubelet", b.componentsAPIConn, b.config),
-		startNPD.Executor("start-npd", b.componentsAPIConn, b.config),
+	// Step 1: Enrich cluster config (fetch serverURL/caCertData from AKS for non-bootstrap-token modes).
+	// This must run before we build the agent config because it populates ServerURL and CACertData.
+	enrichTask := EnrichClusterConfig(cfg, log)
+	if err := phases.ExecuteTask(ctx, log, enrichTask); err != nil {
+		return failedResult("enrich-cluster-config", err), fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
 	}
 
-	return b.ExecuteSteps(ctx, steps, "bootstrap")
+	// Step 2: Convert FlexNode config to shared agent config and resolve goal states.
+	agentCfg := config.ToAgentConfig(cfg, b.machineName)
+	gs, err := goalstates.ResolveMachine(log, agentCfg, b.machineName)
+	if err != nil {
+		return failedResult("resolve-goal-state", err), fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
+	}
+
+	// Step 3: Build the task tree and execute.
+	tasks := phases.Serial(log,
+		// Phase 1: host preparation
+		host.InstallPackages(log),
+		phases.Parallel(log,
+			host.ConfigureOS(log),
+			host.ConfigureNFTables(log),
+			host.DisableDocker(log),
+			host.DisableSwap(log),
+		),
+
+		// Azure-specific: install Arc (no-op if not enabled)
+		InstallArc(conn, cfg),
+
+		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
+		// TODO: allow customizing containerd, runc, and CNI plugin versions from FlexNode config.
+		// Currently uses library defaults from goalstates/constants.go.
+		rootfs.Provision(log, gs.RootFS),
+
+		// Azure-specific: download NPD
+		DownloadNPD(conn, cfg),
+
+		// Phase 3: node start (configure + boot nspawn + start containerd + kubelet)
+		// TODO: allow customizing Kubernetes binary versions from FlexNode config.
+		// Currently uses the version from cfg.Kubernetes.Version via the agent config.
+		nodestart.StartNode(log, gs.NodeStart),
+
+		// Azure-specific: start NPD
+		StartNPD(conn, cfg),
+	)
+
+	start := time.Now()
+	err = tasks.Do(ctx)
+
+	result := &ExecutionResult{
+		Success:  err == nil,
+		Duration: time.Since(start),
+	}
+	if err != nil {
+		result.Error = err.Error()
+		return result, fmt.Errorf("bootstrap failed: %w", err)
+	}
+
+	return result, nil
 }
 
-// Unbootstrap executes all cleanup steps sequentially (in reverse order of bootstrap)
+// Unbootstrap tears down the Kubernetes node and cleans up all resources.
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
-	steps := []Executor{
-		resetKubelet.Executor("reset-kubelet", b.componentsAPIConn, b.config),
-		resetContainerdService.Executor("reset-containerd", b.componentsAPIConn, b.config),
-		arc.NewUnInstaller(b.logger), // Uninstall Arc (after cleanup)
+	log := b.logger
+
+	// Unbootstrap uses best-effort semantics: continue even if steps fail.
+	start := time.Now()
+	var firstErr error
+
+	steps := []phases.Task{
+		nodestop.StopNode(log, b.machineName),
+		reset.CleanupMachine(log, b.machineName),
+		UninstallArc(log),
 	}
 
-	return b.ExecuteSteps(ctx, steps, "unbootstrap")
+	for _, step := range steps {
+		if err := phases.ExecuteTask(ctx, log, step); err != nil {
+			log.Warn("unbootstrap step failed (continuing)", "step", step.Name(), "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	result := &ExecutionResult{
+		Success:  firstErr == nil,
+		Duration: time.Since(start),
+	}
+	if firstErr != nil {
+		result.Error = firstErr.Error()
+	}
+
+	return result, nil
+}
+
+// failedResult creates an ExecutionResult for an early failure.
+func failedResult(step string, err error) *ExecutionResult {
+	return &ExecutionResult{
+		Success: false,
+		Error:   fmt.Sprintf("step %s: %s", step, err),
+	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
+	"github.com/Azure/unbounded/agent/goalstates"
 )
 
 // Version information variables (set at build time)
@@ -73,7 +75,7 @@ func NewVersionCommand() *cobra.Command {
 
 // runAgent executes the bootstrap process and then runs as daemon
 func runAgent(ctx context.Context) error {
-	logger := logger.GetLoggerFromContext(ctx)
+	log := logger.GetLoggerFromContext(ctx)
 
 	if err := spec.EnsureRuntimeDir(); err != nil {
 		return err
@@ -90,25 +92,28 @@ func runAgent(ctx context.Context) error {
 	}
 	defer conn.Close() //nolint:errcheck // stops in memory connection only
 
-	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
+	slogger := slog.Default()
+	machineName := goalstates.NSpawnMachineKube1
+
+	bootstrapExecutor := bootstrapper.New(cfg, slogger, conn, machineName)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Handle and log the bootstrap result
-	if err := handleExecutionResult(result, "bootstrap", logger); err != nil {
+	if err := handleExecutionResult(result, "bootstrap", log); err != nil {
 		return err
 	}
 
 	// After successful bootstrap, transition to daemon mode
-	logger.Info("Bootstrap completed successfully, transitioning to daemon mode...")
-	return runDaemonLoop(ctx, cfg, conn)
+	log.Info("Bootstrap completed successfully, transitioning to daemon mode...")
+	return runDaemonLoop(ctx, cfg, conn, machineName)
 }
 
 // runUnbootstrap executes the unbootstrap process
 func runUnbootstrap(ctx context.Context) error {
-	logger := logger.GetLoggerFromContext(ctx)
+	log := logger.GetLoggerFromContext(ctx)
 
 	if err := spec.EnsureRuntimeDir(); err != nil {
 		return err
@@ -125,14 +130,17 @@ func runUnbootstrap(ctx context.Context) error {
 	}
 	defer conn.Close() //nolint:errcheck // stops in memory connection only
 
-	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
+	slogger := slog.Default()
+	machineName := goalstates.NSpawnMachineKube1
+
+	bootstrapExecutor := bootstrapper.New(cfg, slogger, conn, machineName)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Handle and log the result (unbootstrap is more lenient with failures)
-	return handleExecutionResult(result, "unbootstrap", logger)
+	return handleExecutionResult(result, "unbootstrap", log)
 }
 
 // runVersion displays version information
@@ -144,7 +152,7 @@ func runVersion() {
 }
 
 // runDaemonLoop runs the periodic status collection and bootstrap monitoring daemon
-func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn) error {
+func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn, machineName string) error {
 	logger := logger.GetLoggerFromContext(ctx)
 	// Runtime directory already ensured by runAgent; get status file path.
 	statusFilePath := spec.StatusFilePath
@@ -174,7 +182,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientCon
 	var bootstrapInProgress int32
 
 	// Collect status immediately on start
-	if err := collectAndWriteStatus(ctx, cfg, statusFilePath); err != nil {
+	if err := collectAndWriteStatus(ctx, cfg, statusFilePath, machineName); err != nil {
 		logger.Errorf("Failed to collect initial status: %v", err)
 	}
 
@@ -192,7 +200,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientCon
 			logger.Warnf("Failed to collect initial managed cluster spec: %v", err)
 		} else {
 			cfgSnap := snapshotConfig(cfg, &cfgMu)
-			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors, conn); err != nil {
+			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors, conn, machineName); err != nil {
 				logger.Warnf("Initial drift detection after spec collection failed: %v", err)
 			} else {
 				logger.Info("Initial drift detection after spec collection completed successfully")
@@ -201,7 +209,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, conn *grpc.ClientCon
 	}
 
 	var wg sync.WaitGroup
-	startDaemonLoops(ctx, cfg, conn, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg)
+	startDaemonLoops(ctx, cfg, conn, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg, machineName)
 
 	<-ctx.Done()
 	logger.Info("Daemon shutting down due to context cancellation")
@@ -220,6 +228,7 @@ func startDaemonLoops(
 	detectors []drift.Detector,
 	driftEnabled bool,
 	wg *sync.WaitGroup,
+	machineName string,
 ) {
 	if wg == nil {
 		return
@@ -229,10 +238,10 @@ func startDaemonLoops(
 	} else {
 		wg.Add(2)
 	}
-	startStatusCollectionLoop(ctx, cfg, statusFilePath, logger, cfgMu, wg)
-	startBootstrapHealthCheckLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, wg)
+	startStatusCollectionLoop(ctx, cfg, statusFilePath, logger, cfgMu, wg, machineName)
+	startBootstrapHealthCheckLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, wg, machineName)
 	if driftEnabled {
-		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, detectors, wg)
+		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, conn, logger, cfgMu, bootstrapInProgress, detectors, wg, machineName)
 	}
 }
 
@@ -254,6 +263,7 @@ func startStatusCollectionLoop(
 	logger *logrus.Logger,
 	cfgMu *sync.RWMutex,
 	wg *sync.WaitGroup,
+	machineName string,
 ) {
 	go func() {
 		defer wg.Done()
@@ -267,7 +277,7 @@ func startStatusCollectionLoop(
 				now := time.Now()
 				logger.Infof("Starting periodic status collection at %s...", now.Format("2006-01-02 15:04:05"))
 				cfgSnap := snapshotConfig(cfg, cfgMu)
-				err := collectAndWriteStatus(ctx, cfgSnap, statusFilePath)
+				err := collectAndWriteStatus(ctx, cfgSnap, statusFilePath, machineName)
 				if err != nil {
 					logger.Errorf("Failed to collect status at %s: %v", now.Format("2006-01-02 15:04:05"), err)
 					continue
@@ -286,6 +296,7 @@ func startBootstrapHealthCheckLoop(
 	cfgMu *sync.RWMutex,
 	bootstrapInProgress *int32,
 	wg *sync.WaitGroup,
+	machineName string,
 ) {
 	go func() {
 		defer wg.Done()
@@ -306,7 +317,7 @@ func startBootstrapHealthCheckLoop(
 				func() {
 					defer atomic.StoreInt32(bootstrapInProgress, 0)
 					cfgSnap := snapshotConfig(cfg, cfgMu)
-					err := checkAndBootstrap(ctx, cfgSnap, conn)
+					err := checkAndBootstrap(ctx, cfgSnap, conn, machineName)
 					if err != nil {
 						logger.Errorf("Auto-bootstrap check failed at %s: %v", now.Format("2006-01-02 15:04:05"), err)
 						return
@@ -327,6 +338,7 @@ func startNodeDriftDetectionAndRemediationLoop(
 	bootstrapInProgress *int32,
 	detectors []drift.Detector,
 	wg *sync.WaitGroup,
+	machineName string,
 ) {
 	go func() {
 		defer wg.Done()
@@ -348,7 +360,7 @@ func startNodeDriftDetectionAndRemediationLoop(
 				logger.Infof("Managed cluster spec collection completed at %s", time.Now().Format("2006-01-02 15:04:05"))
 
 				// Run drift detection immediately after spec is updated so we don't wait.
-				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors, conn); err != nil {
+				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors, conn, machineName); err != nil {
 					logger.Warnf("Drift detection after spec collection failed at %s: %v", time.Now().Format("2006-01-02 15:04:05"), err)
 				} else {
 					logger.Infof("Drift detection after spec collection completed at %s", time.Now().Format("2006-01-02 15:04:05"))
@@ -366,10 +378,10 @@ func collectAndWriteManagedClusterSpec(ctx context.Context, cfg *config.Config) 
 }
 
 // checkAndBootstrap checks if the node needs re-bootstrapping and performs it if necessary
-func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn) error {
+func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn, machineName string) error {
 	logger := logger.GetLoggerFromContext(ctx)
 	// Create status collector to check bootstrap requirements
-	collector := status.NewCollector(cfg, logger, Version)
+	collector := status.NewCollector(cfg, logger, Version, machineName)
 
 	// Check if bootstrap is needed
 	needsBootstrap := collector.NeedsBootstrap(ctx)
@@ -396,7 +408,8 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.Clien
 	}
 
 	// Perform bootstrap
-	bootstrapExecutor := bootstrapper.New(cfg, logger, conn)
+	slogger := slog.Default()
+	bootstrapExecutor := bootstrapper.New(cfg, slogger, conn, machineName)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		// Bootstrap failed - remove status file so next check will detect the problem
@@ -416,11 +429,11 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.Clien
 }
 
 // collectAndWriteStatus collects current node status and writes it to the status file
-func collectAndWriteStatus(ctx context.Context, cfg *config.Config, statusFilePath string) error {
+func collectAndWriteStatus(ctx context.Context, cfg *config.Config, statusFilePath string, machineName string) error {
 	logger := logger.GetLoggerFromContext(ctx)
 
 	// Create status collector
-	collector := status.NewCollector(cfg, logger, Version)
+	collector := status.NewCollector(cfg, logger, Version, machineName)
 
 	// Collect comprehensive status
 	nodeStatus, err := collector.CollectStatus(ctx)
