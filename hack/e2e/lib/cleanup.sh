@@ -32,25 +32,37 @@ _collect_vm_logs() {
     > "${E2E_LOG_DIR}/${prefix}-agent-journal.log" 2>/dev/null || true
 
   # Kubelet and containerd run inside the nspawn machine (kube1 or kube2).
-  # Try nspawn first; fall back to host journal for non-nspawn setups.
+  # Use nsenter via the machine leader PID to run journalctl inside the container.
+  # Fall back to host journal for non-nspawn setups.
   remote_exec "${vm_ip}" \
-    "sudo machinectl shell kube1 /usr/bin/journalctl -u kubelet -n 500 --no-pager 2>/dev/null \
-     || sudo journalctl -u kubelet -n 500 --no-pager 2>/dev/null" \
+    "leader=\$(sudo machinectl show kube1 -p Leader --value 2>/dev/null); \
+     if [ -n \"\$leader\" ]; then \
+       sudo nsenter -t \$leader -m -p -- journalctl -u kubelet -n 500 --no-pager 2>/dev/null; \
+     else \
+       sudo journalctl -u kubelet -n 500 --no-pager 2>/dev/null; \
+     fi" \
     > "${E2E_LOG_DIR}/${prefix}-kubelet.log" 2>/dev/null || true
 
   remote_exec "${vm_ip}" \
-    "sudo machinectl shell kube1 /usr/bin/journalctl -u containerd -n 200 --no-pager 2>/dev/null \
-     || sudo journalctl -u containerd -n 200 --no-pager 2>/dev/null" \
+    "leader=\$(sudo machinectl show kube1 -p Leader --value 2>/dev/null); \
+     if [ -n \"\$leader\" ]; then \
+       sudo nsenter -t \$leader -m -p -- journalctl -u containerd -n 200 --no-pager 2>/dev/null; \
+     else \
+       sudo journalctl -u containerd -n 200 --no-pager 2>/dev/null; \
+     fi" \
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
 
-  # Collect CNI config and nspawn machine state for networking diagnostics
+  # Collect CNI config and nspawn machine state for networking diagnostics.
+  # Read directly from the nspawn rootfs at /var/lib/machines/kube1/.
+  local kube1_root="/var/lib/machines/kube1"
   remote_exec "${vm_ip}" \
     "echo '=== nspawn machines ===' && sudo machinectl list --no-pager 2>/dev/null; \
-     echo '=== CNI config (kube1) ===' && sudo machinectl shell kube1 /bin/ls -la /etc/cni/net.d/ 2>/dev/null; \
-     sudo machinectl shell kube1 /bin/cat /etc/cni/net.d/10-containerd-net.conflist 2>/dev/null; \
-     sudo machinectl shell kube1 /bin/cat /etc/cni/net.d/10-unbounded.conflist 2>/dev/null; \
-     echo '=== CNI binaries (kube1) ===' && sudo machinectl shell kube1 /bin/ls -la /opt/cni/bin/ 2>/dev/null; \
-     echo '=== containerd config ===' && sudo machinectl shell kube1 /bin/cat /etc/containerd/config.toml 2>/dev/null" \
+     echo '=== CNI config (kube1) ===' && sudo ls -la ${kube1_root}/etc/cni/net.d/ 2>/dev/null; \
+     for f in ${kube1_root}/etc/cni/net.d/*.conflist ${kube1_root}/etc/cni/net.d/*.conf; do \
+       [ -f \"\$f\" ] && echo \"--- \$f ---\" && sudo cat \"\$f\"; \
+     done; \
+     echo '=== CNI binaries (kube1) ===' && sudo ls -la ${kube1_root}/opt/cni/bin/ 2>/dev/null; \
+     echo '=== containerd config ===' && sudo cat ${kube1_root}/etc/containerd/config.toml 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-nspawn-diagnostics.log" 2>/dev/null || true
 
   log_info "Logs saved to ${E2E_LOG_DIR}/${prefix}-*.log"
