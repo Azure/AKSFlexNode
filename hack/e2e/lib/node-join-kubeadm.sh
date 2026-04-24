@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# hack/e2e/lib/node-join-kubeadm.sh - Join / unjoin an AKS flex node via kubeadm
+# hack/e2e/lib/node-join-kubeadm.sh - Join / unjoin an AKS flex node via
+#                                       bootstrap token (kubeadm VM)
 #
 # Functions:
-#   node_join_kubeadm   - Create bootstrap token & RBAC, generate action file,
-#                         run aks-flex-node apply -f (KubeadmNodeJoin)
-#   node_unjoin_kubeadm - Reset the node (KubeadmNodeReset) and delete the
-#                         stale node object from the cluster
+#   node_join_kubeadm   - Create bootstrap token & RBAC, generate config,
+#                         run aks-flex-node agent
+#   node_unjoin_kubeadm - Stop agent, run unbootstrap, delete the node object
 # =============================================================================
 set -euo pipefail
 
@@ -251,10 +251,10 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_join_kubeadm - Join the Kubeadm VM using apply -f with KubeadmNodeJoin
+# node_join_kubeadm - Join the Kubeadm VM using bootstrap token config
 # ---------------------------------------------------------------------------
 node_join_kubeadm() {
-  log_section "Joining Kubeadm Node (apply -f)"
+  log_section "Joining Kubeadm Node (bootstrap token)"
   local start
   start=$(timer_start)
 
@@ -264,6 +264,14 @@ node_join_kubeadm() {
   server_url="$(state_get server_url)"
   local ca_cert_data
   ca_cert_data="$(state_get ca_cert_data)"
+  local cluster_id
+  cluster_id="$(state_get cluster_id)"
+  local subscription_id
+  subscription_id="$(state_get subscription_id)"
+  local tenant_id
+  tenant_id="$(state_get tenant_id)"
+  local location
+  location="$(state_get location)"
 
   # Step 1: Ensure RBAC / ConfigMaps and create a bootstrap token
   _kubeadm_ensure_rbac "${server_url}" "${ca_cert_data}"
@@ -273,168 +281,80 @@ node_join_kubeadm() {
   bootstrap_token="$(_kubeadm_create_bootstrap_token)"
   state_set "kubeadm_bootstrap_token" "${bootstrap_token}"
 
-  # Step 2: Generate the apply -f action file (JSON array of all bootstrap
-  #         steps ending with the KubeadmNodeJoin action)
-  local action_file="${E2E_WORK_DIR}/kubeadm-join.json"
-  cat > "${action_file}" <<EOF
-[
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.linux.ConfigureBaseOS",
-      "name": "configure-os"
+  # Step 2: Generate the config file for aks-flex-node agent
+  local config_file="${E2E_WORK_DIR}/config-kubeadm.json"
+  cat > "${config_file}" <<EOF
+{
+  "azure": {
+    "subscriptionId": "${subscription_id}",
+    "tenantId": "${tenant_id}",
+    "cloud": "AzurePublicCloud",
+    "bootstrapToken": {
+      "token": "${bootstrap_token}"
     },
-    "spec": {}
-  },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.cri.DownloadCRIBinaries",
-      "name": "download-cri-binaries"
-    },
-    "spec": {
-      "containerdVersion": "${E2E_CONTAINERD_VERSION}",
-      "runcVersion": "${E2E_RUNC_VERSION}"
+    "arc": { "enabled": false },
+    "targetCluster": {
+      "resourceId": "${cluster_id}",
+      "location": "${location}"
     }
   },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.kubebins.DownloadKubeBinaries",
-      "name": "download-kube-binaries"
+  "node": {
+    "labels": {
+      "kubernetes.azure.com/managed": "false"
     },
-    "spec": {
-      "kubernetesVersion": "${E2E_KUBERNETES_VERSION}"
+    "kubelet": {
+      "serverURL": "${server_url}",
+      "caCertData": "${ca_cert_data}"
     }
   },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.cni.DownloadCNIBinaries",
-      "name": "download-cni-binaries"
-    },
-    "spec": {}
+  "agent": {
+    "logLevel": "debug",
+    "logDir": "/var/log/aks-flex-node"
   },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.cni.ConfigureCNI",
-      "name": "configure-cni"
-    },
-    "spec": {}
-  },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.cri.StartContainerdService",
-      "name": "start-containerd"
-    },
-    "spec": {}
-  },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.kubeadm.KubeadmNodeJoin",
-      "name": "kubeadm-node-join"
-    },
-    "spec": {
-      "controlPlane": {
-        "server": "${server_url}",
-        "certificateAuthorityData": "${ca_cert_data}"
-      },
-      "kubelet": {
-        "bootstrapAuthInfo": {
-          "token": "${bootstrap_token}"
-        },
-        "node_labels": {
-          "kubernetes.azure.com/managed": "false"
-        }
-      }
-    }
-  }
-]
+  "kubernetes": { "version": "${E2E_KUBERNETES_VERSION}" },
+  "containerd": { "version": "${E2E_CONTAINERD_VERSION}" },
+  "runc": { "version": "${E2E_RUNC_VERSION}" }
+}
 EOF
 
-  # Step 3: Upload binary and action file, then run apply -f directly
-  log_info "Uploading binary and action file to ${vm_ip}..."
-  remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
-  remote_copy "${action_file}" "${vm_ip}" "/tmp/kubeadm-join.json"
+  # Step 3: Deploy and start the agent
+  _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-kubeadm"
 
-  log_info "Running kubeadm join via apply -f on ${vm_ip}..."
-  remote_exec "${vm_ip}" 'bash -s' <<REMOTE
-set -euo pipefail
-
-sudo cp /tmp/aks-flex-node-binary /usr/local/bin/aks-flex-node
-sudo chmod +x /usr/local/bin/aks-flex-node
-aks-flex-node version
-
-sudo mkdir -p /etc/aks-flex-node /var/log/aks-flex-node
-sudo cp /tmp/kubeadm-join.json /etc/aks-flex-node/
-
-sudo /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kubeadm-join.json \
-  2>&1 | sudo tee /var/log/aks-flex-node/aks-flex-node.log
-
-if systemctl is-active --quiet kubelet; then
-  echo "kubelet is running"
-else
-  echo "kubelet status:"
-  systemctl status kubelet --no-pager -l 2>&1 || true
-fi
-REMOTE
-
-  log_success "Kubeadm node joined via apply -f in $(timer_elapsed "${start}")s"
+  log_success "Kubeadm node joined in $(timer_elapsed "${start}")s"
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_kubeadm - Reset the node and remove it from the cluster
+# node_unjoin_kubeadm - Stop agent, run unbootstrap, remove node from cluster
 # ---------------------------------------------------------------------------
 node_unjoin_kubeadm() {
-  log_section "Resetting Kubeadm Node (apply -f)"
+  log_section "Unjoining Kubeadm Node"
   local start
   start=$(timer_start)
 
-  local vm_ip
+  local vm_ip vm_name
   vm_ip="$(state_get kubeadm_vm_ip)"
+  vm_name="$(state_get kubeadm_vm_name)"
 
-  # Run KubeadmNodeReset followed by ResetContainerdService on the VM.
-  # Order matters: kubeadm reset requires containerd to clean up pods/containers,
-  # so the CRI reset must come after the kubeadm reset.
-  local reset_action_file="${E2E_WORK_DIR}/kubeadm-reset.json"
-  cat > "${reset_action_file}" <<EOF
-[
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.kubeadm.KubeadmNodeReset",
-      "name": "kubeadm-node-reset"
-    },
-    "spec": {}
-  },
-  {
-    "metadata": {
-      "type": "type.googleapis.com/aks.flex.components.cri.ResetContainerdService",
-      "name": "reset-containerd"
-    },
-    "spec": {}
-  }
-]
-EOF
-
-  remote_copy "${reset_action_file}" "${vm_ip}" "/tmp/kubeadm-reset.json"
-
-  log_info "Running kubeadm reset via apply -f on ${vm_ip}..."
-  remote_exec "${vm_ip}" 'bash -s' <<REMOTE
+  # Step 1: Stop the agent service and run unbootstrap on the VM.
+  log_info "Stopping agent and running unbootstrap on ${vm_ip}..."
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 
-sudo cp /tmp/kubeadm-reset.json /etc/aks-flex-node/
+sudo systemctl stop aks-flex-node-kubeadm 2>/dev/null || true
 
-sudo /usr/local/bin/aks-flex-node apply --no-prettyui -f /etc/aks-flex-node/kubeadm-reset.json \
+sudo /usr/local/bin/aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json \
   2>&1 | sudo tee -a /var/log/aks-flex-node/aks-flex-node.log
 
-echo "kubelet status after reset:"
+echo "kubelet status after unbootstrap:"
 systemctl is-active kubelet 2>&1 || true
-echo "containerd status after reset:"
+echo "containerd status after unbootstrap:"
 systemctl is-active containerd 2>&1 || true
 REMOTE
 
-  # Delete the node object from the API server so validation passes
+  # Step 2: Delete the node object from the API server so validation passes
   # without waiting for the node controller to evict it.
-  local vm_name
-  vm_name="$(state_get kubeadm_vm_name)"
   log_info "Deleting node '${vm_name}' from cluster..."
   kubectl delete node "${vm_name}" --ignore-not-found --wait=false
 
-  log_success "Kubeadm node reset in $(timer_elapsed "${start}")s"
+  log_success "Kubeadm node unjoined in $(timer_elapsed "${start}")s"
 }
