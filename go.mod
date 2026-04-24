@@ -10,7 +10,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute v1.2.0
 	github.com/Azure/go-autorest/autorest/to v0.4.1
 	github.com/Azure/kubelogin v0.2.15
-	github.com/Azure/unbounded v0.0.0-00010101000000-000000000000
+	github.com/Azure/unbounded v0.0.0-20260424073001-e39f25fb3626
 	github.com/blang/semver/v4 v4.0.0
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/google/renameio/v2 v2.0.2
@@ -124,5 +124,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482 // indirect
 )
-
-replace github.com/Azure/unbounded => ../unbounded-kube-azure
