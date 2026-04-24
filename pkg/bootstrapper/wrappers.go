@@ -2,6 +2,7 @@ package bootstrapper
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"log/slog"
@@ -170,7 +171,47 @@ func (t *uninstallArcTask) Do(ctx context.Context) error {
 	return u.Execute(ctx)
 }
 
-// installBinaryTask copies the running aks-flex-node binary into the nspawn
+// writeCNIConfigTask writes a default bridge CNI conflist into the nspawn
+// rootfs. The unbounded library installs CNI binaries but does not write a
+// conflist; without one kubelet reports NetworkNotReady and pods cannot be
+// scheduled. This uses the same 10.244.0.0/16 bridge configuration that
+// the previous FlexNode CNI component wrote.
+
+//go:embed assets/99-bridge.conf
+var defaultBridgeCNIConfig []byte
+
+type writeCNIConfigTask struct {
+	machineDir string
+}
+
+// WriteCNIConfig returns a task that writes the default bridge CNI config
+// into the nspawn rootfs at /etc/cni/net.d/99-bridge.conf.
+func WriteCNIConfig(machineDir string) phases.Task {
+	return &writeCNIConfigTask{machineDir: machineDir}
+}
+
+func (t *writeCNIConfigTask) Name() string { return "write-cni-config" }
+
+func (t *writeCNIConfigTask) Do(_ context.Context) error {
+	confDir := filepath.Join(t.machineDir, "etc", "cni", "net.d")
+	if err := os.MkdirAll(confDir, 0o750); err != nil { //nolint:gosec // directory needs to be traversable
+		return fmt.Errorf("create CNI config directory: %w", err)
+	}
+
+	confPath := filepath.Join(confDir, "99-bridge.conf")
+
+	// Idempotent: skip if file already exists with expected content.
+	current, err := os.ReadFile(confPath) //nolint:gosec // path is constructed, not user input
+	if err == nil && string(current) == string(defaultBridgeCNIConfig) {
+		return nil
+	}
+
+	if err := os.WriteFile(confPath, defaultBridgeCNIConfig, 0o644); err != nil { //nolint:gosec // CNI config must be world-readable
+		return fmt.Errorf("write CNI bridge config: %w", err)
+	}
+	return nil
+}
+
 // rootfs so that exec credential plugins can invoke it from inside the
 // container. This is required for MSI and service principal auth where
 // kubelet uses `aks-flex-node token kubelogin` as an exec credential plugin.

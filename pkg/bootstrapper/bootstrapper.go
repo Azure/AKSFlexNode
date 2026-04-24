@@ -94,6 +94,11 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// inside the nspawn container (needed for exec credential plugins
 		// and useful for debugging).
 		InstallBinary(gs.RootFS.MachineDir),
+
+		// Write the default bridge CNI config into the rootfs. The shared
+		// library installs CNI binaries but not a conflist; without one
+		// kubelet stays NetworkNotReady.
+		WriteCNIConfig(gs.RootFS.MachineDir),
 	}
 
 	taskList = append(taskList,
