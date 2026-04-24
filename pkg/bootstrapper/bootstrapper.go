@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -19,13 +17,12 @@ import (
 )
 
 // Bootstrapper orchestrates the bootstrap and unbootstrap sequences using
-// the shared unbounded agent library for Kubernetes operations and wrapped
-// gRPC actions for Azure-specific components.
+// the shared unbounded agent library for Kubernetes operations and native
+// task implementations for Azure-specific components (Arc, NPD).
 type Bootstrapper struct {
-	cfg               *config.Config
-	logger            *slog.Logger
-	componentsAPIConn *grpc.ClientConn
-	machineName       string
+	cfg         *config.Config
+	logger      *slog.Logger
+	machineName string
 }
 
 // New creates a new bootstrapper. machineName is the nspawn machine name
@@ -33,14 +30,12 @@ type Bootstrapper struct {
 func New(
 	cfg *config.Config,
 	logger *slog.Logger,
-	componentsAPIConn *grpc.ClientConn,
 	machineName string,
 ) *Bootstrapper {
 	return &Bootstrapper{
-		cfg:               cfg,
-		logger:            logger,
-		componentsAPIConn: componentsAPIConn,
-		machineName:       machineName,
+		cfg:         cfg,
+		logger:      logger,
+		machineName: machineName,
 	}
 }
 
@@ -49,7 +44,6 @@ func New(
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
 	log := b.logger
 	cfg := b.cfg
-	conn := b.componentsAPIConn
 
 	// Step 1: Enrich cluster config (fetch serverURL/caCertData from AKS for non-bootstrap-token modes).
 	// This must run before we build the agent config because it populates ServerURL and CACertData.
@@ -66,9 +60,6 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 	}
 
 	// Step 3: Build the task tree and execute.
-	//
-	// If exec credential auth is used (MSI/SP), copy the aks-flex-node binary
-	// into the rootfs so kubelet can invoke it as a credential plugin.
 	taskList := []phases.Task{
 		// Phase 1: host preparation
 		host.InstallPackages(log),
@@ -80,13 +71,13 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		),
 
 		// Azure-specific: install Arc (no-op if not enabled)
-		InstallArc(conn, cfg),
+		InstallArc(cfg, log),
 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
 		rootfs.Provision(log, gs.RootFS),
 
 		// Azure-specific: download NPD
-		DownloadNPD(conn, cfg),
+		DownloadNPD(cfg),
 
 		// Copy the aks-flex-node binary into the rootfs so it is available
 		// inside the nspawn container (needed for exec credential plugins
@@ -104,7 +95,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		nodestart.StartNode(log, gs.NodeStart),
 
 		// Azure-specific: start NPD
-		StartNPD(conn, cfg),
+		StartNPD(cfg),
 	)
 
 	tasks := phases.Serial(log, taskList...)

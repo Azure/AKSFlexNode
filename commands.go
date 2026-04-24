@@ -95,7 +95,7 @@ func runAgent(ctx context.Context) error {
 	slogger := slog.Default()
 	machineName := goalstates.NSpawnMachineKube1
 
-	bootstrapExecutor := bootstrapper.New(cfg, slogger, conn, machineName)
+	bootstrapExecutor := bootstrapper.New(cfg, slogger, machineName)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		return err
@@ -133,7 +133,7 @@ func runUnbootstrap(ctx context.Context) error {
 	slogger := slog.Default()
 	machineName := goalstates.NSpawnMachineKube1
 
-	bootstrapExecutor := bootstrapper.New(cfg, slogger, conn, machineName)
+	bootstrapExecutor := bootstrapper.New(cfg, slogger, machineName)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {
 		return err
@@ -317,7 +317,7 @@ func startBootstrapHealthCheckLoop(
 				func() {
 					defer atomic.StoreInt32(bootstrapInProgress, 0)
 					cfgSnap := snapshotConfig(cfg, cfgMu)
-					err := checkAndBootstrap(ctx, cfgSnap, conn, machineName)
+					err := checkAndBootstrap(ctx, cfgSnap, machineName)
 					if err != nil {
 						logger.Errorf("Auto-bootstrap check failed at %s: %v", now.Format("2006-01-02 15:04:05"), err)
 						return
@@ -378,7 +378,7 @@ func collectAndWriteManagedClusterSpec(ctx context.Context, cfg *config.Config) 
 }
 
 // checkAndBootstrap checks if the node needs re-bootstrapping and performs it if necessary
-func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.ClientConn, machineName string) error {
+func checkAndBootstrap(ctx context.Context, cfg *config.Config, machineName string) error {
 	logger := logger.GetLoggerFromContext(ctx)
 	// Create status collector to check bootstrap requirements
 	collector := status.NewCollector(cfg, logger, Version, machineName)
@@ -409,7 +409,7 @@ func checkAndBootstrap(ctx context.Context, cfg *config.Config, conn *grpc.Clien
 
 	// Perform bootstrap
 	slogger := slog.Default()
-	bootstrapExecutor := bootstrapper.New(cfg, slogger, conn, machineName)
+	bootstrapExecutor := bootstrapper.New(cfg, slogger, machineName)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		// Bootstrap failed - remove status file so next check will detect the problem
