@@ -192,3 +192,68 @@ func TestToAgentConfig_ManagedIdentitySystemAssigned(t *testing.T) {
 		t.Fatal("AZURE_CLIENT_ID should not be set for system-assigned MSI")
 	}
 }
+
+func TestToAgentConfig_CRICNIVersions(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Azure: AzureConfig{
+			BootstrapToken: &BootstrapTokenConfig{Token: "tok"},
+		},
+		Kubernetes: KubernetesConfig{Version: "1.30.0"},
+		Containerd: ContainerdConfig{Version: "2.1.0"},
+		Runc:       RuncConfig{Version: "1.2.0"},
+		CNI:        CNIConfig{Version: "1.6.0"},
+		Node: NodeConfig{
+			Kubelet: KubeletConfig{
+				DNSServiceIP: "10.0.0.10",
+				ServerURL:    "https://api.example.com:6443",
+				CACertData:   "ca",
+			},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+
+	if ac.CRI.Containerd.Version != "2.1.0" {
+		t.Fatalf("CRI.Containerd.Version=%q, want %q", ac.CRI.Containerd.Version, "2.1.0")
+	}
+	if ac.CRI.Runc.Version != "1.2.0" {
+		t.Fatalf("CRI.Runc.Version=%q, want %q", ac.CRI.Runc.Version, "1.2.0")
+	}
+	if ac.CNI.PluginVersion != "1.6.0" {
+		t.Fatalf("CNI.PluginVersion=%q, want %q", ac.CNI.PluginVersion, "1.6.0")
+	}
+}
+
+func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Azure: AzureConfig{
+			BootstrapToken: &BootstrapTokenConfig{Token: "tok"},
+		},
+		Kubernetes: KubernetesConfig{Version: "1.30.0"},
+		Node: NodeConfig{
+			Kubelet: KubeletConfig{
+				DNSServiceIP: "10.0.0.10",
+				ServerURL:    "https://api.example.com:6443",
+				CACertData:   "ca",
+			},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+
+	// Empty values should be passed through; the library defaults in
+	// goalstates.ResolveMachine when empty.
+	if ac.CRI.Containerd.Version != "" {
+		t.Fatalf("CRI.Containerd.Version=%q, want empty", ac.CRI.Containerd.Version)
+	}
+	if ac.CRI.Runc.Version != "" {
+		t.Fatalf("CRI.Runc.Version=%q, want empty", ac.CRI.Runc.Version)
+	}
+	if ac.CNI.PluginVersion != "" {
+		t.Fatalf("CNI.PluginVersion=%q, want empty", ac.CNI.PluginVersion)
+	}
+}

@@ -10,7 +10,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute v1.2.0
 	github.com/Azure/go-autorest/autorest/to v0.4.1
 	github.com/Azure/kubelogin v0.2.15
-	github.com/Azure/unbounded v0.1.1-0.20260424204836-f9e5ffb2b2ec
+	github.com/Azure/unbounded v0.1.1-0.20260424222659-b8847fd8701b
 	github.com/blang/semver/v4 v4.0.0
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/google/renameio/v2 v2.0.2

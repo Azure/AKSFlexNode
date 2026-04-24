@@ -83,8 +83,6 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		InstallArc(conn, cfg),
 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
-		// TODO: allow customizing containerd, runc, and CNI plugin versions from FlexNode config.
-		// Currently uses library defaults from goalstates/constants.go.
 		rootfs.Provision(log, gs.RootFS),
 
 		// Azure-specific: download NPD
@@ -103,8 +101,6 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 
 	taskList = append(taskList,
 		// Phase 3: node start (configure + boot nspawn + start containerd + kubelet)
-		// TODO: allow customizing Kubernetes binary versions from FlexNode config.
-		// Currently uses the version from cfg.Kubernetes.Version via the agent config.
 		nodestart.StartNode(log, gs.NodeStart),
 
 		// Azure-specific: start NPD

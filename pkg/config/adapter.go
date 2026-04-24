@@ -34,6 +34,17 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			Labels:             cfg.Node.Labels,
 			RegisterWithTaints: cfg.Node.Taints,
 		},
+		CRI: agentconfig.CRIConfig{
+			Containerd: agentconfig.ContainerdConfig{
+				Version: cfg.Containerd.Version,
+			},
+			Runc: agentconfig.RuncConfig{
+				Version: cfg.Runc.Version,
+			},
+		},
+		CNI: agentconfig.CNIConfig{
+			PluginVersion: cfg.CNI.Version,
+		},
 	}
 
 	switch {
