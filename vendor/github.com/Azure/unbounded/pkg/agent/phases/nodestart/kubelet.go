@@ -17,6 +17,8 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/utilio"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 type configureKubelet struct {
@@ -137,6 +139,7 @@ func (c *configureKubelet) ensureKubeletDropIns() error {
 				"KubeconfigPath":          goalstates.KubeletKubeconfigPath,
 				"BootstrapKubeconfigPath": goalstates.KubeletBootstrapKubeconfigPath,
 				"RotateCertificates":      true,
+				"UseExecCredential":       spec.ExecCredential != nil,
 			},
 		},
 		{
@@ -166,27 +169,76 @@ func (c *configureKubelet) ensureKubeletDropIns() error {
 		}
 	}
 
-	// Write the bootstrap kubeconfig (not a drop-in, but a standalone file)
-	return c.ensureBootstrapKubeconfig()
+	// Write the kubelet kubeconfig (bootstrap or exec-based).
+	return c.ensureKubeconfig()
 }
 
-// ensureBootstrapKubeconfig renders and writes the bootstrap kubeconfig into
-// the machine rootfs. This file is required by kubelet for TLS bootstrapping.
-func (c *configureKubelet) ensureBootstrapKubeconfig() error {
+// ensureKubeconfig writes the appropriate kubeconfig into the machine rootfs
+// based on the configured authentication method.
+func (c *configureKubelet) ensureKubeconfig() error {
 	spec := c.goalState.Kubelet
-
-	buf := &bytes.Buffer{}
-	if err := assetsTemplate.ExecuteTemplate(buf, "bootstrap-kubeconfig.yaml", map[string]any{
-		"CACertPath": goalstates.KubeletAPIServerCACertPath,
-		"Server":     spec.APIServer,
-		"Token":      spec.BootstrapToken,
-	}); err != nil {
-		return fmt.Errorf("render bootstrap-kubeconfig.yaml: %w", err)
+	switch {
+	case spec.ExecCredential != nil:
+		return c.ensureExecKubeconfig()
+	case spec.BootstrapToken != "":
+		return c.ensureBootstrapKubeconfig()
+	default:
+		return fmt.Errorf("no kubelet auth method configured")
 	}
+}
 
+// buildKubeconfig creates a kubeconfig with the given auth info and the
+// cluster CA and server from the kubelet goal state.
+func (c *configureKubelet) buildKubeconfig(authInfo *clientcmdapi.AuthInfo) clientcmdapi.Config {
+	spec := c.goalState.Kubelet
+	return clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			"cluster": {
+				CertificateAuthority: goalstates.KubeletAPIServerCACertPath,
+				Server:               spec.APIServer,
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			"kubelet": authInfo,
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			"default": {
+				Cluster:  "cluster",
+				AuthInfo: "kubelet",
+			},
+		},
+		CurrentContext: "default",
+	}
+}
+
+// ensureBootstrapKubeconfig writes a bootstrap kubeconfig that uses a bearer
+// token for TLS bootstrapping.
+func (c *configureKubelet) ensureBootstrapKubeconfig() error {
+	cfg := c.buildKubeconfig(&clientcmdapi.AuthInfo{
+		Token: c.goalState.Kubelet.BootstrapToken,
+	})
+	data, err := clientcmd.Write(cfg)
+	if err != nil {
+		return fmt.Errorf("serialize bootstrap kubeconfig: %w", err)
+	}
 	dest := filepath.Join(c.goalState.MachineDir, goalstates.KubeletBootstrapKubeconfigPath)
+	return utilio.WriteFile(dest, data, 0o600)
+}
 
-	return utilio.WriteFile(dest, buf.Bytes(), 0o600)
+// ensureExecKubeconfig writes a kubeconfig that uses an exec credential
+// plugin for authentication.
+func (c *configureKubelet) ensureExecKubeconfig() error {
+	cfg := c.buildKubeconfig(&clientcmdapi.AuthInfo{
+		Exec: c.goalState.Kubelet.ExecCredential,
+	})
+	data, err := clientcmd.Write(cfg)
+	if err != nil {
+		return fmt.Errorf("serialize exec kubeconfig: %w", err)
+	}
+	// Exec credential plugins provide renewable tokens, so write directly
+	// to the kubelet kubeconfig path (no TLS bootstrap needed).
+	dest := filepath.Join(c.goalState.MachineDir, goalstates.KubeletKubeconfigPath)
+	return utilio.WriteFile(dest, data, 0o600)
 }
 
 // formatNodeLabels formats a map of node labels as a sorted, comma-separated

@@ -3,15 +3,17 @@
 
 package goalstates
 
+import "github.com/Azure/unbounded/pkg/agent/config"
+
 // Kubelet defines the goal state for the kubelet configuration.
 type Kubelet struct {
 	// KubeletBinPath is the absolute path to the kubelet binary inside the
 	// machine container (e.g. /usr/local/bin/kubelet).
 	KubeletBinPath string
 
-	// BootstrapToken is the bootstrap token in "<token-id>.<token-secret>"
-	// format used for TLS bootstrapping with the API server.
-	BootstrapToken string
+	// KubeletAuthInfo holds the authentication configuration for the
+	// kubelet. Exactly one of BootstrapToken or ExecCredential must be set.
+	config.KubeletAuthInfo
 
 	// APIServer is the HTTPS endpoint of the Kubernetes API server
 	// (e.g. "https://my-cluster.hcp.eastus.azmk8s.io:443").

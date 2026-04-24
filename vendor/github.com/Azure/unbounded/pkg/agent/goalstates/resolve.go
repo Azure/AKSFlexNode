@@ -102,9 +102,13 @@ func resolveKubelet(cfg *config.AgentConfig) (Kubelet, error) {
 		labels = make(map[string]string)
 	}
 
+	if err := cfg.Kubelet.Auth.Validate(); err != nil {
+		return zero, fmt.Errorf("kubelet auth: %w", err)
+	}
+
 	return Kubelet{
 		KubeletBinPath:     filepath.Join("/"+BinDir, "kubelet"),
-		BootstrapToken:     cfg.Kubelet.BootstrapToken,
+		KubeletAuthInfo:    cfg.Kubelet.Auth,
 		APIServer:          cfg.Kubelet.ApiServer,
 		CACertData:         caCert,
 		ClusterDNS:         cfg.Cluster.ClusterDNS,

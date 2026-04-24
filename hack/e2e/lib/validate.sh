@@ -71,8 +71,7 @@ validate_all_nodes() {
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
   local failed=0
-  # TODO: MSI validation skipped until credential plugin auth is supported
-  log_info "Skipping MSI node validation (credential plugin auth not yet supported)"
+  validate_node_joined "${msi_vm_name}" || failed=1
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
 

@@ -86,7 +86,7 @@ github.com/Azure/kubelogin/pkg/internal/pop/cache/internal/aescbc
 github.com/Azure/kubelogin/pkg/internal/pop/cache/internal/jwe
 github.com/Azure/kubelogin/pkg/internal/token
 github.com/Azure/kubelogin/pkg/token
-# github.com/Azure/unbounded v0.1.1-0.20260424195918-fcfb1ae4f3d8
+# github.com/Azure/unbounded v0.1.1-0.20260424204836-f9e5ffb2b2ec
 ## explicit; go 1.26.2
 github.com/Azure/unbounded/internal/ociutil
 github.com/Azure/unbounded/pkg/agent/config

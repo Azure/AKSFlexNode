@@ -66,7 +66,10 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 	}
 
 	// Step 3: Build the task tree and execute.
-	tasks := phases.Serial(log,
+	//
+	// If exec credential auth is used (MSI/SP), copy the aks-flex-node binary
+	// into the rootfs so kubelet can invoke it as a credential plugin.
+	taskList := []phases.Task{
 		// Phase 1: host preparation
 		host.InstallPackages(log),
 		phases.Parallel(log,
@@ -87,6 +90,13 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Azure-specific: download NPD
 		DownloadNPD(conn, cfg),
 
+		// Copy the aks-flex-node binary into the rootfs so it is available
+		// inside the nspawn container (needed for exec credential plugins
+		// and useful for debugging).
+		InstallBinary(gs.RootFS.MachineDir),
+	}
+
+	taskList = append(taskList,
 		// Phase 3: node start (configure + boot nspawn + start containerd + kubelet)
 		// TODO: allow customizing Kubernetes binary versions from FlexNode config.
 		// Currently uses the version from cfg.Kubernetes.Version via the agent config.
@@ -95,6 +105,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Azure-specific: start NPD
 		StartNPD(conn, cfg),
 	)
+
+	tasks := phases.Serial(log, taskList...)
 
 	start := time.Now()
 	err = tasks.Do(ctx)

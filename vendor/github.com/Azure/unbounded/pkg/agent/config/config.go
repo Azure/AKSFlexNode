@@ -14,6 +14,12 @@
 // yet finalized and will be revisited in a future iteration.
 package config
 
+import (
+	"fmt"
+
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+)
+
 // AgentConfig is the core configuration needed to bootstrap a Kubernetes
 // node. It contains only the cloud-agnostic fields required by the shared
 // agent library. Platform-specific extensions (e.g. attestation, cloud
@@ -40,7 +46,35 @@ type AgentClusterConfig struct {
 // AgentKubeletConfig holds kubelet-specific overrides.
 type AgentKubeletConfig struct {
 	ApiServer          string            `json:"ApiServer"`
-	BootstrapToken     string            `json:"BootstrapToken,omitempty"`
+	Auth               KubeletAuthInfo   `json:"Auth"`
 	Labels             map[string]string `json:"Labels"`
 	RegisterWithTaints []string          `json:"RegisterWithTaints"`
+}
+
+// KubeletAuthInfo holds the kubelet authentication configuration.
+// Exactly one of BootstrapToken or ExecCredential must be set.
+type KubeletAuthInfo struct {
+	// BootstrapToken is a Kubernetes bootstrap token in
+	// "<token-id>.<token-secret>" format used for TLS bootstrapping.
+	BootstrapToken string `json:"BootstrapToken,omitempty"`
+
+	// ExecCredential configures kubelet to authenticate via a
+	// client.authentication.k8s.io exec credential plugin.
+	ExecCredential *clientcmdapi.ExecConfig `json:"ExecCredential,omitempty"`
+}
+
+// Validate checks that exactly one auth method is configured.
+func (a *KubeletAuthInfo) Validate() error {
+	hasToken := a.BootstrapToken != ""
+	hasExec := a.ExecCredential != nil
+	switch {
+	case hasToken && hasExec:
+		return fmt.Errorf("BootstrapToken and ExecCredential are mutually exclusive")
+	case !hasToken && !hasExec:
+		return fmt.Errorf("one of BootstrapToken or ExecCredential must be set")
+	}
+	if hasExec && a.ExecCredential.Command == "" {
+		return fmt.Errorf("ExecCredential.Command is required")
+	}
+	return nil
 }
