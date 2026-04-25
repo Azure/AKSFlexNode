@@ -19,7 +19,6 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
@@ -1033,28 +1032,4 @@ func (t *ensureMachineTask) buildK8sProfile(k8sVersion string) *armcontainerserv
 func isARMNotFound(err error) bool {
 	var respErr *azcore.ResponseError
 	return errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound
-}
-
-// buildARMClientOptions returns ARM client options that redirect all calls to
-// endpointOverride when non-empty (e.g. "http://localhost:8080" for local testing).
-// Returns nil when the override is empty, which uses the default public ARM endpoint.
-//
-//nolint:unused // kept for local testing support; will be wired up when needed
-func buildARMClientOptions(endpointOverride string) *arm.ClientOptions {
-	if endpointOverride == "" {
-		return nil
-	}
-	return &arm.ClientOptions{
-		ClientOptions: azcore.ClientOptions{
-			Cloud: cloud.Configuration{
-				Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-					cloud.ResourceManager: {
-						Endpoint: endpointOverride,
-						Audience: endpointOverride,
-					},
-				},
-			},
-			InsecureAllowCredentialWithHTTP: true,
-		},
-	}
 }
