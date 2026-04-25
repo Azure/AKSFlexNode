@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -10,28 +11,32 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
-	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilexec "k8s.io/utils/exec"
 )
 
-// Collector collects system and node status information
+// Collector collects system and node status information.
+// After the nspawn migration, kubelet and containerd run inside the nspawn
+// machine rather than directly on the host.
 type Collector struct {
 	config       *config.Config
 	logger       *logrus.Logger
+	slog         *slog.Logger
 	agentVersion string
-	exec         utilexec.Interface
+	machineName  string
 }
 
-// NewCollector creates a new status collector
-func NewCollector(cfg *config.Config, logger *logrus.Logger, agentVersion string) *Collector {
+// NewCollector creates a new status collector. machineName is the nspawn
+// machine name where kubelet/containerd are running (e.g. "kube1").
+func NewCollector(cfg *config.Config, logger *logrus.Logger, agentVersion string, machineName string) *Collector {
 	return &Collector{
 		config:       cfg,
 		logger:       logger,
+		slog:         slog.Default(),
 		agentVersion: agentVersion,
-		exec:         utilexec.New(),
+		machineName:  machineName,
 	}
 }
 
@@ -42,20 +47,19 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 		AgentVersion: c.agentVersion,
 	}
 
-	// Get kubelet related status
+	// Get kubelet related status (running inside nspawn machine)
 	status.KubeletVersion = c.getKubeletVersion(ctx)
-	status.KubeletRunning = utils.IsServiceActive("kubelet")
+	status.KubeletRunning = c.isServiceActiveInMachine(ctx, "kubelet")
 	status.KubeletReady = c.isKubeletReady(ctx)
 
-	// get containerd related status
+	// get containerd related status (running inside nspawn machine)
 	status.ContainerdVersion = c.getContainerdVersion(ctx)
-	// check if containerd is running, it will cause kubelet not ready
-	status.ContainerdRunning = utils.IsServiceActive("containerd")
+	status.ContainerdRunning = c.isServiceActiveInMachine(ctx, "containerd")
 
-	// Get runc version
+	// Get runc version (inside nspawn machine)
 	status.RuncVersion = c.getRuncVersion(ctx)
 
-	// Collect Arc status
+	// Collect Arc status (runs on host, not inside nspawn)
 	arcStatus, err := c.collectArcStatus(ctx)
 	if err != nil {
 		c.logger.Warnf("Failed to collect Arc status: %v", err)
@@ -65,9 +69,25 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 	return status, nil
 }
 
-// getKubeletVersion gets the kubelet version
+// machineRun executes a command inside the nspawn machine and returns its stdout.
+func (c *Collector) machineRun(ctx context.Context, args ...string) (string, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return utilexec.MachineRun(timeoutCtx, c.slog, c.machineName, args...)
+}
+
+// isServiceActiveInMachine checks if a systemd service is active inside the nspawn machine.
+func (c *Collector) isServiceActiveInMachine(ctx context.Context, serviceName string) bool {
+	output, err := c.machineRun(ctx, "systemctl", "is-active", serviceName)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(output) == "active"
+}
+
+// getKubeletVersion gets the kubelet version from inside the nspawn machine
 func (c *Collector) getKubeletVersion(ctx context.Context) string {
-	output, err := c.runCommand(ctx, "/usr/local/bin/kubelet", "--version")
+	output, err := c.machineRun(ctx, "/usr/local/bin/kubelet", "--version")
 	if err != nil {
 		c.logger.Warnf("Failed to get kubelet version: %v", err)
 		return "unknown"
@@ -84,13 +104,13 @@ func (c *Collector) getKubeletVersion(ctx context.Context) string {
 }
 
 func (c *Collector) getContainerdVersion(ctx context.Context) string {
-	output, err := c.runCommand(ctx, "containerd", "--version")
+	output, err := c.machineRun(ctx, "containerd", "--version")
 	if err != nil {
 		c.logger.Warnf("Failed to get containerd version: %v", err)
 		return "unknown"
 	}
 
-	// Extract version from output like "containerd github.com/containerd/containerd v1.7.20 8fc6bcff51318944179630522a095cc9dbf9f353"
+	// Extract version from output like "containerd github.com/containerd/containerd v1.7.20 8fc6bcff..."
 	parts := strings.Fields(strings.TrimSpace(output))
 	if len(parts) >= 3 {
 		return strings.TrimPrefix(parts[2], "v")
@@ -98,9 +118,9 @@ func (c *Collector) getContainerdVersion(ctx context.Context) string {
 	return "unknown"
 }
 
-// getRuncVersion gets the runc version
+// getRuncVersion gets the runc version from inside the nspawn machine
 func (c *Collector) getRuncVersion(ctx context.Context) string {
-	output, err := c.runCommand(ctx, "runc", "--version")
+	output, err := c.machineRun(ctx, "runc", "--version")
 	if err != nil {
 		c.logger.Warnf("Failed to get runc version: %v", err)
 		return "unknown"
@@ -124,31 +144,24 @@ func (c *Collector) getRuncVersion(ctx context.Context) string {
 }
 
 // collectArcStatus gathers Azure Arc machine registration and connection status
+// Arc runs on the host, not inside the nspawn machine.
 func (c *Collector) collectArcStatus(ctx context.Context) (ArcStatus, error) {
 	status := ArcStatus{}
 
-	// Try to get comprehensive Arc status from azcmagent show
-	if output, err := c.runCommand(ctx, "azcmagent", "show"); err == nil {
+	// Try to get comprehensive Arc status from azcmagent show (runs on host)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	output, err := utilexec.OutputCmd(timeoutCtx, c.slog, "azcmagent", "show")
+	if err == nil {
 		c.parseArcShowOutput(&status, output)
 	} else {
-		// If azcmagent show fails, explicitly mark as disconnected
 		c.logger.Debugf("azcmagent show failed: %v - marking Arc as disconnected", err)
 		status.Connected = false
 		status.Registered = false
 	}
 
 	return status, nil
-}
-
-// runCommand executes a system command and returns the output with a timeout
-func (c *Collector) runCommand(ctx context.Context, name string, args ...string) (string, error) {
-	// Create a context with timeout to prevent hanging commands
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	cmd := c.exec.CommandContext(timeoutCtx, name, args...)
-	output, err := cmd.Output()
-	return string(output), err
 }
 
 // parseArcShowOutput parses the output of 'azcmagent show' and populates ArcStatus
@@ -172,7 +185,7 @@ func (c *Collector) parseArcShowOutput(status *ArcStatus, output string) {
 		switch key {
 		case "Agent Status":
 			status.Connected = strings.ToLower(value) == "connected"
-			status.Registered = status.Connected // If connected, assume registered
+			status.Registered = status.Connected
 		case "Agent Last Heartbeat":
 			if heartbeat, err := time.Parse("2006-01-02T15:04:05Z", value); err == nil {
 				status.LastHeartbeat = heartbeat

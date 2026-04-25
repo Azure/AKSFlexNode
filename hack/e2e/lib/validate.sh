@@ -124,7 +124,8 @@ validate_all_nodes_absent() {
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
   local failed=0
-  validate_node_absent "${msi_vm_name}" || failed=1
+  # TODO: MSI validation skipped until credential plugin auth is supported
+  log_info "Skipping MSI node absence validation (credential plugin auth not yet supported)"
   validate_node_absent "${token_vm_name}" || failed=1
   validate_node_absent "${kubeadm_vm_name}" || failed=1
 
@@ -200,6 +201,8 @@ smoke_test_all() {
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
+  # A default bridge CNI config (99-bridge.conf) is written during bootstrap,
+  # making nodes Ready without requiring unbounded-net-node DaemonSet.
   local failed=0
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1

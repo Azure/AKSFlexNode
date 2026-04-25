@@ -21,9 +21,9 @@ type clusterConfigEnricher struct {
 	logger *logrus.Logger
 }
 
-func newClusterConfigEnricher(logger *logrus.Logger) *clusterConfigEnricher {
+func newClusterConfigEnricher(cfg *config.Config, logger *logrus.Logger) *clusterConfigEnricher {
 	return &clusterConfigEnricher{
-		cfg:    config.GetConfig(),
+		cfg:    cfg,
 		logger: logger,
 	}
 }

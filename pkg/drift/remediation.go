@@ -4,18 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"google.golang.org/grpc"
 
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/host"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 const driftKubernetesUpgradeOperation = "drift-kubernetes-upgrade"
@@ -37,9 +43,6 @@ const maxManagedClusterSpecAge = 2 * time.Hour
 // and (if needed) performs remediation.
 //
 // Remediation attempts are guarded by bootstrapInProgress to avoid concurrent executions.
-//
-// conn must be a usable components API connection; drift remediation never creates its own
-// in-memory connection.
 func DetectAndRemediateFromFiles(
 	ctx context.Context,
 	// cfg must be an immutable snapshot for the duration of this call.
@@ -49,7 +52,7 @@ func DetectAndRemediateFromFiles(
 	logger *logrus.Logger,
 	bootstrapInProgress *int32,
 	detectors []Detector,
-	conn *grpc.ClientConn,
+	machineName string,
 ) error {
 	if logger == nil {
 		logger = logrus.New()
@@ -66,7 +69,7 @@ func DetectAndRemediateFromFiles(
 		return err
 	}
 
-	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus, conn)
+	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus, machineName)
 }
 
 func detectAndRemediate(
@@ -77,7 +80,7 @@ func detectAndRemediate(
 	detectors []Detector,
 	specSnap *spec.ManagedClusterSpec,
 	statusSnap *status.NodeStatus,
-	conn *grpc.ClientConn,
+	machineName string,
 ) error {
 	if specSnap == nil || statusSnap == nil {
 		return nil
@@ -129,7 +132,7 @@ func detectAndRemediate(
 	// Run remediation.
 	switch plan.Action {
 	case RemediationActionKubernetesUpgrade:
-		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger, conn)
+		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger, machineName)
 		if upgradeErr != nil {
 			if shouldMarkKubeletUnhealthyAfterUpgradeFailure(result, upgradeErr) {
 				status.MarkKubeletUnhealthyBestEffort(logger)
@@ -178,13 +181,6 @@ type remediationPlan struct {
 }
 
 // resolveRemediationPlan collapses potentially many drift findings into a single remediation plan.
-//
-// Today the remediation runner supports executing only one remediation action per pass.
-// As more detectors are added, it's possible to receive multiple findings at once. This helper
-// performs two tasks:
-//  1. Dedup: pick a single action and a single set of parameters (e.g., Kubernetes version).
-//  2. Consistency check: if findings disagree (different actions or different desired versions),
-//     fail fast rather than guessing.
 func resolveRemediationPlan(findings []Finding) (remediationPlan, bool, error) {
 	plan := remediationPlan{Action: RemediationActionUnspecified}
 	requiresRemediation := false
@@ -222,49 +218,107 @@ func runKubernetesUpgradeRemediation(
 	ctx context.Context,
 	cfg *config.Config,
 	logger *logrus.Logger,
-	conn *grpc.ClientConn,
+	machineName string,
 ) (*bootstrapper.ExecutionResult, error) {
-	// runKubernetesUpgradeRemediation performs a targeted Kubernetes upgrade with minimal disruption.
-	//
-	// Key design points:
-	//   - Stop/start kubelet around the upgrade so we don't run kubelet against partially-updated
-	//     binaries or config (avoids flapping, crash loops, and nondeterministic behavior).
-	//   - Do not stop/restart containerd to keep disruption lower and avoid impacting running pods
-	//     more than necessary.
-	if conn == nil {
-		return nil, errors.New("components API connection is required")
+	// Kubernetes upgrade using the nspawn model:
+	// 1. Cordon + drain the node
+	// 2. Stop the nspawn machine (graceful kubelet+containerd stop)
+	// 3. Re-provision rootfs with new binaries
+	// 4. Start the nspawn machine with new binaries
+	// 5. Uncordon the node
+
+	log := slog.Default()
+
+	// Convert config to agent config and resolve goal states for the new version.
+	agentCfg := config.ToAgentConfig(cfg, machineName)
+	gs, err := goalstates.ResolveMachine(log, agentCfg, machineName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve goal state for upgrade: %w", err)
 	}
 
-	// For kubelet upgrades we cordon+drain the node first to minimize disruption.
-	// We only uncordon if we cordoned the node in this remediation run.
 	nodeOps := newKubeNodeMaintenance(cfg, logger)
 	cordonState := &cordonDrainState{}
 
-	steps := []bootstrapper.Executor{
-		newCordonAndDrainExecutor(upgradeStepCordonAndDrain, logger, nodeOps, cordonState),
-		// Stop/disable kubelet around the upgrade so we don't run kubelet against partially-updated bits.
-		bootstrapper.StopKubeletExecutor(upgradeStepStopKubelet, conn, cfg),
-		// Install the desired kube binaries version.
-		bootstrapper.DownloadKubeBinariesExecutor(upgradeStepDownloadKubeBinaries, conn, cfg),
-		// Reconfigure + start kubelet to match the upgraded bits.
-		bootstrapper.StartKubeletExecutor(upgradeStepStartKubelet, conn, cfg),
-		newUncordonExecutor(upgradeStepUncordon, logger, nodeOps, cordonState),
-	}
+	start := time.Now()
 
-	be := bootstrapper.NewBaseExecutor(cfg, logger)
-	result, err := be.ExecuteSteps(ctx, steps, driftKubernetesUpgradeOperation)
-	if err != nil && logger != nil {
-		// Special-case: if the only thing that failed was uncordon, best-effort retry so the
-		// node doesn't remain stuck unschedulable after a successful upgrade.
-		if failedStepName(result) == upgradeStepUncordon {
-			nodeName, hnErr := os.Hostname()
-			if hnErr == nil && cordonState.shouldUncordon(nodeName) {
-				logger.WithError(err).Warnf("Upgrade remediation failed at uncordon; retrying uncordon best-effort for node %s", nodeName)
-				_ = nodeOps.Uncordon(ctx, nodeName)
-			}
+	// Step 1: Cordon and drain
+	hostname, _ := os.Hostname()
+	if hostname != "" {
+		logger.Infof("Cordoning and draining node %s", hostname)
+		if err := cordonAndDrain(ctx, logger, nodeOps, cordonState); err != nil {
+			return &bootstrapper.ExecutionResult{
+				Success:     false,
+				Duration:    time.Since(start),
+				StepResults: []bootstrapper.StepResult{{StepName: "cordon-and-drain", Success: false, Error: err.Error()}},
+				Error:       err.Error(),
+			}, err
 		}
 	}
-	return result, err
+
+	// Step 2: Stop the nspawn machine
+	if err := nodestop.StopNode(log, machineName).Do(ctx); err != nil {
+		result := &bootstrapper.ExecutionResult{
+			Success:     false,
+			Duration:    time.Since(start),
+			StepResults: []bootstrapper.StepResult{{StepName: "stop-kubelet", Success: false, Error: err.Error()}},
+			Error:       err.Error(),
+		}
+		return result, err
+	}
+
+	// Step 3: Re-provision rootfs with new binaries
+	// TODO: allow customizing containerd, runc, and CNI plugin versions.
+	provisionTask := phases.Serial(log,
+		host.InstallPackages(log),
+		rootfs.Provision(log, gs.RootFS),
+	)
+	if err := provisionTask.Do(ctx); err != nil {
+		result := &bootstrapper.ExecutionResult{
+			Success:     false,
+			Duration:    time.Since(start),
+			StepResults: []bootstrapper.StepResult{{StepName: "download-kube-binaries", Success: false, Error: err.Error()}},
+			Error:       err.Error(),
+		}
+		return result, err
+	}
+
+	// Step 4: Start the nspawn machine with new config
+	if err := nodestart.StartNode(log, gs.NodeStart).Do(ctx); err != nil {
+		result := &bootstrapper.ExecutionResult{
+			Success:     false,
+			Duration:    time.Since(start),
+			StepResults: []bootstrapper.StepResult{{StepName: "start-kubelet", Success: false, Error: err.Error()}},
+			Error:       err.Error(),
+		}
+		return result, err
+	}
+
+	// Step 5: Uncordon
+	if hostname != "" && cordonState.shouldUncordon(hostname) {
+		if err := nodeOps.Uncordon(ctx, hostname); err != nil {
+			logger.Warnf("Failed to uncordon node %s: %v", hostname, err)
+			result := &bootstrapper.ExecutionResult{
+				Success:     false,
+				Duration:    time.Since(start),
+				StepResults: []bootstrapper.StepResult{{StepName: "uncordon", Success: false, Error: err.Error()}},
+				Error:       err.Error(),
+			}
+			// Best-effort retry
+			_ = nodeOps.Uncordon(ctx, hostname)
+			return result, err
+		}
+	}
+
+	return &bootstrapper.ExecutionResult{
+		Success:  true,
+		Duration: time.Since(start),
+	}, nil
+}
+
+// cordonAndDrain performs the cordon-and-drain step using the existing executor logic.
+func cordonAndDrain(ctx context.Context, logger *logrus.Logger, nodeOps *kubeNodeMaintenance, state *cordonDrainState) error {
+	executor := newCordonAndDrainExecutor("cordon-and-drain", logger, nodeOps, state)
+	return executor.Execute(ctx)
 }
 
 // handleExecutionResult mirrors main's handleExecutionResult but lives in drift so remediation
@@ -300,15 +354,12 @@ func shouldMarkKubeletUnhealthyAfterUpgradeFailure(result *bootstrapper.Executio
 		return false
 	}
 	// Only mark kubelet unhealthy when the failure indicates kubelet/binaries are likely in a bad state.
-	// Cordon/drain failures are generally control-plane/RBAC/timeouts, and uncordon failures do not
-	// imply kubelet is unhealthy.
 	switch failedStepName(result) {
-	case upgradeStepCordonAndDrain, upgradeStepUncordon:
+	case "cordon-and-drain", "uncordon":
 		return false
-	case upgradeStepStopKubelet, upgradeStepDownloadKubeBinaries, upgradeStepStartKubelet:
+	case "stop-kubelet", "download-kube-binaries", "start-kubelet":
 		return true
 	default:
-		// Unknown step; avoid unnecessary auto-bootstrap unless we can positively identify a kubelet/binary issue.
 		return false
 	}
 }

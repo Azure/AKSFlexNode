@@ -121,7 +121,7 @@ func TestDetectAndRemediate_SkipsStaleSpec_DoesNotCallDetectors(t *testing.T) {
 	specSnap := &spec.ManagedClusterSpec{CurrentKubernetesVersion: "1.30.0", CollectedAt: staleCollectedAt}
 	statusSnap := &status.NodeStatus{KubeletVersion: "1.29.0"}
 
-	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, nil)
+	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, "kube1")
 	if err != nil {
 		t.Fatalf("err=%v, want nil", err)
 	}
@@ -145,7 +145,7 @@ func TestDetectAndRemediate_BootstrapGuard_SkipsWhenInProgress(t *testing.T) {
 	statusSnap := &status.NodeStatus{KubeletVersion: "1.30.0"}
 
 	var bootstrapInProgress int32 = 1
-	err := detectAndRemediate(context.Background(), nil, logger, &bootstrapInProgress, []Detector{d}, specSnap, statusSnap, nil)
+	err := detectAndRemediate(context.Background(), nil, logger, &bootstrapInProgress, []Detector{d}, specSnap, statusSnap, "kube1")
 	if err != nil {
 		t.Fatalf("err=%v, want nil", err)
 	}
@@ -169,7 +169,7 @@ func TestDetectAndRemediate_ReturnsDetectErrorIfNoFindings(t *testing.T) {
 	specSnap := &spec.ManagedClusterSpec{CurrentKubernetesVersion: "1.31.0", CollectedAt: time.Now()}
 	statusSnap := &status.NodeStatus{KubeletVersion: "1.30.0"}
 
-	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, nil)
+	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, "kube1")
 	if err == nil {
 		t.Fatalf("err=nil, want %v", wantErr)
 	}
