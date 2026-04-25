@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"google.golang.org/grpc"
 
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -44,9 +43,6 @@ const maxManagedClusterSpecAge = 2 * time.Hour
 // and (if needed) performs remediation.
 //
 // Remediation attempts are guarded by bootstrapInProgress to avoid concurrent executions.
-//
-// conn must be a usable components API connection; drift remediation uses it for Azure-specific
-// component actions (NPD).
 func DetectAndRemediateFromFiles(
 	ctx context.Context,
 	// cfg must be an immutable snapshot for the duration of this call.
@@ -56,7 +52,6 @@ func DetectAndRemediateFromFiles(
 	logger *logrus.Logger,
 	bootstrapInProgress *int32,
 	detectors []Detector,
-	conn *grpc.ClientConn,
 	machineName string,
 ) error {
 	if logger == nil {
@@ -74,7 +69,7 @@ func DetectAndRemediateFromFiles(
 		return err
 	}
 
-	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus, conn, machineName)
+	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus, machineName)
 }
 
 func detectAndRemediate(
@@ -85,7 +80,6 @@ func detectAndRemediate(
 	detectors []Detector,
 	specSnap *spec.ManagedClusterSpec,
 	statusSnap *status.NodeStatus,
-	conn *grpc.ClientConn,
 	machineName string,
 ) error {
 	if specSnap == nil || statusSnap == nil {
@@ -138,7 +132,7 @@ func detectAndRemediate(
 	// Run remediation.
 	switch plan.Action {
 	case RemediationActionKubernetesUpgrade:
-		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger, conn, machineName)
+		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger, machineName)
 		if upgradeErr != nil {
 			if shouldMarkKubeletUnhealthyAfterUpgradeFailure(result, upgradeErr) {
 				status.MarkKubeletUnhealthyBestEffort(logger)
@@ -224,7 +218,6 @@ func runKubernetesUpgradeRemediation(
 	ctx context.Context,
 	cfg *config.Config,
 	logger *logrus.Logger,
-	conn *grpc.ClientConn,
 	machineName string,
 ) (*bootstrapper.ExecutionResult, error) {
 	// Kubernetes upgrade using the nspawn model:
@@ -233,9 +226,6 @@ func runKubernetesUpgradeRemediation(
 	// 3. Re-provision rootfs with new binaries
 	// 4. Start the nspawn machine with new binaries
 	// 5. Uncordon the node
-	if conn == nil {
-		return nil, errors.New("components API connection is required")
-	}
 
 	log := slog.Default()
 
