@@ -8,11 +8,9 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3 v3.0.0-beta.2
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8 v8.3.0-beta.2
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute v1.2.0
-	github.com/Azure/go-autorest/autorest/to v0.4.1
 	github.com/Azure/kubelogin v0.2.15
 	github.com/Azure/unbounded v0.1.1-0.20260427163728-a75f94bceb37
 	github.com/blang/semver/v4 v4.0.0
-	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/google/renameio/v2 v2.0.2
 	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.3
@@ -56,7 +54,6 @@ require (
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
-	github.com/godbus/dbus/v5 v5.0.4 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/btree v1.1.3 // indirect
