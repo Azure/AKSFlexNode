@@ -1,7 +1,6 @@
 package bootstrapper
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -10,8 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
-	"text/template"
 
 	"net/http"
 
@@ -20,173 +17,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
-	utilexec "k8s.io/utils/exec"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/systemd"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
-
-// ---------------------------------------------------------------------------
-// NPD: Download
-// ---------------------------------------------------------------------------
-
-const (
-	defaultNPDURLTemplate = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_%s.tar.gz"
-
-	npdBinaryPath = "/usr/bin/node-problem-detector"
-	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
-)
-
-type downloadNPDTask struct {
-	version string
-}
-
-// DownloadNPD returns a task that downloads the node-problem-detector binary
-// and config from the upstream GitHub release tarball.
-func DownloadNPD(cfg *config.Config) phases.Task {
-	version := cfg.Npd.Version
-	if version == "" {
-		version = config.DefaultNPDVersion
-	}
-	return &downloadNPDTask{version: version}
-}
-
-func (t *downloadNPDTask) Name() string { return "download-npd" }
-
-func (t *downloadNPDTask) Do(ctx context.Context) error {
-	if npdVersionMatch(t.version) {
-		return nil // already installed at correct version
-	}
-
-	downloadURL := constructNPDDownloadURL(t.version)
-	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, downloadURL) {
-		if err != nil {
-			return fmt.Errorf("decompress npd tar: %w", err)
-		}
-
-		switch tarFile.Name {
-		case "bin/node-problem-detector":
-			if err := utilio.InstallFile(npdBinaryPath, tarFile.Body, 0o755); err != nil { //nolint:gosec // binary must be executable
-				return fmt.Errorf("install npd binary: %w", err)
-			}
-		case "config/kernel-monitor.json":
-			if err := utilio.InstallFile(npdConfigPath, tarFile.Body, 0o644); err != nil { //nolint:gosec // config must be readable
-				return fmt.Errorf("install npd config: %w", err)
-			}
-		default:
-			continue
-		}
-	}
-
-	return nil
-}
-
-func constructNPDDownloadURL(version string) string {
-	arch := utilhost.GetArch()
-	return fmt.Sprintf(defaultNPDURLTemplate, version, version, arch)
-}
-
-func npdVersionMatch(expectedVersion string) bool {
-	if !utilio.IsExecutable(npdBinaryPath) {
-		return false
-	}
-	output, err := utilexec.New().Command(npdBinaryPath, "--version").Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(output), expectedVersion)
-}
-
-// ---------------------------------------------------------------------------
-// NPD: Start (systemd service)
-// ---------------------------------------------------------------------------
-
-//go:embed assets/node-problem-detector.service
-var npdServiceTemplate string
-
-const (
-	systemdUnitNPD = "node-problem-detector.service"
-	npdServicePath = "/etc/systemd/system/node-problem-detector.service"
-)
-
-var npdTmpl = template.Must(template.New("npd-service").Parse(npdServiceTemplate))
-
-type startNPDTask struct {
-	apiServer      string
-	kubeconfigPath string
-	systemd        systemd.Manager
-}
-
-// StartNPD returns a task that renders the NPD systemd unit file and ensures
-// the service is running.
-func StartNPD(cfg *config.Config) phases.Task {
-	return &startNPDTask{
-		apiServer:      cfg.Node.Kubelet.ServerURL,
-		kubeconfigPath: config.KubeletKubeconfigPath,
-		systemd:        systemd.New(),
-	}
-}
-
-func (t *startNPDTask) Name() string { return "start-npd" }
-
-func (t *startNPDTask) Do(ctx context.Context) error {
-	serviceUpdated, err := t.ensureServiceFile()
-	if err != nil {
-		return fmt.Errorf("ensure npd service file: %w", err)
-	}
-
-	return t.ensureSystemdUnit(ctx, serviceUpdated)
-}
-
-func (t *startNPDTask) ensureServiceFile() (updated bool, err error) {
-	var buf bytes.Buffer
-	if err := npdTmpl.Execute(&buf, map[string]any{
-		"NPDBinaryPath":  npdBinaryPath,
-		"APIServerURL":   t.apiServer,
-		"KubeconfigPath": t.kubeconfigPath,
-		"NPDConfigPath":  npdConfigPath,
-	}); err != nil {
-		return false, fmt.Errorf("render npd service template: %w", err)
-	}
-
-	current, err := os.ReadFile(npdServicePath) //nolint:gosec // path is constructed, not user input
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// fall through to create
-	case err != nil:
-		return false, err
-	default:
-		if bytes.Equal(bytes.TrimSpace(current), bytes.TrimSpace(buf.Bytes())) {
-			return false, nil
-		}
-	}
-
-	if err := utilio.InstallFile(npdServicePath, &buf, 0o644); err != nil { //nolint:gosec // service files must be world-readable
-		return false, err
-	}
-	return true, nil
-}
-
-func (t *startNPDTask) ensureSystemdUnit(ctx context.Context, restart bool) error {
-	_, err := t.systemd.GetUnitStatus(ctx, systemdUnitNPD)
-	switch {
-	case errors.Is(err, systemd.ErrUnitNotFound):
-		if err := t.systemd.DaemonReload(ctx); err != nil {
-			return err
-		}
-		return t.systemd.StartUnit(ctx, systemdUnitNPD)
-	case err != nil:
-		return err
-	default:
-		if restart {
-			return t.systemd.ReloadOrRestartUnit(ctx, systemdUnitNPD)
-		}
-		return nil
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Enrich Cluster Config

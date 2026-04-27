@@ -8,6 +8,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
@@ -79,7 +80,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		rootfs.Provision(log, gs.RootFS),
 
 		// Azure-specific: download NPD
-		DownloadNPD(cfg),
+		npd.Download(cfg),
 
 		// Copy the aks-flex-node binary into the rootfs so it is available
 		// inside the nspawn container (needed for exec credential plugins
@@ -97,7 +98,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		nodestart.StartNode(log, gs.NodeStart),
 
 		// Azure-specific: start NPD
-		StartNPD(cfg),
+		npd.Start(cfg),
 
 		// Azure-specific: register this machine with the AKS Machines API.
 		// TODO: enable once the Machines API is available in all target environments.
