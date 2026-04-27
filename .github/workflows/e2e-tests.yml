@@ -18,7 +18,12 @@ on:
     tags:
       - "v*"
 
-  pull_request:
+  # pull_request_target runs in the context of the base branch, giving the
+  # workflow access to repository secrets even for Dependabot PRs (which only
+  # receive Dependabot-scoped secrets under the plain pull_request event).
+  # The checkout step below pins to the PR head SHA so the actual PR code is
+  # tested, not the base-branch code.
+  pull_request_target:
     branches: [main, dev]
     types: [opened, synchronize, reopened]
 
@@ -35,10 +40,6 @@ env:
 jobs:
   e2e:
     name: E2E Tests (MSI + Token)
-    # Dependabot PRs only bump dependency versions and cannot access repository
-    # secrets (they run with Dependabot-scoped secrets only). Skip E2E tests
-    # for such PRs to avoid always-failing runs due to missing credentials.
-    if: github.actor != 'dependabot[bot]'
     runs-on: [self-hosted, e2e, azure]
     timeout-minutes: 45
     environment: e2e-testing
@@ -46,6 +47,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Explicitly check out the PR head commit; with pull_request_target
+          # the default checkout is the base branch, not the PR branch.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
