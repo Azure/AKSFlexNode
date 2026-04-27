@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -33,17 +33,14 @@ type nodeMaintenance interface {
 
 type kubeNodeMaintenance struct {
 	cfg    *config.Config
-	logger *logrus.Logger
+	logger *slog.Logger
 
 	mu       sync.Mutex
 	client   *kubernetes.Clientset
 	initFrom string
 }
 
-func newKubeNodeMaintenance(cfg *config.Config, logger *logrus.Logger) *kubeNodeMaintenance {
-	if logger == nil {
-		logger = logrus.New()
-	}
+func newKubeNodeMaintenance(cfg *config.Config, logger *slog.Logger) *kubeNodeMaintenance {
 	return &kubeNodeMaintenance{cfg: cfg, logger: logger}
 }
 
@@ -81,10 +78,8 @@ func (m *kubeNodeMaintenance) Drain(ctx context.Context, nodeName string) error 
 				h2 := m.drainHelper(ctx, cs2)
 				return drain.RunNodeDrain(h2, nodeName)
 			}
-			// Log failure to obtain admin clientset before returning the original error.
-			m.logger.WithError(adminErr).WithField("node", nodeName).Warn(
-				"failed to get admin clientset for drain retry; returning original error",
-			)
+			m.logger.Warn("failed to get admin clientset for drain retry; returning original error",
+				"node", nodeName, "error", adminErr)
 		}
 		return err
 	}
@@ -115,10 +110,8 @@ func (m *kubeNodeMaintenance) cordonOrUncordon(ctx context.Context, nodeName str
 				err2 = drain.RunCordonOrUncordon(h2, n2, cordon)
 				return err2
 			}
-			// Log failure to obtain admin clientset before returning the original error.
-			m.logger.WithError(adminErr).WithField("node", nodeName).Warn(
-				"failed to get admin clientset for cordon/uncordon retry; returning original error",
-			)
+			m.logger.Warn("failed to get admin clientset for cordon/uncordon retry; returning original error",
+				"node", nodeName, "error", adminErr)
 		}
 		return err
 	}
@@ -128,8 +121,8 @@ func (m *kubeNodeMaintenance) cordonOrUncordon(ctx context.Context, nodeName str
 func (m *kubeNodeMaintenance) drainHelper(ctx context.Context, cs *kubernetes.Clientset) *drain.Helper {
 	out := io.Discard
 	errOut := io.Discard
-	if m.logger != nil && m.logger.IsLevelEnabled(logrus.DebugLevel) {
-		w := &logrusLineWriter{logger: m.logger, level: logrus.DebugLevel}
+	if m.logger != nil && m.logger.Enabled(ctx, slog.LevelDebug) {
+		w := &slogLineWriter{logger: m.logger, level: slog.LevelDebug}
 		out = w
 		errOut = w
 	}
@@ -163,9 +156,7 @@ func (m *kubeNodeMaintenance) clientset(ctx context.Context) (*kubernetes.Client
 		if err == nil {
 			return cs, nil
 		}
-		if m.logger != nil {
-			m.logger.WithError(err).Debug("Failed to create admin clientset for node maintenance; falling back to kubelet kubeconfig")
-		}
+		m.logger.Debug("Failed to create admin clientset for node maintenance; falling back to kubelet kubeconfig", "error", err)
 	}
 
 	// Fall back to the local kubelet kubeconfig if present.
@@ -178,9 +169,7 @@ func (m *kubeNodeMaintenance) clientset(ctx context.Context) (*kubernetes.Client
 			m.mu.Unlock()
 			return cs, nil
 		}
-		if m.logger != nil {
-			m.logger.WithError(err).Debug("Failed to create kubelet clientset for node maintenance")
-		}
+		m.logger.Debug("Failed to create kubelet clientset for node maintenance", "error", err)
 	}
 
 	// Last resort: admin kubeconfig via the AKS management plane (may still fail if cfg is nil).
@@ -209,17 +198,13 @@ func shouldRetryWithAdmin(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Prefer structured detection when possible...
 	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
 		return true
 	}
-	// ...but kubectl drain frequently wraps StatusErrors into plain strings.
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "forbidden") || strings.Contains(msg, "unauthorized") {
 		return true
 	}
-	// Admin kubeconfigs/certs can expire; transport-layer TLS failures won't be classified
-	// as apierrors.*. Treat these as signals to refresh credentials and retry.
 	if strings.Contains(msg, "x509:") || strings.Contains(msg, "tls:") {
 		return true
 	}
@@ -249,12 +234,12 @@ func (s *cordonDrainState) shouldUncordon(nodeName string) bool {
 
 type cordonAndDrainExecutor struct {
 	name   string
-	logger *logrus.Logger
+	logger *slog.Logger
 	ops    nodeMaintenance
 	state  *cordonDrainState
 }
 
-func newCordonAndDrainExecutor(name string, logger *logrus.Logger, ops nodeMaintenance, state *cordonDrainState) *cordonAndDrainExecutor {
+func newCordonAndDrainExecutor(name string, logger *slog.Logger, ops nodeMaintenance, state *cordonDrainState) *cordonAndDrainExecutor {
 	return &cordonAndDrainExecutor{name: name, logger: logger, ops: ops, state: state}
 }
 
@@ -277,13 +262,12 @@ func (e *cordonAndDrainExecutor) Execute(ctx context.Context) error {
 		return fmt.Errorf("failed to check if node is cordoned: %w", err)
 	}
 
-	// Only uncordon if we changed the scheduling state.
 	uncordonAfter := !alreadyCordoned
 	cordonedByUs := false
 
 	if !alreadyCordoned {
 		if e.logger != nil {
-			e.logger.Infof("Cordoning node %s before kubelet upgrade", nodeName)
+			e.logger.Info("Cordoning node before kubelet upgrade", "node", nodeName)
 		}
 		if err := e.ops.Cordon(ctx, nodeName); err != nil {
 			return fmt.Errorf("failed to cordon node %s: %w", nodeName, err)
@@ -292,14 +276,12 @@ func (e *cordonAndDrainExecutor) Execute(ctx context.Context) error {
 	}
 
 	if e.logger != nil {
-		e.logger.Infof("Draining node %s before kubelet upgrade", nodeName)
+		e.logger.Info("Draining node before kubelet upgrade", "node", nodeName)
 	}
 	if err := e.ops.Drain(ctx, nodeName); err != nil {
 		if cordonedByUs {
-			// We cordoned the node as part of this remediation run; if draining fails we should
-			// revert the cordon so the node can continue to accept workloads.
 			if e.logger != nil {
-				e.logger.WithError(err).Warnf("Drain failed for node %s; uncordoning to restore scheduling", nodeName)
+				e.logger.Warn("Drain failed; uncordoning to restore scheduling", "node", nodeName, "error", err)
 			}
 			if uncordonErr := e.ops.Uncordon(ctx, nodeName); uncordonErr != nil {
 				return fmt.Errorf("failed to drain node %s: %w (uncordon after drain failure also failed: %v)", nodeName, err, uncordonErr)
@@ -316,12 +298,12 @@ func (e *cordonAndDrainExecutor) Execute(ctx context.Context) error {
 
 type uncordonExecutor struct {
 	name   string
-	logger *logrus.Logger
+	logger *slog.Logger
 	ops    nodeMaintenance
 	state  *cordonDrainState
 }
 
-func newUncordonExecutor(name string, logger *logrus.Logger, ops nodeMaintenance, state *cordonDrainState) *uncordonExecutor {
+func newUncordonExecutor(name string, logger *slog.Logger, ops nodeMaintenance, state *cordonDrainState) *uncordonExecutor {
 	return &uncordonExecutor{name: name, logger: logger, ops: ops, state: state}
 }
 
@@ -341,13 +323,13 @@ func (e *uncordonExecutor) Execute(ctx context.Context) error {
 
 	if e.state == nil || !e.state.shouldUncordon(nodeName) {
 		if e.logger != nil {
-			e.logger.Infof("Skipping uncordon for node %s (node was already cordoned)", nodeName)
+			e.logger.Info("Skipping uncordon (node was already cordoned)", "node", nodeName)
 		}
 		return nil
 	}
 
 	if e.logger != nil {
-		e.logger.Infof("Uncordoning node %s after kubelet upgrade", nodeName)
+		e.logger.Info("Uncordoning node after kubelet upgrade", "node", nodeName)
 	}
 	if err := e.ops.Uncordon(ctx, nodeName); err != nil {
 		return fmt.Errorf("failed to uncordon node %s: %w", nodeName, err)
@@ -355,17 +337,17 @@ func (e *uncordonExecutor) Execute(ctx context.Context) error {
 	return nil
 }
 
-// logrusLineWriter writes each line to logrus at a fixed level.
-// It intentionally buffers until a newline so kubectl drain helper output is readable.
-type logrusLineWriter struct {
-	logger *logrus.Logger
-	level  logrus.Level
+// slogLineWriter writes each line to slog at a fixed level.
+// It buffers until a newline so kubectl drain helper output is readable.
+type slogLineWriter struct {
+	logger *slog.Logger
+	level  slog.Level
 
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
-func (w *logrusLineWriter) Write(p []byte) (int, error) {
+func (w *slogLineWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -374,7 +356,7 @@ func (w *logrusLineWriter) Write(p []byte) (int, error) {
 			line := w.buf.String()
 			w.buf.Reset()
 			if w.logger != nil {
-				w.logger.Log(w.level, line)
+				w.logger.Log(context.Background(), w.level, line)
 			}
 			continue
 		}

@@ -12,7 +12,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
-	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -22,19 +21,17 @@ import (
 // machine rather than directly on the host.
 type Collector struct {
 	config       *config.Config
-	logger       *logrus.Logger
-	slog         *slog.Logger
+	logger       *slog.Logger
 	agentVersion string
 	machineName  string
 }
 
 // NewCollector creates a new status collector. machineName is the nspawn
 // machine name where kubelet/containerd are running (e.g. "kube1").
-func NewCollector(cfg *config.Config, logger *logrus.Logger, agentVersion string, machineName string) *Collector {
+func NewCollector(cfg *config.Config, logger *slog.Logger, agentVersion string, machineName string) *Collector {
 	return &Collector{
 		config:       cfg,
 		logger:       logger,
-		slog:         slog.Default(),
 		agentVersion: agentVersion,
 		machineName:  machineName,
 	}
@@ -62,7 +59,7 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 	// Collect Arc status (runs on host, not inside nspawn)
 	arcStatus, err := c.collectArcStatus(ctx)
 	if err != nil {
-		c.logger.Warnf("Failed to collect Arc status: %v", err)
+		c.logger.Warn("failed to collect Arc status", "error", err)
 	}
 	status.ArcStatus = arcStatus
 
@@ -73,7 +70,7 @@ func (c *Collector) CollectStatus(ctx context.Context) (*NodeStatus, error) {
 func (c *Collector) machineRun(ctx context.Context, args ...string) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return utilexec.MachineRun(timeoutCtx, c.slog, c.machineName, args...)
+	return utilexec.MachineRun(timeoutCtx, c.logger, c.machineName, args...)
 }
 
 // isServiceActiveInMachine checks if a systemd service is active inside the nspawn machine.
@@ -89,7 +86,7 @@ func (c *Collector) isServiceActiveInMachine(ctx context.Context, serviceName st
 func (c *Collector) getKubeletVersion(ctx context.Context) string {
 	output, err := c.machineRun(ctx, "/usr/local/bin/kubelet", "--version")
 	if err != nil {
-		c.logger.Warnf("Failed to get kubelet version: %v", err)
+		c.logger.Warn("failed to get kubelet version", "error", err)
 		return "unknown"
 	}
 
@@ -99,14 +96,14 @@ func (c *Collector) getKubeletVersion(ctx context.Context) string {
 		return strings.TrimPrefix(parts[1], "v")
 	}
 
-	c.logger.Warnf("Failed to parse kubelet version from output: %s", output)
+	c.logger.Warn("failed to parse kubelet version", "output", output)
 	return "unknown"
 }
 
 func (c *Collector) getContainerdVersion(ctx context.Context) string {
 	output, err := c.machineRun(ctx, "containerd", "--version")
 	if err != nil {
-		c.logger.Warnf("Failed to get containerd version: %v", err)
+		c.logger.Warn("failed to get containerd version", "error", err)
 		return "unknown"
 	}
 
@@ -122,7 +119,7 @@ func (c *Collector) getContainerdVersion(ctx context.Context) string {
 func (c *Collector) getRuncVersion(ctx context.Context) string {
 	output, err := c.machineRun(ctx, "runc", "--version")
 	if err != nil {
-		c.logger.Warnf("Failed to get runc version: %v", err)
+		c.logger.Warn("failed to get runc version", "error", err)
 		return "unknown"
 	}
 
@@ -139,7 +136,7 @@ func (c *Collector) getRuncVersion(ctx context.Context) string {
 		}
 	}
 
-	c.logger.Warnf("Failed to parse runc version from output: %s", output)
+	c.logger.Warn("failed to parse runc version", "output", output)
 	return "unknown"
 }
 
@@ -152,11 +149,11 @@ func (c *Collector) collectArcStatus(ctx context.Context) (ArcStatus, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	output, err := utilexec.OutputCmd(timeoutCtx, c.slog, "azcmagent", "show")
+	output, err := utilexec.OutputCmd(timeoutCtx, c.logger, "azcmagent", "show")
 	if err == nil {
 		c.parseArcShowOutput(&status, output)
 	} else {
-		c.logger.Debugf("azcmagent show failed: %v - marking Arc as disconnected", err)
+		c.logger.Debug("azcmagent show failed, marking Arc as disconnected", "error", err)
 		status.Connected = false
 		status.Registered = false
 	}
@@ -212,13 +209,13 @@ func (c *Collector) parseArcShowOutput(status *ArcStatus, output string) {
 func (c *Collector) isKubeletReady(ctx context.Context) string {
 	hostName, err := os.Hostname()
 	if err != nil {
-		c.logger.Warnf("Failed to get hostname: %v", err)
+		c.logger.Warn("failed to get hostname", "error", err)
 		return "Unknown"
 	}
 
 	cs, err := kube.KubeletClientset()
 	if err != nil {
-		c.logger.Warnf("Failed to create kubelet clientset for readiness: %v", err)
+		c.logger.Warn("failed to create kubelet clientset for readiness", "error", err)
 		return "Unknown"
 	}
 
@@ -227,7 +224,7 @@ func (c *Collector) isKubeletReady(ctx context.Context) string {
 
 	n, err := cs.CoreV1().Nodes().Get(timeoutCtx, hostName, metav1.GetOptions{})
 	if err != nil {
-		c.logger.Warnf("Failed to get node %s for readiness: %v", hostName, err)
+		c.logger.Warn("failed to get node for readiness", "node", hostName, "error", err)
 		return "Unknown"
 	}
 
@@ -254,47 +251,47 @@ func (c *Collector) NeedsBootstrap(ctx context.Context) bool {
 	// #nosec G304 -- reading a local status snapshot path controlled by the agent, not user input.
 	statusData, err := os.ReadFile(statusFilePath)
 	if err != nil {
-		c.logger.Info("Status file not found - bootstrap needed")
+		c.logger.Info("status file not found, bootstrap needed")
 		return true
 	}
 
 	var nodeStatus NodeStatus
 	if err := json.Unmarshal(statusData, &nodeStatus); err != nil {
-		c.logger.Info("Could not parse status file - bootstrap needed")
+		c.logger.Info("could not parse status file, bootstrap needed")
 		return true
 	}
 
 	// Check if status indicates unhealthy conditions
 	if !nodeStatus.KubeletRunning {
-		c.logger.Info("Status file indicates kubelet not running - bootstrap needed")
+		c.logger.Info("status file indicates kubelet not running, bootstrap needed")
 		return true
 	}
 
 	// Check if Arc status is unhealthy (if configured)
 	if c.config != nil && c.config.IsARCEnabled() && c.config.GetArcMachineName() != "" {
 		if !nodeStatus.ArcStatus.Connected {
-			c.logger.Info("Status file indicates Arc agent not connected - bootstrap needed")
+			c.logger.Info("status file indicates Arc agent not connected, bootstrap needed")
 			return true
 		}
 	}
 
 	// Check if status is too old (older than 5 minutes might indicate daemon issues)
 	if time.Since(nodeStatus.LastUpdated) > 5*time.Minute {
-		c.logger.Info("Status file is stale (older than 5 minutes) - bootstrap needed")
+		c.logger.Info("status file is stale (older than 5 minutes), bootstrap needed")
 		return true
 	}
 
 	// Check for essential component versions being unknown (indicates collection failures)
 	if nodeStatus.KubeletVersion == "unknown" || nodeStatus.KubeletVersion == "" {
-		c.logger.Info("Status file indicates kubelet version unknown - bootstrap needed")
+		c.logger.Info("status file indicates kubelet version unknown, bootstrap needed")
 		return true
 	}
 
 	if nodeStatus.RuncVersion == "unknown" || nodeStatus.RuncVersion == "" {
-		c.logger.Info("Status file indicates runc version unknown - bootstrap needed")
+		c.logger.Info("status file indicates runc version unknown, bootstrap needed")
 		return true
 	}
 
-	c.logger.Debug("Status file indicates healthy state - no bootstrap needed")
+	c.logger.Debug("status file indicates healthy state, no bootstrap needed")
 	return false
 }

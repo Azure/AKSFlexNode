@@ -1,11 +1,10 @@
 package status
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/sirupsen/logrus"
 )
 
 func TestRemoveStatusFileBestEffortAtPath_RemovesFile(t *testing.T) {
@@ -17,7 +16,7 @@ func TestRemoveStatusFileBestEffortAtPath_RemovesFile(t *testing.T) {
 		t.Fatalf("write temp status: %v", err)
 	}
 
-	logger := logrus.New()
+	logger := slog.Default()
 	RemoveStatusFileBestEffortAtPath(logger, p)
 
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
@@ -31,7 +30,7 @@ func TestRemoveStatusFileBestEffortAtPath_MissingFileNoError(t *testing.T) {
 	tmpDir := t.TempDir()
 	p := filepath.Join(tmpDir, "status.json")
 
-	logger := logrus.New()
+	logger := slog.Default()
 	RemoveStatusFileBestEffortAtPath(logger, p)
 
 	// Should remain missing.

@@ -1,11 +1,10 @@
 package status
 
 import (
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 func TestMarkKubeletUnhealthyBestEffortAtPath_CreatesOrUpdatesSnapshot(t *testing.T) {
@@ -13,7 +12,7 @@ func TestMarkKubeletUnhealthyBestEffortAtPath_CreatesOrUpdatesSnapshot(t *testin
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "status.json")
-	logger := logrus.New()
+	logger := slog.Default()
 
 	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
 	MarkKubeletUnhealthyBestEffortAtPath(logger, path, now)
@@ -47,7 +46,7 @@ func TestMarkKubeletHealthyAfterUpgradeBestEffortAtPath_UpdatesKubeletOnly(t *te
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "status.json")
-	logger := logrus.New()
+	logger := slog.Default()
 
 	// Seed a status snapshot similar to what the periodic collector would write.
 	seed := &NodeStatus{
