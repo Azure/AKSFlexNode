@@ -43,6 +43,14 @@ jobs:
     runs-on: [self-hosted, e2e, azure]
     timeout-minutes: 45
     environment: e2e-testing
+    # For pull_request_target, only run when the PR originates from the same
+    # repository (team members) or from dependabot[bot].  External fork PRs
+    # must NOT receive repository secrets, even though pull_request_target
+    # would otherwise grant them access.
+    if: |
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      github.actor == 'dependabot[bot]'
 
     steps:
       - name: Checkout code
