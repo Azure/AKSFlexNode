@@ -1,5 +1,14 @@
 package arc
 
+const arcInstallScriptURL = "https://gbl.his.arc.azure.com/azcmagent-linux"
+
+// roleAssignment represents a role assignment configuration.
+type roleAssignment struct {
+	roleName string
+	scope    string
+	roleID   string
+}
+
 var (
 	// Map role names to role definition IDs
 	roleDefinitionIDs = map[string]string{

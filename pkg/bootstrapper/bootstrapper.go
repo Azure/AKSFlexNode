@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -72,7 +73,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		),
 
 		// Azure-specific: install Arc (no-op if not enabled)
-		InstallArc(cfg, log),
+		arc.InstallArc(cfg, log),
 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
 		rootfs.Provision(log, gs.RootFS),
@@ -131,7 +132,7 @@ func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error
 	steps := []phases.Task{
 		nodestop.StopNode(log, b.machineName),
 		reset.CleanupMachine(log, b.machineName),
-		UninstallArc(log),
+		arc.UninstallArc(log),
 	}
 
 	for _, step := range steps {
