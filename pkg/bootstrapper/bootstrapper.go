@@ -31,6 +31,10 @@ type Bootstrapper struct {
 
 // New creates a new bootstrapper. machineName is the nspawn machine name
 // (e.g. goalstates.NSpawnMachineKube1).
+//
+// TODO: implement blue-green in-place upgrade. For now we hard-code a single
+// machine slot (kube1). Once blue-green is supported the caller will manage
+// two machine names and swap between them during upgrades.
 func New(
 	cfg *config.Config,
 	logger *slog.Logger,

@@ -43,6 +43,10 @@ const maxManagedClusterSpecAge = 2 * time.Hour
 // and (if needed) performs remediation.
 //
 // Remediation attempts are guarded by bootstrapInProgress to avoid concurrent executions.
+//
+// TODO: implement blue-green in-place upgrade. For now we hard-code a single
+// machine slot (kube1). Once blue-green is supported the caller will manage
+// two machine names and swap between them during upgrades.
 func DetectAndRemediateFromFiles(
 	ctx context.Context,
 	// cfg must be an immutable snapshot for the duration of this call.
