@@ -35,6 +35,10 @@ env:
 jobs:
   e2e:
     name: E2E Tests (MSI + Token)
+    # Dependabot PRs only bump dependency versions and cannot access repository
+    # secrets (they run with Dependabot-scoped secrets only). Skip E2E tests
+    # for such PRs to avoid always-failing runs due to missing credentials.
+    if: github.actor != 'dependabot[bot]'
     runs-on: [self-hosted, e2e, azure]
     timeout-minutes: 45
     environment: e2e-testing
