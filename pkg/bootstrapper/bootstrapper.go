@@ -45,43 +45,37 @@ func New(
 // Bootstrap executes all bootstrap steps to transform a bare VM into a
 // Kubernetes worker node running inside an nspawn machine.
 func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) {
-	log := b.logger
-	cfg := b.cfg
-
-	// Step 1: Enrich cluster config (fetch serverURL/caCertData from AKS for non-bootstrap-token modes).
+	// Enrich cluster config (fetch serverURL/caCertData from AKS for non-bootstrap-token modes).
 	// This must run before we build the agent config because it populates ServerURL and CACertData.
-	enrichTask := EnrichClusterConfig(cfg, log)
-	if err := phases.ExecuteTask(ctx, log, enrichTask); err != nil {
+	if err := EnrichClusterConfig(ctx, b.cfg, b.logger); err != nil {
 		return failedResult("enrich-cluster-config", err), fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
 	}
 
-	// Step 2: Convert FlexNode config to shared agent config and resolve goal states.
-	agentCfg := config.ToAgentConfig(cfg, b.machineName)
-	gs, err := goalstates.ResolveMachine(log, agentCfg, b.machineName)
+	// Convert FlexNode config to shared agent config and resolve goal states.
+	agentCfg := config.ToAgentConfig(b.cfg, b.machineName)
+	gs, err := goalstates.ResolveMachine(b.logger, agentCfg, b.machineName)
 	if err != nil {
 		return failedResult("resolve-goal-state", err), fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
-	// Step 3: Build the task tree and execute.
-	taskList := []phases.Task{
+	// Build the task tree and execute.
+	bootstrapTasks := phases.Serial(b.logger,
 		// Phase 1: host preparation
-		host.InstallPackages(log),
-		phases.Parallel(log,
-			host.ConfigureOS(log),
-			host.ConfigureNFTables(log),
-			host.DisableDocker(log),
-			host.DisableSwap(log),
-			host.HardenAPT(log),
+		host.InstallPackages(b.logger),
+		phases.Parallel(b.logger,
+			host.ConfigureOS(b.logger),
+			host.ConfigureNFTables(b.logger),
+			host.DisableDocker(b.logger),
+			host.DisableSwap(b.logger),
+			host.HardenAPT(b.logger),
+			arc.InstallArc(b.cfg, b.logger),
 		),
 
-		// Azure-specific: install Arc (no-op if not enabled)
-		arc.InstallArc(cfg, log),
-
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
-		rootfs.Provision(log, gs.RootFS),
+		rootfs.Provision(b.logger, gs.RootFS),
 
 		// Azure-specific: download NPD into the machine rootfs
-		npd.Download(cfg, gs.RootFS.MachineDir),
+		npd.Download(b.cfg, gs.RootFS.MachineDir),
 
 		// Copy the aks-flex-node binary into the rootfs so it is available
 		// inside the nspawn container (needed for exec credential plugins
@@ -92,24 +86,20 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// library installs CNI binaries but not a conflist; without one
 		// kubelet stays NetworkNotReady.
 		cni.WriteCNIConfig(gs.RootFS.MachineDir),
-	}
 
-	taskList = append(taskList,
 		// Phase 3: node start (configure + boot nspawn + start containerd + kubelet)
-		nodestart.StartNode(log, gs.NodeStart),
+		nodestart.StartNode(b.logger, gs.NodeStart),
 
 		// Azure-specific: start NPD inside the nspawn container
-		npd.Start(cfg, log, gs.RootFS.MachineDir, b.machineName),
+		npd.Start(b.cfg, b.logger, gs.RootFS.MachineDir, b.machineName),
 
 		// Azure-specific: register this machine with the AKS Machines API.
 		// TODO: enable once the Machines API is available in all target environments.
-		// aksmachine.EnsureMachine(cfg, log),
+		// aksmachine.EnsureMachine(b.cfg, b.logger),
 	)
 
-	tasks := phases.Serial(log, taskList...)
-
 	start := time.Now()
-	err = tasks.Do(ctx)
+	err = bootstrapTasks.Do(ctx)
 
 	result := &ExecutionResult{
 		Success:  err == nil,
@@ -125,33 +115,29 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 
 // Unbootstrap tears down the Kubernetes node and cleans up all resources.
 func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
-	log := b.logger
-
-	// Unbootstrap uses best-effort semantics: continue even if steps fail.
 	start := time.Now()
-	var firstErr error
 
-	steps := []phases.Task{
-		nodestop.StopNode(log, b.machineName),
-		reset.CleanupMachine(log, b.machineName),
-		arc.UninstallArc(log),
-	}
+	unbootstrapTasks := phases.Serial(b.logger,
+		nodestop.StopNode(b.logger, b.machineName),
+		reset.CleanupMachine(b.logger, b.machineName),
+	)
 
-	for _, step := range steps {
-		if err := phases.ExecuteTask(ctx, log, step); err != nil {
-			log.Warn("unbootstrap step failed (continuing)", "step", step.Name(), "error", err)
-			if firstErr == nil {
-				firstErr = err
-			}
+	err := unbootstrapTasks.Do(ctx)
+
+	// Best-effort: attempt Arc uninstall regardless of earlier failures.
+	if arcErr := phases.ExecuteTask(ctx, b.logger, arc.UninstallArc(b.logger)); arcErr != nil {
+		b.logger.Warn("arc uninstall failed (continuing)", "error", arcErr)
+		if err == nil {
+			err = arcErr
 		}
 	}
 
 	result := &ExecutionResult{
-		Success:  firstErr == nil,
+		Success:  err == nil,
 		Duration: time.Since(start),
 	}
-	if firstErr != nil {
-		result.Error = firstErr.Error()
+	if err != nil {
+		result.Error = err.Error()
 	}
 
 	return result, nil

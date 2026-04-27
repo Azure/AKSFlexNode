@@ -4,38 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
-
-// ---------------------------------------------------------------------------
-// Enrich Cluster Config
-// ---------------------------------------------------------------------------
-
-type enrichClusterConfigTask struct {
-	cfg    *config.Config
-	logger *slog.Logger
-}
-
-// EnrichClusterConfig returns a task that fetches cluster metadata (server URL,
-// CA cert) from AKS for non-bootstrap-token auth modes.
-func EnrichClusterConfig(cfg *config.Config, logger *slog.Logger) phases.Task {
-	return &enrichClusterConfigTask{cfg: cfg, logger: logger}
-}
-
-func (t *enrichClusterConfigTask) Name() string { return "enrich-cluster-config" }
-
-func (t *enrichClusterConfigTask) Do(ctx context.Context) error {
-	enricher := newClusterConfigEnricher(t.cfg, toLogrus(t.logger))
-	if enricher.IsCompleted(ctx) {
-		return nil
-	}
-	return enricher.Execute(ctx)
-}
 
 // ---------------------------------------------------------------------------
 // Install Binary (copy aks-flex-node into nspawn rootfs)
