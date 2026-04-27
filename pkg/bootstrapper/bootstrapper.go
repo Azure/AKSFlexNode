@@ -79,8 +79,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
 		rootfs.Provision(log, gs.RootFS),
 
-		// Azure-specific: download NPD
-		npd.Download(cfg),
+		// Azure-specific: download NPD into the machine rootfs
+		npd.Download(cfg, gs.RootFS.MachineDir),
 
 		// Copy the aks-flex-node binary into the rootfs so it is available
 		// inside the nspawn container (needed for exec credential plugins
@@ -97,8 +97,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Phase 3: node start (configure + boot nspawn + start containerd + kubelet)
 		nodestart.StartNode(log, gs.NodeStart),
 
-		// Azure-specific: start NPD
-		npd.Start(cfg),
+		// Azure-specific: start NPD inside the nspawn container
+		npd.Start(cfg, log, gs.RootFS.MachineDir, b.machineName),
 
 		// Azure-specific: register this machine with the AKS Machines API.
 		// TODO: enable once the Machines API is available in all target environments.
