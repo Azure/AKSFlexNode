@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -74,18 +75,13 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
 		rootfs.Provision(b.logger, gs.RootFS),
 
-		// Azure-specific: download NPD into the machine rootfs
-		npd.Download(b.cfg, gs.RootFS.MachineDir),
-
-		// Copy the aks-flex-node binary into the rootfs so it is available
-		// inside the nspawn container (needed for exec credential plugins
-		// and useful for debugging).
-		InstallBinary(gs.RootFS.MachineDir),
-
-		// Write the default bridge CNI config into the rootfs. The shared
-		// library installs CNI binaries but not a conflist; without one
-		// kubelet stays NetworkNotReady.
-		cni.WriteCNIConfig(gs.RootFS.MachineDir),
+		// Parallel rootfs customisation: download NPD, copy the daemon binary,
+		// and write the bridge CNI config into the machine rootfs.
+		phases.Parallel(b.logger,
+			npd.Download(b.cfg, gs.RootFS.MachineDir),
+			daemon.InstallBinary(gs.RootFS.MachineDir),
+			cni.WriteCNIConfig(gs.RootFS.MachineDir),
+		),
 
 		// Phase 3: node start (configure + boot nspawn + start containerd + kubelet)
 		nodestart.StartNode(b.logger, gs.NodeStart),

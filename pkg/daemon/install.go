@@ -1,4 +1,4 @@
-package bootstrapper
+package daemon
 
 import (
 	"context"
@@ -9,10 +9,6 @@ import (
 
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
-
-// ---------------------------------------------------------------------------
-// Install Binary (copy aks-flex-node into nspawn rootfs)
-// ---------------------------------------------------------------------------
 
 type installBinaryTask struct {
 	machineDir string
