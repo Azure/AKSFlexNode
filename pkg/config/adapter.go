@@ -54,7 +54,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
 
 	case cfg.IsSPConfigured():
-		ac.Kubelet.Auth.ExecCredential = buildExecCredential(cfg, "spn", map[string]string{
+		ac.Kubelet.Auth.ExecCredential = buildExecCredential(map[string]string{
 			"AAD_LOGIN_METHOD":                    "spn",
 			"AAD_SERVICE_PRINCIPAL_CLIENT_ID":     cfg.Azure.ServicePrincipal.ClientID,
 			"AAD_SERVICE_PRINCIPAL_CLIENT_SECRET": cfg.Azure.ServicePrincipal.ClientSecret,
@@ -68,7 +68,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
 			env["AZURE_CLIENT_ID"] = cfg.Azure.ManagedIdentity.ClientID
 		}
-		ac.Kubelet.Auth.ExecCredential = buildExecCredential(cfg, "msi", env)
+		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
 	}
 
 	return ac
@@ -77,7 +77,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node
 // binary as a credential plugin. The binary's `token kubelogin` subcommand
 // uses kubelogin to obtain an Azure AD token for the AKS API server.
-func buildExecCredential(_ *Config, _ string, env map[string]string) *clientcmdapi.ExecConfig {
+func buildExecCredential(env map[string]string) *clientcmdapi.ExecConfig {
 	execEnv := make([]clientcmdapi.ExecEnvVar, 0, len(env))
 	for k, v := range env {
 		execEnv = append(execEnv, clientcmdapi.ExecEnvVar{Name: k, Value: v})
