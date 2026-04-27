@@ -2,7 +2,6 @@ package bootstrapper
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -45,44 +44,6 @@ func (t *enrichClusterConfigTask) Do(ctx context.Context) error {
 		return nil
 	}
 	return enricher.Execute(ctx)
-}
-
-// ---------------------------------------------------------------------------
-// CNI Config
-// ---------------------------------------------------------------------------
-
-//go:embed assets/99-bridge.conf
-var defaultBridgeCNIConfig []byte
-
-type writeCNIConfigTask struct {
-	machineDir string
-}
-
-// WriteCNIConfig returns a task that writes the default bridge CNI config
-// into the nspawn rootfs at /etc/cni/net.d/99-bridge.conf.
-func WriteCNIConfig(machineDir string) phases.Task {
-	return &writeCNIConfigTask{machineDir: machineDir}
-}
-
-func (t *writeCNIConfigTask) Name() string { return "write-cni-config" }
-
-func (t *writeCNIConfigTask) Do(_ context.Context) error {
-	confDir := filepath.Join(t.machineDir, "etc", "cni", "net.d")
-	if err := os.MkdirAll(confDir, 0o750); err != nil { //nolint:gosec // directory needs to be traversable
-		return fmt.Errorf("create CNI config directory: %w", err)
-	}
-
-	confPath := filepath.Join(confDir, "99-bridge.conf")
-
-	current, err := os.ReadFile(confPath) //nolint:gosec // path is constructed, not user input
-	if err == nil && string(current) == string(defaultBridgeCNIConfig) {
-		return nil
-	}
-
-	if err := os.WriteFile(confPath, defaultBridgeCNIConfig, 0o644); err != nil { //nolint:gosec // CNI config must be world-readable
-		return fmt.Errorf("write CNI bridge config: %w", err)
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/arc"
+	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -90,7 +91,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Write the default bridge CNI config into the rootfs. The shared
 		// library installs CNI binaries but not a conflist; without one
 		// kubelet stays NetworkNotReady.
-		WriteCNIConfig(gs.RootFS.MachineDir),
+		cni.WriteCNIConfig(gs.RootFS.MachineDir),
 	}
 
 	taskList = append(taskList,
