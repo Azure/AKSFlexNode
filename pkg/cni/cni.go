@@ -4,10 +4,10 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -30,19 +30,8 @@ func WriteCNIConfig(machineDir string) phases.Task {
 func (t *writeCNIConfigTask) Name() string { return "write-cni-config" }
 
 func (t *writeCNIConfigTask) Do(_ context.Context) error {
-	confDir := filepath.Join(t.machineDir, config.DefaultCNIConfigDir)
-	if err := os.MkdirAll(confDir, 0o750); err != nil { //nolint:gosec // directory needs to be traversable
-		return fmt.Errorf("create CNI config directory: %w", err)
-	}
-
-	confPath := filepath.Join(confDir, bridgeConfFile)
-
-	current, err := os.ReadFile(confPath) //nolint:gosec // path is constructed, not user input
-	if err == nil && string(current) == string(defaultBridgeCNIConfig) {
-		return nil
-	}
-
-	if err := os.WriteFile(confPath, defaultBridgeCNIConfig, 0o644); err != nil { //nolint:gosec // CNI config must be world-readable
+	confPath := filepath.Join(t.machineDir, config.DefaultCNIConfigDir, bridgeConfFile)
+	if err := utilio.WriteFile(confPath, defaultBridgeCNIConfig, 0o644); err != nil { //nolint:gosec // CNI config must be world-readable
 		return fmt.Errorf("write CNI bridge config: %w", err)
 	}
 	return nil
