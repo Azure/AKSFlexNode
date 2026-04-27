@@ -270,6 +270,7 @@ func runKubernetesUpgradeRemediation(
 	// TODO: allow customizing containerd, runc, and CNI plugin versions.
 	provisionTask := phases.Serial(log,
 		host.InstallPackages(log),
+		host.HardenAPT(log),
 		rootfs.Provision(log, gs.RootFS),
 	)
 	if err := provisionTask.Do(ctx); err != nil {

@@ -68,6 +68,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 			host.ConfigureNFTables(log),
 			host.DisableDocker(log),
 			host.DisableSwap(log),
+			host.HardenAPT(log),
 		),
 
 		// Azure-specific: install Arc (no-op if not enabled)
