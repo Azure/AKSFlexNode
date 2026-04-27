@@ -103,7 +103,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 
 		// Azure-specific: register this machine with the AKS Machines API.
 		// TODO: enable once the Machines API is available in all target environments.
-		// EnsureMachine(cfg, log),
+		// aksmachine.EnsureMachine(cfg, log),
 	)
 
 	tasks := phases.Serial(log, taskList...)
