@@ -50,7 +50,7 @@ sudo systemd-run \
   --unit=${unit_name} \
   --description="AKS Flex Node E2E (${unit_name})" \
   --remain-after-exit \
-  /usr/local/bin/aks-flex-node agent --config /etc/aks-flex-node/config.json
+  /usr/local/bin/aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 
 echo "Waiting ${E2E_BOOTSTRAP_SETTLE_TIME}s for bootstrap to complete..."
 sleep ${E2E_BOOTSTRAP_SETTLE_TIME}

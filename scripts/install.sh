@@ -296,67 +296,6 @@ setup_directories() {
     log_success "Directories created successfully"
 }
 
-setup_systemd_service() {
-    log_info "Setting up systemd service..."
-
-    # Download service file from repository (use the same version as the binary)
-    local temp_dir
-    temp_dir=$(mktemp -d)
-    local service_url="https://raw.githubusercontent.com/${REPO}/${version}/aks-flex-node-agent.service"
-
-    if command -v curl &> /dev/null; then
-        if ! curl -L -f -o "$temp_dir/aks-flex-node-agent.service" "$service_url"; then
-            log_error "Failed to download systemd service file"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-    elif command -v wget &> /dev/null; then
-        if ! wget -O "$temp_dir/aks-flex-node-agent.service" "$service_url"; then
-            log_error "Failed to download systemd service file"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-    else
-        log_error "Neither curl nor wget is available for downloading service file"
-        return 1
-    fi
-
-    # Install systemd service file
-    cp "$temp_dir/aks-flex-node-agent.service" /etc/systemd/system/
-    chmod 644 /etc/systemd/system/aks-flex-node-agent.service
-
-    # Copy Azure CLI config to a root-owned directory so the root service never reads
-    # from an unprivileged user's home directory (prevents local privilege escalation
-    # via malicious CLI extensions planted in ~/.azure/cliextensions/).
-    local current_user
-    current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
-    local current_user_home
-    current_user_home=$(eval echo "~$current_user")
-
-    local azure_config_dir="/etc/aks-flex-node/azure"
-    mkdir -p "$azure_config_dir"
-    chmod 700 "$azure_config_dir"
-    chown root:root "$azure_config_dir"
-
-    # Copy only the authentication-related files (token cache, profile), never extensions
-    for f in azureProfile.json msal_token_cache.json msal_token_cache.bin clouds.config; do
-        if [ -f "$current_user_home/.azure/$f" ]; then
-            cp "$current_user_home/.azure/$f" "$azure_config_dir/"
-            chmod 600 "$azure_config_dir/$f"
-            chown root:root "$azure_config_dir/$f"
-        fi
-    done
-
-    log_info "Azure CLI auth files copied to root-owned $azure_config_dir"
-
-    # Reload systemd
-    systemctl daemon-reload
-
-    rm -rf "$temp_dir"
-    log_success "Systemd service configured successfully"
-    return 0
-}
-
 show_next_steps() {
     log_success "AKS Flex Node installation completed successfully!"
     echo ""
@@ -393,26 +332,17 @@ EOF
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
     echo -e "${BLUE}Command Line Usage:${NC}"
-    echo "  Run agent daemon:       aks-flex-node agent --config $CONFIG_DIR/config.json"
     echo "  Bootstrap node:         aks-flex-node bootstrap --config $CONFIG_DIR/config.json"
+    echo "  Run daemon directly:    aks-flex-node agent --config $CONFIG_DIR/config.json"
     echo "  Unbootstrap node:       aks-flex-node unbootstrap --config $CONFIG_DIR/config.json"
     echo "  Check version:          aks-flex-node version"
     echo ""
-
-    if [[ "${SERVICE_SETUP_SUCCESS:-false}" == "true" ]]; then
-        echo -e "${BLUE}Systemd Service Usage:${NC}"
-        echo "  Enable agent service:       systemctl enable aks-flex-node-agent.service"
-        echo "  Start agent:                systemctl start aks-flex-node-agent"
-        echo "  Stop agent:                 systemctl stop aks-flex-node-agent"
-        echo "  Check service status:       systemctl status aks-flex-node-agent"
-        echo "  View service logs:          journalctl -u aks-flex-node-agent -f"
-        echo ""
-        echo -e "${GREEN}✅ Systemd service is ready to use!${NC}"
-    else
-        echo -e "${BLUE}Systemd Service:${NC}"
-        echo -e "${YELLOW}⚠️  Systemd service setup was not completed during installation.${NC}"
-        echo "  You can still run the service manually using the CLI commands above."
-    fi
+    echo -e "${BLUE}Systemd Service:${NC}"
+    echo "  Bootstrap installs and starts aks-flex-node-agent.service."
+    echo "  Stop agent:                 systemctl stop aks-flex-node-agent"
+    echo "  Check service status:       systemctl status aks-flex-node-agent"
+    echo "  View service logs:          journalctl -u aks-flex-node-agent -f"
+    echo ""
 
     echo ""
     echo -e "${YELLOW}Directories:${NC}"
@@ -475,15 +405,6 @@ main() {
     setup_permissions
     setup_hostname_resolution
     setup_directories
-
-    # Setup systemd service components
-    if setup_systemd_service; then
-        log_success "Systemd service setup completed successfully"
-        SERVICE_SETUP_SUCCESS=true
-    else
-        log_warning "Systemd service setup failed - you can still use the CLI directly"
-        SERVICE_SETUP_SUCCESS=false
-    fi
 
     # Cleanup
     rm -rf "$(dirname "$binary_path")"

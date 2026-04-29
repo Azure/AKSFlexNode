@@ -68,18 +68,11 @@ confirm_uninstall() {
 stop_and_disable_services() {
     log_info "Stopping and disabling systemd services..."
 
-    # Stop the agent service if running
-    if systemctl is-active --quiet "aks-flex-node-agent"; then
-        log_info "Stopping aks-flex-node-agent..."
-        systemctl stop "aks-flex-node-agent" || true
+    if [[ ! -x "$INSTALL_DIR/aks-flex-node" ]]; then
+        log_warning "AKS Flex Node binary not found; skipping binary-managed service uninstall"
     fi
 
-    if systemctl is-enabled --quiet "aks-flex-node-agent" 2>/dev/null; then
-        log_info "Disabling aks-flex-node-agent..."
-        systemctl disable "aks-flex-node-agent" || true
-    fi
-
-    log_success "Services stopped and disabled"
+    log_info "Systemd service removal is handled by unbootstrap"
 }
 
 run_unbootstrap() {
@@ -98,36 +91,27 @@ run_unbootstrap() {
         config_file="$CONFIG_DIR/config.json"
         log_info "Using config file: $config_file"
     else
+        config_file="$CONFIG_DIR/config.json"
         log_warning "Config file not found at $CONFIG_DIR/config.json"
-        log_warning "Cannot run unbootstrap without config file - skipping resource cleanup"
+        log_warning "Resource cleanup may be skipped, but systemd service removal will still be attempted"
         log_info "Manual cleanup of Azure resources may be required"
-        return 0
     fi
 
     # Run unbootstrap to clean up resources
-    # Get the current user who ran sudo (the one with Azure CLI credentials)
-    local current_user
-    current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
-    local current_user_home
-    current_user_home=$(eval echo "~$current_user")
-
-    # Set Azure CLI environment variable to point to the user's .azure directory
-    local azure_config_dir="$current_user_home/.azure"
+    # Use the root-owned auth copy prepared by 'aks-flex-node bootstrap'.
+    local azure_config_dir="$CONFIG_DIR/azure"
 
     if [[ -d "$azure_config_dir" ]]; then
         log_info "Using Azure CLI credentials from: $azure_config_dir"
-        
-        # Added TERM=$TERM to ensure the tool knows it can print formatted text
-        # Added 2>&1 to capture Standard Error logs alongside Standard Out
-        sudo env AZURE_CONFIG_DIR="$azure_config_dir" TERM="$TERM" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
+
+        env AZURE_CONFIG_DIR="$azure_config_dir" TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
             log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
         }
     else
         log_warning "Azure CLI credentials not found at $azure_config_dir"
         log_info "Attempting unbootstrap without Azure CLI credentials..."
-        
-        # Applied the same fixes here
-        sudo env TERM="$TERM" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
+
+        env TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
             log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
         }
     fi
@@ -136,19 +120,7 @@ run_unbootstrap() {
 }
 
 remove_systemd_service() {
-    log_info "Removing systemd service files..."
-
-    # Remove agent service file
-    if [[ -f "/etc/systemd/system/aks-flex-node-agent.service" ]]; then
-        rm -f "/etc/systemd/system/aks-flex-node-agent.service"
-        log_success "Removed systemd agent service file"
-    else
-        log_info "Agent service file not found"
-    fi
-
-    # Reload systemd daemon
-    systemctl daemon-reload
-    log_success "Systemd daemon reloaded"
+    log_info "Systemd service removal is handled by the aks-flex-node binary"
 }
 
 remove_service_user() {
@@ -246,11 +218,9 @@ main() {
     echo ""
     log_info "Starting AKS Flex Node uninstallation..."
 
-    # Run unbootstrap before proceeding with uninstall
-    run_unbootstrap
-
     # Uninstall components in reverse order of installation
     stop_and_disable_services
+    run_unbootstrap
     remove_systemd_service
     remove_service_user
     remove_directories

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/drift"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
@@ -31,18 +32,40 @@ func NewAgentCommand() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:   "agent",
-		Short: "Start AKS node agent with Arc connection",
-		Long:  "Initialize and run the AKS node agent daemon with automatic status tracking and self-recovery",
+		Short: "Run the AKS Flex Node daemon",
+		Long:  "Run the long-lived AKS Flex Node daemon with automatic status tracking and self-recovery. This command is intended to be launched by systemd after bootstrap.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, logger, err := initConfigAndLogger(configPath)
 			if err != nil {
 				return err
 			}
-			return runAgent(cmd.Context(), cfg, logger)
+			return runAgentDaemon(cmd.Context(), cfg, logger)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
 	_ = cmd.MarkFlagRequired("config")
+	return cmd
+}
+
+func NewBootstrapCommand() *cobra.Command {
+	var configPath string
+	var azureConfigSource string
+	cmd := &cobra.Command{
+		Use:   "bootstrap",
+		Short: "Bootstrap the node and start the agent service",
+		Long:  "Install the systemd unit, bootstrap the nspawn-based AKS worker node, then enable and start the agent daemon through systemd.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, logger, err := initConfigAndLogger(configPath)
+			if err != nil {
+				return err
+			}
+			return runBootstrap(cmd.Context(), cfg, logger, azureConfigSource)
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
+	cmd.Flags().StringVar(&azureConfigSource, "azure-config-source", "", "Source Azure CLI config directory containing auth files")
+	_ = cmd.MarkFlagRequired("config")
+
 	return cmd
 }
 
@@ -53,6 +76,11 @@ func NewUnbootstrapCommand() *cobra.Command {
 		Short: "Remove AKS node configuration and Arc connection",
 		Long:  "Clean up and remove all AKS node components and Arc registration from this machine",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			l := logger.CreateLogger("info", "")
+			if err := daemon.UninstallService(cmd.Context(), l); err != nil {
+				return err
+			}
+
 			cfg, logger, err := initConfigAndLogger(configPath)
 			if err != nil {
 				return err
@@ -89,7 +117,11 @@ func initConfigAndLogger(configPath string) (*config.Config, *slog.Logger, error
 	return cfg, l, nil
 }
 
-func runAgent(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+func runBootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger, azureConfigSource string) error {
+	if err := daemon.InstallService(ctx, logger, azureConfigSource); err != nil {
+		return err
+	}
+
 	if err := spec.EnsureRuntimeDir(); err != nil {
 		return err
 	}
@@ -106,7 +138,16 @@ func runAgent(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	logger.Info("Bootstrap completed successfully, transitioning to daemon mode...")
+	logger.Info("Bootstrap completed successfully, starting agent systemd service...")
+	return daemon.EnableAndStartService(ctx, logger)
+}
+
+func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+	if err := spec.EnsureRuntimeDir(); err != nil {
+		return err
+	}
+
+	machineName := goalstates.NSpawnMachineKube1
 	return runDaemonLoop(ctx, cfg, logger, machineName)
 }
 
