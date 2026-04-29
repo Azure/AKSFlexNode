@@ -16,6 +16,8 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
+SERVICE_UNIT="aks-flex-node-agent.service"
+SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
@@ -68,6 +70,20 @@ stop_and_disable_services() {
 
     if [[ ! -x "$INSTALL_DIR/aks-flex-node" ]]; then
         log_warning "AKS Flex Node binary not found; skipping binary-managed service uninstall"
+        log_info "Removing systemd service directly..."
+
+        systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
+        systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
+
+        if [[ -e "$SERVICE_UNIT_PATH" ]]; then
+            rm -f "$SERVICE_UNIT_PATH"
+            log_success "Removed systemd unit: $SERVICE_UNIT_PATH"
+        else
+            log_info "Systemd unit not found: $SERVICE_UNIT_PATH"
+        fi
+
+        systemctl daemon-reload 2>/dev/null || true
+        return 0
     fi
 
     log_info "Systemd service removal is handled by unbootstrap"

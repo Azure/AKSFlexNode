@@ -213,13 +213,28 @@ func ReloadSystemd(ctx context.Context, logger *slog.Logger) error {
 
 // streamLogs reads lines from reader and logs each line at level.
 func streamLogs(ctx context.Context, logger *slog.Logger, reader io.Reader, level slog.Level) {
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
+	buffered := bufio.NewReader(reader)
+	for {
+		line, err := buffered.ReadString('\n')
+		if line != "" {
+			line = strings.TrimRight(line, "\r\n")
+		}
+
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			logger.Log(ctx, level, scanner.Text())
+		}
+
+		if line != "" {
+			logger.Log(ctx, level, line)
+		}
+
+		if err != nil {
+			if err != io.EOF {
+				logger.Warn("failed to stream command output", "error", err)
+			}
+			return
 		}
 	}
 }
