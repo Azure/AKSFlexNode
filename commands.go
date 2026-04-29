@@ -139,7 +139,22 @@ func runBootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger, 
 	}
 
 	logger.Info("Bootstrap completed successfully, starting agent systemd service...")
-	return daemon.EnableAndStartService(ctx, logger)
+	if err := daemon.EnableAndStartService(ctx, logger); err != nil {
+		return err
+	}
+
+	printBootstrapNextSteps()
+	return nil
+}
+
+func printBootstrapNextSteps() {
+	fmt.Println()
+	fmt.Println("AKS Flex Node agent service started successfully.")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  Check service status: systemctl status aks-flex-node-agent")
+	fmt.Println("  View service logs:    journalctl -u aks-flex-node-agent -f")
+	fmt.Println("  Stop agent:           systemctl stop aks-flex-node-agent")
 }
 
 func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
