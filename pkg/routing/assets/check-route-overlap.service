@@ -2,7 +2,7 @@
 Description=AKSFlexNode IPv4 route overlap pre-flight check
 After=network-online.target static-routes.service
 Wants=network-online.target
-Before=kubelet.service
+Before=systemd-nspawn@.service
 
 [Service]
 Type=oneshot
@@ -12,4 +12,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-RequiredBy=kubelet.service
+RequiredBy=systemd-nspawn@.service

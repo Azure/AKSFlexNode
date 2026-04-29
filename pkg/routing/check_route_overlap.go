@@ -32,8 +32,8 @@ type checkRouteOverlapTask struct {
 }
 
 // CheckRouteOverlap returns a task that installs a oneshot systemd unit which,
-// before kubelet starts, verifies that expected IPv4 CIDRs all route via the
-// IPv4 default outbound interface.
+// before the nspawn machine starts, verifies that expected IPv4 CIDRs all route
+// via the IPv4 default outbound interface.
 //
 // The classic failure it catches is the Azure ND-isr H200 IB driver shadowing a
 // customer VNet CIDR with a connected /16 on ib0 — in that case
@@ -45,12 +45,13 @@ type checkRouteOverlapTask struct {
 // runs the kernel route table reflects any mitigations.
 //
 // Mode "STRICT" (recommended for production): any overlap causes the unit to
-// exit 1. With RequiredBy=kubelet.service the node will not become Ready until
-// the overlap is resolved. Mode "WARN" (default): the overlap is logged and
-// written to /run/aks-flex-node/route-overlap.detected but kubelet still starts.
+// exit 1. With RequiredBy=systemd-nspawn@.service the nspawn machine will not
+// start until the overlap is resolved. Mode "WARN" (default): the overlap is
+// logged and written to /run/aks-flex-node/route-overlap.detected but the
+// machine still starts.
 func CheckRouteOverlap(cfg *config.Config, logger *slog.Logger) phases.Task {
 	return &checkRouteOverlapTask{
-		cfg:    cfg.Routing.RouteOverlap,
+		cfg:    cfg.HostRouting.RouteOverlap,
 		logger: logger,
 	}
 }

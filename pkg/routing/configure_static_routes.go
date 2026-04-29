@@ -50,8 +50,8 @@ type configureStaticRoutesTask struct {
 }
 
 // ConfigureStaticRoutes returns a task that installs a oneshot systemd unit
-// which applies static IPv4 routes via `ip -4 route replace` before kubelet
-// starts. When no routes are configured the task is a no-op.
+// which applies static IPv4 routes via `ip -4 route replace` before the nspawn
+// machine starts. When no routes are configured the task is a no-op.
 //
 // This is intended for cases where the VM provider's default routing is wrong
 // for the cluster — for example, Azure ND-isr SKUs install connected /16 routes
@@ -60,7 +60,7 @@ type configureStaticRoutesTask struct {
 // disturbing peer-to-peer IB traffic.
 func ConfigureStaticRoutes(cfg *config.Config, logger *slog.Logger) phases.Task {
 	return &configureStaticRoutesTask{
-		cfg:    cfg.Routing.StaticRoutes,
+		cfg:    cfg.HostRouting.StaticRoutes,
 		logger: logger,
 	}
 }

@@ -14,7 +14,7 @@ type Config struct {
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
-	Routing    RoutingConfig    `json:"routing"`
+	HostRouting HostRoutingConfig `json:"hostRouting"`
 
 	// Internal field to track if ManagedIdentity was explicitly set in config
 	// This is necessary because viper unmarshals empty JSON objects {} as nil
@@ -164,8 +164,9 @@ type NPDConfig struct {
 	Version string `json:"version"`
 }
 
-// RoutingConfig groups host-level routing tasks that run before kubelet starts.
-type RoutingConfig struct {
+// HostRoutingConfig groups host-level routing tasks that run before the nspawn
+// machine starts.
+type HostRoutingConfig struct {
 	// StaticRoutes installs explicit IPv4 routes to prevent provider-installed
 	// connected routes (e.g. Azure IB /16 on ND-isr SKUs) from shadowing
 	// cluster CIDRs.
