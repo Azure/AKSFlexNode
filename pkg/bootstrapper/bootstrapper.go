@@ -80,7 +80,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Host routing: install static routes then verify no overlap exists.
 		// Both tasks install oneshot systemd units ordered Before=systemd-nspawn@.service
 		// so the kernel route table is correct when the nspawn machine boots.
-		hostrouting.Tasks(b.cfg, b.logger),
+		hostrouting.Configure(b.cfg, b.logger),
 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
 		rootfs.Provision(b.logger, gs.RootFS),
