@@ -18,6 +18,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
+SKIP_AZURE_CLI_REMOVE="${AKS_FLEX_NODE_SKIP_AZURE_CLI_REMOVE:-false}"
 
 # Functions
 log_info() {
@@ -169,6 +170,11 @@ remove_binary() {
 }
 
 remove_azure_cli() {
+    if [[ "$SKIP_AZURE_CLI_REMOVE" == "true" || "$SKIP_AZURE_CLI_REMOVE" == "1" ]]; then
+        log_info "Skipping Azure CLI removal (AKS_FLEX_NODE_SKIP_AZURE_CLI_REMOVE=$SKIP_AZURE_CLI_REMOVE)"
+        return 0
+    fi
+
     log_info "Removing Azure CLI..."
 
     if command -v az &> /dev/null; then

@@ -21,6 +21,9 @@ LOG_DIR="/var/log/aks-flex-node"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
+LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
+SKIP_AZURE_CLI_INSTALL="${AKS_FLEX_NODE_SKIP_AZURE_CLI_INSTALL:-false}"
+SKIP_AZURE_CLI_AUTH_CHECK="${AKS_FLEX_NODE_SKIP_AZURE_CLI_AUTH_CHECK:-false}"
 
 # Functions
 log_info() {
@@ -98,6 +101,11 @@ check_ubuntu_version() {
 }
 
 get_latest_release() {
+    if [[ -n "${AKS_FLEX_NODE_VERSION:-}" ]]; then
+        echo "${AKS_FLEX_NODE_VERSION}"
+        return 0
+    fi
+
     local latest_release_url="${GITHUB_RELEASES}/latest"
     log_info "Fetching latest release information..." >&2
 
@@ -115,6 +123,17 @@ download_binary() {
     local version="$1"
     local os="$2"
     local arch="$3"
+
+    if [[ -n "$LOCAL_BINARY_PATH" ]]; then
+        log_info "Using local AKS Flex Node binary override: $LOCAL_BINARY_PATH" >&2
+        if [[ ! -f "$LOCAL_BINARY_PATH" ]]; then
+            log_error "Local binary override not found: $LOCAL_BINARY_PATH"
+            exit 1
+        fi
+        echo "$LOCAL_BINARY_PATH"
+        return 0
+    fi
+
     local binary_name="aks-flex-node-${os}-${arch}"
     local archive_name="${binary_name}.tar.gz"
     local download_url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
@@ -169,6 +188,11 @@ install_binary() {
 }
 
 install_azure_cli() {
+    if [[ "$SKIP_AZURE_CLI_INSTALL" == "true" || "$SKIP_AZURE_CLI_INSTALL" == "1" ]]; then
+        log_info "Skipping Azure CLI installation (AKS_FLEX_NODE_SKIP_AZURE_CLI_INSTALL=$SKIP_AZURE_CLI_INSTALL)"
+        return 0
+    fi
+
     log_info "Installing Azure CLI..."
 
     if ! command -v az &> /dev/null; then
@@ -195,6 +219,11 @@ install_azure_cli() {
 }
 
 check_azure_cli_auth() {
+    if [[ "$SKIP_AZURE_CLI_AUTH_CHECK" == "true" || "$SKIP_AZURE_CLI_AUTH_CHECK" == "1" ]]; then
+        log_info "Skipping Azure CLI auth check (AKS_FLEX_NODE_SKIP_AZURE_CLI_AUTH_CHECK=$SKIP_AZURE_CLI_AUTH_CHECK)"
+        return 0
+    fi
+
     log_info "Checking Azure CLI authentication..."
 
     # Check if the user who ran sudo is authenticated

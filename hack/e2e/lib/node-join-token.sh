@@ -175,14 +175,21 @@ node_unjoin_token() {
   # The unbootstrap command runs best-effort: ResetKubelet, ResetContainerdService,
   # and ArcUnbootstrap (no-op since Arc is disabled for token auth). It does not
   # delete the node object.
-  log_info "Stopping agent and running unbootstrap on ${vm_ip}..."
+  log_info "Running uninstall script on ${vm_ip}..."
+  remote_copy "${REPO_ROOT}/scripts/uninstall.sh" "${vm_ip}" "/tmp/aks-flex-node-uninstall.sh"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 
-sudo systemctl stop aks-flex-node-token 2>/dev/null || true
+sudo AKS_FLEX_NODE_SKIP_AZURE_CLI_REMOVE=true bash /tmp/aks-flex-node-uninstall.sh --force
 
-sudo /usr/local/bin/aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json \
-  2>&1 | sudo tee -a /var/log/aks-flex-node/aks-flex-node.log
+if [[ -e /usr/local/bin/aks-flex-node ]]; then
+  echo "aks-flex-node binary still exists after uninstall"
+  exit 1
+fi
+if systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; then
+  echo "aks-flex-node-agent.service still exists after uninstall"
+  exit 1
+fi
 
 echo "kubelet status after unbootstrap:"
 systemctl is-active kubelet 2>&1 || true

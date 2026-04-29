@@ -30,16 +30,20 @@ _deploy_and_start_agent() {
   log_info "Uploading binary and config to ${vm_ip}..."
   remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
   remote_copy "${config_file}" "${vm_ip}" "/tmp/config.json"
+  remote_copy "${REPO_ROOT}/scripts/install.sh" "${vm_ip}" "/tmp/aks-flex-node-install.sh"
 
-  log_info "Starting flex node agent on ${vm_ip}..."
+  log_info "Installing and starting flex node agent on ${vm_ip}..."
   remote_exec "${vm_ip}" 'bash -s' <<REMOTE
 set -euo pipefail
 
-sudo cp /tmp/aks-flex-node-binary /usr/local/bin/aks-flex-node
-sudo chmod +x /usr/local/bin/aks-flex-node
+sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
+  AKS_FLEX_NODE_VERSION=e2e-local \
+  AKS_FLEX_NODE_SKIP_AZURE_CLI_INSTALL=true \
+  AKS_FLEX_NODE_SKIP_AZURE_CLI_AUTH_CHECK=true \
+  bash /tmp/aks-flex-node-install.sh --yes
+
 aks-flex-node version
 
-sudo mkdir -p /etc/aks-flex-node /var/log/aks-flex-node
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
 # Clean up any leftover transient unit from a previous run
