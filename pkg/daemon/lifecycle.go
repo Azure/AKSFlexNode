@@ -96,7 +96,7 @@ func CopyAzureCLIAuth(sourceDir string) error {
 	if err := os.Chown(azureConfigDir, 0, 0); err != nil {
 		return fmt.Errorf("chown azure config dir %s: %w", azureConfigDir, err)
 	}
-	if err := os.Chmod(azureConfigDir, 0o700); err != nil { //nolint:gosec // directory must be traversable by root and inaccessible to other users
+	if err := os.Chmod(azureConfigDir, 0o700); err != nil { // #nosec G302 -- directory must be traversable by root and inaccessible to other users
 		return fmt.Errorf("chmod azure config dir %s: %w", azureConfigDir, err)
 	}
 
@@ -106,7 +106,7 @@ func CopyAzureCLIAuth(sourceDir string) error {
 
 	for _, name := range azureAuthFiles {
 		sourcePath := filepath.Join(sourceDir, name)
-		data, err := os.ReadFile(filepath.Clean(sourcePath)) //nolint:gosec // fixed auth filenames under a caller-selected Azure config dir
+		data, err := os.ReadFile(filepath.Clean(sourcePath)) // #nosec G304 -- fixed auth filenames under a caller-selected Azure config dir
 		if os.IsNotExist(err) {
 			continue
 		}

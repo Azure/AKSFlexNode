@@ -56,17 +56,31 @@ sudo systemd-run \
   --remain-after-exit \
   /usr/local/bin/aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 
-echo "Waiting ${E2E_BOOTSTRAP_SETTLE_TIME}s for bootstrap to complete..."
-sleep ${E2E_BOOTSTRAP_SETTLE_TIME}
+echo "Waiting up to ${E2E_NODE_JOIN_TIMEOUT}s for aks-flex-node-agent.service to start..."
+deadline=\$((SECONDS + ${E2E_NODE_JOIN_TIMEOUT}))
+while ! systemctl is-active --quiet aks-flex-node-agent.service; do
+  if systemctl is-failed --quiet ${unit_name}; then
+    echo "Bootstrap unit failed:"
+    sudo systemctl status ${unit_name} --no-pager -l || true
+    sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+    sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
+    exit 1
+  fi
 
-if systemctl is-active --quiet ${unit_name}; then
-  echo "Bootstrap unit completed successfully"
-else
-  echo "Bootstrap unit failed:"
-  sudo journalctl -u ${unit_name} -n 50 --no-pager || true
-  sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
-  exit 1
-fi
+  if (( SECONDS >= deadline )); then
+    echo "Timed out waiting for aks-flex-node-agent.service to become active"
+    sudo systemctl status ${unit_name} --no-pager -l || true
+    sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
+    sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+    sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager || true
+    sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
+    exit 1
+  fi
+
+  sleep 5
+done
+
+echo "aks-flex-node-agent.service became active"
 
 echo "Validating aks-flex-node-agent.service..."
 if ! systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; then

@@ -29,11 +29,11 @@ func New() Interface {
 }
 
 func (executor) Command(name string, args ...string) *exec.Cmd {
-	return exec.Command(name, args...) //nolint:gosec // callers pass trusted binary names
+	return exec.Command(name, args...) // #nosec G204 -- callers pass trusted binary names
 }
 
 func (executor) CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, name, args...) //nolint:gosec // callers pass trusted binary names
+	return exec.CommandContext(ctx, name, args...) // #nosec G204 -- callers pass trusted binary names
 }
 
 // RunCmd creates a command from newCmd, appends args, streams stdout at Debug
@@ -87,7 +87,7 @@ func OutputCmd(ctx context.Context, logger *slog.Logger, name string, args ...st
 
 // OutputCmdAt is like OutputCmd but streams stderr at stderrLevel.
 func OutputCmdAt(ctx context.Context, logger *slog.Logger, stderrLevel slog.Level, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // callers pass trusted binary names
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- callers pass trusted binary names
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -136,49 +136,49 @@ func MachineRun(ctx context.Context, logger *slog.Logger, machine string, args .
 // Systemctl returns a command factory for systemctl.
 func Systemctl() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "systemctl") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "systemctl") // #nosec G204 -- fixed binary
 	}
 }
 
 // Azcmagent returns a command factory for azcmagent.
 func Azcmagent() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "azcmagent") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "azcmagent") // #nosec G204 -- fixed binary
 	}
 }
 
 // Dpkg returns a command factory for dpkg.
 func Dpkg() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "dpkg") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "dpkg") // #nosec G204 -- fixed binary
 	}
 }
 
 // Bash returns a command factory for bash.
 func Bash() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "bash") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "bash") // #nosec G204 -- fixed binary
 	}
 }
 
 // Curl returns a command factory for curl.
 func Curl() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "curl") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "curl") // #nosec G204 -- fixed binary
 	}
 }
 
 // Wget returns a command factory for wget.
 func Wget() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "wget") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "wget") // #nosec G204 -- fixed binary
 	}
 }
 
 // Pgrep returns a command factory for pgrep.
 func Pgrep() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "pgrep") //nolint:gosec // fixed binary
+		return exec.CommandContext(ctx, "pgrep") // #nosec G204 -- fixed binary
 	}
 }
 
