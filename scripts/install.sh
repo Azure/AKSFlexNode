@@ -427,8 +427,12 @@ main() {
     setup_hostname_resolution
     setup_directories
 
-    # Cleanup
-    rm -rf "$(dirname "$binary_path")"
+    # Cleanup only the temp download directory created by this installer.
+    # Local binary overrides are caller-owned and may share a directory with
+    # other e2e artifacts such as /tmp/config.json.
+    if [[ -z "$LOCAL_BINARY_PATH" ]]; then
+        rm -rf "$(dirname "$binary_path")"
+    fi
 
     # Show next steps
     show_next_steps
