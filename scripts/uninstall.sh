@@ -65,11 +65,13 @@ confirm_uninstall() {
     fi
 }
 
-stop_and_disable_services() {
-    log_info "Stopping and disabling systemd services..."
+run_unbootstrap() {
+    log_info "Running unbootstrap to clean up cluster and Arc resources..."
 
-    if [[ ! -x "$INSTALL_DIR/aks-flex-node" ]]; then
-        log_warning "AKS Flex Node binary not found; skipping binary-managed service uninstall"
+    # Check if aks-flex-node binary exists
+    if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
+        log_warning "AKS Flex Node binary not found at $INSTALL_DIR/aks-flex-node"
+        log_info "Skipping unbootstrap - binary may already be removed"
         log_info "Removing systemd service directly..."
 
         systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
@@ -83,19 +85,6 @@ stop_and_disable_services() {
         fi
 
         systemctl daemon-reload 2>/dev/null || true
-        return 0
-    fi
-
-    log_info "Systemd service removal is handled by unbootstrap"
-}
-
-run_unbootstrap() {
-    log_info "Running unbootstrap to clean up cluster and Arc resources..."
-
-    # Check if aks-flex-node binary exists
-    if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
-        log_warning "AKS Flex Node binary not found at $INSTALL_DIR/aks-flex-node"
-        log_info "Skipping unbootstrap - binary may already be removed"
         return 0
     fi
 
@@ -215,7 +204,6 @@ main() {
     log_info "Starting AKS Flex Node uninstallation..."
 
     # Uninstall components in reverse order of installation
-    stop_and_disable_services
     run_unbootstrap
     remove_directories
     remove_binary
