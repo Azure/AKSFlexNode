@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -41,7 +41,7 @@ func InstallService(ctx context.Context, log *slog.Logger, azureConfigSourceDir 
 		return err
 	}
 
-	if err := runSystemctl(ctx, "daemon-reload"); err != nil {
+	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 
@@ -51,10 +51,10 @@ func InstallService(ctx context.Context, log *slog.Logger, azureConfigSourceDir 
 
 // EnableAndStartService enables and starts the installed systemd unit.
 func EnableAndStartService(ctx context.Context, log *slog.Logger) error {
-	if err := runSystemctl(ctx, "enable", ServiceUnitName); err != nil {
+	if err := utilexec.RunCmd(ctx, log, utilexec.Systemctl(), "enable", ServiceUnitName); err != nil {
 		return fmt.Errorf("systemctl enable %s: %w", ServiceUnitName, err)
 	}
-	if err := runSystemctl(ctx, "start", ServiceUnitName); err != nil {
+	if err := utilexec.RunCmd(ctx, log, utilexec.Systemctl(), "start", ServiceUnitName); err != nil {
 		return fmt.Errorf("systemctl start %s: %w", ServiceUnitName, err)
 	}
 
@@ -64,10 +64,10 @@ func EnableAndStartService(ctx context.Context, log *slog.Logger) error {
 
 // UninstallService stops, disables, removes, and reloads the systemd unit.
 func UninstallService(ctx context.Context, log *slog.Logger) error {
-	if err := runSystemctl(ctx, "stop", ServiceUnitName); err != nil {
+	if err := utilexec.StopService(ctx, log, ServiceUnitName); err != nil {
 		log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
 	}
-	if err := runSystemctl(ctx, "disable", ServiceUnitName); err != nil {
+	if err := utilexec.DisableService(ctx, log, ServiceUnitName); err != nil {
 		log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
 
@@ -76,7 +76,7 @@ func UninstallService(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("remove %s: %w", unitPath, err)
 	}
 
-	if err := runSystemctl(ctx, "daemon-reload"); err != nil {
+	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 
@@ -139,11 +139,4 @@ func defaultAzureConfigSourceDir() string {
 		return filepath.Join(home, ".azure")
 	}
 	return ""
-}
-
-func runSystemctl(ctx context.Context, args ...string) error {
-	cmd := exec.CommandContext(ctx, "systemctl", args...) //nolint:gosec // fixed binary with caller-controlled subcommand args from this package
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
