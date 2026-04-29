@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
-	"github.com/sirupsen/logrus"
 
 	"github.com/Azure/AKSFlexNode/pkg/auth"
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -30,7 +30,7 @@ type ManagedClusterSpecEnricher func(spec *ManagedClusterSpec, resp armcontainer
 // and persists it to a local file for later checking.
 type ManagedClusterSpecCollector struct {
 	cfg    *config.Config
-	logger *logrus.Logger
+	logger *slog.Logger
 
 	authProvider *auth.AuthProvider
 	client       ManagedClusterClient
@@ -42,7 +42,7 @@ type ManagedClusterSpecCollector struct {
 
 // NewManagedClusterSpecCollector creates a collector that writes to the default spec path.
 // The Azure client is created lazily on the first Collect call.
-func NewManagedClusterSpecCollector(cfg *config.Config, logger *logrus.Logger) *ManagedClusterSpecCollector {
+func NewManagedClusterSpecCollector(cfg *config.Config, logger *slog.Logger) *ManagedClusterSpecCollector {
 	c := &ManagedClusterSpecCollector{
 		cfg:          cfg,
 		logger:       logger,
@@ -55,7 +55,7 @@ func NewManagedClusterSpecCollector(cfg *config.Config, logger *logrus.Logger) *
 }
 
 // NewManagedClusterSpecCollectorWithClient allows injecting a ManagedClusterClient and output path (primarily for tests).
-func NewManagedClusterSpecCollectorWithClient(cfg *config.Config, logger *logrus.Logger, client ManagedClusterClient, outputPath string) *ManagedClusterSpecCollector {
+func NewManagedClusterSpecCollectorWithClient(cfg *config.Config, logger *slog.Logger, client ManagedClusterClient, outputPath string) *ManagedClusterSpecCollector {
 	c := NewManagedClusterSpecCollector(cfg, logger)
 	c.client = client
 	if outputPath != "" {
@@ -80,9 +80,6 @@ func (c *ManagedClusterSpecCollector) Collect(ctx context.Context) (*ManagedClus
 	}
 	if c.cfg == nil {
 		return nil, fmt.Errorf("config is nil")
-	}
-	if c.logger == nil {
-		c.logger = logrus.New()
 	}
 
 	clusterName := c.cfg.GetTargetClusterName()
@@ -112,7 +109,7 @@ func (c *ManagedClusterSpecCollector) Collect(ctx context.Context) (*ManagedClus
 		c.client = mcClient
 	}
 
-	c.logger.Infof("Collecting managed cluster spec for %s/%s", clusterRG, clusterName)
+	c.logger.Info("Collecting managed cluster spec", "resourceGroup", clusterRG, "cluster", clusterName)
 	resp, err := c.client.Get(ctx, clusterRG, clusterName, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AKS managed cluster via SDK: %w", err)
@@ -155,13 +152,11 @@ func enrichKubernetesVersionRequired(spec *ManagedClusterSpec, resp armcontainer
 	if spec == nil {
 		return fmt.Errorf("spec is nil")
 	}
-	// set kubernetesVersion
 	if resp.Properties == nil || resp.Properties.KubernetesVersion == nil || *resp.Properties.KubernetesVersion == "" {
 		return fmt.Errorf("managed cluster kubernetesVersion is empty")
 	}
 	spec.KubernetesVersion = *resp.Properties.KubernetesVersion
 
-	// set currentKubernetesVersion
 	if resp.Properties == nil || resp.Properties.CurrentKubernetesVersion == nil || *resp.Properties.CurrentKubernetesVersion == "" {
 		return fmt.Errorf("managed cluster currentKubernetesVersion is empty")
 	}

@@ -2,37 +2,34 @@ package status
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 
 	"github.com/Azure/AKSFlexNode/pkg/spec"
-	"github.com/sirupsen/logrus"
 )
 
 // RemoveStatusFileBestEffort removes the current node status file.
 //
 // It is intentionally best-effort: failure to remove the file should not crash the agent,
 // but it helps ensure subsequent health checks re-collect status from scratch.
-func RemoveStatusFileBestEffort(logger *logrus.Logger) {
+func RemoveStatusFileBestEffort(logger *slog.Logger) {
 	RemoveStatusFileBestEffortAtPath(logger, spec.StatusFilePath)
 }
 
-func RemoveStatusFileBestEffortAtPath(logger *logrus.Logger, statusFilePath string) {
-	if logger == nil {
-		return
-	}
+func RemoveStatusFileBestEffortAtPath(logger *slog.Logger, statusFilePath string) {
 	if statusFilePath == "" {
-		logger.Debug("Failed to remove status file: empty path")
+		logger.Debug("failed to remove status file: empty path")
 		return
 	}
 
 	if err := os.Remove(statusFilePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			logger.Debug("Status file already removed")
+			logger.Debug("status file already removed")
 			return
 		}
-		logger.Debugf("Failed to remove status file: %v", err)
+		logger.Debug("failed to remove status file", "error", err)
 		return
 	}
 
-	logger.Debug("Removed status file successfully")
+	logger.Debug("removed status file successfully")
 }

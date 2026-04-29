@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/sirupsen/logrus"
 
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -109,7 +108,7 @@ func TestResolveRemediationPlan(t *testing.T) {
 func TestDetectAndRemediate_SkipsStaleSpec_DoesNotCallDetectors(t *testing.T) {
 	t.Parallel()
 
-	logger := logrus.New()
+	logger := slog.Default()
 	d := &countingDetector{fn: func() ([]Finding, error) {
 		return []Finding{{
 			ID:          "f1",
@@ -121,7 +120,7 @@ func TestDetectAndRemediate_SkipsStaleSpec_DoesNotCallDetectors(t *testing.T) {
 	specSnap := &spec.ManagedClusterSpec{CurrentKubernetesVersion: "1.30.0", CollectedAt: staleCollectedAt}
 	statusSnap := &status.NodeStatus{KubeletVersion: "1.29.0"}
 
-	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, nil)
+	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, "kube1")
 	if err != nil {
 		t.Fatalf("err=%v, want nil", err)
 	}
@@ -133,7 +132,7 @@ func TestDetectAndRemediate_SkipsStaleSpec_DoesNotCallDetectors(t *testing.T) {
 func TestDetectAndRemediate_BootstrapGuard_SkipsWhenInProgress(t *testing.T) {
 	t.Parallel()
 
-	logger := logrus.New()
+	logger := slog.Default()
 	d := &countingDetector{fn: func() ([]Finding, error) {
 		return []Finding{{
 			ID:          "f1",
@@ -145,7 +144,7 @@ func TestDetectAndRemediate_BootstrapGuard_SkipsWhenInProgress(t *testing.T) {
 	statusSnap := &status.NodeStatus{KubeletVersion: "1.30.0"}
 
 	var bootstrapInProgress int32 = 1
-	err := detectAndRemediate(context.Background(), nil, logger, &bootstrapInProgress, []Detector{d}, specSnap, statusSnap, nil)
+	err := detectAndRemediate(context.Background(), nil, logger, &bootstrapInProgress, []Detector{d}, specSnap, statusSnap, "kube1")
 	if err != nil {
 		t.Fatalf("err=%v, want nil", err)
 	}
@@ -160,7 +159,7 @@ func TestDetectAndRemediate_BootstrapGuard_SkipsWhenInProgress(t *testing.T) {
 func TestDetectAndRemediate_ReturnsDetectErrorIfNoFindings(t *testing.T) {
 	t.Parallel()
 
-	logger := logrus.New()
+	logger := slog.Default()
 	wantErr := errors.New("detect failed")
 	d := &countingDetector{fn: func() ([]Finding, error) {
 		return nil, wantErr
@@ -169,7 +168,7 @@ func TestDetectAndRemediate_ReturnsDetectErrorIfNoFindings(t *testing.T) {
 	specSnap := &spec.ManagedClusterSpec{CurrentKubernetesVersion: "1.31.0", CollectedAt: time.Now()}
 	statusSnap := &status.NodeStatus{KubeletVersion: "1.30.0"}
 
-	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, nil)
+	err := detectAndRemediate(context.Background(), nil, logger, nil, []Detector{d}, specSnap, statusSnap, "kube1")
 	if err == nil {
 		t.Fatalf("err=nil, want %v", wantErr)
 	}
@@ -209,11 +208,9 @@ func TestShouldMarkKubeletUnhealthyAfterUpgradeFailure(t *testing.T) {
 		t.Fatalf("start-kubelet failure marked unhealthy=false, want true")
 	}
 
-	// Unknown step -> dont mark kubelet unhealthy
 	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt("something-else"), err); got {
 		t.Fatalf("unknown step marked unhealthy=true, want false")
 	}
-	// No error -> never mark.
 	if got := shouldMarkKubeletUnhealthyAfterUpgradeFailure(makeResultFailingAt(upgradeStepStopKubelet), nil); got {
 		t.Fatalf("nil error marked unhealthy=true, want false")
 	}

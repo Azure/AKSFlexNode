@@ -3,11 +3,10 @@ package drift
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"reflect"
 	"testing"
-
-	"github.com/sirupsen/logrus"
 )
 
 type fakeNodeMaintenance struct {
@@ -62,7 +61,7 @@ func TestCordonAndDrainExecutor_CordonsThenDrains_UncordonAfter(t *testing.T) {
 
 	ops := &fakeNodeMaintenance{cordoned: false}
 	state := &cordonDrainState{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	cd := newCordonAndDrainExecutor("cordon-and-drain", logger, ops, state)
 	if err := cd.Execute(context.Background()); err != nil {
@@ -94,7 +93,7 @@ func TestCordonAndDrainExecutor_AlreadyCordoned_DoesNotUncordon(t *testing.T) {
 
 	ops := &fakeNodeMaintenance{cordoned: true}
 	state := &cordonDrainState{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	cd := newCordonAndDrainExecutor("cordon-and-drain", logger, ops, state)
 	if err := cd.Execute(context.Background()); err != nil {
@@ -124,7 +123,7 @@ func TestCordonAndDrainExecutor_CordonFails_DoesNotDrain(t *testing.T) {
 	boom := errors.New("boom")
 	ops := &fakeNodeMaintenance{cordoned: false, cordonErr: boom}
 	state := &cordonDrainState{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	cd := newCordonAndDrainExecutor("cordon-and-drain", logger, ops, state)
 	err := cd.Execute(context.Background())
@@ -147,7 +146,7 @@ func TestCordonAndDrainExecutor_DrainFails_UncordonsIfCordonedByUs(t *testing.T)
 	boom := errors.New("boom")
 	ops := &fakeNodeMaintenance{cordoned: false, drainErr: boom}
 	state := &cordonDrainState{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	cd := newCordonAndDrainExecutor("cordon-and-drain", logger, ops, state)
 	err := cd.Execute(context.Background())
@@ -178,7 +177,7 @@ func TestCordonAndDrainExecutor_DrainFails_DoesNotUncordonIfAlreadyCordoned(t *t
 	boom := errors.New("boom")
 	ops := &fakeNodeMaintenance{cordoned: true, drainErr: boom}
 	state := &cordonDrainState{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	cd := newCordonAndDrainExecutor("cordon-and-drain", logger, ops, state)
 	err := cd.Execute(context.Background())
@@ -206,36 +205,12 @@ func TestShouldRetryWithAdmin(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{
-			name: "nil",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "forbidden wrapped as string",
-			err:  errors.New("error when waiting for pod \"x\" to terminate: pods \"x\" is forbidden: User \"system:node:free-node\" cannot get resource \"pods\""),
-			want: true,
-		},
-		{
-			name: "unauthorized wrapped as string",
-			err:  errors.New("Unauthorized"),
-			want: true,
-		},
-		{
-			name: "x509 cert expired",
-			err:  errors.New("Get \"https://10.0.0.1:443\": x509: certificate has expired or is not yet valid"),
-			want: true,
-		},
-		{
-			name: "tls bad certificate",
-			err:  errors.New("remote error: tls: bad certificate"),
-			want: true,
-		},
-		{
-			name: "other error",
-			err:  errors.New("context deadline exceeded"),
-			want: false,
-		},
+		{name: "nil", err: nil, want: false},
+		{name: "forbidden wrapped as string", err: errors.New("error when waiting for pod \"x\" to terminate: pods \"x\" is forbidden: User \"system:node:free-node\" cannot get resource \"pods\""), want: true},
+		{name: "unauthorized wrapped as string", err: errors.New("Unauthorized"), want: true},
+		{name: "x509 cert expired", err: errors.New("Get \"https://10.0.0.1:443\": x509: certificate has expired or is not yet valid"), want: true},
+		{name: "tls bad certificate", err: errors.New("remote error: tls: bad certificate"), want: true},
+		{name: "other error", err: errors.New("context deadline exceeded"), want: false},
 	}
 
 	for _, tc := range tcs {

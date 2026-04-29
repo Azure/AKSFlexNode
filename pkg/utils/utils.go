@@ -6,8 +6,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 // RunSystemCommand executes a system command for privileged operations.
@@ -111,28 +109,4 @@ func DirectoryExists(path string) bool {
 		return false
 	}
 	return info.IsDir()
-}
-
-// RemoveDirectories removes multiple directories recursively, continuing on errors
-func RemoveDirectories(directories []string, logger *logrus.Logger) []error {
-	var errors []error
-
-	for _, dir := range directories {
-		logger.Infof("Removing directory: %s", dir)
-
-		// Check if directory exists first
-		if !DirectoryExists(dir) {
-			logger.Debugf("Directory %s does not exist, skipping", dir)
-			continue
-		}
-
-		if err := RunSystemCommand("rm", "-rf", dir); err != nil {
-			logger.Errorf("Failed to remove directory %s: %v", dir, err)
-			errors = append(errors, fmt.Errorf("failed to remove %s: %w", dir, err))
-		} else {
-			logger.Infof("Successfully removed directory: %s", dir)
-		}
-	}
-
-	return errors
 }

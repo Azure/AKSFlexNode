@@ -65,12 +65,27 @@ else
 fi
 
 sleep 10
-if systemctl is-active --quiet kubelet; then
-  echo "kubelet is running"
+
+# Dump nspawn machine status for debugging
+echo "=== nspawn machines ==="
+machinectl list --no-pager 2>&1 || true
+echo "=== nspawn machine kube1 status ==="
+machinectl status kube1 --no-pager 2>&1 || echo "(kube1 not found)"
+
+# Check kubelet inside nspawn container
+if machinectl show kube1 &>/dev/null 2>&1; then
+  echo "=== kubelet status inside kube1 ==="
+  sudo systemd-run --machine=kube1 --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
+  echo "=== kubelet journal inside kube1 (last 30 lines) ==="
+  sudo systemd-run --machine=kube1 --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
 else
-  echo "kubelet status:"
+  echo "kube1 machine not running, checking host kubelet:"
   systemctl status kubelet --no-pager -l 2>&1 || true
 fi
+
+# Dump agent logs for debugging
+echo "=== agent logs (last 30 lines) ==="
+sudo journalctl -u ${unit_name} -n 30 --no-pager 2>&1 || true
 REMOTE
 
   log_success "Agent started on ${vm_ip}"

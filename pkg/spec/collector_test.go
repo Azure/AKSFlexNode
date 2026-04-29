@@ -3,12 +3,12 @@ package spec
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
-	"github.com/sirupsen/logrus"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
@@ -49,7 +49,7 @@ func TestManagedClusterSpecCollector_Collect_WritesFile(t *testing.T) {
 		},
 	}
 
-	collector := NewManagedClusterSpecCollectorWithClient(cfg, logrus.New(), &fakeManagedClusterClient{resp: resp}, outPath)
+	collector := NewManagedClusterSpecCollectorWithClient(cfg, slog.Default(), &fakeManagedClusterClient{resp: resp}, outPath)
 	_, err := collector.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -84,7 +84,7 @@ func TestManagedClusterSpecCollector_Collect_WritesFile(t *testing.T) {
 
 func TestManagedClusterSpecCollector_Collect_MissingClusterInfo(t *testing.T) {
 	cfg := &config.Config{Azure: config.AzureConfig{SubscriptionID: "sub", TargetCluster: &config.TargetClusterConfig{}}}
-	collector := NewManagedClusterSpecCollectorWithClient(cfg, logrus.New(), &fakeManagedClusterClient{}, filepath.Join(t.TempDir(), "x.json"))
+	collector := NewManagedClusterSpecCollectorWithClient(cfg, slog.Default(), &fakeManagedClusterClient{}, filepath.Join(t.TempDir(), "x.json"))
 	if _, err := collector.Collect(context.Background()); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
