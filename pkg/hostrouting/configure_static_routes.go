@@ -1,5 +1,5 @@
-// Package routing provides phases.Task implementations that configure IPv4
-// routing on the host before kubelet starts.
+// Package hostrouting provides phases.Task implementations that configure IPv4
+// routing on the host before the nspawn machine starts.
 //
 // ConfigureStaticRoutes installs explicit routes to prevent provider-installed
 // connected routes (e.g. Azure IB /16 on ND-isr SKUs) from shadowing cluster
@@ -7,7 +7,7 @@
 //
 // CheckRouteOverlap verifies that expected CIDRs all route via the IPv4 default
 // outbound interface, catching unmitigated routing overlaps at boot time.
-package routing
+package hostrouting
 
 import (
 	"bytes"
