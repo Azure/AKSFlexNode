@@ -12,13 +12,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration (should match install.sh)
-SERVICE_NAME="aks-flex-node"
-SERVICE_USER="aks-flex-node"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
-SKIP_AZURE_CLI_REMOVE="${AKS_FLEX_NODE_SKIP_AZURE_CLI_REMOVE:-false}"
+SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
 log_info() {
@@ -44,7 +42,6 @@ confirm_uninstall() {
     echo "This will remove the following components:"
     echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
     echo "• Systemd service (aks-flex-node-agent.service)"
-    echo "• Service user ($SERVICE_USER) (if exists from previous installation)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
@@ -120,29 +117,6 @@ run_unbootstrap() {
     log_success "Unbootstrap completed"
 }
 
-remove_systemd_service() {
-    log_info "Systemd service removal is handled by the aks-flex-node binary"
-}
-
-remove_service_user() {
-    log_info "Removing service user..."
-
-    if id "$SERVICE_USER" &>/dev/null; then
-        # Stop any processes running as the service user
-        pkill -u "$SERVICE_USER" || true
-        sleep 2
-
-        # Remove the user and their home directory
-        userdel -r "$SERVICE_USER" 2>/dev/null || {
-            log_warning "Failed to remove user with home directory, trying without -r flag"
-            userdel "$SERVICE_USER" 2>/dev/null || log_warning "Failed to remove service user"
-        }
-        log_success "Removed service user: $SERVICE_USER"
-    else
-        log_info "Service user $SERVICE_USER not found"
-    fi
-}
-
 remove_directories() {
     log_info "Removing directories..."
 
@@ -170,8 +144,8 @@ remove_binary() {
 }
 
 remove_azure_cli() {
-    if [[ "$SKIP_AZURE_CLI_REMOVE" == "true" || "$SKIP_AZURE_CLI_REMOVE" == "1" ]]; then
-        log_info "Skipping Azure CLI removal (AKS_FLEX_NODE_SKIP_AZURE_CLI_REMOVE=$SKIP_AZURE_CLI_REMOVE)"
+    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
+        log_info "Skipping Azure CLI removal (SKIP_AZCLI=$SKIP_AZCLI)"
         return 0
     fi
 
@@ -227,8 +201,6 @@ main() {
     # Uninstall components in reverse order of installation
     stop_and_disable_services
     run_unbootstrap
-    remove_systemd_service
-    remove_service_user
     remove_directories
     remove_binary
     remove_azure_cli

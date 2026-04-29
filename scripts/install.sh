@@ -22,8 +22,7 @@ GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
 LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
-SKIP_AZURE_CLI_INSTALL="${AKS_FLEX_NODE_SKIP_AZURE_CLI_INSTALL:-false}"
-SKIP_AZURE_CLI_AUTH_CHECK="${AKS_FLEX_NODE_SKIP_AZURE_CLI_AUTH_CHECK:-false}"
+SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
 log_info() {
@@ -188,8 +187,8 @@ install_binary() {
 }
 
 install_azure_cli() {
-    if [[ "$SKIP_AZURE_CLI_INSTALL" == "true" || "$SKIP_AZURE_CLI_INSTALL" == "1" ]]; then
-        log_info "Skipping Azure CLI installation (AKS_FLEX_NODE_SKIP_AZURE_CLI_INSTALL=$SKIP_AZURE_CLI_INSTALL)"
+    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
+        log_info "Skipping Azure CLI installation (SKIP_AZCLI=$SKIP_AZCLI)"
         return 0
     fi
 
@@ -219,8 +218,8 @@ install_azure_cli() {
 }
 
 check_azure_cli_auth() {
-    if [[ "$SKIP_AZURE_CLI_AUTH_CHECK" == "true" || "$SKIP_AZURE_CLI_AUTH_CHECK" == "1" ]]; then
-        log_info "Skipping Azure CLI auth check (AKS_FLEX_NODE_SKIP_AZURE_CLI_AUTH_CHECK=$SKIP_AZURE_CLI_AUTH_CHECK)"
+    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
+        log_info "Skipping Azure CLI auth check (SKIP_AZCLI=$SKIP_AZCLI)"
         return 0
     fi
 
@@ -289,22 +288,6 @@ setup_permissions() {
         log_success "Azure CLI configuration found at: $current_user_home/.azure (user: $current_user)"
     else
         log_warning "Azure CLI not found at $current_user_home/.azure - skipping CLI access setup"
-    fi
-}
-
-setup_hostname_resolution() {
-    log_info "Setting up hostname resolution..."
-
-    local current_hostname
-    current_hostname=$(hostname)
-
-    # Check if hostname is already in /etc/hosts
-    if grep -q "$current_hostname" /etc/hosts; then
-        log_info "Hostname $current_hostname already configured in /etc/hosts"
-    else
-        log_info "Adding hostname $current_hostname to /etc/hosts"
-        echo "127.0.1.1 $current_hostname" >> /etc/hosts
-        log_success "Hostname resolution configured for $current_hostname"
     fi
 }
 
@@ -424,7 +407,6 @@ main() {
     install_azure_cli
     check_azure_cli_auth
     setup_permissions
-    setup_hostname_resolution
     setup_directories
 
     # Cleanup only the temp download directory created by this installer.

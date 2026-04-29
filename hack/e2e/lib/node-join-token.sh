@@ -180,7 +180,7 @@ node_unjoin_token() {
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 
-sudo AKS_FLEX_NODE_SKIP_AZURE_CLI_REMOVE=true bash /tmp/aks-flex-node-uninstall.sh --force
+sudo SKIP_AZCLI=true bash /tmp/aks-flex-node-uninstall.sh --force
 
 if [[ -e /usr/local/bin/aks-flex-node ]]; then
   echo "aks-flex-node binary still exists after uninstall"

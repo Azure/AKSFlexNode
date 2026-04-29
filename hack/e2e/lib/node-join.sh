@@ -38,8 +38,7 @@ set -euo pipefail
 
 sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
   AKS_FLEX_NODE_VERSION=e2e-local \
-  AKS_FLEX_NODE_SKIP_AZURE_CLI_INSTALL=true \
-  AKS_FLEX_NODE_SKIP_AZURE_CLI_AUTH_CHECK=true \
+  SKIP_AZCLI=true \
   bash /tmp/aks-flex-node-install.sh --yes
 
 aks-flex-node version
