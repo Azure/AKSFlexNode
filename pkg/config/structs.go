@@ -5,15 +5,15 @@ import "os"
 // Config represents the complete agent configuration structure.
 // It contains Azure-specific settings and agent operational settings.
 type Config struct {
-	Azure      AzureConfig      `json:"azure"`
-	Agent      AgentConfig      `json:"agent"`
-	Containerd ContainerdConfig `json:"containerd"`
-	Kubernetes KubernetesConfig `json:"kubernetes"`
-	CNI        CNIConfig        `json:"cni"`
-	Runc       RuncConfig       `json:"runc"`
-	Node       NodeConfig       `json:"node"`
-	Paths      PathsConfig      `json:"paths"`
-	Npd        NPDConfig        `json:"npd"`
+	Azure       AzureConfig       `json:"azure"`
+	Agent       AgentConfig       `json:"agent"`
+	Containerd  ContainerdConfig  `json:"containerd"`
+	Kubernetes  KubernetesConfig  `json:"kubernetes"`
+	CNI         CNIConfig         `json:"cni"`
+	Runc        RuncConfig        `json:"runc"`
+	Node        NodeConfig        `json:"node"`
+	Paths       PathsConfig       `json:"paths"`
+	Npd         NPDConfig         `json:"npd"`
 	HostRouting HostRoutingConfig `json:"hostRouting"`
 
 	// Internal field to track if ManagedIdentity was explicitly set in config
