@@ -1,0 +1,16 @@
+[Unit]
+Description=Install AKSFlexNode static routes
+# Route install must happen before kubelet tries to reach cluster services
+# whose CIDR may otherwise be shadowed by provider-installed connected
+# routes (e.g. the Azure InfiniBand fabric /16 on ND-isr SKUs).
+Before=kubelet.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/etc/aks-flex-node/static-routes.sh
+RemainAfterExit=yes
+
+[Install]
+RequiredBy=kubelet.service

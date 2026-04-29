@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
+	"github.com/Azure/AKSFlexNode/pkg/routing"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
@@ -75,6 +76,12 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 			host.HardenAPT(b.logger),
 			arc.InstallArc(b.cfg, b.logger),
 		),
+
+		// Host routing: install static routes then verify no overlap exists.
+		// Both tasks install oneshot systemd units ordered Before=kubelet.service
+		// so the kernel route table is correct when kubelet registers the node.
+		routing.ConfigureStaticRoutes(b.cfg, b.logger),
+		routing.CheckRouteOverlap(b.cfg, b.logger),
 
 		// Phase 2: rootfs provisioning (nspawn workspace + parallel binary downloads)
 		rootfs.Provision(b.logger, gs.RootFS),

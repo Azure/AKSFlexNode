@@ -14,6 +14,7 @@ type Config struct {
 	Node       NodeConfig       `json:"node"`
 	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
+	Routing    RoutingConfig    `json:"routing"`
 
 	// Internal field to track if ManagedIdentity was explicitly set in config
 	// This is necessary because viper unmarshals empty JSON objects {} as nil
@@ -161,6 +162,58 @@ type CNIConfig struct {
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
 type NPDConfig struct {
 	Version string `json:"version"`
+}
+
+// RoutingConfig groups host-level routing tasks that run before kubelet starts.
+type RoutingConfig struct {
+	// StaticRoutes installs explicit IPv4 routes to prevent provider-installed
+	// connected routes (e.g. Azure IB /16 on ND-isr SKUs) from shadowing
+	// cluster CIDRs.
+	StaticRoutes StaticRoutesConfig `json:"staticRoutes"`
+
+	// RouteOverlap checks that the expected CIDRs all route via the default
+	// outbound interface. Use this to catch unmitigated routing overlaps at
+	// boot time instead of hours after a node silently misbehaves.
+	RouteOverlap RouteOverlapConfig `json:"routeOverlap"`
+}
+
+// StaticRoutesConfig holds the spec for the static-routes systemd oneshot.
+type StaticRoutesConfig struct {
+	// Enabled must be set to true when routes are provided. This explicit
+	// opt-in prevents accidental route injection.
+	Enabled bool `json:"enabled"`
+
+	// Routes is the list of IPv4 static routes to install before kubelet starts.
+	Routes []StaticRoute `json:"routes,omitempty"`
+}
+
+// StaticRoute describes a single IPv4 route to install via `ip -4 route replace`.
+type StaticRoute struct {
+	// Destination is an IPv4 CIDR, e.g. "172.16.1.0/24". Required.
+	Destination string `json:"destination"`
+
+	// Gateway is the next-hop IPv4 address. When empty the script resolves the
+	// default gateway on Dev at boot time (with a bounded retry for DHCP races).
+	Gateway string `json:"gateway,omitempty"`
+
+	// Dev is the outbound interface (e.g. "eth0"). When empty the script
+	// resolves the IPv4 default route's outbound interface at boot time.
+	Dev string `json:"dev,omitempty"`
+
+	// Metric sets the route metric for tie-breaking. 0 means use kernel default.
+	Metric uint32 `json:"metric,omitempty"`
+}
+
+// RouteOverlapConfig holds the spec for the check-route-overlap systemd oneshot.
+type RouteOverlapConfig struct {
+	// ExpectedCIDRs is the list of IPv4 CIDRs that must route via the default
+	// outbound interface. Typically pod CIDR + service CIDR + API server prefix.
+	ExpectedCIDRs []string `json:"expectedCidrs,omitempty"`
+
+	// Mode controls behaviour on overlap detection.
+	// "WARN" (default): log the overlap and let kubelet start.
+	// "STRICT": log the overlap and prevent kubelet from starting.
+	Mode string `json:"mode,omitempty"`
 }
 
 // IsSPConfigured checks if service principal credentials are provided in the configuration
