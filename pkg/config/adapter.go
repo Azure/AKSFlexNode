@@ -24,8 +24,9 @@ const (
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName: machineName,
-		// TODO: remove pin once the default OCI image in the library is updated.
-		OCIImage: "ghcr.io/azure/agent-ubuntu2404:cd4449f94aa4bb3e2ef80f37f09c2c128f2f4ebf",
+		// TODO: implement support for overriding rootfs image from flex node config.
+		//       Using empty string here means the agent will detect and use the default image.
+		// OCIImage: "",
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Node.Kubelet.DNSServiceIP,
