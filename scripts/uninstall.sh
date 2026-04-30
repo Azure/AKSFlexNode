@@ -12,12 +12,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration (should match install.sh)
-SERVICE_NAME="aks-flex-node"
-SERVICE_USER="aks-flex-node"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
+SERVICE_UNIT="aks-flex-node-agent.service"
+SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
+SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
 log_info() {
@@ -43,7 +44,6 @@ confirm_uninstall() {
     echo "This will remove the following components:"
     echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
     echo "• Systemd service (aks-flex-node-agent.service)"
-    echo "• Service user ($SERVICE_USER) (if exists from previous installation)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
@@ -65,23 +65,6 @@ confirm_uninstall() {
     fi
 }
 
-stop_and_disable_services() {
-    log_info "Stopping and disabling systemd services..."
-
-    # Stop the agent service if running
-    if systemctl is-active --quiet "aks-flex-node-agent"; then
-        log_info "Stopping aks-flex-node-agent..."
-        systemctl stop "aks-flex-node-agent" || true
-    fi
-
-    if systemctl is-enabled --quiet "aks-flex-node-agent" 2>/dev/null; then
-        log_info "Disabling aks-flex-node-agent..."
-        systemctl disable "aks-flex-node-agent" || true
-    fi
-
-    log_success "Services stopped and disabled"
-}
-
 run_unbootstrap() {
     log_info "Running unbootstrap to clean up cluster and Arc resources..."
 
@@ -89,6 +72,19 @@ run_unbootstrap() {
     if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
         log_warning "AKS Flex Node binary not found at $INSTALL_DIR/aks-flex-node"
         log_info "Skipping unbootstrap - binary may already be removed"
+        log_info "Removing systemd service directly..."
+
+        systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
+        systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
+
+        if [[ -e "$SERVICE_UNIT_PATH" ]]; then
+            rm -f "$SERVICE_UNIT_PATH"
+            log_success "Removed systemd unit: $SERVICE_UNIT_PATH"
+        else
+            log_info "Systemd unit not found: $SERVICE_UNIT_PATH"
+        fi
+
+        systemctl daemon-reload 2>/dev/null || true
         return 0
     fi
 
@@ -98,76 +94,32 @@ run_unbootstrap() {
         config_file="$CONFIG_DIR/config.json"
         log_info "Using config file: $config_file"
     else
+        config_file="$CONFIG_DIR/config.json"
         log_warning "Config file not found at $CONFIG_DIR/config.json"
-        log_warning "Cannot run unbootstrap without config file - skipping resource cleanup"
+        log_warning "Resource cleanup may be skipped, but systemd service removal will still be attempted"
         log_info "Manual cleanup of Azure resources may be required"
-        return 0
     fi
 
     # Run unbootstrap to clean up resources
-    # Get the current user who ran sudo (the one with Azure CLI credentials)
-    local current_user
-    current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
-    local current_user_home
-    current_user_home=$(eval echo "~$current_user")
-
-    # Set Azure CLI environment variable to point to the user's .azure directory
-    local azure_config_dir="$current_user_home/.azure"
+    # Use the root-owned auth copy prepared by 'aks-flex-node bootstrap'.
+    local azure_config_dir="$CONFIG_DIR/azure"
 
     if [[ -d "$azure_config_dir" ]]; then
         log_info "Using Azure CLI credentials from: $azure_config_dir"
-        
-        # Added TERM=$TERM to ensure the tool knows it can print formatted text
-        # Added 2>&1 to capture Standard Error logs alongside Standard Out
-        sudo env AZURE_CONFIG_DIR="$azure_config_dir" TERM="$TERM" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
+
+        env AZURE_CONFIG_DIR="$azure_config_dir" TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
             log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
         }
     else
         log_warning "Azure CLI credentials not found at $azure_config_dir"
         log_info "Attempting unbootstrap without Azure CLI credentials..."
-        
-        # Applied the same fixes here
-        sudo env TERM="$TERM" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
+
+        env TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
             log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
         }
     fi
 
     log_success "Unbootstrap completed"
-}
-
-remove_systemd_service() {
-    log_info "Removing systemd service files..."
-
-    # Remove agent service file
-    if [[ -f "/etc/systemd/system/aks-flex-node-agent.service" ]]; then
-        rm -f "/etc/systemd/system/aks-flex-node-agent.service"
-        log_success "Removed systemd agent service file"
-    else
-        log_info "Agent service file not found"
-    fi
-
-    # Reload systemd daemon
-    systemctl daemon-reload
-    log_success "Systemd daemon reloaded"
-}
-
-remove_service_user() {
-    log_info "Removing service user..."
-
-    if id "$SERVICE_USER" &>/dev/null; then
-        # Stop any processes running as the service user
-        pkill -u "$SERVICE_USER" || true
-        sleep 2
-
-        # Remove the user and their home directory
-        userdel -r "$SERVICE_USER" 2>/dev/null || {
-            log_warning "Failed to remove user with home directory, trying without -r flag"
-            userdel "$SERVICE_USER" 2>/dev/null || log_warning "Failed to remove service user"
-        }
-        log_success "Removed service user: $SERVICE_USER"
-    else
-        log_info "Service user $SERVICE_USER not found"
-    fi
 }
 
 remove_directories() {
@@ -197,6 +149,11 @@ remove_binary() {
 }
 
 remove_azure_cli() {
+    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
+        log_info "Skipping Azure CLI removal (SKIP_AZCLI=$SKIP_AZCLI)"
+        return 0
+    fi
+
     log_info "Removing Azure CLI..."
 
     if command -v az &> /dev/null; then
@@ -246,13 +203,8 @@ main() {
     echo ""
     log_info "Starting AKS Flex Node uninstallation..."
 
-    # Run unbootstrap before proceeding with uninstall
-    run_unbootstrap
-
     # Uninstall components in reverse order of installation
-    stop_and_disable_services
-    remove_systemd_service
-    remove_service_user
+    run_unbootstrap
     remove_directories
     remove_binary
     remove_azure_cli

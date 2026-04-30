@@ -156,8 +156,8 @@ You need use Azure CLI credentials for Arc registration:
 # Login to Azure
 az login
 
-# The agent will use your CLI credentials
-aks-flex-node agent --config /etc/aks-flex-node/config.json
+# Bootstrap copies only Azure CLI auth files into a root-owned service directory.
+aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 ```
 
 ### Running the Agent
@@ -165,11 +165,8 @@ aks-flex-node agent --config /etc/aks-flex-node/config.json
 > **Important:** All commands in this guide assume you are running as root (`sudo su`). The agent installs system packages, writes to protected directories, and manages systemd services.
 
 ```bash
-# Direct execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
-
-# Or using systemd
-systemctl enable --now aks-flex-node-agent
+# Bootstrap installs and starts the systemd-managed agent.
+aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 journalctl -u aks-flex-node-agent -f
 ```
 
@@ -362,11 +359,8 @@ EOF
 > **Important:** All commands in this guide assume you are running as root (`sudo su`). The agent installs system packages, writes to protected directories, and manages systemd services.
 
 ```bash
-# Direct execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
-
-# Or using systemd
-systemctl enable --now aks-flex-node-agent
+# Bootstrap installs and starts the systemd-managed agent.
+aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 journalctl -u aks-flex-node-agent -f
 ```
 
@@ -613,11 +607,8 @@ You can disable automated drift detection and remediation if you prefer to self-
 > **Important:** All commands in this guide assume you are running as root (`sudo su`). The agent installs system packages, writes to protected directories, and manages systemd services.
 
 ```bash
-# Direct execution
-aks-flex-node agent --config /etc/aks-flex-node/config.json
-
-# Or using systemd
-systemctl enable --now aks-flex-node-agent
+# Bootstrap installs and starts the systemd-managed agent.
+aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 journalctl -u aks-flex-node-agent -f
 ```
 
@@ -676,7 +667,8 @@ This approach is more secure than long-lived credentials because:
 
 | Command | Description | Usage |
 |---------|-------------|-------|
-| `agent` | Start agent daemon (bootstrap + monitoring) | `aks-flex-node agent --config /etc/aks-flex-node/config.json` |
+| `bootstrap` | Bootstrap node and start the systemd-managed agent | `aks-flex-node bootstrap --config /etc/aks-flex-node/config.json` |
+| `agent` | Run the long-lived daemon used by systemd | `aks-flex-node agent --config /etc/aks-flex-node/config.json` |
 | `unbootstrap` | Clean removal of all components | `aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json` |
 | `version` | Show version information | `aks-flex-node version` |
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/auth"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -81,7 +80,7 @@ func (t *uninstallArcTask) Do(ctx context.Context) error {
 	}
 
 	// Step 5: Remove agent binaries and configuration.
-	if err := t.removeArcAgentBinary(); err != nil {
+	if err := t.removeArcAgentBinary(ctx); err != nil {
 		t.logger.Warn("failed to remove Arc agent binaries (continuing cleanup)", "error", err)
 		failedOps = append(failedOps, "Arc agent binary removal")
 	}
@@ -173,10 +172,8 @@ func (t *uninstallArcTask) unregisterArcMachine(ctx context.Context) error {
 }
 
 func (t *uninstallArcTask) disconnectArcMachine(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "azcmagent", "disconnect", "--force-local-only")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("disconnect Arc machine: %w, output: %s", err, string(output))
+	if err := utilexec.RunCmd(ctx, t.logger, utilexec.Azcmagent(), "disconnect", "--force-local-only"); err != nil {
+		return fmt.Errorf("disconnect Arc machine: %w", err)
 	}
 	t.logger.Info("Arc machine disconnected")
 	return nil
@@ -263,24 +260,24 @@ func (t *uninstallArcTask) removeRoleAssignment(ctx context.Context, principalID
 
 // --- local cleanup ---
 
-func (t *uninstallArcTask) removeArcAgentBinary() error {
+func (t *uninstallArcTask) removeArcAgentBinary(ctx context.Context) error {
 	if !isArcAgentInstalled() {
 		t.logger.Info("Azure Arc agent not found, already removed or never installed")
 		return nil
 	}
 
 	// Ensure disconnection happened.
-	if err := utils.RunSystemCommand("azcmagent", "disconnect", "--force-local-only"); err != nil {
+	if err := utilexec.RunCmd(ctx, t.logger, utilexec.Azcmagent(), "disconnect", "--force-local-only"); err != nil {
 		t.logger.Debug("Arc disconnect command failed or already disconnected")
 	}
 
 	// Stop Arc agent services.
 	for _, service := range arcServices {
-		if utils.ServiceExists(service) {
-			if err := utils.StopService(service); err != nil {
+		if utilexec.ServiceExists(ctx, t.logger, service) {
+			if err := utilexec.StopService(ctx, t.logger, service); err != nil {
 				t.logger.Debug("failed to stop service", "service", service, "error", err)
 			}
-			if err := utils.DisableService(service); err != nil {
+			if err := utilexec.DisableService(ctx, t.logger, service); err != nil {
 				t.logger.Debug("failed to disable service", "service", service, "error", err)
 			}
 		}
@@ -288,26 +285,26 @@ func (t *uninstallArcTask) removeArcAgentBinary() error {
 
 	// Remove binaries.
 	for _, path := range arcBinaryPaths {
-		if err := utils.RunCleanupCommand(path); err != nil {
+		if err := utilexec.RemoveFileIfExists(path); err != nil {
 			t.logger.Debug("failed to remove binary", "path", path, "error", err)
 		}
 	}
 
 	// Remove directories.
 	for _, dir := range arcDirectories {
-		if err := utils.RunSystemCommand("rm", "-rf", dir); err != nil {
+		if err := utilexec.RemoveAllIfExists(dir); err != nil {
 			t.logger.Debug("failed to remove directory", "dir", dir, "error", err)
 		}
 	}
 
 	// Remove systemd service files.
 	for _, file := range arcServiceFiles {
-		if err := utils.RunCleanupCommand(file); err != nil {
+		if err := utilexec.RemoveFileIfExists(file); err != nil {
 			t.logger.Debug("failed to remove service file", "file", file, "error", err)
 		}
 	}
 
-	if err := utils.ReloadSystemd(); err != nil {
+	if err := utilexec.ReloadSystemd(ctx, t.logger); err != nil {
 		t.logger.Debug("failed to reload systemd daemon")
 	}
 

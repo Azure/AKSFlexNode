@@ -109,7 +109,7 @@ ssh -p 2222 ubuntu@localhost
 # Inside the VM: the repo is already mounted
 cd /flex-node
 sudo su
-./bin/aks-flex-node agent --config <path-to-config>
+./bin/aks-flex-node bootstrap --config <path-to-config>
 ```
 
 Edit code and rebuild on the host as usual. Since `/flex-node` is a live mount of the repository, the updated binary is available inside the VM immediately after each build.

@@ -21,6 +21,8 @@ LOG_DIR="/var/log/aks-flex-node"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
+LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
+SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
 log_info() {
@@ -98,6 +100,11 @@ check_ubuntu_version() {
 }
 
 get_latest_release() {
+    if [[ -n "${AKS_FLEX_NODE_VERSION:-}" ]]; then
+        echo "${AKS_FLEX_NODE_VERSION}"
+        return 0
+    fi
+
     local latest_release_url="${GITHUB_RELEASES}/latest"
     log_info "Fetching latest release information..." >&2
 
@@ -115,6 +122,17 @@ download_binary() {
     local version="$1"
     local os="$2"
     local arch="$3"
+
+    if [[ -n "$LOCAL_BINARY_PATH" ]]; then
+        log_info "Using local AKS Flex Node binary override: $LOCAL_BINARY_PATH" >&2
+        if [[ ! -f "$LOCAL_BINARY_PATH" ]]; then
+            log_error "Local binary override not found: $LOCAL_BINARY_PATH"
+            exit 1
+        fi
+        echo "$LOCAL_BINARY_PATH"
+        return 0
+    fi
+
     local binary_name="aks-flex-node-${os}-${arch}"
     local archive_name="${binary_name}.tar.gz"
     local download_url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
@@ -169,6 +187,11 @@ install_binary() {
 }
 
 install_azure_cli() {
+    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
+        log_info "Skipping Azure CLI installation (SKIP_AZCLI=$SKIP_AZCLI)"
+        return 0
+    fi
+
     log_info "Installing Azure CLI..."
 
     if ! command -v az &> /dev/null; then
@@ -195,6 +218,11 @@ install_azure_cli() {
 }
 
 check_azure_cli_auth() {
+    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
+        log_info "Skipping Azure CLI auth check (SKIP_AZCLI=$SKIP_AZCLI)"
+        return 0
+    fi
+
     log_info "Checking Azure CLI authentication..."
 
     # Check if the user who ran sudo is authenticated
@@ -263,22 +291,6 @@ setup_permissions() {
     fi
 }
 
-setup_hostname_resolution() {
-    log_info "Setting up hostname resolution..."
-
-    local current_hostname
-    current_hostname=$(hostname)
-
-    # Check if hostname is already in /etc/hosts
-    if grep -q "$current_hostname" /etc/hosts; then
-        log_info "Hostname $current_hostname already configured in /etc/hosts"
-    else
-        log_info "Adding hostname $current_hostname to /etc/hosts"
-        echo "127.0.1.1 $current_hostname" >> /etc/hosts
-        log_success "Hostname resolution configured for $current_hostname"
-    fi
-}
-
 setup_directories() {
     log_info "Creating directories..."
 
@@ -294,67 +306,6 @@ setup_directories() {
     chmod 644 "$LOG_DIR/aks-flex-node.log"
 
     log_success "Directories created successfully"
-}
-
-setup_systemd_service() {
-    log_info "Setting up systemd service..."
-
-    # Download service file from repository (use the same version as the binary)
-    local temp_dir
-    temp_dir=$(mktemp -d)
-    local service_url="https://raw.githubusercontent.com/${REPO}/${version}/aks-flex-node-agent.service"
-
-    if command -v curl &> /dev/null; then
-        if ! curl -L -f -o "$temp_dir/aks-flex-node-agent.service" "$service_url"; then
-            log_error "Failed to download systemd service file"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-    elif command -v wget &> /dev/null; then
-        if ! wget -O "$temp_dir/aks-flex-node-agent.service" "$service_url"; then
-            log_error "Failed to download systemd service file"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-    else
-        log_error "Neither curl nor wget is available for downloading service file"
-        return 1
-    fi
-
-    # Install systemd service file
-    cp "$temp_dir/aks-flex-node-agent.service" /etc/systemd/system/
-    chmod 644 /etc/systemd/system/aks-flex-node-agent.service
-
-    # Copy Azure CLI config to a root-owned directory so the root service never reads
-    # from an unprivileged user's home directory (prevents local privilege escalation
-    # via malicious CLI extensions planted in ~/.azure/cliextensions/).
-    local current_user
-    current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
-    local current_user_home
-    current_user_home=$(eval echo "~$current_user")
-
-    local azure_config_dir="/etc/aks-flex-node/azure"
-    mkdir -p "$azure_config_dir"
-    chmod 700 "$azure_config_dir"
-    chown root:root "$azure_config_dir"
-
-    # Copy only the authentication-related files (token cache, profile), never extensions
-    for f in azureProfile.json msal_token_cache.json msal_token_cache.bin clouds.config; do
-        if [ -f "$current_user_home/.azure/$f" ]; then
-            cp "$current_user_home/.azure/$f" "$azure_config_dir/"
-            chmod 600 "$azure_config_dir/$f"
-            chown root:root "$azure_config_dir/$f"
-        fi
-    done
-
-    log_info "Azure CLI auth files copied to root-owned $azure_config_dir"
-
-    # Reload systemd
-    systemctl daemon-reload
-
-    rm -rf "$temp_dir"
-    log_success "Systemd service configured successfully"
-    return 0
 }
 
 show_next_steps() {
@@ -393,27 +344,10 @@ EOF
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
     echo -e "${BLUE}Command Line Usage:${NC}"
-    echo "  Run agent daemon:       aks-flex-node agent --config $CONFIG_DIR/config.json"
     echo "  Bootstrap node:         aks-flex-node bootstrap --config $CONFIG_DIR/config.json"
+    echo "  Run daemon directly:    aks-flex-node agent --config $CONFIG_DIR/config.json"
     echo "  Unbootstrap node:       aks-flex-node unbootstrap --config $CONFIG_DIR/config.json"
     echo "  Check version:          aks-flex-node version"
-    echo ""
-
-    if [[ "${SERVICE_SETUP_SUCCESS:-false}" == "true" ]]; then
-        echo -e "${BLUE}Systemd Service Usage:${NC}"
-        echo "  Enable agent service:       systemctl enable aks-flex-node-agent.service"
-        echo "  Start agent:                systemctl start aks-flex-node-agent"
-        echo "  Stop agent:                 systemctl stop aks-flex-node-agent"
-        echo "  Check service status:       systemctl status aks-flex-node-agent"
-        echo "  View service logs:          journalctl -u aks-flex-node-agent -f"
-        echo ""
-        echo -e "${GREEN}✅ Systemd service is ready to use!${NC}"
-    else
-        echo -e "${BLUE}Systemd Service:${NC}"
-        echo -e "${YELLOW}⚠️  Systemd service setup was not completed during installation.${NC}"
-        echo "  You can still run the service manually using the CLI commands above."
-    fi
-
     echo ""
     echo -e "${YELLOW}Directories:${NC}"
     echo "  Configuration: $CONFIG_DIR"
@@ -473,20 +407,14 @@ main() {
     install_azure_cli
     check_azure_cli_auth
     setup_permissions
-    setup_hostname_resolution
     setup_directories
 
-    # Setup systemd service components
-    if setup_systemd_service; then
-        log_success "Systemd service setup completed successfully"
-        SERVICE_SETUP_SUCCESS=true
-    else
-        log_warning "Systemd service setup failed - you can still use the CLI directly"
-        SERVICE_SETUP_SUCCESS=false
+    # Cleanup only the temp download directory created by this installer.
+    # Local binary overrides are caller-owned and may share a directory with
+    # other e2e artifacts such as /tmp/config.json.
+    if [[ -z "$LOCAL_BINARY_PATH" ]]; then
+        rm -rf "$(dirname "$binary_path")"
     fi
-
-    # Cleanup
-    rm -rf "$(dirname "$binary_path")"
 
     # Show next steps
     show_next_steps
