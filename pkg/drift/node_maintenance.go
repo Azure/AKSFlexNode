@@ -19,7 +19,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kube"
-	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 const defaultDrainTimeout = 10 * time.Minute
@@ -160,7 +160,7 @@ func (m *kubeNodeMaintenance) clientset(ctx context.Context) (*kubernetes.Client
 	}
 
 	// Fall back to the local kubelet kubeconfig if present.
-	if utils.FileExists(config.KubeletKubeconfigPath) {
+	if utilio.FileExists(config.KubeletKubeconfigPath) {
 		cs, err := kube.KubeletClientset()
 		if err == nil {
 			m.mu.Lock()

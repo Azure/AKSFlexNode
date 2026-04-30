@@ -19,7 +19,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/auth"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -119,10 +119,7 @@ func (t *installArcTask) testCredential(ctx context.Context, cred azcore.TokenCr
 
 func (t *installArcTask) installArcAgentBinary(ctx context.Context) error {
 	// Purge existing package state.
-	cmd := exec.CommandContext(ctx, "dpkg", "--purge", "azcmagent") //nolint:gosec // constant args
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run() // best-effort
+	_ = utilexec.RunCmdAt(ctx, t.logger, slog.LevelDebug, utilexec.Dpkg(), "--purge", "azcmagent") // best-effort
 
 	tempDir, err := os.MkdirTemp("", "arc-install-*")
 	if err != nil {
@@ -138,18 +135,15 @@ func (t *installArcTask) installArcAgentBinary(ctx context.Context) error {
 		return err
 	}
 
-	installCmd := exec.CommandContext(ctx, "bash", scriptPath) //nolint:gosec // trusted script
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-	return installCmd.Run()
+	return utilexec.RunCmd(ctx, t.logger, utilexec.Bash(), scriptPath)
 }
 
 func (t *installArcTask) downloadArcInstallScript(ctx context.Context, dest string) error {
 	if _, err := exec.LookPath("curl"); err == nil {
-		return exec.CommandContext(ctx, "curl", "-L", "-o", dest, arcInstallScriptURL).Run() //nolint:gosec // constant URL
+		return utilexec.RunCmd(ctx, t.logger, utilexec.Curl(), "-L", "-o", dest, arcInstallScriptURL)
 	}
 	if _, err := exec.LookPath("wget"); err == nil {
-		return exec.CommandContext(ctx, "wget", "-O", dest, arcInstallScriptURL).Run() //nolint:gosec // constant URL
+		return utilexec.RunCmd(ctx, t.logger, utilexec.Wget(), "-O", dest, arcInstallScriptURL)
 	}
 	return fmt.Errorf("neither curl nor wget available")
 }
@@ -288,7 +282,7 @@ func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 	}
 	t.logger.Info("running azcmagent connect", "args", masked)
 
-	_, err = utils.RunCommandWithOutput("azcmagent", args...)
+	_, err = utilexec.OutputCmd(ctx, t.logger, "azcmagent", args...)
 	return err
 }
 
@@ -438,20 +432,19 @@ func (t *installArcTask) waitForPermissions(ctx context.Context, _ string) error
 // --- isCompleted ---
 
 func (t *installArcTask) isCompleted(ctx context.Context) bool {
-	if !isArcServicesRunning(ctx) {
+	if !isArcServicesRunning(ctx, t.logger) {
 		return false
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(timeoutCtx, "azcmagent", "show")
-	output, err := cmd.Output()
+	output, err := utilexec.OutputCmdAt(timeoutCtx, t.logger, slog.LevelDebug, "azcmagent", "show")
 	if err != nil {
 		return false
 	}
 
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "Agent Status") && strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)

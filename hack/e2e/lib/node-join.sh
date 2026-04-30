@@ -30,16 +30,19 @@ _deploy_and_start_agent() {
   log_info "Uploading binary and config to ${vm_ip}..."
   remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
   remote_copy "${config_file}" "${vm_ip}" "/tmp/config.json"
+  remote_copy "${REPO_ROOT}/scripts/install.sh" "${vm_ip}" "/tmp/aks-flex-node-install.sh"
 
-  log_info "Starting flex node agent on ${vm_ip}..."
+  log_info "Installing and starting flex node agent on ${vm_ip}..."
   remote_exec "${vm_ip}" 'bash -s' <<REMOTE
 set -euo pipefail
 
-sudo cp /tmp/aks-flex-node-binary /usr/local/bin/aks-flex-node
-sudo chmod +x /usr/local/bin/aks-flex-node
+sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
+  AKS_FLEX_NODE_VERSION=e2e-local \
+  SKIP_AZCLI=true \
+  bash /tmp/aks-flex-node-install.sh --yes
+
 aks-flex-node version
 
-sudo mkdir -p /etc/aks-flex-node /var/log/aks-flex-node
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
 # Clean up any leftover transient unit from a previous run
@@ -50,19 +53,56 @@ sudo systemd-run \
   --unit=${unit_name} \
   --description="AKS Flex Node E2E (${unit_name})" \
   --remain-after-exit \
-  /usr/local/bin/aks-flex-node agent --config /etc/aks-flex-node/config.json
+  /usr/local/bin/aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 
-echo "Waiting ${E2E_BOOTSTRAP_SETTLE_TIME}s for bootstrap to complete..."
-sleep ${E2E_BOOTSTRAP_SETTLE_TIME}
+echo "Waiting up to ${E2E_NODE_JOIN_TIMEOUT}s for aks-flex-node-agent.service to start..."
+deadline=\$((SECONDS + ${E2E_NODE_JOIN_TIMEOUT}))
+while ! systemctl is-active --quiet aks-flex-node-agent.service; do
+  if systemctl is-failed --quiet ${unit_name}; then
+    echo "Bootstrap unit failed:"
+    sudo systemctl status ${unit_name} --no-pager -l || true
+    sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+    sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
+    exit 1
+  fi
 
-if systemctl is-active --quiet ${unit_name}; then
-  echo "Agent service is running"
-else
-  echo "Agent service failed:"
-  sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+  if (( SECONDS >= deadline )); then
+    echo "Timed out waiting for aks-flex-node-agent.service to become active"
+    sudo systemctl status ${unit_name} --no-pager -l || true
+    sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
+    sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+    sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager || true
+    sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
+    exit 1
+  fi
+
+  sleep 5
+done
+
+echo "aks-flex-node-agent.service became active"
+
+echo "Validating aks-flex-node-agent.service..."
+if ! systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; then
+  echo "aks-flex-node-agent.service unit file is not installed"
+  sudo systemctl list-unit-files 'aks-flex-node*' --no-pager || true
+  exit 1
+fi
+
+if ! systemctl is-enabled --quiet aks-flex-node-agent.service; then
+  echo "aks-flex-node-agent.service is not enabled"
+  sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
+  exit 1
+fi
+
+if ! systemctl is-active --quiet aks-flex-node-agent.service; then
+  echo "aks-flex-node-agent.service is not active"
+  sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
+  sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager || true
   sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
   exit 1
 fi
+
+echo "aks-flex-node-agent.service is installed, enabled, and active"
 
 sleep 10
 
@@ -86,6 +126,8 @@ fi
 # Dump agent logs for debugging
 echo "=== agent logs (last 30 lines) ==="
 sudo journalctl -u ${unit_name} -n 30 --no-pager 2>&1 || true
+echo "=== aks-flex-node-agent.service logs (last 30 lines) ==="
+sudo journalctl -u aks-flex-node-agent.service -n 30 --no-pager 2>&1 || true
 REMOTE
 
   log_success "Agent started on ${vm_ip}"

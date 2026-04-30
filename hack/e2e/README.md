@@ -80,8 +80,8 @@ The E2E suite tests three node join methods:
 
 | VM | Auth Mode | Join Method |
 |----|-----------|-------------|
-| `vm-e2e-msi-*` | Managed Identity (MSI) | `aks-flex-node agent --config config.json` |
-| `vm-e2e-token-*` | Bootstrap Token | `aks-flex-node agent --config config.json` |
+| `vm-e2e-msi-*` | Managed Identity (MSI) | `aks-flex-node bootstrap --config config.json` |
+| `vm-e2e-token-*` | Bootstrap Token | `aks-flex-node bootstrap --config config.json` |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | `aks-flex-node apply -f kubeadm-join.json` |
 
 The kubeadm VM uses the `apply -f` command with a JSON action file that

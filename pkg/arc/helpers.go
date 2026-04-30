@@ -2,11 +2,12 @@ package arc
 
 import (
 	"context"
+	"log/slog"
 	"os/exec"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 
-	"github.com/Azure/AKSFlexNode/pkg/utils"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 )
 
 func isArcAgentInstalled() bool {
@@ -23,17 +24,16 @@ func getArcMachineIdentityID(arcMachine *armhybridcompute.Machine) string {
 	return ""
 }
 
-func isArcServicesRunning(ctx context.Context) bool {
+func isArcServicesRunning(ctx context.Context, logger *slog.Logger) bool {
 	if !isArcAgentInstalled() {
 		return false
 	}
 	for _, service := range arcServices {
-		if !utils.IsServiceActive(service) {
+		if !utilexec.IsServiceActive(ctx, logger, service) {
 			return false
 		}
 	}
-	cmd := exec.CommandContext(ctx, "pgrep", "-f", "azcmagent")
-	return cmd.Run() == nil
+	return utilexec.RunCmdAt(ctx, logger, slog.LevelDebug, utilexec.Pgrep(), "-f", "azcmagent") == nil
 }
 
 func ptrDeref[T any](p *T) T {

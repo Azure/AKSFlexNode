@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 )
 
+// FileExists checks if a file exists.
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return !os.IsNotExist(err)
+}
+
 // CleanDir removes everything in a directory, but not the directory itself.
 func CleanDir(path string) (retErr error) {
 	_, err := os.Stat(path)
