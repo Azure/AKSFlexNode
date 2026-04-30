@@ -58,7 +58,7 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 
 	// Convert FlexNode config to shared agent config and resolve goal states.
 	agentCfg := config.ToAgentConfig(b.cfg, b.machineName)
-	gs, err := goalstates.ResolveMachine(b.logger, agentCfg, b.machineName)
+	gs, err := goalstates.ResolveMachine(b.logger, agentCfg, b.machineName, nil)
 	if err != nil {
 		return failedResult("resolve-goal-state", err), fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}

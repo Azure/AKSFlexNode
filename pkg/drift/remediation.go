@@ -201,7 +201,7 @@ func runKubernetesUpgradeRemediation(
 	machineName string,
 ) (*bootstrapper.ExecutionResult, error) {
 	agentCfg := config.ToAgentConfig(cfg, machineName)
-	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName)
+	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName, nil)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for upgrade: %w", err)
 	}
