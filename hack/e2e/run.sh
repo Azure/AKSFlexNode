@@ -20,6 +20,7 @@
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
+#   upgrade-drift Run token-node Kubernetes version drift repave test
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
 #   status        Show current state (deployment outputs)
@@ -89,6 +90,8 @@ source "${SCRIPT_DIR}/lib/node-join.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/validate.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/cleanup.sh"
 
 # ---------------------------------------------------------------------------
@@ -111,7 +114,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|validate|validate-absent|smoke|logs|cleanup|status)
+      all|infra|join|join-msi|join-token|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|validate|validate-absent|smoke|upgrade-drift|logs|cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -261,6 +264,10 @@ main() {
       ;;
     smoke)
       smoke_test_all
+      ;;
+    upgrade-drift)
+      ensure_binary
+      upgrade_drift_token
       ;;
     logs)
       collect_logs
