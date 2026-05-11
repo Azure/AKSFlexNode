@@ -162,8 +162,7 @@ func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		return err
 	}
 
-	machineName := goalstates.NSpawnMachineKube1
-	return runDaemonLoop(ctx, cfg, logger, machineName)
+	return runDaemonLoop(ctx, cfg, logger)
 }
 
 func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
@@ -182,7 +181,7 @@ func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger
 	return handleExecutionResult(result, "unbootstrap", logger)
 }
 
-func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *slog.Logger, machineName string) error {
+func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	statusFilePath := spec.StatusFilePath
 
 	if _, err := os.Stat(statusFilePath); err == nil {
@@ -202,7 +201,9 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *slog.Logger,
 	var cfgMu sync.RWMutex
 	var bootstrapInProgress int32
 
-	if err := collectAndWriteStatus(ctx, cfg, logger, statusFilePath, machineName); err != nil {
+	if activeMachine, err := bootstrapper.FindActiveMachine(ctx, logger); err != nil {
+		logger.Error("Failed to resolve active machine for initial status collection", "error", err)
+	} else if err := collectAndWriteStatus(ctx, cfg, logger, statusFilePath, activeMachine.Name); err != nil {
 		logger.Error("Failed to collect initial status", "error", err)
 	}
 
@@ -218,7 +219,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *slog.Logger,
 			logger.Warn("Failed to collect initial managed cluster spec", "error", err)
 		} else {
 			cfgSnap := snapshotConfig(cfg, &cfgMu)
-			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors, machineName); err != nil {
+			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors); err != nil {
 				logger.Warn("Initial drift detection after spec collection failed", "error", err)
 			} else {
 				logger.Info("Initial drift detection after spec collection completed successfully")
@@ -227,7 +228,7 @@ func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *slog.Logger,
 	}
 
 	var wg sync.WaitGroup
-	startDaemonLoops(ctx, cfg, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg, machineName)
+	startDaemonLoops(ctx, cfg, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg)
 
 	<-ctx.Done()
 	logger.Info("Daemon shutting down due to context cancellation")
@@ -245,7 +246,6 @@ func startDaemonLoops(
 	detectors []drift.Detector,
 	driftEnabled bool,
 	wg *sync.WaitGroup,
-	machineName string,
 ) {
 	if wg == nil {
 		return
@@ -255,10 +255,10 @@ func startDaemonLoops(
 	} else {
 		wg.Add(2)
 	}
-	startStatusCollectionLoop(ctx, cfg, statusFilePath, logger, cfgMu, wg, machineName)
-	startBootstrapHealthCheckLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, wg, machineName)
+	startStatusCollectionLoop(ctx, cfg, statusFilePath, logger, cfgMu, wg)
+	startBootstrapHealthCheckLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, wg)
 	if driftEnabled {
-		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, detectors, wg, machineName)
+		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, detectors, wg)
 	}
 }
 
@@ -280,7 +280,6 @@ func startStatusCollectionLoop(
 	logger *slog.Logger,
 	cfgMu *sync.RWMutex,
 	wg *sync.WaitGroup,
-	machineName string,
 ) {
 	go func() {
 		defer wg.Done()
@@ -293,7 +292,12 @@ func startStatusCollectionLoop(
 			case <-ticker.C:
 				logger.Info("Starting periodic status collection")
 				cfgSnap := snapshotConfig(cfg, cfgMu)
-				err := collectAndWriteStatus(ctx, cfgSnap, logger, statusFilePath, machineName)
+				activeMachine, err := bootstrapper.FindActiveMachine(ctx, logger)
+				if err != nil {
+					logger.Error("Failed to resolve active machine for status collection", "error", err)
+					continue
+				}
+				err = collectAndWriteStatus(ctx, cfgSnap, logger, statusFilePath, activeMachine.Name)
 				if err != nil {
 					logger.Error("Failed to collect status", "error", err)
 					continue
@@ -311,7 +315,6 @@ func startBootstrapHealthCheckLoop(
 	cfgMu *sync.RWMutex,
 	bootstrapInProgress *int32,
 	wg *sync.WaitGroup,
-	machineName string,
 ) {
 	go func() {
 		defer wg.Done()
@@ -331,7 +334,15 @@ func startBootstrapHealthCheckLoop(
 				func() {
 					defer atomic.StoreInt32(bootstrapInProgress, 0)
 					cfgSnap := snapshotConfig(cfg, cfgMu)
-					err := checkAndBootstrap(ctx, cfgSnap, logger, machineName)
+					// TODO: refine goal-state persistence and use it to select the
+					// recovery target. Runtime active-machine discovery can fail when
+					// both sides are stopped, which currently skips this health check.
+					activeMachine, err := bootstrapper.FindActiveMachine(ctx, logger)
+					if err != nil {
+						logger.Error("Failed to resolve active machine for bootstrap health check", "error", err)
+						return
+					}
+					err = checkAndBootstrap(ctx, cfgSnap, logger, activeMachine.Name)
 					if err != nil {
 						logger.Error("Auto-bootstrap check failed", "error", err)
 						return
@@ -351,7 +362,6 @@ func startNodeDriftDetectionAndRemediationLoop(
 	bootstrapInProgress *int32,
 	detectors []drift.Detector,
 	wg *sync.WaitGroup,
-	machineName string,
 ) {
 	go func() {
 		defer wg.Done()
@@ -371,7 +381,7 @@ func startNodeDriftDetectionAndRemediationLoop(
 				}
 				logger.Info("Managed cluster spec collection completed")
 
-				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors, machineName); err != nil {
+				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors); err != nil {
 					logger.Warn("Drift detection after spec collection failed", "error", err)
 				} else {
 					logger.Info("Drift detection after spec collection completed")
