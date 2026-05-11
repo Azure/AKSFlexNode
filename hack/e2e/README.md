@@ -29,7 +29,8 @@ make e2e
 ```
 
 This will build the agent binary, deploy infrastructure via Bicep, join all
-three nodes, run validations, collect logs, and tear everything down.
+three nodes, run validations including token-node Kubernetes version drift
+repave, collect logs, and tear everything down.
 
 ## Commands
 
@@ -38,7 +39,7 @@ omitted it defaults to `all`.
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, join, validate, cleanup (default) |
+| `all` | Full flow: build, infra, join, validate, drift repave, cleanup (default) |
 | `infra` | Deploy AKS cluster + 3 VMs via Bicep |
 | `join` | Join all nodes to the cluster |
 | `join-msi` | Join only the MSI-authenticated node |

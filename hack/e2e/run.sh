@@ -170,6 +170,11 @@ cmd_all() {
   # Validate nodes are gone
   validate_all_nodes_absent
 
+  # ── Drift remediation ─────────────────────────────────────────────────
+  upgrade_drift_token
+  node_unjoin_token
+  validate_node_absent "$(state_get token_vm_name)"
+
   # ── Rejoin ──────────────────────────────────────────────────────────
   node_join_all
 
