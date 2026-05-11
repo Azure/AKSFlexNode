@@ -145,7 +145,8 @@ EOF
   },
   "agent": {
     "logLevel": "debug",
-    "logDir": "/var/log/aks-flex-node"
+    "logDir": "/var/log/aks-flex-node",
+    "enableDriftDetectionAndRemediation": false
   },
   "kubernetes": { "version": "${E2E_KUBERNETES_VERSION}" },
   "containerd": { "version": "${E2E_CONTAINERD_VERSION}" },

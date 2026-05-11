@@ -20,7 +20,7 @@
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
-#   upgrade-drift Run token-node Kubernetes version drift repave test
+#   upgrade-drift Run MSI-node Kubernetes version drift repave test
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
 #   status        Show current state (deployment outputs)
@@ -171,9 +171,9 @@ cmd_all() {
   validate_all_nodes_absent
 
   # ── Drift remediation ─────────────────────────────────────────────────
-  upgrade_drift_token
-  node_unjoin_token
-  validate_node_absent "$(state_get token_vm_name)"
+  upgrade_drift_msi
+  node_unjoin_msi
+  validate_node_absent "$(state_get msi_vm_name)"
 
   # ── Rejoin ──────────────────────────────────────────────────────────
   node_join_all
@@ -272,7 +272,7 @@ main() {
       ;;
     upgrade-drift)
       ensure_binary
-      upgrade_drift_token
+      upgrade_drift_msi
       ;;
     logs)
       collect_logs

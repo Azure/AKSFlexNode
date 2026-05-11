@@ -116,9 +116,9 @@ Cordon/drain and uncordon failures do not mark kubelet unhealthy because they oc
 
 ## E2E Coverage
 
-The default E2E `all` flow includes token-node Kubernetes version drift coverage. The suite also exposes an explicit `upgrade-drift` command for running only the drift scenario after infra is deployed.
+The default E2E `all` flow includes MSI-node Kubernetes version drift coverage. The suite also exposes an explicit `upgrade-drift` command for running only the drift scenario after infra is deployed.
 
-The flow bootstraps the token node with an older Kubernetes minor version, waits for drift remediation to repave to `kube2`, validates kubelet major/minor matches the AKS desired version, verifies the Kubernetes node is Ready, and runs a smoke pod.
+The flow bootstraps the MSI node with an older Kubernetes minor version, waits for drift remediation to repave to `kube2`, validates kubelet major/minor matches the AKS desired version, verifies the Kubernetes node is Ready, and runs a smoke pod.
 
 Run it after infra is deployed:
 

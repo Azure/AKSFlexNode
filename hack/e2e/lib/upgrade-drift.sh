@@ -3,8 +3,8 @@
 # hack/e2e/lib/upgrade-drift.sh - Kubernetes version drift / repave E2E test
 #
 # Functions:
-#   upgrade_drift_token - Join the token node with an older kubelet version and
-#                         verify drift remediation repaves to the alternate side.
+#   upgrade_drift_msi - Join the MSI node with an older kubelet version and
+#                       verify drift remediation repaves to the alternate side.
 # =============================================================================
 set -euo pipefail
 
@@ -60,18 +60,18 @@ printf '%s|%s\n' "${state}" "${version}"
 REMOTE
 }
 
-_wait_for_token_repave() {
+_wait_for_msi_repave() {
   local desired_version="$1"
   local desired_major_minor
   desired_major_minor="$(_version_major_minor "${desired_version}")"
 
   local vm_ip vm_name timeout elapsed
-  vm_ip="$(state_get token_vm_ip)"
-  vm_name="$(state_get token_vm_name)"
+  vm_ip="$(state_get msi_vm_ip)"
+  vm_name="$(state_get msi_vm_name)"
   timeout="${E2E_DRIFT_UPGRADE_TIMEOUT:-900}"
   elapsed=0
 
-  log_info "Waiting for token node drift remediation to repave to kube2 (timeout: ${timeout}s)..."
+  log_info "Waiting for MSI node drift remediation to repave to kube2 (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
     local state_and_version state kubelet_version kubelet_major_minor ready
     state_and_version="$(_remote_kube2_state_and_version "${vm_ip}" || true)"
@@ -87,7 +87,7 @@ _wait_for_token_repave() {
 
     log_debug "repave poll: kube2_state=${state:-unknown} kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown}"
     if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" ]]; then
-      log_success "Drift remediation repaved token node to kube2 with kubelet ${kubelet_version}"
+      log_success "Drift remediation repaved MSI node to kube2 with kubelet ${kubelet_version}"
       return 0
     fi
 
@@ -95,7 +95,7 @@ _wait_for_token_repave() {
     elapsed=$((elapsed + 15))
   done
 
-  log_error "Timed out waiting for token node drift remediation"
+  log_error "Timed out waiting for MSI node drift remediation"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE' || true
 set +e
 echo "=== nspawn machines ==="
@@ -113,8 +113,8 @@ REMOTE
   return 1
 }
 
-upgrade_drift_token() {
-  log_section "Kubernetes Version Drift Upgrade (Token Node)"
+upgrade_drift_msi() {
+  log_section "Kubernetes Version Drift Upgrade (MSI Node)"
   local start desired_version initial_version original_version
   start="$(timer_start)"
 
@@ -123,17 +123,17 @@ upgrade_drift_token() {
   original_version="${E2E_KUBERNETES_VERSION}"
 
   log_info "AKS desired Kubernetes version: ${desired_version}"
-  log_info "Bootstrapping token node with older Kubernetes version: ${initial_version}"
+  log_info "Bootstrapping MSI node with older Kubernetes version: ${initial_version}"
 
   export E2E_KUBERNETES_VERSION="${initial_version}"
-  node_join_token
+  node_join_msi
   export E2E_KUBERNETES_VERSION="${original_version}"
 
-  local token_vm_name
-  token_vm_name="$(state_get token_vm_name)"
-  validate_node_joined "${token_vm_name}"
-  _wait_for_token_repave "${desired_version}"
-  smoke_test "${token_vm_name}" "token-drift"
+  local msi_vm_name
+  msi_vm_name="$(state_get msi_vm_name)"
+  validate_node_joined "${msi_vm_name}"
+  _wait_for_msi_repave "${desired_version}"
+  smoke_test "${msi_vm_name}" "msi-drift"
 
   log_success "Kubernetes version drift upgrade passed in $(timer_elapsed "${start}")s"
 }
