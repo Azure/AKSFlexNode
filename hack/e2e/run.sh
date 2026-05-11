@@ -170,17 +170,17 @@ cmd_all() {
   # Validate nodes are gone
   validate_all_nodes_absent
 
-  # ── Drift remediation ─────────────────────────────────────────────────
-  upgrade_drift_msi
-  node_unjoin_msi
-  validate_node_absent "$(state_get msi_vm_name)"
-
   # ── Rejoin ──────────────────────────────────────────────────────────
   node_join_all
 
   # Validate + smoke tests (second pass)
   validate_all_nodes
   smoke_test_all || exit_code=1
+
+  # ── Drift remediation ─────────────────────────────────────────────────
+  node_unjoin_msi
+  validate_node_absent "$(state_get msi_vm_name)"
+  upgrade_drift_msi
 
   # Collect logs (always, even if tests fail)
   collect_logs || true
