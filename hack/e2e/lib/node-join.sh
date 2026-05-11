@@ -109,19 +109,18 @@ sleep 10
 # Dump nspawn machine status for debugging
 echo "=== nspawn machines ==="
 machinectl list --no-pager 2>&1 || true
-echo "=== nspawn machine kube1 status ==="
-machinectl status kube1 --no-pager 2>&1 || echo "(kube1 not found)"
+for machine in kube1 kube2; do
+  echo "=== nspawn machine \$machine status ==="
+  machinectl status "\$machine" --no-pager 2>&1 || echo "(\$machine not found)"
 
-# Check kubelet inside nspawn container
-if machinectl show kube1 &>/dev/null 2>&1; then
-  echo "=== kubelet status inside kube1 ==="
-  sudo systemd-run --machine=kube1 --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
-  echo "=== kubelet journal inside kube1 (last 30 lines) ==="
-  sudo systemd-run --machine=kube1 --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
-else
-  echo "kube1 machine not running, checking host kubelet:"
-  systemctl status kubelet --no-pager -l 2>&1 || true
-fi
+  # Check kubelet inside each nspawn side when present.
+  if machinectl show "\$machine" &>/dev/null 2>&1; then
+    echo "=== kubelet status inside \$machine ==="
+    sudo systemd-run --machine="\$machine" --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
+    echo "=== kubelet journal inside \$machine (last 30 lines) ==="
+    sudo systemd-run --machine="\$machine" --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
+  fi
+done
 
 # Dump agent logs for debugging
 echo "=== agent logs (last 30 lines) ==="
