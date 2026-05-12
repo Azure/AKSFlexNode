@@ -141,3 +141,13 @@ E2E_DRIFT_UPGRADE_TIMEOUT=1200 ./hack/e2e/run.sh upgrade-drift
 - Active side discovery depends on runtime `machinectl` state. If both sides are stopped, current health checks cannot infer the intended recovery target from persisted goal state.
 
 The repave code contains TODOs to refine goal-state persistence and use it for active/desired machine discovery and recovery decisions.
+
+## Follow-Up Direction
+
+The current implementation is intentionally narrow and should be refined before broader use.
+
+First, the agent goal-state path needs to be unified across supported authentication modes. Today, only MSI/service-principal enabled agents can fetch the AKS managed cluster snapshot used as desired state. If bootstrap-token based agents remain supported, they need a fallback or side channel for receiving equivalent goal state without requiring direct AKS management-plane credentials.
+
+Second, remediation currently has a bootstrap race and performs node cordon/drain from inside the agent. The temporary wait before cordon mitigates the startup race where drift detection can run before the Kubernetes `Node` object exists, but this is only a workaround. More importantly, agent-owned cordon/drain is not ideal because users may have running workloads and should have explicit control over disruption timing.
+
+The proposed follow-up design is to move cordon/drain and node deletion out of the agent scope. Following the unbounded-agent model, an external operator should trigger repave after it has made the Kubernetes scheduling/disruption decision. For AKS Flex Node, that external operator could be AKS RP orchestration or an explicit user `kubectl` command/workflow.
