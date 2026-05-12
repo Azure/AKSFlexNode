@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -25,6 +26,11 @@ const (
 
 // maxManagedClusterSpecAge is a safety guard to avoid acting on very stale spec snapshots.
 const maxManagedClusterSpecAge = 2 * time.Hour
+
+const (
+	waitForNodeBeforeCordonTimeout  = 3 * time.Minute
+	waitForNodeBeforeCordonInterval = 10 * time.Second
+)
 
 // DetectAndRemediateFromFiles loads spec/status snapshots from disk, runs all detectors,
 // and (if needed) performs remediation.
@@ -194,6 +200,11 @@ func runKubernetesUpgradeRemediation(
 	// Step 1: Cordon and drain
 	hostname, _ := os.Hostname()
 	if hostname != "" {
+		// Workaround for a startup race where the drift loop can detect a kubelet
+		// version mismatch before kubelet has registered this host as a Kubernetes
+		// Node. Without this guard, cordon fails with NotFound; remediation later
+		// succeeds on the periodic retry. This will be reworked in a follow-up PR.
+		waitForNodeBeforeCordon(ctx, logger, nodeOps, hostname)
 		logger.Info("Cordoning and draining node", "node", hostname)
 		if err := cordonAndDrain(ctx, logger, nodeOps, cordonState); err != nil {
 			return &bootstrapper.ExecutionResult{
@@ -234,6 +245,35 @@ func runKubernetesUpgradeRemediation(
 		Success:  true,
 		Duration: time.Since(start),
 	}, nil
+}
+
+func waitForNodeBeforeCordon(ctx context.Context, logger *slog.Logger, nodeOps *kubeNodeMaintenance, nodeName string) {
+	deadline := time.NewTimer(waitForNodeBeforeCordonTimeout)
+	defer deadline.Stop()
+
+	ticker := time.NewTicker(waitForNodeBeforeCordonInterval)
+	defer ticker.Stop()
+
+	for {
+		_, err := nodeOps.IsCordoned(ctx, nodeName)
+		if err == nil {
+			return
+		}
+		if !apierrors.IsNotFound(err) {
+			logger.Debug("Node lookup before cordon failed; proceeding with cordon", "node", nodeName, "error", err)
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			logger.Warn("Context canceled while waiting for node before cordon; proceeding with cordon", "node", nodeName, "error", ctx.Err())
+			return
+		case <-deadline.C:
+			logger.Warn("Node did not appear before cordon timeout; proceeding with cordon", "node", nodeName, "timeout", waitForNodeBeforeCordonTimeout)
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func cordonAndDrain(ctx context.Context, logger *slog.Logger, nodeOps *kubeNodeMaintenance, state *cordonDrainState) error {
