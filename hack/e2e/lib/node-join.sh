@@ -110,15 +110,15 @@ sleep 10
 echo "=== nspawn machines ==="
 machinectl list --no-pager 2>&1 || true
 for machine in kube1 kube2; do
-  echo "=== nspawn machine \$machine status ==="
-  machinectl status "\$machine" --no-pager 2>&1 || echo "(\$machine not found)"
+  echo "=== nspawn machine $machine status ==="
+  machinectl status "$machine" --no-pager 2>&1 || echo "($machine not found)"
 
   # Check kubelet inside each nspawn side when present.
-  if machinectl show "\$machine" &>/dev/null 2>&1; then
-    echo "=== kubelet status inside \$machine ==="
-    sudo systemd-run --machine="\$machine" --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
-    echo "=== kubelet journal inside \$machine (last 30 lines) ==="
-    sudo systemd-run --machine="\$machine" --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
+  if machinectl show "$machine" &>/dev/null 2>&1; then
+    echo "=== kubelet status inside $machine ==="
+    sudo systemd-run --machine="$machine" --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
+    echo "=== kubelet journal inside $machine (last 30 lines) ==="
+    sudo systemd-run --machine="$machine" --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
   fi
 done
 
