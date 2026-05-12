@@ -14,38 +14,32 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/kube"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/AKSFlexNode/pkg/status"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/phases"
-	"github.com/Azure/unbounded/pkg/agent/phases/host"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
-	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
 	driftKubernetesUpgradeOperation = "drift-kubernetes-upgrade"
 	upgradeStepCordonAndDrain       = "cordon-and-drain"
-	upgradeStepStopKubelet          = "stop-kubelet"
-	upgradeStepDownloadKubeBinaries = "download-kube-binaries"
-	upgradeStepStartKubelet         = "start-kubelet"
+	upgradeStepNodeRepave           = "node-repave"
 	upgradeStepUncordon             = "uncordon"
 )
 
 // maxManagedClusterSpecAge is a safety guard to avoid acting on very stale spec snapshots.
 const maxManagedClusterSpecAge = 2 * time.Hour
 
+const (
+	waitForNodeBeforeCordonTimeout  = 3 * time.Minute
+	waitForNodeBeforeCordonInterval = 10 * time.Second
+)
+
 // DetectAndRemediateFromFiles loads spec/status snapshots from disk, runs all detectors,
 // and (if needed) performs remediation.
-//
-// TODO: implement blue-green in-place upgrade. For now we hard-code a single
-// machine slot (kube1).
 func DetectAndRemediateFromFiles(
 	ctx context.Context,
 	cfg *config.Config,
 	logger *slog.Logger,
 	bootstrapInProgress *int32,
 	detectors []Detector,
-	machineName string,
 ) error {
 	specSnap, err := spec.LoadManagedClusterSpec()
 	if err != nil {
@@ -57,7 +51,7 @@ func DetectAndRemediateFromFiles(
 		return err
 	}
 
-	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus, machineName)
+	return detectAndRemediate(ctx, cfg, logger, bootstrapInProgress, detectors, specSnap, nodeStatus)
 }
 
 func detectAndRemediate(
@@ -68,7 +62,6 @@ func detectAndRemediate(
 	detectors []Detector,
 	specSnap *spec.ManagedClusterSpec,
 	statusSnap *status.NodeStatus,
-	machineName string,
 ) error {
 	if specSnap == nil || statusSnap == nil {
 		return nil
@@ -116,7 +109,7 @@ func detectAndRemediate(
 
 	switch plan.Action {
 	case RemediationActionKubernetesUpgrade:
-		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger, machineName)
+		result, upgradeErr := runKubernetesUpgradeRemediation(ctx, cfg, logger)
 		if upgradeErr != nil {
 			if shouldMarkKubeletUnhealthyAfterUpgradeFailure(result, upgradeErr) {
 				status.MarkKubeletUnhealthyBestEffort(logger)
@@ -198,14 +191,7 @@ func runKubernetesUpgradeRemediation(
 	ctx context.Context,
 	cfg *config.Config,
 	logger *slog.Logger,
-	machineName string,
 ) (*bootstrapper.ExecutionResult, error) {
-	agentCfg := config.ToAgentConfig(cfg, machineName)
-	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName, nil)
-	if err != nil {
-		return nil, fmt.Errorf("resolve goal state for upgrade: %w", err)
-	}
-
 	nodeOps := newKubeNodeMaintenance(cfg, logger)
 	cordonState := &cordonDrainState{}
 
@@ -214,6 +200,11 @@ func runKubernetesUpgradeRemediation(
 	// Step 1: Cordon and drain
 	hostname, _ := os.Hostname()
 	if hostname != "" {
+		// Workaround for a startup race where the drift loop can detect a kubelet
+		// version mismatch before kubelet has registered this host as a Kubernetes
+		// Node. Without this guard, cordon fails with NotFound; remediation later
+		// succeeds on the periodic retry. This will be reworked in a follow-up PR.
+		waitForNodeBeforeCordon(ctx, logger, nodeOps, hostname)
 		logger.Info("Cordoning and draining node", "node", hostname)
 		if err := cordonAndDrain(ctx, logger, nodeOps, cordonState); err != nil {
 			return &bootstrapper.ExecutionResult{
@@ -225,45 +216,17 @@ func runKubernetesUpgradeRemediation(
 		}
 	}
 
-	// Step 2: Stop the nspawn machine
-	if err := nodestop.StopNode(logger, machineName).Do(ctx); err != nil {
+	if err := bootstrapper.Repave(ctx, cfg, logger); err != nil {
 		result := &bootstrapper.ExecutionResult{
 			Success:     false,
 			Duration:    time.Since(start),
-			StepResults: []bootstrapper.StepResult{{StepName: "stop-kubelet", Success: false, Error: err.Error()}},
+			StepResults: []bootstrapper.StepResult{{StepName: upgradeStepNodeRepave, Success: false, Error: err.Error()}},
 			Error:       err.Error(),
 		}
 		return result, err
 	}
 
-	// Step 3: Re-provision rootfs with new binaries
-	provisionTask := phases.Serial(logger,
-		host.InstallPackages(logger),
-		host.HardenAPT(logger),
-		rootfs.Provision(logger, gs.RootFS),
-	)
-	if err := provisionTask.Do(ctx); err != nil {
-		result := &bootstrapper.ExecutionResult{
-			Success:     false,
-			Duration:    time.Since(start),
-			StepResults: []bootstrapper.StepResult{{StepName: "download-kube-binaries", Success: false, Error: err.Error()}},
-			Error:       err.Error(),
-		}
-		return result, err
-	}
-
-	// Step 4: Start the nspawn machine with new config
-	if err := nodestart.StartNode(logger, gs.NodeStart).Do(ctx); err != nil {
-		result := &bootstrapper.ExecutionResult{
-			Success:     false,
-			Duration:    time.Since(start),
-			StepResults: []bootstrapper.StepResult{{StepName: "start-kubelet", Success: false, Error: err.Error()}},
-			Error:       err.Error(),
-		}
-		return result, err
-	}
-
-	// Step 5: Uncordon
+	// Step 2: Uncordon
 	if hostname != "" && cordonState.shouldUncordon(hostname) {
 		if err := nodeOps.Uncordon(ctx, hostname); err != nil {
 			logger.Warn("Failed to uncordon node", "node", hostname, "error", err)
@@ -282,6 +245,35 @@ func runKubernetesUpgradeRemediation(
 		Success:  true,
 		Duration: time.Since(start),
 	}, nil
+}
+
+func waitForNodeBeforeCordon(ctx context.Context, logger *slog.Logger, nodeOps *kubeNodeMaintenance, nodeName string) {
+	deadline := time.NewTimer(waitForNodeBeforeCordonTimeout)
+	defer deadline.Stop()
+
+	ticker := time.NewTicker(waitForNodeBeforeCordonInterval)
+	defer ticker.Stop()
+
+	for {
+		_, err := nodeOps.IsCordoned(ctx, nodeName)
+		if err == nil {
+			return
+		}
+		if !apierrors.IsNotFound(err) {
+			logger.Debug("Node lookup before cordon failed; proceeding with cordon", "node", nodeName, "error", err)
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			logger.Warn("Context canceled while waiting for node before cordon; proceeding with cordon", "node", nodeName, "error", ctx.Err())
+			return
+		case <-deadline.C:
+			logger.Warn("Node did not appear before cordon timeout; proceeding with cordon", "node", nodeName, "timeout", waitForNodeBeforeCordonTimeout)
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func cordonAndDrain(ctx context.Context, logger *slog.Logger, nodeOps *kubeNodeMaintenance, state *cordonDrainState) error {
@@ -321,7 +313,7 @@ func shouldMarkKubeletUnhealthyAfterUpgradeFailure(result *bootstrapper.Executio
 	switch failedStepName(result) {
 	case upgradeStepCordonAndDrain, upgradeStepUncordon:
 		return false
-	case upgradeStepStopKubelet, upgradeStepDownloadKubeBinaries, upgradeStepStartKubelet:
+	case upgradeStepNodeRepave:
 		return true
 	default:
 		return false

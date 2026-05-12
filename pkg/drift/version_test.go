@@ -2,48 +2,23 @@ package drift
 
 import "testing"
 
-func TestMajorMinor(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		version string
-		want    string
-	}{
-		{name: "trim-v", version: "v1.30.2", want: "1.30"},
-		{name: "already-major-minor", version: "1.30", want: "1.30"},
-		{name: "only-major", version: "1", want: "1"},
-		{name: "spaces", version: "  v1.31.7  ", want: "1.31"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := majorMinor(tt.version); got != tt.want {
-				t.Fatalf("majorMinor(%q)=%q, want %q", tt.version, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseMajorMinor(t *testing.T) {
 	t.Parallel()
 
-	maj, min, ok := parseMajorMinor("v1.31.7")
-	if !ok || maj != 1 || min != 31 {
-		t.Fatalf("parseMajorMinor(v1.31.7)=(%d,%d,%v), want (1,31,true)", maj, min, ok)
+	v, ok := parseMajorMinor("v1.31.7")
+	if !ok || v.Major != 1 || v.Minor != 31 || v.Patch != 0 {
+		t.Fatalf("parseMajorMinor(v1.31.7)=(%s,%v), want (1.31.0,true)", v, ok)
 	}
 
-	_, _, ok = parseMajorMinor("1")
+	_, ok = parseMajorMinor("1")
 	if ok {
 		t.Fatalf("parseMajorMinor(1) ok=true, want false")
 	}
-	_, _, ok = parseMajorMinor("foo.1")
+	_, ok = parseMajorMinor("foo.1")
 	if ok {
 		t.Fatalf("parseMajorMinor(foo.1) ok=true, want false")
 	}
-	_, _, ok = parseMajorMinor("1.bar")
+	_, ok = parseMajorMinor("1.bar")
 	if ok {
 		t.Fatalf("parseMajorMinor(1.bar) ok=true, want false")
 	}
@@ -52,11 +27,10 @@ func TestParseMajorMinor(t *testing.T) {
 func TestParseMajorMinor_Overflow(t *testing.T) {
 	t.Parallel()
 
-	// Larger than max int on both 32-bit and 64-bit platforms.
-	// semver parsing stores major/minor as uint64; we must not blindly cast.
-	_, _, ok := parseMajorMinor("9223372036854775808.1.0")
-	if ok {
-		t.Fatalf("parseMajorMinor(overflow) ok=true, want false")
+	// semver parsing stores major/minor as uint64; no lossy int conversion is needed.
+	v, ok := parseMajorMinor("9223372036854775808.1.0")
+	if !ok || v.Major != 9223372036854775808 || v.Minor != 1 || v.Patch != 0 {
+		t.Fatalf("parseMajorMinor(large)=(%s,%v), want (9223372036854775808.1.0,true)", v, ok)
 	}
 }
 
