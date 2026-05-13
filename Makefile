@@ -12,6 +12,11 @@ build:
 	@echo "Building for current platform..."
 	@go build -ldflags "$(LDFLAGS)" -o aks-flex-node .
 
+.PHONY: build-e2ehelper
+build-e2ehelper:
+	@echo "Building E2E helper for current platform..."
+	@go build -o e2ehelper ./cmd/e2ehelper
+
 # Cross-platform builds for supported architectures
 .PHONY: build-linux-amd64
 build-linux-amd64:
@@ -146,6 +151,7 @@ help:
 	@echo ""
 	@echo "Build Targets:"
 	@echo "  build              Build for current platform"
+	@echo "  build-e2ehelper    Build E2E helper for current platform"
 	@echo "  build-linux-amd64  Build for Linux AMD64"
 	@echo "  build-linux-arm64  Build for Linux ARM64"
 	@echo "  build-all          Build for all supported platforms"
