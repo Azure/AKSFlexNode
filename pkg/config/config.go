@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 )
 
 const (
@@ -15,10 +16,11 @@ const (
 	ConfigDir = "/etc/aks-flex-node"
 
 	// Default configuration values
-	defaultConfigPath = ConfigDir + "/config.json"
-	defaultLogDir     = "/var/log/aks-flex-node"
-	defaultLogLevel   = "info"
-	defaultAzureCloud = "AzurePublicCloud"
+	defaultConfigPath               = ConfigDir + "/config.json"
+	defaultLogDir                   = "/var/log/aks-flex-node"
+	defaultLogLevel                 = "info"
+	defaultAzureCloud               = "AzurePublicCloud"
+	defaultMachineReconcileInterval = 10 * time.Minute
 )
 
 // Singleton instance for configuration
@@ -101,6 +103,9 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.LogDir == "" {
 		c.Agent.LogDir = defaultLogDir
+	}
+	if c.Agent.MachineReconcileInterval == 0 {
+		c.Agent.MachineReconcileInterval = defaultMachineReconcileInterval
 	}
 	if c.Agent.EnableDriftDetectionAndRemediation == nil {
 		enabled := true
@@ -274,6 +279,9 @@ func (c *Config) Validate() error {
 	// Validate log level
 	if !validLogLevels[c.Agent.LogLevel] {
 		return fmt.Errorf("invalid agent.logLevel: %s. Valid values are: debug, info, warning, error", c.Agent.LogLevel)
+	}
+	if c.Agent.MachineReconcileInterval < 0 {
+		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
 	}
 
 	// Validate authentication configuration - ensure mutual exclusivity

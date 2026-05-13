@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 // Config represents the complete agent configuration structure.
 // It contains Azure-specific settings and agent operational settings.
@@ -76,6 +79,10 @@ type ArcConfig struct {
 type AgentConfig struct {
 	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
 	LogDir   string `json:"logDir"`   // Directory for log files
+
+	// MachineReconcileInterval controls how often the daemon re-reads the AKS
+	// machine resource when no Kubernetes Node event wakes the controller.
+	MachineReconcileInterval time.Duration `json:"machineReconcileInterval,omitempty"`
 
 	// EnableDriftDetectionAndRemediation controls whether the agent performs drift detection
 	// and automated remediation (e.g., Kubernetes version drift upgrades).
