@@ -151,6 +151,7 @@ _wait_for_mode_repave() {
     log_debug "${mode} repave poll: kube2_state=${state:-unknown} kube2_kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown} node_kubelet=${node_kubelet_version:-unknown}"
     if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" && "${node_kubelet_major_minor}" == "${desired_major_minor}" ]]; then
       log_success "Repaved ${mode} node to kube2 with kubelet ${kubelet_version}; node reports kubelet ${node_kubelet_version}"
+      kubectl get nodes -o wide || true
       return 0
     fi
 
@@ -172,7 +173,7 @@ done
 echo "=== aks-flex-node-agent logs ==="
 sudo journalctl -u aks-flex-node-agent.service -n 100 --no-pager || true
 REMOTE
-  kubectl get node "${vm_name}" -o wide || true
+  kubectl get nodes -o wide || true
   return 1
 }
 
