@@ -54,7 +54,7 @@ func (o *NSpawnNodeOperator) FindActiveMachine(_ context.Context, _ *slog.Logger
 	if state == nil {
 		return nil, fmt.Errorf("daemon state is missing active machine")
 	}
-	if state.ActiveMachine != goalstates.NSpawnMachineKube1 && state.ActiveMachine != goalstates.NSpawnMachineKube2 {
+	if !validActiveMachine(state.ActiveMachine) {
 		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
 	}
 	return &ActiveMachine{Name: state.ActiveMachine, State: state}, nil

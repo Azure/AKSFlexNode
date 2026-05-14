@@ -84,6 +84,10 @@ type AgentConfig struct {
 	// machine resource when no Kubernetes Node event wakes the controller.
 	MachineReconcileInterval time.Duration `json:"machineReconcileInterval,omitempty"`
 
+	// E2EMode uses the local file-backed AKS machine client. This is only for
+	// end-to-end tests until the production AKS RP machine client is available.
+	E2EMode bool `json:"e2eMode,omitempty"`
+
 	// EnableDriftDetectionAndRemediation controls whether the agent performs drift detection
 	// and automated remediation (e.g., Kubernetes version drift upgrades).
 	//

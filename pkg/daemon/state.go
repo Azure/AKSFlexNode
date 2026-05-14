@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 const (
@@ -29,6 +30,49 @@ type State struct {
 	PreviousSettingsVersion   string `json:"previousSettingsVersion,omitempty"`
 	PreviousKubernetesVersion string `json:"previousKubernetesVersion,omitempty"`
 	ActiveMachine             string `json:"activeMachine,omitempty"`
+}
+
+type seedStateTask struct {
+	machines      aksmachine.MachineClient
+	activeMachine string
+}
+
+func NewSeedStateTask(machines aksmachine.MachineClient, activeMachine string) *seedStateTask {
+	return &seedStateTask{machines: machines, activeMachine: activeMachine}
+}
+
+func (t *seedStateTask) Name() string { return "seed-daemon-state" }
+
+// Do records the bootstrap-applied goal so the daemon can reconcile from
+// persisted state instead of live machinectl discovery after systemd starts it.
+func (t *seedStateTask) Do(ctx context.Context) error {
+	if t.machines == nil {
+		return fmt.Errorf("machine client is nil")
+	}
+	if !validActiveMachine(t.activeMachine) {
+		return fmt.Errorf("active machine %q is invalid", t.activeMachine)
+	}
+	machine, err := t.machines.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get AKS machine for daemon state seed: %w", err)
+	}
+	store, err := newFileStateStore("")
+	if err != nil {
+		return err
+	}
+	return store.Save(ctx, SeededState(machine.Goal, t.activeMachine))
+}
+
+func SeededState(goal aksmachine.GoalState, activeMachine string) *State {
+	return &State{
+		AppliedSettingsVersion:   goal.SettingsVersion,
+		AppliedKubernetesVersion: goal.KubernetesVersion,
+		ActiveMachine:            activeMachine,
+	}
+}
+
+func validActiveMachine(machine string) bool {
+	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
 }
 
 func (s State) AppliedGoal() aksmachine.GoalState {

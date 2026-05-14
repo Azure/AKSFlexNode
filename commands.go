@@ -4,20 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
-	"github.com/Azure/AKSFlexNode/pkg/drift"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/spec"
-	"github.com/Azure/AKSFlexNode/pkg/status"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -38,6 +34,9 @@ func NewAgentCommand() *cobra.Command {
 			cfg, logger, err := initConfigAndLogger(configPath)
 			if err != nil {
 				return err
+			}
+			if cfg.Agent.E2EMode {
+				return runAgentDaemonE2E(cmd.Context(), cfg, logger)
 			}
 			return runAgentDaemon(cmd.Context(), cfg, logger)
 		},
@@ -128,7 +127,11 @@ func runBootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger, 
 
 	machineName := goalstates.NSpawnMachineKube1
 
-	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName)
+	machines, err := newMachineClient(cfg, logger)
+	if err != nil {
+		return err
+	}
+	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName, machines)
 	result, err := bootstrapExecutor.Bootstrap(ctx)
 	if err != nil {
 		return err
@@ -137,14 +140,21 @@ func runBootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger, 
 	if err := handleExecutionResult(result, "bootstrap", logger); err != nil {
 		return err
 	}
-
-	logger.Info("Bootstrap completed successfully, starting agent systemd service...")
-	if err := daemon.EnableAndStartService(ctx, logger); err != nil {
-		return err
-	}
-
 	printBootstrapNextSteps()
 	return nil
+}
+
+func newMachineClient(cfg *config.Config, logger *slog.Logger) (aksmachine.MachineClient, error) {
+	if cfg.Agent.E2EMode {
+		logger.Info("using local e2e AKS machine client", "machineFile", local.E2EMachineFilePath)
+		machines, err := local.NewClient(local.E2EMachineFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("create local AKS machine client: %w", err)
+		}
+		return machines, nil
+	}
+	logger.Info("TODO: using no-op AKS machine client until AKS RP implementation is available")
+	return aksmachine.NewNoopClient(cfg), nil
 }
 
 func printBootstrapNextSteps() {
@@ -162,7 +172,22 @@ func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		return err
 	}
 
-	return runDaemonLoop(ctx, cfg, logger)
+	logger.Info("TODO: production agent daemon requires AKS RP machine client implementation")
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func runAgentDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+	if err := spec.EnsureRuntimeDir(); err != nil {
+		return err
+	}
+
+	logger.Info("running agent daemon in e2e mode", "machineFile", local.E2EMachineFilePath)
+	machines, err := local.NewClient(local.E2EMachineFilePath)
+	if err != nil {
+		return fmt.Errorf("create local AKS machine client: %w", err)
+	}
+	return daemon.Run(ctx, cfg, logger, machines)
 }
 
 func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
@@ -172,285 +197,13 @@ func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger
 
 	machineName := goalstates.NSpawnMachineKube1
 
-	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName)
+	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName, nil)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)
 	if err != nil {
 		return err
 	}
 
 	return handleExecutionResult(result, "unbootstrap", logger)
-}
-
-func runDaemonLoop(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	statusFilePath := spec.StatusFilePath
-
-	if _, err := os.Stat(statusFilePath); err == nil {
-		logger.Info("Removing stale status file from previous daemon session...")
-		status.RemoveStatusFileBestEffortAtPath(logger, statusFilePath)
-	}
-
-	removed, err := spec.RemoveManagedClusterSpecSnapshot()
-	if err != nil {
-		logger.Warn("Failed to remove stale managed cluster spec snapshot", "error", err)
-	} else if removed {
-		logger.Info("Removed stale managed cluster spec snapshot successfully")
-	}
-
-	logger.Info("Starting periodic status collection daemon", "statusInterval", "1m", "bootstrapCheckInterval", "2m", "specCollectionInterval", "10m")
-
-	var cfgMu sync.RWMutex
-	var bootstrapInProgress int32
-
-	if activeMachine, err := bootstrapper.FindActiveMachine(ctx, logger); err != nil {
-		logger.Error("Failed to resolve active machine for initial status collection", "error", err)
-	} else if err := collectAndWriteStatus(ctx, cfg, logger, statusFilePath, activeMachine.Name); err != nil {
-		logger.Error("Failed to collect initial status", "error", err)
-	}
-
-	driftEnabled := cfg != nil && cfg.IsDriftDetectionAndRemediationEnabled()
-	if !driftEnabled {
-		logger.Info("Drift detection and remediation is disabled by config")
-	}
-
-	var detectors []drift.Detector
-	if driftEnabled {
-		detectors = drift.DefaultDetectors()
-		if err := collectAndWriteManagedClusterSpec(ctx, cfg, logger); err != nil {
-			logger.Warn("Failed to collect initial managed cluster spec", "error", err)
-		} else {
-			cfgSnap := snapshotConfig(cfg, &cfgMu)
-			if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, &bootstrapInProgress, detectors); err != nil {
-				logger.Warn("Initial drift detection after spec collection failed", "error", err)
-			} else {
-				logger.Info("Initial drift detection after spec collection completed successfully")
-			}
-		}
-	}
-
-	var wg sync.WaitGroup
-	startDaemonLoops(ctx, cfg, statusFilePath, logger, &cfgMu, &bootstrapInProgress, detectors, driftEnabled, &wg)
-
-	<-ctx.Done()
-	logger.Info("Daemon shutting down due to context cancellation")
-	wg.Wait()
-	return ctx.Err()
-}
-
-func startDaemonLoops(
-	ctx context.Context,
-	cfg *config.Config,
-	statusFilePath string,
-	logger *slog.Logger,
-	cfgMu *sync.RWMutex,
-	bootstrapInProgress *int32,
-	detectors []drift.Detector,
-	driftEnabled bool,
-	wg *sync.WaitGroup,
-) {
-	if wg == nil {
-		return
-	}
-	if driftEnabled {
-		wg.Add(3)
-	} else {
-		wg.Add(2)
-	}
-	startStatusCollectionLoop(ctx, cfg, statusFilePath, logger, cfgMu, wg)
-	startBootstrapHealthCheckLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, wg)
-	if driftEnabled {
-		startNodeDriftDetectionAndRemediationLoop(ctx, cfg, logger, cfgMu, bootstrapInProgress, detectors, wg)
-	}
-}
-
-func snapshotConfig(cfg *config.Config, cfgMu *sync.RWMutex) *config.Config {
-	if cfg == nil {
-		return nil
-	}
-	if cfgMu != nil {
-		cfgMu.RLock()
-		defer cfgMu.RUnlock()
-	}
-	return cfg.DeepCopy()
-}
-
-func startStatusCollectionLoop(
-	ctx context.Context,
-	cfg *config.Config,
-	statusFilePath string,
-	logger *slog.Logger,
-	cfgMu *sync.RWMutex,
-	wg *sync.WaitGroup,
-) {
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				logger.Info("Starting periodic status collection")
-				cfgSnap := snapshotConfig(cfg, cfgMu)
-				activeMachine, err := bootstrapper.FindActiveMachine(ctx, logger)
-				if err != nil {
-					logger.Error("Failed to resolve active machine for status collection", "error", err)
-					continue
-				}
-				err = collectAndWriteStatus(ctx, cfgSnap, logger, statusFilePath, activeMachine.Name)
-				if err != nil {
-					logger.Error("Failed to collect status", "error", err)
-					continue
-				}
-				logger.Info("Status collection completed successfully")
-			}
-		}
-	}()
-}
-
-func startBootstrapHealthCheckLoop(
-	ctx context.Context,
-	cfg *config.Config,
-	logger *slog.Logger,
-	cfgMu *sync.RWMutex,
-	bootstrapInProgress *int32,
-	wg *sync.WaitGroup,
-) {
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(2 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				logger.Info("Starting bootstrap health check")
-
-				if !atomic.CompareAndSwapInt32(bootstrapInProgress, 0, 1) {
-					logger.Warn("Bootstrap already in progress, skipping this interval")
-					continue
-				}
-				func() {
-					defer atomic.StoreInt32(bootstrapInProgress, 0)
-					cfgSnap := snapshotConfig(cfg, cfgMu)
-					// TODO: refine goal-state persistence and use it to select the
-					// recovery target. Runtime active-machine discovery can fail when
-					// both sides are stopped, which currently skips this health check.
-					activeMachine, err := bootstrapper.FindActiveMachine(ctx, logger)
-					if err != nil {
-						logger.Error("Failed to resolve active machine for bootstrap health check", "error", err)
-						return
-					}
-					err = checkAndBootstrap(ctx, cfgSnap, logger, activeMachine.Name)
-					if err != nil {
-						logger.Error("Auto-bootstrap check failed", "error", err)
-						return
-					}
-					logger.Info("Bootstrap health check completed")
-				}()
-			}
-		}
-	}()
-}
-
-func startNodeDriftDetectionAndRemediationLoop(
-	ctx context.Context,
-	cfg *config.Config,
-	logger *slog.Logger,
-	cfgMu *sync.RWMutex,
-	bootstrapInProgress *int32,
-	detectors []drift.Detector,
-	wg *sync.WaitGroup,
-) {
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(10 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				logger.Info("Starting periodic managed cluster spec collection")
-				cfgSnap := snapshotConfig(cfg, cfgMu)
-				err := collectAndWriteManagedClusterSpec(ctx, cfgSnap, logger)
-				if err != nil {
-					logger.Warn("Failed to collect managed cluster spec", "error", err)
-					continue
-				}
-				logger.Info("Managed cluster spec collection completed")
-
-				if err := drift.DetectAndRemediateFromFiles(ctx, cfgSnap, logger, bootstrapInProgress, detectors); err != nil {
-					logger.Warn("Drift detection after spec collection failed", "error", err)
-				} else {
-					logger.Info("Drift detection after spec collection completed")
-				}
-			}
-		}
-	}()
-}
-
-func collectAndWriteManagedClusterSpec(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	collector := spec.NewManagedClusterSpecCollector(cfg, logger)
-	_, err := collector.Collect(ctx)
-	return err
-}
-
-func checkAndBootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger, machineName string) error {
-	collector := status.NewCollector(cfg, logger, Version, machineName)
-
-	needsBootstrap := collector.NeedsBootstrap(ctx)
-	if !needsBootstrap {
-		return nil
-	}
-
-	logger.Info("Node requires re-bootstrapping, initiating auto-bootstrap...")
-
-	if cfg != nil && cfg.IsDriftDetectionAndRemediationEnabled() {
-		if err := collectAndWriteManagedClusterSpec(ctx, cfg, logger); err != nil {
-			logger.Warn("Failed to refresh managed cluster spec before auto-bootstrap", "error", err)
-		}
-
-		if changed, oldV, newV, err := spec.OverrideKubernetesVersionFromManagedClusterSpec(cfg); err == nil && changed {
-			logger.Info("Overriding Kubernetes version from managed cluster spec", "old", oldV, "new", newV)
-		}
-	}
-
-	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName)
-	result, err := bootstrapExecutor.Bootstrap(ctx)
-	if err != nil {
-		status.RemoveStatusFileBestEffort(logger)
-		return fmt.Errorf("auto-bootstrap failed: %w", err)
-	}
-
-	if err := handleExecutionResult(result, "auto-bootstrap", logger); err != nil {
-		status.RemoveStatusFileBestEffort(logger)
-		return fmt.Errorf("auto-bootstrap execution failed: %w", err)
-	}
-
-	logger.Info("Auto-bootstrap completed successfully")
-	return nil
-}
-
-func collectAndWriteStatus(ctx context.Context, cfg *config.Config, logger *slog.Logger, statusFilePath string, machineName string) error {
-	collector := status.NewCollector(cfg, logger, Version, machineName)
-
-	nodeStatus, err := collector.CollectStatus(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to collect node status: %w", err)
-	}
-	if nodeStatus != nil {
-		nodeStatus.LastUpdatedBy = status.LastUpdatedByStatusCollectionLoop
-		nodeStatus.LastUpdatedReason = status.LastUpdatedReasonPeriodicStatusLoop
-	}
-
-	err = status.WriteStatusToFile(statusFilePath, nodeStatus)
-	if err != nil {
-		return fmt.Errorf("failed to write status to file: %w", err)
-	}
-	logger.Debug("Status written", "path", statusFilePath)
-	return nil
 }
 
 func handleExecutionResult(result *bootstrapper.ExecutionResult, operation string, logger *slog.Logger) error {

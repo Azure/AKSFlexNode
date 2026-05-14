@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 )
 
 func TestFileStateStoreSaveLoad(t *testing.T) {
@@ -111,5 +113,37 @@ func TestFileStateStoreDelete(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".sha256"); !os.IsNotExist(err) {
 		t.Fatalf("checksum file exists after Delete: %v", err)
+	}
+}
+
+func TestSeededState(t *testing.T) {
+	t.Parallel()
+
+	state := SeededState(aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}, "kube1")
+	if state.AppliedSettingsVersion != "42" {
+		t.Fatalf("AppliedSettingsVersion = %q, want 42", state.AppliedSettingsVersion)
+	}
+	if state.AppliedKubernetesVersion != "1.34.0" {
+		t.Fatalf("AppliedKubernetesVersion = %q, want 1.34.0", state.AppliedKubernetesVersion)
+	}
+	if state.ActiveMachine != "kube1" {
+		t.Fatalf("ActiveMachine = %q, want kube1", state.ActiveMachine)
+	}
+	if state.PreviousSettingsVersion != "" || state.PreviousKubernetesVersion != "" {
+		t.Fatalf("previous state = %#v, want empty", state)
+	}
+}
+
+func TestSeedStateTaskValidation(t *testing.T) {
+	t.Parallel()
+
+	if err := NewSeedStateTask(nil, "kube1").Do(t.Context()); err == nil {
+		t.Fatalf("seedStateTask nil client error = nil")
+	}
+	if err := NewSeedStateTask(&fakeMachineClient{}, "kube3").Do(t.Context()); err == nil {
+		t.Fatalf("seedStateTask invalid active machine error = nil")
+	}
+	if task := NewSeedStateTask(&fakeMachineClient{}, "kube1"); task.Name() != "seed-daemon-state" {
+		t.Fatalf("Name = %q, want seed-daemon-state", task.Name())
 	}
 }

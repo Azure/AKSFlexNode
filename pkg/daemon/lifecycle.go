@@ -49,16 +49,25 @@ func InstallService(ctx context.Context, log *slog.Logger, azureConfigSourceDir 
 	return nil
 }
 
-// EnableAndStartService enables and starts the installed systemd unit.
-func EnableAndStartService(ctx context.Context, log *slog.Logger) error {
-	if err := utilexec.RunCmd(ctx, log, utilexec.Systemctl(), "enable", ServiceUnitName); err != nil {
+type enableAndStartServiceTask struct {
+	log *slog.Logger
+}
+
+func EnableAndStartServiceTask(log *slog.Logger) *enableAndStartServiceTask {
+	return &enableAndStartServiceTask{log: log}
+}
+
+func (t *enableAndStartServiceTask) Name() string { return "enable-and-start-service" }
+
+func (t *enableAndStartServiceTask) Do(ctx context.Context) error {
+	if err := utilexec.RunCmd(ctx, t.log, utilexec.Systemctl(), "enable", ServiceUnitName); err != nil {
 		return fmt.Errorf("systemctl enable %s: %w", ServiceUnitName, err)
 	}
-	if err := utilexec.RunCmd(ctx, log, utilexec.Systemctl(), "start", ServiceUnitName); err != nil {
+	if err := utilexec.RunCmd(ctx, t.log, utilexec.Systemctl(), "start", ServiceUnitName); err != nil {
 		return fmt.Errorf("systemctl start %s: %w", ServiceUnitName, err)
 	}
 
-	log.Info("systemd service started", "unit", ServiceUnitName)
+	t.log.Info("systemd service started", "unit", ServiceUnitName)
 	return nil
 }
 
