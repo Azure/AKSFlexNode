@@ -39,7 +39,7 @@ This keeps scheduling and disruption decisions outside the agent. AKS RP, an ope
 
 ## Repave Flow
 
-`bootstrapper.Repave` performs the nspawn side replacement:
+`daemon.NSpawnNodeOperator.ApplyGoalState` performs the nspawn side replacement:
 
 1. Detect the single running side with `machinectl show <machine> --property=State --value`.
 2. Select the alternate side with `goalstates.AlternateMachine`.
