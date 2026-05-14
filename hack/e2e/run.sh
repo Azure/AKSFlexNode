@@ -177,10 +177,8 @@ cmd_all() {
   validate_all_nodes
   smoke_test_all || exit_code=1
 
-  # ── Drift remediation ─────────────────────────────────────────────────
-  node_unjoin_msi
-  validate_node_absent "$(state_get msi_vm_name)"
-  upgrade_drift_msi
+  # ── Local machine repave ────────────────────────────────────────────────
+  upgrade_drift_all
 
   # Collect logs (always, even if tests fail)
   collect_logs || true
@@ -272,7 +270,7 @@ main() {
       ;;
     upgrade-drift)
       ensure_binary
-      upgrade_drift_msi
+      upgrade_drift_all
       ;;
     logs)
       collect_logs

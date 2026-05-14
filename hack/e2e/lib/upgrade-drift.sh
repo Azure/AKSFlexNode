@@ -3,8 +3,7 @@
 # hack/e2e/lib/upgrade-drift.sh - Kubernetes version drift / repave E2E test
 #
 # Functions:
-#   upgrade_drift_msi - Join the MSI node with an older kubelet version and
-#                       verify drift remediation repaves to the alternate side.
+#   upgrade_drift_all - Trigger local-machine-driven repave on all joined modes.
 # =============================================================================
 set -euo pipefail
 
@@ -60,18 +59,76 @@ printf '%s|%s\n' "${state}" "${version}"
 REMOTE
 }
 
-_wait_for_msi_repave() {
-  local desired_version="$1"
+_mode_vm_ip() {
+  local mode="$1"
+  state_get "${mode}_vm_ip"
+}
+
+_mode_vm_name() {
+  local mode="$1"
+  state_get "${mode}_vm_name"
+}
+
+_join_mode() {
+  local mode="$1"
+  case "${mode}" in
+    msi) node_join_msi ;;
+    token) node_join_token ;;
+    kubeadm) node_join_kubeadm ;;
+    *) log_error "unknown repave mode ${mode}" ;;
+  esac
+}
+
+_ensure_mode_joined() {
+  local mode="$1"
+  local vm_name
+  vm_name="$(_mode_vm_name "${mode}")"
+  if kubectl get node "${vm_name}" &>/dev/null; then
+    return 0
+  fi
+  log_info "Node ${vm_name} is not joined; joining ${mode} node before repave validation"
+  _join_mode "${mode}"
+  validate_node_joined "${vm_name}"
+}
+
+_trigger_mode_repave() {
+  local mode="$1" desired_version="$2" settings_version="$3"
+  local vm_ip vm_name
+  vm_ip="$(_mode_vm_ip "${mode}")"
+  vm_name="$(_mode_vm_name "${mode}")"
+
+  log_info "Updating local machine goal on ${mode} node to Kubernetes ${desired_version} (${settings_version})"
+  remote_exec "${vm_ip}" "DESIRED_VERSION=${desired_version} SETTINGS_VERSION=${settings_version} bash -s" <<'REMOTE'
+set -euo pipefail
+sudo mkdir -p /run/aks-flex-node
+sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
+{
+  "id": "local-test-machine",
+  "goal": {
+    "kubernetesVersion": "${DESIRED_VERSION}",
+    "settingsVersion": "${SETTINGS_VERSION}"
+  }
+}
+EOF
+sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
+REMOTE
+
+  log_info "Deleting Kubernetes Node ${vm_name} to trigger ${mode} repave"
+  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
+}
+
+_wait_for_mode_repave() {
+  local mode="$1" desired_version="$2"
   local desired_major_minor
   desired_major_minor="$(_version_major_minor "${desired_version}")"
 
   local vm_ip vm_name timeout elapsed
-  vm_ip="$(state_get msi_vm_ip)"
-  vm_name="$(state_get msi_vm_name)"
+  vm_ip="$(_mode_vm_ip "${mode}")"
+  vm_name="$(_mode_vm_name "${mode}")"
   timeout="${E2E_DRIFT_UPGRADE_TIMEOUT:-900}"
   elapsed=0
 
-  log_info "Waiting for MSI node drift remediation to repave to kube2 (timeout: ${timeout}s)..."
+  log_info "Waiting for ${mode} node repave to kube2 (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
     local state_and_version state kubelet_version kubelet_major_minor ready
     state_and_version="$(_remote_kube2_state_and_version "${vm_ip}" || true)"
@@ -85,9 +142,9 @@ _wait_for_msi_repave() {
 
     ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
 
-    log_debug "repave poll: kube2_state=${state:-unknown} kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown}"
+    log_debug "${mode} repave poll: kube2_state=${state:-unknown} kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown}"
     if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" ]]; then
-      log_success "Drift remediation repaved MSI node to kube2 with kubelet ${kubelet_version}"
+      log_success "Repaved ${mode} node to kube2 with kubelet ${kubelet_version}"
       return 0
     fi
 
@@ -95,7 +152,7 @@ _wait_for_msi_repave() {
     elapsed=$((elapsed + 15))
   done
 
-  log_error "Timed out waiting for MSI node drift remediation"
+  log_error "Timed out waiting for ${mode} node repave"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE' || true
 set +e
 echo "=== nspawn machines ==="
@@ -113,27 +170,31 @@ REMOTE
   return 1
 }
 
-upgrade_drift_msi() {
-  log_section "Kubernetes Version Drift Upgrade (MSI Node)"
-  local start desired_version initial_version original_version
+upgrade_drift_mode() {
+  local mode="$1"
+  log_section "Local Machine Repave (${mode} node)"
+  local start desired_version settings_version vm_name
   start="$(timer_start)"
 
   desired_version="$(_cluster_current_kubernetes_version)"
-  initial_version="${E2E_DRIFT_INITIAL_KUBERNETES_VERSION:-$(_previous_minor_version "${desired_version}")}"
-  original_version="${E2E_KUBERNETES_VERSION}"
+  settings_version="repave-${mode}-$(date +%s)"
+  vm_name="$(_mode_vm_name "${mode}")"
 
   log_info "AKS desired Kubernetes version: ${desired_version}"
-  log_info "Bootstrapping MSI node with older Kubernetes version: ${initial_version}"
+  _ensure_mode_joined "${mode}"
+  validate_node_joined "${vm_name}"
+  _trigger_mode_repave "${mode}" "${desired_version}" "${settings_version}"
+  _wait_for_mode_repave "${mode}" "${desired_version}"
+  smoke_test "${vm_name}" "${mode}-repave"
 
-  export E2E_KUBERNETES_VERSION="${initial_version}"
-  node_join_msi
-  export E2E_KUBERNETES_VERSION="${original_version}"
-
-  local msi_vm_name
-  msi_vm_name="$(state_get msi_vm_name)"
-  validate_node_joined "${msi_vm_name}"
-  _wait_for_msi_repave "${desired_version}"
-  smoke_test "${msi_vm_name}" "msi-drift"
-
-  log_success "Kubernetes version drift upgrade passed in $(timer_elapsed "${start}")s"
+  log_success "${mode} local machine repave passed in $(timer_elapsed "${start}")s"
 }
+
+upgrade_drift_all() {
+  log_section "Local Machine Repave (all modes)"
+  upgrade_drift_mode msi
+  upgrade_drift_mode token
+  upgrade_drift_mode kubeadm
+}
+
+upgrade_drift_msi() { upgrade_drift_mode msi; }

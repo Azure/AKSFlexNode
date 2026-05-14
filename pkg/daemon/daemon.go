@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"k8s.io/client-go/rest"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
@@ -56,18 +57,31 @@ func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
 	if cfg.Node.Kubelet.CACertData == "" {
 		return nil, fmt.Errorf("kubernetes CA certificate data is empty")
 	}
-	if !cfg.IsBootstrapTokenConfigured() {
-		return nil, fmt.Errorf("bootstrap token is required for daemon node client")
-	}
 	caData, err := base64.StdEncoding.DecodeString(cfg.Node.Kubelet.CACertData)
 	if err != nil {
 		return nil, fmt.Errorf("decode Kubernetes CA certificate: %w", err)
 	}
-	return &rest.Config{
-		Host:        cfg.Node.Kubelet.ServerURL,
-		BearerToken: cfg.Azure.BootstrapToken.Token,
+	restCfg := &rest.Config{
+		Host: cfg.Node.Kubelet.ServerURL,
 		TLSClientConfig: rest.TLSClientConfig{
 			CAData: caData,
 		},
-	}, nil
+	}
+	if cfg.IsBootstrapTokenConfigured() {
+		restCfg.BearerToken = cfg.Azure.BootstrapToken.Token
+		return restCfg, nil
+	}
+	agentCfg := config.ToAgentConfig(cfg, cfg.GetArcMachineName())
+	if agentCfg.Kubelet.Auth.ExecCredential == nil {
+		return nil, fmt.Errorf("daemon node client requires bootstrap token or exec credential")
+	}
+	restCfg.ExecProvider = &clientcmdapi.ExecConfig{
+		APIVersion:         agentCfg.Kubelet.Auth.ExecCredential.APIVersion,
+		Command:            agentCfg.Kubelet.Auth.ExecCredential.Command,
+		Args:               agentCfg.Kubelet.Auth.ExecCredential.Args,
+		Env:                agentCfg.Kubelet.Auth.ExecCredential.Env,
+		InteractiveMode:    agentCfg.Kubelet.Auth.ExecCredential.InteractiveMode,
+		ProvideClusterInfo: agentCfg.Kubelet.Auth.ExecCredential.ProvideClusterInfo,
+	}
+	return restCfg, nil
 }
