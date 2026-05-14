@@ -2,10 +2,11 @@ package daemon
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
+	"math/big"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -173,7 +174,11 @@ func machineReconcileJitter(interval time.Duration) time.Duration {
 	if maxJitter <= 0 {
 		return 0
 	}
-	return time.Duration(rand.Int64N(int64(maxJitter) + 1))
+	jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(maxJitter)+1))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(jitter.Int64())
 }
 
 func (c *Controller) mapInitialEvent(_ context.Context, name string) []daemonRequest {
