@@ -130,7 +130,7 @@ _wait_for_mode_repave() {
 
   log_info "Waiting for ${mode} node repave to kube2 (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    local state_and_version state kubelet_version kubelet_major_minor ready
+    local state_and_version state kubelet_version kubelet_major_minor ready node_kubelet_version node_kubelet_major_minor
     state_and_version="$(_remote_kube2_state_and_version "${vm_ip}" || true)"
     state="${state_and_version%%|*}"
     kubelet_version="${state_and_version#*|}"
@@ -141,10 +141,16 @@ _wait_for_mode_repave() {
     fi
 
     ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    node_kubelet_version="$(kubectl get node "${vm_name}" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | sed 's/^v//' || true)"
+    if [[ -n "${node_kubelet_version}" ]]; then
+      node_kubelet_major_minor="$(_version_major_minor "${node_kubelet_version}")"
+    else
+      node_kubelet_major_minor=""
+    fi
 
-    log_debug "${mode} repave poll: kube2_state=${state:-unknown} kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown}"
-    if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" ]]; then
-      log_success "Repaved ${mode} node to kube2 with kubelet ${kubelet_version}"
+    log_debug "${mode} repave poll: kube2_state=${state:-unknown} kube2_kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown} node_kubelet=${node_kubelet_version:-unknown}"
+    if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" && "${node_kubelet_major_minor}" == "${desired_major_minor}" ]]; then
+      log_success "Repaved ${mode} node to kube2 with kubelet ${kubelet_version}; node reports kubelet ${node_kubelet_version}"
       return 0
     fi
 
