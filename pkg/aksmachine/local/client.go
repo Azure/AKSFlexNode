@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/spec"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -19,7 +19,7 @@ const localResourceID = "local-test-machine"
 
 // E2EMachineFilePath is the well-known local machine file used by e2e daemon
 // mode and by e2ehelper when simulating AKS RP machine changes.
-const E2EMachineFilePath = spec.RuntimeDir + "/e2e-machine.json"
+const E2EMachineFilePath = config.RuntimeDir + "/e2e-machine.json"
 
 // Client implements aksmachine.MachineClient with a JSON file. It is intended
 // for e2e tests that simulate AKS RP by mutating local disk state.

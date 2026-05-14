@@ -591,7 +591,7 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
 }
 EOF
 
-You can disable automated drift detection and remediation if you prefer to self-managed node updates:
+You can disable ensure-machine reconciliation if you prefer to self-manage node updates:
 
 ```json
 {

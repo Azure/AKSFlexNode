@@ -13,7 +13,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
-	"github.com/Azure/AKSFlexNode/pkg/spec"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -121,7 +120,7 @@ func runBootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger, 
 		return err
 	}
 
-	if err := spec.EnsureRuntimeDir(); err != nil {
+	if err := config.EnsureRuntimeDir(); err != nil {
 		return err
 	}
 
@@ -168,7 +167,7 @@ func printBootstrapNextSteps() {
 }
 
 func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := spec.EnsureRuntimeDir(); err != nil {
+	if err := config.EnsureRuntimeDir(); err != nil {
 		return err
 	}
 
@@ -178,7 +177,7 @@ func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger
 }
 
 func runAgentDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := spec.EnsureRuntimeDir(); err != nil {
+	if err := config.EnsureRuntimeDir(); err != nil {
 		return err
 	}
 
@@ -191,7 +190,7 @@ func runAgentDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Log
 }
 
 func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := spec.EnsureRuntimeDir(); err != nil {
+	if err := config.EnsureRuntimeDir(); err != nil {
 		return err
 	}
 
