@@ -33,7 +33,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	controller, err := NewController(ControllerOptions{
+	runner, err := newDaemonRunner(runnerOptions{
 		Log:                      log,
 		Machines:                 machines,
 		Client:                   kubeClient,
@@ -44,7 +44,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	return controller.Run(ctx, restCfg)
+	return runner.run(ctx, restCfg)
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {

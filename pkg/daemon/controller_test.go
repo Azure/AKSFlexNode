@@ -14,14 +14,14 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 )
 
-func TestControllerApplyGoalState(t *testing.T) {
+func TestDaemonRunnerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
 	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
-	c := newTestController(t, machines, fakeClient(), operator)
+	runner := newTestRunner(t, machines, fakeClient(), operator)
 
-	if err := c.ReconcileOnce(context.Background()); err != nil {
+	if err := runner.reconcileOnce(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if !operator.applied {
@@ -35,16 +35,16 @@ func TestControllerApplyGoalState(t *testing.T) {
 	}
 }
 
-func TestControllerResetDelete(t *testing.T) {
+func TestDaemonRunnerResetDelete(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{notFound: true}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: map[string]string{ResetAnnotationKey: "true"}}}
 	operator := &fakeNodeOperator{}
 	kubeClient := fakeClient(node)
-	c := newTestController(t, machines, kubeClient, operator)
+	runner := newTestRunner(t, machines, kubeClient, operator)
 
-	if err := c.ReconcileOnce(context.Background()); err != nil {
+	if err := runner.reconcileOnce(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if !operator.reset {
@@ -62,13 +62,13 @@ func TestControllerResetDelete(t *testing.T) {
 	}
 }
 
-func TestControllerStateLoadFailurePatchesFailed(t *testing.T) {
+func TestDaemonRunnerStateLoadFailurePatchesFailed(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{}}
-	c := newTestController(t, machines, fakeClient(), &fakeNodeOperator{err: errors.New("bad state")})
+	runner := newTestRunner(t, machines, fakeClient(), &fakeNodeOperator{err: errors.New("bad state")})
 
-	if err := c.ReconcileOnce(context.Background()); err == nil {
+	if err := runner.reconcileOnce(context.Background()); err == nil {
 		t.Fatal("Reconcile error = nil, want error")
 	}
 	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateFailed {
@@ -76,9 +76,9 @@ func TestControllerStateLoadFailurePatchesFailed(t *testing.T) {
 	}
 }
 
-func newTestController(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator NodeOperator) *Controller {
+func newTestRunner(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator NodeOperator) *daemonRunner {
 	t.Helper()
-	c, err := NewController(ControllerOptions{
+	runner, err := newDaemonRunner(runnerOptions{
 		Log:      slog.Default(),
 		Machines: machines,
 		Client:   kubeClient,
@@ -86,9 +86,9 @@ func newTestController(t *testing.T, machines aksmachine.MachineClient, kubeClie
 		NodeName: "node1",
 	})
 	if err != nil {
-		t.Fatalf("NewController: %v", err)
+		t.Fatalf("newDaemonRunner: %v", err)
 	}
-	return c
+	return runner
 }
 
 func fakeClient(objects ...client.Object) client.Client {
