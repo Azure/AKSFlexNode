@@ -14,7 +14,7 @@ Lifecycle operations use these signals:
 
 - Upgrade: AKS RP updates the ARM machine settings, cordons and drains the node, then deletes the Kubernetes `Node` object. The agent observes the node deletion or re-read 404, fetches the ARM machine, and applies the target settings.
 - Reimage: treated as an upgrade mode where the target ARM settings require fresh local provisioning.
-- Rollback: treated as an upgrade mode where AKS RP resets the ARM machine settings to a previous value.
+- Rollback: treated as an upgrade mode where the user applies a previous settings version and AKS RP triggers the flow.
 - Reset/delete: AKS RP deletes the ARM machine, cordons and drains the node, then annotates the node. The agent confirms the ARM machine returns 404, wipes host runtime, and deletes the Kubernetes `Node` object.
 
 AKS RP determines upgrade completion from ARM machine status and `observedSettingsVersion`. For reset/delete, Kubernetes `Node` deletion is the primary completion signal, with AKS RP fallback cleanup for stale, NotReady nodes.
@@ -166,7 +166,7 @@ sequenceDiagram
 
 Reimage is a subset of upgrade. AKS RP expresses the target through the ARM machine resource settings version. The agent derives whether it can reuse existing local artifacts or must provision from a fresh image by comparing the new ARM machine settings with the locally applied settings. The nspawn side used to stage the change remains an internal agent choice.
 
-Rollback is also a subset of upgrade. AKS RP owns the rollback trigger. To roll back, AKS RP resets the ARM machine settings to a previous settings value, and the agent applies that settings version through the same blue/green nspawn flow used for forward upgrades.
+Rollback is also a subset of upgrade. To roll back, the user applies a previous settings version, AKS RP updates the ARM machine settings and triggers the flow, and the agent applies that settings version through the same blue/green nspawn flow used for forward upgrades. The ARM machine resource does not need to keep revision history; it only carries the current desired settings.
 
 ```mermaid
 sequenceDiagram
@@ -176,32 +176,32 @@ sequenceDiagram
     participant Agent as Flex Node agent
     participant Host as VM host/nspawn
 
-    RP->>ARM: Restore earlier settings version
+    RP->>ARM: Write previous settings and version
     RP->>Node: Perform required disruption orchestration
     RP->>Node: Delete Node to trigger rollback upgrade
     Node-->>Agent: Watch event
-    Agent->>ARM: Fetch selected settings version
-    Agent->>Agent: Compare selected settings with applied state
-    alt previous side matches selected settings
+    Agent->>ARM: Fetch current settings
+    Agent->>Agent: Compare current settings with applied state
+    alt previous side matches current settings
         Agent->>Host: Switch back to previous side
     else previous side unavailable or mismatched
-        Agent->>Host: Provision inactive side from selected settings
+        Agent->>Host: Provision inactive side from current settings
     end
     Agent->>Host: Start reconciled side and verify health
     Agent-->>RP: Expose operation result
 ```
 
-1. AKS RP determines that rollback is required or allowed.
-2. AKS RP updates the ARM machine resource by resetting it to a previous settings value.
+1. The user applies a previous settings version to roll back the Flex Node.
+2. AKS RP updates the ARM machine resource with those previous settings as the current settings value.
 3. AKS RP performs any required Kubernetes disruption orchestration.
 4. AKS RP deletes the Kubernetes `Node` object to signal that the operation may proceed.
-5. The Flex Node agent observes the node deletion event, fetches the latest ARM machine resource, and compares the selected settings version with local applied state.
-6. If the previous side is still available and matches the selected settings version, the agent can switch back to it.
-7. If the previous side is not available or does not match the selected settings, the agent provisions the inactive side from the selected settings.
+5. The Flex Node agent observes the node deletion event, fetches the latest ARM machine resource, and compares the current settings version with local applied state.
+6. If the previous side is still available and matches the current settings version, the agent can switch back to it.
+7. If the previous side is not available or does not match the current settings, the agent provisions the inactive side from the current settings.
 8. The agent starts the reconciled side, verifies kubelet health, and records the applied state.
 9. AKS RP observes the recovered node state and completes rollback bookkeeping.
 
-The ARM machine resource is what makes rollback deterministic. The agent should not infer rollback settings only from runtime `machinectl` state.
+The current ARM machine settings are what make rollback deterministic. The agent should not infer rollback settings only from runtime `machinectl` state.
 
 ## Reset And Delete Flow
 
@@ -266,7 +266,7 @@ If the ARM machine resource is missing but the reset/delete node annotation is n
 
 If provisioning the inactive side fails, the agent should keep the current active side running and report failure.
 
-If failure happens after the old side is stopped, the agent should use the persisted applied state and ARM machine rollback settings to decide whether to retry the new settings or roll back to the previous settings.
+If failure happens after the old side is stopped, the agent should use the persisted applied state and current ARM machine settings to decide whether to retry the current settings or return to the previously applied settings.
 
 If local state is ambiguous, such as both nspawn sides running or both stopped, the agent should prefer persisted applied state and ARM goal state over runtime discovery alone.
 
@@ -277,7 +277,7 @@ flowchart TD
     KeepOld[Keep old side active<br/>report failure]
     AfterStop[Old side already stopped]
     Persisted[Read persisted applied state]
-    ARMTarget[Fetch ARM settings or rollback settings]
+    ARMTarget[Fetch current ARM target settings]
     Decision{Safe target known?}
     Retry[Retry current settings]
     Rollback[Switch or provision rollback side]
@@ -291,7 +291,7 @@ flowchart TD
     Persisted --> Decision
     ARMTarget --> Decision
     Decision -->|current settings valid| Retry
-    Decision -->|rollback settings valid| Rollback
+    Decision -->|previous settings valid| Rollback
     Decision -->|no| Failed
 ```
 
