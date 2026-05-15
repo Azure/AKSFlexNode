@@ -24,55 +24,55 @@ func TestDecide(t *testing.T) {
 		machine machineSnapshot
 		node    nodeSnapshot
 		state   *State
-		want    DecisionKind
+		want    decisionKind
 	}{
 		"reset waits for machine delete": {
 			machine: machine,
 			node:    resetNode,
 			state:   applied,
-			want:    DecisionWaitForMachineDelete,
+			want:    decisionWaitForMachineDelete,
 		},
 		"reset after machine delete": {
 			machine: machineSnapshot{notFound: true},
 			node:    resetNode,
 			state:   applied,
-			want:    DecisionResetDelete,
+			want:    decisionResetDelete,
 		},
 		"machine not found without reset waits": {
 			machine: machineSnapshot{notFound: true},
 			node:    node,
 			state:   applied,
-			want:    DecisionWaitForNodeSignal,
+			want:    decisionWaitForNodeSignal,
 		},
 		"node deletion applies unapplied goal": {
 			machine: machine,
 			node:    missingNode,
 			state:   stale,
-			want:    DecisionApplyGoalState,
+			want:    decisionApplyGoalState,
 		},
 		"node deletion reports applied goal": {
 			machine: machine,
 			node:    missingNode,
 			state:   applied,
-			want:    DecisionReportSucceeded,
+			want:    decisionReportSucceeded,
 		},
 		"present node reports applied goal": {
 			machine: machine,
 			node:    node,
 			state:   applied,
-			want:    DecisionReportSucceeded,
+			want:    decisionReportSucceeded,
 		},
 		"present node waits for deletion before applying drift": {
 			machine: machine,
 			node:    node,
 			state:   stale,
-			want:    DecisionWaitForNodeSignal,
+			want:    decisionWaitForNodeSignal,
 		},
 		"present node waits with missing state": {
 			machine: machine,
 			node:    node,
 			state:   nil,
-			want:    DecisionWaitForNodeSignal,
+			want:    decisionWaitForNodeSignal,
 		},
 	}
 

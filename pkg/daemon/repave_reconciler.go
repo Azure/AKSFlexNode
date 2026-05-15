@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,34 @@ const (
 	repaveByAKSMachine = "aks-machine"
 	repaveByNode       = "node-change"
 )
+
+const ResetAnnotationKey = "kubernetes.azure.com/flex-node-reset"
+
+type decisionKind string
+
+const (
+	decisionNoop                 decisionKind = "Noop"
+	decisionApplyGoalState       decisionKind = "ApplyGoalState"
+	decisionResetDelete          decisionKind = "ResetDelete"
+	decisionWaitForMachineDelete decisionKind = "WaitForMachineDelete"
+	decisionWaitForNodeSignal    decisionKind = "WaitForNodeSignal"
+	decisionReportSucceeded      decisionKind = "ReportSucceeded"
+)
+
+type machineSnapshot struct {
+	machine  *aksmachine.Machine
+	notFound bool
+}
+
+type nodeSnapshot struct {
+	node *corev1.Node
+}
+
+type decision struct {
+	Kind   decisionKind
+	Goal   aksmachine.GoalState
+	Reason string
+}
 
 type repaveReconciler struct {
 	log      *slog.Logger
@@ -144,13 +173,13 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	r.log.Info("daemon reconcile decision", "decision", decision.Kind, "reason", decision.Reason)
 
 	switch decision.Kind {
-	case DecisionNoop, DecisionWaitForMachineDelete, DecisionWaitForNodeSignal:
+	case decisionNoop, decisionWaitForMachineDelete, decisionWaitForNodeSignal:
 		return nil
-	case DecisionReportSucceeded:
+	case decisionReportSucceeded:
 		return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, decision.Goal.SettingsVersion, decision.Reason)
-	case DecisionApplyGoalState:
+	case decisionApplyGoalState:
 		return r.applyGoalState(ctx, state, decision.Goal)
-	case DecisionResetDelete:
+	case decisionResetDelete:
 		return r.resetDelete(ctx)
 	default:
 		return fmt.Errorf("unsupported daemon decision %q", decision.Kind)
@@ -220,6 +249,52 @@ func (r *repaveReconciler) patchStatus(ctx context.Context, provisioningState ak
 		ObservedSettingsVersion: observedSettingsVersion,
 		Message:                 message,
 	})
+}
+
+func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
+	nodeExists := node.node != nil
+	resetRequested := nodeExists && annotationTrue(node.node.Annotations, ResetAnnotationKey)
+	if resetRequested {
+		if machine.notFound {
+			return decision{Kind: decisionResetDelete, Reason: "reset annotation present and machine resource is gone"}
+		}
+		return decision{Kind: decisionWaitForMachineDelete, Reason: "reset annotation present but machine resource still exists"}
+	}
+
+	if machine.notFound {
+		return decision{Kind: decisionWaitForNodeSignal, Reason: "machine resource is gone without reset annotation"}
+	}
+	if machine.machine == nil {
+		return decision{Kind: decisionNoop, Reason: "machine snapshot is empty"}
+	}
+
+	goal := machine.machine.Goal
+	if node.node == nil {
+		if goalApplied(goal, state) {
+			return decision{Kind: decisionReportSucceeded, Goal: goal, Reason: "node is absent but goal state is already applied"}
+		}
+		return decision{Kind: decisionApplyGoalState, Goal: goal, Reason: "node deletion observed and goal state is not applied"}
+	}
+
+	if goalApplied(goal, state) {
+		return decision{Kind: decisionReportSucceeded, Goal: goal, Reason: "goal state is applied"}
+	}
+
+	return decision{Kind: decisionWaitForNodeSignal, Goal: goal, Reason: "goal state differs but node deletion trigger is absent"}
+}
+
+func goalApplied(goal aksmachine.GoalState, state *State) bool {
+	if state == nil {
+		return false
+	}
+	return goal.SettingsVersion != "" && state.AppliedSettingsVersion == goal.SettingsVersion
+}
+
+func annotationTrue(annotations map[string]string, key string) bool {
+	if annotations == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(annotations[key]), "true")
 }
 
 func stateObservedVersion(state *State) string {
