@@ -8,7 +8,7 @@ AKS RP owns the AKS control-plane decision making for a Flex Node. The AKS Flex 
 
 The key contract between them is an AKS RP-exposed ARM machine resource. The ARM machine resource acts as the authoritative goal state for one AKS Flex Node instance. It serves the same conceptual purpose as the Machine custom resource used by unbounded-agent, but is exposed through ARM and owned by AKS RP.
 
-The Flex Node agent creates the ARM machine resource after node bootstrap using pre-configured credentials retrieved from AKS RP. After creation, the agent continuously reconciles local host/nspawn state from the ARM machine settings version and the Kubernetes `Node` signal for this instance.
+AKS RP creates the ARM machine resource before host bootstrap and returns the accepted bootstrap settings to the user. The user runs those bootstrap settings on the host, and after the node joins the cluster the agent continuously reconciles local host/nspawn state from the ARM machine settings version and the Kubernetes `Node` signal for this instance.
 
 Lifecycle operations use these signals:
 
@@ -68,21 +68,23 @@ The Flex Node agent owns:
 
 The agent should not own Kubernetes workload disruption. Cordon and drain belong to AKS RP because AKS RP has the broader cluster context needed to decide when disruption is safe.
 
-## ARM Machine Creation
+## ARM Machine Creation And Bootstrap
 
-The Flex Node agent creates the ARM machine resource during bootstrap. The bootstrap step retrieves pre-configured credentials from AKS RP and uses those credentials for ARM machine creation.
+AKS RP creates the ARM machine resource as part of the user-facing create flow and returns the accepted bootstrap settings to the user. This makes the ARM machine resource the saved goal state before any host mutation starts.
 
 The creation order is:
 
-1. The agent bootstraps the host and prepares the local nspawn-backed Kubernetes node.
-2. The node joins the AKS cluster and the Kubernetes `Node` object exists.
-3. The agent uses the pre-configured AKS RP credential to create the ARM machine resource for this Flex Node instance.
-4. The agent persists the accepted ARM machine settings locally.
-5. The agent starts its runtime control loops for ARM machine fetch/status patch and Kubernetes `Node` watch.
+1. The user requests Flex Node creation from AKS RP.
+2. AKS RP creates the ARM machine resource and returns the accepted bootstrap settings to the user.
+3. The user runs the bootstrap settings on the target host.
+4. The agent bootstraps the host and prepares the local nspawn-backed Kubernetes node from those settings.
+5. The node joins the AKS cluster and the Kubernetes `Node` object exists.
+6. The agent fetches the ARM machine resource, validates that it belongs to this Flex Node instance, and persists the accepted ARM machine settings locally.
+7. The agent starts its runtime control loops for ARM machine fetch/status patch and Kubernetes `Node` watch.
 
-Creating the ARM machine after node bootstrap avoids exposing a machine resource for a host that has not yet joined the cluster as a Kubernetes node.
+Creating the ARM machine before host bootstrap ensures a failed or interrupted bootstrap still has a durable goal state for retry and reconciliation.
 
-ARM machine creation must be idempotent. If the agent retries creation and the ARM machine resource already exists, the agent should fetch the existing resource, validate that it belongs to this Flex Node instance, persist the accepted settings, and continue. The exact create-or-get conflict handling and retry policy are agent implementation details.
+ARM machine creation must be idempotent. If AKS RP retries creation and the ARM machine resource already exists, AKS RP should return the existing accepted bootstrap settings when they match the requested Flex Node instance. The agent should treat the existing ARM machine resource as the source of truth, persist the accepted settings, and continue.
 
 ## Control Loops
 
@@ -313,7 +315,7 @@ If the ARM machine resource has been deleted during reset/delete, the agent cann
 
 The Flex Node agent requires credentials for two APIs.
 
-For ARM, the agent uses pre-configured credentials retrieved from AKS RP during bootstrap. The bootstrap credential delivery and rotation mechanism follows the bootstrap authentication design described in the broader project docs and is out of scope for this interaction document. The credential must allow creating the ARM machine resource after node bootstrap, reading the machine goal state, and patching machine status for the specific Flex Node instance. The agent should not start host-mutating operations if it cannot authenticate to ARM or cannot fetch the machine resource, except for reset/delete where a 404 Not Found is part of the expected confirmation path.
+For ARM, the agent uses pre-configured credentials retrieved from AKS RP during the user-facing create flow. The bootstrap credential delivery and rotation mechanism follows the bootstrap authentication design described in the broader project docs and is out of scope for this interaction document. The credential must allow reading the machine goal state and patching machine status for the specific Flex Node instance. The agent should not start host-mutating operations if it cannot authenticate to ARM or cannot fetch the machine resource, except for reset/delete where a 404 Not Found is part of the expected confirmation path.
 
 For the Kubernetes API server, the agent should not rely on the kubelet kubeconfig for lifecycle operations. A standard kubelet identity is authorized for kubelet-scoped node behavior and should not be assumed to have permission to delete `Node` objects.
 
