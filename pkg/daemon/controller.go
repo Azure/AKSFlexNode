@@ -18,7 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -28,21 +27,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 )
-
-type queueItemKind string
 
 const DefaultMachineReconcileInterval = 10 * time.Minute
 
-const (
-	queueItemNodeChange    queueItemKind = "nodeChange"
-	queueItemMachineChange queueItemKind = "machineChange"
-)
-
-type daemonRequest struct {
-	Kind queueItemKind
-	Name string
-}
+const initialReconcileSource = "initial-reconcile"
 
 type Controller struct {
 	log      *slog.Logger
@@ -50,8 +40,9 @@ type Controller struct {
 	client   client.Client
 	operator NodeOperator
 	nodeName string
-	// initialEvents queues the first reconcile after manager startup so cached
-	// Node reads can detect state that existed before the daemon started.
+	// initialEvents queues the first reconcile after manager startup so cached Node
+	// reads can detect state that existed before the daemon started and then keep
+	// polling for ARM-only machine transitions.
 	initialEvents            chan event.TypedGenericEvent[string]
 	machineReconcileInterval time.Duration
 }
@@ -132,38 +123,33 @@ func (c *Controller) Run(ctx context.Context, restCfg *rest.Config) error {
 }
 
 func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
-	return builder.TypedControllerManagedBy[daemonRequest](mgr).
-		Named("aks-flex-node-daemon").
-		Watches(
-			&corev1.Node{},
-			handler.TypedEnqueueRequestsFromMapFunc(c.mapNode),
-			builder.WithPredicates(predicate.Funcs{
-				CreateFunc:  func(e event.CreateEvent) bool { return e.Object.GetName() == c.nodeName },
-				UpdateFunc:  func(e event.UpdateEvent) bool { return e.ObjectNew.GetName() == c.nodeName },
-				DeleteFunc:  func(e event.DeleteEvent) bool { return e.Object.GetName() == c.nodeName },
-				GenericFunc: func(e event.GenericEvent) bool { return e.Object.GetName() == c.nodeName },
-			}),
-		).
-		WatchesRawSource(source.TypedChannel(
-			c.initialEvents,
-			handler.TypedEnqueueRequestsFromMapFunc(c.mapInitialEvent),
-		)).
-		WithOptions(controller.TypedOptions[daemonRequest]{MaxConcurrentReconciles: 1}).
-		Complete(c)
+	return agentdaemon.SetupController("aks-flex-node-daemon", mgr, noopMachineOperationReconciler{}, c)
 }
 
-func (c *Controller) Reconcile(ctx context.Context, req daemonRequest) (reconcile.Result, error) {
-	switch req.Kind {
-	case queueItemNodeChange:
-		return reconcile.Result{}, c.ReconcileOnce(ctx)
-	case queueItemMachineChange:
-		if err := c.ReconcileOnce(ctx); err != nil {
-			return reconcile.Result{}, err
-		}
-		return reconcile.Result{RequeueAfter: c.machineReconcileInterval + machineReconcileJitter(c.machineReconcileInterval)}, nil
-	default:
-		return reconcile.Result{}, nil
+func (c *Controller) SetupController(b *builder.TypedBuilder[agentdaemon.Request]) *builder.TypedBuilder[agentdaemon.Request] {
+	return b.Watches(
+		&corev1.Node{},
+		handler.TypedEnqueueRequestsFromMapFunc(c.mapNode),
+		builder.WithPredicates(predicate.Funcs{
+			CreateFunc:  func(e event.CreateEvent) bool { return e.Object.GetName() == c.nodeName },
+			UpdateFunc:  func(e event.UpdateEvent) bool { return e.ObjectNew.GetName() == c.nodeName },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return e.Object.GetName() == c.nodeName },
+			GenericFunc: func(e event.GenericEvent) bool { return e.Object.GetName() == c.nodeName },
+		}),
+	).WatchesRawSource(source.TypedChannel(
+		c.initialEvents,
+		handler.TypedEnqueueRequestsFromMapFunc(c.mapInitialEvent),
+	))
+}
+
+func (c *Controller) ReconcileRepave(ctx context.Context, source string) (reconcile.Result, error) {
+	if err := c.ReconcileOnce(ctx); err != nil {
+		return reconcile.Result{}, err
 	}
+	if source == initialReconcileSource {
+		return reconcile.Result{RequeueAfter: c.machineReconcileInterval + machineReconcileJitter(c.machineReconcileInterval)}, nil
+	}
+	return reconcile.Result{}, nil
 }
 
 func machineReconcileJitter(interval time.Duration) time.Duration {
@@ -181,20 +167,20 @@ func machineReconcileJitter(interval time.Duration) time.Duration {
 	return time.Duration(jitter.Int64())
 }
 
-func (c *Controller) mapInitialEvent(_ context.Context, name string) []daemonRequest {
-	return []daemonRequest{{Kind: queueItemMachineChange, Name: name}}
+func (c *Controller) mapInitialEvent(_ context.Context, name string) []agentdaemon.Request {
+	return []agentdaemon.Request{agentdaemon.NewRepaveRequest(name)}
 }
 
-func (c *Controller) mapNode(_ context.Context, obj client.Object) []daemonRequest {
+func (c *Controller) mapNode(_ context.Context, obj client.Object) []agentdaemon.Request {
 	if obj.GetName() != c.nodeName {
 		return nil
 	}
-	return []daemonRequest{{Kind: queueItemNodeChange, Name: obj.GetName()}}
+	return []agentdaemon.Request{agentdaemon.NewRepaveRequest("node-change")}
 }
 
 func (c *Controller) enqueueInitialReconcile(ctx context.Context) {
 	select {
-	case c.initialEvents <- event.TypedGenericEvent[string]{Object: c.nodeName}:
+	case c.initialEvents <- event.TypedGenericEvent[string]{Object: initialReconcileSource}:
 	case <-ctx.Done():
 	}
 }
@@ -303,3 +289,16 @@ func stateObservedVersion(state *State) string {
 	}
 	return state.AppliedSettingsVersion
 }
+
+type noopMachineOperationReconciler struct{}
+
+func (noopMachineOperationReconciler) SetupController(b *builder.TypedBuilder[agentdaemon.Request]) *builder.TypedBuilder[agentdaemon.Request] {
+	return b
+}
+
+func (noopMachineOperationReconciler) ReconcileMachineOperation(context.Context, string) (ctrl.Result, error) {
+	return ctrl.Result{}, nil
+}
+
+var _ agentdaemon.MachineOperationRequestReconciler = noopMachineOperationReconciler{}
+var _ agentdaemon.RepaveReconciler = (*Controller)(nil)
