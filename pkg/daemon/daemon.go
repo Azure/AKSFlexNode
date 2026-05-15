@@ -6,12 +6,19 @@ import (
 	"fmt"
 	"log/slog"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
 // Run starts the ARM-machine-driven daemon loop. The AKS machine client is
@@ -33,7 +40,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	runner, err := newDaemonRunner(runnerOptions{
+	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,
 		Client:                   kubeClient,
@@ -44,7 +51,30 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	return runner.run(ctx, restCfg)
+	mgr, err := ctrl.NewManager(restCfg, manager.Options{
+		Scheme: newScheme(),
+		Metrics: metricsserver.Options{
+			BindAddress: "0",
+		},
+		Cache: ctrlcache.Options{
+			ByObject: map[client.Object]ctrlcache.ByObject{
+				&corev1.Node{}: {
+					Field: fields.OneTermEqualSelector("metadata.name", repaves.nodeName),
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create daemon manager: %w", err)
+	}
+	if err := daemon.SetupController("aks-flex-node-daemon", mgr, daemon.NoopMachineOperationReconciler(), repaves); err != nil {
+		return fmt.Errorf("setup daemon controller: %w", err)
+	}
+	repaves.client = mgr.GetClient()
+
+	err = mgr.Start(ctx)
+	repaves.log.Info("daemon shutting down")
+	return err
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {

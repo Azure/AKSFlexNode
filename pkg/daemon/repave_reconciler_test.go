@@ -14,14 +14,14 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 )
 
-func TestDaemonRunnerApplyGoalState(t *testing.T) {
+func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
 	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
-	runner := newTestRunner(t, machines, fakeClient(), operator)
+	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
-	if err := runner.reconcileOnce(context.Background()); err != nil {
+	if err := repaves.reconcileOnce(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if !operator.applied {
@@ -35,16 +35,16 @@ func TestDaemonRunnerApplyGoalState(t *testing.T) {
 	}
 }
 
-func TestDaemonRunnerResetDelete(t *testing.T) {
+func TestRepaveReconcilerResetDelete(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{notFound: true}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: map[string]string{ResetAnnotationKey: "true"}}}
 	operator := &fakeNodeOperator{}
 	kubeClient := fakeClient(node)
-	runner := newTestRunner(t, machines, kubeClient, operator)
+	repaves := newTestRepaveReconciler(t, machines, kubeClient, operator)
 
-	if err := runner.reconcileOnce(context.Background()); err != nil {
+	if err := repaves.reconcileOnce(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if !operator.reset {
@@ -62,13 +62,13 @@ func TestDaemonRunnerResetDelete(t *testing.T) {
 	}
 }
 
-func TestDaemonRunnerStateLoadFailurePatchesFailed(t *testing.T) {
+func TestRepaveReconcilerStateLoadFailurePatchesFailed(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{}}
-	runner := newTestRunner(t, machines, fakeClient(), &fakeNodeOperator{err: errors.New("bad state")})
+	repaves := newTestRepaveReconciler(t, machines, fakeClient(), &fakeNodeOperator{err: errors.New("bad state")})
 
-	if err := runner.reconcileOnce(context.Background()); err == nil {
+	if err := repaves.reconcileOnce(context.Background()); err == nil {
 		t.Fatal("Reconcile error = nil, want error")
 	}
 	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateFailed {
@@ -76,9 +76,9 @@ func TestDaemonRunnerStateLoadFailurePatchesFailed(t *testing.T) {
 	}
 }
 
-func newTestRunner(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator NodeOperator) *daemonRunner {
+func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator NodeOperator) *repaveReconciler {
 	t.Helper()
-	runner, err := newDaemonRunner(runnerOptions{
+	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:      slog.Default(),
 		Machines: machines,
 		Client:   kubeClient,
@@ -86,9 +86,9 @@ func newTestRunner(t *testing.T, machines aksmachine.MachineClient, kubeClient c
 		NodeName: "node1",
 	})
 	if err != nil {
-		t.Fatalf("newDaemonRunner: %v", err)
+		t.Fatalf("newRepaveReconciler: %v", err)
 	}
-	return runner
+	return repaves
 }
 
 func fakeClient(objects ...client.Object) client.Client {
