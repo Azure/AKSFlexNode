@@ -118,13 +118,14 @@ func (f *fakeMachineClient) PatchStatus(_ context.Context, status aksmachine.Sta
 }
 
 type fakeNodeOperator struct {
-	state    *State
-	newState *State
-	err      error
-	applied  bool
-	reset    bool
-	stopped  bool
-	cleared  bool
+	state     *State
+	newState  *State
+	err       error
+	applied   bool
+	restarted bool
+	reset     bool
+	stopped   bool
+	cleared   bool
 }
 
 func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
@@ -142,6 +143,11 @@ func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, *Active
 		return f.newState, nil
 	}
 	return f.state, nil
+}
+
+func (f *fakeNodeOperator) RestartNode(context.Context, *slog.Logger, *ActiveMachine) error {
+	f.restarted = true
+	return nil
 }
 
 func (f *fakeNodeOperator) ResetNodeRuntime(context.Context, *slog.Logger) error {

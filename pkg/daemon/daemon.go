@@ -67,7 +67,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
-	if err := daemon.SetupController("aks-flex-node-daemon", mgr, daemon.NoopMachineOperationReconciler(), repaves); err != nil {
+	machineOperations, err := machineOperationReconciler(restCfg, mgr.GetClient(), log, repaves.nodeName, repaves.operator)
+	if err != nil {
+		return err
+	}
+	if err := daemon.SetupController("aks-flex-node-daemon", mgr, machineOperations, repaves); err != nil {
 		return fmt.Errorf("setup daemon controller: %w", err)
 	}
 	repaves.client = mgr.GetClient()

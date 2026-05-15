@@ -26,12 +26,42 @@ type NodeOperator interface {
 	LoadState(ctx context.Context) (*State, error)
 	FindActiveMachine(ctx context.Context, log *slog.Logger, state *State) (*ActiveMachine, error)
 	ApplyGoalState(ctx context.Context, log *slog.Logger, active *ActiveMachine, goal aksmachine.GoalState) (*State, error)
+	RestartNode(ctx context.Context, log *slog.Logger, active *ActiveMachine) error
 	// ResetNodeRuntime removes nspawn node runtime state but must not stop this
 	// daemon process. The controller deletes the Kubernetes Node after host cleanup.
 	ResetNodeRuntime(ctx context.Context, log *slog.Logger) error
 	ClearState(ctx context.Context) error
 	// StopDaemon stops/removes the daemon after lifecycle completion is visible to AKS RP.
 	StopDaemon(ctx context.Context, log *slog.Logger) error
+}
+
+func (o *NSpawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger, active *ActiveMachine) error {
+	if o.cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if active == nil || active.Name == "" {
+		return fmt.Errorf("active machine is empty")
+	}
+	if active.State == nil {
+		return fmt.Errorf("active machine state is empty")
+	}
+
+	cfg := o.cfg.DeepCopy()
+	if active.State.AppliedKubernetesVersion != "" {
+		cfg.Kubernetes.Version = active.State.AppliedKubernetesVersion
+	}
+	agentCfg := config.ToAgentConfig(cfg, active.Name)
+	gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
+	if err != nil {
+		return fmt.Errorf("resolve goal state for node restart: %w", err)
+	}
+
+	return phases.Serial(log,
+		nodestop.StopNode(log, active.Name),
+		nodestart.StartNode(log, gs.NodeStart),
+		nodestart.WaitForKubelet(log, active.Name),
+		npd.Start(cfg, log, gs.RootFS.MachineDir, active.Name),
+	).Do(ctx)
 }
 
 type NSpawnNodeOperator struct {
