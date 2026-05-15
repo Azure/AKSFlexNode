@@ -75,6 +75,34 @@ func validActiveMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
 }
 
+// ActiveMachineFromState loads the persisted active nspawn side. It is used by
+// CLI paths that run outside the daemon but must follow daemon-selected sides.
+func ActiveMachineFromState(ctx context.Context) (string, error) {
+	store, err := newFileStateStore("")
+	if err != nil {
+		return "", err
+	}
+	active, err := activeMachineFromStore(ctx, store)
+	if err != nil {
+		return "", err
+	}
+	return active.Name, nil
+}
+
+func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachine, error) {
+	state, err := store.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if state == nil {
+		return nil, fmt.Errorf("daemon state is missing active machine")
+	}
+	if !validActiveMachine(state.ActiveMachine) {
+		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
+	}
+	return &activeMachine{Name: state.ActiveMachine, State: state}, nil
+}
+
 func (s State) AppliedGoal() aksmachine.GoalState {
 	return aksmachine.GoalState{
 		KubernetesVersion: s.AppliedKubernetesVersion,

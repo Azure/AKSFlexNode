@@ -194,7 +194,10 @@ func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		return err
 	}
 
-	machineName := goalstates.NSpawnMachineKube1
+	machineName, err := daemon.ActiveMachineFromState(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve active machine from daemon state: %w", err)
+	}
 
 	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName, nil)
 	result, err := bootstrapExecutor.Unbootstrap(ctx)

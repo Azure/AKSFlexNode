@@ -78,17 +78,7 @@ func (o *nspawnNodeOperator) LoadState(ctx context.Context) (*State, error) {
 }
 
 func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*activeMachine, error) {
-	state, err := o.LoadState(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if state == nil {
-		return nil, fmt.Errorf("daemon state is missing active machine")
-	}
-	if !validActiveMachine(state.ActiveMachine) {
-		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
-	}
-	return &activeMachine{Name: state.ActiveMachine, State: state}, nil
+	return activeMachineFromStore(ctx, o.state)
 }
 
 func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {

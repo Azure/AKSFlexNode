@@ -49,13 +49,18 @@ _cluster_current_kubernetes_version() {
   echo "${version#v}"
 }
 
-_remote_kube2_state_and_version() {
+_remote_active_machine_state_and_version() {
   local vm_ip="$1"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set +e
-state="$(machinectl show kube2 --property=State --value 2>/dev/null)"
-version="$(sudo systemd-run --machine=kube2 --quiet --pipe /usr/local/bin/kubelet --version 2>/dev/null | awk '{print $2}' | sed 's/^v//')"
-printf '%s|%s\n' "${state}" "${version}"
+machine="$(sudo sed -n 's/.*"activeMachine"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/aks-flex-node/daemon-state.json 2>/dev/null)"
+state=""
+version=""
+if [[ -n "${machine}" ]]; then
+  state="$(machinectl show "${machine}" --property=State --value 2>/dev/null)"
+  version="$(sudo systemd-run --machine="${machine}" --quiet --pipe /usr/local/bin/kubelet --version 2>/dev/null | awk '{print $2}' | sed 's/^v//')"
+fi
+printf '%s|%s|%s\n' "${machine}" "${state}" "${version}"
 REMOTE
 }
 
@@ -128,13 +133,12 @@ _wait_for_mode_repave() {
   timeout="${E2E_DRIFT_UPGRADE_TIMEOUT:-900}"
   elapsed=0
 
-  log_info "Waiting for ${mode} node repave to kube2 (timeout: ${timeout}s)..."
+  log_info "Waiting for ${mode} node repave to active side (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    local state_and_version state kubelet_version kubelet_major_minor ready node_kubelet_version node_kubelet_major_minor
-    state_and_version="$(_remote_kube2_state_and_version "${vm_ip}" || true)"
-    state="${state_and_version%%|*}"
-    kubelet_version="${state_and_version#*|}"
-    if [[ "${kubelet_version}" != "${state_and_version}" && -n "${kubelet_version}" ]]; then
+    local machine_state_and_version active_machine state kubelet_version kubelet_major_minor ready node_kubelet_version node_kubelet_major_minor
+    machine_state_and_version="$(_remote_active_machine_state_and_version "${vm_ip}" || true)"
+    IFS='|' read -r active_machine state kubelet_version <<<"${machine_state_and_version}"
+    if [[ -n "${kubelet_version}" ]]; then
       kubelet_major_minor="$(_version_major_minor "${kubelet_version}")"
     else
       kubelet_major_minor=""
@@ -148,9 +152,9 @@ _wait_for_mode_repave() {
       node_kubelet_major_minor=""
     fi
 
-    log_debug "${mode} repave poll: kube2_state=${state:-unknown} kube2_kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown} node_kubelet=${node_kubelet_version:-unknown}"
+    log_debug "${mode} repave poll: active_machine=${active_machine:-unknown} state=${state:-unknown} kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown} node_kubelet=${node_kubelet_version:-unknown}"
     if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" && "${node_kubelet_major_minor}" == "${desired_major_minor}" ]]; then
-      log_success "Repaved ${mode} node to kube2 with kubelet ${kubelet_version}; node reports kubelet ${node_kubelet_version}"
+      log_success "Repaved ${mode} node to ${active_machine} with kubelet ${kubelet_version}; node reports kubelet ${node_kubelet_version}"
       kubectl get nodes -o wide || true
       return 0
     fi
