@@ -64,7 +64,7 @@ type repaveReconciler struct {
 	log      *slog.Logger
 	machines aksmachine.MachineClient
 	client   client.Client
-	operator NodeOperator
+	operator nodeOperator
 	nodeName string
 	// machineEvents queues AKS-machine-driven reconciles so cached Node
 	// reads can detect state that existed before the daemon started and then keep
@@ -77,7 +77,7 @@ type repaveReconcilerOptions struct {
 	Log      *slog.Logger
 	Machines aksmachine.MachineClient
 	Client   client.Client
-	Operator NodeOperator
+	Operator nodeOperator
 	NodeName string
 	// MachineReconcileInterval is the steady-state fallback interval for
 	// re-reading the AKS machine resource. Kubernetes Node events wake the
@@ -212,12 +212,7 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 	if err := r.patchStatus(ctx, aksmachine.ProvisioningStateReconciling, stateObservedVersion(state), "applying machine goal state"); err != nil {
 		return err
 	}
-	active, err := r.operator.FindActiveMachine(ctx, r.log, state)
-	if err != nil {
-		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
-		return err
-	}
-	newState, err := r.operator.ApplyGoalState(ctx, r.log, active, goal)
+	newState, err := r.operator.ApplyGoalState(ctx, r.log, goal)
 	if err != nil {
 		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
 		return err
@@ -227,10 +222,7 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
 	// Stage 1 clears local runtime/settings while keeping this daemon alive.
-	if err := r.operator.ResetNodeRuntime(ctx, r.log); err != nil {
-		return err
-	}
-	if err := r.operator.ClearState(ctx); err != nil {
+	if err := r.operator.ResetNode(ctx, r.log); err != nil {
 		return err
 	}
 

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -39,19 +40,35 @@ func TestActiveMachineFromState(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := (&NSpawnNodeOperator{}).FindActiveMachine(t.Context(), nil, tt.state)
+			got, err := (&nspawnNodeOperator{state: &testStateStore{state: tt.state}}).findActiveMachine(t.Context())
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("FindActiveMachine error = nil, want error")
+					t.Fatal("findActiveMachine error = nil, want error")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("FindActiveMachine: %v", err)
+				t.Fatalf("findActiveMachine: %v", err)
 			}
 			if got.Name != tt.want {
 				t.Fatalf("machine = %q, want %q", got.Name, tt.want)
 			}
 		})
 	}
+}
+
+type testStateStore struct {
+	state *State
+}
+
+func (s *testStateStore) Load(context.Context) (*State, error) {
+	return s.state, nil
+}
+
+func (s *testStateStore) Save(context.Context, *State) error {
+	return nil
+}
+
+func (s *testStateStore) Delete(context.Context) error {
+	return nil
 }

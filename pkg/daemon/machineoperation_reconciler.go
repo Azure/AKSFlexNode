@@ -24,12 +24,12 @@ type machineOperationReconcilerOptions struct {
 	NodeName             string
 	AKSMachineName       string
 	MachineOperationMode string
-	Operator             NodeOperator
+	Operator             nodeOperator
 }
 
 type machineOperationHandlers struct {
 	log      *slog.Logger
-	operator NodeOperator
+	operator nodeOperator
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
@@ -37,6 +37,15 @@ type machineOperationHandlers struct {
 func machineOperationReconciler(
 	opts machineOperationReconcilerOptions,
 ) (daemon.MachineOperationRequestReconciler, error) {
+	if opts.Log == nil {
+		return nil, fmt.Errorf("logger is nil")
+	}
+	if opts.Client == nil {
+		return nil, fmt.Errorf("kubernetes client is nil")
+	}
+	if opts.Operator == nil {
+		return nil, fmt.Errorf("node operator is nil")
+	}
 	if opts.MachineOperationMode == "" {
 		opts.MachineOperationMode = machineOperationModeAuto
 	}
@@ -56,6 +65,12 @@ func machineOperationReconciler(
 			"Machina MachineOperation API not found; using noop machine operation reconciler",
 		)
 		return daemon.NoopMachineOperationReconciler(), nil
+	}
+	if opts.NodeName == "" {
+		return nil, fmt.Errorf("node name is empty")
+	}
+	if opts.AKSMachineName == "" {
+		return nil, fmt.Errorf("AKS machine name is empty")
 	}
 
 	handlers := &machineOperationHandlers{log: opts.Log, operator: opts.Operator}
@@ -98,29 +113,9 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 	op daemon.MachineOperation,
 ) (ctrl.Result, error) {
 	if err := store.MarkInProgress(ctx, op, "restarting active nspawn node"); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("mark NodeReboot MachineOperation in progress: %w", err)
 	}
-	state, err := h.operator.LoadState(ctx)
-	if err != nil {
-		return h.finishFailedMachineOperation(
-			ctx,
-			store,
-			op,
-			"ExecutionFailed",
-			err.Error(),
-		)
-	}
-	active, err := h.operator.FindActiveMachine(ctx, h.log, state)
-	if err != nil {
-		return h.finishFailedMachineOperation(
-			ctx,
-			store,
-			op,
-			"ExecutionFailed",
-			err.Error(),
-		)
-	}
-	if err := h.operator.RestartNode(ctx, h.log, active); err != nil {
+	if err := h.operator.RestartNode(ctx, h.log); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,
@@ -131,11 +126,14 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 	}
 	// FlexNode does not have a Machina Machine CR, so observed machine
 	// generation is intentionally unset.
-	return ctrl.Result{}, store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
+	if err := store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
 		Phase:   machinav1alpha3.OperationPhaseComplete,
 		Reason:  "Succeeded",
 		Message: "NodeReboot completed",
-	})
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("finish NodeReboot MachineOperation: %w", err)
+	}
+	return ctrl.Result{}, nil
 }
 
 func (h *machineOperationHandlers) reconcileAgentReset(
@@ -148,18 +146,9 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 		op,
 		"resetting local nspawn node runtime",
 	); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}
-	if err := h.operator.ResetNodeRuntime(ctx, h.log); err != nil {
-		return h.finishFailedMachineOperation(
-			ctx,
-			store,
-			op,
-			"ExecutionFailed",
-			err.Error(),
-		)
-	}
-	if err := h.operator.ClearState(ctx); err != nil {
+	if err := h.operator.ResetNode(ctx, h.log); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,
@@ -175,10 +164,10 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 		Reason:  "Succeeded",
 		Message: "AgentReset completed",
 	}); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("finish AgentReset MachineOperation: %w", err)
 	}
 	if err := h.operator.StopDaemon(ctx, h.log); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("stop daemon after AgentReset MachineOperation: %w", err)
 	}
 	return ctrl.Result{}, nil
 }
@@ -208,9 +197,12 @@ func (h *machineOperationHandlers) finishFailedMachineOperation(
 ) (ctrl.Result, error) {
 	// FlexNode does not have a Machina Machine CR, so observed machine
 	// generation is intentionally unset.
-	return ctrl.Result{}, store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
+	if err := store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
 		Phase:   machinav1alpha3.OperationPhaseFailed,
 		Reason:  reason,
 		Message: message,
-	})
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("finish failed MachineOperation: %w", err)
+	}
+	return ctrl.Result{}, nil
 }

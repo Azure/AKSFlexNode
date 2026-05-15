@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -65,12 +66,99 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 		).Build(),
 		Log:                  slog.Default(),
 		MachineOperationMode: machineOperationModeDisable,
+		Operator:             &fakeNodeOperator{},
 	})
 	if err != nil {
 		t.Fatalf("machineOperationReconciler: %v", err)
 	}
 	if reconciler == nil {
 		t.Fatal("machineOperationReconciler returned nil")
+	}
+}
+
+func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		opts    machineOperationReconcilerOptions
+		wantErr string
+	}{
+		"missing logger": {
+			opts: machineOperationReconcilerOptions{
+				Client:   fake.NewClientBuilder().Build(),
+				Operator: &fakeNodeOperator{},
+			},
+			wantErr: "logger is nil",
+		},
+		"missing client": {
+			opts: machineOperationReconcilerOptions{
+				Log:      slog.Default(),
+				Operator: &fakeNodeOperator{},
+			},
+			wantErr: "kubernetes client is nil",
+		},
+		"missing operator": {
+			opts: machineOperationReconcilerOptions{
+				Client: fake.NewClientBuilder().Build(),
+				Log:    slog.Default(),
+			},
+			wantErr: "node operator is nil",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := machineOperationReconciler(tt.opts)
+			if err == nil {
+				t.Fatal("machineOperationReconciler error = nil, want error")
+			}
+			if err.Error() != tt.wantErr {
+				t.Fatalf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestMachineOperationReconcilerEnabledRequiresNames(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		nodeName       string
+		aksMachineName string
+		wantErr        string
+	}{
+		"missing node name": {
+			aksMachineName: "machine1",
+			wantErr:        "node name is empty",
+		},
+		"missing AKS machine name": {
+			nodeName: "node1",
+			wantErr:  "AKS machine name is empty",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := machineOperationReconciler(machineOperationReconcilerOptions{
+				Client: fake.NewClientBuilder().WithRESTMapper(
+					machineOperationRESTMapper(),
+				).Build(),
+				Log:            slog.Default(),
+				NodeName:       tt.nodeName,
+				AKSMachineName: tt.aksMachineName,
+				Operator:       &fakeNodeOperator{},
+			})
+			if err == nil {
+				t.Fatal("machineOperationReconciler error = nil, want error")
+			}
+			if err.Error() != tt.wantErr {
+				t.Fatalf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -137,6 +225,42 @@ func TestMachineOperationHandlersNodeReboot(t *testing.T) {
 	}
 }
 
+func TestMachineOperationHandlersNodeRebootFailure(t *testing.T) {
+	t.Parallel()
+
+	operator := &fakeNodeOperator{restartErr: errors.New("restart failed")}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+
+	if _, err := target.reconcileNodeReboot(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationNodeReboot}); err != nil {
+		t.Fatalf("reconcileNodeReboot: %v", err)
+	}
+	if store.result.Phase != machinav1alpha3.OperationPhaseFailed {
+		t.Fatalf("phase = %s, want %s", store.result.Phase, machinav1alpha3.OperationPhaseFailed)
+	}
+	if store.result.Reason != "ExecutionFailed" {
+		t.Fatalf("reason = %s, want ExecutionFailed", store.result.Reason)
+	}
+	if store.result.Message != "restart failed" {
+		t.Fatalf("message = %q, want restart failed", store.result.Message)
+	}
+}
+
+func TestMachineOperationHandlersNodeRebootStoreFailure(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeMachineOperationStore{markErr: errors.New("mark failed")}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}}
+
+	_, err := target.reconcileNodeReboot(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationNodeReboot})
+	if err == nil {
+		t.Fatal("reconcileNodeReboot error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "mark NodeReboot MachineOperation in progress") {
+		t.Fatalf("error = %q, want mark context", err.Error())
+	}
+}
+
 func TestMachineOperationHandlersUnsupportedOperation(t *testing.T) {
 	t.Parallel()
 
@@ -168,10 +292,7 @@ func TestMachineOperationHandlersAgentReset(t *testing.T) {
 		t.Fatal("MarkInProgress was not called")
 	}
 	if !operator.reset {
-		t.Fatal("ResetNodeRuntime was not called")
-	}
-	if !operator.cleared {
-		t.Fatal("ClearState was not called")
+		t.Fatal("ResetNode was not called")
 	}
 	if !operator.stopped {
 		t.Fatal("StopDaemon was not called")
@@ -184,22 +305,61 @@ func TestMachineOperationHandlersAgentReset(t *testing.T) {
 	}
 }
 
+func TestMachineOperationHandlersAgentResetFailure(t *testing.T) {
+	t.Parallel()
+
+	operator := &fakeNodeOperator{resetErr: errors.New("reset failed")}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+
+	if _, err := target.reconcileAgentReset(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationAgentReset}); err != nil {
+		t.Fatalf("reconcileAgentReset: %v", err)
+	}
+	if store.result.Phase != machinav1alpha3.OperationPhaseFailed {
+		t.Fatalf("phase = %s, want %s", store.result.Phase, machinav1alpha3.OperationPhaseFailed)
+	}
+	if store.result.Reason != "ExecutionFailed" {
+		t.Fatalf("reason = %s, want ExecutionFailed", store.result.Reason)
+	}
+}
+
+func TestMachineOperationHandlersAgentResetStopFailure(t *testing.T) {
+	t.Parallel()
+
+	operator := &fakeNodeOperator{stopErr: errors.New("stop failed")}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+
+	_, err := target.reconcileAgentReset(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationAgentReset})
+	if err == nil {
+		t.Fatal("reconcileAgentReset error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "stop daemon after AgentReset MachineOperation") {
+		t.Fatalf("error = %q, want stop context", err.Error())
+	}
+	if store.result.Phase != machinav1alpha3.OperationPhaseComplete {
+		t.Fatalf("phase = %s, want %s", store.result.Phase, machinav1alpha3.OperationPhaseComplete)
+	}
+}
+
 type fakeMachineOperationStore struct {
 	inProgress bool
 	operation  daemon.MachineOperation
 	result     daemon.MachineOperationResult[int64]
+	markErr    error
+	finishErr  error
 }
 
 func (f *fakeMachineOperationStore) MarkInProgress(_ context.Context, op daemon.MachineOperation, _ string) error {
 	f.inProgress = true
 	f.operation = op
-	return nil
+	return f.markErr
 }
 
 func (f *fakeMachineOperationStore) Finish(_ context.Context, op daemon.MachineOperation, result daemon.MachineOperationResult[int64]) error {
 	f.operation = op
 	f.result = result
-	return nil
+	return f.finishErr
 }
 
 var _ daemon.MachineOperationStore[int64] = (*fakeMachineOperationStore)(nil)

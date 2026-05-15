@@ -53,11 +53,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
+	operator, err := newNSpawnNodeOperator(cfg, store)
+	if err != nil {
+		return err
+	}
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,
 		Client:                   mgr.GetClient(),
-		Operator:                 NewNSpawnNodeOperator(cfg, store),
+		Operator:                 operator,
 		NodeName:                 aksMachineName,
 		MachineReconcileInterval: cfg.Agent.MachineReconcileInterval,
 	})

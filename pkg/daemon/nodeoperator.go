@@ -17,33 +17,27 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
-type ActiveMachine struct {
+type activeMachine struct {
 	Name  string
 	State *State
 }
 
-type NodeOperator interface {
+type nodeOperator interface {
 	LoadState(ctx context.Context) (*State, error)
-	FindActiveMachine(ctx context.Context, log *slog.Logger, state *State) (*ActiveMachine, error)
-	ApplyGoalState(ctx context.Context, log *slog.Logger, active *ActiveMachine, goal aksmachine.GoalState) (*State, error)
-	RestartNode(ctx context.Context, log *slog.Logger, active *ActiveMachine) error
-	// ResetNodeRuntime removes nspawn node runtime state but must not stop this
-	// daemon process. The controller deletes the Kubernetes Node after host cleanup.
-	ResetNodeRuntime(ctx context.Context, log *slog.Logger) error
-	ClearState(ctx context.Context) error
+	ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error)
+	RestartNode(ctx context.Context, log *slog.Logger) error
+	// ResetNode removes nspawn node runtime and persisted daemon state but must
+	// not stop this daemon process. The controller publishes lifecycle completion
+	// after host cleanup.
+	ResetNode(ctx context.Context, log *slog.Logger) error
 	// StopDaemon stops/removes the daemon after lifecycle completion is visible to AKS RP.
 	StopDaemon(ctx context.Context, log *slog.Logger) error
 }
 
-func (o *NSpawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger, active *ActiveMachine) error {
-	if o.cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
-	if active == nil || active.Name == "" {
-		return fmt.Errorf("active machine is empty")
-	}
-	if active.State == nil {
-		return fmt.Errorf("active machine state is empty")
+func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) error {
+	active, err := o.findActiveMachine(ctx)
+	if err != nil {
+		return err
 	}
 
 	cfg := o.cfg.DeepCopy()
@@ -64,38 +58,43 @@ func (o *NSpawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger, 
 	).Do(ctx)
 }
 
-type NSpawnNodeOperator struct {
+type nspawnNodeOperator struct {
 	cfg   *config.Config
 	state stateStore
 }
 
-func NewNSpawnNodeOperator(cfg *config.Config, state stateStore) *NSpawnNodeOperator {
-	return &NSpawnNodeOperator{cfg: cfg, state: state}
-}
-
-func (o *NSpawnNodeOperator) LoadState(ctx context.Context) (*State, error) {
-	if o.state == nil {
+func newNSpawnNodeOperator(cfg *config.Config, state stateStore) (*nspawnNodeOperator, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	if state == nil {
 		return nil, fmt.Errorf("state store is nil")
 	}
+	return &nspawnNodeOperator{cfg: cfg, state: state}, nil
+}
+
+func (o *nspawnNodeOperator) LoadState(ctx context.Context) (*State, error) {
 	return o.state.Load(ctx)
 }
 
-func (o *NSpawnNodeOperator) FindActiveMachine(_ context.Context, _ *slog.Logger, state *State) (*ActiveMachine, error) {
+func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*activeMachine, error) {
+	state, err := o.LoadState(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if state == nil {
 		return nil, fmt.Errorf("daemon state is missing active machine")
 	}
 	if !validActiveMachine(state.ActiveMachine) {
 		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
 	}
-	return &ActiveMachine{Name: state.ActiveMachine, State: state}, nil
+	return &activeMachine{Name: state.ActiveMachine, State: state}, nil
 }
 
-func (o *NSpawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, active *ActiveMachine, goal aksmachine.GoalState) (*State, error) {
-	if o.cfg == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
-	if active == nil || active.Name == "" {
-		return nil, fmt.Errorf("active machine is empty")
+func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
+	active, err := o.findActiveMachine(ctx)
+	if err != nil {
+		return nil, err
 	}
 	cfg := o.cfg.DeepCopy()
 	if goal.KubernetesVersion != "" {
@@ -127,15 +126,15 @@ func (o *NSpawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err := tasks.Do(ctx); err != nil {
 		return nil, fmt.Errorf("apply machine goal state: %w", err)
 	}
-	newState := nextAppliedState(active.State, goal, &ActiveMachine{Name: newMachine})
+	newState := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
 	if err := o.state.Save(ctx, newState); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("save daemon state: %w", err)
 	}
 	return newState, nil
 }
 
-func (o *NSpawnNodeOperator) ResetNodeRuntime(ctx context.Context, log *slog.Logger) error {
-	return phases.Serial(log,
+func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {
+	if err := phases.Serial(log,
 		phases.Parallel(log,
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube2),
@@ -146,21 +145,20 @@ func (o *NSpawnNodeOperator) ResetNodeRuntime(ctx context.Context, log *slog.Log
 		),
 		reset.CleanupRoutes(log),
 		reset.ReloadSystemd(log),
-	).Do(ctx)
-}
-
-func (o *NSpawnNodeOperator) ClearState(ctx context.Context) error {
-	if o.state == nil {
-		return fmt.Errorf("state store is nil")
+	).Do(ctx); err != nil {
+		return err
 	}
-	return o.state.Delete(ctx)
+	if err := o.state.Delete(ctx); err != nil {
+		return fmt.Errorf("delete daemon state: %w", err)
+	}
+	return nil
 }
 
-func (o *NSpawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) error {
+func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) error {
 	return UninstallService(ctx, log)
 }
 
-func nextAppliedState(current *State, goal aksmachine.GoalState, active *ActiveMachine) *State {
+func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
 	next := &State{
 		AppliedSettingsVersion:    goal.SettingsVersion,
 		AppliedKubernetesVersion:  goal.KubernetesVersion,

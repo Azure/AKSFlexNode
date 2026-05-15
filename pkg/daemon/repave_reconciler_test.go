@@ -48,13 +48,10 @@ func TestRepaveReconcilerResetDelete(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if !operator.reset {
-		t.Fatal("ResetNodeRuntime was not called")
+		t.Fatal("ResetNode was not called")
 	}
 	if !operator.stopped {
 		t.Fatal("StopDaemon was not called")
-	}
-	if !operator.cleared {
-		t.Fatal("state Delete was not called")
 	}
 	var got corev1.Node
 	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "node1"}, &got); err == nil {
@@ -76,7 +73,7 @@ func TestRepaveReconcilerStateLoadFailurePatchesFailed(t *testing.T) {
 	}
 }
 
-func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator NodeOperator) *repaveReconciler {
+func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator nodeOperator) *repaveReconciler {
 	t.Helper()
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:      slog.Default(),
@@ -118,25 +115,23 @@ func (f *fakeMachineClient) PatchStatus(_ context.Context, status aksmachine.Sta
 }
 
 type fakeNodeOperator struct {
-	state     *State
-	newState  *State
-	err       error
-	applied   bool
-	restarted bool
-	reset     bool
-	stopped   bool
-	cleared   bool
+	state      *State
+	newState   *State
+	err        error
+	restartErr error
+	resetErr   error
+	stopErr    error
+	applied    bool
+	restarted  bool
+	reset      bool
+	stopped    bool
 }
 
 func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
 	return f.state, f.err
 }
 
-func (f *fakeNodeOperator) FindActiveMachine(context.Context, *slog.Logger, *State) (*ActiveMachine, error) {
-	return &ActiveMachine{Name: "kube1", State: f.state}, nil
-}
-
-func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, *ActiveMachine, aksmachine.GoalState) (*State, error) {
+func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error) {
 	f.applied = true
 	if f.newState != nil {
 		f.state = f.newState
@@ -145,23 +140,18 @@ func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, *Active
 	return f.state, nil
 }
 
-func (f *fakeNodeOperator) RestartNode(context.Context, *slog.Logger, *ActiveMachine) error {
+func (f *fakeNodeOperator) RestartNode(context.Context, *slog.Logger) error {
 	f.restarted = true
-	return nil
+	return f.restartErr
 }
 
-func (f *fakeNodeOperator) ResetNodeRuntime(context.Context, *slog.Logger) error {
+func (f *fakeNodeOperator) ResetNode(context.Context, *slog.Logger) error {
 	f.reset = true
-	return nil
+	f.state = nil
+	return f.resetErr
 }
 
 func (f *fakeNodeOperator) StopDaemon(context.Context, *slog.Logger) error {
 	f.stopped = true
-	return nil
-}
-
-func (f *fakeNodeOperator) ClearState(context.Context) error {
-	f.cleared = true
-	f.state = nil
-	return nil
+	return f.stopErr
 }
