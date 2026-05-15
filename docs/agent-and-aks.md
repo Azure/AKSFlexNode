@@ -305,9 +305,9 @@ For reset/delete operations, AKS RP annotates the node with a reset or delete si
 
 ## Status Reporting
 
-The Flex Node agent reports operation status by patching the ARM machine resource status. Status updates should cover in-progress, succeeded, failed, and rollback-applied upgrade states.
+The Flex Node agent reports operation status by patching the ARM machine resource status. Status updates should set `provisioningState`, `observedSettingsVersion`, and `message` for in-progress, succeeded, failed, and rollback-applied upgrade states.
 
-AKS RP determines upgrade operation completion from ARM machine status and `observedSettingsVersion`. The operation is complete when machine status reports success for the settings version AKS RP requested.
+AKS RP determines upgrade operation completion from ARM machine status and `observedSettingsVersion`. The operation is complete when machine status reports `provisioningState: "Succeeded"` for the settings version AKS RP requested.
 
 If the ARM machine resource has been deleted during reset/delete, the agent cannot patch machine status. In that case, successful Kubernetes `Node` deletion is the primary completion signal, with AKS RP fallback cleanup for stale, NotReady nodes.
 
@@ -333,7 +333,7 @@ The initial ARM machine model can stay minimal. It only needs desired Kubernetes
       "settingsVersion": "42"
     },
     "status": {
-      "phase": "Succeeded",
+      "provisioningState": "Succeeded",
       "observedSettingsVersion": "42",
       "message": ""
     }
@@ -347,4 +347,4 @@ Previous known-good settings are persisted locally on the host so rollback does 
 
 ## Appendix: AKS RP Implementation Details
 
-- Define the exact allowed ARM machine `status.phase` values and required status fields, such as reason, message, and last transition time.
+- Define the exact allowed ARM machine `status.provisioningState` values and required status fields, such as reason, message, and last transition time.

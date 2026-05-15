@@ -41,7 +41,7 @@ This keeps scheduling and disruption decisions outside the agent. AKS RP, an ope
 
 `daemon.NSpawnNodeOperator.ApplyGoalState` performs the nspawn side replacement:
 
-1. Detect the single running side with `machinectl show <machine> --property=State --value`.
+1. Load the active side from persisted daemon state (`ActiveMachine`).
 2. Select the alternate side with `goalstates.AlternateMachine`.
 3. Resolve unbounded machine goal state for the alternate side.
 4. Provision the alternate rootfs.
@@ -61,7 +61,7 @@ AKS Flex Node uses two local nspawn machine names:
 - `kube1`
 - `kube2`
 
-The initial bootstrap starts `kube1`. Repave discovers the currently running side using host `machinectl` state, then provisions and starts the alternate side.
+The initial bootstrap starts `kube1` and seeds daemon state with `ActiveMachine: kube1`. Repave loads `ActiveMachine` from persisted daemon state, treats that value as the old side, then provisions and starts the alternate side. Runtime `machinectl` state is not the source of truth for side selection.
 
 ## E2E Coverage
 
@@ -86,4 +86,4 @@ E2E_DRIFT_UPGRADE_TIMEOUT=1200 ./hack/e2e/run.sh upgrade-drift
 
 - Production AKS RP machine client implementation is pending.
 - Rollback is not yet automatic if failure happens after the old side is stopped but before the new side is fully healthy.
-- Active side discovery depends on runtime `machinectl` state. If both sides are stopped, recovery needs the persisted daemon state plus operator intervention.
+- Active side selection depends on persisted daemon state. If that state file is missing, corrupt, or stale, repave cannot safely choose the old side and should require operator intervention instead of guessing from runtime `machinectl` state.
