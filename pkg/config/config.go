@@ -19,6 +19,7 @@ const (
 	defaultConfigPath               = ConfigDir + "/config.json"
 	defaultLogDir                   = "/var/log/aks-flex-node"
 	defaultLogLevel                 = "info"
+	defaultMachineOperationMode     = "auto"
 	defaultAzureCloud               = "AzurePublicCloud"
 	defaultMachineReconcileInterval = 10 * time.Minute
 )
@@ -106,6 +107,9 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.MachineReconcileInterval == 0 {
 		c.Agent.MachineReconcileInterval = defaultMachineReconcileInterval
+	}
+	if c.Agent.MachineOperationMode == "" {
+		c.Agent.MachineOperationMode = defaultMachineOperationMode
 	}
 	if c.Agent.EnableDriftDetectionAndRemediation == nil {
 		enabled := true
@@ -250,6 +254,11 @@ var validAzureClouds = map[string]bool{
 	"AzurePublicCloud": true,
 }
 
+var validMachineOperationModes = map[string]bool{
+	"auto":    true,
+	"disable": true,
+}
+
 // Validate validates the configuration and ensures all required fields are set
 func (c *Config) Validate() error {
 	// Validate required Azure configuration (core requirements for Arc discovery)
@@ -282,6 +291,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Agent.MachineReconcileInterval < 0 {
 		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
+	}
+	if c.Agent.MachineOperationMode != "" && !validMachineOperationModes[c.Agent.MachineOperationMode] {
+		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.Agent.MachineOperationMode)
 	}
 
 	// Validate authentication configuration - ensure mutual exclusivity

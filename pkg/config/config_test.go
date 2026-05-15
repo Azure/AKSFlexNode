@@ -23,6 +23,7 @@ func TestSetDefaults(t *testing.T) {
 				return c.Azure.Cloud == "AzurePublicCloud" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
+					c.Agent.MachineOperationMode == "auto" &&
 					driftEnabled &&
 					c.Paths.Kubernetes.ConfigDir == "/etc/kubernetes" &&
 					c.Node.MaxPods == 110 &&
@@ -73,6 +74,13 @@ func TestSetDefaults(t *testing.T) {
 					c.Node.Kubelet.ImageGCLowThreshold == 80 &&
 					c.Node.Kubelet.KubeReserved != nil &&
 					c.Node.Kubelet.EvictionHard != nil
+			},
+		},
+		{
+			name:   "machine operation mode can be disabled",
+			config: &Config{Agent: AgentConfig{MachineOperationMode: "disable"}},
+			want: func(c *Config) bool {
+				return c.Agent.MachineOperationMode == "disable"
 			},
 		},
 	}
@@ -231,6 +239,29 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "invalid agent.logLevel: invalid. Valid values are: debug, info, warning, error",
+		},
+		{
+			name: "invalid machine operation mode fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel:             "info",
+					MachineOperationMode: "arm",
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid agent.machineOperationMode",
 		},
 		{
 			name: "valid arc config passes",

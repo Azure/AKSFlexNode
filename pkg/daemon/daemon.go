@@ -32,25 +32,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	kubeClient, err := client.New(restCfg, client.Options{Scheme: newScheme()})
-	if err != nil {
-		return fmt.Errorf("create controller-runtime client: %w", err)
-	}
 	store, err := newFileStateStore("")
 	if err != nil {
 		return err
 	}
-	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
-		Log:                      log,
-		Machines:                 machines,
-		Client:                   kubeClient,
-		Operator:                 NewNSpawnNodeOperator(cfg, store),
-		NodeName:                 cfg.GetArcMachineName(),
-		MachineReconcileInterval: cfg.Agent.MachineReconcileInterval,
-	})
-	if err != nil {
-		return err
-	}
+	aksMachineName := cfg.GetArcMachineName()
 	mgr, err := ctrl.NewManager(restCfg, manager.Options{
 		Scheme: newScheme(),
 		Metrics: metricsserver.Options{
@@ -59,7 +45,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 		Cache: ctrlcache.Options{
 			ByObject: map[client.Object]ctrlcache.ByObject{
 				&corev1.Node{}: {
-					Field: fields.OneTermEqualSelector("metadata.name", repaves.nodeName),
+					Field: fields.OneTermEqualSelector("metadata.name", aksMachineName),
 				},
 			},
 		},
@@ -67,14 +53,31 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
-	machineOperations, err := machineOperationReconciler(restCfg, mgr.GetClient(), log, repaves.nodeName, repaves.operator)
+	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
+		Log:                      log,
+		Machines:                 machines,
+		Client:                   mgr.GetClient(),
+		Operator:                 NewNSpawnNodeOperator(cfg, store),
+		NodeName:                 aksMachineName,
+		MachineReconcileInterval: cfg.Agent.MachineReconcileInterval,
+	})
+	if err != nil {
+		return err
+	}
+	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
+		Client:               mgr.GetClient(),
+		Log:                  log,
+		NodeName:             repaves.nodeName,
+		AKSMachineName:       aksMachineName,
+		MachineOperationMode: cfg.Agent.MachineOperationMode,
+		Operator:             repaves.operator,
+	})
 	if err != nil {
 		return err
 	}
 	if err := daemon.SetupController("aks-flex-node-daemon", mgr, machineOperations, repaves); err != nil {
 		return fmt.Errorf("setup daemon controller: %w", err)
 	}
-	repaves.client = mgr.GetClient()
 
 	err = mgr.Start(ctx)
 	repaves.log.Info("daemon shutting down")

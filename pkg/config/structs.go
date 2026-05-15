@@ -88,6 +88,10 @@ type AgentConfig struct {
 	// end-to-end tests until the production AKS RP machine client is available.
 	E2EMode bool `json:"e2eMode,omitempty"`
 
+	// MachineOperationMode controls MachineOperation handling. Supported values:
+	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
+	MachineOperationMode string `json:"machineOperationMode,omitempty"`
+
 	// EnableDriftDetectionAndRemediation controls whether the agent performs drift detection
 	// and automated remediation (e.g., Kubernetes version drift upgrades).
 	//
