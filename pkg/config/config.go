@@ -261,6 +261,10 @@ var validMachineOperationModes = map[string]bool{
 
 // Validate validates the configuration and ensures all required fields are set
 func (c *Config) Validate() error {
+	if _, err := c.resolveNodeName(); err != nil {
+		return fmt.Errorf("resolve node name: %w", err)
+	}
+
 	// Validate required Azure configuration (core requirements for Arc discovery)
 	if c.Azure.SubscriptionID == "" {
 		return fmt.Errorf("azure.subscriptionId is required")

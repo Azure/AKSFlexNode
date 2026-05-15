@@ -1,8 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Config represents the complete agent configuration structure.
@@ -79,6 +83,9 @@ type ArcConfig struct {
 type AgentConfig struct {
 	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
 	LogDir   string `json:"logDir"`   // Directory for log files
+	// NodeName is resolved from the host hostname for now. TODO: allow AKS RP or
+	// user input to override the Kubernetes Node name explicitly.
+	NodeName string `json:"nodeName,omitempty"`
 
 	// MachineReconcileInterval controls how often the daemon re-reads the AKS
 	// machine resource when no Kubernetes Node event wakes the controller.
@@ -195,6 +202,42 @@ func (cfg *Config) IsMIConfigured() bool {
 func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil &&
 		cfg.Azure.BootstrapToken.Token != ""
+}
+
+// resolveNodeName resolves the Kubernetes Node name once and stores it on the
+// config so bootstrap, daemon watches, and lifecycle operations use one value.
+func (cfg *Config) resolveNodeName() (string, error) {
+	if cfg == nil {
+		return "", fmt.Errorf("config is nil")
+	}
+	if nodeName := strings.TrimSpace(cfg.Agent.NodeName); nodeName != "" {
+		if err := validateNodeName(nodeName); err != nil {
+			return "", err
+		}
+		cfg.Agent.NodeName = nodeName
+		return nodeName, nil
+	}
+	// TODO: allow AKS RP or user input to override this instead of relying on the host hostname.
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("get host hostname for node name: %w", err)
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return "", fmt.Errorf("host hostname is empty")
+	}
+	if err := validateNodeName(hostname); err != nil {
+		return "", fmt.Errorf("host hostname: %w", err)
+	}
+	cfg.Agent.NodeName = hostname
+	return hostname, nil
+}
+
+func validateNodeName(name string) error {
+	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+		return fmt.Errorf("node name %q is not a valid Kubernetes DNS subdomain: %s", name, strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // GetArcMachineName returns the Arc machine name from configuration or defaults to the system hostname

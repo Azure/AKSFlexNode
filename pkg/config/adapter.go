@@ -24,6 +24,7 @@ const (
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName: machineName,
+		NodeName:    cfg.Agent.NodeName,
 		// TODO: implement support for overriding rootfs image from flex node config.
 		//       Using empty string here means the agent will detect and use the default image.
 		// OCIImage: "",

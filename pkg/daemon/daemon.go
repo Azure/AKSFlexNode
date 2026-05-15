@@ -36,7 +36,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	aksMachineName := cfg.GetArcMachineName()
+	nodeName := cfg.Agent.NodeName
+	// TODO: use the ARM machine resource name once the AKS RP Machine API contract is defined.
+	aksMachineName := nodeName
 	mgr, err := ctrl.NewManager(restCfg, manager.Options{
 		Scheme: newScheme(),
 		Metrics: metricsserver.Options{
@@ -45,7 +47,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 		Cache: ctrlcache.Options{
 			ByObject: map[client.Object]ctrlcache.ByObject{
 				&corev1.Node{}: {
-					Field: fields.OneTermEqualSelector("metadata.name", aksMachineName),
+					Field: fields.OneTermEqualSelector("metadata.name", nodeName),
 				},
 			},
 		},
@@ -62,7 +64,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 		Machines:                 machines,
 		Client:                   mgr.GetClient(),
 		Operator:                 operator,
-		NodeName:                 aksMachineName,
+		NodeName:                 nodeName,
 		MachineReconcileInterval: cfg.Agent.MachineReconcileInterval,
 	})
 	if err != nil {
@@ -71,7 +73,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:               mgr.GetClient(),
 		Log:                  log,
-		NodeName:             repaves.nodeName,
+		NodeName:             nodeName,
 		AKSMachineName:       aksMachineName,
 		MachineOperationMode: cfg.Agent.MachineOperationMode,
 		Operator:             repaves.operator,

@@ -95,6 +95,52 @@ func TestSetDefaults(t *testing.T) {
 	}
 }
 
+func TestResolveNodeName(t *testing.T) {
+	cfg := &Config{}
+	got, err := cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName: %v", err)
+	}
+	if got == "" {
+		t.Fatal("resolveNodeName returned empty node name")
+	}
+	if cfg.Agent.NodeName != got {
+		t.Fatalf("cfg.Agent.NodeName=%q, want %q", cfg.Agent.NodeName, got)
+	}
+
+	cfg.Agent.NodeName = "custom-node"
+	got, err = cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName with existing node name: %v", err)
+	}
+	if got != "custom-node" {
+		t.Fatalf("resolveNodeName=%q, want custom-node", got)
+	}
+
+	cfg.Agent.NodeName = "  custom-node-2  "
+	got, err = cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName with spaced node name: %v", err)
+	}
+	if got != "custom-node-2" || cfg.Agent.NodeName != "custom-node-2" {
+		t.Fatalf("resolved node name=%q cfg=%q, want custom-node-2", got, cfg.Agent.NodeName)
+	}
+}
+
+func TestResolveNodeNameNilConfig(t *testing.T) {
+	var cfg *Config
+	if _, err := cfg.resolveNodeName(); err == nil {
+		t.Fatal("resolveNodeName nil config error = nil")
+	}
+}
+
+func TestResolveNodeNameRejectsInvalidConfiguredName(t *testing.T) {
+	cfg := &Config{Agent: AgentConfig{NodeName: "Invalid_Node"}}
+	if _, err := cfg.resolveNodeName(); err == nil || !strings.Contains(err.Error(), "valid Kubernetes DNS subdomain") {
+		t.Fatalf("resolveNodeName error = %v, want DNS subdomain error", err)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
