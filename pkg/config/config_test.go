@@ -23,6 +23,7 @@ func TestSetDefaults(t *testing.T) {
 				return c.Azure.Cloud == "AzurePublicCloud" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
+					c.Agent.MachineOperationMode == "auto" &&
 					driftEnabled &&
 					c.Paths.Kubernetes.ConfigDir == "/etc/kubernetes" &&
 					c.Node.MaxPods == 110 &&
@@ -75,6 +76,13 @@ func TestSetDefaults(t *testing.T) {
 					c.Node.Kubelet.EvictionHard != nil
 			},
 		},
+		{
+			name:   "machine operation mode can be disabled",
+			config: &Config{Agent: AgentConfig{MachineOperationMode: "disable"}},
+			want: func(c *Config) bool {
+				return c.Agent.MachineOperationMode == "disable"
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -84,6 +92,52 @@ func TestSetDefaults(t *testing.T) {
 				t.Errorf("SetDefaults() failed validation for %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestResolveNodeName(t *testing.T) {
+	cfg := &Config{}
+	got, err := cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName: %v", err)
+	}
+	if got == "" {
+		t.Fatal("resolveNodeName returned empty node name")
+	}
+	if cfg.Agent.NodeName != got {
+		t.Fatalf("cfg.Agent.NodeName=%q, want %q", cfg.Agent.NodeName, got)
+	}
+
+	cfg.Agent.NodeName = "custom-node"
+	got, err = cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName with existing node name: %v", err)
+	}
+	if got != "custom-node" {
+		t.Fatalf("resolveNodeName=%q, want custom-node", got)
+	}
+
+	cfg.Agent.NodeName = "  custom-node-2  "
+	got, err = cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName with spaced node name: %v", err)
+	}
+	if got != "custom-node-2" || cfg.Agent.NodeName != "custom-node-2" {
+		t.Fatalf("resolved node name=%q cfg=%q, want custom-node-2", got, cfg.Agent.NodeName)
+	}
+}
+
+func TestResolveNodeNameNilConfig(t *testing.T) {
+	var cfg *Config
+	if _, err := cfg.resolveNodeName(); err == nil {
+		t.Fatal("resolveNodeName nil config error = nil")
+	}
+}
+
+func TestResolveNodeNameRejectsInvalidConfiguredName(t *testing.T) {
+	cfg := &Config{Agent: AgentConfig{NodeName: "Invalid_Node"}}
+	if _, err := cfg.resolveNodeName(); err == nil || !strings.Contains(err.Error(), "valid Kubernetes DNS subdomain") {
+		t.Fatalf("resolveNodeName error = %v, want DNS subdomain error", err)
 	}
 }
 
@@ -231,6 +285,29 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "invalid agent.logLevel: invalid. Valid values are: debug, info, warning, error",
+		},
+		{
+			name: "invalid machine operation mode fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel:             "info",
+					MachineOperationMode: "arm",
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid agent.machineOperationMode",
 		},
 		{
 			name: "valid arc config passes",

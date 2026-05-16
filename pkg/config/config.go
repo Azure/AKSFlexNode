@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 )
 
 const (
@@ -15,10 +16,12 @@ const (
 	ConfigDir = "/etc/aks-flex-node"
 
 	// Default configuration values
-	defaultConfigPath = ConfigDir + "/config.json"
-	defaultLogDir     = "/var/log/aks-flex-node"
-	defaultLogLevel   = "info"
-	defaultAzureCloud = "AzurePublicCloud"
+	defaultConfigPath               = ConfigDir + "/config.json"
+	defaultLogDir                   = "/var/log/aks-flex-node"
+	defaultLogLevel                 = "info"
+	defaultMachineOperationMode     = "auto"
+	defaultAzureCloud               = "AzurePublicCloud"
+	defaultMachineReconcileInterval = 10 * time.Minute
 )
 
 // Singleton instance for configuration
@@ -101,6 +104,12 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.LogDir == "" {
 		c.Agent.LogDir = defaultLogDir
+	}
+	if c.Agent.MachineReconcileInterval == 0 {
+		c.Agent.MachineReconcileInterval = defaultMachineReconcileInterval
+	}
+	if c.Agent.MachineOperationMode == "" {
+		c.Agent.MachineOperationMode = defaultMachineOperationMode
 	}
 	if c.Agent.EnableDriftDetectionAndRemediation == nil {
 		enabled := true
@@ -245,8 +254,17 @@ var validAzureClouds = map[string]bool{
 	"AzurePublicCloud": true,
 }
 
+var validMachineOperationModes = map[string]bool{
+	"auto":    true,
+	"disable": true,
+}
+
 // Validate validates the configuration and ensures all required fields are set
 func (c *Config) Validate() error {
+	if _, err := c.resolveNodeName(); err != nil {
+		return fmt.Errorf("resolve node name: %w", err)
+	}
+
 	// Validate required Azure configuration (core requirements for Arc discovery)
 	if c.Azure.SubscriptionID == "" {
 		return fmt.Errorf("azure.subscriptionId is required")
@@ -274,6 +292,12 @@ func (c *Config) Validate() error {
 	// Validate log level
 	if !validLogLevels[c.Agent.LogLevel] {
 		return fmt.Errorf("invalid agent.logLevel: %s. Valid values are: debug, info, warning, error", c.Agent.LogLevel)
+	}
+	if c.Agent.MachineReconcileInterval < 0 {
+		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
+	}
+	if c.Agent.MachineOperationMode != "" && !validMachineOperationModes[c.Agent.MachineOperationMode] {
+		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.Agent.MachineOperationMode)
 	}
 
 	// Validate authentication configuration - ensure mutual exclusivity

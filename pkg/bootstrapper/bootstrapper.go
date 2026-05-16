@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -27,23 +28,22 @@ type Bootstrapper struct {
 	cfg         *config.Config
 	logger      *slog.Logger
 	machineName string
+	machines    aksmachine.MachineClient
 }
 
 // New creates a new bootstrapper. machineName is the nspawn machine name
 // (e.g. goalstates.NSpawnMachineKube1).
-//
-// TODO: implement blue-green in-place upgrade. For now we hard-code a single
-// machine slot (kube1). Once blue-green is supported the caller will manage
-// two machine names and swap between them during upgrades.
 func New(
 	cfg *config.Config,
 	logger *slog.Logger,
 	machineName string,
+	machines aksmachine.MachineClient,
 ) *Bootstrapper {
 	return &Bootstrapper{
 		cfg:         cfg,
 		logger:      logger,
 		machineName: machineName,
+		machines:    machines,
 	}
 }
 
@@ -62,7 +62,6 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 	if err != nil {
 		return failedResult("resolve-goal-state", err), fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
-
 	// Build the task tree and execute.
 	bootstrapTasks := phases.Serial(b.logger,
 		// Phase 1: host preparation
@@ -93,9 +92,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 		// Azure-specific: start NPD inside the nspawn container
 		npd.Start(b.cfg, b.logger, gs.RootFS.MachineDir, b.machineName),
 
-		// Azure-specific: register this machine with the AKS Machines API.
-		// TODO: enable once the Machines API is available in all target environments.
-		// aksmachine.EnsureMachine(b.cfg, b.logger),
+		daemon.NewSeedStateTask(b.machines, b.machineName),
+		daemon.EnableAndStartServiceTask(b.logger),
 	)
 
 	start := time.Now()

@@ -1,5 +1,10 @@
 package config
 
+import (
+	"fmt"
+	"os"
+)
+
 const (
 	DefaultContainerdMetricsAddress = "0.0.0.0:10257"
 	DefaultSandboxImage             = "mcr.microsoft.com/oss/kubernetes/pause:3.9"
@@ -8,6 +13,7 @@ const (
 	DefaultCNIConfigDir = "/etc/cni/net.d"
 
 	DefaultBinaryPath = "/usr/local/bin"
+	RuntimeDir        = "/run/aks-flex-node"
 
 	DefaultNvidiaContainerRuntimePath = "/usr/bin/nvidia-container-runtime"
 	DefaultNvidiaRuntimeClassName     = "nvidia"
@@ -23,6 +29,14 @@ const (
 	DefaultContainerdVersion = "2.0.4" // FIXME: confirm if we still want containerd 1.x
 
 )
+
+// EnsureRuntimeDir creates the runtime directory for CLI invocations.
+func EnsureRuntimeDir() error {
+	if err := os.MkdirAll(RuntimeDir, 0o700); err != nil {
+		return fmt.Errorf("failed to create runtime directory %s: %w", RuntimeDir, err)
+	}
+	return nil
+}
 
 // refs:
 // - https://kubernetes.io/docs/reference/node/kubelet-files/

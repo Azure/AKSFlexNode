@@ -33,7 +33,7 @@ _deploy_and_start_agent() {
   remote_copy "${REPO_ROOT}/scripts/install.sh" "${vm_ip}" "/tmp/aks-flex-node-install.sh"
 
   log_info "Installing and starting flex node agent on ${vm_ip}..."
-  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
 set -euo pipefail
 
 sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
@@ -44,6 +44,16 @@ sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
 aks-flex-node version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
+sudo mkdir -p /run/aks-flex-node
+sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
+{
+  "id": "local-test-machine",
+  "goal": {
+    "kubernetesVersion": "${E2E_KUBERNETES_VERSION}",
+    "settingsVersion": "${E2E_KUBERNETES_VERSION}"
+  }
+}
+EOF
 
 # Clean up any leftover transient unit from a previous run
 sudo systemctl stop "${UNIT_NAME}" 2>/dev/null || true

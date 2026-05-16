@@ -29,8 +29,8 @@ make e2e
 ```
 
 This will build the agent binary, deploy infrastructure via Bicep, join all
-three nodes, run validations including MSI-node Kubernetes version drift
-repave, collect logs, and tear everything down.
+three nodes, run validations including local-machine-driven repave, collect
+logs, and tear everything down.
 
 ## Commands
 
@@ -39,7 +39,7 @@ omitted it defaults to `all`.
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, join, validate, drift repave, cleanup (default) |
+| `all` | Full flow: build, infra, join, validate, repave, cleanup (default) |
 | `infra` | Deploy AKS cluster + 3 VMs via Bicep |
 | `join` | Join all nodes to the cluster |
 | `join-msi` | Join only the MSI-authenticated node |
@@ -47,7 +47,7 @@ omitted it defaults to `all`.
 | `join-kubeadm` | Join only the kubeadm node (`apply -f` with `KubeadmNodeJoin`) |
 | `validate` | Verify nodes joined and run smoke tests |
 | `smoke` | Run smoke tests only (nginx pods on flex nodes) |
-| `upgrade-drift` | Join the MSI node with an older kubelet version and validate drift repave to the alternate nspawn side |
+| `upgrade-drift` | Validate local-machine-driven repave to the alternate nspawn side |
 | `logs` | Collect logs from VMs |
 | `cleanup` | Collect logs then delete Azure resources |
 | `status` | Print the current state file (deployment outputs) |
@@ -73,7 +73,6 @@ Additional environment variables:
 | `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version for the node config |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version |
-| `E2E_DRIFT_INITIAL_KUBERNETES_VERSION` | previous AKS minor | Initial MSI-node kubelet version for `upgrade-drift` |
 | `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for drift repave |
 | `AZURE_SUBSCRIPTION_ID` | (auto-detected) | Azure subscription |
 | `AZURE_TENANT_ID` | (auto-detected) | Azure tenant |
