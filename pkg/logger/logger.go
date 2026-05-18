@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// parseLogLevel converts a string log level to slog.Level with validation.
-func parseLogLevel(level string) (slog.Level, error) {
+// ParseLogLevel converts a string log level to slog.Level with validation.
+func ParseLogLevel(level string) (slog.Level, error) {
 	normalizedLevel := strings.ToLower(strings.TrimSpace(level))
 
 	switch normalizedLevel {
@@ -30,7 +30,7 @@ func parseLogLevel(level string) (slog.Level, error) {
 // CreateLogger creates and returns a *slog.Logger with the specified level
 // and optional log directory for file output.
 func CreateLogger(level, logDir string) *slog.Logger {
-	logLevel, err := parseLogLevel(level)
+	logLevel, err := ParseLogLevel(level)
 	if err != nil {
 		fmt.Printf("Warning: %v. Using 'info' level as default.\n", err)
 		logLevel = slog.LevelInfo

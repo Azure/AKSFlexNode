@@ -19,13 +19,10 @@ func TestSetDefaults(t *testing.T) {
 			name:   "empty config gets all defaults",
 			config: &Config{},
 			want: func(c *Config) bool {
-				driftEnabled := c.IsDriftDetectionAndRemediationEnabled()
 				return c.Azure.Cloud == "AzurePublicCloud" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
 					c.Agent.MachineOperationMode == "auto" &&
-					driftEnabled &&
-					c.Paths.Kubernetes.ConfigDir == "/etc/kubernetes" &&
 					c.Node.MaxPods == 110 &&
 					c.Runc.Version == "1.1.12"
 			},
@@ -47,20 +44,6 @@ func TestSetDefaults(t *testing.T) {
 			},
 		},
 		{
-			name:   "drift detection default is enabled",
-			config: &Config{},
-			want: func(c *Config) bool {
-				return c.IsDriftDetectionAndRemediationEnabled()
-			},
-		},
-		{
-			name:   "drift detection can be disabled",
-			config: &Config{Agent: AgentConfig{EnableDriftDetectionAndRemediation: func() *bool { v := false; return &v }()}},
-			want: func(c *Config) bool {
-				return !c.IsDriftDetectionAndRemediationEnabled()
-			},
-		},
-		{
 			name: "node kubelet defaults are set correctly",
 			config: &Config{
 				Node: NodeConfig{
@@ -71,9 +54,7 @@ func TestSetDefaults(t *testing.T) {
 				return c.Node.MaxPods == 50 && // preserved
 					c.Node.Kubelet.Verbosity == 2 &&
 					c.Node.Kubelet.ImageGCHighThreshold == 85 &&
-					c.Node.Kubelet.ImageGCLowThreshold == 80 &&
-					c.Node.Kubelet.KubeReserved != nil &&
-					c.Node.Kubelet.EvictionHard != nil
+					c.Node.Kubelet.ImageGCLowThreshold == 80
 			},
 		},
 		{
@@ -87,7 +68,7 @@ func TestSetDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.config.SetDefaults()
+			tt.config.setDefaults()
 			if !tt.want(tt.config) {
 				t.Errorf("SetDefaults() failed validation for %s", tt.name)
 			}
@@ -284,7 +265,7 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid agent.logLevel: invalid. Valid values are: debug, info, warning, error",
+			errMsg:  "invalid agent.logLevel: invalid log level 'invalid'. Valid levels are: debug, info, warning, error",
 		},
 		{
 			name: "invalid machine operation mode fails",
@@ -337,7 +318,7 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.validate()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Validate() expected error but got none for %s", tt.name)
@@ -1132,7 +1113,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.validate()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Validate() expected error but got none")

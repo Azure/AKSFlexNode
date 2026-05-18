@@ -28,8 +28,7 @@ type ensureMachineTask struct {
 }
 
 // EnsureMachine returns a task that ensures the AKS "aksflexnodes" agent pool
-// (mode=Machines) exists and this machine is registered in it. It is a no-op
-// when drift detection/remediation is disabled in the config.
+// (mode=Machines) exists and this machine is registered in it.
 func EnsureMachine(cfg *config.Config, logger *slog.Logger) phases.Task {
 	return &ensureMachineTask{cfg: cfg, logger: logger}
 }
@@ -37,11 +36,6 @@ func EnsureMachine(cfg *config.Config, logger *slog.Logger) phases.Task {
 func (t *ensureMachineTask) Name() string { return "ensure-machine" }
 
 func (t *ensureMachineTask) Do(ctx context.Context) error {
-	if !t.cfg.IsDriftDetectionAndRemediationEnabled() {
-		t.logger.Info("drift detection/remediation disabled, skipping ensure-machine")
-		return nil
-	}
-
 	cfg := t.cfg
 	subID := cfg.GetTargetClusterSubscriptionID()
 	rg := cfg.GetTargetClusterResourceGroup()

@@ -78,7 +78,7 @@ func TestParseLogLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			level, err := parseLogLevel(tt.level)
+			level, err := ParseLogLevel(tt.level)
 
 			if tt.expectErr && err == nil {
 				t.Error("Expected error but got none")

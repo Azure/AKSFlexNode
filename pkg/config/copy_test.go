@@ -2,32 +2,6 @@ package config
 
 import "testing"
 
-func TestCloneStringMap(t *testing.T) {
-	t.Parallel()
-
-	if got := cloneStringMap(nil); got != nil {
-		t.Fatalf("cloneStringMap(nil)=%v, want nil", got)
-	}
-
-	in := map[string]string{"a": "1"}
-	out := cloneStringMap(in)
-	if out["a"] != "1" {
-		t.Fatalf("cloneStringMap value=%q, want %q", out["a"], "1")
-	}
-
-	// Mutate input; output should not change.
-	in["a"] = "2"
-	if out["a"] != "1" {
-		t.Fatalf("cloneStringMap shares backing map; out[a]=%q, want %q", out["a"], "1")
-	}
-
-	// Mutate output; input should not change.
-	out["a"] = "3"
-	if in["a"] != "2" {
-		t.Fatalf("cloneStringMap shares backing map; in[a]=%q, want %q", in["a"], "2")
-	}
-}
-
 func TestConfigDeepCopy_Nil(t *testing.T) {
 	t.Parallel()
 
@@ -40,7 +14,6 @@ func TestConfigDeepCopy_Nil(t *testing.T) {
 func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	t.Parallel()
 
-	falseVal := false
 	cfg := &Config{
 		Azure: AzureConfig{
 			ServicePrincipal: &ServicePrincipalConfig{TenantID: "t", ClientID: "c", ClientSecret: "s"},
@@ -49,14 +22,9 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 			TargetCluster:    &TargetClusterConfig{ResourceID: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster", Location: "eastus"},
 			Arc:              &ArcConfig{Enabled: true, MachineName: "m", Location: "eastus", ResourceGroup: "rg", Tags: map[string]string{"k": "v"}},
 		},
-		Agent: AgentConfig{EnableDriftDetectionAndRemediation: &falseVal},
 		Node: NodeConfig{
 			Labels: map[string]string{"l": "1"},
 			Taints: []string{"dedicated=infra:NoSchedule"},
-			Kubelet: KubeletConfig{
-				KubeReserved: map[string]string{"cpu": "100m"},
-				EvictionHard: map[string]string{"memory.available": "200Mi"},
-			},
 		},
 	}
 
@@ -113,21 +81,4 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 		t.Fatalf("Node.Taints shares backing array; copy=%q, want %q", copy.Node.Taints[0], "dedicated=infra:NoSchedule")
 	}
 
-	cfg.Node.Kubelet.KubeReserved["cpu"] = "200m"
-	if copy.Node.Kubelet.KubeReserved["cpu"] != "100m" {
-		t.Fatalf("KubeReserved shared; copy=%q, want %q", copy.Node.Kubelet.KubeReserved["cpu"], "100m")
-	}
-	copy.Node.Kubelet.KubeReserved["cpu"] = "300m"
-	if cfg.Node.Kubelet.KubeReserved["cpu"] != "200m" {
-		t.Fatalf("KubeReserved shared; orig=%q, want %q", cfg.Node.Kubelet.KubeReserved["cpu"], "200m")
-	}
-
-	cfg.Node.Kubelet.EvictionHard["memory.available"] = "150Mi"
-	if copy.Node.Kubelet.EvictionHard["memory.available"] != "200Mi" {
-		t.Fatalf("EvictionHard shared; copy=%q, want %q", copy.Node.Kubelet.EvictionHard["memory.available"], "200Mi")
-	}
-	copy.Node.Kubelet.EvictionHard["memory.available"] = "250Mi"
-	if cfg.Node.Kubelet.EvictionHard["memory.available"] != "150Mi" {
-		t.Fatalf("EvictionHard shared; orig=%q, want %q", cfg.Node.Kubelet.EvictionHard["memory.available"], "150Mi")
-	}
 }

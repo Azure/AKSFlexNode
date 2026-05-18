@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-// bridgeConfFile is the filename for the default bridge CNI config.
-const bridgeConfFile = "99-bridge.conf"
+const (
+	DefaultConfigDir = "/etc/cni/net.d"
+
+	// bridgeConfFile is the filename for the default bridge CNI config.
+	bridgeConfFile = "99-bridge.conf"
+)
 
 //go:embed assets/99-bridge.conf
 var defaultBridgeCNIConfig []byte
@@ -30,7 +33,7 @@ func WriteCNIConfig(machineDir string) phases.Task {
 func (t *writeCNIConfigTask) Name() string { return "write-cni-config" }
 
 func (t *writeCNIConfigTask) Do(_ context.Context) error {
-	confPath := filepath.Join(t.machineDir, config.DefaultCNIConfigDir, bridgeConfFile)
+	confPath := filepath.Join(t.machineDir, DefaultConfigDir, bridgeConfFile)
 	if err := utilio.WriteFile(confPath, defaultBridgeCNIConfig, 0o644); err != nil { //nolint:gosec // CNI config must be world-readable
 		return fmt.Errorf("write CNI bridge config: %w", err)
 	}

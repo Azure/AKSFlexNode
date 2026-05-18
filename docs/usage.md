@@ -134,8 +134,7 @@ tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node",
-    "enableDriftDetectionAndRemediation": true
+    "logDir": "/var/log/aks-flex-node"
   }
 }
 EOF
@@ -347,8 +346,7 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node",
-    "enableDriftDetectionAndRemediation": true
+    "logDir": "/var/log/aks-flex-node"
   }
 }
 EOF
@@ -585,21 +583,10 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node",
-    "enableDriftDetectionAndRemediation": true
+    "logDir": "/var/log/aks-flex-node"
   }
 }
 EOF
-
-You can disable ensure-machine reconciliation if you prefer to self-manage node updates:
-
-```json
-{
-  "agent": {
-    "enableDriftDetectionAndRemediation": false
-  }
-}
-```
 ```
 
 ### Running the Agent

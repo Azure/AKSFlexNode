@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
 const (
@@ -56,19 +58,9 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
-	// encoding/json deserializes "managedIdentity": {} into a non-nil pointer, so
-	// presence can be detected directly — unlike Viper which decoded it as nil.
-	config.isMIExplicitlySet = config.Azure.ManagedIdentity != nil
-
-	// Set defaults for any missing values
-	config.SetDefaults()
-
-	// Validate the configuration
-	if err := config.Validate(); err != nil {
+	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
-
-	populateTargetClusterInfoFromConfig(config)
 
 	// Set the singleton instance
 	configMutex.Lock()
@@ -78,13 +70,10 @@ func LoadConfig(configPath string) (*Config, error) {
 	return config, nil
 }
 
-// SetDefaults sets default values for any missing configuration fields
-func (c *Config) SetDefaults() {
+func (c *Config) setDefaults() {
 	c.setAzureCloudDefaults()
 	c.setAgentDefaults()
-	c.setPathDefaults()
 	c.setNodeDefaults()
-	c.setContainerdDefaults()
 	c.setRuncDefaults()
 	c.setNpdDefaults()
 }
@@ -109,29 +98,6 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode
-	}
-	if c.Agent.EnableDriftDetectionAndRemediation == nil {
-		enabled := true
-		c.Agent.EnableDriftDetectionAndRemediation = &enabled
-	}
-}
-
-func (c *Config) setPathDefaults() {
-	// Set default paths for Kubernetes components if not provided
-	if c.Paths.Kubernetes.ConfigDir == "" {
-		c.Paths.Kubernetes.ConfigDir = "/etc/kubernetes"
-	}
-	if c.Paths.Kubernetes.CertsDir == "" {
-		c.Paths.Kubernetes.CertsDir = "/etc/kubernetes/certs"
-	}
-	if c.Paths.Kubernetes.ManifestsDir == "" {
-		c.Paths.Kubernetes.ManifestsDir = "/etc/kubernetes/manifests"
-	}
-	if c.Paths.Kubernetes.VolumePluginDir == "" {
-		c.Paths.Kubernetes.VolumePluginDir = "/etc/kubernetes/volumeplugins"
-	}
-	if c.Paths.Kubernetes.KubeletDir == "" {
-		c.Paths.Kubernetes.KubeletDir = "/var/lib/kubelet"
 	}
 }
 
@@ -164,19 +130,6 @@ func (c *Config) setNodeDefaults() {
 	// Clusters with custom service CIDRs should specify this value explicitly
 	if c.Node.Kubelet.DNSServiceIP == "" {
 		c.Node.Kubelet.DNSServiceIP = "10.0.0.10"
-	}
-	// Initialize default kubelet resource reservations if not provided
-	if c.Node.Kubelet.KubeReserved == nil {
-		c.Node.Kubelet.KubeReserved = make(map[string]string)
-	}
-	if c.Node.Kubelet.EvictionHard == nil {
-		c.Node.Kubelet.EvictionHard = make(map[string]string)
-	}
-}
-
-func (c *Config) setContainerdDefaults() {
-	if c.Containerd.MetricsAddress == "" {
-		c.Containerd.MetricsAddress = "0.0.0.0:10257"
 	}
 }
 
@@ -239,14 +192,6 @@ func validateBootstrapToken(cfg *Config) error {
 	return nil
 }
 
-// validLogLevels defines the allowed logging levels for the agent
-var validLogLevels = map[string]bool{
-	"debug":   true,
-	"info":    true,
-	"warning": true,
-	"error":   true,
-}
-
 // validAzureClouds defines the supported Azure cloud environments
 // Currently only Azure Public Cloud is supported
 var validAzureClouds = map[string]bool{
@@ -258,8 +203,13 @@ var validMachineOperationModes = map[string]bool{
 	"disable": true,
 }
 
-// Validate validates the configuration and ensures all required fields are set
-func (c *Config) Validate() error {
+func (c *Config) validate() error {
+	// encoding/json deserializes "managedIdentity": {} into a non-nil pointer, so
+	// presence can be detected directly.
+	c.isMIExplicitlySet = c.Azure.ManagedIdentity != nil
+
+	c.setDefaults()
+
 	if _, err := c.resolveNodeName(); err != nil {
 		return fmt.Errorf("resolve node name: %w", err)
 	}
@@ -288,9 +238,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid azure.cloud: %s. Valid values are: AzurePublicCloud", c.Azure.Cloud)
 	}
 
-	// Validate log level
-	if !validLogLevels[c.Agent.LogLevel] {
-		return fmt.Errorf("invalid agent.logLevel: %s. Valid values are: debug, info, warning, error", c.Agent.LogLevel)
+	if _, err := logger.ParseLogLevel(c.Agent.LogLevel); err != nil {
+		return fmt.Errorf("invalid agent.logLevel: %w", err)
 	}
 	if c.Agent.MachineReconcileInterval < 0 {
 		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
@@ -327,6 +276,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid bootstrap token configuration: %w", err)
 		}
 	}
+
+	populateTargetClusterInfoFromConfig(c)
 
 	return nil
 }

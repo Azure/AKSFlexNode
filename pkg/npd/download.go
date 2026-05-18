@@ -15,6 +15,8 @@ import (
 )
 
 const (
+	DefaultVersion = "v1.35.1"
+
 	defaultNPDURLTemplate = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_%s.tar.gz"
 
 	// Paths as they appear inside the container.
@@ -33,7 +35,7 @@ type downloadTask struct {
 func Download(cfg *config.Config, machineDir string) phases.Task {
 	version := cfg.Npd.Version
 	if version == "" {
-		version = config.DefaultNPDVersion
+		version = DefaultVersion
 	}
 	return &downloadTask{version: version, machineDir: machineDir}
 }

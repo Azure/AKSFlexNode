@@ -1,15 +1,6 @@
 package config
 
-func cloneStringMap(in map[string]string) map[string]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
+import "maps"
 
 // DeepCopy returns a copy of the config that does not share mutable sub-objects (maps/pointers)
 // with the original.
@@ -39,17 +30,15 @@ func (cfg *Config) DeepCopy() *Config {
 	}
 	if cfg.Azure.Arc != nil {
 		arc := *cfg.Azure.Arc
-		arc.Tags = cloneStringMap(cfg.Azure.Arc.Tags)
+		arc.Tags = maps.Clone(cfg.Azure.Arc.Tags)
 		out.Azure.Arc = &arc
 	}
 
 	// Copy node-level maps.
-	out.Node.Labels = cloneStringMap(cfg.Node.Labels)
+	out.Node.Labels = maps.Clone(cfg.Node.Labels)
 	if cfg.Node.Taints != nil {
 		out.Node.Taints = append([]string(nil), cfg.Node.Taints...)
 	}
-	out.Node.Kubelet.KubeReserved = cloneStringMap(cfg.Node.Kubelet.KubeReserved)
-	out.Node.Kubelet.EvictionHard = cloneStringMap(cfg.Node.Kubelet.EvictionHard)
 
 	return &out
 }

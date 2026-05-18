@@ -19,7 +19,6 @@ type Config struct {
 	CNI        CNIConfig        `json:"cni"`
 	Runc       RuncConfig       `json:"runc"`
 	Node       NodeConfig       `json:"node"`
-	Paths      PathsConfig      `json:"paths"`
 	Npd        NPDConfig        `json:"npd"`
 
 	// Internal field to track if ManagedIdentity was explicitly set in config
@@ -98,43 +97,21 @@ type AgentConfig struct {
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
-
-	// EnableDriftDetectionAndRemediation controls whether the agent performs drift detection
-	// and automated remediation (e.g., Kubernetes version drift upgrades).
-	//
-	// When omitted from config, the default is true.
-	EnableDriftDetectionAndRemediation *bool `json:"enableDriftDetectionAndRemediation,omitempty"`
-}
-
-// IsDriftDetectionAndRemediationEnabled returns whether automated drift detection/remediation
-// is enabled. For backward compatibility, a nil setting is treated as enabled.
-func (cfg *Config) IsDriftDetectionAndRemediationEnabled() bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.Agent.EnableDriftDetectionAndRemediation == nil {
-		return true
-	}
-	return *cfg.Agent.EnableDriftDetectionAndRemediation
 }
 
 // KubernetesConfig holds configuration settings for Kubernetes components.
 type KubernetesConfig struct {
-	Version     string `json:"version"`
-	URLTemplate string `json:"urlTemplate"`
+	Version string `json:"version"`
 }
 
 // RuncConfig holds configuration settings for the container runtime (runc).
 type RuncConfig struct {
 	Version string `json:"version"`
-	URL     string `json:"url"`
 }
 
 // ContainerdConfig holds configuration settings for the containerd runtime.
 type ContainerdConfig struct {
-	Version        string `json:"version"`
-	PauseImage     string `json:"pauseImage"`
-	MetricsAddress string `json:"metricsAddress"`
+	Version string `json:"version"`
 }
 
 // NodeConfig holds configuration settings for the Kubernetes node.
@@ -150,29 +127,13 @@ type NodeConfig struct {
 
 // KubeletConfig holds kubelet-specific configuration settings.
 type KubeletConfig struct {
-	KubeReserved         map[string]string `json:"kubeReserved"`
-	EvictionHard         map[string]string `json:"evictionHard"`
-	Verbosity            int               `json:"verbosity"`
-	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
-	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
-	DNSServiceIP         string            `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
-	ServerURL            string            `json:"serverURL"`    // Kubernetes API server URL
-	CACertData           string            `json:"caCertData"`   // Base64-encoded CA certificate data
-	NodeIP               string            `json:"nodeIP"`       // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
-}
-
-// PathsConfig holds file system paths used by the agent for Kubernetes and CNI configurations.
-type PathsConfig struct {
-	Kubernetes KubernetesPathsConfig `json:"kubernetes"`
-}
-
-// KubernetesPathsConfig holds file system paths related to Kubernetes components.
-type KubernetesPathsConfig struct {
-	ConfigDir       string `json:"configDir"`
-	CertsDir        string `json:"certsDir"`
-	ManifestsDir    string `json:"manifestsDir"`
-	VolumePluginDir string `json:"volumePluginDir"`
-	KubeletDir      string `json:"kubeletDir"`
+	Verbosity            int    `json:"verbosity"`
+	ImageGCHighThreshold int    `json:"imageGCHighThreshold"`
+	ImageGCLowThreshold  int    `json:"imageGCLowThreshold"`
+	DNSServiceIP         string `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	ServerURL            string `json:"serverURL"`    // Kubernetes API server URL
+	CACertData           string `json:"caCertData"`   // Base64-encoded CA certificate data
+	NodeIP               string `json:"nodeIP"`       // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
 }
 
 // CNIPathsConfig holds file system paths related to CNI plugins and configurations.
