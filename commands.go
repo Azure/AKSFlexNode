@@ -16,28 +16,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
-func NewAgentCommand() *cobra.Command {
-	var configPath string
-	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "Run the AKS Flex Node daemon",
-		Long:  "Run the long-lived AKS Flex Node daemon with automatic status tracking and self-recovery. This command is intended to be launched by systemd after bootstrap.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, logger, err := initConfigAndLogger(configPath)
-			if err != nil {
-				return err
-			}
-			if cfg.Agent.E2EMode {
-				return runAgentDaemonE2E(cmd.Context(), cfg, logger)
-			}
-			return runAgentDaemon(cmd.Context(), cfg, logger)
-		},
-	}
-	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
-	_ = cmd.MarkFlagRequired("config")
-	return cmd
-}
-
 func NewBootstrapCommand() *cobra.Command {
 	var configPath string
 	var azureConfigSource string
@@ -143,29 +121,6 @@ func printBootstrapNextSteps() {
 	fmt.Println("  Check service status: systemctl status aks-flex-node-agent")
 	fmt.Println("  View service logs:    journalctl -u aks-flex-node-agent -f")
 	fmt.Println("  Stop agent:           systemctl stop aks-flex-node-agent")
-}
-
-func runAgentDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := config.EnsureRuntimeDir(); err != nil {
-		return err
-	}
-
-	logger.Info("TODO: production agent daemon requires AKS RP machine client implementation")
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func runAgentDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := config.EnsureRuntimeDir(); err != nil {
-		return err
-	}
-
-	logger.Info("running agent daemon in e2e mode", "machineFile", local.E2EMachineFilePath)
-	machines, err := local.NewClient(local.E2EMachineFilePath)
-	if err != nil {
-		return fmt.Errorf("create local AKS machine client: %w", err)
-	}
-	return daemon.Run(ctx, cfg, logger, machines)
 }
 
 func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
