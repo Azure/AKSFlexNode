@@ -42,6 +42,10 @@ func UninstallArc(logger *slog.Logger) phases.Task {
 func (t *uninstallArcTask) Name() string { return "uninstall-arc" }
 
 func (t *uninstallArcTask) Do(ctx context.Context) error {
+	if t.cfg == nil {
+		t.logger.Info("configuration not loaded, skipping Arc uninstall")
+		return nil
+	}
 	if !t.cfg.IsARCEnabled() {
 		t.logger.Info("Azure Arc is disabled, skipping uninstall")
 		return nil

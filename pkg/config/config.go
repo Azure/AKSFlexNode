@@ -16,8 +16,7 @@ const (
 	ConfigDir = "/etc/aks-flex-node"
 
 	// Default configuration values
-	defaultConfigPath               = ConfigDir + "/config.json"
-	defaultLogDir                   = "/var/log/aks-flex-node"
+	DefaultLogDir                   = "/var/log/aks-flex-node"
 	defaultLogLevel                 = "info"
 	defaultMachineOperationMode     = "auto"
 	defaultAzureCloud               = "AzurePublicCloud"
@@ -103,7 +102,7 @@ func (c *Config) setAgentDefaults() {
 		c.Agent.LogLevel = defaultLogLevel
 	}
 	if c.Agent.LogDir == "" {
-		c.Agent.LogDir = defaultLogDir
+		c.Agent.LogDir = DefaultLogDir
 	}
 	if c.Agent.MachineReconcileInterval == 0 {
 		c.Agent.MachineReconcileInterval = defaultMachineReconcileInterval

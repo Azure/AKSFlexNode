@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const (
@@ -71,13 +72,23 @@ func (t *enableAndStartServiceTask) Do(ctx context.Context) error {
 	return nil
 }
 
-// UninstallService stops, disables, removes, and reloads the systemd unit.
-func UninstallService(ctx context.Context, log *slog.Logger) error {
-	if err := utilexec.StopService(ctx, log, ServiceUnitName); err != nil {
-		log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
+type uninstallServiceTask struct {
+	log *slog.Logger
+}
+
+// UninstallService returns a task that stops, disables, removes, and reloads the systemd unit.
+func UninstallService(log *slog.Logger) phases.Task {
+	return &uninstallServiceTask{log: log}
+}
+
+func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
+
+func (t *uninstallServiceTask) Do(ctx context.Context) error {
+	if err := utilexec.StopService(ctx, t.log, ServiceUnitName); err != nil {
+		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
 	}
-	if err := utilexec.DisableService(ctx, log, ServiceUnitName); err != nil {
-		log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
+	if err := utilexec.DisableService(ctx, t.log, ServiceUnitName); err != nil {
+		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
 
 	unitPath := filepath.Join(systemdSystemDir, ServiceUnitName)
@@ -85,11 +96,11 @@ func UninstallService(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("remove %s: %w", unitPath, err)
 	}
 
-	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+	if err := utilexec.ReloadSystemd(ctx, t.log); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 
-	log.Info("systemd service uninstalled", "unit", ServiceUnitName)
+	t.log.Info("systemd service uninstalled", "unit", ServiceUnitName)
 	return nil
 }
 

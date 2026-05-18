@@ -16,8 +16,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
-	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
@@ -106,36 +104,6 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*ExecutionResult, error) 
 	if err != nil {
 		result.Error = err.Error()
 		return result, fmt.Errorf("bootstrap failed: %w", err)
-	}
-
-	return result, nil
-}
-
-// Unbootstrap tears down the Kubernetes node and cleans up all resources.
-func (b *Bootstrapper) Unbootstrap(ctx context.Context) (*ExecutionResult, error) {
-	start := time.Now()
-
-	unbootstrapTasks := phases.Serial(b.logger,
-		nodestop.StopNode(b.logger, b.machineName),
-		reset.CleanupMachine(b.logger, b.machineName),
-	)
-
-	err := unbootstrapTasks.Do(ctx)
-
-	// Best-effort: attempt Arc uninstall regardless of earlier failures.
-	if arcErr := phases.ExecuteTask(ctx, b.logger, arc.UninstallArc(b.logger)); arcErr != nil {
-		b.logger.Warn("arc uninstall failed (continuing)", "error", arcErr)
-		if err == nil {
-			err = arcErr
-		}
-	}
-
-	result := &ExecutionResult{
-		Success:  err == nil,
-		Duration: time.Since(start),
-	}
-	if err != nil {
-		result.Error = err.Error()
 	}
 
 	return result, nil

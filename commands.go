@@ -38,30 +38,6 @@ func NewBootstrapCommand() *cobra.Command {
 	return cmd
 }
 
-func NewUnbootstrapCommand() *cobra.Command {
-	var configPath string
-	cmd := &cobra.Command{
-		Use:   "unbootstrap",
-		Short: "Remove AKS node configuration and Arc connection",
-		Long:  "Clean up and remove all AKS node components and Arc registration from this machine",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			l := logger.CreateLogger("info", "")
-			if err := daemon.UninstallService(cmd.Context(), l); err != nil {
-				return err
-			}
-
-			cfg, logger, err := initConfigAndLogger(configPath)
-			if err != nil {
-				return err
-			}
-			return runUnbootstrap(cmd.Context(), cfg, logger)
-		},
-	}
-	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
-	_ = cmd.MarkFlagRequired("config")
-	return cmd
-}
-
 func initConfigAndLogger(configPath string) (*config.Config, *slog.Logger, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -121,25 +97,6 @@ func printBootstrapNextSteps() {
 	fmt.Println("  Check service status: systemctl status aks-flex-node-agent")
 	fmt.Println("  View service logs:    journalctl -u aks-flex-node-agent -f")
 	fmt.Println("  Stop agent:           systemctl stop aks-flex-node-agent")
-}
-
-func runUnbootstrap(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := config.EnsureRuntimeDir(); err != nil {
-		return err
-	}
-
-	machineName, err := daemon.ActiveMachineFromState(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve active machine from daemon state: %w", err)
-	}
-
-	bootstrapExecutor := bootstrapper.New(cfg, logger, machineName, nil)
-	result, err := bootstrapExecutor.Unbootstrap(ctx)
-	if err != nil {
-		return err
-	}
-
-	return handleExecutionResult(result, "unbootstrap", logger)
 }
 
 func handleExecutionResult(result *bootstrapper.ExecutionResult, operation string, logger *slog.Logger) error {

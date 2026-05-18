@@ -6,7 +6,7 @@
 # Functions:
 #   node_join_kubeadm   - Create bootstrap token & RBAC, generate config,
 #                         run aks-flex-node agent
-#   node_unjoin_kubeadm - Stop agent, run unbootstrap, delete the node object
+#   node_unjoin_kubeadm - Stop agent, run reset, delete the node object
 # =============================================================================
 set -euo pipefail
 
@@ -325,7 +325,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_kubeadm - Stop agent, run unbootstrap, remove node from cluster
+# node_unjoin_kubeadm - Stop agent, run reset, remove node from cluster
 # ---------------------------------------------------------------------------
 node_unjoin_kubeadm() {
   log_section "Unjoining Kubeadm Node"
@@ -353,9 +353,9 @@ if systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '
   exit 1
 fi
 
-echo "kubelet status after unbootstrap:"
+echo "kubelet status after reset:"
 systemctl is-active kubelet 2>&1 || true
-echo "containerd status after unbootstrap:"
+echo "containerd status after reset:"
 systemctl is-active containerd 2>&1 || true
 REMOTE
 

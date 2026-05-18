@@ -22,10 +22,12 @@ func NewCommand() *cobra.Command {
 		Long: "Run the long-lived AKS Flex Node daemon with automatic status tracking " +
 			"and self-recovery. This command is intended to be launched by systemd after bootstrap.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, logger, err := initConfigAndLogger(configPath)
+			cfg, err := config.LoadConfig(configPath)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 			}
+			logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
+
 			if cfg.Agent.E2EMode {
 				return runDaemonE2E(cmd.Context(), cfg, logger)
 			}
@@ -35,16 +37,6 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
 	_ = cmd.MarkFlagRequired("config")
 	return cmd
-}
-
-func initConfigAndLogger(configPath string) (*config.Config, *slog.Logger, error) {
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load config from %s: %w", configPath, err)
-	}
-
-	l := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
-	return cfg, l, nil
 }
 
 func runDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {

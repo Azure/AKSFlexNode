@@ -124,28 +124,11 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {
-	if err := phases.Serial(log,
-		phases.Parallel(log,
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube2),
-		),
-		phases.Parallel(log,
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube1),
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube2),
-		),
-		reset.CleanupRoutes(log),
-		reset.ReloadSystemd(log),
-	).Do(ctx); err != nil {
-		return err
-	}
-	if err := o.state.Delete(ctx); err != nil {
-		return fmt.Errorf("delete daemon state: %w", err)
-	}
-	return nil
+	return phases.ExecuteTask(ctx, log, ResetNode(log))
 }
 
 func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) error {
-	return UninstallService(ctx, log)
+	return phases.ExecuteTask(ctx, log, UninstallService(log))
 }
 
 func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
