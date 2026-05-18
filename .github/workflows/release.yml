@@ -60,7 +60,7 @@ jobs:
 
           BINARY_NAME="aks-flex-node-${{ matrix.os }}-${{ matrix.arch }}"
 
-          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" .
+          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/aks-flex-node
 
           # Create tarball
           tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"

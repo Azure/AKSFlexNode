@@ -268,7 +268,7 @@ ensure_binary() {
   E2E_BINARY="${E2E_WORK_DIR}/aks-flex-node"
   (
     cd "${REPO_ROOT}"
-    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_BINARY}" .
+    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_BINARY}" ./cmd/aks-flex-node
   )
   chmod +x "${E2E_BINARY}"
 
