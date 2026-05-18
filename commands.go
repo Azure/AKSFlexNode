@@ -16,13 +16,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
-// Version information variables (set at build time)
-var (
-	Version   = "dev"
-	GitCommit = "unknown"
-	BuildTime = "unknown"
-)
-
 func NewAgentCommand() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
@@ -89,20 +82,6 @@ func NewUnbootstrapCommand() *cobra.Command {
 	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
 	_ = cmd.MarkFlagRequired("config")
 	return cmd
-}
-
-func NewVersionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Show version information",
-		Long:  "Display version, build commit, and build time information",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("AKS Flex Node Agent\n")
-			fmt.Printf("Version: %s\n", Version)
-			fmt.Printf("Git Commit: %s\n", GitCommit)
-			fmt.Printf("Build Time: %s\n", BuildTime)
-		},
-	}
 }
 
 func initConfigAndLogger(configPath string) (*config.Config, *slog.Logger, error) {

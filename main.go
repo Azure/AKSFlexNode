@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/version"
 )
 
 func main() {
@@ -23,7 +24,7 @@ func main() {
 	rootCmd.AddCommand(NewBootstrapCommand())
 	rootCmd.AddCommand(NewAgentCommand())
 	rootCmd.AddCommand(NewUnbootstrapCommand())
-	rootCmd.AddCommand(NewVersionCommand())
+	rootCmd.AddCommand(version.NewCommand())
 	rootCmd.AddCommand(token.Command)
 
 	// Set up context with signal handling

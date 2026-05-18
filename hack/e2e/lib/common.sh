@@ -263,7 +263,7 @@ ensure_binary() {
   git_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
   local build_date
   build_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  local ldflags="-X main.Version=${version} -X main.GitCommit=${git_commit} -X main.BuildTime=${build_date}"
+  local ldflags="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${version} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${git_commit} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${build_date}"
 
   E2E_BINARY="${E2E_WORK_DIR}/aks-flex-node"
   (
