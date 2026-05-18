@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -14,7 +13,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
-	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 type activeMachine struct {
@@ -86,39 +84,35 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, err
 	}
+	// TODO: This per-goal config copy/mutation is not ideal. Refactor goal-state
+	// resolution to avoid rewriting shared config-shaped data here.
 	cfg := o.cfg.DeepCopy()
 	if goal.KubernetesVersion != "" {
 		cfg.Kubernetes.Version = goal.KubernetesVersion
 	}
 	oldMachine := active.Name
 	newMachine := goalstates.AlternateMachine(oldMachine)
-	log.Info("starting nspawn machine goal-state apply", "oldMachine", oldMachine, "newMachine", newMachine, "settingsVersion", goal.SettingsVersion, "kubernetesVersion", cfg.Kubernetes.Version)
+	log.Info("starting nspawn machine goal-state apply",
+		"oldMachine", oldMachine,
+		"newMachine", newMachine,
+		"settingsVersion", goal.SettingsVersion,
+		"kubernetesVersion", cfg.Kubernetes.Version,
+	)
 
 	agentCfg := config.ToAgentConfig(cfg, newMachine)
 	gs, err := goalstates.ResolveMachine(log, agentCfg, newMachine, nil)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
+	newState := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
 
 	tasks := phases.Serial(log,
-		rootfs.Provision(log, gs.RootFS),
-		phases.Parallel(log,
-			npd.Download(cfg, gs.RootFS.MachineDir),
-			InstallBinary(gs.RootFS.MachineDir),
-			cni.WriteCNIConfig(gs.RootFS.MachineDir),
-		),
 		nodestop.StopNode(log, oldMachine),
-		nodestart.StartNode(log, gs.NodeStart),
-		nodestart.WaitForKubelet(log, newMachine),
-		npd.Start(cfg, log, gs.RootFS.MachineDir, newMachine),
+		StartNode(cfg, log, newMachine, gs, o.state, newState),
 		reset.CleanupMachine(log, oldMachine),
 	)
 	if err := tasks.Do(ctx); err != nil {
 		return nil, fmt.Errorf("apply machine goal state: %w", err)
-	}
-	newState := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
-	if err := o.state.Save(ctx, newState); err != nil {
-		return nil, fmt.Errorf("save daemon state: %w", err)
 	}
 	return newState, nil
 }

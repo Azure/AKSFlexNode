@@ -12,6 +12,7 @@ import (
 
 	daemoncmd "github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/reset"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/start"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/version"
 )
@@ -23,7 +24,7 @@ func main() {
 		Long:  "Azure Kubernetes Service Flex Node Agent for edge computing scenarios",
 	}
 
-	rootCmd.AddCommand(NewBootstrapCommand())
+	rootCmd.AddCommand(start.NewCommand())
 	rootCmd.AddCommand(daemoncmd.NewCommand())
 	rootCmd.AddCommand(reset.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())

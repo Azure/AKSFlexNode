@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const (
@@ -32,61 +33,40 @@ type State struct {
 	ActiveMachine             string `json:"activeMachine,omitempty"`
 }
 
-type seedStateTask struct {
-	machines      aksmachine.MachineClient
-	activeMachine string
+type saveStateTask struct {
+	store stateStore
+	state *State
 }
 
-func NewSeedStateTask(machines aksmachine.MachineClient, activeMachine string) *seedStateTask {
-	return &seedStateTask{machines: machines, activeMachine: activeMachine}
+func saveState(store stateStore, state *State) phases.Task {
+	return &saveStateTask{store: store, state: state}
 }
 
-func (t *seedStateTask) Name() string { return "seed-daemon-state" }
+func (t *saveStateTask) Name() string { return "save-daemon-state" }
 
-// Do records the bootstrap-applied goal so the daemon can reconcile from
-// persisted state instead of live machinectl discovery after systemd starts it.
-func (t *seedStateTask) Do(ctx context.Context) error {
-	if t.machines == nil {
-		return fmt.Errorf("machine client is nil")
+func (t *saveStateTask) Do(ctx context.Context) error {
+	if t.state == nil {
+		return fmt.Errorf("daemon state is nil")
 	}
-	if !validActiveMachine(t.activeMachine) {
-		return fmt.Errorf("active machine %q is invalid", t.activeMachine)
+	if t.store == nil {
+		return fmt.Errorf("state store is nil")
 	}
-	machine, err := t.machines.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("get AKS machine for daemon state seed: %w", err)
+	if err := t.store.Save(ctx, t.state); err != nil {
+		return fmt.Errorf("save daemon state: %w", err)
 	}
-	store, err := newFileStateStore("")
-	if err != nil {
-		return err
-	}
-	return store.Save(ctx, SeededState(machine.Goal, t.activeMachine))
+	return nil
 }
 
-func SeededState(goal aksmachine.GoalState, activeMachine string) *State {
+func SeededState(goal aksmachine.GoalState) *State {
 	return &State{
 		AppliedSettingsVersion:   goal.SettingsVersion,
 		AppliedKubernetesVersion: goal.KubernetesVersion,
-		ActiveMachine:            activeMachine,
+		ActiveMachine:            goalstates.NSpawnMachineKube1,
 	}
 }
 
 func validActiveMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
-}
-
-// ActiveMachineFromState loads the persisted active nspawn side. It is used by
-// CLI paths that run outside the daemon but must follow daemon-selected sides.
-func ActiveMachineFromState(ctx context.Context) (string, error) {
-	store, err := newFileStateStore("")
-	if err != nil {
-		return "", err
-	}
-	active, err := activeMachineFromStore(ctx, store)
-	if err != nil {
-		return "", err
-	}
-	return active.Name, nil
 }
 
 func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachine, error) {
@@ -103,17 +83,14 @@ func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachi
 	return &activeMachine{Name: state.ActiveMachine, State: state}, nil
 }
 
-func (s State) AppliedGoal() aksmachine.GoalState {
-	return aksmachine.GoalState{
-		KubernetesVersion: s.AppliedKubernetesVersion,
-		SettingsVersion:   s.AppliedSettingsVersion,
-	}
-}
-
 type stateStore interface {
 	Load(ctx context.Context) (*State, error)
 	Save(ctx context.Context, state *State) error
 	Delete(ctx context.Context) error
+}
+
+func NewFileStateStore() (stateStore, error) {
+	return newFileStateStore("")
 }
 
 type fileStateStore struct {

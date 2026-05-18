@@ -52,6 +52,9 @@ func (t *installArcTask) Do(ctx context.Context) error {
 		t.logger.Info("Arc is disabled, skipping installation")
 		return nil
 	}
+	if err := copyAzureCLIAuth(); err != nil {
+		return fmt.Errorf("copy Azure CLI auth: %w", err)
+	}
 
 	// Step 1: prerequisites (auth + azcmagent binary)
 	if err := t.ensurePrerequisites(ctx); err != nil {

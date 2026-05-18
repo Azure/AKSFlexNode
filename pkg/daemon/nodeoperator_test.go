@@ -7,7 +7,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
-func TestActiveMachineFromState(t *testing.T) {
+func TestFindActiveMachine(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {

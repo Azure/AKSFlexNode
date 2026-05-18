@@ -32,7 +32,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	if err != nil {
 		return err
 	}
-	store, err := newFileStateStore("")
+	store, err := NewFileStateStore()
 	if err != nil {
 		return err
 	}
