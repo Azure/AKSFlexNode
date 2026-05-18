@@ -40,20 +40,12 @@ func NewCommand() *cobra.Command {
 }
 
 func runDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := config.EnsureRuntimeDir(); err != nil {
-		return err
-	}
-
 	logger.Info("TODO: production agent daemon requires AKS RP machine client implementation")
 	<-ctx.Done()
 	return ctx.Err()
 }
 
 func runDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := config.EnsureRuntimeDir(); err != nil {
-		return err
-	}
-
 	logger.Info("running agent daemon in e2e mode", "machineFile", local.E2EMachineFilePath)
 	machines, err := local.NewClient(local.E2EMachineFilePath)
 	if err != nil {

@@ -53,10 +53,6 @@ func NewCommand() *cobra.Command {
 }
 
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := config.EnsureRuntimeDir(); err != nil {
-		return err
-	}
-
 	machines, err := newMachineClient(cfg, logger)
 	if err != nil {
 		return err

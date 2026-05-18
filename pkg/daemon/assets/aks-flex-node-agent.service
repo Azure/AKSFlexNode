@@ -19,8 +19,6 @@ RestartSec=30
 # NOT the installing user's ~/.azure (which would allow local privilege escalation
 # via malicious CLI extensions). See scripts/install.sh for the copy logic.
 Environment=AZURE_CONFIG_DIR=/etc/aks-flex-node/azure
-RuntimeDirectory=aks-flex-node
-RuntimeDirectoryMode=0750
 StandardOutput=journal
 StandardError=journal
 

@@ -16,7 +16,7 @@ type removeRuntimeDirsTask struct {
 }
 
 func RemoveRuntimeDirs(logger *slog.Logger) phases.Task {
-	return &removeRuntimeDirsTask{logger: logger, paths: []string{RuntimeDir, ConfigDir, DefaultLogDir}}
+	return &removeRuntimeDirsTask{logger: logger, paths: []string{ConfigDir, DefaultLogDir}}
 }
 
 func (t *removeRuntimeDirsTask) Name() string { return "remove-runtime-dirs" }

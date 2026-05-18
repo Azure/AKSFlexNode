@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
@@ -24,21 +23,6 @@ const (
 	defaultAzureCloud               = "AzurePublicCloud"
 	defaultMachineReconcileInterval = 10 * time.Minute
 )
-
-// Singleton instance for configuration
-var (
-	configInstance *Config
-	configMutex    sync.RWMutex
-)
-
-// GetConfig returns the singleton configuration instance.
-// Returns nil if configuration has not been loaded yet. Use LoadConfig() first.
-// This function is thread-safe and handles concurrent access correctly.
-func GetConfig() *Config {
-	configMutex.RLock()
-	defer configMutex.RUnlock()
-	return configInstance
-}
 
 // LoadConfig loads configuration from a JSON file.
 // The configPath parameter is required and cannot be empty.
@@ -61,11 +45,6 @@ func LoadConfig(configPath string) (*Config, error) {
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
-
-	// Set the singleton instance
-	configMutex.Lock()
-	defer configMutex.Unlock()
-	configInstance = config
 
 	return config, nil
 }
@@ -284,6 +263,8 @@ func (c *Config) validate() error {
 
 // populateTargetClusterInfoFromConfig extracts cluster information from the resource ID
 // This function should only be called after validateAzureResourceID confirms the format is correct
+// TODO: Deprecate this helper; deriving cluster fields from resourceID/location is wrong
+// for cases like custom node resource groups. Use explicit config fields or an Azure lookup instead.
 func populateTargetClusterInfoFromConfig(cfg *Config) {
 	matches := AKSClusterResourceIDPattern.FindStringSubmatch(cfg.Azure.TargetCluster.ResourceID)
 	if len(matches) < 4 {
