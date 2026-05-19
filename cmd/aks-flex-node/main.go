@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	daemoncmd "github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/reset"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/start"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
@@ -25,7 +25,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(start.NewCommand())
-	rootCmd.AddCommand(daemoncmd.NewCommand())
+	rootCmd.AddCommand(daemon.NewCommand())
 	rootCmd.AddCommand(reset.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())
 	rootCmd.AddCommand(token.Command)

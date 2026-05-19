@@ -109,6 +109,7 @@ func (t *installArcTask) getCredential() (azcore.TokenCredential, error) {
 	if err == nil {
 		sources = append(sources, cred)
 	} else {
+		//nolint:gosec // CredentialType is a display label, not a hardcoded credential.
 		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "Arc managed identity", Err: err})
 	}
 

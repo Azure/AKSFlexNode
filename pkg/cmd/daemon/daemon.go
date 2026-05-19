@@ -9,7 +9,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	daemonruntime "github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
@@ -51,5 +51,5 @@ func runDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 	if err != nil {
 		return fmt.Errorf("create local AKS machine client: %w", err)
 	}
-	return daemonruntime.Run(ctx, cfg, logger, machines)
+	return daemon.Run(ctx, cfg, logger, machines)
 }
