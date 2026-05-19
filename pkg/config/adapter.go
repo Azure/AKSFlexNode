@@ -7,7 +7,7 @@ import (
 
 const (
 	// flexNodeBinaryPath is the path to the aks-flex-node binary inside
-	// the nspawn rootfs. The bootstrapper copies the binary here before
+	// the nspawn rootfs. The start task copies the binary here before
 	// starting the kubelet so that exec credential plugins can invoke it.
 	flexNodeBinaryPath = "/usr/local/bin/aks-flex-node"
 
@@ -24,6 +24,7 @@ const (
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName: machineName,
+		NodeName:    cfg.Agent.NodeName,
 		// TODO: implement support for overriding rootfs image from flex node config.
 		//       Using empty string here means the agent will detect and use the default image.
 		// OCIImage: "",

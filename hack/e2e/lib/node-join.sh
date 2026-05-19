@@ -33,7 +33,7 @@ _deploy_and_start_agent() {
   remote_copy "${REPO_ROOT}/scripts/install.sh" "${vm_ip}" "/tmp/aks-flex-node-install.sh"
 
   log_info "Installing and starting flex node agent on ${vm_ip}..."
-  remote_exec "${vm_ip}" 'bash -s' <<REMOTE
+  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
 set -euo pipefail
 
 sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
@@ -44,33 +44,43 @@ sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
 aks-flex-node version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
+sudo mkdir -p /run/aks-flex-node
+sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
+{
+  "id": "local-test-machine",
+  "goal": {
+    "kubernetesVersion": "${E2E_KUBERNETES_VERSION}",
+    "settingsVersion": "${E2E_KUBERNETES_VERSION}"
+  }
+}
+EOF
 
 # Clean up any leftover transient unit from a previous run
-sudo systemctl stop ${unit_name} 2>/dev/null || true
-sudo systemctl reset-failed ${unit_name} 2>/dev/null || true
+sudo systemctl stop "${UNIT_NAME}" 2>/dev/null || true
+sudo systemctl reset-failed "${UNIT_NAME}" 2>/dev/null || true
 
 sudo systemd-run \
-  --unit=${unit_name} \
-  --description="AKS Flex Node E2E (${unit_name})" \
+  --unit="${UNIT_NAME}" \
+  --description="AKS Flex Node E2E (${UNIT_NAME})" \
   --remain-after-exit \
   /usr/local/bin/aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 
 echo "Waiting up to ${E2E_NODE_JOIN_TIMEOUT}s for aks-flex-node-agent.service to start..."
-deadline=\$((SECONDS + ${E2E_NODE_JOIN_TIMEOUT}))
+deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while ! systemctl is-active --quiet aks-flex-node-agent.service; do
-  if systemctl is-failed --quiet ${unit_name}; then
+  if systemctl is-failed --quiet "${UNIT_NAME}"; then
     echo "Bootstrap unit failed:"
-    sudo systemctl status ${unit_name} --no-pager -l || true
-    sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+    sudo systemctl status "${UNIT_NAME}" --no-pager -l || true
+    sudo journalctl -u "${UNIT_NAME}" -n 50 --no-pager || true
     sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
     exit 1
   fi
 
   if (( SECONDS >= deadline )); then
     echo "Timed out waiting for aks-flex-node-agent.service to become active"
-    sudo systemctl status ${unit_name} --no-pager -l || true
+    sudo systemctl status "${UNIT_NAME}" --no-pager -l || true
     sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
-    sudo journalctl -u ${unit_name} -n 50 --no-pager || true
+    sudo journalctl -u "${UNIT_NAME}" -n 50 --no-pager || true
     sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager || true
     sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
     exit 1
@@ -109,23 +119,22 @@ sleep 10
 # Dump nspawn machine status for debugging
 echo "=== nspawn machines ==="
 machinectl list --no-pager 2>&1 || true
-echo "=== nspawn machine kube1 status ==="
-machinectl status kube1 --no-pager 2>&1 || echo "(kube1 not found)"
+for machine in kube1 kube2; do
+  echo "=== nspawn machine $machine status ==="
+  machinectl status "$machine" --no-pager 2>&1 || echo "($machine not found)"
 
-# Check kubelet inside nspawn container
-if machinectl show kube1 &>/dev/null 2>&1; then
-  echo "=== kubelet status inside kube1 ==="
-  sudo systemd-run --machine=kube1 --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
-  echo "=== kubelet journal inside kube1 (last 30 lines) ==="
-  sudo systemd-run --machine=kube1 --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
-else
-  echo "kube1 machine not running, checking host kubelet:"
-  systemctl status kubelet --no-pager -l 2>&1 || true
-fi
+  # Check kubelet inside each nspawn side when present.
+  if machinectl show "$machine" &>/dev/null 2>&1; then
+    echo "=== kubelet status inside $machine ==="
+    sudo systemd-run --machine="$machine" --quiet --pipe systemctl status kubelet --no-pager -l 2>&1 || true
+    echo "=== kubelet journal inside $machine (last 30 lines) ==="
+    sudo systemd-run --machine="$machine" --quiet --pipe journalctl -u kubelet -n 30 --no-pager 2>&1 || true
+  fi
+done
 
 # Dump agent logs for debugging
 echo "=== agent logs (last 30 lines) ==="
-sudo journalctl -u ${unit_name} -n 30 --no-pager 2>&1 || true
+sudo journalctl -u "${UNIT_NAME}" -n 30 --no-pager 2>&1 || true
 echo "=== aks-flex-node-agent.service logs (last 30 lines) ==="
 sudo journalctl -u aks-flex-node-agent.service -n 30 --no-pager 2>&1 || true
 REMOTE

@@ -23,10 +23,14 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 		},
 	}
 
+	cfg.Agent.NodeName = "test-node"
 	ac := ToAgentConfig(cfg, "kube1")
 
 	if ac.MachineName != "kube1" {
 		t.Fatalf("MachineName=%q, want %q", ac.MachineName, "kube1")
+	}
+	if ac.NodeName != "test-node" {
+		t.Fatalf("NodeName=%q, want test-node", ac.NodeName)
 	}
 	if ac.Cluster.Version != "1.30.0" {
 		t.Fatalf("Cluster.Version=%q, want %q", ac.Cluster.Version, "1.30.0")
@@ -51,6 +55,18 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	}
 	if len(ac.Kubelet.RegisterWithTaints) != 1 || ac.Kubelet.RegisterWithTaints[0] != "dedicated=infra:NoSchedule" {
 		t.Fatalf("Kubelet.RegisterWithTaints=%v, want [dedicated=infra:NoSchedule]", ac.Kubelet.RegisterWithTaints)
+	}
+}
+
+func TestToAgentConfig_NodeName(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{Agent: AgentConfig{NodeName: "worker-1"}}
+
+	ac := ToAgentConfig(cfg, "kube1")
+
+	if ac.NodeName != "worker-1" {
+		t.Fatalf("NodeName=%q, want worker-1", ac.NodeName)
 	}
 }
 
@@ -119,8 +135,7 @@ func TestToAgentConfig_ManagedIdentity(t *testing.T) {
 				ClientID: "mi-client-id",
 			},
 		},
-		Kubernetes:        KubernetesConfig{Version: "1.31.0"},
-		isMIExplicitlySet: true,
+		Kubernetes: KubernetesConfig{Version: "1.31.0"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
 				DNSServiceIP: "10.0.0.10",
@@ -163,9 +178,10 @@ func TestToAgentConfig_ManagedIdentitySystemAssigned(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
-		Azure:             AzureConfig{},
-		isMIExplicitlySet: true,
-		Kubernetes:        KubernetesConfig{Version: "1.31.0"},
+		Azure: AzureConfig{
+			ManagedIdentity: &ManagedIdentityConfig{},
+		},
+		Kubernetes: KubernetesConfig{Version: "1.31.0"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
 				DNSServiceIP: "10.0.0.10",

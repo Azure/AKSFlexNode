@@ -28,8 +28,7 @@ type ensureMachineTask struct {
 }
 
 // EnsureMachine returns a task that ensures the AKS "aksflexnodes" agent pool
-// (mode=Machines) exists and this machine is registered in it. It is a no-op
-// when drift detection/remediation is disabled in the config.
+// (mode=Machines) exists and this machine is registered in it.
 func EnsureMachine(cfg *config.Config, logger *slog.Logger) phases.Task {
 	return &ensureMachineTask{cfg: cfg, logger: logger}
 }
@@ -37,17 +36,11 @@ func EnsureMachine(cfg *config.Config, logger *slog.Logger) phases.Task {
 func (t *ensureMachineTask) Name() string { return "ensure-machine" }
 
 func (t *ensureMachineTask) Do(ctx context.Context) error {
-	if !t.cfg.IsDriftDetectionAndRemediationEnabled() {
-		t.logger.Info("drift detection/remediation disabled, skipping ensure-machine")
-		return nil
-	}
-
-	cfg := t.cfg
-	subID := cfg.GetTargetClusterSubscriptionID()
-	rg := cfg.GetTargetClusterResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
-	machineName := cfg.GetArcMachineName() // hostname-based
-	k8sVersion := cfg.GetKubernetesVersion()
+	subID := t.cfg.Azure.TargetCluster.SubscriptionID
+	rg := t.cfg.Azure.TargetCluster.ResourceGroup
+	clusterName := t.cfg.Azure.TargetCluster.Name
+	machineName := t.cfg.Agent.NodeName // TODO: add support for overriding machine name in config
+	k8sVersion := t.cfg.Kubernetes.Version
 
 	if subID == "" || rg == "" || clusterName == "" || machineName == "" || k8sVersion == "" {
 		return fmt.Errorf("ensure-machine: incomplete config: subscriptionId=%q resourceGroup=%q clusterName=%q machineName=%q kubernetesVersion=%q",

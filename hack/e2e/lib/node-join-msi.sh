@@ -4,7 +4,7 @@
 #
 # Functions:
 #   node_join_msi   - Generate MSI config, deploy binary, run agent
-#   node_unjoin_msi - Stop agent, run unbootstrap, delete node from cluster
+#   node_unjoin_msi - Stop agent, run reset, delete node from cluster
 # =============================================================================
 set -euo pipefail
 
@@ -59,7 +59,8 @@ node_join_msi() {
   },
   "agent": {
     "logLevel": "debug",
-    "logDir": "/var/log/aks-flex-node"
+    "logDir": "/var/log/aks-flex-node",
+    "e2eMode": true
   },
   "kubernetes": { "version": "${E2E_KUBERNETES_VERSION}" },
   "containerd": { "version": "${E2E_CONTAINERD_VERSION}" },
@@ -74,7 +75,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_msi - Stop the agent, run unbootstrap, remove node from cluster
+# node_unjoin_msi - Stop the agent, run reset, remove node from cluster
 # ---------------------------------------------------------------------------
 node_unjoin_msi() {
   log_section "Unjoining MSI Node"
@@ -85,9 +86,9 @@ node_unjoin_msi() {
   vm_ip="$(state_get msi_vm_ip)"
   vm_name="$(state_get msi_vm_name)"
 
-  # Step 1: Stop the agent service and run unbootstrap on the VM.
-  # The unbootstrap command runs best-effort: ResetKubelet, ResetContainerdService,
-  # and ArcUnbootstrap (in that order). It does not delete the node object.
+  # Step 1: Stop the agent service and run reset on the VM.
+  # The public uninstall script still invokes the unbootstrap alias for backward
+  # compatibility. The reset flow does not delete the node object.
   log_info "Running uninstall script on ${vm_ip}..."
   remote_copy "${REPO_ROOT}/scripts/uninstall.sh" "${vm_ip}" "/tmp/aks-flex-node-uninstall.sh"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
@@ -104,9 +105,9 @@ if systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '
   exit 1
 fi
 
-echo "kubelet status after unbootstrap:"
+echo "kubelet status after reset:"
 systemctl is-active kubelet 2>&1 || true
-echo "containerd status after unbootstrap:"
+echo "containerd status after reset:"
 systemctl is-active containerd 2>&1 || true
 REMOTE
 

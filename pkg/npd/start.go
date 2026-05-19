@@ -20,7 +20,10 @@ import (
 //go:embed assets/node-problem-detector.service
 var serviceTemplate string
 
-const systemdUnitNPD = "node-problem-detector.service"
+const (
+	KubeletKubeconfigPath = "/var/lib/kubelet/kubelet/kubeconfig"
+	systemdUnitNPD        = "node-problem-detector.service"
+)
 
 var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
 
@@ -39,7 +42,7 @@ func Start(cfg *config.Config, log *slog.Logger, machineDir, machineName string)
 	return &startTask{
 		log:            log,
 		apiServer:      cfg.Node.Kubelet.ServerURL,
-		kubeconfigPath: config.KubeletKubeconfigPath,
+		kubeconfigPath: KubeletKubeconfigPath,
 		machineDir:     machineDir,
 		machineName:    machineName,
 	}

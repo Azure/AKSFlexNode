@@ -56,11 +56,11 @@ jobs:
           GIT_COMMIT=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          LDFLAGS="-X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT} -X main.BuildTime=${BUILD_DATE} -w -s"
+          LDFLAGS="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_DATE} -w -s"
 
           BINARY_NAME="aks-flex-node-${{ matrix.os }}-${{ matrix.arch }}"
 
-          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" .
+          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/aks-flex-node
 
           # Create tarball
           tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"

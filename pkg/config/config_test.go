@@ -19,12 +19,10 @@ func TestSetDefaults(t *testing.T) {
 			name:   "empty config gets all defaults",
 			config: &Config{},
 			want: func(c *Config) bool {
-				driftEnabled := c.IsDriftDetectionAndRemediationEnabled()
 				return c.Azure.Cloud == "AzurePublicCloud" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
-					driftEnabled &&
-					c.Paths.Kubernetes.ConfigDir == "/etc/kubernetes" &&
+					c.Agent.MachineOperationMode == "auto" &&
 					c.Node.MaxPods == 110 &&
 					c.Runc.Version == "1.1.12"
 			},
@@ -46,20 +44,6 @@ func TestSetDefaults(t *testing.T) {
 			},
 		},
 		{
-			name:   "drift detection default is enabled",
-			config: &Config{},
-			want: func(c *Config) bool {
-				return c.IsDriftDetectionAndRemediationEnabled()
-			},
-		},
-		{
-			name:   "drift detection can be disabled",
-			config: &Config{Agent: AgentConfig{EnableDriftDetectionAndRemediation: func() *bool { v := false; return &v }()}},
-			want: func(c *Config) bool {
-				return !c.IsDriftDetectionAndRemediationEnabled()
-			},
-		},
-		{
 			name: "node kubelet defaults are set correctly",
 			config: &Config{
 				Node: NodeConfig{
@@ -70,20 +54,64 @@ func TestSetDefaults(t *testing.T) {
 				return c.Node.MaxPods == 50 && // preserved
 					c.Node.Kubelet.Verbosity == 2 &&
 					c.Node.Kubelet.ImageGCHighThreshold == 85 &&
-					c.Node.Kubelet.ImageGCLowThreshold == 80 &&
-					c.Node.Kubelet.KubeReserved != nil &&
-					c.Node.Kubelet.EvictionHard != nil
+					c.Node.Kubelet.ImageGCLowThreshold == 80
+			},
+		},
+		{
+			name:   "machine operation mode can be disabled",
+			config: &Config{Agent: AgentConfig{MachineOperationMode: "disable"}},
+			want: func(c *Config) bool {
+				return c.Agent.MachineOperationMode == "disable"
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.config.SetDefaults()
+			tt.config.setDefaults()
 			if !tt.want(tt.config) {
 				t.Errorf("SetDefaults() failed validation for %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestResolveNodeName(t *testing.T) {
+	cfg := &Config{}
+	got, err := cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName: %v", err)
+	}
+	if got == "" {
+		t.Fatal("resolveNodeName returned empty node name")
+	}
+	if cfg.Agent.NodeName != got {
+		t.Fatalf("cfg.Agent.NodeName=%q, want %q", cfg.Agent.NodeName, got)
+	}
+
+	cfg.Agent.NodeName = "custom-node"
+	got, err = cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName with existing node name: %v", err)
+	}
+	if got != "custom-node" {
+		t.Fatalf("resolveNodeName=%q, want custom-node", got)
+	}
+
+	cfg.Agent.NodeName = "  custom-node-2  "
+	got, err = cfg.resolveNodeName()
+	if err != nil {
+		t.Fatalf("resolveNodeName with spaced node name: %v", err)
+	}
+	if got != "custom-node-2" || cfg.Agent.NodeName != "custom-node-2" {
+		t.Fatalf("resolved node name=%q cfg=%q, want custom-node-2", got, cfg.Agent.NodeName)
+	}
+}
+
+func TestResolveNodeNameRejectsInvalidConfiguredName(t *testing.T) {
+	cfg := &Config{Agent: AgentConfig{NodeName: "Invalid_Node"}}
+	if _, err := cfg.resolveNodeName(); err == nil || !strings.Contains(err.Error(), "valid Kubernetes DNS subdomain") {
+		t.Fatalf("resolveNodeName error = %v, want DNS subdomain error", err)
 	}
 }
 
@@ -230,7 +258,30 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid agent.logLevel: invalid. Valid values are: debug, info, warning, error",
+			errMsg:  "invalid agent.logLevel: invalid log level 'invalid'. Valid levels are: debug, info, warning, error",
+		},
+		{
+			name: "invalid machine operation mode fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel:             "info",
+					MachineOperationMode: "arm",
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid agent.machineOperationMode",
 		},
 		{
 			name: "valid arc config passes",
@@ -260,7 +311,7 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.validate()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Validate() expected error but got none for %s", tt.name)
@@ -767,7 +818,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateBootstrapToken(tt.config)
+			err := tt.config.validateBootstrapToken()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("validateBootstrapToken() expected error but got none")
@@ -841,6 +892,29 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "partial service principal fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID: "12345678-1234-1234-1234-123456789012",
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.servicePrincipal.clientSecret is required when service principal is configured",
+		},
+		{
 			name: "managed identity authentication enabled",
 			config: &Config{
 				Azure: AzureConfig{
@@ -858,7 +932,6 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
-				isMIExplicitlySet: true,
 			},
 			wantErr: false,
 		},
@@ -887,6 +960,30 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "partial arc config fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					Arc: &ArcConfig{
+						Enabled:     true,
+						MachineName: "test-machine",
+						Location:    "eastus",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.arc.resourceGroup is required when Arc is enabled",
+		},
+		{
 			name: "arc and managed identity together fails",
 			config: &Config{
 				Azure: AzureConfig{
@@ -910,7 +1007,6 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
-				isMIExplicitlySet: true,
 			},
 			wantErr: true,
 			errMsg:  "only one authentication method can be enabled at a time",
@@ -1055,7 +1151,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.validate()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Validate() expected error but got none")
@@ -1220,7 +1316,7 @@ func TestIsBootstrapTokenConfigured(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "bootstrap token configured but empty token",
+			name: "bootstrap token selected with empty token",
 			config: &Config{
 				Azure: AzureConfig{
 					BootstrapToken: &BootstrapTokenConfig{
@@ -1228,7 +1324,7 @@ func TestIsBootstrapTokenConfigured(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			expected: true,
 		},
 		{
 			name: "service principal configured (not bootstrap token)",
