@@ -1,66 +1,52 @@
 # AKS Flex Node
 
-A Go agent that extends Azure Kubernetes Service (AKS) to non-Azure VMs, enabling hybrid and edge computing scenarios. Optionally integrates with Azure Arc for enhanced cloud management capabilities.
-
-**Alpha Release**
-
-Runs on Ubuntu 22.04 & 24.04 (x86_64, arm64)  
-Deploy anywhere: Azure, AWS, GCP, OCI, Nebius, Tensorwave or NVIDIA DGX Spark
-
 ## Overview
 
-AKS Flex Node transforms any Ubuntu VM into a semi-managed AKS worker node by:
+AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual machines and bare metal hosts, enabling them to run as AKS worker nodes outside standard AKS node pools.
 
-- 📦 **Container Runtime Setup** - Installs and configures runc and containerd
-- ☸️ **Kubernetes Integration** - Deploys kubelet, kubectl, and kubeadm components
-- 🌐 **Network Configuration** - Sets up Container Network Interface (CNI) for pod networking
-- 🚀 **Service Orchestration** - Configures and manages all required systemd services
-- ⚡ **Cluster Connection** - Securely joins your VM as a worker node to your existing AKS cluster
-- 🔗 **Azure Arc Registration** (Optional) - Registers your VM with Azure Arc for cloud management and managed identity
+> **Status:** AKS Flex Node is currently alpha software.
 
-## Documentation
+## Key Features And Scenarios
 
-- **[Usage Guide](docs/usage.md)** - Installation, configuration, and usage instructions
-- **[Design Documentation](docs/design.md)** - System design, data flow, Azure integration, and technical specifications
-- **[Development Guide](docs/development.md)** - Building from source, testing, and contributing
+- Bootstrap and join virtual machines or bare metal hosts for both amd64 and arm64 as AKS worker nodes.
+- Support hybrid, lab, and specialized hardware scenarios.
+- Use flexible authentication modes, including Azure Arc, managed identity (MSI), and Kubernetes bootstrap token.
+- Automatically detect NVIDIA GPU devices and configure the container runtime for accelerated workloads.
+- Run blue-green in-place updates and upgrades while retaining the existing host.
+- Manage your Flex Node fleet through AKS management APIs for upgrade, repair, reset, and related lifecycle operations.
+- Remediate and repair agent and node state through first-class lifecycle operations.
 
-## Quick Start
+## Getting Started
 
-### Installation
+Install the latest `aks-flex-node` binary with the install script:
 
 ```bash
-# Switch to root
 sudo su
-
-# Install aks-flex-node
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
-
-# Verify installation
 aks-flex-node version
 ```
 
-### Usage
-
-> **Important:** All commands below assume you are running as root (`sudo su`). The agent installs and configures system-level components (containerd, kubelet, CNI) and manages systemd services, all of which require root privileges.
+After installation, create a configuration file for your authentication mode and target AKS cluster, then bootstrap the node:
 
 ```bash
-# Bootstrap the node and start the systemd-managed agent
 aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
 ```
 
-For detailed setup instructions, prerequisites, requirements, and configuration options, see the **[Usage Guide](docs/usage.md)**.
+`bootstrap` installs host components, starts the local AKS worker node, installs the systemd unit, and starts the agent daemon.
 
-## Contributing
+## Usage Guides And Topics
 
-We welcome contributions! See the **[Development Guide](docs/development.md)** for details on building, testing, and submitting pull requests.
+- [Usage Guide](docs/usage.md) - Installation, configuration, authentication modes, operations, and troubleshooting.
+- [Design Documentation](docs/design.md) - Architecture, lifecycle, Azure integration, and security model.
+
+## Development And Security
+
+- [Development Guide](docs/development.md) - To learn more about build, development, and contribution workflow.
+- [Security Policy](SECURITY.md) - How to report security vulnerabilities.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE.MD) file for details.
-
-## Security
-
-Microsoft takes the security of our software products and services seriously. If you believe you have found a security vulnerability, please report it to us as described in [SECURITY.md](SECURITY.md).
+This project is licensed under the MIT License. See [LICENSE](LICENSE.MD) for details.
 
 ---
 
