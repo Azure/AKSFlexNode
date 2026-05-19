@@ -6,6 +6,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 )
 
 type CredentialErrorReporter struct {
@@ -14,5 +15,7 @@ type CredentialErrorReporter struct {
 }
 
 func (c *CredentialErrorReporter) GetToken(context.Context, policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	return azcore.AccessToken{}, fmt.Errorf("%s credential unavailable: %w", c.CredentialType, c.Err)
+	return azcore.AccessToken{}, azidentity.NewCredentialUnavailableError(
+		fmt.Sprintf("%s credential unavailable: %v", c.CredentialType, c.Err),
+	)
 }
