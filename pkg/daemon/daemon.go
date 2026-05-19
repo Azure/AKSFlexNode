@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,14 +24,11 @@ import (
 // injected so production ARM, remote test, and local file-backed clients can
 // share the same daemon controller.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aksmachine.MachineClient) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
 	restCfg, err := bootstrapCredentialRESTConfig(cfg)
 	if err != nil {
 		return err
 	}
-	store, err := newFileStateStore("")
+	store, err := NewFileStateStore()
 	if err != nil {
 		return err
 	}
@@ -91,9 +87,6 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
 	if cfg.Node.Kubelet.ServerURL == "" {
 		return nil, fmt.Errorf("kubernetes API server URL is empty")
 	}
@@ -114,17 +107,10 @@ func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
 		restCfg.BearerToken = cfg.Azure.BootstrapToken.Token
 		return restCfg, nil
 	}
-	agentCfg := config.ToAgentConfig(cfg, cfg.GetArcMachineName())
+	agentCfg := config.ToAgentConfig(cfg, cfg.Agent.NodeName)
 	if agentCfg.Kubelet.Auth.ExecCredential == nil {
 		return nil, fmt.Errorf("daemon node client requires bootstrap token or exec credential")
 	}
-	restCfg.ExecProvider = &clientcmdapi.ExecConfig{
-		APIVersion:         agentCfg.Kubelet.Auth.ExecCredential.APIVersion,
-		Command:            agentCfg.Kubelet.Auth.ExecCredential.Command,
-		Args:               agentCfg.Kubelet.Auth.ExecCredential.Args,
-		Env:                agentCfg.Kubelet.Auth.ExecCredential.Env,
-		InteractiveMode:    agentCfg.Kubelet.Auth.ExecCredential.InteractiveMode,
-		ProvideClusterInfo: agentCfg.Kubelet.Auth.ExecCredential.ProvideClusterInfo,
-	}
+	restCfg.ExecProvider = agentCfg.Kubelet.Auth.ExecCredential.DeepCopy()
 	return restCfg, nil
 }

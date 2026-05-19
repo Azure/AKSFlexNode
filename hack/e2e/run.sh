@@ -220,6 +220,8 @@ main() {
   load_config
   init_work_dir
 
+  trap 'gha_end_group' EXIT
+
   case "${COMMAND}" in
     all)
       cmd_all

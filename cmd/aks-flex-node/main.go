@@ -10,7 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/reset"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/start"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/version"
 )
 
 func main() {
@@ -20,10 +24,10 @@ func main() {
 		Long:  "Azure Kubernetes Service Flex Node Agent for edge computing scenarios",
 	}
 
-	rootCmd.AddCommand(NewBootstrapCommand())
-	rootCmd.AddCommand(NewAgentCommand())
-	rootCmd.AddCommand(NewUnbootstrapCommand())
-	rootCmd.AddCommand(NewVersionCommand())
+	rootCmd.AddCommand(start.NewCommand())
+	rootCmd.AddCommand(daemon.NewCommand())
+	rootCmd.AddCommand(reset.NewCommand())
+	rootCmd.AddCommand(version.NewCommand())
 	rootCmd.AddCommand(token.Command)
 
 	// Set up context with signal handling

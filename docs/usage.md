@@ -134,8 +134,7 @@ tee /etc/aks-flex-node/config.json > /dev/null << 'EOF'
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node",
-    "enableDriftDetectionAndRemediation": true
+    "logDir": "/var/log/aks-flex-node"
   }
 }
 EOF
@@ -347,8 +346,7 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node",
-    "enableDriftDetectionAndRemediation": true
+    "logDir": "/var/log/aks-flex-node"
   }
 }
 EOF
@@ -585,21 +583,10 @@ tee /etc/aks-flex-node/config.json > /dev/null <<EOF
   },
   "agent": {
     "logLevel": "info",
-    "logDir": "/var/log/aks-flex-node",
-    "enableDriftDetectionAndRemediation": true
+    "logDir": "/var/log/aks-flex-node"
   }
 }
 EOF
-
-You can disable ensure-machine reconciliation if you prefer to self-manage node updates:
-
-```json
-{
-  "agent": {
-    "enableDriftDetectionAndRemediation": false
-  }
-}
-```
 ```
 
 ### Running the Agent
@@ -668,8 +655,8 @@ This approach is more secure than long-lived credentials because:
 | Command | Description | Usage |
 |---------|-------------|-------|
 | `bootstrap` | Bootstrap node and start the systemd-managed agent | `aks-flex-node bootstrap --config /etc/aks-flex-node/config.json` |
-| `agent` | Run the long-lived daemon used by systemd | `aks-flex-node agent --config /etc/aks-flex-node/config.json` |
-| `unbootstrap` | Clean removal of all components | `aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json` |
+| `daemon` | Run the long-lived daemon used by systemd | `aks-flex-node daemon --config /etc/aks-flex-node/config.json` |
+| `reset` | Clean removal of all components | `aks-flex-node reset` |
 | `version` | Show version information | `aks-flex-node version` |
 
 ### Monitoring Logs
@@ -685,13 +672,13 @@ tail -f /var/log/aks-flex-node/aks-flex-node.log
 journalctl -u kubelet -f
 ```
 
-### Unbootstrap
+### Reset
 
 Remove the node from the cluster and clean up:
 
 ```bash
-# Run unbootstrap
-aks-flex-node unbootstrap --config /etc/aks-flex-node/config.json
+# Run reset
+aks-flex-node reset
 
 # Verify node removed from cluster
 kubectl get nodes

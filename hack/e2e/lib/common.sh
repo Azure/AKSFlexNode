@@ -53,7 +53,21 @@ log_debug()   {
   return 0
 }
 
+_E2E_GHA_GROUP_OPEN=0
+
+gha_end_group() {
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && "${_E2E_GHA_GROUP_OPEN}" == "1" ]]; then
+    echo "::endgroup::"
+    _E2E_GHA_GROUP_OPEN=0
+  fi
+}
+
 log_section() {
+  gha_end_group
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::group::$*"
+    _E2E_GHA_GROUP_OPEN=1
+  fi
   echo ""
   echo "=================================================================="
   echo "  $*"
@@ -263,12 +277,12 @@ ensure_binary() {
   git_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
   local build_date
   build_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  local ldflags="-X main.Version=${version} -X main.GitCommit=${git_commit} -X main.BuildTime=${build_date}"
+  local ldflags="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${version} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${git_commit} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${build_date}"
 
   E2E_BINARY="${E2E_WORK_DIR}/aks-flex-node"
   (
     cd "${REPO_ROOT}"
-    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_BINARY}" .
+    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_BINARY}" ./cmd/aks-flex-node
   )
   chmod +x "${E2E_BINARY}"
 

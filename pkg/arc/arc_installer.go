@@ -11,22 +11,22 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/google/uuid"
 
-	"github.com/Azure/AKSFlexNode/pkg/auth"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilaz"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 type installArcTask struct {
-	cfg          *config.Config
-	logger       *slog.Logger
-	authProvider *auth.AuthProvider
+	cfg    *config.Config
+	logger *slog.Logger
 
 	// lazily initialised by setUpClients
 	hybridComputeClient   *armhybridcompute.MachinesClient
@@ -39,9 +39,8 @@ type installArcTask struct {
 // It is a no-op when Arc is disabled in the config.
 func InstallArc(cfg *config.Config, logger *slog.Logger) phases.Task {
 	return &installArcTask{
-		cfg:          cfg,
-		logger:       logger,
-		authProvider: auth.NewAuthProvider(),
+		cfg:    cfg,
+		logger: logger,
 	}
 }
 
@@ -51,6 +50,9 @@ func (t *installArcTask) Do(ctx context.Context) error {
 	if !t.cfg.IsARCEnabled() {
 		t.logger.Info("Arc is disabled, skipping installation")
 		return nil
+	}
+	if err := copyAzureCLIAuth(); err != nil {
+		return fmt.Errorf("copy Azure CLI auth: %w", err)
 	}
 
 	// Step 1: prerequisites (auth + azcmagent binary)
@@ -88,33 +90,58 @@ func (t *installArcTask) ensurePrerequisites(ctx context.Context) error {
 }
 
 func (t *installArcTask) ensureAuthentication(ctx context.Context) error {
-	_, err := t.getCredential(ctx)
+	cred, err := t.getCredential()
+	if err != nil {
+		return err
+	}
+	scope, err := t.cfg.Azure.ResourceManagerTokenScope()
+	if err != nil {
+		return err
+	}
+	_, err = getAccessToken(ctx, cred, scope)
 	return err
 }
 
-func (t *installArcTask) getCredential(ctx context.Context) (azcore.TokenCredential, error) {
-	// Arc MSI → DefaultAzure → CLI
-	if cred, err := t.authProvider.ArcCredential(); err == nil {
-		if err := t.testCredential(ctx, cred); err == nil {
-			return cred, nil
-		}
+func (t *installArcTask) getCredential() (azcore.TokenCredential, error) {
+	var sources []azcore.TokenCredential
+
+	cred, err := azidentity.NewManagedIdentityCredential(nil)
+	if err == nil {
+		sources = append(sources, cred)
+	} else {
+		//nolint:gosec // CredentialType is a display label, not a hardcoded credential.
+		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "Arc managed identity", Err: err})
 	}
-	if cred, err := azidentity.NewDefaultAzureCredential(nil); err == nil {
-		if err := t.testCredential(ctx, cred); err == nil {
-			return cred, nil
-		}
+
+	defaultCred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err == nil {
+		sources = append(sources, defaultCred)
+	} else {
+		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "default Azure", Err: err})
 	}
-	if cred, err := azidentity.NewAzureCLICredential(nil); err == nil {
-		if err := t.testCredential(ctx, cred); err == nil {
-			return cred, nil
-		}
+
+	cliCred, err := azidentity.NewAzureCLICredential(nil)
+	if err == nil {
+		sources = append(sources, cliCred)
+	} else {
+		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "Azure CLI", Err: err})
 	}
-	return nil, fmt.Errorf("no valid Azure credential found")
+
+	chainedCred, err := azidentity.NewChainedTokenCredential(sources, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create chained credential: %w", err)
+	}
+	return chainedCred, nil
 }
 
-func (t *installArcTask) testCredential(ctx context.Context, cred azcore.TokenCredential) error {
-	_, err := t.authProvider.GetAccessToken(ctx, cred)
-	return err
+func getAccessToken(ctx context.Context, cred azcore.TokenCredential, scope string) (string, error) {
+	accessToken, err := cred.GetToken(ctx, policy.TokenRequestOptions{
+		Scopes: []string{scope},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get access token: %w", err)
+	}
+	return accessToken.Token, nil
 }
 
 func (t *installArcTask) installArcAgentBinary(ctx context.Context) error {
@@ -175,7 +202,7 @@ func (t *installArcTask) execute(ctx context.Context) error {
 }
 
 func (t *installArcTask) setUpClients(ctx context.Context) error {
-	cred, err := t.getCredential(ctx)
+	cred, err := t.getCredential()
 	if err != nil {
 		return fmt.Errorf("obtain credential: %w", err)
 	}
@@ -214,7 +241,8 @@ func (t *installArcTask) registerArcMachine(ctx context.Context) (*armhybridcomp
 }
 
 func (t *installArcTask) getArcMachine(ctx context.Context) (*armhybridcompute.Machine, error) {
-	result, err := t.hybridComputeClient.Get(ctx, t.cfg.GetArcResourceGroup(), t.cfg.GetArcMachineName(), nil)
+	arcConfig := t.cfg.Azure.Arc
+	result, err := t.hybridComputeClient.Get(ctx, arcConfig.ResourceGroup, arcConfig.MachineName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -247,25 +275,30 @@ func (t *installArcTask) waitForArcRegistration(ctx context.Context) (*armhybrid
 
 func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 	cfg := t.cfg
+	arcConfig := cfg.Azure.Arc
 	args := []string{
 		"connect",
-		"--resource-group", cfg.GetArcResourceGroup(),
+		"--resource-group", arcConfig.ResourceGroup,
 		"--tenant-id", cfg.Azure.TenantID,
-		"--location", cfg.GetArcLocation(),
+		"--location", arcConfig.Location,
 		"--subscription-id", cfg.Azure.SubscriptionID,
-		"--resource-name", cfg.GetArcMachineName(),
+		"--resource-name", arcConfig.MachineName,
 	}
 
-	for key, value := range cfg.GetArcTags() {
+	for key, value := range arcConfig.Tags {
 		args = append(args, "--tags", fmt.Sprintf("%s=%s", key, value))
 	}
 
 	// Add access token for authentication.
-	cred, err := t.getCredential(ctx)
+	cred, err := t.getCredential()
 	if err != nil {
 		return fmt.Errorf("obtain credential for azcmagent: %w", err)
 	}
-	accessToken, err := t.authProvider.GetAccessToken(ctx, cred)
+	scope, err := t.cfg.Azure.ResourceManagerTokenScope()
+	if err != nil {
+		return err
+	}
+	accessToken, err := getAccessToken(ctx, cred, scope)
 	if err != nil {
 		return fmt.Errorf("get access token: %w", err)
 	}
@@ -290,8 +323,9 @@ func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 
 func (t *installArcTask) validateManagedCluster(ctx context.Context) error {
 	cfg := t.cfg
-	clusterRG := cfg.GetArcResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	arcConfig := cfg.Azure.Arc
+	clusterRG := arcConfig.ResourceGroup
+	clusterName := cfg.Azure.TargetCluster.Name
 
 	result, err := t.mcClient.Get(ctx, clusterRG, clusterName, nil)
 	if err != nil {
@@ -338,9 +372,10 @@ func (t *installArcTask) assignRBACRoles(ctx context.Context, arcMachine *armhyb
 
 func (t *installArcTask) getRoleAssignments() []roleAssignment {
 	cfg := t.cfg
+	arcConfig := cfg.Azure.Arc
 	subID := cfg.Azure.SubscriptionID
-	rg := cfg.GetArcResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	rg := arcConfig.ResourceGroup
+	clusterName := cfg.Azure.TargetCluster.Name
 
 	subScope := fmt.Sprintf("/subscriptions/%s", subID)
 	rgScope := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", subID, rg)

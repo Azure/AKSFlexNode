@@ -7,7 +7,7 @@ import (
 
 const (
 	// flexNodeBinaryPath is the path to the aks-flex-node binary inside
-	// the nspawn rootfs. The bootstrapper copies the binary here before
+	// the nspawn rootfs. The start task copies the binary here before
 	// starting the kubelet so that exec credential plugins can invoke it.
 	flexNodeBinaryPath = "/usr/local/bin/aks-flex-node"
 

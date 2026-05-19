@@ -1,22 +1,22 @@
-package bootstrapper
+package config
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
 
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilaz"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"sigs.k8s.io/yaml"
-
-	"github.com/Azure/AKSFlexNode/pkg/auth"
-	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
-// EnrichClusterConfig populates cfg.Node.Kubelet.ServerURL and
+// BackfillClusterConfigWithUserCredentials populates cfg.Node.Kubelet.ServerURL and
 // cfg.Node.Kubelet.CACertData from the AKS cluster admin credentials.
 // It is a no-op when these fields are already set or when bootstrap token
 // auth is configured (which requires them in the config file).
-func EnrichClusterConfig(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+func BackfillClusterConfigWithUserCredentials(ctx context.Context, cfg *Config, logger *slog.Logger) error {
 	if cfg.Node.Kubelet.ServerURL != "" && cfg.Node.Kubelet.CACertData != "" {
 		return nil
 	}
@@ -26,20 +26,19 @@ func EnrichClusterConfig(ctx context.Context, cfg *config.Config, logger *slog.L
 	}
 
 	logger.Info("fetching cluster admin credentials to populate server URL and CA cert data")
-
-	cred, err := auth.NewAuthProvider().UserCredential(cfg)
+	cred, err := userCredential(cfg)
 	if err != nil {
 		return fmt.Errorf("get credential: %w", err)
 	}
 
-	clusterSubID := cfg.GetTargetClusterSubscriptionID()
+	clusterSubID := cfg.Azure.TargetCluster.SubscriptionID
 	mcClient, err := armcontainerservice.NewManagedClustersClient(clusterSubID, cred, nil)
 	if err != nil {
 		return fmt.Errorf("create managed clusters client: %w", err)
 	}
 
-	clusterRG := cfg.GetTargetClusterResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	clusterRG := cfg.Azure.TargetCluster.ResourceGroup
+	clusterName := cfg.Azure.TargetCluster.Name
 
 	resp, err := mcClient.ListClusterAdminCredentials(ctx, clusterRG, clusterName, nil)
 	if err != nil {
@@ -64,6 +63,48 @@ func EnrichClusterConfig(ctx context.Context, cfg *config.Config, logger *slog.L
 	cfg.Node.Kubelet.CACertData = caCertData
 	logger.Info("cluster config enriched", "serverURL", serverURL)
 	return nil
+}
+
+func userCredential(cfg *Config) (azcore.TokenCredential, error) {
+	var sources []azcore.TokenCredential
+	if cfg.Azure.ServicePrincipal != nil {
+		sp := cfg.Azure.ServicePrincipal
+		cred, err := azidentity.NewClientSecretCredential(
+			sp.TenantID,
+			sp.ClientID,
+			sp.ClientSecret,
+			nil,
+		)
+		if err == nil {
+			sources = append(sources, cred)
+		} else {
+			sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "service principal", Err: err})
+		}
+	}
+	if cfg.Azure.ManagedIdentity != nil {
+		options := &azidentity.ManagedIdentityCredentialOptions{}
+		if cfg.Azure.ManagedIdentity.ClientID != "" {
+			options.ID = azidentity.ClientID(cfg.Azure.ManagedIdentity.ClientID)
+		}
+		cred, err := azidentity.NewManagedIdentityCredential(options)
+		if err == nil {
+			sources = append(sources, cred)
+		} else {
+			sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "managed identity", Err: err})
+		}
+	}
+	cred, err := azidentity.NewAzureCLICredential(nil)
+	if err == nil {
+		sources = append(sources, cred)
+	} else {
+		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "azure CLI", Err: err})
+	}
+
+	chainedCred, err := azidentity.NewChainedTokenCredential(sources, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create chained credential: %w", err)
+	}
+	return chainedCred, nil
 }
 
 // minimalKubeconfig holds just the fields we need from an admin kubeconfig.

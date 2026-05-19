@@ -4,13 +4,13 @@ GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
 # Build flags to inject version information
-LDFLAGS := -X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildTime=$(BUILD_DATE) -w -s
+LDFLAGS := -X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=$(VERSION) -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=$(GIT_COMMIT) -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=$(BUILD_DATE) -w -s
 
 # Default build for current platform
 .PHONY: build
 build:
 	@echo "Building for current platform..."
-	@go build -ldflags "$(LDFLAGS)" -o aks-flex-node .
+	@go build -ldflags "$(LDFLAGS)" -o aks-flex-node ./cmd/aks-flex-node
 
 .PHONY: build-e2ehelper
 build-e2ehelper:
@@ -21,12 +21,12 @@ build-e2ehelper:
 .PHONY: build-linux-amd64
 build-linux-amd64:
 	@echo "Building for Linux AMD64..."
-	@GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o aks-flex-node-linux-amd64 .
+	@GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o aks-flex-node-linux-amd64 ./cmd/aks-flex-node
 
 .PHONY: build-linux-arm64
 build-linux-arm64:
 	@echo "Building for Linux ARM64..."
-	@GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o aks-flex-node-linux-arm64 .
+	@GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o aks-flex-node-linux-arm64 ./cmd/aks-flex-node
 
 # Build all supported platforms
 .PHONY: build-all

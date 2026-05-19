@@ -49,7 +49,7 @@ confirm_uninstall() {
     echo "• Log directory ($LOG_DIR)"
     echo "• Azure CLI"
     echo ""
-    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node unbootstrap' to clean up cluster and Arc resources.${NC}"
+    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node reset' to clean up cluster and Arc resources.${NC}"
         echo ""
 
     # Always prompt for confirmation, even when piped
@@ -65,13 +65,13 @@ confirm_uninstall() {
     fi
 }
 
-run_unbootstrap() {
-    log_info "Running unbootstrap to clean up cluster and Arc resources..."
+run_reset() {
+    log_info "Running reset to clean up cluster and Arc resources..."
 
     # Check if aks-flex-node binary exists
     if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
         log_warning "AKS Flex Node binary not found at $INSTALL_DIR/aks-flex-node"
-        log_info "Skipping unbootstrap - binary may already be removed"
+        log_info "Skipping reset - binary may already be removed"
         log_info "Removing systemd service directly..."
 
         systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
@@ -100,26 +100,26 @@ run_unbootstrap() {
         log_info "Manual cleanup of Azure resources may be required"
     fi
 
-    # Run unbootstrap to clean up resources
+    # Run reset to clean up resources
     # Use the root-owned auth copy prepared by 'aks-flex-node bootstrap'.
     local azure_config_dir="$CONFIG_DIR/azure"
 
     if [[ -d "$azure_config_dir" ]]; then
         log_info "Using Azure CLI credentials from: $azure_config_dir"
 
-        env AZURE_CONFIG_DIR="$azure_config_dir" TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
-            log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
+        env AZURE_CONFIG_DIR="$azure_config_dir" TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" reset 2>&1 || {
+            log_warning "Reset failed - this may be expected if resources are already cleaned up"
         }
     else
         log_warning "Azure CLI credentials not found at $azure_config_dir"
-        log_info "Attempting unbootstrap without Azure CLI credentials..."
+        log_info "Attempting reset without Azure CLI credentials..."
 
-        env TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" unbootstrap --config "$config_file" 2>&1 || {
-            log_warning "Unbootstrap failed - this may be expected if resources are already cleaned up"
+        env TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" reset 2>&1 || {
+            log_warning "Reset failed - this may be expected if resources are already cleaned up"
         }
     fi
 
-    log_success "Unbootstrap completed"
+    log_success "Reset completed"
 }
 
 remove_directories() {
@@ -204,7 +204,7 @@ main() {
     log_info "Starting AKS Flex Node uninstallation..."
 
     # Uninstall components in reverse order of installation
-    run_unbootstrap
+    run_reset
     remove_directories
     remove_binary
     remove_azure_cli

@@ -119,7 +119,7 @@ func TestFileStateStoreDelete(t *testing.T) {
 func TestSeededState(t *testing.T) {
 	t.Parallel()
 
-	state := SeededState(aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}, "kube1")
+	state := SeededState(aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"})
 	if state.AppliedSettingsVersion != "42" {
 		t.Fatalf("AppliedSettingsVersion = %q, want 42", state.AppliedSettingsVersion)
 	}
@@ -134,17 +134,21 @@ func TestSeededState(t *testing.T) {
 	}
 }
 
-func TestSeedStateTaskValidation(t *testing.T) {
+func TestSaveStateValidation(t *testing.T) {
 	t.Parallel()
 
-	if err := NewSeedStateTask(nil, "kube1").Do(t.Context()); err == nil {
-		t.Fatalf("seedStateTask nil client error = nil")
+	if err := saveState(nil, &State{}).Do(t.Context()); err == nil {
+		t.Fatalf("SaveState nil store error = nil")
 	}
-	if err := NewSeedStateTask(&fakeMachineClient{}, "kube3").Do(t.Context()); err == nil {
-		t.Fatalf("seedStateTask invalid active machine error = nil")
+	store, err := newFileStateStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("newFileStateStore: %v", err)
 	}
-	if task := NewSeedStateTask(&fakeMachineClient{}, "kube1"); task.Name() != "seed-daemon-state" {
-		t.Fatalf("Name = %q, want seed-daemon-state", task.Name())
+	if err := saveState(store, nil).Do(t.Context()); err == nil {
+		t.Fatalf("SaveState nil state error = nil")
+	}
+	if task := saveState(store, &State{}); task.Name() != "save-daemon-state" {
+		t.Fatalf("Name = %q, want save-daemon-state", task.Name())
 	}
 }
 
