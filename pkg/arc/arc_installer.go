@@ -217,7 +217,8 @@ func (t *installArcTask) registerArcMachine(ctx context.Context) (*armhybridcomp
 }
 
 func (t *installArcTask) getArcMachine(ctx context.Context) (*armhybridcompute.Machine, error) {
-	result, err := t.hybridComputeClient.Get(ctx, t.cfg.GetArcResourceGroup(), t.cfg.GetArcMachineName(), nil)
+	arcConfig := t.cfg.Azure.Arc
+	result, err := t.hybridComputeClient.Get(ctx, arcConfig.ResourceGroup, arcConfig.MachineName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -250,16 +251,17 @@ func (t *installArcTask) waitForArcRegistration(ctx context.Context) (*armhybrid
 
 func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 	cfg := t.cfg
+	arcConfig := cfg.Azure.Arc
 	args := []string{
 		"connect",
-		"--resource-group", cfg.GetArcResourceGroup(),
+		"--resource-group", arcConfig.ResourceGroup,
 		"--tenant-id", cfg.Azure.TenantID,
-		"--location", cfg.GetArcLocation(),
+		"--location", arcConfig.Location,
 		"--subscription-id", cfg.Azure.SubscriptionID,
-		"--resource-name", cfg.GetArcMachineName(),
+		"--resource-name", arcConfig.MachineName,
 	}
 
-	for key, value := range cfg.GetArcTags() {
+	for key, value := range arcConfig.Tags {
 		args = append(args, "--tags", fmt.Sprintf("%s=%s", key, value))
 	}
 
@@ -293,8 +295,9 @@ func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 
 func (t *installArcTask) validateManagedCluster(ctx context.Context) error {
 	cfg := t.cfg
-	clusterRG := cfg.GetArcResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	arcConfig := cfg.Azure.Arc
+	clusterRG := arcConfig.ResourceGroup
+	clusterName := cfg.Azure.TargetCluster.Name
 
 	result, err := t.mcClient.Get(ctx, clusterRG, clusterName, nil)
 	if err != nil {
@@ -341,9 +344,10 @@ func (t *installArcTask) assignRBACRoles(ctx context.Context, arcMachine *armhyb
 
 func (t *installArcTask) getRoleAssignments() []roleAssignment {
 	cfg := t.cfg
+	arcConfig := cfg.Azure.Arc
 	subID := cfg.Azure.SubscriptionID
-	rg := cfg.GetArcResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	rg := arcConfig.ResourceGroup
+	clusterName := cfg.Azure.TargetCluster.Name
 
 	subScope := fmt.Sprintf("/subscriptions/%s", subID)
 	rgScope := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", subID, rg)

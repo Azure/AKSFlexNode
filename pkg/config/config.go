@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -23,6 +25,190 @@ const (
 	defaultAzureCloud               = "AzurePublicCloud"
 	defaultMachineReconcileInterval = 10 * time.Minute
 )
+
+// Config represents the complete agent configuration structure.
+// It contains Azure-specific settings and agent operational settings.
+type Config struct {
+	Azure      AzureConfig      `json:"azure"`
+	Agent      AgentConfig      `json:"agent"`
+	Containerd ContainerdConfig `json:"containerd"`
+	Kubernetes KubernetesConfig `json:"kubernetes"`
+	CNI        CNIConfig        `json:"cni"`
+	Runc       RuncConfig       `json:"runc"`
+	Node       NodeConfig       `json:"node"`
+	Npd        NPDConfig        `json:"npd"`
+}
+
+// AzureConfig holds Azure-specific configuration required for connecting to Azure services.
+// All fields except Cloud are required for proper operation.
+type AzureConfig struct {
+	SubscriptionID   string                  `json:"subscriptionId"`             // Azure subscription ID
+	TenantID         string                  `json:"tenantId"`                   // Azure tenant ID
+	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
+	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
+	ManagedIdentity  *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`  // Optional managed identity authentication
+	BootstrapToken   *BootstrapTokenConfig   `json:"bootstrapToken,omitempty"`   // Optional bootstrap token authentication
+	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
+	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
+}
+
+// ServicePrincipalConfig holds Azure service principal authentication configuration.
+// When provided, service principal authentication will be used instead of Azure CLI.
+type ServicePrincipalConfig struct {
+	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
+	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
+	ClientSecret string `json:"clientSecret"` // Azure AD application client secret
+}
+
+// ManagedIdentityConfig holds managed identity authentication configuration.
+// It can only be used when the agent is running on an Azure VM with a managed identity assigned.
+type ManagedIdentityConfig struct {
+	ClientID string `json:"clientId,omitempty"` // Client ID of the managed identity (optional, for VMs with multiple identities)
+}
+
+// BootstrapTokenConfig holds Kubernetes bootstrap token authentication configuration.
+// Bootstrap tokens provide a lightweight authentication method for node joining.
+type BootstrapTokenConfig struct {
+	Token string `json:"token"` // Bootstrap token in format: <token-id>.<token-secret>
+}
+
+// TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
+type TargetClusterConfig struct {
+	ResourceID        string `json:"resourceId"` // Full resource ID of the target AKS cluster
+	Location          string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
+	Name              string // will be populated from ResourceID
+	ResourceGroup     string // will be populated from ResourceID
+	SubscriptionID    string // will be populated from ResourceID
+	NodeResourceGroup string // will be populated from ResourceID
+}
+
+// ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.
+type ArcConfig struct {
+	Enabled       bool              `json:"enabled"`       // Whether to enable Azure Arc registration
+	MachineName   string            `json:"machineName"`   // Name for the Arc machine resource
+	Tags          map[string]string `json:"tags"`          // Tags to apply to the Arc machine
+	ResourceGroup string            `json:"resourceGroup"` // Azure resource group for Arc machine
+	Location      string            `json:"location"`      // Azure region for Arc machine
+}
+
+// AgentConfig holds agent-specific operational configuration.
+type AgentConfig struct {
+	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
+	LogDir   string `json:"logDir"`   // Directory for log files
+	// NodeName is resolved from the host hostname when omitted.
+	NodeName string `json:"nodeName,omitempty"`
+
+	// MachineReconcileInterval controls how often the daemon re-reads the AKS
+	// machine resource when no Kubernetes Node event wakes the controller.
+	MachineReconcileInterval time.Duration `json:"machineReconcileInterval,omitempty"`
+
+	// E2EMode uses the local file-backed AKS machine client. This is only for
+	// end-to-end tests until the production AKS RP machine client is available.
+	E2EMode bool `json:"e2eMode,omitempty"`
+
+	// MachineOperationMode controls MachineOperation handling. Supported values:
+	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
+	MachineOperationMode string `json:"machineOperationMode,omitempty"`
+}
+
+// KubernetesConfig holds configuration settings for Kubernetes components.
+type KubernetesConfig struct {
+	Version string `json:"version"`
+}
+
+// RuncConfig holds configuration settings for the container runtime (runc).
+type RuncConfig struct {
+	Version string `json:"version"`
+}
+
+// ContainerdConfig holds configuration settings for the containerd runtime.
+type ContainerdConfig struct {
+	Version string `json:"version"`
+}
+
+// NodeConfig holds configuration settings for the Kubernetes node.
+type NodeConfig struct {
+	MaxPods int               `json:"maxPods"`
+	Labels  map[string]string `json:"labels"`
+	// Taints to apply at node registration time via --register-with-taints.
+	// Each entry must use the kubelet taint format: "key=value:Effect" or "key:Effect"
+	// (e.g. "dedicated=infra:NoSchedule", "gpu:NoExecute").
+	Taints  []string      `json:"taints,omitempty"`
+	Kubelet KubeletConfig `json:"kubelet"`
+}
+
+// KubeletConfig holds kubelet-specific configuration settings.
+type KubeletConfig struct {
+	Verbosity            int    `json:"verbosity"`
+	ImageGCHighThreshold int    `json:"imageGCHighThreshold"`
+	ImageGCLowThreshold  int    `json:"imageGCLowThreshold"`
+	DNSServiceIP         string `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	ServerURL            string `json:"serverURL"`    // Kubernetes API server URL
+	CACertData           string `json:"caCertData"`   // Base64-encoded CA certificate data
+	NodeIP               string `json:"nodeIP"`       // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+}
+
+// CNIPathsConfig holds file system paths related to CNI plugins and configurations.
+type CNIConfig struct {
+	Version string `json:"version"`
+}
+
+// NPDConfig holds configuration settings for the Node Problem Detector (NPD).
+type NPDConfig struct {
+	Version string `json:"version"`
+}
+
+// IsARCEnabled checks if Azure Arc registration is enabled in the configuration.
+func (cfg *Config) IsARCEnabled() bool {
+	return cfg.Azure.Arc != nil && cfg.Azure.Arc.Enabled
+}
+
+// IsSPConfigured checks if service principal authentication is selected.
+func (cfg *Config) IsSPConfigured() bool {
+	return cfg.Azure.ServicePrincipal != nil
+}
+
+// IsMIConfigured checks if managed identity configuration is provided in the configuration.
+func (cfg *Config) IsMIConfigured() bool {
+	return cfg.Azure.ManagedIdentity != nil
+}
+
+// IsBootstrapTokenConfigured checks if bootstrap token authentication is selected.
+func (cfg *Config) IsBootstrapTokenConfigured() bool {
+	return cfg.Azure.BootstrapToken != nil
+}
+
+// resolveNodeName resolves the Kubernetes Node name once and stores it on the
+// config so bootstrap, daemon watches, and lifecycle operations use one value.
+func (cfg *Config) resolveNodeName() (string, error) {
+	if nodeName := strings.TrimSpace(cfg.Agent.NodeName); nodeName != "" {
+		if err := validateNodeName(nodeName); err != nil {
+			return "", err
+		}
+		cfg.Agent.NodeName = nodeName
+		return nodeName, nil
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("get host hostname for node name: %w", err)
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return "", fmt.Errorf("host hostname is empty")
+	}
+	if err := validateNodeName(hostname); err != nil {
+		return "", fmt.Errorf("host hostname: %w", err)
+	}
+	cfg.Agent.NodeName = hostname
+	return hostname, nil
+}
+
+func validateNodeName(name string) error {
+	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+		return fmt.Errorf("node name %q is not a valid Kubernetes DNS subdomain: %s", name, strings.Join(errs, "; "))
+	}
+	return nil
+}
 
 // LoadConfig loads configuration from a JSON file.
 // The configPath parameter is required and cannot be empty.
@@ -47,6 +233,20 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// DeepCopy returns a copy of the config that does not share mutable sub-objects (maps/pointers)
+// with the original.
+func (cfg *Config) DeepCopy() *Config {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return nil
+	}
+	var out Config
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return &out
 }
 
 func (c *Config) setDefaults() {
@@ -146,28 +346,130 @@ func validateAzureResourceID(resourceID string) error {
 	return nil
 }
 
-// validateBootstrapToken validates the bootstrap token configuration
-func validateBootstrapToken(cfg *Config) error {
-	tokenCfg := cfg.Azure.BootstrapToken
-	if tokenCfg == nil {
-		return fmt.Errorf("bootstrap token configuration is nil")
+func (c *Config) validateBootstrapToken() error {
+	if !c.IsBootstrapTokenConfigured() {
+		return nil
 	}
-
-	// Validate token format
-	if !BootstrapTokenPattern.MatchString(tokenCfg.Token) {
-		return fmt.Errorf("invalid bootstrap token format. Expected format: <token-id>.<token-secret> " +
-			"where token-id is 6 lowercase alphanumeric characters and token-secret is 16 lowercase alphanumeric characters")
+	if err := c.Azure.BootstrapToken.validate(); err != nil {
+		return err
 	}
 
 	// When using bootstrap token, serverURL and caCertData are required in kubelet config
 	// because there's no Azure authentication to fetch them
-	if cfg.Node.Kubelet.ServerURL == "" {
+	if c.Node.Kubelet.ServerURL == "" {
 		return fmt.Errorf("node.kubelet.serverURL is required when using bootstrap token authentication")
 	}
-	if cfg.Node.Kubelet.CACertData == "" {
+	if c.Node.Kubelet.CACertData == "" {
 		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
 	}
 
+	return nil
+}
+
+func (c *AzureConfig) validate() error {
+	if c.SubscriptionID == "" {
+		return fmt.Errorf("azure.subscriptionId is required")
+	}
+	if c.TenantID == "" {
+		return fmt.Errorf("azure.tenantId is required")
+	}
+	if c.TargetCluster == nil {
+		return fmt.Errorf("azure.targetCluster is required")
+	}
+	if err := c.TargetCluster.validate(); err != nil {
+		return err
+	}
+	if !validAzureClouds[c.Cloud] {
+		return fmt.Errorf("invalid azure.cloud: %s. Valid values are: AzurePublicCloud", c.Cloud)
+	}
+	if err := c.ServicePrincipal.validate(); err != nil {
+		return err
+	}
+	if err := c.ManagedIdentity.validate(); err != nil {
+		return err
+	}
+	if err := c.BootstrapToken.validate(); err != nil {
+		return err
+	}
+	if err := c.Arc.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *ServicePrincipalConfig) validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.TenantID == "" {
+		return fmt.Errorf("azure.servicePrincipal.tenantId is required when service principal is configured")
+	}
+	if c.ClientID == "" {
+		return fmt.Errorf("azure.servicePrincipal.clientId is required when service principal is configured")
+	}
+	if c.ClientSecret == "" {
+		return fmt.Errorf("azure.servicePrincipal.clientSecret is required when service principal is configured")
+	}
+	return nil
+}
+
+func (c *ManagedIdentityConfig) validate() error {
+	return nil
+}
+
+func (c *TargetClusterConfig) validate() error {
+	if c.Location == "" {
+		return fmt.Errorf("azure.targetCluster.location is required")
+	}
+	if c.ResourceID == "" {
+		return fmt.Errorf("azure.targetCluster.resourceId is required")
+	}
+	if err := validateAzureResourceID(c.ResourceID); err != nil {
+		return fmt.Errorf("invalid azure.targetCluster.resourceId: %w", err)
+	}
+	return nil
+}
+
+func (c *ArcConfig) validate() error {
+	if c == nil {
+		return nil
+	}
+	if !c.Enabled {
+		return nil
+	}
+	if c.MachineName == "" {
+		return fmt.Errorf("azure.arc.machineName is required when Arc is enabled")
+	}
+	if c.ResourceGroup == "" {
+		return fmt.Errorf("azure.arc.resourceGroup is required when Arc is enabled")
+	}
+	if c.Location == "" {
+		return fmt.Errorf("azure.arc.location is required when Arc is enabled")
+	}
+	return nil
+}
+
+func (c *BootstrapTokenConfig) validate() error {
+	if c == nil {
+		return nil
+	}
+	if !BootstrapTokenPattern.MatchString(c.Token) {
+		return fmt.Errorf("invalid bootstrap token format. Expected format: <token-id>.<token-secret> " +
+			"where token-id is 6 lowercase alphanumeric characters and token-secret is 16 lowercase alphanumeric characters")
+	}
+	return nil
+}
+
+func (c *AgentConfig) validate() error {
+	if _, err := logger.ParseLogLevel(c.LogLevel); err != nil {
+		return fmt.Errorf("invalid agent.logLevel: %w", err)
+	}
+	if c.MachineReconcileInterval < 0 {
+		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
+	}
+	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
+		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)
+	}
 	return nil
 }
 
@@ -183,80 +485,44 @@ var validMachineOperationModes = map[string]bool{
 }
 
 func (c *Config) validate() error {
-	// encoding/json deserializes "managedIdentity": {} into a non-nil pointer, so
-	// presence can be detected directly.
-	c.isMIExplicitlySet = c.Azure.ManagedIdentity != nil
-
 	c.setDefaults()
 
 	if _, err := c.resolveNodeName(); err != nil {
 		return fmt.Errorf("resolve node name: %w", err)
 	}
 
-	// Validate required Azure configuration (core requirements for Arc discovery)
-	if c.Azure.SubscriptionID == "" {
-		return fmt.Errorf("azure.subscriptionId is required")
+	if err := c.Azure.validate(); err != nil {
+		return err
 	}
-	if c.Azure.TenantID == "" {
-		return fmt.Errorf("azure.tenantId is required")
-	}
-	if c.Azure.TargetCluster.Location == "" {
-		return fmt.Errorf("azure.targetCluster.location is required")
-	}
-	if c.Azure.TargetCluster.ResourceID == "" {
-		return fmt.Errorf("azure.targetCluster.resourceId is required")
+	if err := c.Agent.validate(); err != nil {
+		return err
 	}
 
-	// Validate Azure resource ID format
-	if err := validateAzureResourceID(c.Azure.TargetCluster.ResourceID); err != nil {
-		return fmt.Errorf("invalid azure.targetCluster.resourceId: %w", err)
+	if err := c.validateExclusiveAuthSettings(); err != nil {
+		return err
+	}
+	if err := c.validateBootstrapToken(); err != nil {
+		return fmt.Errorf("invalid bootstrap token configuration: %w", err)
 	}
 
-	// Validate Azure cloud
-	if !validAzureClouds[c.Azure.Cloud] {
-		return fmt.Errorf("invalid azure.cloud: %s. Valid values are: AzurePublicCloud", c.Azure.Cloud)
-	}
+	populateTargetClusterInfoFromConfig(c)
 
-	if _, err := logger.ParseLogLevel(c.Agent.LogLevel); err != nil {
-		return fmt.Errorf("invalid agent.logLevel: %w", err)
-	}
-	if c.Agent.MachineReconcileInterval < 0 {
-		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
-	}
-	if c.Agent.MachineOperationMode != "" && !validMachineOperationModes[c.Agent.MachineOperationMode] {
-		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.Agent.MachineOperationMode)
-	}
+	return nil
+}
 
-	// Validate authentication configuration - ensure mutual exclusivity
+func (c *Config) validateExclusiveAuthSettings() error {
 	authMethodCount := 0
-	if c.IsARCEnabled() {
-		authMethodCount++
+	for _, m := range []bool{c.IsARCEnabled(), c.IsSPConfigured(), c.IsMIConfigured(), c.IsBootstrapTokenConfigured()} {
+		if m {
+			authMethodCount++
+		}
 	}
-	if c.IsSPConfigured() {
-		authMethodCount++
-	}
-	if c.IsMIConfigured() {
-		authMethodCount++
-	}
-	if c.IsBootstrapTokenConfigured() {
-		authMethodCount++
-	}
-
 	if authMethodCount == 0 {
 		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, or Bootstrap Token")
 	}
 	if authMethodCount > 1 {
 		return fmt.Errorf("only one authentication method can be enabled at a time: Arc, Service Principal, Managed Identity, or Bootstrap Token")
 	}
-
-	// Validate bootstrap token if configured
-	if c.IsBootstrapTokenConfigured() {
-		if err := validateBootstrapToken(c); err != nil {
-			return fmt.Errorf("invalid bootstrap token configuration: %w", err)
-		}
-	}
-
-	populateTargetClusterInfoFromConfig(c)
 
 	return nil
 }

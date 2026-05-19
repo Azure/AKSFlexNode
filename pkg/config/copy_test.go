@@ -2,15 +2,6 @@ package config
 
 import "testing"
 
-func TestConfigDeepCopy_Nil(t *testing.T) {
-	t.Parallel()
-
-	var cfg *Config
-	if got := cfg.DeepCopy(); got != nil {
-		t.Fatalf("DeepCopy()=%v, want nil", got)
-	}
-}
-
 func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	t.Parallel()
 

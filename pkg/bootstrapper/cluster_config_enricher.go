@@ -32,14 +32,14 @@ func EnrichClusterConfig(ctx context.Context, cfg *config.Config, logger *slog.L
 		return fmt.Errorf("get credential: %w", err)
 	}
 
-	clusterSubID := cfg.GetTargetClusterSubscriptionID()
+	clusterSubID := cfg.Azure.TargetCluster.SubscriptionID
 	mcClient, err := armcontainerservice.NewManagedClustersClient(clusterSubID, cred, nil)
 	if err != nil {
 		return fmt.Errorf("create managed clusters client: %w", err)
 	}
 
-	clusterRG := cfg.GetTargetClusterResourceGroup()
-	clusterName := cfg.GetTargetClusterName()
+	clusterRG := cfg.Azure.TargetCluster.ResourceGroup
+	clusterName := cfg.Azure.TargetCluster.Name
 
 	resp, err := mcClient.ListClusterAdminCredentials(ctx, clusterRG, clusterName, nil)
 	if err != nil {

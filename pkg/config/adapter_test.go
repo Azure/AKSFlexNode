@@ -135,8 +135,7 @@ func TestToAgentConfig_ManagedIdentity(t *testing.T) {
 				ClientID: "mi-client-id",
 			},
 		},
-		Kubernetes:        KubernetesConfig{Version: "1.31.0"},
-		isMIExplicitlySet: true,
+		Kubernetes: KubernetesConfig{Version: "1.31.0"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
 				DNSServiceIP: "10.0.0.10",
@@ -179,9 +178,10 @@ func TestToAgentConfig_ManagedIdentitySystemAssigned(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
-		Azure:             AzureConfig{},
-		isMIExplicitlySet: true,
-		Kubernetes:        KubernetesConfig{Version: "1.31.0"},
+		Azure: AzureConfig{
+			ManagedIdentity: &ManagedIdentityConfig{},
+		},
+		Kubernetes: KubernetesConfig{Version: "1.31.0"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
 				DNSServiceIP: "10.0.0.10",

@@ -25,9 +25,6 @@ import (
 // injected so production ARM, remote test, and local file-backed clients can
 // share the same daemon controller.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aksmachine.MachineClient) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
 	restCfg, err := bootstrapCredentialRESTConfig(cfg)
 	if err != nil {
 		return err
@@ -91,9 +88,6 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
 	if cfg.Node.Kubelet.ServerURL == "" {
 		return nil, fmt.Errorf("kubernetes API server URL is empty")
 	}
@@ -114,7 +108,7 @@ func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
 		restCfg.BearerToken = cfg.Azure.BootstrapToken.Token
 		return restCfg, nil
 	}
-	agentCfg := config.ToAgentConfig(cfg, cfg.GetArcMachineName())
+	agentCfg := config.ToAgentConfig(cfg, cfg.Agent.NodeName)
 	if agentCfg.Kubelet.Auth.ExecCredential == nil {
 		return nil, fmt.Errorf("daemon node client requires bootstrap token or exec credential")
 	}

@@ -62,9 +62,6 @@ type nspawnNodeOperator struct {
 }
 
 func newNSpawnNodeOperator(cfg *config.Config, state stateStore) (*nspawnNodeOperator, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
 	if state == nil {
 		return nil, fmt.Errorf("state store is nil")
 	}

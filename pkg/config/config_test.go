@@ -108,13 +108,6 @@ func TestResolveNodeName(t *testing.T) {
 	}
 }
 
-func TestResolveNodeNameNilConfig(t *testing.T) {
-	var cfg *Config
-	if _, err := cfg.resolveNodeName(); err == nil {
-		t.Fatal("resolveNodeName nil config error = nil")
-	}
-}
-
 func TestResolveNodeNameRejectsInvalidConfiguredName(t *testing.T) {
 	cfg := &Config{Agent: AgentConfig{NodeName: "Invalid_Node"}}
 	if _, err := cfg.resolveNodeName(); err == nil || !strings.Contains(err.Error(), "valid Kubernetes DNS subdomain") {
@@ -825,7 +818,7 @@ func TestValidateBootstrapToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateBootstrapToken(tt.config)
+			err := tt.config.validateBootstrapToken()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("validateBootstrapToken() expected error but got none")
@@ -899,6 +892,29 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "partial service principal fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID: "12345678-1234-1234-1234-123456789012",
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.servicePrincipal.clientSecret is required when service principal is configured",
+		},
+		{
 			name: "managed identity authentication enabled",
 			config: &Config{
 				Azure: AzureConfig{
@@ -916,7 +932,6 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
-				isMIExplicitlySet: true,
 			},
 			wantErr: false,
 		},
@@ -945,6 +960,30 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "partial arc config fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					Arc: &ArcConfig{
+						Enabled:     true,
+						MachineName: "test-machine",
+						Location:    "eastus",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.arc.resourceGroup is required when Arc is enabled",
+		},
+		{
 			name: "arc and managed identity together fails",
 			config: &Config{
 				Azure: AzureConfig{
@@ -968,7 +1007,6 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "info",
 				},
-				isMIExplicitlySet: true,
 			},
 			wantErr: true,
 			errMsg:  "only one authentication method can be enabled at a time",
@@ -1278,7 +1316,7 @@ func TestIsBootstrapTokenConfigured(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "bootstrap token configured but empty token",
+			name: "bootstrap token selected with empty token",
 			config: &Config{
 				Azure: AzureConfig{
 					BootstrapToken: &BootstrapTokenConfig{
@@ -1286,7 +1324,7 @@ func TestIsBootstrapTokenConfigured(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			expected: true,
 		},
 		{
 			name: "service principal configured (not bootstrap token)",
