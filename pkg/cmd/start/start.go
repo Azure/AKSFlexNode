@@ -10,7 +10,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
-	"github.com/Azure/AKSFlexNode/pkg/bootstrapper"
+	"github.com/Azure/AKSFlexNode/pkg/auth"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
@@ -68,8 +68,15 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	if err := bootstrapper.EnrichClusterConfig(ctx, cfg, logger); err != nil {
-		return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
+	if !cfg.IsBootstrapTokenConfigured() &&
+		(cfg.Node.Kubelet.ServerURL == "" || cfg.Node.Kubelet.CACertData == "") {
+		cred, err := auth.NewAuthProvider().UserCredential(cfg)
+		if err != nil {
+			return fmt.Errorf("bootstrap failed at step enrich-cluster-config: get credential: %w", err)
+		}
+		if err := config.EnrichClusterConfig(ctx, cfg, cred, logger); err != nil {
+			return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
+		}
 	}
 
 	agentCfg := config.ToAgentConfig(cfg, machineName)

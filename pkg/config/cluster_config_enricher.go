@@ -1,22 +1,20 @@
-package bootstrapper
+package config
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"sigs.k8s.io/yaml"
-
-	"github.com/Azure/AKSFlexNode/pkg/auth"
-	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 // EnrichClusterConfig populates cfg.Node.Kubelet.ServerURL and
 // cfg.Node.Kubelet.CACertData from the AKS cluster admin credentials.
 // It is a no-op when these fields are already set or when bootstrap token
 // auth is configured (which requires them in the config file).
-func EnrichClusterConfig(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+func EnrichClusterConfig(ctx context.Context, cfg *Config, cred azcore.TokenCredential, logger *slog.Logger) error {
 	if cfg.Node.Kubelet.ServerURL != "" && cfg.Node.Kubelet.CACertData != "" {
 		return nil
 	}
@@ -26,11 +24,6 @@ func EnrichClusterConfig(ctx context.Context, cfg *config.Config, logger *slog.L
 	}
 
 	logger.Info("fetching cluster admin credentials to populate server URL and CA cert data")
-
-	cred, err := auth.NewAuthProvider().UserCredential(cfg)
-	if err != nil {
-		return fmt.Errorf("get credential: %w", err)
-	}
 
 	clusterSubID := cfg.Azure.TargetCluster.SubscriptionID
 	mcClient, err := armcontainerservice.NewManagedClustersClient(clusterSubID, cred, nil)
