@@ -10,7 +10,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
-	"github.com/Azure/AKSFlexNode/pkg/auth"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
@@ -68,7 +67,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	if err := config.EnrichClusterConfig(ctx, cfg, auth.NewAuthProvider().UserCredential, logger); err != nil {
+	if err := config.BackfillClusterConfigWithUserCredentials(ctx, cfg, logger); err != nil {
 		return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
 	}
 

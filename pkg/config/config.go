@@ -178,6 +178,23 @@ func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil
 }
 
+func (cfg AzureConfig) ResourceManagerEndpoint() (string, error) {
+	switch cfg.Cloud {
+	case "", "AzurePublicCloud":
+		return "https://management.azure.com", nil
+	default:
+		return "", fmt.Errorf("unsupported Azure cloud %q", cfg.Cloud)
+	}
+}
+
+func (cfg AzureConfig) ResourceManagerTokenScope() (string, error) {
+	endpoint, err := cfg.ResourceManagerEndpoint()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(endpoint, "/") + "/.default", nil
+}
+
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
 // config so bootstrap, daemon watches, and lifecycle operations use one value.
 func (cfg *Config) resolveNodeName() (string, error) {
