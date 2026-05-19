@@ -53,7 +53,21 @@ log_debug()   {
   return 0
 }
 
+_E2E_GHA_GROUP_OPEN=0
+
+gha_end_group() {
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && "${_E2E_GHA_GROUP_OPEN}" == "1" ]]; then
+    echo "::endgroup::"
+    _E2E_GHA_GROUP_OPEN=0
+  fi
+}
+
 log_section() {
+  gha_end_group
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::group::$*"
+    _E2E_GHA_GROUP_OPEN=1
+  fi
   echo ""
   echo "=================================================================="
   echo "  $*"
