@@ -18,7 +18,10 @@ var azureAuthFiles = []string{
 	"clouds.config",
 }
 
-// copyAzureCLIAuth copies only Azure CLI auth files from $HOME/.azure into a root-owned directory.
+// copyAzureCLIAuth copies only Azure CLI auth files from the current user's
+// $HOME/.azure into a root-owned directory. During start this is expected to run
+// as root, so the source is intentionally /root/.azure rather than SUDO_USER's
+// profile.
 func copyAzureCLIAuth() error {
 	home, err := os.UserHomeDir()
 	if err != nil {

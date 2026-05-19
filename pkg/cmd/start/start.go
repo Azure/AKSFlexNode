@@ -67,6 +67,9 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
+	// This backfill is a best-effort bridge until cluster connection details are
+	// provided directly by the API. It should be removed once start no longer
+	// needs to fetch admin kubeconfig data from ARM.
 	if err := config.BackfillClusterConfigWithUserCredentials(ctx, cfg, logger); err != nil {
 		return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
 	}
