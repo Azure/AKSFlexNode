@@ -25,11 +25,8 @@ func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
 			host.DisableSwap(log),
 			host.HardenAPT(log),
 			arc.InstallArc(cfg, log),
+			hostrouting.Configure(cfg, log),
 		),
-		// Host routing: install static routes then verify no overlap exists.
-		// Both tasks install oneshot systemd units ordered Before=systemd-nspawn@.service
-		// so the kernel route table is correct when the nspawn machine boots.
-		hostrouting.Configure(cfg, log),
 	)
 }
 
