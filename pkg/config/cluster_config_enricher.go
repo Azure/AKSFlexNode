@@ -10,11 +10,13 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+type CredentialProvider func(*Config) (azcore.TokenCredential, error)
+
 // EnrichClusterConfig populates cfg.Node.Kubelet.ServerURL and
 // cfg.Node.Kubelet.CACertData from the AKS cluster admin credentials.
 // It is a no-op when these fields are already set or when bootstrap token
 // auth is configured (which requires them in the config file).
-func EnrichClusterConfig(ctx context.Context, cfg *Config, cred azcore.TokenCredential, logger *slog.Logger) error {
+func EnrichClusterConfig(ctx context.Context, cfg *Config, credentialProvider CredentialProvider, logger *slog.Logger) error {
 	if cfg.Node.Kubelet.ServerURL != "" && cfg.Node.Kubelet.CACertData != "" {
 		return nil
 	}
@@ -24,6 +26,10 @@ func EnrichClusterConfig(ctx context.Context, cfg *Config, cred azcore.TokenCred
 	}
 
 	logger.Info("fetching cluster admin credentials to populate server URL and CA cert data")
+	cred, err := credentialProvider(cfg)
+	if err != nil {
+		return fmt.Errorf("get credential: %w", err)
+	}
 
 	clusterSubID := cfg.Azure.TargetCluster.SubscriptionID
 	mcClient, err := armcontainerservice.NewManagedClustersClient(clusterSubID, cred, nil)

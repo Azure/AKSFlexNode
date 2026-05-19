@@ -68,15 +68,8 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	if !cfg.IsBootstrapTokenConfigured() &&
-		(cfg.Node.Kubelet.ServerURL == "" || cfg.Node.Kubelet.CACertData == "") {
-		cred, err := auth.NewAuthProvider().UserCredential(cfg)
-		if err != nil {
-			return fmt.Errorf("bootstrap failed at step enrich-cluster-config: get credential: %w", err)
-		}
-		if err := config.EnrichClusterConfig(ctx, cfg, cred, logger); err != nil {
-			return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
-		}
+	if err := config.EnrichClusterConfig(ctx, cfg, auth.NewAuthProvider().UserCredential, logger); err != nil {
+		return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
 	}
 
 	agentCfg := config.ToAgentConfig(cfg, machineName)

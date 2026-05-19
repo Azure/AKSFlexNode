@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -112,13 +111,6 @@ func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
 	if agentCfg.Kubelet.Auth.ExecCredential == nil {
 		return nil, fmt.Errorf("daemon node client requires bootstrap token or exec credential")
 	}
-	restCfg.ExecProvider = &clientcmdapi.ExecConfig{
-		APIVersion:         agentCfg.Kubelet.Auth.ExecCredential.APIVersion,
-		Command:            agentCfg.Kubelet.Auth.ExecCredential.Command,
-		Args:               agentCfg.Kubelet.Auth.ExecCredential.Args,
-		Env:                agentCfg.Kubelet.Auth.ExecCredential.Env,
-		InteractiveMode:    agentCfg.Kubelet.Auth.ExecCredential.InteractiveMode,
-		ProvideClusterInfo: agentCfg.Kubelet.Auth.ExecCredential.ProvideClusterInfo,
-	}
+	restCfg.ExecProvider = agentCfg.Kubelet.Auth.ExecCredential.DeepCopy()
 	return restCfg, nil
 }
