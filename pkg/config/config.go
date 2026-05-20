@@ -91,6 +91,29 @@ type ArcConfig struct {
 	Location      string            `json:"location"`      // Azure region for Arc machine
 }
 
+// JSONDuration accepts Go duration strings in config JSON while preserving
+// compatibility with time.Duration's numeric nanosecond representation.
+type JSONDuration time.Duration
+
+func (d *JSONDuration) UnmarshalJSON(data []byte) error {
+	var durationString string
+	if err := json.Unmarshal(data, &durationString); err == nil {
+		duration, err := time.ParseDuration(durationString)
+		if err != nil {
+			return fmt.Errorf("parse duration: %w", err)
+		}
+		*d = JSONDuration(duration)
+		return nil
+	}
+
+	var duration time.Duration
+	if err := json.Unmarshal(data, &duration); err != nil {
+		return fmt.Errorf("duration must be a string or number")
+	}
+	*d = JSONDuration(duration)
+	return nil
+}
+
 // AgentConfig holds agent-specific operational configuration.
 type AgentConfig struct {
 	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
@@ -100,7 +123,7 @@ type AgentConfig struct {
 
 	// MachineReconcileInterval controls how often the daemon re-reads the AKS
 	// machine resource when no Kubernetes Node event wakes the controller.
-	MachineReconcileInterval time.Duration `json:"machineReconcileInterval,omitempty"`
+	MachineReconcileInterval JSONDuration `json:"machineReconcileInterval,omitempty"`
 
 	// E2EMode uses the local file-backed AKS machine client. This is only for
 	// end-to-end tests until the production AKS RP machine client is available.
@@ -109,39 +132,6 @@ type AgentConfig struct {
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
-}
-
-func (c *AgentConfig) UnmarshalJSON(data []byte) error {
-	type agentConfig AgentConfig
-	var raw struct {
-		agentConfig
-		MachineReconcileInterval json.RawMessage `json:"machineReconcileInterval,omitempty"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	*c = AgentConfig(raw.agentConfig)
-	if len(raw.MachineReconcileInterval) == 0 {
-		return nil
-	}
-
-	var durationString string
-	if err := json.Unmarshal(raw.MachineReconcileInterval, &durationString); err == nil {
-		duration, err := time.ParseDuration(durationString)
-		if err != nil {
-			return fmt.Errorf("parse agent.machineReconcileInterval: %w", err)
-		}
-		c.MachineReconcileInterval = duration
-		return nil
-	}
-
-	var duration time.Duration
-	if err := json.Unmarshal(raw.MachineReconcileInterval, &duration); err != nil {
-		return fmt.Errorf("agent.machineReconcileInterval must be a duration string or number")
-	}
-	c.MachineReconcileInterval = duration
-	return nil
 }
 
 // KubernetesConfig holds configuration settings for Kubernetes components.
@@ -323,7 +313,7 @@ func (c *Config) setAgentDefaults() {
 		c.Agent.LogDir = DefaultLogDir
 	}
 	if c.Agent.MachineReconcileInterval == 0 {
-		c.Agent.MachineReconcileInterval = defaultMachineReconcileInterval
+		c.Agent.MachineReconcileInterval = JSONDuration(defaultMachineReconcileInterval)
 	}
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode

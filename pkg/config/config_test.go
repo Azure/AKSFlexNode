@@ -429,7 +429,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func TestAgentConfigUnmarshalMachineReconcileInterval(t *testing.T) {
+func TestJSONDurationUnmarshal(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -464,7 +464,9 @@ func TestAgentConfigUnmarshalMachineReconcileInterval(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg AgentConfig
+			var cfg struct {
+				MachineReconcileInterval JSONDuration `json:"machineReconcileInterval"`
+			}
 			err := json.Unmarshal([]byte(tt.json), &cfg)
 			if tt.wantErr {
 				if err == nil {
@@ -475,8 +477,9 @@ func TestAgentConfigUnmarshalMachineReconcileInterval(t *testing.T) {
 			if err != nil {
 				t.Fatalf("json.Unmarshal: %v", err)
 			}
-			if cfg.MachineReconcileInterval != tt.want {
-				t.Fatalf("MachineReconcileInterval=%s, want %s", cfg.MachineReconcileInterval, tt.want)
+			got := time.Duration(cfg.MachineReconcileInterval)
+			if got != tt.want {
+				t.Fatalf("MachineReconcileInterval=%s, want %s", got, tt.want)
 			}
 		})
 	}
