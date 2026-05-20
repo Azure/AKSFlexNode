@@ -84,6 +84,21 @@ timer_elapsed() {
   echo $(( $(date +%s) - start ))
 }
 
+# Validate IPv4 literals used by E2E VM outputs.
+is_valid_ipv4() {
+  local ip="$1"
+  local IFS='.'
+  local -a octets
+
+  [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  read -r -a octets <<< "${ip}"
+  [[ "${#octets[@]}" -eq 4 ]] || return 1
+
+  for octet in "${octets[@]}"; do
+    (( octet >= 0 && octet <= 255 )) || return 1
+  done
+}
+
 # ---------------------------------------------------------------------------
 # Prerequisite checks
 # ---------------------------------------------------------------------------

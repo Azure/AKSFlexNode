@@ -55,8 +55,8 @@ validate_node_ip() {
   local vm_name="$1"
   local expected_ip="$2"
 
-  if [[ -z "${expected_ip}" ]]; then
-    log_error "Expected node IP is empty for '${vm_name}'"
+  if [[ -z "${expected_ip}" ]] || ! is_valid_ipv4 "${expected_ip}"; then
+    log_error "Expected node IP is empty or invalid for '${vm_name}': '${expected_ip}'"
     return 1
   fi
 

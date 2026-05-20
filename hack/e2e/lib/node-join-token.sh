@@ -40,6 +40,11 @@ node_join_token() {
   local ca_cert_data
   ca_cert_data="$(state_get ca_cert_data)"
 
+  if [[ -z "${vm_private_ip}" ]] || ! is_valid_ipv4 "${vm_private_ip}"; then
+    log_error "Invalid token VM private IP in state: '${vm_private_ip}'"
+    return 1
+  fi
+
   # Step 1: Create bootstrap token & RBAC in the cluster
   log_info "Creating bootstrap token and RBAC resources..."
   local token_id token_secret bootstrap_token expiration
