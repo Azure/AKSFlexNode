@@ -1,12 +1,14 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSetDefaults(t *testing.T) {
@@ -422,6 +424,59 @@ func TestLoadConfig(t *testing.T) {
 				} else if config.Agent.LogLevel != "info" {
 					t.Errorf("Expected default log level 'info', got %s", config.Agent.LogLevel)
 				}
+			}
+		})
+	}
+}
+
+func TestAgentConfigUnmarshalMachineReconcileInterval(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		json    string
+		want    time.Duration
+		wantErr bool
+	}{
+		{
+			name: "duration string",
+			json: `{"machineReconcileInterval":"10m"}`,
+			want: 10 * time.Minute,
+		},
+		{
+			name: "numeric nanoseconds",
+			json: `{"machineReconcileInterval":600000000000}`,
+			want: 10 * time.Minute,
+		},
+		{
+			name:    "invalid duration string",
+			json:    `{"machineReconcileInterval":"ten minutes"}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid type",
+			json:    `{"machineReconcileInterval":true}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg AgentConfig
+			err := json.Unmarshal([]byte(tt.json), &cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("json.Unmarshal expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("json.Unmarshal: %v", err)
+			}
+			if cfg.MachineReconcileInterval != tt.want {
+				t.Fatalf("MachineReconcileInterval=%s, want %s", cfg.MachineReconcileInterval, tt.want)
 			}
 		})
 	}

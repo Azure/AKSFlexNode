@@ -111,6 +111,39 @@ type AgentConfig struct {
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
 }
 
+func (c *AgentConfig) UnmarshalJSON(data []byte) error {
+	type agentConfig AgentConfig
+	var raw struct {
+		agentConfig
+		MachineReconcileInterval json.RawMessage `json:"machineReconcileInterval,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*c = AgentConfig(raw.agentConfig)
+	if len(raw.MachineReconcileInterval) == 0 {
+		return nil
+	}
+
+	var durationString string
+	if err := json.Unmarshal(raw.MachineReconcileInterval, &durationString); err == nil {
+		duration, err := time.ParseDuration(durationString)
+		if err != nil {
+			return fmt.Errorf("parse agent.machineReconcileInterval: %w", err)
+		}
+		c.MachineReconcileInterval = duration
+		return nil
+	}
+
+	var duration time.Duration
+	if err := json.Unmarshal(raw.MachineReconcileInterval, &duration); err != nil {
+		return fmt.Errorf("agent.machineReconcileInterval must be a duration string or number")
+	}
+	c.MachineReconcileInterval = duration
+	return nil
+}
+
 // KubernetesConfig holds configuration settings for Kubernetes components.
 type KubernetesConfig struct {
 	Version string `json:"version"`

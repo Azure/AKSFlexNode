@@ -133,7 +133,7 @@ Service principal mode uses static Azure application credentials. It is simple t
 
 After `start`, the host runs `aks-flex-node-agent.service`.
 
-The daemon is responsible for fetching desired machine goal state from the AKS RP API and reconciling it with local applied state and Kubernetes `Node` signals. The AKS RP API integration is still in progress.
+The daemon is responsible for fetching desired machine goal state and reconciling it with local applied state and Kubernetes `Node` signals. The production AKS RP API integration is still in progress; current development and E2E flows use a local file-backed machine client for that desired state.
 
 The agent does not own workload disruption decisions. Cordon and drain are AKS/RP responsibilities because they require cluster-wide scheduling context.
 
@@ -158,7 +158,7 @@ The current state model separates desired state, applied state, and runtime disc
 
 | State | Owner | Purpose |
 |-------|-------|---------|
-| Desired machine goal | AKS RP API | Target Kubernetes version and settings version for the Flex Node. |
+| Desired machine goal | AKS RP API or local file-backed client | Target Kubernetes version and settings version for the Flex Node. |
 | Applied daemon state | Local host | Last successfully applied goal and active nspawn side. |
 | Runtime machine state | systemd/machinectl | Current process and nspawn machine status for inspection and service control. |
 

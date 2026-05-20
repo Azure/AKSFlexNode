@@ -83,7 +83,7 @@ Exactly one authentication mode must be configured.
 | `agent.logLevel` | string | Agent log verbosity. | `info` |
 | `agent.logDir` | string | Host directory for agent logs. | `/var/log/aks-flex-node` |
 | `agent.nodeName` | string | Optional Kubernetes node name override. Defaults to the host hostname. | `edge-node-01` |
-| `agent.machineReconcileInterval` | duration | Daemon interval for re-reading machine state. | `10m` |
+| `agent.machineReconcileInterval` | duration string | Daemon interval for re-reading machine state. Uses Go duration syntax. | `10m` |
 | `agent.e2eMode` | boolean | Uses the local file-backed machine client for E2E tests. | `false` |
 | `agent.machineOperationMode` | string | MachineOperation handling mode. | `auto` |
 

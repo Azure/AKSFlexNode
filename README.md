@@ -18,7 +18,7 @@ AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual
 
 ## Getting Started
 
-Before you begin, [create or choose an existing AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli) and a virtual machine or bare metal host to join as a Flex Node. The host must be able to reach the AKS API server over outbound HTTPS.
+Before you begin, [create or choose an existing AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli) and a virtual machine or bare metal host to join as a Flex Node. This example assumes a Linux workstation with Azure CLI, `kubectl`, `openssl`, `curl`, `envsubst`, and `python3`. The target host must run systemd, allow root installation, and reach the AKS API server over outbound HTTPS.
 
 The flow below will:
 
@@ -42,10 +42,14 @@ az aks get-credentials \
   --admin \
   --overwrite-existing
 
-TOKEN_ID="$(openssl rand -hex 3)"
-TOKEN_SECRET="$(openssl rand -hex 8)"
+TOKEN_ID="$(openssl rand -hex 3 | tr '[:upper:]' '[:lower:]')"
+TOKEN_SECRET="$(openssl rand -hex 8 | tr '[:upper:]' '[:lower:]')"
 BOOTSTRAP_TOKEN="${TOKEN_ID}.${TOKEN_SECRET}"
-EXPIRATION="$(date -u -d "+24 hours" +"%Y-%m-%dT%H:%M:%SZ")"
+EXPIRATION="$(python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))
+PY
+)"
 
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-rbac.yaml \
   | envsubst \
@@ -72,6 +76,7 @@ sudo su
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
 aks-flex-node version
 
+umask 077
 mkdir -p /etc/aks-flex-node
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-config.json \
   | envsubst \
