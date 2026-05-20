@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -11,13 +14,17 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-const kubeletDefaultsPath = "etc/default/kubelet"
+const (
+	kubeletDefaultsPath   = "etc/default/kubelet"
+	kubeletDefaultsHeader = "# Managed by aks-flex-node. Do not edit directly.\n"
+)
 
 type configureKubeletDefaultsTask struct {
 	cfg        config.KubeletConfig
 	machineDir string
 }
 
+// ConfigureKubeletDefaults writes the environment file consumed by unbounded's kubelet unit.
 func ConfigureKubeletDefaults(cfg *config.Config, machineDir string) phases.Task {
 	return &configureKubeletDefaultsTask{
 		cfg:        cfg.Node.Kubelet,
@@ -28,16 +35,16 @@ func ConfigureKubeletDefaults(cfg *config.Config, machineDir string) phases.Task
 func (t *configureKubeletDefaultsTask) Name() string { return "configure-kubelet-defaults" }
 
 func (t *configureKubeletDefaultsTask) Do(context.Context) error {
+	path := filepath.Join(t.machineDir, kubeletDefaultsPath)
 	content, err := renderKubeletDefaults(t.cfg)
 	if err != nil {
 		return err
 	}
 	if len(content) == 0 {
-		return nil
+		return removeManagedKubeletDefaults(path)
 	}
 
-	path := filepath.Join(t.machineDir, kubeletDefaultsPath)
-	if err := utilio.WriteFile(path, content, 0o644); err != nil {
+	if err := utilio.WriteFile(path, content, 0o644); err != nil { //nolint:gosec // kubelet defaults contain no secrets and follow /etc/default readability
 		return fmt.Errorf("writing kubelet defaults: %w", err)
 	}
 	return nil
@@ -53,7 +60,24 @@ func renderKubeletDefaults(cfg config.KubeletConfig) ([]byte, error) {
 	}
 
 	return []byte(fmt.Sprintf(
-		"# Managed by aks-flex-node. Do not edit directly.\nKUBELET_EXTRA_ARGS=--node-ip=%s\n",
+		kubeletDefaultsHeader+"KUBELET_EXTRA_ARGS=--node-ip=%s\n",
 		addr.String(),
 	)), nil
+}
+
+func removeManagedKubeletDefaults(path string) error {
+	existing, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // path is constructed under the machine rootfs
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading kubelet defaults: %w", err)
+	}
+	if !bytes.HasPrefix(existing, []byte(kubeletDefaultsHeader)) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removing kubelet defaults: %w", err)
+	}
+	return nil
 }

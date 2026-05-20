@@ -13,28 +13,34 @@ func TestConfigureKubeletDefaults(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		cfg          config.KubeletConfig
-		wantFile     bool
-		wantContains []string
-		wantErr      string
+		cfg         config.KubeletConfig
+		preContent  string
+		wantContent string
+		wantFile    bool
+		wantErr     string
 	}{
 		"empty node ip skips file": {
 			cfg: config.KubeletConfig{},
 		},
+		"empty node ip removes managed file": {
+			cfg:        config.KubeletConfig{},
+			preContent: kubeletDefaultsHeader + "KUBELET_EXTRA_ARGS=--node-ip=10.247.1.4\n",
+		},
+		"empty node ip preserves unmanaged file": {
+			cfg:         config.KubeletConfig{},
+			preContent:  "KUBELET_EXTRA_ARGS=--v=2\n",
+			wantFile:    true,
+			wantContent: "KUBELET_EXTRA_ARGS=--v=2\n",
+		},
 		"writes ipv4 node ip": {
-			cfg:      config.KubeletConfig{NodeIP: "10.247.1.4"},
-			wantFile: true,
-			wantContains: []string{
-				"# Managed by aks-flex-node. Do not edit directly.",
-				"KUBELET_EXTRA_ARGS=--node-ip=10.247.1.4",
-			},
+			cfg:         config.KubeletConfig{NodeIP: "10.247.1.4"},
+			wantFile:    true,
+			wantContent: kubeletDefaultsHeader + "KUBELET_EXTRA_ARGS=--node-ip=10.247.1.4\n",
 		},
 		"normalizes ipv6 node ip": {
-			cfg:      config.KubeletConfig{NodeIP: "2001:db8:0:0:0:0:0:1"},
-			wantFile: true,
-			wantContains: []string{
-				"KUBELET_EXTRA_ARGS=--node-ip=2001:db8::1",
-			},
+			cfg:         config.KubeletConfig{NodeIP: "2001:db8:0:0:0:0:0:1"},
+			wantFile:    true,
+			wantContent: kubeletDefaultsHeader + "KUBELET_EXTRA_ARGS=--node-ip=2001:db8::1\n",
 		},
 		"rejects invalid node ip": {
 			cfg:     config.KubeletConfig{NodeIP: "eth0; rm -rf /"},
@@ -47,6 +53,16 @@ func TestConfigureKubeletDefaults(t *testing.T) {
 			t.Parallel()
 
 			machineDir := t.TempDir()
+			path := filepath.Join(machineDir, kubeletDefaultsPath)
+			if tt.preContent != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("MkdirAll: %v", err)
+				}
+				if err := os.WriteFile(path, []byte(tt.preContent), 0o644); err != nil {
+					t.Fatalf("WriteFile(%s): %v", path, err)
+				}
+			}
+
 			task := (&configureKubeletDefaultsTask{
 				cfg:        tt.cfg,
 				machineDir: machineDir,
@@ -66,7 +82,6 @@ func TestConfigureKubeletDefaults(t *testing.T) {
 				t.Fatalf("Do(): %v", err)
 			}
 
-			path := filepath.Join(machineDir, kubeletDefaultsPath)
 			got, err := os.ReadFile(path)
 			if !tt.wantFile {
 				if !os.IsNotExist(err) {
@@ -77,10 +92,8 @@ func TestConfigureKubeletDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
-			for _, want := range tt.wantContains {
-				if !strings.Contains(string(got), want) {
-					t.Fatalf("defaults file = %q, want containing %q", got, want)
-				}
+			if string(got) != tt.wantContent {
+				t.Fatalf("defaults file = %q, want %q", got, tt.wantContent)
 			}
 		})
 	}
