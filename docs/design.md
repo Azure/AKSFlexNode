@@ -1,264 +1,212 @@
-# AKS Flex Node - Design Documentation
+# AKS Flex Node Design
 
-## Table of Contents
+AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual machines and bare metal hosts. It is built on top of [Azure Unbounded](https://github.com/Azure/unbounded), using host-side nspawn machines to run isolated Kubernetes worker environments that can join an existing AKS cluster.
 
-- [Overview](#overview)
-- [High-Level Design](#high-level-design)
-- [System Components](#system-components)
-- [Data Flow & Lifecycle](#data-flow--lifecycle)
-- [Azure Integration](#azure-integration)
-- [Security & Authentication](#security--authentication)
-- [References](#references)
+## Goals
 
----
+- Join customer-managed hosts to AKS as worker nodes.
+- Keep host mutation explicit, root-owned, and idempotent.
+- Isolate Kubernetes node runtime inside local nspawn machines.
+- Support multiple authentication modes for different deployment environments.
+- Enable future AKS-managed lifecycle operations such as upgrade, repair, reset, reimage, and rollback.
 
-## Overview
+## Architecture
 
-**Key Technologies:**
-- **Language:** Go 1.24+
-- **Target Platform:** Ubuntu 22.04 LTS or 24.04 LTS
-- **Architecture:** x86_64 (amd64) or arm64
-- **Container Runtime:** containerd + runc
-- **Kubernetes Components:** kubelet, kubectl, kubeadm
-- **Azure Integration:** Azure RBAC, Optional Azure Arc with Managed Identity
+```mermaid
+flowchart LR
+    Operator[Operator]
+    AKS[AKS cluster]
+    API[Kubernetes API server]
+    Host[Customer-managed host]
+    Agent[aks-flex-node binary]
+    Service[aks-flex-node-agent systemd service]
+    Kube1[nspawn machine kube1]
+    Kube2[nspawn machine kube2]
+    Kubelet[kubelet]
+    Containerd[containerd]
 
+    Operator -->|start --config| Agent
+    Agent -->|install host prerequisites| Host
+    Agent -->|create/start| Kube1
+    Agent -->|install/start| Service
+    Service -->|reconcile lifecycle state| Host
+    Host --> Kube1
+    Host -. future repave .-> Kube2
+    Kube1 --> Kubelet
+    Kube1 --> Containerd
+    Kubelet -->|TLS bootstrap / auth| API
+    API --> AKS
+```
 
-### Deployment Modes
+## Host Model
 
-AKS Flex Node supports two deployment modes:
+The host runs the `aks-flex-node` binary as root because the agent installs packages, writes system configuration, manages systemd units, configures nspawn machines, and starts Kubernetes runtime services. Host-side commands mutate system state and should be treated as privileged operations.
 
-1. **With Azure Arc**
-   - VM registered as Azure Arc-enabled server
-   - Kubelet uses Arc-managed identity for authentication
-   - Enhanced cloud visibility and management
-   - Automatic credential rotation
+Current host-side responsibilities include:
 
-2. **Without Azure Arc**
-   - No Arc registration required
-   - Kubelet uses Service Principal for authentication
-   - Simplified deployment for environments where Arc is not desired
-   - Manual credential management
+- Install and configure OS prerequisites.
+- Prepare nspawn workspace under `/var/lib/machines`.
+- Download and install Kubernetes, CRI, CNI, runc, containerd, and node-problem-detector artifacts.
+- Render containerd, kubelet, CNI, and systemd configuration.
+- Start the active nspawn-backed worker.
+- Install and start `aks-flex-node-agent.service`.
 
----
+The Kubernetes worker runs inside an nspawn machine. The initial machine is `kube1`; lifecycle repave flows use `kube1` and `kube2` as blue-green sides.
 
-## High-Level Design
+## Unbounded Integration
 
-### System Overview
+AKS Flex Node builds on the host-side agent model from Azure Unbounded. The [Unbounded agent guide](https://unbounded-cloud.io/guides/agent/) describes the underlying pattern for running Kubernetes node environments in systemd-nspawn machines and reconciling host-local machine state.
 
-![System Overview](../diagrams/system-overview.svg)
+AKS Flex Node reuses that foundation for:
 
-**How to Read:**
+- Resolving machine goal state into an nspawn worker environment.
+- Preparing rootfs content and node runtime assets.
+- Managing blue-green nspawn sides for future repave operations.
+- Applying host-local reconciliation patterns around persisted state and idempotent mutation.
 
-- **Layers** (spatial - WHERE):
-  - 👤 Blue = User Layer
-  - ☁️ Yellow = Azure Cloud Services
-  - 💻 Green = VM/Node
-  - 📦 Purple = Workloads
+AKS Flex Node owns the AKS-specific layer on top:
 
-- **Phases** (temporal - WHEN):
-  - **⟹ Steps 1-4**: Identity Setup
-  - **- - → Steps 5-9**: Installation
-  - **→ Steps 10-12**: Activation
-  - **···· Unlabeled**: Runtime (continuous)
+- AKS cluster authentication and join configuration.
+- AKS-specific kubelet, CNI, node-problem-detector, and runtime customization.
+- Flex Node config and CLI commands.
+- Future AKS RP lifecycle integration through ARM machine state and Kubernetes `Node` signals.
 
-### Operational Phases
+## Command Model
 
-**Phase 1: Identity Setup**
-- Authenticate user credentials
-- **(Optional)** Register VM with Azure Arc (creates managed identity)
-- **(Optional)** Assign RBAC permissions to the Arc identity
-- **(Non-Arc mode)** Validate Service Principal credentials
+The primary command is:
 
-**Phase 2: Installation**
-- Configure system (kernel settings, directories)
-- Install container runtime (containerd + runc)
-- Install Kubernetes components (kubelet, kubectl, kubeadm)
-- Setup CNI networking plugins
+```bash
+aks-flex-node start --config /etc/aks-flex-node/config.json
+```
 
-**Phase 3: Activation**
-- Download cluster configuration from AKS
-- Configure kubelet authentication:
-  - **With Arc:** Use Arc-managed identity
-  - **Without Arc:** Use Service Principal credentials
-- Start services (containerd, kubelet)
-- Node joins cluster automatically
+`start` performs host bootstrap and installs the long-running systemd service. `bootstrap` remains an alias for compatibility, but new docs should use `start`.
 
----
+Other important commands:
 
-## System Components
+| Command | Purpose |
+|---------|---------|
+| `daemon` / `agent` | Run the long-lived daemon. Intended to be launched by systemd. |
+| `reset` / `unbootstrap` | Remove local Flex Node runtime from the host. |
+| `version` | Print build version, commit, and build time. |
+| `token kubelogin` | Exec credential helper used by kubelet auth flows. |
 
-### Component Responsibilities
+## Configuration Model
 
-| Component | What It Does | When It Runs |
-|-----------|--------------|--------------|
-| **AKS Flex Node Agent** | Orchestrates VM transformation | Bootstrap + Runtime |
-| **Azure Arc Agent** (Optional) | Manages VM identity and authentication | Bootstrap + Runtime (Arc mode only) |
-| **Container Runtime** | Executes containerized applications | Runtime phase |
-| **Kubelet** | Communicates with AKS control plane | Runtime phase |
-| **CNI Plugins** | Enables pod-to-pod networking | Runtime phase |
+The agent reads a JSON config file. The config has these top-level sections:
 
-### System Architecture
+- `azure` - subscription, target AKS cluster, cloud, and authentication mode.
+- `agent` - logging, node name, daemon reconcile interval, and test-mode settings.
+- `kubernetes` - Kubernetes version to install.
+- `node` - kubelet, labels, taints, max pods, and node IP settings.
+- `containerd`, `runc`, `cni`, `npd` - optional component version overrides.
 
-![System Overview](../diagrams/system-overview.svg)
+Exactly one authentication mode must be configured:
 
-**Phase 1 - Identity Setup (Steps 1-4):** Azure identity establishment
-- Operator initiates bootstrap
-- **(Optional)** Agent registers VM with Arc
-- **(Optional)** Agent assigns RBAC roles
-- Azure AD creates managed identity (Arc mode) or Service Principal used (non-Arc mode)
+- Kubernetes bootstrap token.
+- Azure managed identity.
+- Azure Arc.
+- Service principal.
 
-**Phase 2 - Installation (Steps 5-9):** Component installation
-- Agent downloads cluster configuration from AKS
-- Agent installs Arc agent (Arc mode only)
-- Agent installs kubelet, containerd, and CNI plugins
+See [Configuration](usages/configuration.md) for the option reference and sample configs.
 
-**Phase 3 - Activation (Steps 10-12):** Cluster joining
-- RBAC grants access to AKS cluster
-- Kubelet obtains authentication token
-- Kubelet joins the AKS cluster
+## Join Flows
 
-**Runtime Operations:** Ongoing interactions
-- **(Arc mode)** Arc Agent provides identity tokens to Kubelet
-- **(Non-Arc mode)** Kubelet uses Service Principal for authentication
-- AKS schedules workloads; Kubelet manages pod lifecycle
-- Containerd executes containers with CNI networking
+### Bootstrap Token
 
----
+Bootstrap token mode uses Kubernetes TLS bootstrapping. A short-lived Kubernetes bootstrap token and RBAC bindings are created in the target AKS cluster. The host config includes the token, API server URL, and cluster CA data. After the kubelet joins, it uses its issued client certificate for ongoing Kubernetes API access.
 
-## Data Flow & Lifecycle
+This is the shortest validated path and is documented in the [README](../README.md#getting-started).
 
-### Bootstrap Workflow
+### Managed Identity
 
-![Bootstrap Workflow](../diagrams/bootstrap-workflow.svg)
+Managed identity mode is intended for Azure VMs with system-assigned or user-assigned managed identity. The host uses Azure identity to retrieve or use the cluster connection details needed by kubelet.
 
-### Phase Breakdown
+### Azure Arc
 
-**Phase 1: Identity Setup** (1-5 minutes with Arc, <1 minute without)
-- **Purpose**: Establish trust between VM and AKS cluster
-- **With Arc**: VM registered with Arc, managed identity created, RBAC permissions assigned
-- **Without Arc**: Service Principal credentials validated
-- **Outcome**: Authentication configured for cluster access
+Arc mode registers the host as an Arc-enabled server and uses Arc-managed identity for Azure integration. This path adds Azure Arc dependencies and requires Arc onboarding permissions.
 
-**Phase 2: Installation** (5-10 minutes)
-- **Purpose**: Prepare VM to run Kubernetes workloads
-- **Outcome**: All required software installed and configured
+### Service Principal
 
-**Phase 3: Activation** (1-2 minutes)
-- **Purpose**: Connect VM to AKS cluster
-- **With Arc**: Kubelet configured to use Arc-managed identity
-- **Without Arc**: Kubelet configured to use Service Principal
-- **Outcome**: Node is running and accepting workload assignments
+Service principal mode uses static Azure application credentials. It is simple to automate but requires careful secret storage and rotation.
 
-**Runtime Operation** (Continuous)
-- **Purpose**: Execute workloads assigned by cluster
-- **Duration**: Until node is decommissioned
+## Runtime And Daemon
 
----
+After `start`, the host runs `aks-flex-node-agent.service`.
 
-## Azure Integration
+The daemon is responsible for fetching desired machine goal state from the AKS RP API and reconciling it with local applied state and Kubernetes `Node` signals. The AKS RP API integration is still in progress.
 
-### Azure APIs Used
+The agent does not own workload disruption decisions. Cordon and drain are AKS/RP responsibilities because they require cluster-wide scheduling context.
 
-The agent calls these Azure APIs during bootstrap:
+## Lifecycle And Repave
 
-| Azure Service | API Purpose | Required | Azure API Documentation |
-|---------------|-------------|----------|------------------------|
-| **Azure Container Service** | Download cluster credentials | Always | [AKS API](https://learn.microsoft.com/rest/api/aks/) |
-| **Azure AD** | Authenticate for API calls | Always | [Azure Identity](https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication) |
-| **Azure Arc** | Register VM, get managed identity | Arc mode only | [Hybrid Compute API](https://learn.microsoft.com/rest/api/hybridcompute/) |
-| **Azure RBAC** | Assign cluster permissions | Arc mode only | [Authorization API](https://learn.microsoft.com/rest/api/authorization/) |
+AKS Flex Node uses a blue-green nspawn model for lifecycle operations.
 
-### Bootstrap Flow by Mode
+- `kube1` is the initial active side.
+- `kube2` is used as the alternate side for repave.
+- Active side selection comes from persisted daemon state, not live `machinectl` discovery alone.
+- The agent provisions the inactive side, applies AKS-specific customization, stops the old side, starts the new side, verifies kubelet health, and then persists the new applied state.
 
-**With Azure Arc enabled:**
-1. Authenticates to Azure AD (Service Principal or Azure CLI)
-2. Registers VM with Azure Arc → creates managed identity
-3. Assigns RBAC roles to the managed identity
-4. Downloads kubeconfig from AKS API
-5. Configures kubelet to use Arc managed identity
+The current repave path is driven by machine goal state and Kubernetes `Node` deletion. Future production flows are intended to be driven by AKS RP through an ARM machine resource and Kubernetes `Node` operation signals.
 
-**Without Azure Arc:**
-1. Validates Service Principal credentials
-2. Downloads kubeconfig from AKS API
-3. Configures kubelet to use Service Principal for authentication
+See [AKS RP And Flex Node Agent Interaction](design/agent-and-aks.md) for the detailed lifecycle contract.
 
----
+## State And Idempotency
 
-## Security & Authentication
+The agent persists local daemon state so it can recover after restart, reboot, or partial failure. Persisted state includes the applied Kubernetes/settings version and active nspawn machine side.
 
-### Authentication Flow
+The current state model separates desired state, applied state, and runtime discovery:
 
-#### With Azure Arc Enabled
+| State | Owner | Purpose |
+|-------|-------|---------|
+| Desired machine goal | AKS RP API | Target Kubernetes version and settings version for the Flex Node. |
+| Applied daemon state | Local host | Last successfully applied goal and active nspawn side. |
+| Runtime machine state | systemd/machinectl | Current process and nspawn machine status for inspection and service control. |
 
-**Bootstrap Phase:**
-- Uses Service Principal OR Azure CLI credentials
-- Authenticates to Azure AD
-- Used for Arc registration, RBAC assignment, kubeconfig download
+Applied daemon state is the source of truth for blue-green side selection. Runtime `machinectl` state is useful for diagnostics, but the agent should not guess upgrade or rollback targets from runtime discovery alone.
 
-**Runtime Phase:**
-- Kubelet uses Arc managed identity (HIMDS)
-- Token script at `/var/lib/kubelet/token.sh`
-- Auto-rotated, short-lived tokens
-- No manual credential management needed
+Applied daemon state is persisted on the host as JSON:
 
-#### Without Azure Arc
+| Path | Mode | Purpose |
+|------|------|---------|
+| `/etc/aks-flex-node/daemon-state.json` | `0600` | Last safely applied settings and active nspawn side. |
+| `/etc/aks-flex-node/daemon-state.json.sha256` | `0600` | Checksum used to detect state corruption before loading. |
 
-**Bootstrap Phase:**
-- Uses Service Principal credentials (required)
-- Authenticates to Azure AD
-- Used for kubeconfig download
+The exact state schema is an implementation detail and may evolve. On load, the agent verifies the checksum before trusting the state file. If the file is missing, corrupt, or cannot identify a safe active side, the agent should avoid guessing a safe repave target from runtime state alone.
 
-**Runtime Phase:**
-- Kubelet uses Service Principal for authentication
-- Static credentials stored in kubeconfig
-- Manual credential rotation required
+Reset and uninstall flows remove local Flex Node runtime state, including nspawn machine artifacts, service configuration, and agent-managed runtime directories. Cluster-side `Node` cleanup is a separate Kubernetes operation unless it is driven by an AKS RP lifecycle signal.
 
-### Required Permissions
+Design principles:
 
-#### For Arc Mode
+- Re-running host setup should converge rather than duplicate work.
+- Reprocessing the same desired machine settings should not perform destructive work if local state already matches.
+- Runtime `machinectl` state is useful for inspection but not the sole source of truth for repave decisions.
+- Host-mutating lifecycle operations should be serialized by a single operation guard.
 
-**User/Service Principal (Bootstrap):**
-- `Azure Connected Machine Onboarding` - Register with Arc
-- `User Access Administrator` or `Owner` - Assign RBAC roles
-- `Azure Kubernetes Service Cluster Admin Role` - Download credentials
+## Authentication Modes
 
-**Arc Managed Identity (Runtime):**
-- `Azure Kubernetes Service Cluster User Role` - Assigned by agent during bootstrap
+AKS Flex Node supports one authentication mode per config. The selected mode determines how the host obtains the credentials or bootstrap material needed to join the AKS cluster.
 
-#### For Non-Arc Mode
+| Mode | Config Field | Primary Use Case | Credential Boundary |
+|------|--------------|------------------|---------------------|
+| Bootstrap token | `azure.bootstrapToken` | Short-lived Kubernetes TLS bootstrap path. | Host receives a temporary Kubernetes bootstrap token, then kubelet uses issued client certificates. |
+| Managed identity | `azure.managedIdentity` | Azure VM with assigned managed identity. | Host uses Azure Instance Metadata Service for identity-backed Azure access. |
+| Azure Arc | `azure.arc.enabled: true` | Host registered as an Arc-enabled server. | Host uses Arc-managed identity after Arc registration. |
+| Service principal | `azure.servicePrincipal` | Automation with static Azure application credentials. | Host stores client credentials and requires secret rotation. |
 
-**Service Principal (Bootstrap + Runtime):**
-- `Azure Kubernetes Service Cluster Admin Role` - Download credentials (bootstrap)
-- `Azure Kubernetes Service Cluster User Role` - Kubelet authentication (runtime)
+Only one of these modes can be configured at a time. Bootstrap token mode requires the config to include the Kubernetes API server URL and CA data because the host does not use Azure credentials to fetch cluster connection details during join.
 
-**Azure Docs:** [Azure RBAC Built-in Roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
+Auth mode selection affects only how the node obtains join and API credentials. Host lifecycle mutation remains local and privileged, and AKS/RP remains responsible for workload disruption decisions such as cordon and drain.
 
----
+## Detailed Design Topics
+
+- [AKS RP And Flex Node Agent Interaction](design/agent-and-aks.md) - AKS RP contract, lifecycle signals, nspawn repave flow, status reporting, and failure handling.
 
 ## References
 
-### Azure Documentation
+- [Azure Unbounded](https://github.com/Azure/unbounded)
 - [Azure Arc-enabled servers](https://learn.microsoft.com/azure/azure-arc/servers/overview)
-- [Azure Arc managed identity](https://learn.microsoft.com/azure/azure-arc/servers/managed-identity-authentication)
-- [Azure RBAC](https://learn.microsoft.com/azure/role-based-access-control/overview)
-- [AKS REST API](https://learn.microsoft.com/rest/api/aks/)
-
-### Kubernetes Documentation
-- [Kubelet Configuration](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/)
-- [Exec Credential Plugin](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#client-go-credential-plugins)
-- [Node API](https://kubernetes.io/docs/reference/kubernetes-api/cluster-resources/node-v1/)
-
-### Container Runtime Documentation
+- [Kubernetes TLS bootstrapping](https://kubernetes.io/docs/reference/access-authn-authz/kubelet-tls-bootstrapping/)
+- [Kubernetes Node API](https://kubernetes.io/docs/reference/kubernetes-api/cluster-resources/node-v1/)
 - [containerd](https://containerd.io/)
 - [runc](https://github.com/opencontainers/runc)
 - [CNI Specification](https://github.com/containernetworking/cni)
-
-### Code Repository
-- [AKS Flex Node Source Code](https://github.com/Azure/AKSFlexNode)
-- [Azure SDK for Go](https://github.com/Azure/azure-sdk-for-go)
-
----
-
-**Version:** 1.1
-**Last Updated:** 2026-02-03
-**Feedback:** [GitHub Issues](https://github.com/Azure/AKSFlexNode/issues)
