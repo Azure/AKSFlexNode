@@ -67,9 +67,10 @@ If the image does not include the driver, you must own and operate driver instal
 Valid image option categories include:
 
 1. **GPU-capable Ubuntu HPC / DSVM marketplace image.** The current Flex GPU validation uses `microsoft-dsvm/ubuntu-hpc/2204/latest`, which ships with an NVIDIA driver stack suitable for the validated GPU host SKUs. Other SKUs and versions under the same `microsoft-dsvm/ubuntu-hpc` offer are candidate alternatives to validate per region and per GPU family.
-2. **AKS managed GPU-capable image or image ID.** If you can use an AKS managed GPU image (for example, an image referenced from an existing AKS GPU node pool such as the AzureLinux V3 GPU image series), the driver is provided by the AKS managed GPU bootstrap path rather than baked into a marketplace image. This is only an alternative when you can resolve and consume the AKS managed image ID and reproduce the AKS GPU bootstrap contract on the Flex host. Do not treat it as a generally supported standalone option.
-3. **Custom or prebaked image.** Bake the NVIDIA driver (and Fabric Manager when required by the GPU SKU), nvidia-container-toolkit or equivalent runtime integration, and any required kernel modules. Validate the image on the target GPU SKU before running AKS Flex Node. This is the most portable productizable fallback because you own the contract.
-4. **Other GPU-capable marketplace or partner images.** Marketplace images such as NVIDIA-published CUDA images or partner Ubuntu GPU images may work, but treat them as candidates to validate rather than supported images. Confirm driver version, kernel module signatures, container runtime integration, and Secure Boot posture before adoption.
+2. **Custom or prebaked image.** Bake the NVIDIA driver (and Fabric Manager when required by the GPU SKU), nvidia-container-toolkit or equivalent runtime integration, and any required kernel modules. Validate the image on the target GPU SKU before running AKS Flex Node. This is the most portable productizable fallback because you own the contract.
+3. **Other GPU-capable marketplace or partner images.** Marketplace images such as NVIDIA-published CUDA images or partner Ubuntu GPU images may work, but treat them as candidates to validate rather than supported images. Confirm driver version, kernel module signatures, container runtime integration, and Secure Boot posture before adoption.
+
+> **Note:** AKS managed GPU node pools are not a host-image option for AKS Flex Node. Those node pools install the NVIDIA driver at node boot through the AKS managed GPU bootstrap path; the marketplace/AKS image itself is not a baked GPU image you can hand to AKS Flex Node. Pick a baked image (Ubuntu HPC or your own prebake) or a partner image you have validated.
 
 Do not rely on AKS Flex Node to repair a missing or incompatible GPU driver after bootstrap.
 
@@ -119,26 +120,6 @@ Examples to evaluate as candidates (availability and GPU family coverage vary by
 - `microsoft-dsvm/ubuntu-hpc/2404-gb` — Ubuntu 24.04 HPC variant aligned with Grace/Blackwell-class hosts. This is **not** the current Flex H100/H200 path; treat it as a separate validation effort for GB-class hardware.
 
 Always confirm the resolved driver version inside the image (for example, `nvidia-smi` on a one-shot VM built from it) before adding the image to a node class used by AKS Flex Node.
-
-### AKS managed image ID
-
-```yaml
-imageID: /subscriptions/<subscription-id>/resourceGroups/<image-resource-group>/providers/Microsoft.Compute/galleries/<gallery>/images/<image-name>/versions/<image-version>
-```
-
-Use this when a specific AKS managed GPU-capable image has been validated for the target GPU family. Record the resolved node image label, OS image, kernel, containerd version, and NVIDIA driver version.
-
-As a reference shape, AKS managed A100 node pools currently use AzureLinux V3 GPU images. The image reference looks like:
-
-```text
-# Shape only; resolve the current ID from your AKS GPU node pool.
-/subscriptions/<subscription-id>/resourceGroups/AKS-AzureLinux/providers/Microsoft.Compute/galleries/AKSAzureLinux/images/V3gen2/versions/<image-version>
-
-# Node image label exposed by AKS, for example:
-AKSAzureLinux-V3gen2-<image-version>
-```
-
-Reusing this kind of image with AKS Flex Node is only meaningful if you can resolve and consume the image ID and reproduce the AKS GPU bootstrap contract on a Flex host. In AKS managed GPU node pools the driver is delivered through the managed GPU bootstrap path (with `ClusterPolicy.spec.driver.enabled=false` on the GPU Operator), not as a baked-in marketplace driver. Do not treat this as a generally supported standalone option for AKS Flex Node.
 
 ### Custom or prebaked image
 
