@@ -6,6 +6,8 @@ This guide provides three complete setup paths for AKS Flex Node:
 2. **[Setup with Service Principal](#setup-with-service-principal)** - More scalable for secure production environment
 3. **[Setup with Bootstrap Token](#setup-with-bootstrap-token)** - Simplest setup with minimum dependancy for dynamic hyperscale environments
 
+For GPU-capable hosts, see the **[GPU Flex Node setup](usages/gpu-node-setup.md)** guide. It explains the driver and image contract, cluster GPU components, validation commands, and troubleshooting.
+
 ## Comparison: Arc vs Service Principal vs Bootstrap Token
 
 Use this comparison to choose the deployment path that best fits your requirements:
