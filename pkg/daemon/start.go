@@ -42,6 +42,7 @@ func StartNode(
 			npd.Download(cfg, gs.RootFS.MachineDir),
 			InstallBinary(gs.RootFS.MachineDir),
 			cni.WriteCNIConfig(gs.RootFS.MachineDir),
+			ConfigureKubeletDefaults(cfg, gs.RootFS.MachineDir),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, machineName),
