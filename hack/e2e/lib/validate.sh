@@ -49,6 +49,31 @@ validate_node_joined() {
 }
 
 # ---------------------------------------------------------------------------
+# validate_node_ip - Ensure node InternalIP matches the expected provisioned IP
+# ---------------------------------------------------------------------------
+validate_node_ip() {
+  local vm_name="$1"
+  local expected_ip="$2"
+
+  if [[ -z "${expected_ip}" ]]; then
+    log_error "Expected node IP is empty for '${vm_name}'"
+    return 1
+  fi
+
+  local internal_ips
+  internal_ips="$(kubectl get node "${vm_name}" -o jsonpath='{range .status.addresses[?(@.type=="InternalIP")]}{.address}{"\n"}{end}')"
+  if grep -Fxq "${expected_ip}" <<<"${internal_ips}"; then
+    log_success "Node '${vm_name}' InternalIP includes expected IP '${expected_ip}'"
+    return 0
+  fi
+
+  log_error "Node '${vm_name}' InternalIP mismatch; expected '${expected_ip}'"
+  log_error "Observed InternalIP values:"
+  echo "${internal_ips}"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # validate_all_nodes - Check all MSI, token, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
@@ -66,14 +91,21 @@ validate_all_nodes() {
     --admin
 
   local msi_vm_name token_vm_name kubeadm_vm_name
+  local msi_vm_private_ip token_vm_private_ip kubeadm_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  msi_vm_private_ip="$(state_get msi_vm_private_ip)"
+  token_vm_private_ip="$(state_get token_vm_private_ip)"
+  kubeadm_vm_private_ip="$(state_get kubeadm_vm_private_ip)"
 
   local failed=0
   validate_node_joined "${msi_vm_name}" || failed=1
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
+  validate_node_ip "${msi_vm_name}" "${msi_vm_private_ip}" || failed=1
+  validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
+  validate_node_ip "${kubeadm_vm_name}" "${kubeadm_vm_private_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
