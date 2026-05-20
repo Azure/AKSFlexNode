@@ -21,7 +21,7 @@ AKS Flex Node transforms any Ubuntu VM into a semi-managed AKS worker node by:
 ## Documentation
 
 - **[Usage Guide](docs/usage.md)** - Installation, configuration, and usage instructions
-- **[GPU Flex Node Setup](docs/usages/gpu-node-setup.md)** - PM-facing GPU node setup flow, image contract, validation, and troubleshooting
+- **[GPU Flex Node Setup](docs/usages/gpu-node-setup.md)** - GPU node setup flow, image contract, validation, and troubleshooting
 - **[Design Documentation](docs/design.md)** - System design, data flow, Azure integration, and technical specifications
 - **[Development Guide](docs/development.md)** - Building from source, testing, and contributing
 
