@@ -29,14 +29,15 @@ const (
 // Config represents the complete agent configuration structure.
 // It contains Azure-specific settings and agent operational settings.
 type Config struct {
-	Azure      AzureConfig      `json:"azure"`
-	Agent      AgentConfig      `json:"agent"`
-	Containerd ContainerdConfig `json:"containerd"`
-	Kubernetes KubernetesConfig `json:"kubernetes"`
-	CNI        CNIConfig        `json:"cni"`
-	Runc       RuncConfig       `json:"runc"`
-	Node       NodeConfig       `json:"node"`
-	Npd        NPDConfig        `json:"npd"`
+	Azure       AzureConfig       `json:"azure"`
+	Agent       AgentConfig       `json:"agent"`
+	Containerd  ContainerdConfig  `json:"containerd"`
+	Kubernetes  KubernetesConfig  `json:"kubernetes"`
+	CNI         CNIConfig         `json:"cni"`
+	Runc        RuncConfig        `json:"runc"`
+	Node        NodeConfig        `json:"node"`
+	Npd         NPDConfig         `json:"npd"`
+	HostRouting HostRoutingConfig `json:"hostRouting"`
 }
 
 // AzureConfig holds Azure-specific configuration required for connecting to Azure services.
@@ -569,4 +570,57 @@ func populateTargetClusterInfoFromConfig(cfg *Config) {
 	cfg.Azure.TargetCluster.ResourceGroup = resourceGroupName
 	cfg.Azure.TargetCluster.SubscriptionID = subscriptionID
 	cfg.Azure.TargetCluster.NodeResourceGroup = mcResourceGroup
+}
+
+// HostRoutingConfig groups host-level routing tasks that run before the nspawn
+// machine starts.
+type HostRoutingConfig struct {
+	// StaticRoutes installs explicit IPv4 routes to prevent provider-installed
+	// connected routes (e.g. Azure IB /16 on ND-isr SKUs) from shadowing
+	// cluster CIDRs.
+	StaticRoutes StaticRoutesConfig `json:"staticRoutes"`
+
+	// RouteOverlap checks that the expected CIDRs all route via the default
+	// outbound interface. Use this to catch unmitigated routing overlaps at
+	// boot time instead of hours after a node silently misbehaves.
+	RouteOverlap RouteOverlapConfig `json:"routeOverlap"`
+}
+
+// StaticRoutesConfig holds the spec for the static-routes systemd oneshot.
+type StaticRoutesConfig struct {
+	// Enabled must be set to true when routes are provided. This explicit
+	// opt-in prevents accidental route injection.
+	Enabled bool `json:"enabled"`
+
+	// Routes is the list of IPv4 static routes to install before kubelet starts.
+	Routes []StaticRoute `json:"routes,omitempty"`
+}
+
+// StaticRoute describes a single IPv4 route to install via `ip -4 route replace`.
+type StaticRoute struct {
+	// Destination is an IPv4 CIDR, e.g. "172.16.1.0/24". Required.
+	Destination string `json:"destination"`
+
+	// Gateway is the next-hop IPv4 address. When empty the script resolves the
+	// default gateway on Dev at boot time (with a bounded retry for DHCP races).
+	Gateway string `json:"gateway,omitempty"`
+
+	// Dev is the outbound interface (e.g. "eth0"). When empty the script
+	// resolves the IPv4 default route's outbound interface at boot time.
+	Dev string `json:"dev,omitempty"`
+
+	// Metric sets the route metric for tie-breaking. 0 means use kernel default.
+	Metric uint32 `json:"metric,omitempty"`
+}
+
+// RouteOverlapConfig holds the spec for the check-route-overlap systemd oneshot.
+type RouteOverlapConfig struct {
+	// ExpectedCIDRs is the list of IPv4 CIDRs that must route via the default
+	// outbound interface. Typically pod CIDR + service CIDR + API server prefix.
+	ExpectedCIDRs []string `json:"expectedCidrs,omitempty"`
+
+	// Mode controls behaviour on overlap detection.
+	// "WARN" (default): log the overlap and let kubelet start.
+	// "STRICT": log the overlap and prevent kubelet from starting.
+	Mode string `json:"mode,omitempty"`
 }
