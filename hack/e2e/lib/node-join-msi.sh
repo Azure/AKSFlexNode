@@ -24,8 +24,6 @@ node_join_msi() {
 
   local vm_ip
   vm_ip="$(state_get msi_vm_ip)"
-  local vm_private_ip
-  vm_private_ip="$(state_get msi_vm_private_ip)"
   local cluster_id
   cluster_id="$(state_get cluster_id)"
   local subscription_id
@@ -56,8 +54,7 @@ node_join_msi() {
   "node": {
     "kubelet": {
       "serverURL": "${server_url}",
-      "caCertData": "${ca_cert_data}",
-      "nodeIP": "${vm_private_ip}"
+      "caCertData": "${ca_cert_data}"
     }
   },
   "agent": {

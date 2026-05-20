@@ -260,8 +260,6 @@ node_join_kubeadm() {
 
   local vm_ip
   vm_ip="$(state_get kubeadm_vm_ip)"
-  local vm_private_ip
-  vm_private_ip="$(state_get kubeadm_vm_private_ip)"
   local server_url
   server_url="$(state_get server_url)"
   local ca_cert_data
@@ -306,8 +304,7 @@ node_join_kubeadm() {
     },
     "kubelet": {
       "serverURL": "${server_url}",
-      "caCertData": "${ca_cert_data}",
-      "nodeIP": "${vm_private_ip}"
+      "caCertData": "${ca_cert_data}"
     }
   },
   "agent": {
