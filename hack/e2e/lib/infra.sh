@@ -114,7 +114,7 @@ infra_deploy() {
   msi_vm_principal_id=$(echo "${outputs}" | jq -r '.msiVmPrincipalId.value')
   token_vm_name=$(echo "${outputs}"   | jq -r '.tokenVmName.value')
   token_vm_ip=$(echo "${outputs}"     | jq -r '.tokenVmIp.value')
-  token_vm_private_ip=$(echo "${outputs}" | jq -r '.tokenVmPrivateIp.value // empty')
+  token_vm_private_ip=$(echo "${outputs}" | jq -r '.tokenVmPrivateIp.value // ""')
   kubeadm_vm_name=$(echo "${outputs}" | jq -r '.kubeadmVmName.value')
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
