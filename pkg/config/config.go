@@ -114,6 +114,10 @@ func (d *JSONDuration) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (d JSONDuration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
 // AgentConfig holds agent-specific operational configuration.
 type AgentConfig struct {
 	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error

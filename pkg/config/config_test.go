@@ -485,6 +485,18 @@ func TestJSONDurationUnmarshal(t *testing.T) {
 	}
 }
 
+func TestJSONDurationMarshal(t *testing.T) {
+	t.Parallel()
+
+	data, err := json.Marshal(JSONDuration(10 * time.Minute))
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if got, want := string(data), `"10m0s"`; got != want {
+		t.Fatalf("json.Marshal=%s, want %s", got, want)
+	}
+}
+
 func TestValidateAzureResourceID(t *testing.T) {
 	tests := []struct {
 		name       string
