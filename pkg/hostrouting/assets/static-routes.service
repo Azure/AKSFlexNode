@@ -1,0 +1,17 @@
+[Unit]
+Description=Install AKSFlexNode static routes
+# Route install must happen before the nspawn machine starts, whose kubelet
+# would otherwise register with incorrect routes (e.g. IB /16 shadowing
+# cluster CIDRs on Azure ND-isr SKUs). kubelet.service runs inside the
+# nspawn container, not on the host.
+Before=systemd-nspawn@.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/etc/aks-flex-node/static-routes.sh
+RemainAfterExit=yes
+
+[Install]
+RequiredBy=systemd-nspawn@.service

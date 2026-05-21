@@ -25,12 +25,19 @@ node_join_token() {
 
   local vm_ip
   vm_ip="$(state_get token_vm_ip)"
+  local vm_private_ip
+  vm_private_ip="$(state_get token_vm_private_ip)"
   local cluster_name
   cluster_name="$(state_get cluster_name)"
   local resource_group
   resource_group="$(state_get resource_group)"
   local subscription_id
   subscription_id="$(state_get subscription_id)"
+
+  if [[ -z "${vm_private_ip}" ]] || ! is_valid_ipv4 "${vm_private_ip}"; then
+    log_error "Invalid token VM private IP in state: '${vm_private_ip}'"
+    return 1
+  fi
 
   log_info "Setting up bootstrap token RBAC resources..."
   "${REPO_ROOT}/scripts/aks-flex-config" setup-node-rbac \
@@ -48,11 +55,13 @@ node_join_token() {
     --output "${config_file}"
 
   jq \
+    --arg nodeIP "${vm_private_ip}" \
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
     --arg runcVersion "${E2E_RUNC_VERSION}" \
     '.agent.logLevel = "debug"
       | .agent.e2eMode = true
+      | .node.kubelet.nodeIP = $nodeIP
       | .kubernetes.version = $kubernetesVersion
       | .containerd.version = $containerdVersion
       | .runc.version = $runcVersion' \
