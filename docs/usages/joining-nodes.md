@@ -22,7 +22,7 @@ High-level flow:
 4. Run `aks-flex-node start --config /etc/aks-flex-node/config.json`.
 5. Verify with `kubectl get nodes -o wide`.
 
-See the repository [README](../../README.md#getting-started) for the complete bootstrap token walkthrough.
+See the repository [README](../../README.md#getting-started) for the complete bootstrap token walkthrough, and [AKS Flex Config Helper](aks-flex-config.md) for all helper command options.
 
 ## Managed Identity
 
