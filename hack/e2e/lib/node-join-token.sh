@@ -25,6 +25,8 @@ node_join_token() {
 
   local vm_ip
   vm_ip="$(state_get token_vm_ip)"
+  local vm_private_ip
+  vm_private_ip="$(state_get token_vm_private_ip)"
   local cluster_id
   cluster_id="$(state_get cluster_id)"
   local subscription_id
@@ -37,6 +39,11 @@ node_join_token() {
   server_url="$(state_get server_url)"
   local ca_cert_data
   ca_cert_data="$(state_get ca_cert_data)"
+
+  if [[ -z "${vm_private_ip}" ]] || ! is_valid_ipv4 "${vm_private_ip}"; then
+    log_error "Invalid token VM private IP in state: '${vm_private_ip}'"
+    return 1
+  fi
 
   # Step 1: Create bootstrap token & RBAC in the cluster
   log_info "Creating bootstrap token and RBAC resources..."
@@ -140,7 +147,8 @@ EOF
   "node": {
     "kubelet": {
       "serverURL": "${server_url}",
-      "caCertData": "${ca_cert_data}"
+      "caCertData": "${ca_cert_data}",
+      "nodeIP": "${vm_private_ip}"
     }
   },
   "agent": {
