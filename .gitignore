@@ -55,6 +55,9 @@ config.json
 # Downloaded toolchain binaries
 hack/bin/
 
+# Python cache files
+__pycache__/
+
 # qemu vm state
 .vm
 

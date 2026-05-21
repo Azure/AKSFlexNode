@@ -113,7 +113,7 @@ See [Configuration](usages/configuration.md) for the option reference and sample
 
 ### Bootstrap Token
 
-Bootstrap token mode uses Kubernetes TLS bootstrapping. A short-lived Kubernetes bootstrap token and RBAC bindings are created in the target AKS cluster. The host config includes the token, API server URL, and cluster CA data. After the kubelet joins, it uses its issued client certificate for ongoing Kubernetes API access.
+Bootstrap token mode uses Kubernetes TLS bootstrapping. A Kubernetes bootstrap token and RBAC bindings are created in the target AKS cluster. The host config includes the token, API server URL, and cluster CA data. After the kubelet joins, it uses its issued client certificate for ongoing Kubernetes API access.
 
 This is the shortest validated path and is documented in the [README](../README.md#getting-started).
 
@@ -188,7 +188,7 @@ AKS Flex Node supports one authentication mode per config. The selected mode det
 
 | Mode | Config Field | Primary Use Case | Credential Boundary |
 |------|--------------|------------------|---------------------|
-| Bootstrap token | `azure.bootstrapToken` | Short-lived Kubernetes TLS bootstrap path. | Host receives a temporary Kubernetes bootstrap token, then kubelet uses issued client certificates. |
+| Bootstrap token | `azure.bootstrapToken` | Kubernetes TLS bootstrap path. | Host receives a Kubernetes bootstrap token, then kubelet uses issued client certificates. |
 | Managed identity | `azure.managedIdentity` | Azure VM with assigned managed identity. | Host uses Azure Instance Metadata Service for identity-backed Azure access. |
 | Azure Arc | `azure.arc.enabled: true` | Host registered as an Arc-enabled server. | Host uses Arc-managed identity after Arc registration. |
 | Service principal | `azure.servicePrincipal` | Automation with static Azure application credentials. | Host stores client credentials and requires secret rotation. |

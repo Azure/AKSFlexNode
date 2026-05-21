@@ -6,6 +6,7 @@ This guide summarizes the supported ways to join a virtual machine or bare metal
 
 - Create or choose an existing AKS cluster.
 - Prepare a host that can reach the AKS API server over outbound HTTPS.
+- Use a host size with enough CPU and memory for nspawn startup and Kubernetes components; the validated quickstart used a 4-vCPU Azure VM.
 - Run host-side install and start commands as root.
 - Make the host hostname match the Kubernetes node name you expect, or set `agent.nodeName` in the config.
 
@@ -15,13 +16,11 @@ Bootstrap token mode is the recommended quickstart path. It uses Kubernetes TLS 
 
 High-level flow:
 
-1. Get AKS admin credentials with `az aks get-credentials --admin`.
-2. Generate a short-lived bootstrap token.
-3. Apply [`docs/examples/bootstrap-token-rbac.yaml`](../examples/bootstrap-token-rbac.yaml) with `envsubst`.
-4. Collect AKS cluster values: subscription, tenant, resource ID, location, Kubernetes version, API server URL, and CA data.
-5. Render [`docs/examples/bootstrap-token-config.json`](../examples/bootstrap-token-config.json) on the host.
-6. Run `aks-flex-node start --config /etc/aks-flex-node/config.json`.
-7. Verify with `kubectl get nodes -o wide`.
+1. Run [`scripts/aks-flex-config setup-node-rbac`](../../scripts/aks-flex-config) to setup required node bootstrap RBAC permissions.
+2. Run `scripts/aks-flex-config generate-node-config --bootstrap-token` to create a bootstrap token, fetch AKS cluster metadata, and render the host config.
+3. Copy the generated config to `/etc/aks-flex-node/config.json` on the target host.
+4. Run `aks-flex-node start --config /etc/aks-flex-node/config.json`.
+5. Verify with `kubectl get nodes -o wide`.
 
 See the repository [README](../../README.md#getting-started) for the complete bootstrap token walkthrough.
 

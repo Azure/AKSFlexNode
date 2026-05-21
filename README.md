@@ -18,72 +18,42 @@ AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual
 
 ## Getting Started
 
-Before you begin, [create or choose an existing AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli) and a virtual machine or bare metal host to join as a Flex Node. This example assumes a Linux workstation with Azure CLI, `kubectl`, `openssl`, `curl`, `envsubst`, and `python3`. The target host must run systemd, allow root installation, and reach the AKS API server over outbound HTTPS.
+Before you begin, [create or choose an existing AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli) and a virtual machine or bare metal host to join as a Flex Node. This example assumes a Linux workstation with Azure CLI, `kubectl`, `curl`, and `python3`. The target host must run systemd, allow root installation, and reach the AKS API server over outbound HTTPS. Use a VM size with enough CPU and memory for nspawn startup and Kubernetes components; the validated quickstart used a 4-vCPU Azure VM.
 
 The flow below will:
 
-1. Create a short-lived Kubernetes bootstrap token and RBAC bindings on the AKS cluster.
-2. Collect the AKS cluster connection values needed by the Flex Node config.
+1. Apply the node bootstrap RBAC bindings on the AKS cluster.
+2. Create a Kubernetes bootstrap token while generating the Flex Node config from AKS cluster metadata.
 3. Install `aks-flex-node` on the target host as root.
-4. Render `/etc/aks-flex-node/config.json` from the bootstrap-token example.
+4. Copy the generated config to `/etc/aks-flex-node/config.json`.
 5. Start the host bootstrap flow and launch the `aks-flex-node-agent` systemd service.
 
 Expected result: the target host appears in `kubectl get nodes`, and `aks-flex-node-agent` is running on the host.
 
-On your workstation, get AKS admin credentials and create a short-lived Kubernetes bootstrap token:
+On your workstation, save the config helper script, setup node RBAC permissions, then generate the bootstrap-token config from AKS cluster metadata:
 
 ```bash
 RESOURCE_GROUP="<resource-group>"
 CLUSTER_NAME="<cluster-name>"
+SUBSCRIPTION_ID="<subscription-id>"
 
-az aks get-credentials \
+curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
+chmod +x ./aks-flex-config
+
+./aks-flex-config setup-node-rbac \
   --resource-group "$RESOURCE_GROUP" \
-  --name "$CLUSTER_NAME" \
-  --admin \
-  --overwrite-existing
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID"
 
-TOKEN_ID="$(openssl rand -hex 3 | tr '[:upper:]' '[:lower:]')"
-TOKEN_SECRET="$(openssl rand -hex 8 | tr '[:upper:]' '[:lower:]')"
-BOOTSTRAP_TOKEN="${TOKEN_ID}.${TOKEN_SECRET}"
-EXPIRATION="$(python3 - <<'PY'
-from datetime import datetime, timedelta, timezone
-print((datetime.now(timezone.utc) + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))
-PY
-)"
-
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-rbac.yaml \
-  | envsubst \
-  | kubectl apply -f -
+./aks-flex-config generate-node-config \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID" \
+  --bootstrap-token \
+  --output ./aks-flex-node-config.json
 ```
 
-Collect the values needed by the host config:
-
-```bash
-SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
-TENANT_ID="$(az account show --query tenantId -o tsv)"
-AKS_RESOURCE_ID="$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query id -o tsv)"
-LOCATION="$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query location -o tsv)"
-KUBERNETES_VERSION="$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query kubernetesVersion -o tsv)"
-SERVER_URL="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
-CA_CERT_DATA="$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
-```
-
-On the target host, copy the collected values into the root shell, then install the agent, write the config, and bootstrap the node:
-
-```bash
-sudo su
-# Optional: set AKS_FLEX_NODE_VERSION=<release-tag> to install a specific release.
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
-aks-flex-node version
-
-umask 077
-mkdir -p /etc/aks-flex-node
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-config.json \
-  | envsubst \
-  > /etc/aks-flex-node/config.json
-
-cat /etc/aks-flex-node/config.json
-```
+`generate-node-config` supports one of the following auth modes: `--bootstrap-token`, `--identity`, `--service-principal --username <client-id> --password <client-secret>`, or `--arc`.
 
 <details>
 <summary>Example Config With Field Notes</summary>
@@ -97,7 +67,7 @@ The rendered config should look like this. Comments are shown here only to expla
     "tenantId": "<tenant-id>", // Microsoft Entra tenant for the subscription.
     "cloud": "AzurePublicCloud", // Azure cloud environment.
     "bootstrapToken": {
-      "token": "<token-id>.<token-secret>" // Short-lived Kubernetes bootstrap token created above.
+      "token": "<token-id>.<token-secret>" // Kubernetes bootstrap token created by generate-node-config.
     },
     "arc": { "enabled": false }, // Arc is disabled for this bootstrap-token flow.
     "targetCluster": {
@@ -121,6 +91,32 @@ The rendered config should look like this. Comments are shown here only to expla
 
 </details>
 
+Copy the generated config to the target host:
+
+```bash
+TARGET_HOST="<user>@<host>"
+
+scp ./aks-flex-node-config.json "$TARGET_HOST:/tmp/aks-flex-node-config.json"
+```
+
+On the target host, install the agent and move the generated config into place:
+
+```bash
+sudo su
+# Optional: set AKS_FLEX_NODE_VERSION=<release-tag> to install a specific release.
+curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
+aks-flex-node version
+
+umask 077
+mkdir -p /etc/aks-flex-node
+cp /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
+chmod 600 /etc/aks-flex-node/config.json
+
+cat /etc/aks-flex-node/config.json
+```
+
+After reviewing the config, bootstrap the node. This installs the long-running agent service and starts the local Kubernetes worker environment.
+
 ```bash
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
@@ -135,7 +131,7 @@ Example output:
 
 ```text
 NAME                   STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
-aks-flex-readme-test   Ready    <none>   9s    v1.34.3   10.0.0.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1013-azure   containerd://2.0.4
+aks-flex-config-test   Ready    <none>   12s   v1.34.3   10.0.0.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1013-azure   containerd://2.0.4
 ```
 
 The node name should match the target host's hostname unless you set `agent.nodeName` in the config.
@@ -157,7 +153,7 @@ Example logs:
 
 ```text
 Started aks-flex-node-agent.service - AKS Flex Node Agent.
-aks-flex-node[3800]: level=INFO msg="running agent daemon" nodeName=aks-flex-readme-test
+aks-flex-node[3800]: level=INFO msg="running agent daemon" nodeName=aks-flex-config-test
 aks-flex-node[3800]: level=INFO msg="machine state reconciled" status=healthy
 ```
 
