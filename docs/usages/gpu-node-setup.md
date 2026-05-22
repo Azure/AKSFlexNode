@@ -69,8 +69,11 @@ Example Helm install with the driver disabled:
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
 helm install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
   --set driver.enabled=false \
+  --set devicePlugin.enabled=true \
   --set gfd.enabled=true
 ```
+
+Use your preferred NVIDIA path to install the optional DRA driver only when workloads request DRA `DeviceClass` resources.
 
 Confirm the operator picked up the host driver and is not trying to install one:
 
@@ -141,6 +144,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/example
 # - __BOOTSTRAP_TOKEN__
 # - __TOKEN_ID__ (the TOKEN_ID value generated above)
 # - __EXPIRATION__
+# Example: replace "__BOOTSTRAP_TOKEN__" with the value in $BOOTSTRAP_TOKEN.
 # You can use any text editor, for example: vi /tmp/bootstrap-token-rbac.yaml
 kubectl apply -f /tmp/bootstrap-token-rbac.yaml
 ```
