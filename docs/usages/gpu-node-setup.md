@@ -9,7 +9,11 @@ How to add a GPU host to an AKS cluster as an AKS Flex Node.
 AKS Flex Node joins a prepared host to an AKS cluster. For GPU hosts there are two extra responsibilities that AKS Flex Node does **not** take on:
 
 1. The host must already have a working **NVIDIA kernel driver** before bootstrap.
-2. After the node joins, you must manually expose GPU devices and features in-cluster. Install NVIDIA GPU Operator, NVIDIA Device Plugin, NVIDIA GPU Feature Discovery (GFD), and the NVIDIA Dynamic Resource Allocation (DRA) Driver.
+2. After the node joins, you must manually expose GPU devices and features in-cluster. Install:
+   - NVIDIA GPU Operator
+   - NVIDIA Device Plugin
+   - NVIDIA GPU Feature Discovery (GFD)
+   - NVIDIA Dynamic Resource Allocation (DRA) Driver
 
 Plan for both before you start.
 
@@ -137,6 +141,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/example
 # - __BOOTSTRAP_TOKEN__
 # - __TOKEN_ID__ (the TOKEN_ID value created above)
 # - __EXPIRATION__
+# You can use any text editor, for example: vi /tmp/bootstrap-token-rbac.yaml
 kubectl apply -f /tmp/bootstrap-token-rbac.yaml
 ```
 
@@ -174,6 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/example
 # Replace placeholders in /etc/aks-flex-node/config.json:
 # - __TENANT_ID__, __SUBSCRIPTION_ID__, __AKS_RESOURCE_ID__, __LOCATION__
 # - __BOOTSTRAP_TOKEN__, __SERVER_URL__, __CA_CERT_DATA__, __KUBERNETES_VERSION__
+# You can use any text editor, for example: vi /etc/aks-flex-node/config.json
 
 cat /etc/aks-flex-node/config.json
 ```
@@ -192,7 +198,7 @@ kubectl get nodes -o wide
 kubectl describe node <gpu-flex-node-name>
 ```
 
-After the node is `Ready`, install the cluster GPU stack from the previous section if it is not already installed. The host driver is local to the node; GPU Operator, Device Plugin, GFD, and optional DRA are cluster components.
+After the node is `Ready`, install the cluster GPU stack from the **Cluster GPU stack (manual)** section if it is not already installed. The host driver is local to the node; GPU Operator, Device Plugin, GFD, and optional DRA are cluster components.
 
 ## Validation
 
