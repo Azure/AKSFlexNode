@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -61,7 +62,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 		Client:                   mgr.GetClient(),
 		Operator:                 operator,
 		NodeName:                 nodeName,
-		MachineReconcileInterval: cfg.Agent.MachineReconcileInterval,
+		MachineReconcileInterval: time.Duration(cfg.Agent.MachineReconcileInterval),
 	})
 	if err != nil {
 		return err

@@ -92,6 +92,33 @@ type ArcConfig struct {
 	Location      string            `json:"location"`      // Azure region for Arc machine
 }
 
+// JSONDuration accepts Go duration strings in config JSON while preserving
+// compatibility with time.Duration's numeric nanosecond representation.
+type JSONDuration time.Duration
+
+func (d *JSONDuration) UnmarshalJSON(data []byte) error {
+	var durationString string
+	if err := json.Unmarshal(data, &durationString); err == nil {
+		duration, err := time.ParseDuration(durationString)
+		if err != nil {
+			return fmt.Errorf("parse duration: %w", err)
+		}
+		*d = JSONDuration(duration)
+		return nil
+	}
+
+	var duration time.Duration
+	if err := json.Unmarshal(data, &duration); err != nil {
+		return fmt.Errorf("duration must be a string or number")
+	}
+	*d = JSONDuration(duration)
+	return nil
+}
+
+func (d JSONDuration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
 // AgentConfig holds agent-specific operational configuration.
 type AgentConfig struct {
 	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
@@ -101,7 +128,7 @@ type AgentConfig struct {
 
 	// MachineReconcileInterval controls how often the daemon re-reads the AKS
 	// machine resource when no Kubernetes Node event wakes the controller.
-	MachineReconcileInterval time.Duration `json:"machineReconcileInterval,omitempty"`
+	MachineReconcileInterval JSONDuration `json:"machineReconcileInterval,omitempty"`
 
 	// E2EMode uses the local file-backed AKS machine client. This is only for
 	// end-to-end tests until the production AKS RP machine client is available.
@@ -291,7 +318,7 @@ func (c *Config) setAgentDefaults() {
 		c.Agent.LogDir = DefaultLogDir
 	}
 	if c.Agent.MachineReconcileInterval == 0 {
-		c.Agent.MachineReconcileInterval = defaultMachineReconcileInterval
+		c.Agent.MachineReconcileInterval = JSONDuration(defaultMachineReconcileInterval)
 	}
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode
