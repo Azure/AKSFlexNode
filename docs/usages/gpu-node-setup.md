@@ -9,11 +9,7 @@ How to add a GPU host to an AKS cluster as an AKS Flex Node.
 AKS Flex Node joins a prepared host to an AKS cluster. For GPU hosts there are two extra responsibilities that AKS Flex Node does **not** take on:
 
 1. The host must already have a working **NVIDIA kernel driver** before bootstrap.
-2. After the node joins, you must manually expose GPU devices and features in-cluster. Install:
-   - NVIDIA GPU Operator
-   - NVIDIA Device Plugin
-   - NVIDIA GPU Feature Discovery (GFD)
-   - NVIDIA Dynamic Resource Allocation (DRA) Driver
+2. After the node joins, you must manually expose GPU devices and features in-cluster by installing the NVIDIA components your workloads need (for example, GPU Operator with Device Plugin and GFD, plus the optional DRA Driver when workloads use DRA).
 
 Plan for both before you start.
 
@@ -114,54 +110,30 @@ If these fail, fix the image or driver installation first. AKS Flex Node bootstr
 
 ### 2. Prepare AKS bootstrap credentials
 
-On your workstation, create a bootstrap token and RBAC bindings with the shared bootstrap-token example. This is the same setup used by the general node-joining flow; the GPU-specific requirement is that the target host image already has a working NVIDIA driver.
+On your workstation, use `aks-flex-config` to create the bootstrap RBAC and render a host config. This is the same setup used by the general node-joining flow; the GPU-specific requirement is that the target host image already has a working NVIDIA driver.
 
 ```bash
 RESOURCE_GROUP="<aks-resource-group>"
 CLUSTER_NAME="<aks-cluster-name>"
+SUBSCRIPTION_ID="<subscription-id>"
 
-az aks get-credentials \
+curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
+chmod +x ./aks-flex-config
+
+./aks-flex-config setup-node-rbac \
   --resource-group "$RESOURCE_GROUP" \
-  --name "$CLUSTER_NAME" \
-  --admin \
-  --overwrite-existing
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID"
 
-TOKEN_ID="$(openssl rand -hex 3 | tr '[:upper:]' '[:lower:]')"
-TOKEN_SECRET="$(openssl rand -hex 8 | tr '[:upper:]' '[:lower:]')"
-BOOTSTRAP_TOKEN="${TOKEN_ID}.${TOKEN_SECRET}"
-# Set expiry long enough for your planned node/agent lifetime.
-EXPIRATION="$(
-  python3 - <<'PY'
-from datetime import datetime, timedelta, timezone
-print((datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-)"
-
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-rbac.yaml \
-  -o /tmp/bootstrap-token-rbac.yaml
-
-# Replace placeholders in /tmp/bootstrap-token-rbac.yaml:
-# - __BOOTSTRAP_TOKEN__
-# - __TOKEN_ID__ (the random 6-hex TOKEN_ID generated above)
-# - __EXPIRATION__ (RFC3339 UTC format, for example: 2026-01-02T15:04:05Z)
-# Example: replace "__BOOTSTRAP_TOKEN__" with the value in $BOOTSTRAP_TOKEN.
-# You can use any text editor, for example: vi /tmp/bootstrap-token-rbac.yaml
-kubectl apply -f /tmp/bootstrap-token-rbac.yaml
+./aks-flex-config generate-node-config \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID" \
+  --bootstrap-token \
+  --output ./aks-flex-node-config.json
 ```
 
-Collect the values the host config needs:
-
-```bash
-TENANT_ID=$(az account show --query tenantId -o tsv)
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-AKS_RESOURCE_ID=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query id -o tsv)
-LOCATION=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query location -o tsv)
-KUBERNETES_VERSION=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query kubernetesVersion -o tsv)
-SERVER_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
-CA_CERT_DATA=$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
-```
-
-Copy those values, plus `BOOTSTRAP_TOKEN`, to a root shell on the GPU host.
+Copy `./aks-flex-node-config.json` to the GPU host.
 
 ### 3. Install AKS Flex Node on the host
 
@@ -173,22 +145,19 @@ aks-flex-node version
 
 ### 4. Write the host config
 
-Render the shared bootstrap-token config example instead of hand-writing the JSON:
+```bash
+TARGET_HOST="<user>@<host>"
+scp ./aks-flex-node-config.json "$TARGET_HOST:/tmp/aks-flex-node-config.json"
+```
+
+On the GPU host:
 
 ```bash
+sudo su
+umask 077
 mkdir -p /etc/aks-flex-node
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-config.json \
-  -o /etc/aks-flex-node/config.json
-
-# Replace placeholders in /etc/aks-flex-node/config.json:
-# - __TENANT_ID__, __SUBSCRIPTION_ID__, __AKS_RESOURCE_ID__, __LOCATION__
-# - __BOOTSTRAP_TOKEN__, __SERVER_URL__, __CA_CERT_DATA__, __KUBERNETES_VERSION__
-# Mapping: TENANT_ID->__TENANT_ID__, SUBSCRIPTION_ID->__SUBSCRIPTION_ID__,
-# AKS_RESOURCE_ID->__AKS_RESOURCE_ID__, LOCATION->__LOCATION__,
-# BOOTSTRAP_TOKEN->__BOOTSTRAP_TOKEN__, SERVER_URL->__SERVER_URL__,
-# CA_CERT_DATA->__CA_CERT_DATA__, KUBERNETES_VERSION->__KUBERNETES_VERSION__.
-# You can use any text editor, for example: vi /etc/aks-flex-node/config.json
-
+cp /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
+chmod 600 /etc/aks-flex-node/config.json
 cat /etc/aks-flex-node/config.json
 ```
 
