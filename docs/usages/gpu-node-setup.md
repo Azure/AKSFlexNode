@@ -9,7 +9,7 @@ How to add a GPU host to an AKS cluster as an AKS Flex Node.
 AKS Flex Node joins a prepared host to an AKS cluster. For GPU hosts there are two extra responsibilities that AKS Flex Node does **not** take on:
 
 1. The host must already have a working **NVIDIA kernel driver** before bootstrap.
-2. After the node joins, you must **manually install the cluster GPU stack** (GPU Operator, container toolkit, GPU Feature Discovery).
+2. After the node joins, you must manually expose the GPU devices and features by using NVIDIA GPU Operator, NVIDIA Device Plugin, NVIDIA GPU Feature Discovery (GFD), and the NVIDIA Dynamic Resource Allocation (DRA) Driver.
 
 Plan for both before you start.
 
@@ -19,8 +19,6 @@ Plan for both before you start.
 - A GPU host with root access and outbound reach to the AKS API server.
 - A GPU host image that already includes the NVIDIA driver.
 - Helm installed on your workstation to install the cluster GPU stack.
-- `envsubst` available on your workstation (`gettext` package).
-- Optional: a Karpenter provider that can provision AKS Flex Node hosts.
 
 ## Driver and image contract
 
@@ -40,7 +38,7 @@ If the image has no driver, you own driver installation, signing for Secure Boot
    - `microsoft-dsvm/ubuntu-hpc/2204` — baseline for current Flex H100/H200 validation.
    - `microsoft-dsvm/ubuntu-hpc/2404` — newer kernel; validate before use.
    - `microsoft-dsvm/ubuntu-hpc/2404-gb` — Grace/Blackwell variant; **not** the current Flex H100/H200 path.
-2. **Custom prebaked image.** Bake the NVIDIA driver, Fabric Manager (multi-GPU SXM), nvidia-container-toolkit, and any required signed kernel modules. Most portable fallback because you own the contract.
+2. **Custom prebaked image.** Bake the NVIDIA driver, Fabric Manager (multi-GPU SXM), and any required signed kernel modules. Most portable fallback because you own the contract.
 3. **Other GPU marketplace or partner images.** Treat as candidates to validate.
 
 > **Note:** AKS managed GPU node pools are not a host-image option. They install the driver at boot through the AKS managed GPU bootstrap path, so the image itself is not baked with the driver and cannot be reused as-is by AKS Flex Node.
@@ -57,8 +55,9 @@ az vm image list --publisher microsoft-dsvm --offer ubuntu-hpc --sku "2204" --lo
 After the Flex node is `Ready`, **you must install the cluster GPU stack yourself**. AKS Flex Node does not deploy any of this. Install at least:
 
 - **NVIDIA GPU Operator** — manages cluster GPU components. Set `driver.enabled=false` because the driver comes from the host image.
-- **NVIDIA Container Toolkit** — wires GPU devices into the container runtime.
+- **NVIDIA Device Plugin** — exposes GPU resources to Kubernetes.
 - **GPU Feature Discovery (GFD)** — labels nodes with GPU product, driver, and count.
+- **NVIDIA DRA Driver** — optional, only if your workloads use Dynamic Resource Allocation.
 
 Example Helm install with the driver disabled:
 
@@ -66,7 +65,6 @@ Example Helm install with the driver disabled:
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
 helm install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
   --set driver.enabled=false \
-  --set toolkit.enabled=true \
   --set gfd.enabled=true
 ```
 
@@ -81,18 +79,13 @@ If you skip this step, the node will be `Ready` but pods will not get GPUs.
 
 > **Optional:** NVIDIA DRA driver exposes GPUs through Kubernetes Dynamic Resource Allocation (`DeviceClass` names such as `gpu.nvidia.com`, `mig.nvidia.com`). In DRA clusters, a node can have GPU labels and DRA devices even when legacy `nvidia.com/gpu` capacity is `0`. Install only if your workloads use DRA.
 
-## Provisioning paths
+## Provisioning path
 
-There are two common ways to reach the same host state:
-
-1. **Direct host bootstrap.** You create the GPU VM or bare metal host yourself, install or select the GPU-capable image, then run AKS Flex Node bootstrap on that host.
-2. **Karpenter-managed provisioning.** Karpenter creates the GPU VM from a Flex node class and node pool, renders the AKS Flex Node user data, and lets `aks-flex-node` join the VM to the AKS cluster.
-
-The current GPU validation flow uses the Karpenter-managed path. The Karpenter resources still rely on the same driver contract: the selected image must already provide a working NVIDIA driver before AKS Flex Node runs.
+Use direct host bootstrap: create the GPU VM or bare metal host yourself, install or select the GPU-capable image, then run AKS Flex Node bootstrap on that host.
 
 ## Direct host bootstrap
 
-Use direct host bootstrap when you manage the GPU host lifecycle outside Karpenter. This path is useful for a single validation VM, a manually provisioned bare metal host, or an environment where another system owns VM creation.
+Use direct host bootstrap when you manage the GPU host lifecycle directly. This path is useful for a single validation VM, a manually provisioned bare metal host, or an environment where another system owns VM creation.
 
 ### 1. Provision a GPU-capable host
 
@@ -138,8 +131,13 @@ PY
 )"
 
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-rbac.yaml \
-  | envsubst \
-  | kubectl apply -f -
+  -o /tmp/bootstrap-token-rbac.yaml
+
+# Replace placeholders in /tmp/bootstrap-token-rbac.yaml:
+# - __BOOTSTRAP_TOKEN__
+# - __TOKEN_ID__
+# - __EXPIRATION__
+kubectl apply -f /tmp/bootstrap-token-rbac.yaml
 ```
 
 Collect the values the host config needs:
@@ -171,8 +169,11 @@ Render the shared bootstrap-token config example instead of hand-writing the JSO
 ```bash
 mkdir -p /etc/aks-flex-node
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-config.json \
-  | envsubst \
-  > /etc/aks-flex-node/config.json
+  -o /etc/aks-flex-node/config.json
+
+# Replace placeholders in /etc/aks-flex-node/config.json:
+# - __TENANT_ID__, __SUBSCRIPTION_ID__, __AKS_RESOURCE_ID__, __LOCATION__
+# - __BOOTSTRAP_TOKEN__, __SERVER_URL__, __CA_CERT_DATA__, __KUBERNETES_VERSION__
 
 cat /etc/aks-flex-node/config.json
 ```
@@ -191,64 +192,13 @@ kubectl get nodes -o wide
 kubectl describe node <gpu-flex-node-name>
 ```
 
-After the node is `Ready`, install the cluster GPU stack from the previous section if it is not already installed. The host driver is local to the node; GPU Operator, GFD, toolkit, and DRA are cluster components.
-
-## Example Karpenter resources
-
-Karpenter-style shape; replace SKU, image, region, networking, and labels.
-
-```yaml
-apiVersion: flex.aks.azure.com/v1alpha1
-kind: AzureFlexNodeClass
-metadata:
-  name: gpu-flex-h100
-spec:
-  subscriptionID: "<subscription-id>"
-  location: "<region>"
-  resourceGroup: "<flex-node-resource-group>"
-  subnetID: "<subnet-resource-id>"
-  imageReference:
-    publisher: microsoft-dsvm
-    offer: ubuntu-hpc
-    sku: "2204"
-    version: latest
-  securityType: Standard
-  osDiskSizeGB: 256
-  allocateNodePublicIP: false
-  maxPodsPerNode: 110
----
-apiVersion: karpenter.sh/v1
-kind: NodePool
-metadata:
-  name: gpu-flex
-spec:
-  template:
-    metadata:
-      labels:
-        aks-flex-node.azure.com/gpu: "true"
-    spec:
-      nodeClassRef:
-        group: flex.aks.azure.com
-        kind: AzureFlexNodeClass
-        name: gpu-flex-h100
-      requirements:
-        - key: node.kubernetes.io/instance-type
-          operator: In
-          values: ["<gpu-vm-size>"]
-      taints:
-        - key: nvidia.com/gpu
-          effect: NoSchedule
-  limits:
-    nvidia.com/gpu: "8"
-```
-
-After applying the node class and node pool, deploy a workload that matches the node pool requirements. Karpenter provisions the GPU VM, and the rendered user data runs AKS Flex Node bootstrap on the host.
+After the node is `Ready`, install the cluster GPU stack from the previous section if it is not already installed. The host driver is local to the node; GPU Operator, Device Plugin, GFD, and optional DRA are cluster components.
 
 ## Validation
 
 ```bash
 # Node Ready
-kubectl get nodes -l aks-flex-node.azure.com/gpu=true -o wide
+kubectl get nodes -o wide
 
 # GPU labels (populated by GFD)
 kubectl get node <gpu-flex-node-name> --show-labels | tr ',' '\n' | grep nvidia.com/gpu
@@ -274,5 +224,5 @@ Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels
 ## Caveats
 
 - AKS Flex Node does not install the NVIDIA kernel driver.
-- AKS Flex Node does not install GPU Operator, nvidia-container-toolkit, GFD, or DRA. These are manual.
+- AKS Flex Node does not install GPU Operator, Device Plugin, GFD, or DRA. These are manual.
 - Image + driver + kernel + containerd versions are part of the GPU node contract. Record them per validation run.
