@@ -9,7 +9,7 @@ How to add a GPU host to an AKS cluster as an AKS Flex Node.
 AKS Flex Node joins a prepared host to an AKS cluster. For GPU hosts there are two extra responsibilities that AKS Flex Node does **not** take on:
 
 1. The host must already have a working **NVIDIA kernel driver** before bootstrap.
-2. After the node joins, you must manually expose the GPU devices and features by using NVIDIA GPU Operator, NVIDIA Device Plugin, NVIDIA GPU Feature Discovery (GFD), and the NVIDIA Dynamic Resource Allocation (DRA) Driver.
+2. After the node joins, you must manually expose GPU devices and features in-cluster. Install NVIDIA GPU Operator, NVIDIA Device Plugin, NVIDIA GPU Feature Discovery (GFD), and the NVIDIA Dynamic Resource Allocation (DRA) Driver.
 
 Plan for both before you start.
 
@@ -135,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/example
 
 # Replace placeholders in /tmp/bootstrap-token-rbac.yaml:
 # - __BOOTSTRAP_TOKEN__
-# - __TOKEN_ID__
+# - __TOKEN_ID__ (the TOKEN_ID value created above)
 # - __EXPIRATION__
 kubectl apply -f /tmp/bootstrap-token-rbac.yaml
 ```
@@ -197,7 +197,7 @@ After the node is `Ready`, install the cluster GPU stack from the previous secti
 ## Validation
 
 ```bash
-# Node Ready
+# Node Ready (then identify your GPU node name)
 kubectl get nodes -o wide
 
 # GPU labels (populated by GFD)
