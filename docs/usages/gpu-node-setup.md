@@ -139,7 +139,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/example
 
 # Replace placeholders in /tmp/bootstrap-token-rbac.yaml:
 # - __BOOTSTRAP_TOKEN__
-# - __TOKEN_ID__ (the TOKEN_ID value created above)
+# - __TOKEN_ID__ (the TOKEN_ID value generated above)
 # - __EXPIRATION__
 # You can use any text editor, for example: vi /tmp/bootstrap-token-rbac.yaml
 kubectl apply -f /tmp/bootstrap-token-rbac.yaml
@@ -179,6 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/example
 # Replace placeholders in /etc/aks-flex-node/config.json:
 # - __TENANT_ID__, __SUBSCRIPTION_ID__, __AKS_RESOURCE_ID__, __LOCATION__
 # - __BOOTSTRAP_TOKEN__, __SERVER_URL__, __CA_CERT_DATA__, __KUBERNETES_VERSION__
+# Use the values from "Collect the values the host config needs" plus BOOTSTRAP_TOKEN.
 # You can use any text editor, for example: vi /etc/aks-flex-node/config.json
 
 cat /etc/aks-flex-node/config.json
