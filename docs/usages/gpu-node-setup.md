@@ -19,6 +19,7 @@ Plan for both before you start.
 - A GPU host with root access and outbound reach to the AKS API server.
 - A GPU host image that already includes the NVIDIA driver.
 - Helm installed on your workstation to install the cluster GPU stack.
+- `envsubst` available on your workstation (`gettext` package).
 - Optional: a Karpenter provider that can provision AKS Flex Node hosts.
 
 ## Driver and image contract
@@ -128,7 +129,13 @@ az aks get-credentials \
 TOKEN_ID="$(openssl rand -hex 3 | tr '[:upper:]' '[:lower:]')"
 TOKEN_SECRET="$(openssl rand -hex 8 | tr '[:upper:]' '[:lower:]')"
 BOOTSTRAP_TOKEN="${TOKEN_ID}.${TOKEN_SECRET}"
-EXPIRATION="$(date -u -d "+24 hours" +"%Y-%m-%dT%H:%M:%SZ")"
+# Set expiry long enough for your planned node/agent lifetime.
+EXPIRATION="$(
+  python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)"
 
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/docs/examples/bootstrap-token-rbac.yaml \
   | envsubst \
