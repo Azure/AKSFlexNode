@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Helpers for preparing AKS Flex Node configuration."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def log_info(message: str) -> None:
+    print(f"INFO: {message}", file=sys.stderr)
+
+
+def log_error(message: str) -> None:
+    print(f"ERROR: {message}", file=sys.stderr)
+
+
+def require_command(name: str) -> None:
+    if shutil.which(name) is None:
+        raise SystemExit(f"ERROR: missing required command: {name}")
+
+
+def run(args: list[str], *, input_text: str | None = None, capture: bool = False) -> str:
+    result = subprocess.run(
+        args,
+        input=input_text,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        check=True,
+    )
+    return result.stdout.strip() if capture and result.stdout is not None else ""
+
+
+def aks_args(args: argparse.Namespace) -> list[str]:
+    values = ["--resource-group", args.resource_group, "--name", args.cluster_name]
+    if args.subscription:
+        values.extend(["--subscription", args.subscription])
+    return values
+
+
+def account_args(args: argparse.Namespace) -> list[str]:
+    if args.subscription:
+        return ["--subscription", args.subscription]
+    return []
+
+
+def load_admin_kubeconfig(args: argparse.Namespace) -> None:
+    log_info("loading AKS admin kubeconfig")
+    run(["az", "aks", "get-credentials", *aks_args(args), "--admin", "--overwrite-existing"])
+
+
+def setup_node_rbac(args: argparse.Namespace) -> None:
+    require_command("az")
+    require_command("kubectl")
+    load_admin_kubeconfig(args)
+
+    log_info("applying bootstrap token RBAC bindings")
+    run(["kubectl", "apply", "-f", "-"], input_text=RBAC_MANIFEST)
+
+
+def generate_bootstrap_token(args: argparse.Namespace) -> str:
+    require_command("kubectl")
+
+    token_id = secrets.token_hex(3)
+    token_secret = secrets.token_hex(8)
+    token = f"{token_id}.{token_secret}"
+    manifest = f"""
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-token-{token_id}
+  namespace: kube-system
+type: bootstrap.kubernetes.io/token
+stringData:
+  description: "AKS Flex Node bootstrap token"
+  token-id: "{token_id}"
+  token-secret: "{token_secret}"
+  usage-bootstrap-authentication: "true"
+  usage-bootstrap-signing: "true"
+  auth-extra-groups: "system:bootstrappers:aks-flex-node"
+""".lstrip()
+    run(["kubectl", "apply", "-f", "-"], input_text=manifest)
+    return token
+
+
+def auth_mode(args: argparse.Namespace) -> str:
+    modes = [
+        ("bootstrap-token", args.bootstrap_token),
+        ("identity", args.identity),
+        ("service-principal", args.service_principal or bool(args.password)),
+        ("arc", args.arc),
+    ]
+    selected = [name for name, enabled in modes if enabled]
+    if len(selected) != 1:
+        raise SystemExit(
+            "ERROR: choose exactly one auth mode: --bootstrap-token, --identity, "
+            "--service-principal, or --arc"
+        )
+    mode = selected[0]
+
+    if mode == "service-principal" and (not args.username or not args.password):
+        raise SystemExit(
+            "ERROR: service principal auth requires --username <client-id> and --password <client-secret>"
+        )
+    if mode == "arc" and (not args.arc_machine_name or not args.arc_resource_group or not args.arc_location):
+        raise SystemExit(
+            "ERROR: --arc requires --arc-machine-name, --arc-resource-group, and --arc-location"
+        )
+    return mode
+
+
+def cluster_metadata(args: argparse.Namespace) -> dict[str, str]:
+    log_info("fetching AKS cluster metadata")
+    account = account_args(args)
+    aks = aks_args(args)
+    return {
+        "subscription_id": run(["az", "account", "show", *account, "--query", "id", "-o", "tsv"], capture=True),
+        "tenant_id": run(
+            ["az", "account", "show", *account, "--query", "tenantId", "-o", "tsv"], capture=True
+        ),
+        "resource_id": run(["az", "aks", "show", *aks, "--query", "id", "-o", "tsv"], capture=True),
+        "location": run(["az", "aks", "show", *aks, "--query", "location", "-o", "tsv"], capture=True),
+        "kubernetes_version": run(
+            ["az", "aks", "show", *aks, "--query", "kubernetesVersion", "-o", "tsv"], capture=True
+        ),
+    }
+
+
+def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str]) -> dict[str, object]:
+    azure: dict[str, object] = {
+        "subscriptionId": metadata["subscription_id"],
+        "tenantId": metadata["tenant_id"],
+        "cloud": "AzurePublicCloud",
+        "targetCluster": {
+            "resourceId": metadata["resource_id"],
+            "location": metadata["location"],
+        },
+    }
+    config: dict[str, object] = {
+        "azure": azure,
+        "agent": {"logLevel": "info", "logDir": "/var/log/aks-flex-node"},
+        "kubernetes": {"version": metadata["kubernetes_version"]},
+    }
+
+    if mode == "bootstrap-token":
+        load_admin_kubeconfig(args)
+        log_info("creating bootstrap token")
+        token = generate_bootstrap_token(args)
+        server_url = run(
+            ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"],
+            capture=True,
+        )
+        ca_cert_data = run(
+            [
+                "kubectl",
+                "config",
+                "view",
+                "--minify",
+                "--raw",
+                "-o",
+                "jsonpath={.clusters[0].cluster.certificate-authority-data}",
+            ],
+            capture=True,
+        )
+        azure["bootstrapToken"] = {"token": token}
+        azure["arc"] = {"enabled": False}
+        config["node"] = {"kubelet": {"serverURL": server_url, "caCertData": ca_cert_data}}
+    elif mode == "identity":
+        managed_identity = {}
+        if args.username:
+            managed_identity["clientId"] = args.username
+        azure["managedIdentity"] = managed_identity
+        azure["arc"] = {"enabled": False}
+    elif mode == "service-principal":
+        azure["servicePrincipal"] = {
+            "tenantId": args.tenant or metadata["tenant_id"],
+            "clientId": args.username,
+            "clientSecret": args.password,
+        }
+        azure["arc"] = {"enabled": False}
+    elif mode == "arc":
+        azure["arc"] = {
+            "enabled": True,
+            "machineName": args.arc_machine_name,
+            "resourceGroup": args.arc_resource_group,
+            "location": args.arc_location,
+            "tags": {"node-type": "flex"},
+        }
+    else:
+        raise SystemExit(f"ERROR: unsupported auth mode: {mode}")
+
+    return config
+
+
+def write_config(config: dict[str, object], output: str) -> None:
+    rendered = json.dumps(config, indent=2) + "\n"
+    if output == "-":
+        print(rendered, end="")
+        return
+
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(rendered)
+    path.chmod(0o600)
+    log_info(f"wrote {path}")
+
+
+def generate_node_config(args: argparse.Namespace) -> None:
+    require_command("az")
+    require_command("kubectl") if args.bootstrap_token else None
+    mode = auth_mode(args)
+    metadata = cluster_metadata(args)
+    config = render_config(args, mode, metadata)
+    write_config(config, args.output)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Prepare AKS Flex Node configuration.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def add_cluster_args(subparser: argparse.ArgumentParser) -> None:
+        subparser.add_argument("--resource-group", required=True)
+        subparser.add_argument("--cluster-name", required=True)
+        subparser.add_argument("--subscription")
+
+    rbac = subparsers.add_parser("setup-node-rbac", help="Apply node bootstrap RBAC bindings.")
+    add_cluster_args(rbac)
+    rbac.set_defaults(func=setup_node_rbac)
+
+    generate = subparsers.add_parser("generate-node-config", help="Render a Flex Node config.")
+    add_cluster_args(generate)
+    generate.add_argument("--bootstrap-token", action="store_true")
+    generate.add_argument("--identity", action="store_true")
+    generate.add_argument("--service-principal", action="store_true")
+    generate.add_argument("--username")
+    generate.add_argument("--password")
+    generate.add_argument("--tenant")
+    generate.add_argument("--arc", action="store_true")
+    generate.add_argument("--arc-machine-name")
+    generate.add_argument("--arc-resource-group")
+    generate.add_argument("--arc-location")
+    generate.add_argument("--output", default="-")
+    generate.set_defaults(func=generate_node_config)
+
+    return parser
+
+
+RBAC_MANIFEST = """
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-bootstrapper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node-bootstrapper
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-csr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:aks-flex-node
+""".lstrip()
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        args.func(args)
+    except subprocess.CalledProcessError as err:
+        command = " ".join(err.cmd) if isinstance(err.cmd, list) else str(err.cmd)
+        log_error(f"command failed: {command}")
+        raise SystemExit(err.returncode) from err
+
+
+if __name__ == "__main__":
+    main()

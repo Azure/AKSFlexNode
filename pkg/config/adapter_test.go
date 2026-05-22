@@ -19,6 +19,7 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 				DNSServiceIP: "10.0.0.10",
 				ServerURL:    "https://api.example.com:6443",
 				CACertData:   "dGVzdC1jYS1kYXRh",
+				NodeIP:       "10.225.0.4",
 			},
 		},
 	}
@@ -43,6 +44,9 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	}
 	if ac.Kubelet.ApiServer != "https://api.example.com:6443" {
 		t.Fatalf("Kubelet.ApiServer=%q, want %q", ac.Kubelet.ApiServer, "https://api.example.com:6443")
+	}
+	if ac.Kubelet.NodeIP != "10.225.0.4" {
+		t.Fatalf("Kubelet.NodeIP=%q, want %q", ac.Kubelet.NodeIP, "10.225.0.4")
 	}
 	if ac.Kubelet.Auth.BootstrapToken != "abcdef.0123456789abcdef" {
 		t.Fatalf("Kubelet.Auth.BootstrapToken=%q, want %q", ac.Kubelet.Auth.BootstrapToken, "abcdef.0123456789abcdef")

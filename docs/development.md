@@ -29,7 +29,7 @@ For a complete list of build targets, run `make help`.
 
 - **Operating System:** Ubuntu 22.04 LTS, 24.04 LTS, or compatible Linux distribution
 - **Architecture:** x86_64 (amd64) or arm64
-- **Go:** Version 1.24 or higher
+- **Go:** Use the version specified by `go.mod`
 - **Make:** GNU Make
 - **Git:** For version control
 
@@ -85,7 +85,7 @@ make verify && make check && make build-all
 
 The project uses GitHub Actions for automated testing on pull requests and pushes to main/dev branches. The testing infrastructure includes:
 
-- **Build verification** across Go 1.24
+- **Build verification** using the Go version specified by `go.mod`
 - **Unit tests** with race detection and coverage reporting
 - **Code quality checks** with multiple linters
 - **Security scanning** with gosec
@@ -100,7 +100,7 @@ The PR checks workflow (`.github/workflows/pr-checks.yml`) runs automatically on
 **Jobs:**
 
 1. **Build** - Verifies the project builds successfully
-   - Tests on Go 1.24
+   - Uses the Go version specified by `go.mod`
    - Builds for current platform and all supported platforms (linux/amd64, linux/arm64)
 
 2. **Test** - Runs the test suite
@@ -224,7 +224,7 @@ func TestFunctionName(t *testing.T) {
 
 If tests fail in CI but pass locally:
 
-1. Check Go version matches CI (1.24)
+1. Check Go version matches `go.mod`
 2. Run with race detector: `make test-race`
 3. Check for environment-specific issues
 4. Ensure dependencies are up to date: `make verify`
@@ -252,16 +252,20 @@ If coverage drops below 30%:
 ```
 AKSFlexNode/
 ├── cmd/                     # Command-line interface
+│   ├── aks-flex-node/       # Main agent CLI
+│   └── e2ehelper/           # E2E helper CLI
 ├── pkg/
-│   ├── auth/               # Azure authentication
-│   ├── azure/              # Azure API interactions
-│   ├── bootstrapper/       # Bootstrap orchestration
-│   ├── components/         # Component installers
-│   ├── config/             # Configuration management
-│   ├── logger/             # Logging infrastructure
-│   └── utils/              # Utility functions
-├── scripts/                # Installation scripts
-├── docs/                   # Documentation
+│   ├── aksmachine/          # AKS machine goal/state client abstractions
+│   ├── cmd/                 # Cobra command implementations
+│   ├── config/              # Configuration loading and validation
+│   ├── daemon/              # Host lifecycle, state, and nspawn reconciliation
+│   ├── logger/              # Logging infrastructure
+│   └── utils/               # Utility functions
+├── docs/                    # Documentation
+│   ├── usages/              # Usage scenario guides
+│   └── design/              # Detailed design topics
+├── hack/                    # E2E and local development tooling
+├── scripts/                 # Installation scripts
 ├── Makefile               # Build and test targets
 └── go.mod                 # Go module definition
 ```
@@ -343,6 +347,6 @@ This project is licensed under the MIT License - see the [LICENSE](../LICENSE.MD
 
 ## Additional Resources
 
-- [Usage Guide](usage.md) - Installation and configuration
-- [Design Documentation](design.md) - Complete system design and technical architecture
-- [CLAUDE.md](../CLAUDE.md) - Development guidance for Claude Code
+- [Usage Guide](usage.md) - Scenario-focused usage guides
+- [Design Documentation](design.md) - Current architecture and design summary
+- [E2E Tests](../hack/e2e/README.md) - Azure-based end-to-end validation

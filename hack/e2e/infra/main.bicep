@@ -221,9 +221,9 @@ output msiVmPrincipalId string = vmMsi.outputs.principalId
 
 output tokenVmName string = vmToken.outputs.vmName
 output tokenVmIp string = vmToken.outputs.publicIpAddress
+output tokenVmPrivateIp string = vmToken.outputs.privateIpAddress
 
 output kubeadmVmName string = vmKubeadm.outputs.vmName
 output kubeadmVmIp string = vmKubeadm.outputs.publicIpAddress
 
 output adminUsername string = adminUsername
-

@@ -132,4 +132,5 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
 // ---------------------------------------------------------------------------
 output vmName string = vm.name
 output publicIpAddress string = pip.properties.ipAddress
+output privateIpAddress string = nic.properties.ipConfigurations[0].properties.privateIPAddress
 output principalId string = assignManagedIdentity ? vm.identity.principalId : ''

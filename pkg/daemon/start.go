@@ -6,6 +6,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -24,6 +25,7 @@ func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
 			host.DisableSwap(log),
 			host.HardenAPT(log),
 			arc.InstallArc(cfg, log),
+			hostrouting.Configure(cfg, log),
 		),
 	)
 }

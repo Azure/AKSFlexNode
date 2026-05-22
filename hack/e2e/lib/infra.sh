@@ -105,7 +105,7 @@ infra_deploy() {
     -o json)
 
   local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_principal_id
-  local token_vm_name token_vm_ip kubeadm_vm_name kubeadm_vm_ip admin_username
+  local token_vm_name token_vm_ip token_vm_private_ip kubeadm_vm_name kubeadm_vm_ip admin_username
 
   cluster_name=$(echo "${outputs}"    | jq -r '.clusterName.value')
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
@@ -114,9 +114,15 @@ infra_deploy() {
   msi_vm_principal_id=$(echo "${outputs}" | jq -r '.msiVmPrincipalId.value')
   token_vm_name=$(echo "${outputs}"   | jq -r '.tokenVmName.value')
   token_vm_ip=$(echo "${outputs}"     | jq -r '.tokenVmIp.value')
+  token_vm_private_ip=$(echo "${outputs}" | jq -r '.tokenVmPrivateIp.value // ""')
   kubeadm_vm_name=$(echo "${outputs}" | jq -r '.kubeadmVmName.value')
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
+
+  if [[ -z "${token_vm_private_ip}" ]] || ! is_valid_ipv4 "${token_vm_private_ip}"; then
+    log_error "Missing or invalid token VM private IP from deployment outputs: '${token_vm_private_ip}'"
+    return 1
+  fi
 
   # Persist to state
   state_set "cluster_name"         "${cluster_name}"
@@ -126,6 +132,7 @@ infra_deploy() {
   state_set "msi_vm_principal_id"  "${msi_vm_principal_id}"
   state_set "token_vm_name"        "${token_vm_name}"
   state_set "token_vm_ip"          "${token_vm_ip}"
+  state_set "token_vm_private_ip"  "${token_vm_private_ip}"
   state_set "kubeadm_vm_name"      "${kubeadm_vm_name}"
   state_set "kubeadm_vm_ip"        "${kubeadm_vm_ip}"
   state_set "admin_username"       "${admin_username}"

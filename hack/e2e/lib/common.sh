@@ -84,6 +84,27 @@ timer_elapsed() {
   echo $(( $(date +%s) - start ))
 }
 
+# is_valid_ipv4 returns success only for canonical dotted-decimal IPv4 literals.
+# It intentionally rejects octets with leading zeros (for example 192.168.001.1)
+# so E2E fails fast on ambiguous VM output values.
+is_valid_ipv4() {
+  local ip="$1"
+  local IFS='.'
+  local -a octets
+
+  [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  read -r -a octets <<< "${ip}"
+
+  for octet in "${octets[@]}"; do
+    (( octet >= 0 && octet <= 255 )) || return 1
+    if [[ "${octet}" != "0" && "${octet#0}" != "${octet}" ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Prerequisite checks
 # ---------------------------------------------------------------------------

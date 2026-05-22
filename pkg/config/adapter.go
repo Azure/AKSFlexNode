@@ -35,6 +35,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		},
 		Kubelet: agentconfig.AgentKubeletConfig{
 			ApiServer:          cfg.Node.Kubelet.ServerURL,
+			NodeIP:             cfg.Node.Kubelet.NodeIP,
 			Labels:             cfg.Node.Labels,
 			RegisterWithTaints: cfg.Node.Taints,
 		},

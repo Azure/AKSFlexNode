@@ -1,170 +1,197 @@
 # AKS Flex Node E2E Tests
 
-End-to-end tests that provision an AKS cluster and three Ubuntu VMs in Azure,
-join them as flex nodes (one via MSI, one via bootstrap token, one via kubeadm
-join using `apply -f`), and run smoke tests.
+The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
 | Tool | Purpose |
 |------|---------|
-| `az` | Azure CLI, authenticated (`az login`) |
-| `jq` | JSON processing |
-| `kubectl` | Kubernetes operations |
-| `ssh` / `scp` | VM access |
-| `openssl` | Bootstrap token generation |
-| `go` | Build the agent binary (unless `--binary` is supplied) |
+| `az` | Azure CLI, authenticated with `az login`. |
+| `jq` | JSON processing. |
+| `kubectl` | Kubernetes operations. |
+| `ssh` / `scp` | VM access and artifact copy. |
+| `openssl` | Bootstrap token generation. |
+| `go` | Build the agent binary unless `--binary` is supplied. |
 
 ## Quick Start
 
 ```bash
-# 1. Set required variables (or copy .env.example to .env and fill in values)
-export E2E_RESOURCE_GROUP=rg-e2e-test
+export E2E_RESOURCE_GROUP=rg-aks-flex-node-e2e
 export E2E_LOCATION=westus2
 
-# 2. Run the full suite
 ./hack/e2e/run.sh
 # or
 make e2e
 ```
 
-This will build the agent binary, deploy infrastructure via Bicep, join all
-three nodes, run validations including local-machine-driven repave, collect
-logs, and tear everything down.
+The default `all` command runs:
+
+1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
+2. Deploy AKS and three VMs with Bicep.
+3. Join all three VMs.
+4. Validate node readiness and run smoke workloads.
+5. Unjoin all Flex Nodes and verify they are absent.
+6. Rejoin all Flex Nodes and validate again.
+7. Run local-machine-driven repave validation.
+8. Collect logs and clean up Azure resources.
 
 ## Commands
 
-`run.sh` accepts a single command as its first positional argument. When
-omitted it defaults to `all`.
+`run.sh` accepts a command as its first positional argument. When omitted, it defaults to `all`.
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, join, validate, repave, cleanup (default) |
-| `infra` | Deploy AKS cluster + 3 VMs via Bicep |
-| `join` | Join all nodes to the cluster |
-| `join-msi` | Join only the MSI-authenticated node |
-| `join-token` | Join only the bootstrap-token node |
-| `join-kubeadm` | Join only the kubeadm node (`apply -f` with `KubeadmNodeJoin`) |
-| `validate` | Verify nodes joined and run smoke tests |
-| `smoke` | Run smoke tests only (nginx pods on flex nodes) |
-| `upgrade-drift` | Validate local-machine-driven repave to the alternate nspawn side |
-| `logs` | Collect logs from VMs |
-| `cleanup` | Collect logs then delete Azure resources |
-| `status` | Print the current state file (deployment outputs) |
+| `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
+| `infra` | Deploy AKS cluster and three VMs via Bicep. |
+| `join` | Join all Flex Node VMs. |
+| `join-msi` | Join only the managed-identity node. |
+| `join-token` | Join only the bootstrap-token node. |
+| `join-kubeadm` | Join only the kubeadm-style bootstrap-token node. |
+| `unjoin` | Unjoin all Flex Node VMs. |
+| `unjoin-msi` | Unjoin only the managed-identity node. |
+| `unjoin-token` | Unjoin only the bootstrap-token node. |
+| `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
+| `validate` | Verify joined nodes and run smoke tests. |
+| `validate-absent` | Verify Flex Node objects are absent after unjoin. |
+| `smoke` | Run smoke workloads only. |
+| `upgrade-drift` | Validate local-machine-driven repave to the alternate nspawn side. |
+| `logs` | Collect logs from VMs. |
+| `cleanup` | Collect logs and delete Azure resources. |
+| `status` | Print the current E2E state file. |
 
 ## Options
 
 | Flag | Env Var | Description |
 |------|---------|-------------|
-| `-g`, `--resource-group` | `E2E_RESOURCE_GROUP` | Azure resource group (required) |
-| `-l`, `--location` | `E2E_LOCATION` | Azure region (required) |
-| `-b`, `--binary` | `E2E_BINARY` | Path to a pre-built `aks-flex-node` binary |
-| `-s`, `--suffix` | `E2E_NAME_SUFFIX` | Unique suffix for resource names (default: epoch) |
-| `--skip-cleanup` | `E2E_SKIP_CLEANUP=1` | Keep resources after tests finish |
-| `--skip-build` | `E2E_SKIP_BUILD=1` | Skip building the binary (requires `--binary`) |
-| `--debug` | `E2E_DEBUG=1` | Enable verbose debug logging |
+| `-g`, `--resource-group` | `E2E_RESOURCE_GROUP` | Azure resource group for test resources. Required. |
+| `-l`, `--location` | `E2E_LOCATION` | Azure region. Required. |
+| `-b`, `--binary` | `E2E_BINARY` | Path to a pre-built `aks-flex-node` binary. |
+| `-s`, `--suffix` | `E2E_NAME_SUFFIX` | Unique suffix for resource names. Defaults to epoch seconds. |
+| `--skip-cleanup` | `E2E_SKIP_CLEANUP=1` | Keep Azure resources after the run. |
+| `--skip-build` | `E2E_SKIP_BUILD=1` | Skip local build. Requires `--binary` or `E2E_BINARY`. |
+| `--debug` | `E2E_DEBUG=1` | Enable verbose debug logging. |
 
 Additional environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `E2E_SSH_KEY_FILE` | (auto) | SSH public key for VM access |
-| `E2E_WORK_DIR` | `/tmp/aks-flex-node-e2e` | Working directory for state and artifacts |
-| `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version for the node config |
-| `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version |
-| `E2E_RUNC_VERSION` | `1.1.12` | Runc version |
-| `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for drift repave |
-| `AZURE_SUBSCRIPTION_ID` | (auto-detected) | Azure subscription |
-| `AZURE_TENANT_ID` | (auto-detected) | Azure tenant |
+| `E2E_SSH_KEY_FILE` | auto-detected | SSH public key used for VM access. |
+| `E2E_WORK_DIR` | `/tmp/aks-flex-node-e2e` | Working directory for state, configs, and logs. |
+| `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
+| `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
+| `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
+| `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
+| `E2E_NODE_JOIN_TIMEOUT` | `300` | Timeout in seconds while waiting for node bootstrap. |
+| `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |
+| `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for repave. |
+| `AZURE_SUBSCRIPTION_ID` | auto-detected | Azure subscription. |
+| `AZURE_TENANT_ID` | auto-detected | Azure tenant. |
 
-## Node Join Modes
+## Join Modes
 
-The E2E suite tests three node join methods:
+The suite validates three join paths:
 
-| VM | Auth Mode | Join Method |
-|----|-----------|-------------|
-| `vm-e2e-msi-*` | Managed Identity (MSI) | `aks-flex-node bootstrap --config config.json` |
-| `vm-e2e-token-*` | Bootstrap Token | `aks-flex-node bootstrap --config config.json` |
-| `vm-e2e-kubeadm-*` | Bootstrap Token | `aks-flex-node apply -f kubeadm-join.json` |
+| VM | Auth Mode | Join Path |
+|----|-----------|-----------|
+| `vm-e2e-msi-*` | Managed Identity | Generated managed-identity config and `aks-flex-node start` flow. |
+| `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
+| `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 
-The kubeadm VM uses the `apply -f` command with a JSON action file that
-contains a sequence of component actions (configure OS, download CRI/kube/CNI
-binaries, start containerd, then `KubeadmNodeJoin`) to join the cluster using
-the kubeadm join flow.
+Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+
+## Repave Validation
+
+The `upgrade-drift` command validates the local-machine-driven repave path:
+
+1. Ensure the selected mode is joined.
+2. Update the local machine goal on the VM.
+3. Delete the Kubernetes `Node` object to trigger repave.
+4. Wait for the active nspawn side to report the desired kubelet version.
+5. Wait for the Kubernetes `Node` to become `Ready` again.
+6. Run a smoke workload on the repaved node.
+
+Run it after infrastructure is deployed:
+
+```bash
+./hack/e2e/run.sh infra
+./hack/e2e/run.sh join
+./hack/e2e/run.sh upgrade-drift
+```
 
 ## Iterative Development
 
-The subcommands make it easy to deploy infrastructure once and iterate on the
-join or validation steps without re-provisioning every time.
+Use subcommands to deploy infrastructure once and iterate quickly:
 
 ```bash
-# Deploy infrastructure (keeps it running)
 ./hack/e2e/run.sh infra
 
-# Iterate on the join logic
 ./hack/e2e/run.sh join-msi
 ./hack/e2e/run.sh join-token
 ./hack/e2e/run.sh join-kubeadm
 
-# Run validation
 ./hack/e2e/run.sh validate
-
-# Check deployment state at any point
-./hack/e2e/run.sh status
-
-# Collect VM logs for debugging
 ./hack/e2e/run.sh logs
-
-# Clean up when done
 ./hack/e2e/run.sh cleanup
-# or
-make e2e-cleanup
+```
+
+Use a local binary without rebuilding:
+
+```bash
+make build
+./hack/e2e/run.sh --binary ./aks-flex-node --skip-build join-token
+```
+
+Keep resources for debugging:
+
+```bash
+./hack/e2e/run.sh --skip-cleanup all
 ```
 
 ## Makefile Targets
 
 ```bash
-make e2e          # Full E2E run (same as ./hack/e2e/run.sh all)
-make e2e-infra    # Deploy infrastructure only
-make e2e-cleanup  # Tear down resources
+make e2e          # Full E2E run.
+make e2e-infra    # Deploy infrastructure only.
+make e2e-cleanup  # Clean up E2E resources.
 ```
 
 ## Project Layout
 
-```
+```text
 hack/e2e/
-  run.sh              Main entry point / orchestrator
+  run.sh                  Main entry point and command dispatcher.
   infra/
-    main.bicep        Bicep template (AKS + VNet + NSG + 3 VMs + role assignments)
+    main.bicep            AKS, VNet, NSG, VMs, identities, and role assignments.
   lib/
-    common.sh             Logging, prereqs, config, state management, SSH helpers
-    infra.sh              Bicep deployment, output extraction, kubeconfig fetch
-    node-join.sh          Shared helper (_deploy_and_start_agent) + node_join_all orchestration
-    node-join-msi.sh      MSI auth node join (node_join_msi)
-    node-join-token.sh    Bootstrap token node join (node_join_token)
-    node-join-kubeadm.sh  Kubeadm join/unjoin (node_join_kubeadm, node_unjoin_kubeadm)
-    validate.sh           Node-ready checks and smoke tests (nginx pods)
-    cleanup.sh            Log collection and Azure resource teardown
+    common.sh             Logging, prerequisites, config, state, and SSH helpers.
+    infra.sh              Bicep deployment, outputs, and kubeconfig setup.
+    node-join.sh          Shared join/unjoin orchestration and remote install helper.
+    node-join-msi.sh      Managed identity join/unjoin.
+    node-join-token.sh    Bootstrap token join/unjoin.
+    node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.
+    upgrade-drift.sh      Local machine goal repave validation.
+    validate.sh           Node readiness and smoke tests.
+    cleanup.sh            Log collection and Azure resource cleanup.
 ```
 
-## State File
+## State And Logs
 
-`run.sh` persists deployment outputs (IPs, cluster name, etc.) to a JSON state
-file at `$E2E_WORK_DIR/state.json`. This lets each subcommand pick up where the
-previous one left off. Use `run.sh status` to inspect it.
+`run.sh` persists deployment outputs to `$E2E_WORK_DIR/state.json`. This lets later commands reuse the same infrastructure.
+
+Useful commands:
+
+```bash
+./hack/e2e/run.sh status
+./hack/e2e/run.sh logs
+```
+
+Logs are collected under `$E2E_WORK_DIR/logs/`.
 
 ## Troubleshooting
 
-- **SSH failures**: The Bicep template creates an NSG allowing port 22. Ensure
-  your SSH key is available (defaults to `~/.ssh/id_rsa.pub`). Check the state
-  file for the correct VM public IPs with `run.sh status`.
-- **Node not joining**: Run `run.sh logs` to pull `journalctl` and agent logs
-  from all VMs. Logs are saved to `$E2E_WORK_DIR/logs/`.
-- **Kubeadm join failures**: Check `kubeadm-agent-journal.log` and
-  `kubeadm-kubelet.log` in the logs directory. The `apply -f` approach runs
-  sequentially; each action step must succeed before the next one starts.
-- **Timeouts**: Adjust `E2E_SSH_WAIT_TIMEOUT`, `E2E_NODE_JOIN_TIMEOUT`, or
-  `E2E_POD_READY_TIMEOUT` environment variables (in seconds).
-- **Leftover resources**: If a previous run didn't clean up, run
-  `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/run.sh cleanup` to delete the resource
-  group.
+- **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `jq`, `kubectl`, `ssh`, `scp`, and `openssl` are available.
+- **Azure auth failures:** run `az account show` and `az login` if needed.
+- **SSH failures:** inspect `state.json` for VM public IPs and confirm the SSH key configured by `E2E_SSH_KEY_FILE` is available.
+- **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, and containerd logs.
+- **Repave failures:** check `aks-flex-node-agent` logs, `machinectl list`, and kubelet versions inside `kube1` and `kube2`.
+- **Leftover resources:** run `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/run.sh cleanup`.
