@@ -286,6 +286,63 @@ func TestValidate(t *testing.T) {
 			errMsg:  "invalid agent.machineOperationMode",
 		},
 		{
+			name: "valid ARM proxy override passes",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel:                  "info",
+					ARMProxyURLOverrideForE2E: "http://127.0.0.1:8080/proxy",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid ARM proxy override fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel:                  "info",
+					ARMProxyURLOverrideForE2E: "/proxy",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid agent.armProxyURLOverrideForE2E",
+		},
+		{
 			name: "valid arc config passes",
 			config: &Config{
 				Azure: AzureConfig{

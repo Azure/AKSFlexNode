@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
@@ -17,8 +20,10 @@ import (
 )
 
 const (
-	aksFlexNodePoolName = "aksflexnodes"
-	flexNodeTagKey      = "aks-flex-node"
+	aksFlexNodePoolName        = "aksflexnodes"
+	fakeARMProxyBearerToken    = "aks-flex-node-e2e"
+	fakeARMProxyTokenExpiresIn = time.Hour
+	flexNodeTagKey             = "aks-flex-node"
 )
 
 type armMachineClient struct {
@@ -33,11 +38,10 @@ func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error
 	if err != nil {
 		return nil, err
 	}
-	cred, err := getCredential(cfg, logger)
+	cred, armOpts, err := armAuthOptions(cfg, logger)
 	if err != nil {
-		return nil, fmt.Errorf("resolve ARM credential: %w", err)
+		return nil, err
 	}
-	var armOpts *arm.ClientOptions // nil = default public ARM endpoint
 	client, err := armcontainerservice.NewMachinesClient(machineID.SubscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create machines client: %w", err)
@@ -134,6 +138,29 @@ func machineResourceIDFromConfig(cfg *config.Config) (*arm.ResourceID, error) {
 	return machineID, nil
 }
 
+func armAuthOptions(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredential, *arm.ClientOptions, error) {
+	proxyURL := cfg.Agent.ARMProxyURLOverrideForE2E
+	if proxyURL == "" {
+		cred, err := getCredential(cfg, logger)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve ARM credential: %w", err)
+		}
+		return cred, nil, nil // nil options uses default public ARM endpoint.
+	}
+
+	transport, err := newARMProxyTransport(proxyURL, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure ARM proxy override: %w", err)
+	}
+	logger.Warn("using dev-test ARM proxy URL override")
+	return fakeARMProxyCredential{}, &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			InsecureAllowCredentialWithHTTP: true,
+			Transport:                       transport,
+		},
+	}, nil
+}
+
 func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredential, error) {
 	switch {
 	case cfg.IsSPConfigured():
@@ -163,6 +190,87 @@ func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredent
 	default:
 		logger.Debug("falling back to default credential for ARM")
 		return azidentity.NewDefaultAzureCredential(nil)
+	}
+}
+
+type fakeARMProxyCredential struct{}
+
+func (fakeARMProxyCredential) GetToken(context.Context, policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	return azcore.AccessToken{
+		Token:     fakeARMProxyBearerToken,
+		ExpiresOn: time.Now().Add(fakeARMProxyTokenExpiresIn),
+	}, nil
+}
+
+type armProxyTransport struct {
+	proxy *url.URL
+	next  policy.Transporter
+}
+
+func newARMProxyTransport(proxyURL string, next policy.Transporter) (*armProxyTransport, error) {
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("proxy URL must be absolute")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("proxy URL scheme must be http or https")
+	}
+	if next == nil {
+		next = roundTripperTransport{next: http.DefaultTransport}
+	}
+	return &armProxyTransport{proxy: parsed, next: next}, nil
+}
+
+type roundTripperTransport struct {
+	next http.RoundTripper
+}
+
+func (t roundTripperTransport) Do(req *http.Request) (*http.Response, error) {
+	return t.next.RoundTrip(req)
+}
+
+func (t *armProxyTransport) Do(req *http.Request) (*http.Response, error) {
+	proxied := req.Clone(req.Context())
+	proxied.URL = cloneURL(req.URL)
+	proxied.URL.Scheme = t.proxy.Scheme
+	proxied.URL.Host = t.proxy.Host
+	proxied.URL.Path = joinURLPath(t.proxy.Path, req.URL.Path)
+	proxied.URL.RawPath = ""
+	proxied.URL.RawQuery = mergeRawQuery(t.proxy.RawQuery, req.URL.RawQuery)
+	proxied.Host = t.proxy.Host
+	return t.next.Do(proxied)
+}
+
+func cloneURL(u *url.URL) *url.URL {
+	cloned := *u
+	return &cloned
+}
+
+func joinURLPath(prefix, path string) string {
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		if path == "" {
+			return "/"
+		}
+		return path
+	}
+	if path == "" || path == "/" {
+		return prefix
+	}
+	return prefix + "/" + strings.TrimLeft(path, "/")
+}
+
+func mergeRawQuery(first, second string) string {
+	switch {
+	case first == "":
+		return second
+	case second == "":
+		return first
+	default:
+		return first + "&" + second
 	}
 }
 
