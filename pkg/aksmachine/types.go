@@ -3,14 +3,60 @@ package aksmachine
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
+
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 // GoalState is the local agent representation of ARM machine desired settings.
 // Keep this type independent from the public Azure SDK shape; adapt the SDK
 // payload to this model when the ARM contract is finalized.
 type GoalState struct {
-	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
-	SettingsVersion   string `json:"settingsVersion,omitempty"`
+	KubernetesVersion string            `json:"kubernetesVersion,omitempty"`
+	SettingsVersion   string            `json:"settingsVersion,omitempty"`
+	MaxPods           int               `json:"maxPods,omitempty"`
+	NodeLabels        map[string]string `json:"nodeLabels,omitempty"`
+	NodeTaints        []string          `json:"nodeTaints,omitempty"`
+	KubeletConfig     KubeletConfig     `json:"kubeletConfig"`
+}
+
+type KubeletConfig struct {
+	ImageGCHighThreshold int `json:"imageGCHighThreshold,omitempty"`
+	ImageGCLowThreshold  int `json:"imageGCLowThreshold,omitempty"`
+}
+
+func (g GoalState) validate() error {
+	if g.KubernetesVersion == "" {
+		return fmt.Errorf("kubernetes version is empty")
+	}
+	if g.MaxPods < 0 {
+		return fmt.Errorf("max pods must be non-negative")
+	}
+	if g.KubeletConfig.ImageGCHighThreshold < 0 {
+		return fmt.Errorf("image GC high threshold must be non-negative")
+	}
+	if g.KubeletConfig.ImageGCLowThreshold < 0 {
+		return fmt.Errorf("image GC low threshold must be non-negative")
+	}
+	return nil
+}
+
+func goalStateFromConfig(cfg *config.Config) (GoalState, error) {
+	goal := GoalState{
+		KubernetesVersion: cfg.Kubernetes.Version,
+		MaxPods:           cfg.Node.MaxPods,
+		NodeLabels:        maps.Clone(cfg.Node.Labels),
+		NodeTaints:        slices.Clone(cfg.Node.Taints),
+		KubeletConfig: KubeletConfig{
+			ImageGCHighThreshold: cfg.Node.Kubelet.ImageGCHighThreshold,
+			ImageGCLowThreshold:  cfg.Node.Kubelet.ImageGCLowThreshold,
+		},
+	}
+	if err := goal.validate(); err != nil {
+		return GoalState{}, err
+	}
+	return goal, nil
 }
 
 type ProvisioningState string

@@ -103,6 +103,10 @@ func newMachineClient(cfg *config.Config, logger *slog.Logger) (aksmachine.Machi
 		}
 		return machines, nil
 	}
-	logger.Info("TODO: using no-op AKS machine client until AKS RP implementation is available")
-	return aksmachine.NewNoopClient(cfg), nil
+	logger.Info("using ARM AKS machine client")
+	machines, err := aksmachine.NewARMClient(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("create ARM AKS machine client: %w", err)
+	}
+	return machines, nil
 }
