@@ -7,6 +7,8 @@ import (
 )
 
 func newMachineClientFromConfig(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
-	// TODO: support overriding arm endpoint
+	if cfg.Agent.ARMProxyURLOverrideForE2E != "" {
+		return newARMProxyClient(cfg, logger)
+	}
 	return newARMClient(cfg, logger)
 }

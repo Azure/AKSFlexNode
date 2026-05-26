@@ -38,10 +38,11 @@ func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error
 	if err != nil {
 		return nil, err
 	}
-	cred, armOpts, err := armAuthOptions(cfg, logger)
+	cred, err := getCredential(cfg, logger)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve ARM credential: %w", err)
 	}
+	var armOpts *arm.ClientOptions // nil = default public ARM endpoint
 	client, err := armcontainerservice.NewMachinesClient(machineID.SubscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create machines client: %w", err)
@@ -138,29 +139,6 @@ func machineResourceIDFromConfig(cfg *config.Config) (*arm.ResourceID, error) {
 	return machineID, nil
 }
 
-func armAuthOptions(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredential, *arm.ClientOptions, error) {
-	proxyURL := cfg.Agent.ARMProxyURLOverrideForE2E
-	if proxyURL == "" {
-		cred, err := getCredential(cfg, logger)
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve ARM credential: %w", err)
-		}
-		return cred, nil, nil // nil options uses default public ARM endpoint.
-	}
-
-	transport, err := newARMProxyTransport(proxyURL, nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("configure ARM proxy override: %w", err)
-	}
-	logger.Warn("using dev-test ARM proxy URL override")
-	return fakeARMProxyCredential{}, &arm.ClientOptions{
-		ClientOptions: policy.ClientOptions{
-			InsecureAllowCredentialWithHTTP: true,
-			Transport:                       transport,
-		},
-	}, nil
-}
-
 func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredential, error) {
 	switch {
 	case cfg.IsSPConfigured():
@@ -191,6 +169,33 @@ func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredent
 		logger.Debug("falling back to default credential for ARM")
 		return azidentity.NewDefaultAzureCredential(nil)
 	}
+}
+
+// newARMProxyClient returns an ARM Machine API client redirected to a dev-test proxy.
+func newARMProxyClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
+	machineID, err := machineResourceIDFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := newARMProxyTransport(cfg.Agent.ARMProxyURLOverrideForE2E, nil)
+	if err != nil {
+		return nil, fmt.Errorf("configure ARM proxy override: %w", err)
+	}
+	logger.Warn("using dev-test ARM proxy URL override")
+	client, err := armcontainerservice.NewMachinesClient(machineID.SubscriptionID, fakeARMProxyCredential{}, &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			InsecureAllowCredentialWithHTTP: true,
+			Transport:                       transport,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create proxied machines client: %w", err)
+	}
+	return &armMachineClient{
+		machineID: machineID,
+		client:    client,
+		logger:    logger,
+	}, nil
 }
 
 type fakeARMProxyCredential struct{}
