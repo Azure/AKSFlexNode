@@ -73,10 +73,10 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 
 	tasks := phases.Serial(logger,
+		// Persist the goal state in AKS RP before mutating local host state.
+		aksmachine.EnsureMachine(machines, goal, logger),
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, stateStore, state),
-		// TODO: Figure out the ARM machine registration order later.
-		aksmachine.EnsureMachine(machines, goal, logger),
 		daemon.InstallService(logger),
 	)
 	start := time.Now()

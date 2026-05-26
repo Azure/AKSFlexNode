@@ -25,6 +25,8 @@ func (t *ensureMachineTask) Name() string { return "ensure-machine" }
 func (t *ensureMachineTask) Do(ctx context.Context) error {
 	if _, err := t.machines.Get(ctx); err == nil {
 		t.logger.Info("machine already registered, skipping")
+		// The prior run may have registered the machine before node startup failed;
+		// continue so startup can retry the node and status update later.
 		return nil
 	} else {
 		var notFound *NotFoundError
