@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -16,6 +14,11 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+)
+
+const (
+	aksFlexNodePoolName = "aksflexnodes"
+	flexNodeTagKey      = "aks-flex-node"
 )
 
 type armMachineClient struct {
@@ -167,8 +170,8 @@ func buildK8sProfile(goal GoalState) *armcontainerservice.MachineKubernetesProfi
 	p := &armcontainerservice.MachineKubernetesProfile{
 		OrchestratorVersion: &goal.KubernetesVersion,
 		MaxPods:             new(int32(goal.MaxPods)), //nolint:gosec // validated non-negative and small
-		NodeLabels:          stringPointerMap(maps.Clone(goal.NodeLabels)),
-		NodeTaints:          stringPointerSlice(slices.Clone(goal.NodeTaints)),
+		NodeLabels:          stringPointerMap(goal.NodeLabels),
+		NodeTaints:          stringPointerSlice(goal.NodeTaints),
 		KubeletConfig: &armcontainerservice.KubeletConfig{
 			ImageGcHighThreshold: new(int32(goal.KubeletConfig.ImageGCHighThreshold)), //nolint:gosec // validated non-negative and small
 			ImageGcLowThreshold:  new(int32(goal.KubeletConfig.ImageGCLowThreshold)),  //nolint:gosec // validated non-negative and small

@@ -34,9 +34,9 @@ func TestGoalStateFromConfig(t *testing.T) {
 	cfg.Node.Kubelet.ImageGCHighThreshold = 85
 	cfg.Node.Kubelet.ImageGCLowThreshold = 80
 
-	goal, err := goalStateFromConfig(cfg)
+	goal, err := GoalStateFromConfig(cfg)
 	if err != nil {
-		t.Fatalf("goalStateFromConfig() error = %v", err)
+		t.Fatalf("GoalStateFromConfig() error = %v", err)
 	}
 	if goal.KubernetesVersion != "1.35.1" {
 		t.Fatalf("KubernetesVersion = %q, want 1.35.1", goal.KubernetesVersion)
@@ -74,8 +74,8 @@ func TestGoalStateFromConfigValidates(t *testing.T) {
 	t.Parallel()
 
 	cfg := testARMConfig(testClusterResourceID, "flex-node-1", "")
-	_, err := goalStateFromConfig(cfg)
+	_, err := GoalStateFromConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "kubernetes version is empty") {
-		t.Fatalf("goalStateFromConfig() error = %v, want Kubernetes version validation", err)
+		t.Fatalf("GoalStateFromConfig() error = %v, want Kubernetes version validation", err)
 	}
 }

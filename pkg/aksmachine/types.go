@@ -42,7 +42,9 @@ func (g GoalState) validate() error {
 	return nil
 }
 
-func goalStateFromConfig(cfg *config.Config) (GoalState, error) {
+// GoalStateFromConfig builds and validates the initial AKS machine goal state
+// from local agent configuration.
+func GoalStateFromConfig(cfg *config.Config) (GoalState, error) {
 	goal := GoalState{
 		KubernetesVersion: cfg.Kubernetes.Version,
 		MaxPods:           cfg.Node.MaxPods,

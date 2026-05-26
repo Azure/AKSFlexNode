@@ -10,19 +10,15 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-const (
-	aksFlexNodePoolName = "aksflexnodes"
-	flexNodeTagKey      = "aks-flex-node"
-)
-
 type ensureMachineTask struct {
 	cfg    *config.Config
+	goal   GoalState
 	logger *slog.Logger
 }
 
 // EnsureMachine returns a task that ensures this machine is registered in AKS.
-func EnsureMachine(cfg *config.Config, logger *slog.Logger) phases.Task {
-	return &ensureMachineTask{cfg: cfg, logger: logger}
+func EnsureMachine(cfg *config.Config, goal GoalState, logger *slog.Logger) phases.Task {
+	return &ensureMachineTask{cfg: cfg, goal: goal, logger: logger}
 }
 
 func (t *ensureMachineTask) Name() string { return "ensure-machine" }
@@ -41,11 +37,7 @@ func (t *ensureMachineTask) Do(ctx context.Context) error {
 			return fmt.Errorf("ensure-machine: get machine: %w", err)
 		}
 	}
-	goal, err := goalStateFromConfig(t.cfg)
-	if err != nil {
-		return fmt.Errorf("ensure-machine: build goal state: %w", err)
-	}
-	if _, err := machines.Create(ctx, goal); err != nil {
+	if _, err := machines.Create(ctx, t.goal); err != nil {
 		return fmt.Errorf("ensure-machine: create machine: %w", err)
 	}
 	return nil
