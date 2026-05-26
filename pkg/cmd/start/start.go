@@ -55,6 +55,10 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	if err != nil {
 		return fmt.Errorf("build goal state from config: %w", err)
 	}
+	machines, err := aksmachine.NewMachineClient(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("create AKS machine client: %w", err)
+	}
 	state := daemon.SeededState(goal)
 	machineName := state.ActiveMachine
 	stateStore, err := daemon.NewFileStateStore()
@@ -72,7 +76,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, stateStore, state),
 		// TODO: Figure out the ARM machine registration order later.
-		aksmachine.EnsureMachine(cfg, goal, logger),
+		aksmachine.EnsureMachine(machines, goal, logger),
 		daemon.InstallService(logger),
 	)
 	start := time.Now()

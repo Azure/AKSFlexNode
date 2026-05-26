@@ -130,8 +130,8 @@ type AgentConfig struct {
 	// machine resource when no Kubernetes Node event wakes the controller.
 	MachineReconcileInterval JSONDuration `json:"machineReconcileInterval,omitempty"`
 
-	// E2EMode uses the local file-backed AKS machine client. This is only for
-	// end-to-end tests until the production AKS RP machine client is available.
+	// E2EMode uses the local file-backed AKS machine client for local testing.
+	// It is a no-op in production builds.
 	E2EMode bool `json:"e2eMode,omitempty"`
 
 	// MachineOperationMode controls MachineOperation handling. Supported values:

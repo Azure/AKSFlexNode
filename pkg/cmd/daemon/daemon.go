@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
+	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
@@ -28,9 +28,6 @@ func NewCommand() *cobra.Command {
 			}
 			logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
 
-			if cfg.Agent.E2EMode {
-				return runDaemonE2E(cmd.Context(), cfg, logger)
-			}
 			return runDaemon(cmd.Context(), cfg, logger)
 		},
 	}
@@ -40,16 +37,10 @@ func NewCommand() *cobra.Command {
 }
 
 func runDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	logger.Info("TODO: production agent daemon requires AKS RP machine client implementation")
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func runDaemonE2E(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	logger.Info("running agent daemon in e2e mode", "machineFile", local.E2EMachineFilePath)
-	machines, err := local.NewClient(local.E2EMachineFilePath)
+	machines, err := aksmachine.NewMachineClient(cfg, logger)
 	if err != nil {
-		return fmt.Errorf("create local AKS machine client: %w", err)
+		return fmt.Errorf("create AKS machine client: %w", err)
 	}
+
 	return daemon.Run(ctx, cfg, logger, machines)
 }

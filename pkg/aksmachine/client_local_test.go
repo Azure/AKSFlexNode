@@ -1,4 +1,6 @@
-package local
+//go:build local_e2e
+
+package aksmachine
 
 import (
 	"context"
@@ -7,20 +9,18 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 )
 
-func TestClientCreateGetAndPatchStatus(t *testing.T) {
+func TestLocalClientCreateGetAndPatchStatus(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "machine.json")
-	client, err := NewClient(path)
+	client, err := newLocalClient(path)
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("newLocalClient: %v", err)
 	}
 
-	created, err := client.Create(context.Background(), aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"})
+	created, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestClientCreateGetAndPatchStatus(t *testing.T) {
 		t.Fatalf("created ID = %q", created.ID)
 	}
 
-	if err := client.PatchStatus(context.Background(), aksmachine.Status{ProvisioningState: aksmachine.ProvisioningStateSucceeded, ObservedSettingsVersion: "42"}); err != nil {
+	if err := client.PatchStatus(context.Background(), Status{ProvisioningState: ProvisioningStateSucceeded, ObservedSettingsVersion: "42"}); err != nil {
 		t.Fatalf("PatchStatus: %v", err)
 	}
 
@@ -39,38 +39,38 @@ func TestClientCreateGetAndPatchStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Goal.KubernetesVersion != "1.34.0" || got.Status.ProvisioningState != aksmachine.ProvisioningStateSucceeded {
+	if got.Goal.KubernetesVersion != "1.34.0" || got.Status.ProvisioningState != ProvisioningStateSucceeded {
 		t.Fatalf("got machine = %#v", got)
 	}
 }
 
-func TestClientGetNotFound(t *testing.T) {
+func TestLocalClientGetNotFound(t *testing.T) {
 	t.Parallel()
 
-	client, err := NewClient(filepath.Join(t.TempDir(), "missing.json"))
+	client, err := newLocalClient(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("newLocalClient: %v", err)
 	}
 	_, err = client.Get(context.Background())
-	var notFound *aksmachine.NotFoundError
+	var notFound *NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("Get error = %v, want NotFoundError", err)
 	}
 }
 
-func TestClientReadsExternalMutation(t *testing.T) {
+func TestLocalClientReadsExternalMutation(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "machine.json")
-	client, err := NewClient(path)
+	client, err := newLocalClient(path)
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("newLocalClient: %v", err)
 	}
-	if _, err := client.Create(context.Background(), aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}); err != nil {
+	if _, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	mutated := aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.35.0", SettingsVersion: "43"}}
+	mutated := Machine{Goal: GoalState{KubernetesVersion: "1.35.0", SettingsVersion: "43"}}
 	data, err := json.Marshal(mutated)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

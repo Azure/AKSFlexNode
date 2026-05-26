@@ -27,8 +27,8 @@ type armMachineClient struct {
 	logger    *slog.Logger
 }
 
-// NewARMClient returns a MachineClient backed by the AKS ARM Machine API.
-func NewARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
+// newARMClient returns a MachineClient backed by the AKS ARM Machine API.
+func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
 	machineID, err := machineResourceIDFromConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 }
 
 func (c *armMachineClient) PatchStatus(context.Context, Status) error {
-	// TODO: impement this
+	// TODO: implement this.
 	c.logger.Warn("skipping AKS machine status update; ARM Machine status is read-only")
 	return nil
 }
