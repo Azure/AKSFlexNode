@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	daemonCredentialDir   = "daemon-credentials"
-	daemonCredentialGroup = "aks-flex-node-daemons"
+	daemonCredentialDir   = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
+	daemonCredentialGroup = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
 )
 
 // Run starts the ARM-machine-driven daemon loop. The AKS machine client is
