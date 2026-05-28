@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,16 +21,23 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/daemoncred"
+)
+
+const (
+	daemonCredentialDir   = "daemon-credentials"
+	daemonCredentialGroup = "aks-flex-node-daemons"
 )
 
 // Run starts the ARM-machine-driven daemon loop. The AKS machine client is
 // injected so production ARM, remote test, and local file-backed clients can
 // share the same daemon controller.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aksmachine.MachineClient) error {
-	restCfg, err := bootstrapCredentialRESTConfig(cfg)
+	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err
 	}
+	defer stopCredentials()
 	store, err := NewFileStateStore()
 	if err != nil {
 		return err
@@ -85,6 +94,44 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 	err = mgr.Start(ctx)
 	repaves.log.Info("daemon shutting down")
 	return err
+}
+
+func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, func(), error) {
+	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !cfg.IsBootstrapTokenConfigured() {
+		return bootstrapRestCfg, func() {}, nil
+	}
+	credentials, stop, err := daemonRESTConfigProvider(ctx, cfg, bootstrapRestCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return credentials.RESTConfig(), stop, nil
+}
+
+func daemonRESTConfigProvider(ctx context.Context, cfg *config.Config, base *rest.Config) (*daemoncred.RESTConfigProvider, func(), error) {
+	credentialDir := filepath.Join(config.ConfigDir, daemonCredentialDir)
+	if err := os.MkdirAll(credentialDir, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("create daemon credential directory: %w", err)
+	}
+	credentialCtx, stop := context.WithCancel(ctx)
+	provider, err := daemoncred.NewRESTConfigProvider(credentialCtx, base, cfg.Agent.NodeName, daemonControllerCertificateOptions(credentialDir))
+	if err != nil {
+		stop()
+		return nil, nil, fmt.Errorf("create daemon credential provider: %w", err)
+	}
+	go provider.Run(credentialCtx)
+	return provider, stop, nil
+}
+
+func daemonControllerCertificateOptions(credentialDir string) daemoncred.ControllerCertificateOptions {
+	return daemoncred.ControllerCertificateOptions{
+		Name:          "aks-flex-node-daemon",
+		DaemonGroup:   daemonCredentialGroup,
+		CredentialDir: credentialDir,
+	}
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
