@@ -45,6 +45,8 @@ node_join_token() {
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}"
 
+  _ensure_daemon_csr_approver
+
   log_info "Generating token config..."
   local config_file="${E2E_WORK_DIR}/config-token.json"
   "${REPO_ROOT}/scripts/aks-flex-config" generate-node-config \
@@ -72,6 +74,21 @@ node_join_token() {
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-token"
 
   log_success "Token node joined in $(timer_elapsed "${start}")s"
+}
+
+_ensure_daemon_csr_approver() {
+  local helper_binary="${E2E_HELPER_BINARY:-}"
+  if [[ -z "${helper_binary}" || ! -f "${helper_binary}" ]]; then
+    helper_binary="${E2E_WORK_DIR}/e2ehelper"
+  fi
+
+  log_info "Starting e2e daemon CSR approver..."
+  pkill -f 'e2ehelper daemon-csr-approver' 2>/dev/null || true
+  "${helper_binary}" daemon-csr-approver \
+    --daemon-group aks-flex-node-daemons \
+    --bootstrap-group system:bootstrappers:aks-flex-node \
+    > "${E2E_LOG_DIR}/daemon-csr-approver.log" 2>&1 &
+  state_set daemon_csr_approver_pid "$!"
 }
 
 # ---------------------------------------------------------------------------

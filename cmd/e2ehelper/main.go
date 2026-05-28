@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/AKSFlexNode/cmd/e2ehelper/daemoncsr"
 	"github.com/Azure/AKSFlexNode/cmd/e2ehelper/localmachine"
 )
 
@@ -18,7 +19,7 @@ func main() {
 		Use:   "e2ehelper",
 		Short: "AKS Flex Node E2E helper",
 	}
-	rootCmd.AddCommand(localmachine.Command)
+	rootCmd.AddCommand(localmachine.Command, daemoncsr.Command)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

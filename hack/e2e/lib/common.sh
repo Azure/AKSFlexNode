@@ -171,6 +171,7 @@ load_config() {
 
   # Binary path - build if not provided
   E2E_BINARY="${E2E_BINARY:-}"
+  E2E_HELPER_BINARY="${E2E_HELPER_BINARY:-}"
 
   # Skip cleanup for debugging
   E2E_SKIP_CLEANUP="${E2E_SKIP_CLEANUP:-0}"
@@ -301,11 +302,14 @@ ensure_binary() {
   local ldflags="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${version} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${git_commit} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${build_date}"
 
   E2E_BINARY="${E2E_WORK_DIR}/aks-flex-node"
+  E2E_HELPER_BINARY="${E2E_WORK_DIR}/e2ehelper"
   (
     cd "${REPO_ROOT}"
     GOOS=linux GOARCH=amd64 go build -tags local_e2e -ldflags "${ldflags}" -o "${E2E_BINARY}" ./cmd/aks-flex-node
+    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_HELPER_BINARY}" ./cmd/e2ehelper
   )
   chmod +x "${E2E_BINARY}"
+  chmod +x "${E2E_HELPER_BINARY}"
 
   log_success "Binary built in $(timer_elapsed "${start}")s -> ${E2E_BINARY}"
 }

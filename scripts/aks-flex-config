@@ -76,6 +76,8 @@ kind: Secret
 metadata:
   name: bootstrap-token-{token_id}
   namespace: kube-system
+  labels:
+    aks-flex-node/e2e-daemon-csr: "true"
 type: bootstrap.kubernetes.io/token
 stringData:
   description: "AKS Flex Node bootstrap token"
