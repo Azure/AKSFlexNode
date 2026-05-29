@@ -157,17 +157,17 @@ REMOTE
 
   log_info "Tainting node '${vm_name}' with RP deletion signal..."
   if kubectl get node "${vm_name}" &>/dev/null; then
-    kubectl taint node "${vm_name}" node.kubernetes.io/flex-node-deleting=true:NoSchedule --overwrite
+    kubectl taint node "${vm_name}" kubernetes.azure.com/flex-node-deleting=true:NoSchedule --overwrite
   else
     log_warn "Node '${vm_name}' is already absent; skipping deletion taint"
   fi
 
   _wait_for_node_not_ready_or_absent "${vm_name}"
 
-  log_info "Deleting node '${vm_name}' from cluster..."
-  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
-
   _validate_rp_delete_cleanup "${vm_ip}"
+
+  log_info "Deleting any remaining node '${vm_name}' from cluster..."
+  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
 }
 
 _wait_for_node_not_ready_or_absent() {

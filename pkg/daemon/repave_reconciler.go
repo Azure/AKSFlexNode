@@ -33,7 +33,7 @@ const (
 )
 
 const (
-	DeletionTaintKey    = "node.kubernetes.io/flex-node-deleting"
+	DeletionTaintKey    = "kubernetes.azure.com/flex-node-deleting"
 	DeletionTaintValue  = "true"
 	DeletionTaintEffect = corev1.TaintEffectNoSchedule
 )
