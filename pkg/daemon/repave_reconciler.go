@@ -32,7 +32,11 @@ const (
 	repaveByNode       = "node-change"
 )
 
-const ResetAnnotationKey = "kubernetes.azure.com/flex-node-reset"
+const (
+	DeletionTaintKey    = "node.kubernetes.io/flex-node-deleting"
+	DeletionTaintValue  = "true"
+	DeletionTaintEffect = corev1.TaintEffectNoSchedule
+)
 
 type decisionKind string
 
@@ -245,16 +249,16 @@ func (r *repaveReconciler) patchStatus(ctx context.Context, provisioningState ak
 
 func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 	nodeExists := node.node != nil
-	resetRequested := nodeExists && annotationTrue(node.node.Annotations, ResetAnnotationKey)
-	if resetRequested {
+	deleteRequested := nodeExists && hasDeletionSignal(node.node.Spec.Taints)
+	if deleteRequested {
 		if machine.notFound {
-			return decision{Kind: decisionResetDelete, Reason: "reset annotation present and machine resource is gone"}
+			return decision{Kind: decisionResetDelete, Reason: "deletion signal present and machine resource is gone"}
 		}
-		return decision{Kind: decisionWaitForMachineDelete, Reason: "reset annotation present but machine resource still exists"}
+		return decision{Kind: decisionWaitForMachineDelete, Reason: "deletion signal present but machine resource still exists"}
 	}
 
 	if machine.notFound {
-		return decision{Kind: decisionWaitForNodeSignal, Reason: "machine resource is gone without reset annotation"}
+		return decision{Kind: decisionWaitForNodeSignal, Reason: "machine resource is gone without deletion signal"}
 	}
 	if machine.machine == nil {
 		return decision{Kind: decisionNoop, Reason: "machine snapshot is empty"}
@@ -282,11 +286,13 @@ func goalApplied(goal aksmachine.GoalState, state *State) bool {
 	return goal.SettingsVersion != "" && state.AppliedSettingsVersion == goal.SettingsVersion
 }
 
-func annotationTrue(annotations map[string]string, key string) bool {
-	if annotations == nil {
-		return false
+func hasDeletionSignal(taints []corev1.Taint) bool {
+	for _, taint := range taints {
+		if taint.Key == DeletionTaintKey && taint.Effect == DeletionTaintEffect && strings.EqualFold(strings.TrimSpace(taint.Value), DeletionTaintValue) {
+			return true
+		}
 	}
-	return strings.EqualFold(strings.TrimSpace(annotations[key]), "true")
+	return false
 }
 
 func stateObservedVersion(state *State) string {

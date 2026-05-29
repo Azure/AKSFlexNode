@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 )
@@ -18,7 +17,7 @@ func TestDecide(t *testing.T) {
 	stale := &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0"}
 	node := nodeSnapshot{node: &corev1.Node{}}
 	missingNode := nodeSnapshot{}
-	resetNode := nodeSnapshot{node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{ResetAnnotationKey: "true"}}}}
+	deleteNode := nodeSnapshot{node: &corev1.Node{Spec: corev1.NodeSpec{Taints: []corev1.Taint{deletionTaint()}}}}
 
 	tests := map[string]struct {
 		machine machineSnapshot
@@ -28,13 +27,13 @@ func TestDecide(t *testing.T) {
 	}{
 		"reset waits for machine delete": {
 			machine: machine,
-			node:    resetNode,
+			node:    deleteNode,
 			state:   applied,
 			want:    decisionWaitForMachineDelete,
 		},
 		"reset after machine delete": {
 			machine: machineSnapshot{notFound: true},
-			node:    resetNode,
+			node:    deleteNode,
 			state:   applied,
 			want:    decisionResetDelete,
 		},
@@ -88,13 +87,20 @@ func TestDecide(t *testing.T) {
 	}
 }
 
-func TestAnnotationTrue(t *testing.T) {
+func TestHasDeletionSignal(t *testing.T) {
 	t.Parallel()
 
-	if !annotationTrue(map[string]string{ResetAnnotationKey: " TRUE "}, ResetAnnotationKey) {
-		t.Fatal("annotationTrue returned false")
+	if !hasDeletionSignal([]corev1.Taint{deletionTaint()}) {
+		t.Fatal("hasDeletionSignal returned false")
 	}
-	if annotationTrue(map[string]string{ResetAnnotationKey: "yes"}, ResetAnnotationKey) {
-		t.Fatal("annotationTrue returned true")
+	if hasDeletionSignal([]corev1.Taint{{Key: DeletionTaintKey, Value: "false", Effect: DeletionTaintEffect}}) {
+		t.Fatal("hasDeletionSignal returned true for wrong value")
 	}
+	if hasDeletionSignal([]corev1.Taint{{Key: DeletionTaintKey, Value: DeletionTaintValue, Effect: corev1.TaintEffectNoExecute}}) {
+		t.Fatal("hasDeletionSignal returned true for wrong effect")
+	}
+}
+
+func deletionTaint() corev1.Taint {
+	return corev1.Taint{Key: DeletionTaintKey, Value: DeletionTaintValue, Effect: DeletionTaintEffect}
 }
