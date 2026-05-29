@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -88,9 +90,52 @@ func bootstrapSecretHasE2ELabel(ctx context.Context, kubeClient kubernetes.Inter
 	if !ok || tokenID == "" {
 		return false, nil
 	}
-	secret, err := kubeClient.CoreV1().Secrets("kube-system").Get(ctx, "bootstrap-token-"+tokenID, metav1.GetOptions{})
+	secret, err := kubeClient.CoreV1().Secrets(metav1.NamespaceSystem).Get(ctx, "bootstrap-token-"+tokenID, metav1.GetOptions{})
 	if err != nil {
 		return false, fmt.Errorf("get bootstrap token secret: %w", err)
 	}
-	return secret.Labels[e2eBootstrapLabel] == "true", nil
+	return isAuthorizedE2EBootstrapSecret(secret, tokenID, flagBootstrapGroup, time.Now()), nil
+}
+
+func isAuthorizedE2EBootstrapSecret(secret *corev1.Secret, tokenID, bootstrapGroup string, now time.Time) bool {
+	if secret.Type != corev1.SecretTypeBootstrapToken {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(secret.Labels[e2eBootstrapLabel]), "true") {
+		return false
+	}
+	if strings.TrimSpace(string(secret.Data["token-id"])) != tokenID {
+		return false
+	}
+	if strings.TrimSpace(string(secret.Data["token-secret"])) == "" {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(string(secret.Data["usage-bootstrap-authentication"])), "true") {
+		return false
+	}
+	if !hasBootstrapGroup(secret.Data["auth-extra-groups"], bootstrapGroup) {
+		return false
+	}
+	return !isExpired(secret.Data["expiration"], now)
+}
+
+func hasBootstrapGroup(raw []byte, bootstrapGroup string) bool {
+	for group := range strings.SplitSeq(string(raw), ",") {
+		if strings.TrimSpace(group) == bootstrapGroup {
+			return true
+		}
+	}
+	return false
+}
+
+func isExpired(raw []byte, now time.Time) bool {
+	expiresAtRaw := strings.TrimSpace(string(raw))
+	if expiresAtRaw == "" {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtRaw)
+	if err != nil {
+		return true
+	}
+	return !now.Before(expiresAt)
 }

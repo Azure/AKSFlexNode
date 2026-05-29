@@ -10,6 +10,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -70,6 +71,7 @@ def generate_bootstrap_token(args: argparse.Namespace) -> str:
     token_id = secrets.token_hex(3)
     token_secret = secrets.token_hex(8)
     token = f"{token_id}.{token_secret}"
+    expiration = (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     manifest = f"""
 apiVersion: v1
 kind: Secret
@@ -83,6 +85,7 @@ stringData:
   description: "AKS Flex Node bootstrap token"
   token-id: "{token_id}"
   token-secret: "{token_secret}"
+  expiration: "{expiration}"
   usage-bootstrap-authentication: "true"
   usage-bootstrap-signing: "true"
   auth-extra-groups: "system:bootstrappers:aks-flex-node"

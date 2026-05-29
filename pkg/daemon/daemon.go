@@ -131,6 +131,7 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 		Name:          "aks-flex-node-daemon",
 		DaemonGroup:   daemonCredentialGroup,
 		CredentialDir: credentialDir,
+		WaitTimeout:   2 * time.Minute,
 	}
 }
 

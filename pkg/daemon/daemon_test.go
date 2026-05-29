@@ -73,4 +73,7 @@ func TestDaemonControllerCertificateOptions(t *testing.T) {
 	if opts.CredentialDir == "" {
 		t.Fatal("CredentialDir is empty")
 	}
+	if opts.WaitTimeout == 0 {
+		t.Fatal("WaitTimeout is empty")
+	}
 }
