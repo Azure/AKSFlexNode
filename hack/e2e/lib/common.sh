@@ -313,3 +313,29 @@ ensure_binary() {
 
   log_success "Binary built in $(timer_elapsed "${start}")s -> ${E2E_BINARY}"
 }
+
+ensure_daemon_csr_approver() {
+  local pid
+  pid="$(state_get daemon_csr_approver_pid)"
+  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+    return 0
+  fi
+
+  local helper_binary="${E2E_HELPER_BINARY:-}"
+  if [[ -z "${helper_binary}" || ! -f "${helper_binary}" ]]; then
+    helper_binary="${E2E_WORK_DIR}/e2ehelper"
+  fi
+
+  log_info "Starting e2e daemon CSR approver..."
+  local approver_kubeconfig="${E2E_WORK_DIR}/daemon-csr-approver.kubeconfig"
+  kubectl config view --raw --minify > "${approver_kubeconfig}"
+  chmod 600 "${approver_kubeconfig}"
+
+  pkill -f 'e2ehelper daemon-csr-approver' 2>/dev/null || true
+  "${helper_binary}" daemon-csr-approver \
+    --kubeconfig "${approver_kubeconfig}" \
+    --daemon-group aks-flex-node-daemons \
+    --bootstrap-group system:bootstrappers:aks-flex-node \
+    > "${E2E_LOG_DIR}/daemon-csr-approver.log" 2>&1 &
+  state_set daemon_csr_approver_pid "$!"
+}

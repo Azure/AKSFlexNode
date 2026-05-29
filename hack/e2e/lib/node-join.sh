@@ -160,6 +160,8 @@ node_join_all() {
   local msi_pid token_pid kubeadm_pid
   local msi_exit=0 token_exit=0 kubeadm_exit=0
 
+  ensure_daemon_csr_approver
+
   node_join_msi &
   msi_pid=$!
 
