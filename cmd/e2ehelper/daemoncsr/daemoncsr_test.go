@@ -54,7 +54,9 @@ func TestIsAuthorizedE2EBootstrapSecret(t *testing.T) {
 			mutate: func(secret *corev1.Secret) { secret.Data["auth-extra-groups"] = []byte("system:bootstrappers:other") },
 		},
 		"expired": {
-			mutate: func(secret *corev1.Secret) { secret.Data["expiration"] = []byte(now.Add(-time.Second).Format(time.RFC3339)) },
+			mutate: func(secret *corev1.Secret) {
+				secret.Data["expiration"] = []byte(now.Add(-time.Second).Format(time.RFC3339))
+			},
 		},
 		"malformed expiration": {
 			mutate: func(secret *corev1.Secret) { secret.Data["expiration"] = []byte("not-a-time") },
