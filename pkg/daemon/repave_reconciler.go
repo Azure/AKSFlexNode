@@ -12,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -230,12 +229,8 @@ func (r *repaveReconciler) resetDelete(ctx context.Context) error {
 		return err
 	}
 
-	// Stage 2 publishes lifecycle completion to AKS RP, then stops this daemon.
-	if err := r.client.Delete(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeName}}); apierrors.IsNotFound(err) {
-		return r.operator.StopDaemon(ctx, r.log)
-	} else if err != nil {
-		return fmt.Errorf("delete node %s: %w", r.nodeName, err)
-	}
+	// Stage 2 stops this daemon. The RP owns Kubernetes Node deletion after it
+	// observes the VM-side cleanup signal through daemon shutdown/Node readiness.
 	return r.operator.StopDaemon(ctx, r.log)
 }
 

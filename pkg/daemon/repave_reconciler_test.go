@@ -54,8 +54,8 @@ func TestRepaveReconcilerResetDelete(t *testing.T) {
 		t.Fatal("StopDaemon was not called")
 	}
 	var got corev1.Node
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "node1"}, &got); err == nil {
-		t.Fatal("node still exists after reset delete")
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "node1"}, &got); err != nil {
+		t.Fatalf("node was deleted by daemon: %v", err)
 	}
 }
 
