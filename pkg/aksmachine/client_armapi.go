@@ -53,10 +53,11 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 	if err := desired.validate(); err != nil {
 		return nil, fmt.Errorf("validate goal state: %w", err)
 	}
+	flexNodeTagValue := "true"
 	params := armcontainerservice.Machine{
 		Properties: &armcontainerservice.MachineProperties{
 			Tags: map[string]*string{
-				flexNodeTagKey: new("true"),
+				flexNodeTagKey: &flexNodeTagValue,
 			},
 			Kubernetes: buildK8sProfile(desired),
 		},

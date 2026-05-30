@@ -86,7 +86,7 @@ type repaveReconcilerOptions struct {
 	// re-reading the AKS machine resource. Kubernetes Node events wake the
 	// controller for node-side signals, but AKS machine changes happen in ARM and
 	// do not produce Kubernetes watch events. The fallback catches ARM-only
-	// transitions, such as machine deletion after a reset annotation was already
+	// transitions, such as machine deletion after a deletion taint was already
 	// observed. Random jitter avoids synchronized ARM reads across large fleets;
 	// the tradeoff is that ARM-only transitions can wait up to this duration plus
 	// jitter.
@@ -132,7 +132,7 @@ func (r *repaveReconciler) SetupController(b *builder.TypedBuilder[daemon.Reques
 		&corev1.Node{},
 		handler.TypedEnqueueRequestsFromMapFunc(r.mapNode),
 		// Every local Node event can carry a daemon signal: creates/updates expose
-		// readiness and reset annotations, deletes unblock applying the next goal,
+		// readiness and deletion taints, deletes unblock applying the next goal,
 		// and generic events preserve controller-runtime cache resync behavior.
 		builder.WithPredicates(predicate.Funcs{
 			CreateFunc:  func(e event.CreateEvent) bool { return e.Object.GetName() == r.nodeName },

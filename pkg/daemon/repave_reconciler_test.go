@@ -55,7 +55,7 @@ func TestRepaveReconcilerResetDelete(t *testing.T) {
 	}
 	var got corev1.Node
 	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "node1"}, &got); err != nil {
-		t.Fatalf("node was deleted by daemon: %v", err)
+		t.Fatalf("node should remain after daemon reset-delete: %v", err)
 	}
 }
 
