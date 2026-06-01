@@ -109,6 +109,16 @@ collect_logs() {
   ls -la "${E2E_LOG_DIR}/"
 }
 
+stop_daemon_csr_approver() {
+  local pid
+  pid="$(state_get daemon_csr_approver_pid)"
+  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+    log_info "Stopping e2e daemon CSR approver (${pid})..."
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # cleanup - Delete Azure resources
 # ---------------------------------------------------------------------------
@@ -121,6 +131,8 @@ cleanup() {
     state_dump
     return 0
   fi
+
+  stop_daemon_csr_approver
 
   local resource_group cluster_name msi_vm_name token_vm_name kubeadm_vm_name
   resource_group="$(state_get resource_group)"

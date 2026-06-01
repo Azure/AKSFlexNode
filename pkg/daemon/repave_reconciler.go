@@ -12,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -32,7 +31,11 @@ const (
 	repaveByNode       = "node-change"
 )
 
-const ResetAnnotationKey = "kubernetes.azure.com/flex-node-reset"
+const (
+	DeletionTaintKey    = "kubernetes.azure.com/flex-node-deleting"
+	DeletionTaintValue  = "true"
+	DeletionTaintEffect = corev1.TaintEffectNoSchedule
+)
 
 type decisionKind string
 
@@ -83,7 +86,7 @@ type repaveReconcilerOptions struct {
 	// re-reading the AKS machine resource. Kubernetes Node events wake the
 	// controller for node-side signals, but AKS machine changes happen in ARM and
 	// do not produce Kubernetes watch events. The fallback catches ARM-only
-	// transitions, such as machine deletion after a reset annotation was already
+	// transitions, such as machine deletion after a deletion taint was already
 	// observed. Random jitter avoids synchronized ARM reads across large fleets;
 	// the tradeoff is that ARM-only transitions can wait up to this duration plus
 	// jitter.
@@ -129,7 +132,7 @@ func (r *repaveReconciler) SetupController(b *builder.TypedBuilder[daemon.Reques
 		&corev1.Node{},
 		handler.TypedEnqueueRequestsFromMapFunc(r.mapNode),
 		// Every local Node event can carry a daemon signal: creates/updates expose
-		// readiness and reset annotations, deletes unblock applying the next goal,
+		// readiness and deletion taints, deletes unblock applying the next goal,
 		// and generic events preserve controller-runtime cache resync behavior.
 		builder.WithPredicates(predicate.Funcs{
 			CreateFunc:  func(e event.CreateEvent) bool { return e.Object.GetName() == r.nodeName },
@@ -226,12 +229,8 @@ func (r *repaveReconciler) resetDelete(ctx context.Context) error {
 		return err
 	}
 
-	// Stage 2 publishes lifecycle completion to AKS RP, then stops this daemon.
-	if err := r.client.Delete(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeName}}); apierrors.IsNotFound(err) {
-		return r.operator.StopDaemon(ctx, r.log)
-	} else if err != nil {
-		return fmt.Errorf("delete node %s: %w", r.nodeName, err)
-	}
+	// Stage 2 stops this daemon. The RP owns Kubernetes Node deletion after it
+	// observes the VM-side cleanup signal through daemon shutdown/Node readiness.
 	return r.operator.StopDaemon(ctx, r.log)
 }
 
@@ -245,16 +244,16 @@ func (r *repaveReconciler) patchStatus(ctx context.Context, provisioningState ak
 
 func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 	nodeExists := node.node != nil
-	resetRequested := nodeExists && annotationTrue(node.node.Annotations, ResetAnnotationKey)
-	if resetRequested {
+	deleteRequested := nodeExists && hasDeletionSignal(node.node.Spec.Taints)
+	if deleteRequested {
 		if machine.notFound {
-			return decision{Kind: decisionResetDelete, Reason: "reset annotation present and machine resource is gone"}
+			return decision{Kind: decisionResetDelete, Reason: "deletion signal present and machine resource is gone"}
 		}
-		return decision{Kind: decisionWaitForMachineDelete, Reason: "reset annotation present but machine resource still exists"}
+		return decision{Kind: decisionWaitForMachineDelete, Reason: "deletion signal present but machine resource still exists"}
 	}
 
 	if machine.notFound {
-		return decision{Kind: decisionWaitForNodeSignal, Reason: "machine resource is gone without reset annotation"}
+		return decision{Kind: decisionWaitForNodeSignal, Reason: "machine resource is gone without deletion signal"}
 	}
 	if machine.machine == nil {
 		return decision{Kind: decisionNoop, Reason: "machine snapshot is empty"}
@@ -282,11 +281,13 @@ func goalApplied(goal aksmachine.GoalState, state *State) bool {
 	return goal.SettingsVersion != "" && state.AppliedSettingsVersion == goal.SettingsVersion
 }
 
-func annotationTrue(annotations map[string]string, key string) bool {
-	if annotations == nil {
-		return false
+func hasDeletionSignal(taints []corev1.Taint) bool {
+	for _, taint := range taints {
+		if taint.Key == DeletionTaintKey && taint.Effect == DeletionTaintEffect && strings.EqualFold(strings.TrimSpace(taint.Value), DeletionTaintValue) {
+			return true
+		}
 	}
-	return strings.EqualFold(strings.TrimSpace(annotations[key]), "true")
+	return false
 }
 
 func stateObservedVersion(state *State) string {

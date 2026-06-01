@@ -19,8 +19,7 @@ const (
 // AgentConfig. The resulting struct can be passed to goalstates.ResolveMachine
 // to produce goal states for the nspawn-based bootstrap phases.
 //
-// The enrich-cluster-config step must have already run so that
-// cfg.Node.Kubelet.ServerURL and cfg.Node.Kubelet.CACertData are populated.
+// cfg.Node.Kubelet.ServerURL and cfg.Node.Kubelet.CACertData must be populated.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName: machineName,

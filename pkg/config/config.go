@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -130,9 +131,17 @@ type AgentConfig struct {
 	// machine resource when no Kubernetes Node event wakes the controller.
 	MachineReconcileInterval JSONDuration `json:"machineReconcileInterval,omitempty"`
 
-	// E2EMode uses the local file-backed AKS machine client. This is only for
-	// end-to-end tests until the production AKS RP machine client is available.
+	// E2EMode uses the local file-backed AKS machine client for local testing.
+	// It is a no-op in production builds.
 	E2EMode bool `json:"e2eMode,omitempty"`
+
+	// ARMProxyURLOverrideForE2E redirects ARM requests to a dev-test proxy.
+	// It must not be set in production configurations.
+	ARMProxyURLOverrideForE2E string `json:"armProxyURLOverrideForE2E,omitempty"`
+
+	// RequireMachineRegistration fails bootstrap if the AKS machine resource
+	// cannot be read or created. When false, registration is best-effort.
+	RequireMachineRegistration bool `json:"requireMachineRegistration,omitempty"`
 
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
@@ -511,6 +520,15 @@ func (c *AgentConfig) validate() error {
 	}
 	if c.MachineReconcileInterval < 0 {
 		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
+	}
+	if c.ARMProxyURLOverrideForE2E != "" {
+		proxyURL, err := url.Parse(c.ARMProxyURLOverrideForE2E)
+		if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+			return fmt.Errorf("invalid agent.armProxyURLOverrideForE2E: must be an absolute URL")
+		}
+		if proxyURL.Scheme != "http" && proxyURL.Scheme != "https" {
+			return fmt.Errorf("invalid agent.armProxyURLOverrideForE2E: scheme must be http or https")
+		}
 	}
 	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
 		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)

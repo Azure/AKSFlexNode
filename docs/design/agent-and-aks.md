@@ -332,11 +332,11 @@ The agent should continue using a single host-operation guard so upgrade, upgrad
 
 If ARM machine fetch fails, the agent should not start a new host-mutating operation. It can continue reporting current local status and retry fetching goal state.
 
-If the Kubernetes watch fails, the agent should reconnect before executing operations that require AKS RP's node-level signal. The ARM machine resource alone provides desired state, but the node deletion or annotation determines whether AKS RP has completed Kubernetes-side orchestration. For upgrade, the watch is scoped to the node object, so the agent should also handle the re-read returning 404 as the deletion signal.
+If the Kubernetes watch fails, the agent should reconnect before executing operations that require AKS RP's node-level signal. The ARM machine resource alone provides desired state, but the node deletion or `kubernetes.azure.com/flex-node-deleting=true:NoSchedule` taint determines whether AKS RP has completed Kubernetes-side orchestration. For upgrade, the watch is scoped to the node object, so the agent should also handle the re-read returning 404 as the deletion signal.
 
 The agent must not depend only on receiving a live watch deletion event. On daemon startup and after watch reconnect, it should explicitly read the scoped Kubernetes `Node`; a 404 from that read is equivalent to observing the upgrade deletion trigger.
 
-If the ARM machine resource is missing but the reset/delete node annotation is not present, the agent should wait and avoid wiping host runtime. AKS RP is responsible for retrying or rewiring the control-plane state so the node annotation and ARM machine state converge.
+If the ARM machine resource is missing but the RP deletion taint is not present, the agent should wait and avoid wiping host runtime. AKS RP is responsible for retrying or rewiring the control-plane state so the node taint and ARM machine state converge.
 
 If provisioning the inactive side fails, the agent should keep the current active side running and report failure.
 

@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
@@ -52,26 +51,19 @@ func NewCommand() *cobra.Command {
 }
 
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	machines, err := newMachineClient(cfg, logger)
+	goal, err := aksmachine.GoalStateFromConfig(cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("build goal state from config: %w", err)
 	}
-	machine, err := machines.Get(ctx)
+	machines, err := aksmachine.NewMachineClient(cfg, logger)
 	if err != nil {
-		return fmt.Errorf("get AKS machine for daemon state seed: %w", err)
+		return fmt.Errorf("create AKS machine client: %w", err)
 	}
-	state := daemon.SeededState(machine.Goal)
+	state := daemon.SeededState(goal)
 	machineName := state.ActiveMachine
 	stateStore, err := daemon.NewFileStateStore()
 	if err != nil {
 		return err
-	}
-
-	// This backfill is a best-effort bridge until cluster connection details are
-	// provided directly by the API. It should be removed once start no longer
-	// needs to fetch admin kubeconfig data from ARM.
-	if err := config.BackfillClusterConfigWithUserCredentials(ctx, cfg, logger); err != nil {
-		return fmt.Errorf("bootstrap failed at step enrich-cluster-config: %w", err)
 	}
 
 	agentCfg := config.ToAgentConfig(cfg, machineName)
@@ -81,6 +73,8 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 
 	tasks := phases.Serial(logger,
+		// Persist the goal state in AKS RP before mutating local host state.
+		aksmachine.EnsureMachine(machines, goal, cfg.Agent.RequireMachineRegistration, logger),
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, stateStore, state),
 		daemon.InstallService(logger),
@@ -92,17 +86,4 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	logger.Info("operation completed successfully", "operation", "bootstrap", "duration", time.Since(start))
 
 	return nil
-}
-
-func newMachineClient(cfg *config.Config, logger *slog.Logger) (aksmachine.MachineClient, error) {
-	if cfg.Agent.E2EMode {
-		logger.Info("using local e2e AKS machine client", "machineFile", local.E2EMachineFilePath)
-		machines, err := local.NewClient(local.E2EMachineFilePath)
-		if err != nil {
-			return nil, fmt.Errorf("create local AKS machine client: %w", err)
-		}
-		return machines, nil
-	}
-	logger.Info("TODO: using no-op AKS machine client until AKS RP implementation is available")
-	return aksmachine.NewNoopClient(cfg), nil
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/base64"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -56,5 +57,23 @@ func TestBootstrapCredentialRESTConfigRequiresCredential(t *testing.T) {
 	_, err := bootstrapCredentialRESTConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "exec credential") {
 		t.Fatalf("error = %v, want credential error", err)
+	}
+}
+
+func TestDaemonControllerCertificateOptions(t *testing.T) {
+	t.Parallel()
+
+	opts := daemonControllerCertificateOptions(filepath.Join(t.TempDir(), "creds"))
+	if opts.Name != "aks-flex-node-daemon" {
+		t.Fatalf("Name = %q, want aks-flex-node-daemon", opts.Name)
+	}
+	if opts.DaemonGroup != "aks-flex-node-daemons" {
+		t.Fatalf("DaemonGroup = %q, want aks-flex-node-daemons", opts.DaemonGroup)
+	}
+	if opts.CredentialDir == "" {
+		t.Fatal("CredentialDir is empty")
+	}
+	if opts.WaitTimeout == 0 {
+		t.Fatal("WaitTimeout is empty")
 	}
 }

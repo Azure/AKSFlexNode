@@ -55,6 +55,8 @@ package-all: package-linux-amd64 package-linux-arm64
 test:
 	@echo "Running tests..."
 	@go test -v ./...
+	@echo "Running local_e2e build-tag tests..."
+	@go test -v -tags local_e2e ./pkg/aksmachine ./pkg/cmd/daemon
 
 .PHONY: test-coverage
 test-coverage:

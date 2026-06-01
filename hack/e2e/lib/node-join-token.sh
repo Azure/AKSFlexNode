@@ -5,7 +5,7 @@
 #
 # Functions:
 #   node_join_token   - Create bootstrap token/RBAC, deploy binary, run agent
-#   node_unjoin_token - Stop agent, run reset, delete node from cluster
+#   node_unjoin_token - Simulate RP delete and verify node cleanup
 # =============================================================================
 set -euo pipefail
 
@@ -45,6 +45,8 @@ node_join_token() {
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}"
 
+  ensure_daemon_csr_approver
+
   log_info "Generating token config..."
   local config_file="${E2E_WORK_DIR}/config-token.json"
   "${REPO_ROOT}/scripts/aks-flex-config" generate-node-config \
@@ -75,7 +77,7 @@ node_join_token() {
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_token - Stop the agent, run reset, remove node from cluster
+# node_unjoin_token - Simulate RP delete and verify node cleanup
 # ---------------------------------------------------------------------------
 node_unjoin_token() {
   log_section "Unjoining Token Node"
@@ -86,35 +88,7 @@ node_unjoin_token() {
   vm_ip="$(state_get token_vm_ip)"
   vm_name="$(state_get token_vm_name)"
 
-  # Step 1: Stop the agent service and run reset on the VM.
-  # The public uninstall script still invokes the unbootstrap alias for backward
-  # compatibility. The reset flow does not delete the node object.
-  log_info "Running uninstall script on ${vm_ip}..."
-  remote_copy "${REPO_ROOT}/scripts/uninstall.sh" "${vm_ip}" "/tmp/aks-flex-node-uninstall.sh"
-  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
-set -euo pipefail
-
-sudo SKIP_AZCLI=true bash /tmp/aks-flex-node-uninstall.sh --force
-
-if [[ -e /usr/local/bin/aks-flex-node ]]; then
-  echo "aks-flex-node binary still exists after uninstall"
-  exit 1
-fi
-if systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; then
-  echo "aks-flex-node-agent.service still exists after uninstall"
-  exit 1
-fi
-
-echo "kubelet status after reset:"
-systemctl is-active kubelet 2>&1 || true
-echo "containerd status after reset:"
-systemctl is-active containerd 2>&1 || true
-REMOTE
-
-  # Step 2: Delete the node object from the API server so validation passes
-  # without waiting for the node controller to evict it.
-  log_info "Deleting node '${vm_name}' from cluster..."
-  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
+  _rp_delete_unjoin_node "${vm_ip}" "${vm_name}"
 
   log_success "Token node unjoined in $(timer_elapsed "${start}")s"
 }

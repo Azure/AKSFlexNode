@@ -142,6 +142,106 @@ REMOTE
   log_success "Agent started on ${vm_ip}"
 }
 
+# ---------------------------------------------------------------------------
+# Internal: simulate AKS RP machine deletion for a joined local_e2e node.
+# ---------------------------------------------------------------------------
+_rp_delete_unjoin_node() {
+  local vm_ip="$1"
+  local vm_name="$2"
+
+  log_info "Deleting local Machine resource on ${vm_ip}..."
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+sudo rm -f /run/aks-flex-node/e2e-machine.json
+REMOTE
+
+  log_info "Tainting node '${vm_name}' with RP deletion signal..."
+  if kubectl get node "${vm_name}" &>/dev/null; then
+    kubectl taint node "${vm_name}" kubernetes.azure.com/flex-node-deleting=true:NoSchedule --overwrite
+  else
+    log_warn "Node '${vm_name}' is already absent; skipping deletion taint"
+  fi
+
+  _wait_for_node_not_ready_or_absent "${vm_name}"
+
+  _validate_rp_delete_cleanup "${vm_ip}"
+
+  log_info "Deleting any remaining node '${vm_name}' from cluster..."
+  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
+}
+
+_wait_for_node_not_ready_or_absent() {
+  local vm_name="$1"
+  local timeout="${E2E_NODE_JOIN_TIMEOUT}"
+  local elapsed=0
+
+  log_info "Waiting for node '${vm_name}' to become NotReady or disappear (timeout: ${timeout}s)..."
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    local ready
+    ready="$(kubectl get node "${vm_name}" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
+    if [[ -z "${ready}" ]]; then
+      log_success "Node '${vm_name}' is absent"
+      return 0
+    fi
+    if [[ "${ready}" != "True" ]]; then
+      log_success "Node '${vm_name}' Ready condition is ${ready}"
+      return 0
+    fi
+
+    sleep 5
+    elapsed=$((elapsed + 5))
+    log_debug "Waiting for ${vm_name} to become NotReady... (${elapsed}/${timeout}s)"
+  done
+
+  log_error "Node '${vm_name}' stayed Ready after ${timeout}s"
+  kubectl get node "${vm_name}" -o wide 2>&1 || true
+  kubectl describe node "${vm_name}" 2>&1 || true
+  return 1
+}
+
+_validate_rp_delete_cleanup() {
+  local vm_ip="$1"
+
+  log_info "Validating RP delete cleanup on ${vm_ip}..."
+  remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+set -euo pipefail
+
+deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
+while systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; do
+  if (( SECONDS >= deadline )); then
+    echo "Timed out waiting for aks-flex-node-agent.service to be uninstalled"
+    sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
+    sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager || true
+    exit 1
+  fi
+  sleep 5
+done
+
+if [[ -e /run/aks-flex-node/e2e-machine.json ]]; then
+  echo "local Machine file still exists after delete"
+  exit 1
+fi
+
+for machine in kube1 kube2; do
+  if machinectl show "${machine}" &>/dev/null; then
+    echo "nspawn machine ${machine} still exists after delete"
+    sudo machinectl status "${machine}" --no-pager || true
+    exit 1
+  fi
+done
+
+for path in /etc/aks-flex-node /var/log/aks-flex-node; do
+  if [[ -e "${path}" ]]; then
+    echo "runtime path ${path} still exists after delete"
+    sudo ls -la "${path}" || true
+    exit 1
+  fi
+done
+
+echo "RP delete cleanup validated"
+REMOTE
+}
+
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-msi.sh"
 # shellcheck disable=SC1091
@@ -159,6 +259,8 @@ node_join_all() {
 
   local msi_pid token_pid kubeadm_pid
   local msi_exit=0 token_exit=0 kubeadm_exit=0
+
+  ensure_daemon_csr_approver
 
   node_join_msi &
   msi_pid=$!

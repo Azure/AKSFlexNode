@@ -3,15 +3,20 @@ package localmachine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine/local"
 )
+
+const fileMode = 0o600
+
+const localResourceID = "local-test-machine"
 
 var (
 	flagPath                    string
@@ -78,28 +83,32 @@ func init() {
 	Command.AddCommand(createCmd, getCmd, statusCmd, deleteCmd)
 }
 
-func client() (*local.Client, error) {
-	return local.NewClient(flagPath)
-}
-
 func runCreate(ctx context.Context, out io.Writer) error {
-	c, err := client()
-	if err != nil {
-		return err
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
-	machine, err := c.Create(ctx, aksmachine.GoalState{KubernetesVersion: flagKubernetesVersion, SettingsVersion: flagSettingsVersion})
-	if err != nil {
+	machine := &aksmachine.Machine{
+		ID: localResourceID,
+		Goal: aksmachine.GoalState{
+			KubernetesVersion: flagKubernetesVersion,
+			SettingsVersion:   flagSettingsVersion,
+		},
+	}
+	if err := writeLocalMachine(flagPath, machine); err != nil {
 		return err
 	}
 	return writeMachine(out, machine)
 }
 
 func runGet(ctx context.Context, out io.Writer) error {
-	c, err := client()
-	if err != nil {
-		return err
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
-	machine, err := c.Get(ctx)
+	machine, err := readLocalMachine(flagPath)
 	if err != nil {
 		return err
 	}
@@ -107,7 +116,12 @@ func runGet(ctx context.Context, out io.Writer) error {
 }
 
 func runStatus(ctx context.Context, out io.Writer) error {
-	c, err := client()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	machine, err := readLocalMachine(flagPath)
 	if err != nil {
 		return err
 	}
@@ -116,11 +130,8 @@ func runStatus(ctx context.Context, out io.Writer) error {
 		ObservedSettingsVersion: flagObservedSettingsVersion,
 		Message:                 flagMessage,
 	}
-	if err := c.PatchStatus(ctx, status); err != nil {
-		return err
-	}
-	machine, err := c.Get(ctx)
-	if err != nil {
+	machine.Status = status
+	if err := writeLocalMachine(flagPath, machine); err != nil {
 		return err
 	}
 	return writeMachine(out, machine)
@@ -138,4 +149,38 @@ func writeMachine(out io.Writer, machine *aksmachine.Machine) error {
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(machine)
+}
+
+func readLocalMachine(path string) (*aksmachine.Machine, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, &aksmachine.NotFoundError{Resource: path}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read machine file %s: %w", path, err)
+	}
+
+	var machine aksmachine.Machine
+	if err := json.Unmarshal(data, &machine); err != nil {
+		return nil, fmt.Errorf("decode machine file %s: %w", path, err)
+	}
+	return &machine, nil
+}
+
+func writeLocalMachine(path string, machine *aksmachine.Machine) error {
+	if machine == nil {
+		return fmt.Errorf("machine is nil")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create local machine file directory: %w", err)
+	}
+	data, err := json.MarshalIndent(machine, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal machine: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Clean(path), data, fileMode); err != nil {
+		return fmt.Errorf("write machine file %s: %w", path, err)
+	}
+	return nil
 }

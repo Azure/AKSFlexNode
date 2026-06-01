@@ -39,7 +39,7 @@ func TestRepaveReconcilerResetDelete(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{notFound: true}
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: map[string]string{ResetAnnotationKey: "true"}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}, Spec: corev1.NodeSpec{Taints: []corev1.Taint{deletionTaint()}}}
 	operator := &fakeNodeOperator{}
 	kubeClient := fakeClient(node)
 	repaves := newTestRepaveReconciler(t, machines, kubeClient, operator)
@@ -54,8 +54,8 @@ func TestRepaveReconcilerResetDelete(t *testing.T) {
 		t.Fatal("StopDaemon was not called")
 	}
 	var got corev1.Node
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "node1"}, &got); err == nil {
-		t.Fatal("node still exists after reset delete")
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Name: "node1"}, &got); err != nil {
+		t.Fatalf("node should remain after daemon reset-delete: %v", err)
 	}
 }
 

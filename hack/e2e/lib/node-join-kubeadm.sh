@@ -6,7 +6,7 @@
 # Functions:
 #   node_join_kubeadm   - Create bootstrap token & RBAC, generate config,
 #                         run aks-flex-node agent
-#   node_unjoin_kubeadm - Stop agent, run reset, delete the node object
+#   node_unjoin_kubeadm - Simulate RP delete and verify node cleanup
 # =============================================================================
 set -euo pipefail
 
@@ -236,6 +236,8 @@ kind: Secret
 metadata:
   name: bootstrap-token-${token_id}
   namespace: kube-system
+  labels:
+    aks-flex-node/e2e-daemon-csr: "true"
 type: bootstrap.kubernetes.io/token
 stringData:
   description: "AKS Flex Node E2E kubeadm bootstrap token"
@@ -275,6 +277,7 @@ node_join_kubeadm() {
 
   # Step 1: Ensure RBAC / ConfigMaps and create a bootstrap token
   _kubeadm_ensure_rbac "${server_url}" "${ca_cert_data}"
+  ensure_daemon_csr_approver
 
   log_info "Creating bootstrap token..."
   local bootstrap_token
@@ -325,7 +328,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# node_unjoin_kubeadm - Stop agent, run reset, remove node from cluster
+# node_unjoin_kubeadm - Simulate RP delete and verify node cleanup
 # ---------------------------------------------------------------------------
 node_unjoin_kubeadm() {
   log_section "Unjoining Kubeadm Node"
@@ -336,33 +339,7 @@ node_unjoin_kubeadm() {
   vm_ip="$(state_get kubeadm_vm_ip)"
   vm_name="$(state_get kubeadm_vm_name)"
 
-  # Step 1: Run uninstall on the VM.
-  log_info "Running uninstall script on ${vm_ip}..."
-  remote_copy "${REPO_ROOT}/scripts/uninstall.sh" "${vm_ip}" "/tmp/aks-flex-node-uninstall.sh"
-  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
-set -euo pipefail
-
-sudo SKIP_AZCLI=true bash /tmp/aks-flex-node-uninstall.sh --force
-
-if [[ -e /usr/local/bin/aks-flex-node ]]; then
-  echo "aks-flex-node binary still exists after uninstall"
-  exit 1
-fi
-if systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; then
-  echo "aks-flex-node-agent.service still exists after uninstall"
-  exit 1
-fi
-
-echo "kubelet status after reset:"
-systemctl is-active kubelet 2>&1 || true
-echo "containerd status after reset:"
-systemctl is-active containerd 2>&1 || true
-REMOTE
-
-  # Step 2: Delete the node object from the API server so validation passes
-  # without waiting for the node controller to evict it.
-  log_info "Deleting node '${vm_name}' from cluster..."
-  kubectl delete node "${vm_name}" --ignore-not-found --wait=false
+  _rp_delete_unjoin_node "${vm_ip}" "${vm_name}"
 
   log_success "Kubeadm node unjoined in $(timer_elapsed "${start}")s"
 }
