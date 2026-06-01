@@ -45,6 +45,9 @@ func (g GoalState) validate() error {
 // GoalStateFromConfig builds and validates the initial AKS machine goal state
 // from local agent configuration.
 func GoalStateFromConfig(cfg *config.Config) (GoalState, error) {
+	// TODO: Populate SettingsVersion from the accepted machine settings once the
+	// ARM contract exposes it; leaving it empty makes bootstrap state differ from
+	// machineFromARM's Kubernetes-version fallback.
 	goal := GoalState{
 		KubernetesVersion: cfg.Kubernetes.Version,
 		MaxPods:           cfg.Node.MaxPods,

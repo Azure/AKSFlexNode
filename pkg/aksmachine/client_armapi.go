@@ -219,6 +219,9 @@ func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Ma
 	result := &Machine{Goal: fallback}
 	if machine.Properties != nil {
 		if machine.Properties.Kubernetes != nil {
+			// TODO: Read all supported machine goal fields from ARM, not only the
+			// Kubernetes version. Otherwise daemon repaves can ignore settings such as
+			// max pods, labels, taints, and kubelet config while reporting success.
 			if machine.Properties.Kubernetes.OrchestratorVersion != nil {
 				result.Goal.KubernetesVersion = *machine.Properties.Kubernetes.OrchestratorVersion
 			}
