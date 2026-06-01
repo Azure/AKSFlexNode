@@ -9,7 +9,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8 v8.3.0-beta.2
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute v1.2.0
 	github.com/Azure/kubelogin v0.2.15
-	github.com/Azure/unbounded v0.1.10-0.20260529192459-0a9ce93887f0
+	github.com/Azure/unbounded v0.1.10
 	github.com/google/renameio/v2 v2.0.2
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
@@ -18,7 +18,6 @@ require (
 	k8s.io/client-go v0.35.4
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.23.3
-	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -111,4 +110,5 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482 // indirect
+	sigs.k8s.io/yaml v1.6.0 // indirect
 )

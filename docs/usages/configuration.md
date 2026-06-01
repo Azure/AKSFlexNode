@@ -85,6 +85,7 @@ Exactly one authentication mode must be configured.
 | `agent.nodeName` | string | Optional Kubernetes node name override. Defaults to the host hostname. | `edge-node-01` |
 | `agent.machineReconcileInterval` | duration string | Daemon interval for re-reading machine state. Uses Go duration syntax. | `10m` |
 | `agent.e2eMode` | boolean | Uses the local file-backed machine client for E2E tests. | `false` |
+| `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `false` |
 | `agent.machineOperationMode` | string | MachineOperation handling mode. | `auto` |
 
 ## Kubernetes
