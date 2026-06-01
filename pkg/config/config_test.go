@@ -66,6 +66,13 @@ func TestSetDefaults(t *testing.T) {
 				return c.Agent.MachineOperationMode == "disable"
 			},
 		},
+		{
+			name:   "require machine registration is preserved",
+			config: &Config{Agent: AgentConfig{RequireMachineRegistration: true}},
+			want: func(c *Config) bool {
+				return c.Agent.RequireMachineRegistration
+			},
+		},
 	}
 
 	for _, tt := range tests {

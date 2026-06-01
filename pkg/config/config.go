@@ -139,6 +139,10 @@ type AgentConfig struct {
 	// It must not be set in production configurations.
 	ARMProxyURLOverrideForE2E string `json:"armProxyURLOverrideForE2E,omitempty"`
 
+	// RequireMachineRegistration fails bootstrap if the AKS machine resource
+	// cannot be read or created. When false, registration is best-effort.
+	RequireMachineRegistration bool `json:"requireMachineRegistration,omitempty"`
+
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
