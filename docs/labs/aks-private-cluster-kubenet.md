@@ -241,7 +241,24 @@ chmod +x ./aks-flex-config
   --output ./aks-flex-node-config.json
 ```
 
-For private clusters, if your workstation cannot reach the private API endpoint, run the RBAC/token creation with `az aks command invoke` and render the config from `az aks show` plus `az aks get-credentials --admin --file <path>`. The config must contain:
+Before copying the config to the Flex VM, verify that the config references a bootstrap token secret that exists in the cluster:
+
+```bash
+TOKEN_ID=$(python3 -c 'import json; print(json.load(open("./aks-flex-node-config.json"))["azure"]["bootstrapToken"]["token"].split(".")[0])')
+kubectl get secret -n kube-system "bootstrap-token-${TOKEN_ID}"
+```
+
+For private clusters, if your workstation cannot reach the private API endpoint, run the RBAC/token creation with `az aks command invoke` and render the config from `az aks show` plus `az aks get-credentials --admin --file <path>`. The `kubernetes.version` value must be the full patch version, such as `1.34.7`, not the major/minor alias such as `1.34`; `aks-flex-node` uses this value to download Kubernetes binaries.
+
+```bash
+KUBERNETES_VERSION=$(az aks show \
+  -g "$AKS_RG" \
+  -n "$CLUSTER_NAME" \
+  --query currentKubernetesVersion \
+  -o tsv)
+```
+
+The config must contain:
 
 ```json
 {
