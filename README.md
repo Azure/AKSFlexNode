@@ -221,7 +221,7 @@ kubectl delete node <node-name>
 ## Usage Guides And Topics
 
 - [Usage Guide](docs/usage.md) - Installation, configuration, authentication modes, operations, and troubleshooting.
-- [GPU Flex Node setup](docs/usages/gpu-node-setup.md) - GPU host image and driver contract, cluster GPU stack, validation, and troubleshooting.
+- [Labs](docs/labs/README.md) - Hands-on Azure scenarios for trying AKS Flex Node end to end.
 - [Design Documentation](docs/design.md) - Architecture, lifecycle, Azure integration, and security model.
 
 ## Development And Security
