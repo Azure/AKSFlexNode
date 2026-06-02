@@ -218,10 +218,14 @@ az vm show -g "$VM_RG" -n "$VM_NAME" --show-details \
 
 ## Generate Bootstrap Config
 
-Use the config helper from this repository or from the release branch.
+Use the config helper from this repository. By default, the installer resolves the latest GitHub release. Set `AKS_FLEX_NODE_VERSION` only when you want to use a specific release tag.
 
 ```bash
-curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
+# Optional: uncomment to use a specific release tag.
+# AKS_FLEX_NODE_VERSION="<release-tag>"
+
+curl -fsSLo ./aks-flex-config \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
 
 ./aks-flex-config setup-node-rbac \
@@ -241,6 +245,9 @@ For private clusters, if your workstation cannot reach the private API endpoint,
 
 ```json
 {
+  "kubernetes": {
+    "version": "<full-kubernetes-version>"
+  },
   "node": {
     "kubelet": {
       "serverURL": "https://<private-aks-fqdn>:443",
@@ -272,12 +279,11 @@ ssh azureuser@"$VM_PUBLIC_IP"
 
 sudo su
 
-# Optional: set AKS_FLEX_NODE_VERSION=<release-tag> to pin a specific release.
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
+# Optional: uncomment to use a specific release tag.
+# AKS_FLEX_NODE_VERSION="<release-tag>"
 
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  curl ca-certificates systemd-container uidmap nftables jq conntrack socat ebtables ethtool iptables iproute2
+curl -fsSL "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/install.sh" \
+  | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}" bash
 
 umask 077
 mkdir -p /etc/aks-flex-node
@@ -300,14 +306,7 @@ kubectl label node <flex-vm-node-name> \
   --overwrite
 ```
 
-This allows AKS node DaemonSets to land on the Flex Node, including:
-
-- `kube-proxy`
-- `azure-ip-masq-agent`
-- `cloud-node-manager`
-- CSI node plugins
-
-`kube-proxy` is required for pods on the Flex Node to reach ClusterIP services such as the Kubernetes API service IP.
+This allows AKS-managed `kube-proxy` to land on the Flex Node. `kube-proxy` is required for pods on the Flex Node to reach ClusterIP services such as the Kubernetes API service IP.
 
 ## Verify
 
@@ -331,21 +330,24 @@ Check pods on the Flex Node:
 kubectl get pods -A --field-selector spec.nodeName=<flex-vm-node-name> -o wide
 ```
 
-Expected `kube-system` pods after labeling:
+Expected minimum `kube-system` pod after labeling:
 
 ```text
 kube-system   kube-proxy-...             Running   <flex-vm-node-name>
-kube-system   azure-ip-masq-agent-...    Running   <flex-vm-node-name>
-kube-system   cloud-node-manager-...     Running   <flex-vm-node-name>
 ```
 
-Check command execution through ClusterIP service routing:
+Verify a pod on the Flex Node can reach the Kubernetes ClusterIP service:
 
 ```bash
-az aks command invoke \
-  -g "$AKS_RG" \
-  -n "$CLUSTER_NAME" \
-  --command "kubectl get nodes -o wide"
+kubectl run flex-service-smoke \
+  --image=busybox:1.36 \
+  --restart=Never \
+  --overrides='{"spec":{"nodeSelector":{"kubernetes.io/hostname":"<flex-vm-node-name>"},"tolerations":[{"operator":"Exists"}]}}' \
+  --command -- sh -c 'wget -S -O- --no-check-certificate https://kubernetes.default.svc 2>&1 | grep -E "HTTP/|Unauthorized|Forbidden"; sleep 300'
+
+kubectl wait --for=condition=Ready pod/flex-service-smoke --timeout=180s
+kubectl logs flex-service-smoke --tail=20
+kubectl delete pod flex-service-smoke --wait=false
 ```
 
 If `kube-proxy` is not running on the Flex Node, pods scheduled there can fail with:
@@ -390,9 +392,3 @@ The kube-proxy logs should show service endpoint programming, including the Kube
 portName="default/kubernetes:https" endpoints=["<private-api-ip>:443"]
 SyncProxyRules complete
 ```
-
-## Notes
-
-- Use a release that supports the bootstrap-token flow for this setup.
-- Some alpha builds may require AKS machine resources, feature flags, and regional RP support.
-- Private DNS linkage is required for cross-region private API access.
