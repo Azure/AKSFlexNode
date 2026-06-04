@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 )
 
@@ -72,22 +73,15 @@ func TestAreArcServiceGroupsActive(t *testing.T) {
 func TestArcServiceConstantsIncludeRenamedService(t *testing.T) {
 	t.Parallel()
 
-	if !stringSliceContains(arcServices, "gcad") {
+	const renamedService = "gcad"
+
+	if !slices.Contains(arcServices, renamedService) {
 		t.Fatalf("arcServices must include gcad for azcmagent v1.62+ cleanup")
 	}
-	if !stringSliceContains(arcServiceFiles, "/lib/systemd/system/gcad.service") {
+	if !slices.Contains(arcServiceFiles, "/lib/systemd/system/"+renamedService+".service") {
 		t.Fatalf("arcServiceFiles must include /lib/systemd/system/gcad.service")
 	}
-	if !stringSliceContains(arcServiceFiles, "/etc/systemd/system/gcad.service") {
+	if !slices.Contains(arcServiceFiles, "/etc/systemd/system/"+renamedService+".service") {
 		t.Fatalf("arcServiceFiles must include /etc/systemd/system/gcad.service")
 	}
-}
-
-func stringSliceContains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
