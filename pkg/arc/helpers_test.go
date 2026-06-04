@@ -7,7 +7,9 @@ import (
 	"testing"
 )
 
-func TestAreArcServiceGroupsActiveAcceptsLegacyOrRenamedGuestConfigService(t *testing.T) {
+func TestAreArcServiceGroupsActive(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -53,7 +55,10 @@ func TestAreArcServiceGroupsActiveAcceptsLegacyOrRenamedGuestConfigService(t *te
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := areArcServiceGroupsActive(ctx, logger, arcRequiredServiceGroups, func(_ context.Context, _ *slog.Logger, service string) bool {
 				return tt.activeServices[service]
 			})
@@ -65,6 +70,8 @@ func TestAreArcServiceGroupsActiveAcceptsLegacyOrRenamedGuestConfigService(t *te
 }
 
 func TestArcServiceConstantsIncludeRenamedService(t *testing.T) {
+	t.Parallel()
+
 	if !stringSliceContains(arcServices, "gcad") {
 		t.Fatalf("arcServices must include gcad for azcmagent v1.62+ cleanup")
 	}
