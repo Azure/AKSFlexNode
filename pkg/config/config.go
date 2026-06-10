@@ -234,7 +234,7 @@ func (cfg AzureConfig) ResourceManagerTokenScope() (string, error) {
 
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
 // config so bootstrap, daemon watches, and lifecycle operations use one value.
-func (cfg *Config) resolveNodeName() (string, error) {
+func (cfg *Config) resolveNodeName(hostnameFunc func() (string, error)) (string, error) {
 	if nodeName := strings.TrimSpace(cfg.Agent.NodeName); nodeName != "" {
 		if err := validateNodeName(nodeName); err != nil {
 			return "", err
@@ -242,16 +242,16 @@ func (cfg *Config) resolveNodeName() (string, error) {
 		cfg.Agent.NodeName = nodeName
 		return nodeName, nil
 	}
-	hostname, err := os.Hostname()
+	hostname, err := hostnameFunc()
 	if err != nil {
 		return "", fmt.Errorf("get host hostname for node name: %w", err)
 	}
-	hostname = strings.TrimSpace(hostname)
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" {
 		return "", fmt.Errorf("host hostname is empty")
 	}
 	if err := validateNodeName(hostname); err != nil {
-		return "", fmt.Errorf("host hostname: %w", err)
+		return "", fmt.Errorf("host hostname: %w; set agent.nodeName to a valid lowercase Kubernetes node name", err)
 	}
 	cfg.Agent.NodeName = hostname
 	return hostname, nil
@@ -550,7 +550,7 @@ var validMachineOperationModes = map[string]bool{
 func (c *Config) validate() error {
 	c.setDefaults()
 
-	if _, err := c.resolveNodeName(); err != nil {
+	if _, err := c.resolveNodeName(os.Hostname); err != nil {
 		return fmt.Errorf("resolve node name: %w", err)
 	}
 

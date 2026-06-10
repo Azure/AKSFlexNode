@@ -87,7 +87,7 @@ func TestSetDefaults(t *testing.T) {
 
 func TestResolveNodeName(t *testing.T) {
 	cfg := &Config{}
-	got, err := cfg.resolveNodeName()
+	got, err := cfg.resolveNodeName(os.Hostname)
 	if err != nil {
 		t.Fatalf("resolveNodeName: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestResolveNodeName(t *testing.T) {
 	}
 
 	cfg.Agent.NodeName = "custom-node"
-	got, err = cfg.resolveNodeName()
+	got, err = cfg.resolveNodeName(os.Hostname)
 	if err != nil {
 		t.Fatalf("resolveNodeName with existing node name: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestResolveNodeName(t *testing.T) {
 	}
 
 	cfg.Agent.NodeName = "  custom-node-2  "
-	got, err = cfg.resolveNodeName()
+	got, err = cfg.resolveNodeName(os.Hostname)
 	if err != nil {
 		t.Fatalf("resolveNodeName with spaced node name: %v", err)
 	}
@@ -119,8 +119,27 @@ func TestResolveNodeName(t *testing.T) {
 
 func TestResolveNodeNameRejectsInvalidConfiguredName(t *testing.T) {
 	cfg := &Config{Agent: AgentConfig{NodeName: "Invalid_Node"}}
-	if _, err := cfg.resolveNodeName(); err == nil || !strings.Contains(err.Error(), "valid Kubernetes DNS subdomain") {
+	if _, err := cfg.resolveNodeName(os.Hostname); err == nil || !strings.Contains(err.Error(), "valid Kubernetes DNS subdomain") {
 		t.Fatalf("resolveNodeName error = %v, want DNS subdomain error", err)
+	}
+}
+
+func TestResolveNodeNameLowercasesHostname(t *testing.T) {
+	cfg := &Config{}
+	got, err := cfg.resolveNodeName(func() (string, error) { return "  PHost01  ", nil })
+	if err != nil {
+		t.Fatalf("resolveNodeName: %v", err)
+	}
+	if got != "phost01" || cfg.Agent.NodeName != "phost01" {
+		t.Fatalf("resolved node name=%q cfg=%q, want phost01", got, cfg.Agent.NodeName)
+	}
+}
+
+func TestResolveNodeNameRejectsInvalidHostnameWithSuggestion(t *testing.T) {
+	cfg := &Config{}
+	_, err := cfg.resolveNodeName(func() (string, error) { return "Invalid_Node", nil })
+	if err == nil || !strings.Contains(err.Error(), "set agent.nodeName") {
+		t.Fatalf("resolveNodeName error = %v, want agent.nodeName suggestion", err)
 	}
 }
 
