@@ -160,6 +160,8 @@ module vmToken 'modules/vm.bicep' = {
   params: {
     location: location
     vmName: tokenVmName
+    // Use uppercase guest hostname to validate default node name normalization.
+    computerName: toUpper(tokenVmName)
     vmSize: vmSize
     adminUsername: adminUsername
     sshPublicKey: sshPublicKey

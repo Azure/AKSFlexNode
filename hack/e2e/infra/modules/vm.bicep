@@ -11,6 +11,9 @@ param location string
 @description('VM name (also used as prefix for NIC and public IP names).')
 param vmName string
 
+@description('Guest OS hostname. Defaults to vmName.')
+param computerName string = vmName
+
 @description('VM size.')
 param vmSize string
 
@@ -95,7 +98,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
   properties: {
     hardwareProfile: { vmSize: vmSize }
     osProfile: {
-      computerName: vmName
+      computerName: computerName
       adminUsername: adminUsername
       linuxConfiguration: {
         disablePasswordAuthentication: true
