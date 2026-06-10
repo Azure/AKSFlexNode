@@ -97,6 +97,11 @@ The suite validates three join paths:
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 
+The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
+its Azure resource name remains lowercase. This verifies that an omitted
+`agent.nodeName` is derived from the normalized hostname and still joins the
+cluster under the lowercase VM name.
+
 Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
 
 ## Repave Validation
