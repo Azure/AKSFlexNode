@@ -396,13 +396,21 @@ chmod +x ./aks-flex-config
   --output ./aks-flex-node-config.json
 ```
 
-Patch the rendered config so kubelet advertises the Flex VM private IP and uses the AKS DNS service IP:
+Patch the rendered config so kubelet advertises the Flex VM private IP, uses the AKS DNS service IP, and uses the full Kubernetes patch version from AKS:
 
 ```bash
+KUBERNETES_VERSION=$(az aks show \
+  -g "$AKS_RG" \
+  -n "$CLUSTER_NAME" \
+  --query currentKubernetesVersion \
+  -o tsv)
+
 jq \
   --arg nodeIP "$VM_PRIVATE_IP" \
+  --arg kubernetesVersion "$KUBERNETES_VERSION" \
   '.node.kubelet.nodeIP = $nodeIP
-   | .node.kubelet.dnsServiceIP = "10.84.0.10"' \
+   | .node.kubelet.dnsServiceIP = "10.84.0.10"
+   | .kubernetes.version = $kubernetesVersion' \
   ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
 mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
 ```
@@ -470,6 +478,28 @@ kubectl patch node "$VM_NAME" \
   -p "{\"status\":{\"addresses\":${ADDRESSES}}}"
 ```
 
+Kubelet can overwrite `status.addresses` and remove the manual `ExternalIP` patch. During validation, keep the patch alive in a background loop:
+
+```bash
+(
+  for i in {1..120}; do
+    ADDRESSES=$(kubectl get node "$VM_NAME" -o json | jq --arg ip "$VM_PUBLIC_IP" '
+      .status.addresses
+      | if any(.type == "ExternalIP" and .address == $ip) then .
+        else . + [{"type":"ExternalIP","address":$ip}]
+        end
+    ')
+
+    kubectl patch node "$VM_NAME" \
+      --subresource=status \
+      --type=merge \
+      -p "{\"status\":{\"addresses\":${ADDRESSES}}}" >/dev/null
+    sleep 3
+  done
+) &
+FLEX_EXTERNAL_IP_PATCHER_PID=$!
+```
+
 Verify that the Flex Node has the expected site, gateway label, WireGuard public key annotation, and external IP:
 
 ```bash
@@ -481,7 +511,13 @@ kubectl get node "$VM_NAME" -o jsonpath='{.metadata.annotations.net\.unbounded-c
 kubectl get node "$VM_NAME" -o jsonpath='{range .status.addresses[*]}{.type}={.address}{"\n"}{end}'
 ```
 
-If kubelet later overwrites the `ExternalIP`, re-run the status patch. That is why the manual patch is appropriate only for this lab.
+Stop the patch loop after validation:
+
+```bash
+kill "$FLEX_EXTERNAL_IP_PATCHER_PID"
+```
+
+This manual patch loop is appropriate only for this lab.
 
 ## Verify WireGuard Gateway Connectivity
 
