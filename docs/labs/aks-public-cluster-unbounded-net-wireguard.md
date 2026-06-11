@@ -612,7 +612,7 @@ Check WireGuard NSG reachability:
 nc -vzu <gateway-public-ip> 51820
 ```
 
-UDP checks are not always conclusive, but blocked NSG rules are a common cause of missing handshakes.
+UDP checks are not always conclusive, but blocked NSG rules are a common cause of missing handshakes. Check every effective NSG on the path, not just the AKS node resource group NSG.
 
 Check unbounded-net node logs on the gateway nodes:
 
@@ -633,5 +633,57 @@ journalctl -M kube1 -u kubelet -f
 If the Flex Node is `Ready` but pod traffic fails:
 
 - Verify the AKS gateway pool has a status node.
-- Verify UDP `51820-51899` is allowed on the AKS gateway node pool.
+- Verify UDP `51820-51899` is allowed on the AKS gateway node pool, the AKS subnet NSG, the Flex subnet NSG, and the Flex NIC NSG.
 - Verify routes for the remote pod CIDR point at `unbounded0` or WireGuard interfaces.
+
+## Platform-Managed NSG Notes
+
+Some environments attach platform-managed NSGs to subnets after the VNet or cluster is created. In Microsoft-managed subscriptions these NSGs may have names such as `NRMS-...`. They can be attached to the AKS subnet independently of the AKS node resource group NSG.
+
+This lab was validated in an environment where the AKS gateway node pool was created correctly with `--allowed-host-ports 51820-51899/UDP`, and the AKS node resource group NSG contained the expected generated allow rule. WireGuard still did not handshake because a separate platform-managed NSG was attached to the AKS subnet and did not allow UDP `51820-51899`.
+
+Symptoms looked like this on the Flex Node:
+
+```text
+peer: <aks-gateway-public-key>
+  endpoint: <aks-gateway-public-ip>:51820
+  allowed ips: <aks-node-cidr>, <aks-pod-cidr>
+  transfer: 0 B received, <bytes> sent
+```
+
+And on the AKS gateway:
+
+```text
+peer: <flex-public-key>
+  allowed ips: <flex-node-ip>/32, <flex-pod-cidr>
+  # no endpoint
+  # no latest handshake
+```
+
+The fix was to add a high-priority allow rule for UDP `51820-51899` to the AKS subnet's platform-managed NSG as well as the AKS node resource group NSG:
+
+```bash
+AKS_SUBNET_NSG_ID=$(az network vnet subnet show \
+  -g "$AKS_RG" \
+  --vnet-name "$AKS_VNET" \
+  -n aks-subnet \
+  --query networkSecurityGroup.id \
+  -o tsv)
+
+if [ -n "$AKS_SUBNET_NSG_ID" ]; then
+  AKS_SUBNET_NSG="${AKS_SUBNET_NSG_ID##*/}"
+  az network nsg rule create \
+    -g "$AKS_RG" \
+    --nsg-name "$AKS_SUBNET_NSG" \
+    -n AllowUnboundedWireGuardFromInternet \
+    --priority 100 \
+    --direction Inbound \
+    --access Allow \
+    --protocol Udp \
+    --source-address-prefixes Internet \
+    --source-port-ranges '*' \
+    --destination-port-ranges 51820-51899 || true
+fi
+```
+
+After that rule was added, the Flex Node established a WireGuard handshake with the AKS gateway and AKS-to-Flex pod ping succeeded. Re-run the NSG checks if policy attaches, replaces, or updates platform-managed NSGs after the initial deployment.
