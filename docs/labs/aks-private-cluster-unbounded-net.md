@@ -6,6 +6,15 @@ The validated setup uses AKS private cluster mode with `--network-plugin none` a
 
 For unbounded-net concepts, custom resources, and operations, see the [Unbounded networking documentation](https://unbounded-cloud.io/concepts/networking/) and [unbounded-net operations guide](https://unbounded-cloud.io/reference/networking/operations/).
 
+## Prerequisites
+
+- An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and the bootstrap RBAC needed by AKS Flex Node.
+- Azure CLI logged in to the target subscription.
+- `kubectl`, `curl`, `git`, `make`, `python3`, and SSH/SCP tooling on the workstation or admin VM that will run the lab commands.
+- A command runner that can resolve and reach the private AKS API endpoint. If your workstation cannot, use the admin VM described below.
+- Non-overlapping CIDR ranges for the AKS VNet, Flex VM VNet, AKS pod CIDR, Flex pod CIDR, AKS service CIDR, and any connected networks.
+- A Flex VM image with Ubuntu 24.04 and sudo access.
+
 ## What Is Unbounded-Net?
 
 `unbounded-net` is the networking layer from [Project Unbounded](https://unbounded-cloud.io/). It provides CNI functionality and multi-site pod networking for Kubernetes clusters whose nodes may live in different networks, regions, or clouds.

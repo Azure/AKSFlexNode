@@ -15,10 +15,12 @@ Plan for both before you start.
 
 ## Before you begin
 
-- An AKS cluster with `kubectl` admin access.
-- A GPU host with root access and outbound reach to the AKS API server.
+- An Azure subscription and AKS cluster with `kubectl` admin access.
+- Azure CLI logged in to the target subscription.
+- `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
+- A GPU host with root or sudo access and outbound reach to the AKS API server.
 - A GPU host image that already includes the NVIDIA driver.
-- Helm installed on your workstation to install the cluster GPU stack.
+- Non-overlapping network ranges for the AKS cluster, host network, pods, services, and any connected networks.
 
 ## Driver and image contract
 

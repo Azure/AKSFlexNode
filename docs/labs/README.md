@@ -2,6 +2,16 @@
 
 Hands-on labs for trying AKS Flex Node in end-to-end Azure scenarios.
 
+## Common Prerequisites
+
+Before starting a lab, prepare:
+
+- An Azure subscription where you can create resource groups, VNets, VMs, AKS clusters, and private DNS links.
+- Azure CLI logged in to the target subscription.
+- `kubectl`, Helm, `curl`, and SSH/SCP tooling on the workstation or admin VM that will run the lab commands.
+- Non-overlapping CIDR ranges for the AKS VNet, Flex VM VNet, pod networks, service CIDR, and any connected networks.
+- Network access from the command runner and Flex VM to the AKS API server. For private AKS labs, run `kubectl`, Helm, and bootstrap config commands from a machine that can resolve and reach the private API endpoint.
+
 ## Available Labs
 
 - [GPU Flex Node setup](gpu-node-setup.md) - GPU host image and driver contract, cluster GPU stack, validation, and troubleshooting.
