@@ -6,6 +6,15 @@ The validated setup uses AKS private cluster mode with `--network-plugin none` a
 
 For Cilium concepts and operations, see the [Cilium documentation](https://docs.cilium.io/).
 
+## Prerequisites
+
+- An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and the bootstrap RBAC needed by AKS Flex Node.
+- Azure CLI logged in to the target subscription.
+- `kubectl`, Helm, `curl`, `python3`, and SSH/SCP tooling on the workstation or admin VM that will run the lab commands.
+- A command runner that can resolve and reach the private AKS API endpoint. If your workstation cannot, use the admin VM described below.
+- Non-overlapping CIDR ranges for the AKS VNet, Flex VM VNet, Cilium pod CIDR, AKS service CIDR, and any connected networks.
+- A Flex VM image with Ubuntu 24.04 and sudo access.
+
 ## What Is Cilium?
 
 Cilium is an eBPF-based networking, security, and observability layer for Kubernetes. In this setup, Cilium provides CNI functionality for both the AKS system node and the Flex node.
