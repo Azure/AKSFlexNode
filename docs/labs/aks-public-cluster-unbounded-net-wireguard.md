@@ -328,7 +328,7 @@ chmod +x ./aks-flex-config
   --output ./aks-flex-node-config.json
 ```
 
-Patch the rendered config so kubelet advertises the Flex VM private IP, uses the AKS DNS service IP, and uses the full Kubernetes patch version from AKS:
+Patch the rendered config so kubelet advertises the Flex VM private IP and uses the full Kubernetes patch version from AKS. The config helper reads the cluster DNS service IP from AKS metadata.
 
 ```bash
 KUBERNETES_VERSION=$(az aks show \
@@ -341,7 +341,6 @@ jq \
   --arg nodeIP "$VM_PRIVATE_IP" \
   --arg kubernetesVersion "$KUBERNETES_VERSION" \
   '.node.kubelet.nodeIP = $nodeIP
-   | .node.kubelet.dnsServiceIP = "10.84.0.10"
    | .kubernetes.version = $kubernetesVersion' \
   ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
 mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
