@@ -1,19 +1,17 @@
 # Public AKS Cluster With Unbounded-Net WireGuard Flex Node
 
-This guide shows how to create a public AKS cluster with no built-in CNI, install `unbounded-net`, join a Flex Node from a separate Azure VNet without VNet peering, and use WireGuard gateway connectivity for pod traffic between AKS nodes and Flex Nodes.
+This guide shows how to create a public AKS cluster with no built-in CNI, install `unbounded-net`, join a Flex Node from a separate Azure VNet without VNet peering, and use a public AKS gateway pool for WireGuard connectivity.
 
 The validated shape is intentionally different from the private-L3 lab:
 
 - The AKS API server is public.
 - The AKS VNet and Flex VM VNet are not peered.
 - `unbounded-net` provides CNI on AKS and Flex nodes.
-- Cross-site pod traffic uses WireGuard through gateway pools over public IPs.
+- Cross-site pod traffic uses WireGuard through a public AKS gateway pool.
 
 This lab focuses on kubelet-to-API-server join traffic and pod-to-pod connectivity. Kubernetes API server callbacks to the Flex kubelet, such as `kubectl logs`, `kubectl exec`, and `kubectl port-forward`, still require API-server-to-kubelet network reachability and may need separate routing or proxy support.
 
-For unbounded-net architecture details, see the [Unbounded networking architecture](https://unbounded-cloud.io/reference/networking/architecture/), [routing flows](https://unbounded-cloud.io/reference/networking/routing-flows/), and [custom resources](https://unbounded-cloud.io/reference/networking/custom-resources/).
-
-> Review note: this draft uses a lab-only `kubectl patch node --subresource=status` step to publish the Flex VM public IP as a Kubernetes `ExternalIP`. `unbounded-net` external gateway pools discover gateway endpoints from `Node.status.addresses`. For production, prefer a cloud/provider integration or another controller that maintains Flex Node external addresses.
+For unbounded-net architecture details, see the [Unbounded networking architecture](https://unbounded-cloud.io/reference/networking/architecture/), [routing flows](https://unbounded-cloud.io/reference/networking/routing-flows/), and [custom resources](https://unbounded-cloud.io/reference/networking/custom-resources/). The cluster shape is a no-CNI AKS cluster plus a dedicated AKS gateway node pool with per-node public IPs and WireGuard host ports open.
 
 ## What Is Unbounded-Net Doing Here?
 
@@ -21,11 +19,10 @@ For unbounded-net architecture details, see the [Unbounded networking architectu
 
 - AKS nodes and Flex Nodes are assigned to different `Site` resources based on their private node CIDRs.
 - Each site receives its own pod CIDR pool.
-- A public AKS gateway node pool is selected by an AKS `GatewayPool`.
-- The Flex Node is selected by a Flex `GatewayPool`.
-- `SiteGatewayPoolAssignment` resources tell each site which gateway pool serves it.
-- A `GatewayPoolPeering` connects the AKS and Flex gateway pools.
-- Because the gateway pools are external and the sites are not network-peered, unbounded-net resolves the cross-site links to WireGuard.
+- A public AKS gateway node pool is selected by a single `GatewayPool`.
+- `SiteGatewayPoolAssignment` resources link both the AKS site and Flex site to that gateway pool.
+- Flex nodes establish outbound WireGuard tunnels to AKS gateway public IPs.
+- Because the gateway pool is external and the sites are not network-peered, unbounded-net resolves those links to WireGuard.
 
 ## Topology
 
@@ -52,19 +49,18 @@ flowchart LR
         subgraph flexVnet[Flex VM VNet]
             flexNode[Flex Node VM]
             flexPods[Flex pods<br/>flex pod CIDR]
-            flexWg[WireGuard gateway ports]
         end
     end
 
     flexNode -->|kubelet HTTPS 443| publicApi
     aksPods -->|site gateway route| aksGateway
-    aksGateway <-->|WireGuard over public internet<br/>UDP 51820-51830| flexNode
-    flexPods -->|site gateway route| flexNode
+    aksGateway <-->|WireGuard over public internet<br/>UDP 51820-51899| flexNode
+    flexPods -->|outbound WireGuard to AKS gateway| aksGateway
 
     classDef unbounded fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0f172a;
     classDef gateway fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#0f172a;
     class unboundedAks unbounded;
-    class aksGateway,flexNode gateway;
+    class aksGateway gateway;
 ```
 
 Example regions and CIDRs used below:
@@ -165,6 +161,7 @@ az aks nodepool add \
   --node-vm-size Standard_D4s_v5 \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
   --enable-node-public-ip \
+  --allowed-host-ports 51820-51899/UDP \
   --labels net.unbounded-cloud.io/gateway=aks-public
 ```
 
@@ -174,34 +171,7 @@ Verify that the gateway node has an external IP:
 kubectl get nodes -l net.unbounded-cloud.io/gateway=aks-public -o wide
 ```
 
-## Allow WireGuard UDP Traffic
-
-unbounded-net gateway traffic uses WireGuard UDP ports. Allow inbound UDP `51820-51830` to the AKS gateway nodes and to the Flex VM.
-
-For the Flex VM VNet, create an NSG rule after the VM NSG exists in a later step. For AKS, locate the node resource group and review the generated NSG before adding the rule:
-
-```bash
-NODE_RG=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query nodeResourceGroup -o tsv)
-az network nsg list -g "$NODE_RG" -o table
-```
-
-If the AKS node subnet or NIC NSG does not already allow the WireGuard ports, add an inbound allow rule to the appropriate NSG:
-
-```bash
-AKS_NSG_NAME="<aks-node-nsg-name>"
-
-az network nsg rule create \
-  -g "$NODE_RG" \
-  --nsg-name "$AKS_NSG_NAME" \
-  -n AllowUnboundedWireGuard \
-  --priority 1200 \
-  --direction Inbound \
-  --access Allow \
-  --protocol Udp \
-  --source-address-prefixes Internet \
-  --source-port-ranges '*' \
-  --destination-port-ranges 51820-51830
-```
+The `--allowed-host-ports 51820-51899/UDP` setting creates the node pool with the WireGuard gateway ports exposed.
 
 ## Install Unbounded-Net
 
@@ -231,16 +201,16 @@ kubectl -n unbounded-net rollout status deploy/unbounded-net-controller --timeou
 kubectl -n unbounded-net rollout status ds/unbounded-net-node --timeout=5m
 ```
 
-## Create Sites And Gateway Pools
+## Create Sites And The AKS Gateway Pool
 
-Create one site for AKS nodes and one site for Flex Nodes. The AKS site has nodes immediately; the Flex site gets nodes after the Flex VM joins.
+Create one site for AKS nodes, one site for Flex Nodes, and one AKS gateway pool. Both sites are assigned to the AKS gateway pool.
 
 ```bash
 kubectl apply -f - <<'EOF'
 apiVersion: net.unbounded-cloud.io/v1alpha1
 kind: Site
 metadata:
-  name: aks-public
+  name: aks-site
 spec:
   nodeCidrs:
   - 10.81.0.0/16
@@ -253,7 +223,7 @@ spec:
 apiVersion: net.unbounded-cloud.io/v1alpha1
 kind: Site
 metadata:
-  name: flex-public
+  name: flex-site
 spec:
   nodeCidrs:
   - 10.82.0.0/16
@@ -266,7 +236,7 @@ spec:
 apiVersion: net.unbounded-cloud.io/v1alpha1
 kind: GatewayPool
 metadata:
-  name: aks-public-gw
+  name: aks-gw
 spec:
   type: External
   nodeSelector:
@@ -274,45 +244,25 @@ spec:
   tunnelProtocol: WireGuard
 ---
 apiVersion: net.unbounded-cloud.io/v1alpha1
-kind: GatewayPool
+kind: SiteGatewayPoolAssignment
 metadata:
-  name: flex-public-gw
+  name: aks-gw-assignment
 spec:
-  type: External
-  nodeSelector:
-    net.unbounded-cloud.io/gateway: flex-public
+  sites:
+  - aks-site
+  gatewayPools:
+  - aks-gw
   tunnelProtocol: WireGuard
 ---
 apiVersion: net.unbounded-cloud.io/v1alpha1
 kind: SiteGatewayPoolAssignment
 metadata:
-  name: aks-public-gw-assignment
+  name: flex-gw-assignment
 spec:
   sites:
-  - aks-public
+  - flex-site
   gatewayPools:
-  - aks-public-gw
-  tunnelProtocol: WireGuard
----
-apiVersion: net.unbounded-cloud.io/v1alpha1
-kind: SiteGatewayPoolAssignment
-metadata:
-  name: flex-public-gw-assignment
-spec:
-  sites:
-  - flex-public
-  gatewayPools:
-  - flex-public-gw
-  tunnelProtocol: WireGuard
----
-apiVersion: net.unbounded-cloud.io/v1alpha1
-kind: GatewayPoolPeering
-metadata:
-  name: aks-flex-public-wireguard
-spec:
-  gatewayPools:
-  - aks-public-gw
-  - flex-public-gw
+  - aks-gw
   tunnelProtocol: WireGuard
 EOF
 ```
@@ -324,7 +274,7 @@ kubectl get sites,sitenodeslices,gatewaypools,sitegatewaypoolassignments,gateway
 kubectl get nodes -L net.unbounded-cloud.io/site,net.unbounded-cloud.io/gateway -o wide
 ```
 
-The `aks-public-gw` pool should show at least one node after the AKS gateway node has a WireGuard public key annotation.
+The `aks-gw` pool should show at least one node after the AKS gateway node has a WireGuard public key annotation.
 
 ## Create The Flex VM
 
@@ -351,24 +301,6 @@ VM_PRIVATE_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query priv
 VM_PUBLIC_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query publicIps -o tsv)
 
 echo "private=${VM_PRIVATE_IP} public=${VM_PUBLIC_IP}"
-```
-
-Allow WireGuard inbound to the Flex VM NSG:
-
-```bash
-FLEX_NSG_NAME=$(az network nsg list -g "$VM_RG" --query '[0].name' -o tsv)
-
-az network nsg rule create \
-  -g "$VM_RG" \
-  --nsg-name "$FLEX_NSG_NAME" \
-  -n AllowUnboundedWireGuard \
-  --priority 1200 \
-  --direction Inbound \
-  --access Allow \
-  --protocol Udp \
-  --source-address-prefixes Internet \
-  --source-port-ranges '*' \
-  --destination-port-ranges 51820-51830
 ```
 
 ## Generate Bootstrap Config
@@ -454,70 +386,18 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 Return to your workstation shell after the node starts.
 
-## Publish The Flex Gateway Endpoint
+## Verify Flex Site Membership
 
-Label the Flex Node so the `flex-public-gw` `GatewayPool` selects it:
-
-```bash
-kubectl label node "$VM_NAME" net.unbounded-cloud.io/gateway=flex-public --overwrite
-```
-
-For this lab, patch the Flex Node status with the VM public IP so the external gateway pool can advertise a WireGuard endpoint:
-
-```bash
-ADDRESSES=$(kubectl get node "$VM_NAME" -o json | jq --arg ip "$VM_PUBLIC_IP" '
-  .status.addresses
-  | if any(.type == "ExternalIP" and .address == $ip) then .
-    else . + [{"type":"ExternalIP","address":$ip}]
-    end
-')
-
-kubectl patch node "$VM_NAME" \
-  --subresource=status \
-  --type=merge \
-  -p "{\"status\":{\"addresses\":${ADDRESSES}}}"
-```
-
-Kubelet can overwrite `status.addresses` and remove the manual `ExternalIP` patch. During validation, keep the patch alive in a background loop:
-
-```bash
-(
-  for i in {1..120}; do
-    ADDRESSES=$(kubectl get node "$VM_NAME" -o json | jq --arg ip "$VM_PUBLIC_IP" '
-      .status.addresses
-      | if any(.type == "ExternalIP" and .address == $ip) then .
-        else . + [{"type":"ExternalIP","address":$ip}]
-        end
-    ')
-
-    kubectl patch node "$VM_NAME" \
-      --subresource=status \
-      --type=merge \
-      -p "{\"status\":{\"addresses\":${ADDRESSES}}}" >/dev/null
-    sleep 3
-  done
-) &
-FLEX_EXTERNAL_IP_PATCHER_PID=$!
-```
-
-Verify that the Flex Node has the expected site, gateway label, WireGuard public key annotation, and external IP:
+Return to your workstation shell after the node starts. Verify that the Flex Node has joined, received the Flex site label, and has a WireGuard public key annotation:
 
 ```bash
 kubectl get node "$VM_NAME" \
-  -L net.unbounded-cloud.io/site,net.unbounded-cloud.io/gateway \
+  -L net.unbounded-cloud.io/site \
   -o wide
 
 kubectl get node "$VM_NAME" -o jsonpath='{.metadata.annotations.net\.unbounded-cloud\.io/wg-pubkey}{"\n"}'
 kubectl get node "$VM_NAME" -o jsonpath='{range .status.addresses[*]}{.type}={.address}{"\n"}{end}'
 ```
-
-Stop the patch loop after validation:
-
-```bash
-kill "$FLEX_EXTERNAL_IP_PATCHER_PID"
-```
-
-This manual patch loop is appropriate only for this lab.
 
 ## Verify WireGuard Gateway Connectivity
 
@@ -525,15 +405,13 @@ Check the unbounded-net resources:
 
 ```bash
 kubectl get sites,sitenodeslices,gatewaypools,sitegatewaypoolassignments,gatewaypoolpeerings -o wide
-kubectl get gatewaypool aks-public-gw flex-public-gw -o yaml
+kubectl get gatewaypool aks-gw -o yaml
 ```
 
 Expected high-level result:
 
 ```text
-gatewaypool.net.unbounded-cloud.io/aks-public-gw    ...   NODES   1
-gatewaypool.net.unbounded-cloud.io/flex-public-gw   ...   NODES   1
-gatewaypoolpeering.net.unbounded-cloud.io/aks-flex-public-wireguard   ...
+gatewaypool.net.unbounded-cloud.io/aks-gw   ...   NODES   1
 ```
 
 Check the node agents:
@@ -577,7 +455,7 @@ kubectl wait --for=condition=Ready pod/flex-wireguard-smoke --timeout=180s
 Create a test pod on an AKS node:
 
 ```bash
-AKS_NODE=$(kubectl get nodes -l net.unbounded-cloud.io/site=aks-public -o jsonpath='{.items[0].metadata.name}')
+AKS_NODE=$(kubectl get nodes -l net.unbounded-cloud.io/site=aks-site -o jsonpath='{.items[0].metadata.name}')
 
 kubectl run aks-wireguard-smoke \
   --image=busybox:1.36 \
@@ -609,7 +487,7 @@ kubectl delete pod aks-wireguard-smoke flex-wireguard-smoke --wait=false
 Check whether gateway pools have nodes and external IPs:
 
 ```bash
-kubectl get gatewaypool aks-public-gw flex-public-gw -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range .status.nodes[*]}  {.name} external={.externalIPs} wg={.wireGuardPublicKey}{"\n"}{end}{end}'
+kubectl get gatewaypool aks-gw -o jsonpath='{.metadata.name}{"\n"}{range .status.nodes[*]}  {.name} external={.externalIPs} wg={.wireGuardPublicKey}{"\n"}{end}'
 ```
 
 If a gateway pool has no nodes:
@@ -644,8 +522,6 @@ journalctl -M kube1 -u kubelet -f
 
 If the Flex Node is `Ready` but pod traffic fails:
 
-- Verify the Flex Node's `ExternalIP` status patch is still present.
-- Verify both gateway pools have status nodes.
-- Verify `GatewayPoolPeering` exists and includes both pools.
-- Verify UDP `51820-51830` is allowed on both AKS gateway and Flex VM NSGs.
+- Verify the AKS gateway pool has a status node.
+- Verify UDP `51820-51899` is allowed on the AKS gateway node pool.
 - Verify routes for the remote pod CIDR point at `unbounded0` or WireGuard interfaces.
