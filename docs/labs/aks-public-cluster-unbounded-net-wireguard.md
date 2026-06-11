@@ -13,6 +13,11 @@ This lab focuses on kubelet-to-API-server join traffic and pod-to-pod connectivi
 
 For unbounded-net architecture details, see the [Unbounded networking architecture](https://unbounded-cloud.io/reference/networking/architecture/), [routing flows](https://unbounded-cloud.io/reference/networking/routing-flows/), and [custom resources](https://unbounded-cloud.io/reference/networking/custom-resources/). The cluster shape is a no-CNI AKS cluster plus a dedicated AKS gateway node pool with per-node public IPs and WireGuard host ports open.
 
+## Prerequisites
+
+- Azure CLI logged in to the target subscription.
+- `kubectl`, `curl`, `git`, `make`, `jq`, `python3`, and SSH/SCP tooling on the workstation that will run the lab commands.
+
 ## What Is Unbounded-Net Doing Here?
 
 `unbounded-net` provides the CNI and cross-site pod routing layer. In this setup:
