@@ -113,6 +113,8 @@ az network vnet create \
 
 Do not create VNet peering between these VNets. Cross-site pod traffic will use WireGuard through unbounded-net gateway pools.
 
+Some subscriptions attach platform-managed NSGs, such as NRMS NSGs, to new VNets or subnets after creation. These policy-managed NSGs can have high-priority deny rules that block WireGuard even when the AKS node pool is created with allowed host ports. The steps below add explicit WireGuard allow rules to any NSG attached to the AKS and Flex subnets; re-run them if policy attaches or replaces an NSG later.
+
 ## Create A Public No-CNI AKS Cluster
 
 ```bash
@@ -172,6 +174,83 @@ kubectl get nodes -l net.unbounded-cloud.io/gateway=aks-public -o wide
 ```
 
 The `--allowed-host-ports 51820-51899/UDP` setting creates the node pool with the WireGuard gateway ports exposed.
+
+Allow WireGuard on every AKS-side NSG that can affect the gateway node pool, including the AKS subnet NSG and the AKS-managed node resource group NSG:
+
+```bash
+NODE_RG=$(az aks show \
+  -g "$AKS_RG" \
+  -n "$CLUSTER_NAME" \
+  --query nodeResourceGroup \
+  -o tsv)
+
+AKS_SUBNET_NSG_ID=$(az network vnet subnet show \
+  -g "$AKS_RG" \
+  --vnet-name "$AKS_VNET" \
+  -n aks-subnet \
+  --query networkSecurityGroup.id \
+  -o tsv)
+
+AKS_AGENT_NSG=$(az network nsg list \
+  -g "$NODE_RG" \
+  --query '[0].name' \
+  -o tsv)
+
+if [ -n "$AKS_SUBNET_NSG_ID" ]; then
+  AKS_SUBNET_NSG="${AKS_SUBNET_NSG_ID##*/}"
+  az network nsg rule create \
+    -g "$AKS_RG" \
+    --nsg-name "$AKS_SUBNET_NSG" \
+    -n AllowUnboundedWireGuardFromInternet \
+    --priority 100 \
+    --direction Inbound \
+    --access Allow \
+    --protocol Udp \
+    --source-address-prefixes Internet \
+    --source-port-ranges '*' \
+    --destination-port-ranges 51820-51899 || true
+fi
+
+if [ -n "$AKS_AGENT_NSG" ]; then
+  az network nsg rule create \
+    -g "$NODE_RG" \
+    --nsg-name "$AKS_AGENT_NSG" \
+    -n AllowUnboundedWireGuardFromInternet \
+    --priority 100 \
+    --direction Inbound \
+    --access Allow \
+    --protocol Udp \
+    --source-address-prefixes Internet \
+    --source-port-ranges '*' \
+    --destination-port-ranges 51820-51899 || true
+fi
+```
+
+Allow WireGuard on every Flex-side NSG that can affect the Flex VM. If you create the Flex subnet before its NSG exists, re-run this after VM creation as well because Azure may create a NIC-level NSG:
+
+```bash
+FLEX_SUBNET_NSG_ID=$(az network vnet subnet show \
+  -g "$VM_RG" \
+  --vnet-name "$FLEX_VNET" \
+  -n flex-subnet \
+  --query networkSecurityGroup.id \
+  -o tsv)
+
+if [ -n "$FLEX_SUBNET_NSG_ID" ]; then
+  FLEX_SUBNET_NSG="${FLEX_SUBNET_NSG_ID##*/}"
+  az network nsg rule create \
+    -g "$VM_RG" \
+    --nsg-name "$FLEX_SUBNET_NSG" \
+    -n AllowUnboundedWireGuardFromInternet \
+    --priority 100 \
+    --direction Inbound \
+    --access Allow \
+    --protocol Udp \
+    --source-address-prefixes Internet \
+    --source-port-ranges '*' \
+    --destination-port-ranges 51820-51899 || true
+fi
+```
 
 ## Install Unbounded-Net
 
@@ -301,6 +380,38 @@ VM_PRIVATE_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query priv
 VM_PUBLIC_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query publicIps -o tsv)
 
 echo "private=${VM_PRIVATE_IP} public=${VM_PUBLIC_IP}"
+```
+
+If the VM has a NIC-level NSG, add the same WireGuard allow rule there:
+
+```bash
+FLEX_NIC_ID=$(az vm show \
+  -g "$VM_RG" \
+  -n "$VM_NAME" \
+  --query 'networkProfile.networkInterfaces[0].id' \
+  -o tsv)
+FLEX_NIC_NAME="${FLEX_NIC_ID##*/}"
+
+FLEX_NIC_NSG_ID=$(az network nic show \
+  -g "$VM_RG" \
+  -n "$FLEX_NIC_NAME" \
+  --query networkSecurityGroup.id \
+  -o tsv)
+
+if [ -n "$FLEX_NIC_NSG_ID" ]; then
+  FLEX_NIC_NSG="${FLEX_NIC_NSG_ID##*/}"
+  az network nsg rule create \
+    -g "$VM_RG" \
+    --nsg-name "$FLEX_NIC_NSG" \
+    -n AllowUnboundedWireGuardFromInternet \
+    --priority 100 \
+    --direction Inbound \
+    --access Allow \
+    --protocol Udp \
+    --source-address-prefixes Internet \
+    --source-port-ranges '*' \
+    --destination-port-ranges 51820-51899 || true
+fi
 ```
 
 ## Generate Bootstrap Config
