@@ -113,7 +113,7 @@ az network vnet create \
 
 Do not create VNet peering between these VNets. Cross-site pod traffic will use WireGuard through unbounded-net gateway pools.
 
-Some Microsoft-managed subscriptions apply NRMS network security policy to new VNets or subnets. In practice this can appear as an NSG with `NRMS-...` rules on the subnet. Those policy-managed rules can block WireGuard even when the AKS node pool is created with allowed host ports. The steps below add explicit WireGuard allow rules to any NSG attached to the AKS and Flex subnets; re-run them if policy adds, replaces, or updates NRMS rules later.
+Some environments apply platform or policy-managed network security rules to new VNets or subnets. In practice this can appear as an NSG with `NRMS-...` rules on the subnet. Those policy-managed rules can block WireGuard even when the AKS node pool is created with allowed host ports. The steps below add explicit WireGuard allow rules to any NSG attached to the AKS and Flex subnets; re-run them if policy adds, replaces, or updates NRMS rules later.
 
 ## Create A Public No-CNI AKS Cluster
 
@@ -638,7 +638,7 @@ If the Flex Node is `Ready` but pod traffic fails:
 
 ## Platform-Managed NSG Notes
 
-Some Microsoft-managed subscriptions apply NRMS network security policy to subnets. In the environment used to validate this lab, the AKS subnet had an NSG containing `NRMS-...` rules in addition to the AKS node resource group NSG.
+Some environments apply platform or policy-managed network security rules to subnets. In the environment used to validate this lab, the AKS subnet had an NSG containing `NRMS-...` rules in addition to the AKS node resource group NSG.
 
 This lab was validated in an environment where the AKS gateway node pool was created correctly with `--allowed-host-ports 51820-51899/UDP`, and the AKS node resource group NSG contained the expected generated allow rule. WireGuard still did not handshake because the AKS subnet's NRMS-policy NSG did not allow UDP `51820-51899`.
 
