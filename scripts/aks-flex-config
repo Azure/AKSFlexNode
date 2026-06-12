@@ -134,6 +134,9 @@ def cluster_metadata(args: argparse.Namespace) -> dict[str, str]:
         "kubernetes_version": run(
             ["az", "aks", "show", *aks, "--query", "kubernetesVersion", "-o", "tsv"], capture=True
         ),
+        "dns_service_ip": run(
+            ["az", "aks", "show", *aks, "--query", "networkProfile.dnsServiceIp", "-o", "tsv"], capture=True
+        ),
     }
 
 
@@ -175,7 +178,10 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
         )
         azure["bootstrapToken"] = {"token": token}
         azure["arc"] = {"enabled": False}
-        config["node"] = {"kubelet": {"serverURL": server_url, "caCertData": ca_cert_data}}
+        kubelet_config = {"serverURL": server_url, "caCertData": ca_cert_data}
+        if metadata["dns_service_ip"]:
+            kubelet_config["dnsServiceIP"] = metadata["dns_service_ip"]
+        config["node"] = {"kubelet": kubelet_config}
     elif mode == "identity":
         managed_identity = {}
         if args.username:
