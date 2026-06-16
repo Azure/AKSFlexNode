@@ -83,6 +83,7 @@ validate_npd_status() {
   local timeout="${E2E_NODE_JOIN_TIMEOUT}"
   local elapsed=0
   local npd_condition_jsonpath='{.status.conditions[?(@.type=="KernelDeadlock")].status}'
+  local condition_error="${E2E_WORK_DIR}/npd-condition-${vm_name}.err"
   local quoted_timeout
 
   log_info "Validating node-problem-detector on '${vm_name}'..."
@@ -97,16 +98,22 @@ validate_npd_status() {
 set -euo pipefail
 
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
-active_machine_error="/tmp/aks-flex-node-e2e-active-machine.err"
+active_machine_error="/tmp/aks-flex-node-e2e-active-machine-$$.err"
+status_error="/tmp/aks-flex-node-e2e-npd-status-$$.err"
 while true; do
-  active_machine="$(sudo python3 - <<'PY' 2>"${active_machine_error}" || true
+  if [[ ! -f /etc/aks-flex-node/daemon-state.json ]]; then
+    active_machine=""
+    echo "/etc/aks-flex-node/daemon-state.json is missing" > "${active_machine_error}"
+  else
+    active_machine="$(sudo python3 - <<'PY' 2>"${active_machine_error}" || true
 import json
 with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
     print(json.load(state).get("activeMachine", ""))
 PY
 )"
+  fi
   if [[ -n "${active_machine}" ]] && machinectl show "${active_machine}" &>/dev/null; then
-    status="$(sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl is-active node-problem-detector.service 2>/dev/null || true)"
+    status="$(sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl is-active node-problem-detector.service 2>"${status_error}" || true)"
     if [[ "${status}" == "active" ]]; then
       echo "node-problem-detector.service is active in ${active_machine}"
       exit 0
@@ -117,6 +124,9 @@ PY
     echo "node-problem-detector.service did not become active"
     if [[ -s "${active_machine_error}" ]]; then
       cat "${active_machine_error}"
+    fi
+    if [[ -s "${status_error}" ]]; then
+      cat "${status_error}"
     fi
     machinectl list --no-pager || true
     if [[ -n "${active_machine:-}" ]]; then
@@ -132,7 +142,7 @@ REMOTE
 
   local kernel_deadlock
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    kernel_deadlock="$(kubectl get node "${vm_name}" -o jsonpath="${npd_condition_jsonpath}" 2>/dev/null || true)"
+    kernel_deadlock="$(kubectl get node "${vm_name}" -o jsonpath="${npd_condition_jsonpath}" 2>"${condition_error}" || true)"
     if [[ "${kernel_deadlock}" == "False" ]]; then
       log_success "node-problem-detector is active and reporting on '${vm_name}'"
       return 0
@@ -144,6 +154,9 @@ REMOTE
   done
 
   log_error "node-problem-detector did not report KernelDeadlock=False on '${vm_name}' within ${timeout}s"
+  if [[ -s "${condition_error}" ]]; then
+    cat "${condition_error}" >&2
+  fi
   kubectl describe node "${vm_name}" 2>&1 || true
   return 1
 }
