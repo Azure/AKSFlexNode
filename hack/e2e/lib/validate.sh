@@ -5,6 +5,7 @@
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
 #   validate_all_nodes                - Verify MSI, token, and kubeadm nodes joined
+#   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
 #   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
@@ -74,6 +75,63 @@ validate_node_ip() {
 }
 
 # ---------------------------------------------------------------------------
+# validate_npd_status - Ensure node-problem-detector is active and reporting
+# ---------------------------------------------------------------------------
+validate_npd_status() {
+  local vm_name="$1"
+  local vm_ip="$2"
+  local timeout="${E2E_NODE_JOIN_TIMEOUT}"
+  local elapsed=0
+
+  log_info "Validating node-problem-detector on '${vm_name}'..."
+
+  remote_exec "${vm_ip}" "VM_NAME=${vm_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+set -euo pipefail
+
+deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
+while true; do
+  active_machine="$(sudo sed -n 's/.*"activeMachine"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/aks-flex-node/daemon-state.json 2>/dev/null || true)"
+  if [[ -n "${active_machine}" ]] && machinectl show "${active_machine}" &>/dev/null; then
+    status="$(sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl is-active node-problem-detector.service 2>/dev/null || true)"
+    if [[ "${status}" == "active" ]]; then
+      echo "node-problem-detector.service is active in ${active_machine}"
+      exit 0
+    fi
+  fi
+
+  if (( SECONDS >= deadline )); then
+    echo "node-problem-detector.service did not become active on ${VM_NAME}"
+    machinectl list --no-pager || true
+    if [[ -n "${active_machine:-}" ]]; then
+      sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl status node-problem-detector.service --no-pager -l || true
+      sudo systemd-run --machine="${active_machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 50 --no-pager || true
+    fi
+    exit 1
+  fi
+
+  sleep 5
+done
+REMOTE
+
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    local kernel_deadlock
+    kernel_deadlock="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="KernelDeadlock")].status}' 2>/dev/null || true)"
+    if [[ "${kernel_deadlock}" == "False" ]]; then
+      log_success "node-problem-detector is active and reporting on '${vm_name}'"
+      return 0
+    fi
+
+    sleep 10
+    elapsed=$((elapsed + 10))
+    log_debug "Waiting for node-problem-detector condition on ${vm_name}... (${elapsed}/${timeout}s)"
+  done
+
+  log_error "node-problem-detector did not report KernelDeadlock=False on '${vm_name}' within ${timeout}s"
+  kubectl describe node "${vm_name}" 2>&1 || true
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # validate_all_nodes - Check all MSI, token, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
@@ -91,10 +149,14 @@ validate_all_nodes() {
     --admin
 
   local msi_vm_name token_vm_name kubeadm_vm_name
+  local msi_vm_ip token_vm_ip kubeadm_vm_ip
   local token_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  msi_vm_ip="$(state_get msi_vm_ip)"
+  token_vm_ip="$(state_get token_vm_ip)"
+  kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
   token_vm_private_ip="$(state_get token_vm_private_ip)"
 
   local failed=0
@@ -102,6 +164,9 @@ validate_all_nodes() {
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
+  validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
+  validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
