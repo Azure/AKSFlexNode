@@ -118,6 +118,7 @@ On your workstation, use `aks-flex-config` to create the bootstrap RBAC and rend
 RESOURCE_GROUP="<aks-resource-group>"
 CLUSTER_NAME="<aks-cluster-name>"
 SUBSCRIPTION_ID="<subscription-id>"
+AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
 chmod +x ./aks-flex-config
@@ -131,6 +132,7 @@ chmod +x ./aks-flex-config
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```

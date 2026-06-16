@@ -184,6 +184,7 @@ load_config() {
   E2E_KUBERNETES_VERSION="${E2E_KUBERNETES_VERSION:-1.35.0}"
   E2E_CONTAINERD_VERSION="${E2E_CONTAINERD_VERSION:-2.0.4}"
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
+  E2E_TARGET_AGENT_POOL_NAME="${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}"
 
   # Timeouts (seconds)
   E2E_SSH_WAIT_TIMEOUT="${E2E_SSH_WAIT_TIMEOUT:-300}"
@@ -196,6 +197,7 @@ load_config() {
   log_info "  Location:         ${E2E_LOCATION}"
   log_info "  Subscription:     ${AZURE_SUBSCRIPTION_ID}"
   log_info "  Name Suffix:      ${E2E_NAME_SUFFIX}"
+  log_info "  Agent Pool:       ${E2E_TARGET_AGENT_POOL_NAME}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
 

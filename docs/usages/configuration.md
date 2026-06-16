@@ -25,8 +25,10 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 |------|------|-------------|--------------|
 | `azure.subscriptionId` | string | Azure subscription that owns the target AKS cluster. | `44654aed-2753-4b88-9142-af7132933b6b` |
 | `azure.tenantId` | string | Microsoft Entra tenant ID for the subscription. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
-| `azure.cloud` | string | Azure cloud environment. Currently only Azure Public Cloud is supported. | `AzurePublicCloud` |
+| `azure.cloud` | string | Optional legacy Azure cloud environment label. Resource Manager calls use `azure.resourceManagerEndpoint`. | `AzurePublicCloud` in legacy configs |
+| `azure.resourceManagerEndpoint` | string | Optional Azure Resource Manager endpoint emitted by RP bootstrap data. Defaults to `https://management.azure.com`. | `https://management.azure.com` |
 | `azure.targetCluster` | object | Target AKS cluster metadata. | `{}` |
+| `azure.targetAgentPoolName` | string | Required target AKS agent pool for FlexNode machine registration (`TargetAgentPoolName` in the agent config). | `flexnode-edge` |
 
 ## Target Cluster
 
@@ -124,6 +126,19 @@ Exactly one authentication mode must be configured.
 | `cni.version` | string | Optional CNI plugin version override. | `v1.6.2` |
 | `npd.version` | string | Optional node-problem-detector version override. | `v1.35.1` |
 
+## AKS RP Bootstrap Data
+
+AKS Flex Node also accepts the bootstrap payload returned by the AKS RP `listBootstrapData` operation. At load time, RP-only fields are normalized into the runtime config shape and are not retained as separate config sections.
+
+| RP Bootstrap Field | Runtime Config Field |
+|--------------------|----------------------|
+| `components.kubernetes` | `kubernetes.version` |
+| `components.containerd` | `containerd.version` |
+| `components.runc` | `runc.version` |
+| `networking.dnsServiceIP` | `node.kubelet.dnsServiceIP` |
+| `networking.cniVersion` | `cni.version` |
+| `node.kubelet.clusterFQDN` | `node.kubelet.serverURL` |
+
 ## Sample Configurations
 
 ### Bootstrap Token
@@ -135,7 +150,8 @@ Use this for the quickstart path where the host joins with Kubernetes TLS bootst
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "bootstrapToken": {
       "token": "<token-id>.<token-secret>"
     },
@@ -168,7 +184,8 @@ Use this for an Azure VM with a managed identity assigned.
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "managedIdentity": {},
     "arc": { "enabled": false },
     "targetCluster": {
@@ -193,7 +210,8 @@ Use this when the host should be registered as an Arc-enabled server.
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "arc": {
       "enabled": true,
       "machineName": "<arc-machine-name>",
@@ -225,7 +243,8 @@ Use this when the host should authenticate with static service principal credent
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "servicePrincipal": {
       "tenantId": "<tenant-id>",
       "clientId": "<client-id>",

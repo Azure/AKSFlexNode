@@ -291,7 +291,8 @@ node_join_kubeadm() {
   "azure": {
     "subscriptionId": "${subscription_id}",
     "tenantId": "${tenant_id}",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "${E2E_TARGET_AGENT_POOL_NAME}",
     "bootstrapToken": {
       "token": "${bootstrap_token}"
     },

@@ -142,6 +142,7 @@ AKS_REGION="<aks-region>"
 VM_REGION="<vm-region>"
 AKS_VNET="<aks-vnet-name>"
 FLEX_VNET="<flex-vnet-name>"
+AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -395,6 +396,7 @@ chmod +x ./aks-flex-config
   --resource-group "$AKS_RG" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```

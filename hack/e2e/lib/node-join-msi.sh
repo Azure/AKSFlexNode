@@ -44,7 +44,8 @@ node_join_msi() {
   "azure": {
     "subscriptionId": "${subscription_id}",
     "tenantId": "${tenant_id}",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "${E2E_TARGET_AGENT_POOL_NAME}",
     "managedIdentity": {},
     "targetCluster": {
       "resourceId": "${cluster_id}",

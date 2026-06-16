@@ -13,6 +13,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com"
+DEFAULT_AGENT_POOL_NAME = "aksflexnodes"
+
 
 def log_info(message: str) -> None:
     print(f"INFO: {message}", file=sys.stderr)
@@ -140,11 +143,16 @@ def cluster_metadata(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def agent_pool_name(args: argparse.Namespace) -> str:
+    return (args.agent_pool_name or "").strip() or DEFAULT_AGENT_POOL_NAME
+
+
 def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str]) -> dict[str, object]:
     azure: dict[str, object] = {
         "subscriptionId": metadata["subscription_id"],
         "tenantId": metadata["tenant_id"],
-        "cloud": "AzurePublicCloud",
+        "resourceManagerEndpoint": RESOURCE_MANAGER_ENDPOINT,
+        "targetAgentPoolName": metadata["agent_pool_name"],
         "targetCluster": {
             "resourceId": metadata["resource_id"],
             "location": metadata["location"],
@@ -230,6 +238,7 @@ def generate_node_config(args: argparse.Namespace) -> None:
     require_command("kubectl") if args.bootstrap_token else None
     mode = auth_mode(args)
     metadata = cluster_metadata(args)
+    metadata["agent_pool_name"] = agent_pool_name(args)
     config = render_config(args, mode, metadata)
     write_config(config, args.output)
 
@@ -249,6 +258,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     generate = subparsers.add_parser("generate-node-config", help="Render a Flex Node config.")
     add_cluster_args(generate)
+    generate.add_argument(
+        "--agent-pool-name",
+        default=DEFAULT_AGENT_POOL_NAME,
+        help=f"AKS agent pool name written to azure.targetAgentPoolName (default: {DEFAULT_AGENT_POOL_NAME}).",
+    )
     generate.add_argument("--bootstrap-token", action="store_true")
     generate.add_argument("--identity", action="store_true")
     generate.add_argument("--service-principal", action="store_true")

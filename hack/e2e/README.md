@@ -80,6 +80,7 @@ Additional environment variables:
 | `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
+| `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Target AKS agent pool name written to generated node configs. |
 | `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
 | `E2E_NODE_JOIN_TIMEOUT` | `300` | Timeout in seconds while waiting for node bootstrap. |
 | `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |

@@ -320,7 +320,8 @@ show_next_steps() {
   "azure": {
     "subscriptionId": "YOUR_SUBSCRIPTION_ID",
     "tenantId": "YOUR_TENANT_ID",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "YOUR_AGENT_POOL_NAME",
     "arc": {
       "machineName": "YOUR_MACHINE_NAME",
       "tags": {
