@@ -85,12 +85,17 @@ validate_npd_status() {
 
   log_info "Validating node-problem-detector on '${vm_name}'..."
 
-  remote_exec "${vm_ip}" "VM_NAME=${vm_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+  remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
 set -euo pipefail
 
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while true; do
-  active_machine="$(sudo sed -n 's/.*"activeMachine"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/aks-flex-node/daemon-state.json 2>/dev/null || true)"
+  active_machine="$(sudo python3 - <<'PY' 2>/dev/null || true
+import json
+with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
+    print(json.load(state).get("activeMachine", ""))
+PY
+)"
   if [[ -n "${active_machine}" ]] && machinectl show "${active_machine}" &>/dev/null; then
     status="$(sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl is-active node-problem-detector.service 2>/dev/null || true)"
     if [[ "${status}" == "active" ]]; then
@@ -100,7 +105,7 @@ while true; do
   fi
 
   if (( SECONDS >= deadline )); then
-    echo "node-problem-detector.service did not become active on ${VM_NAME}"
+    echo "node-problem-detector.service did not become active"
     machinectl list --no-pager || true
     if [[ -n "${active_machine:-}" ]]; then
       sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl status node-problem-detector.service --no-pager -l || true
@@ -113,8 +118,8 @@ while true; do
 done
 REMOTE
 
+  local kernel_deadlock
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    local kernel_deadlock
     kernel_deadlock="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="KernelDeadlock")].status}' 2>/dev/null || true)"
     if [[ "${kernel_deadlock}" == "False" ]]; then
       log_success "node-problem-detector is active and reporting on '${vm_name}'"
