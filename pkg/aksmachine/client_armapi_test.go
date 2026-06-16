@@ -1,6 +1,7 @@
 package aksmachine
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -202,6 +203,11 @@ func TestGoalStateValidate(t *testing.T) {
 			name:    "negative max pods",
 			goal:    GoalState{KubernetesVersion: "1.35.1", MaxPods: -1},
 			wantErr: "max pods must be non-negative",
+		},
+		{
+			name:    "max pods exceeds int32",
+			goal:    GoalState{KubernetesVersion: "1.35.1", MaxPods: math.MaxInt32 + 1},
+			wantErr: "max pods must be less than or equal to",
 		},
 		{
 			name: "negative image GC high threshold",

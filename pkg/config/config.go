@@ -24,6 +24,7 @@ const (
 	defaultLogLevel                 = "info"
 	defaultMachineOperationMode     = "auto"
 	defaultMachineReconcileInterval = 10 * time.Minute
+	defaultTargetAgentPoolName      = "aksflexnodes"
 
 	// DefaultResourceManagerEndpointURL is the public Azure Resource Manager
 	// endpoint used when azure.resourceManagerEndpoint is omitted.
@@ -316,6 +317,9 @@ func (c *Config) setAzureDefaults() {
 		c.Azure.ResourceManagerEndpointURL = strings.TrimRight(endpoint, "/")
 	}
 	c.Azure.TargetAgentPoolName = strings.TrimSpace(c.Azure.TargetAgentPoolName)
+	if c.Azure.TargetAgentPoolName == "" {
+		c.Azure.TargetAgentPoolName = defaultTargetAgentPoolName
+	}
 }
 
 func (c *Config) setAgentDefaults() {

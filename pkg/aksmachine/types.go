@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -32,6 +33,9 @@ func (g GoalState) validate() error {
 	}
 	if g.MaxPods < 0 {
 		return fmt.Errorf("max pods must be non-negative")
+	}
+	if g.MaxPods > math.MaxInt32 {
+		return fmt.Errorf("max pods must be less than or equal to %d", math.MaxInt32)
 	}
 	if g.KubeletConfig.ImageGCHighThreshold < 0 {
 		return fmt.Errorf("image GC high threshold must be non-negative")

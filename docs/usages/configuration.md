@@ -23,12 +23,12 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `azure.subscriptionId` | string | Azure subscription that owns the target AKS cluster. | `44654aed-2753-4b88-9142-af7132933b6b` |
-| `azure.tenantId` | string | Microsoft Entra tenant ID for the subscription. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
+| `azure.subscriptionId` | string | Optional Azure subscription that owns the target AKS cluster. Defaults from `azure.targetCluster.resourceId` when omitted. | `44654aed-2753-4b88-9142-af7132933b6b` |
+| `azure.tenantId` | string | Microsoft Entra tenant ID. Required only when Azure Arc is enabled. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
 | `azure.cloud` | string | Optional legacy Azure cloud environment label. Resource Manager calls use `azure.resourceManagerEndpoint`. | `AzurePublicCloud` in legacy configs |
 | `azure.resourceManagerEndpoint` | string | Optional Azure Resource Manager endpoint emitted by RP bootstrap data. Defaults to `https://management.azure.com`. | `https://management.azure.com` |
 | `azure.targetCluster` | object | Target AKS cluster metadata. | `{}` |
-| `azure.targetAgentPoolName` | string | Required target AKS agent pool for FlexNode machine registration (`TargetAgentPoolName` in the agent config). | `flexnode-edge` |
+| `azure.targetAgentPoolName` | string | Optional target AKS agent pool for FlexNode machine registration (`TargetAgentPoolName` in the agent config). Defaults to `aksflexnodes`. | `flexnode-edge` |
 
 ## Target Cluster
 
@@ -39,7 +39,7 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 ## Authentication
 
-Exactly one authentication mode must be configured.
+At least one join or Azure authentication method must be configured. `azure.bootstrapToken` can be combined with one Azure authentication method (`azure.arc`, `azure.managedIdentity`, or `azure.servicePrincipal`) so kubelet bootstrap and ARM Machine registration can use different credentials. Only one Azure authentication method can be enabled at a time.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
@@ -137,7 +137,11 @@ AKS Flex Node also accepts the bootstrap payload returned by the AKS RP `listBoo
 | `components.runc` | `runc.version` |
 | `networking.dnsServiceIP` | `node.kubelet.dnsServiceIP` |
 | `networking.cniVersion` | `cni.version` |
+| `node.maxPods` | `node.maxPods` |
+| `node.labels` | `node.labels` |
+| `node.taints` | `node.taints` |
 | `node.kubelet.clusterFQDN` | `node.kubelet.serverURL` |
+| `node.kubelet.caCertData` | `node.kubelet.caCertData` |
 
 ## Sample Configurations
 

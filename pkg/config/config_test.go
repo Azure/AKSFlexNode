@@ -31,7 +31,7 @@ func TestSetDefaults(t *testing.T) {
 			want: func(c *Config) bool {
 				return c.Azure.Cloud == "" &&
 					c.Azure.ResourceManagerEndpointURL == "https://management.azure.com" &&
-					c.Azure.TargetAgentPoolName == "" &&
+					c.Azure.TargetAgentPoolName == "aksflexnodes" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
 					c.Agent.MachineOperationMode == "auto" &&
@@ -478,7 +478,7 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestValidateRequiresTargetAgentPoolName(t *testing.T) {
+func TestValidateDefaultsTargetAgentPoolName(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
@@ -500,9 +500,11 @@ func TestValidateRequiresTargetAgentPoolName(t *testing.T) {
 		},
 	}
 
-	err := cfg.validate()
-	if err == nil || !strings.Contains(err.Error(), "azure.targetAgentPoolName is required") {
-		t.Fatalf("validate() error = %v, want azure.targetAgentPoolName required", err)
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() unexpected error = %v", err)
+	}
+	if cfg.Azure.TargetAgentPoolName != "aksflexnodes" {
+		t.Fatalf("TargetAgentPoolName = %q, want aksflexnodes", cfg.Azure.TargetAgentPoolName)
 	}
 }
 
