@@ -57,7 +57,7 @@ type Config struct {
 type AzureConfig struct {
 	SubscriptionID             string                  `json:"subscriptionId"`                    // Azure subscription ID; defaults from targetCluster.resourceId when omitted
 	TenantID                   string                  `json:"tenantId"`                          // Azure tenant ID
-	Cloud                      string                  `json:"cloud,omitempty"`                   // Legacy Azure cloud label; Resource Manager uses resourceManagerEndpoint
+	Cloud                      string                  `json:"cloud,omitempty"`                   // Optional Azure cloud label used when resourceManagerEndpoint is omitted
 	ResourceManagerEndpointURL string                  `json:"resourceManagerEndpoint,omitempty"` // Azure Resource Manager endpoint; defaults to https://management.azure.com
 	ServicePrincipal           *ServicePrincipalConfig `json:"servicePrincipal,omitempty"`        // Optional service principal authentication
 	ManagedIdentity            *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`         // Optional managed identity authentication
@@ -312,13 +312,26 @@ func (c *Config) setDefaults() {
 
 func (c *Config) setAzureDefaults() {
 	if endpoint := strings.TrimSpace(c.Azure.ResourceManagerEndpointURL); endpoint == "" {
-		c.Azure.ResourceManagerEndpointURL = DefaultResourceManagerEndpointURL
+		c.Azure.ResourceManagerEndpointURL = resourceManagerEndpointFromCloud(c.Azure.Cloud)
 	} else {
 		c.Azure.ResourceManagerEndpointURL = strings.TrimRight(endpoint, "/")
 	}
 	c.Azure.TargetAgentPoolName = strings.TrimSpace(c.Azure.TargetAgentPoolName)
 	if c.Azure.TargetAgentPoolName == "" {
 		c.Azure.TargetAgentPoolName = defaultTargetAgentPoolName
+	}
+}
+
+func resourceManagerEndpointFromCloud(cloud string) string {
+	switch strings.TrimSpace(cloud) {
+	case "AzureUSGovernment", "AzureGovernmentCloud":
+		return "https://management.usgovcloudapi.net"
+	case "AzureChinaCloud":
+		return "https://management.chinacloudapi.cn"
+	case "", "AzurePublicCloud":
+		return DefaultResourceManagerEndpointURL
+	default:
+		return DefaultResourceManagerEndpointURL
 	}
 }
 

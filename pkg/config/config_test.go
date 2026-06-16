@@ -43,8 +43,9 @@ func TestSetDefaults(t *testing.T) {
 			name: "existing values are preserved",
 			config: &Config{
 				Azure: AzureConfig{
-					Cloud:               "AzurePublicCloud",
-					TargetAgentPoolName: " flexnode-edge ",
+					Cloud:                      "AzurePublicCloud",
+					ResourceManagerEndpointURL: "https://management.example.test/",
+					TargetAgentPoolName:        " flexnode-edge ",
 				},
 				Agent: AgentConfig{
 					LogLevel: "debug",
@@ -55,7 +56,30 @@ func TestSetDefaults(t *testing.T) {
 				return c.Agent.LogLevel == "debug" &&
 					c.Agent.LogDir == "/custom/log/dir" &&
 					c.Azure.Cloud == "AzurePublicCloud" &&
+					c.Azure.ResourceManagerEndpointURL == "https://management.example.test" &&
 					c.Azure.TargetAgentPoolName == "flexnode-edge"
+			},
+		},
+		{
+			name: "cloud fallback sets sovereign endpoint",
+			config: &Config{
+				Azure: AzureConfig{
+					Cloud: "AzureUSGovernment",
+				},
+			},
+			want: func(c *Config) bool {
+				return c.Azure.ResourceManagerEndpointURL == "https://management.usgovcloudapi.net"
+			},
+		},
+		{
+			name: "cloud fallback supports Azure China",
+			config: &Config{
+				Azure: AzureConfig{
+					Cloud: "AzureChinaCloud",
+				},
+			},
+			want: func(c *Config) bool {
+				return c.Azure.ResourceManagerEndpointURL == "https://management.chinacloudapi.cn"
 			},
 		},
 		{

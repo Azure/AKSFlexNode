@@ -25,8 +25,8 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 |------|------|-------------|--------------|
 | `azure.subscriptionId` | string | Optional Azure subscription that owns the target AKS cluster. Defaults from `azure.targetCluster.resourceId` when omitted. | `44654aed-2753-4b88-9142-af7132933b6b` |
 | `azure.tenantId` | string | Microsoft Entra tenant ID. Required only when Azure Arc is enabled. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
-| `azure.cloud` | string | Optional legacy Azure cloud environment label. Resource Manager calls use `azure.resourceManagerEndpoint`. | `AzurePublicCloud` in legacy configs |
-| `azure.resourceManagerEndpoint` | string | Optional Azure Resource Manager endpoint emitted by RP bootstrap data. Defaults to `https://management.azure.com`. | `https://management.azure.com` |
+| `azure.cloud` | string | Optional Azure cloud environment label used as a fallback when `azure.resourceManagerEndpoint` is omitted. | `AzurePublicCloud` |
+| `azure.resourceManagerEndpoint` | string | Optional Azure Resource Manager endpoint emitted by RP bootstrap data. When omitted, it is derived from `azure.cloud` and defaults to public Azure. | `https://management.azure.com` |
 | `azure.targetCluster` | object | Target AKS cluster metadata. | `{}` |
 | `azure.targetAgentPoolName` | string | Optional target AKS agent pool for FlexNode machine registration (`TargetAgentPoolName` in the agent config). Defaults to `aksflexnodes`. | `flexnode-edge` |
 
