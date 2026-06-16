@@ -82,10 +82,16 @@ validate_npd_status() {
   local vm_ip="$2"
   local timeout="${E2E_NODE_JOIN_TIMEOUT}"
   local elapsed=0
+  local npd_condition_jsonpath='{.status.conditions[?(@.type=="KernelDeadlock")].status}'
 
   log_info "Validating node-problem-detector on '${vm_name}'..."
 
-  remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+  if ! [[ "${timeout}" =~ ^[0-9]+$ ]]; then
+    log_error "E2E_NODE_JOIN_TIMEOUT must be numeric, got '${timeout}'"
+    return 1
+  fi
+
+  remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${timeout} bash -s" <<'REMOTE'
 set -euo pipefail
 
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
@@ -120,7 +126,7 @@ REMOTE
 
   local kernel_deadlock
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    kernel_deadlock="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="KernelDeadlock")].status}' 2>/dev/null || true)"
+    kernel_deadlock="$(kubectl get node "${vm_name}" -o jsonpath="${npd_condition_jsonpath}" 2>/dev/null || true)"
     if [[ "${kernel_deadlock}" == "False" ]]; then
       log_success "node-problem-detector is active and reporting on '${vm_name}'"
       return 0
