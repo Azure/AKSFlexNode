@@ -83,6 +83,7 @@ validate_npd_status() {
   local timeout="${E2E_NODE_JOIN_TIMEOUT}"
   local elapsed=0
   local npd_condition_jsonpath='{.status.conditions[?(@.type=="KernelDeadlock")].status}'
+  local quoted_timeout
 
   log_info "Validating node-problem-detector on '${vm_name}'..."
 
@@ -90,13 +91,15 @@ validate_npd_status() {
     log_error "E2E_NODE_JOIN_TIMEOUT must be numeric, got '${timeout}'"
     return 1
   fi
+  printf -v quoted_timeout "%q" "${timeout}"
 
-  remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${timeout} bash -s" <<'REMOTE'
+  remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${quoted_timeout} bash -s" <<'REMOTE'
 set -euo pipefail
 
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
+active_machine_error="/tmp/aks-flex-node-e2e-active-machine.err"
 while true; do
-  active_machine="$(sudo python3 - <<'PY' 2>/dev/null || true
+  active_machine="$(sudo python3 - <<'PY' 2>"${active_machine_error}" || true
 import json
 with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
     print(json.load(state).get("activeMachine", ""))
@@ -112,6 +115,9 @@ PY
 
   if (( SECONDS >= deadline )); then
     echo "node-problem-detector.service did not become active"
+    if [[ -s "${active_machine_error}" ]]; then
+      cat "${active_machine_error}"
+    fi
     machinectl list --no-pager || true
     if [[ -n "${active_machine:-}" ]]; then
       sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl status node-problem-detector.service --no-pager -l || true
