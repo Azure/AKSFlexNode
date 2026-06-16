@@ -1,6 +1,7 @@
 package azclient
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
@@ -38,19 +39,19 @@ func TestResourceManagerEnvironmentFromConfig(t *testing.T) {
 		{
 			name:          "azure government endpoint",
 			endpoint:      "https://management.usgovcloudapi.net/",
-			wantEndpoint:  azureGovernmentResourceManagerEndpoint,
-			wantAudience:  azureGovernmentResourceManagerAudience,
+			wantEndpoint:  strings.TrimRight(cloud.AzureGovernment.Services[cloud.ResourceManager].Endpoint, "/"),
+			wantAudience:  strings.TrimRight(cloud.AzureGovernment.Services[cloud.ResourceManager].Audience, "/"),
 			wantAuthority: cloud.AzureGovernment.ActiveDirectoryAuthorityHost,
-			wantScope:     azureGovernmentResourceManagerAudience + "/.default",
+			wantScope:     strings.TrimRight(cloud.AzureGovernment.Services[cloud.ResourceManager].Audience, "/") + "/.default",
 			wantAzcmagent: azcmagentAzureGovernmentCloud,
 		},
 		{
 			name:          "azure china endpoint",
 			endpoint:      "https://management.chinacloudapi.cn/",
-			wantEndpoint:  azureChinaResourceManagerEndpoint,
-			wantAudience:  azureChinaResourceManagerAudience,
+			wantEndpoint:  strings.TrimRight(cloud.AzureChina.Services[cloud.ResourceManager].Endpoint, "/"),
+			wantAudience:  strings.TrimRight(cloud.AzureChina.Services[cloud.ResourceManager].Audience, "/"),
 			wantAuthority: cloud.AzureChina.ActiveDirectoryAuthorityHost,
-			wantScope:     azureChinaResourceManagerAudience + "/.default",
+			wantScope:     strings.TrimRight(cloud.AzureChina.Services[cloud.ResourceManager].Audience, "/") + "/.default",
 			wantAzcmagent: azcmagentAzureChinaCloud,
 		},
 	}
@@ -93,11 +94,12 @@ func TestClientOptionsFromConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("ResourceManager cloud service is missing")
 	}
-	if service.Endpoint != azureGovernmentResourceManagerEndpoint {
-		t.Fatalf("ResourceManager endpoint = %q, want %q", service.Endpoint, azureGovernmentResourceManagerEndpoint)
+	wantService := cloud.AzureGovernment.Services[cloud.ResourceManager]
+	if service.Endpoint != strings.TrimRight(wantService.Endpoint, "/") {
+		t.Fatalf("ResourceManager endpoint = %q, want %q", service.Endpoint, strings.TrimRight(wantService.Endpoint, "/"))
 	}
-	if service.Audience != azureGovernmentResourceManagerAudience {
-		t.Fatalf("ResourceManager audience = %q, want %q", service.Audience, azureGovernmentResourceManagerAudience)
+	if service.Audience != strings.TrimRight(wantService.Audience, "/") {
+		t.Fatalf("ResourceManager audience = %q, want %q", service.Audience, strings.TrimRight(wantService.Audience, "/"))
 	}
 	if opts.Cloud.ActiveDirectoryAuthorityHost != cloud.AzureGovernment.ActiveDirectoryAuthorityHost {
 		t.Fatalf("authority host = %q, want Azure Government", opts.Cloud.ActiveDirectoryAuthorityHost)

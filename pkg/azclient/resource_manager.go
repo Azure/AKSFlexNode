@@ -12,11 +12,6 @@ import (
 )
 
 const (
-	azureGovernmentResourceManagerEndpoint = "https://management.usgovcloudapi.net"
-	azureGovernmentResourceManagerAudience = "https://management.core.usgovcloudapi.net"
-	azureChinaResourceManagerEndpoint      = "https://management.chinacloudapi.cn"
-	azureChinaResourceManagerAudience      = "https://management.core.chinacloudapi.cn"
-
 	azcmagentAzureGovernmentCloud = "AzureUSGovernment"
 	azcmagentAzureChinaCloud      = "AzureChinaCloud"
 )
@@ -46,21 +41,30 @@ func ResourceManagerEnvironmentFromConfig(cfg *config.Config) ResourceManagerEnv
 	}
 
 	switch resourceManagerEndpointHost(endpoint) {
-	case "management.azure.com":
+	case resourceManagerEndpointHost(resourceManagerService(cloud.AzurePublic).Endpoint):
 		env.Audience = config.DefaultResourceManagerAudience
-	case "management.usgovcloudapi.net":
-		env.Endpoint = azureGovernmentResourceManagerEndpoint
-		env.Audience = azureGovernmentResourceManagerAudience
-		env.AuthorityHost = cloud.AzureGovernment.ActiveDirectoryAuthorityHost
+	case resourceManagerEndpointHost(resourceManagerService(cloud.AzureGovernment).Endpoint):
+		env = resourceManagerEnvironmentFromCloud(cloud.AzureGovernment)
 		env.AzcmagentCloudName = azcmagentAzureGovernmentCloud
-	case "management.chinacloudapi.cn":
-		env.Endpoint = azureChinaResourceManagerEndpoint
-		env.Audience = azureChinaResourceManagerAudience
-		env.AuthorityHost = cloud.AzureChina.ActiveDirectoryAuthorityHost
+	case resourceManagerEndpointHost(resourceManagerService(cloud.AzureChina).Endpoint):
+		env = resourceManagerEnvironmentFromCloud(cloud.AzureChina)
 		env.AzcmagentCloudName = azcmagentAzureChinaCloud
 	}
 
 	return env
+}
+
+func resourceManagerEnvironmentFromCloud(cfg cloud.Configuration) ResourceManagerEnvironment {
+	service := resourceManagerService(cfg)
+	return ResourceManagerEnvironment{
+		Endpoint:      strings.TrimRight(service.Endpoint, "/"),
+		Audience:      strings.TrimRight(service.Audience, "/"),
+		AuthorityHost: cfg.ActiveDirectoryAuthorityHost,
+	}
+}
+
+func resourceManagerService(cfg cloud.Configuration) cloud.ServiceConfiguration {
+	return cfg.Services[cloud.ResourceManager]
 }
 
 func ClientOptionsFromConfig(cfg *config.Config) azcore.ClientOptions {
