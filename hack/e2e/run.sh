@@ -48,6 +48,7 @@
 #   E2E_KUBERNETES_VERSION  Kubernetes version (default: 1.35.0)
 #   E2E_CONTAINERD_VERSION  Containerd version (default: 2.0.4)
 #   E2E_RUNC_VERSION        Runc version (default: 1.1.12)
+#   E2E_TARGET_AGENT_POOL_NAME Target AKS agent pool name (default: aksflexnodes)
 #   AZURE_SUBSCRIPTION_ID   Azure subscription (auto-detected if not set)
 #   AZURE_TENANT_ID         Azure tenant (auto-detected if not set)
 #

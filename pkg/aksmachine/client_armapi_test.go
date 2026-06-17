@@ -1,24 +1,30 @@
 package aksmachine
 
 import (
+	"math"
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
-const testClusterResourceID = "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+const (
+	testClusterResourceID = "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+	testAgentPoolName     = "aksflexnodes"
+)
 
 func TestMachineResourceIDFromConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		cfg     *config.Config
-		want    string
-		wantErr string
+		name     string
+		cfg      *config.Config
+		want     string
+		wantPool string
+		wantErr  string
 	}{
 		{
 			name: "valid config",
@@ -27,7 +33,8 @@ func TestMachineResourceIDFromConfig(t *testing.T) {
 				"flex-node-1",
 				"1.34.0",
 			),
-			want: testClusterResourceID + "/agentPools/aksflexnodes/machines/flex-node-1",
+			want:     testClusterResourceID + "/agentPools/aksflexnodes/machines/flex-node-1",
+			wantPool: testAgentPoolName,
 		},
 		{
 			name: "trims cluster resource slash",
@@ -36,7 +43,31 @@ func TestMachineResourceIDFromConfig(t *testing.T) {
 				"flex-node-1",
 				"1.34.0",
 			),
-			want: testClusterResourceID + "/agentPools/aksflexnodes/machines/flex-node-1",
+			want:     testClusterResourceID + "/agentPools/aksflexnodes/machines/flex-node-1",
+			wantPool: testAgentPoolName,
+		},
+		{
+			name: "uses configured agent pool name",
+			cfg: func() *config.Config {
+				cfg := testARMConfig(
+					testClusterResourceID,
+					"flex-node-1",
+					"1.34.0",
+				)
+				cfg.Azure.TargetAgentPoolName = "flexnode-edge"
+				return cfg
+			}(),
+			want:     testClusterResourceID + "/agentPools/flexnode-edge/machines/flex-node-1",
+			wantPool: "flexnode-edge",
+		},
+		{
+			name: "rejects non cluster resource ID",
+			cfg: testARMConfig(
+				"/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/test-vm",
+				"flex-node-1",
+				"1.34.0",
+			),
+			wantErr: "invalid AKS machine resource type",
 		},
 		{
 			name: "missing cluster resource ID",
@@ -54,6 +85,19 @@ func TestMachineResourceIDFromConfig(t *testing.T) {
 				"",
 				"1.34.0",
 			),
+			wantErr: "incomplete AKS machine config",
+		},
+		{
+			name: "missing agent pool name",
+			cfg: func() *config.Config {
+				cfg := testARMConfig(
+					testClusterResourceID,
+					"flex-node-1",
+					"1.34.0",
+				)
+				cfg.Azure.TargetAgentPoolName = ""
+				return cfg
+			}(),
 			wantErr: "incomplete AKS machine config",
 		},
 		{
@@ -84,13 +128,36 @@ func TestMachineResourceIDFromConfig(t *testing.T) {
 			if got.String() != tt.want {
 				t.Fatalf("machineResourceIDFromConfig() = %q, want %q", got.String(), tt.want)
 			}
-			if got.Parent == nil || got.Parent.Name != aksFlexNodePoolName {
-				t.Fatalf("agent pool parent = %#v, want name %q", got.Parent, aksFlexNodePoolName)
+			if got.Parent == nil || got.Parent.Name != tt.wantPool {
+				t.Fatalf("agent pool parent = %#v, want name %q", got.Parent, tt.wantPool)
 			}
 			if got.Parent.Parent == nil || got.Parent.Parent.Name != "test-cluster" {
 				t.Fatalf("cluster parent = %#v, want name test-cluster", got.Parent.Parent)
 			}
 		})
+	}
+}
+
+func TestAzureClientOptionsFromConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := testARMConfig(testClusterResourceID, "flex-node-1", "1.34.0")
+	cfg.Azure.Cloud = "InvalidCloud"
+	cfg.Azure.ResourceManagerEndpointURL = "https://management.example.test"
+
+	opts := azureClientOptionsFromConfig(cfg)
+	service, ok := opts.Cloud.Services[cloud.ResourceManager]
+	if !ok {
+		t.Fatal("ResourceManager cloud service is missing")
+	}
+	if service.Endpoint != "https://management.example.test" {
+		t.Fatalf("ResourceManager endpoint = %q, want https://management.example.test", service.Endpoint)
+	}
+	if service.Audience != "https://management.example.test" {
+		t.Fatalf("ResourceManager audience = %q, want https://management.example.test", service.Audience)
+	}
+	if opts.Cloud.ActiveDirectoryAuthorityHost != cloud.AzurePublic.ActiveDirectoryAuthorityHost {
+		t.Fatalf("authority host = %q, want public cloud", opts.Cloud.ActiveDirectoryAuthorityHost)
 	}
 }
 
@@ -119,14 +186,8 @@ func TestBuildK8sProfile(t *testing.T) {
 	if len(profile.NodeTaints) != 1 || profile.NodeTaints[0] == nil || *profile.NodeTaints[0] != "dedicated=flex:NoSchedule" {
 		t.Fatalf("NodeTaints = %#v, want dedicated=flex:NoSchedule", profile.NodeTaints)
 	}
-	if profile.KubeletConfig == nil {
-		t.Fatal("KubeletConfig is nil")
-	}
-	if profile.KubeletConfig.ImageGcHighThreshold == nil || *profile.KubeletConfig.ImageGcHighThreshold != 85 {
-		t.Fatalf("ImageGcHighThreshold = %v, want 85", profile.KubeletConfig.ImageGcHighThreshold)
-	}
-	if profile.KubeletConfig.ImageGcLowThreshold == nil || *profile.KubeletConfig.ImageGcLowThreshold != 80 {
-		t.Fatalf("ImageGcLowThreshold = %v, want 80", profile.KubeletConfig.ImageGcLowThreshold)
+	if profile.KubeletConfig != nil {
+		t.Fatalf("KubeletConfig = %#v, want nil because FlexNode RP rejects custom kubelet config on Machine PUT", profile.KubeletConfig)
 	}
 }
 
@@ -151,6 +212,11 @@ func TestGoalStateValidate(t *testing.T) {
 			name:    "negative max pods",
 			goal:    GoalState{KubernetesVersion: "1.35.1", MaxPods: -1},
 			wantErr: "max pods must be non-negative",
+		},
+		{
+			name:    "max pods exceeds int32",
+			goal:    GoalState{KubernetesVersion: "1.35.1", MaxPods: math.MaxInt32 + 1},
+			wantErr: "max pods must be less than or equal to",
 		},
 		{
 			name: "negative image GC high threshold",
@@ -305,6 +371,7 @@ func TestMachineFromARMUsesCurrentOrchestratorVersionFallback(t *testing.T) {
 func testARMConfig(clusterResourceID, nodeName, kubernetesVersion string) *config.Config {
 	return &config.Config{
 		Azure: config.AzureConfig{
+			TargetAgentPoolName: testAgentPoolName,
 			TargetCluster: &config.TargetClusterConfig{
 				ResourceID: clusterResourceID,
 			},
@@ -312,8 +379,8 @@ func testARMConfig(clusterResourceID, nodeName, kubernetesVersion string) *confi
 		Agent: config.AgentConfig{
 			NodeName: nodeName,
 		},
-		Kubernetes: config.KubernetesConfig{
-			Version: kubernetesVersion,
+		Components: config.ComponentsConfig{
+			Kubernetes: kubernetesVersion,
 		},
 	}
 }

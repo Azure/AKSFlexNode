@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+const testTargetAgentPoolName = "aksflexnodes"
+
+func setTestTargetAgentPoolName(c *Config) {
+	if c != nil && strings.TrimSpace(c.Azure.TargetAgentPoolName) == "" {
+		c.Azure.TargetAgentPoolName = testTargetAgentPoolName
+	}
+}
+
 func TestSetDefaults(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -21,19 +29,23 @@ func TestSetDefaults(t *testing.T) {
 			name:   "empty config gets all defaults",
 			config: &Config{},
 			want: func(c *Config) bool {
-				return c.Azure.Cloud == "AzurePublicCloud" &&
+				return c.Azure.Cloud == "" &&
+					c.Azure.ResourceManagerEndpointURL == "https://management.azure.com" &&
+					c.Azure.TargetAgentPoolName == "aksflexnodes" &&
 					c.Agent.LogLevel == "info" &&
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
 					c.Agent.MachineOperationMode == "auto" &&
 					c.Node.MaxPods == 110 &&
-					c.Runc.Version == "1.1.12"
+					c.Components.Runc == "1.1.12"
 			},
 		},
 		{
 			name: "existing values are preserved",
 			config: &Config{
 				Azure: AzureConfig{
-					Cloud: "AzurePublicCloud",
+					Cloud:                      "AzurePublicCloud",
+					ResourceManagerEndpointURL: "https://management.example.test/",
+					TargetAgentPoolName:        " flexnode-edge ",
 				},
 				Agent: AgentConfig{
 					LogLevel: "debug",
@@ -42,7 +54,32 @@ func TestSetDefaults(t *testing.T) {
 			},
 			want: func(c *Config) bool {
 				return c.Agent.LogLevel == "debug" &&
-					c.Agent.LogDir == "/custom/log/dir"
+					c.Agent.LogDir == "/custom/log/dir" &&
+					c.Azure.Cloud == "AzurePublicCloud" &&
+					c.Azure.ResourceManagerEndpointURL == "https://management.example.test" &&
+					c.Azure.TargetAgentPoolName == "flexnode-edge"
+			},
+		},
+		{
+			name: "cloud fallback sets sovereign endpoint",
+			config: &Config{
+				Azure: AzureConfig{
+					Cloud: "AzureUSGovernment",
+				},
+			},
+			want: func(c *Config) bool {
+				return c.Azure.ResourceManagerEndpointURL == "https://management.usgovcloudapi.net"
+			},
+		},
+		{
+			name: "cloud fallback supports Azure China",
+			config: &Config{
+				Azure: AzureConfig{
+					Cloud: "AzureChinaCloud",
+				},
+			},
+			want: func(c *Config) bool {
+				return c.Azure.ResourceManagerEndpointURL == "https://management.chinacloudapi.cn"
 			},
 		},
 		{
@@ -82,6 +119,14 @@ func TestSetDefaults(t *testing.T) {
 				t.Errorf("SetDefaults() failed validation for %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestDefaultResourceManagerTokenScope(t *testing.T) {
+	t.Parallel()
+
+	if DefaultResourceManagerTokenScope != "https://management.azure.com/.default" {
+		t.Fatalf("DefaultResourceManagerTokenScope = %q, want https://management.azure.com/.default", DefaultResourceManagerTokenScope)
 	}
 }
 
@@ -170,37 +215,50 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
 			wantErr: false,
 		},
 		{
-			name: "missing subscription ID fails",
+			name: "missing subscription ID uses target cluster subscription",
 			config: &Config{
 				Azure: AzureConfig{
 					TenantID: "12345678-1234-1234-1234-123456789012",
 					Cloud:    "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						Location:   "eastus",
 					},
 				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
 			},
-			wantErr: true,
-			errMsg:  "azure.subscriptionId is required",
+			wantErr: false,
 		},
 		{
-			name: "missing tenant ID fails",
+			name: "missing tenant ID fails when Arc is enabled",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
+					Arc: &ArcConfig{
+						Enabled:       true,
+						ResourceGroup: "test-rg",
+						MachineName:   "test-machine",
+						Location:      "eastus",
+					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-						Location:   "eastus",
 					},
 				},
 			},
@@ -208,19 +266,20 @@ func TestValidate(t *testing.T) {
 			errMsg:  "azure.tenantId is required",
 		},
 		{
-			name: "missing target cluster location fails",
+			name: "missing target cluster location passes",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
-					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 					},
 				},
 			},
-			wantErr: true,
-			errMsg:  "azure.targetCluster.location is required",
+			wantErr: false,
 		},
 		{
 			name: "missing target cluster resource ID fails",
@@ -254,20 +313,132 @@ func TestValidate(t *testing.T) {
 			errMsg:  "invalid azure.targetCluster.resourceId:",
 		},
 		{
-			name: "invalid azure cloud fails",
+			name: "unknown azure cloud falls back to public endpoint",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
 					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "InvalidCloud",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						Location:   "eastus",
 					},
 				},
 			},
+			wantErr: false,
+		},
+		{
+			name: "resource manager endpoint without scheme fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "management.azure.com",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
 			wantErr: true,
-			errMsg:  "invalid azure.cloud: InvalidCloud. Valid values are: AzurePublicCloud",
+			errMsg:  "azure.resourceManagerEndpoint must be an absolute https URL",
+		},
+		{
+			name: "resource manager endpoint with http fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "http://management.azure.com",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must use https",
+		},
+		{
+			name: "resource manager endpoint with path fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "https://management.azure.com/path",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must not include a path, query, or fragment",
+		},
+		{
+			name: "resource manager endpoint with port fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "https://management.azure.com:443",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must not include user info or port",
+		},
+		{
+			name: "resource manager endpoint with user info fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "https://user:pass@management.azure.com",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must not include user info or port",
+		},
+		{
+			name: "explicit resource manager endpoint is preserved",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					TenantID:                   "12345678-1234-1234-1234-123456789012",
+					Cloud:                      "InvalidCloud",
+					ResourceManagerEndpointURL: "https://management.example.test/",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
+			},
+			wantErr: false,
 		},
 		{
 			name: "invalid log level fails",
@@ -332,8 +503,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -360,8 +531,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -396,6 +567,8 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			setTestTargetAgentPoolName(tt.config)
+
 			err := tt.config.validate()
 			if tt.wantErr {
 				if err == nil {
@@ -411,6 +584,36 @@ func TestValidate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateDefaultsTargetAgentPoolName(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Azure: AzureConfig{
+			SubscriptionID: "12345678-1234-1234-1234-123456789012",
+			Cloud:          "AzurePublicCloud",
+			BootstrapToken: &BootstrapTokenConfig{
+				Token: "abcdef.0123456789abcdef",
+			},
+			TargetCluster: &TargetClusterConfig{
+				ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+			},
+		},
+		Node: NodeConfig{
+			Kubelet: KubeletConfig{
+				ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+				CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+			},
+		},
+	}
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() unexpected error = %v", err)
+	}
+	if cfg.Azure.TargetAgentPoolName != "aksflexnodes" {
+		t.Fatalf("TargetAgentPoolName = %q, want aksflexnodes", cfg.Azure.TargetAgentPoolName)
 	}
 }
 
@@ -433,28 +636,29 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name: "valid config file loads successfully",
 			configJSON: `{
-				"azure": {
-					"subscriptionId": "12345678-1234-1234-1234-123456789012",
-					"tenantId": "12345678-1234-1234-1234-123456789012",
-					"cloud": "AzurePublicCloud",
-					"bootstrapToken": {
-						"token": "abcdef.0123456789abcdef"
+					"azure": {
+						"subscriptionId": "12345678-1234-1234-1234-123456789012",
+						"tenantId": "12345678-1234-1234-1234-123456789012",
+						"cloud": "AzurePublicCloud",
+						"targetAgentPoolName": "flexnode-edge",
+						"bootstrapToken": {
+							"token": "abcdef.0123456789abcdef"
+						},
+						"targetCluster": {
+							"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+							"location": "eastus"
+						}
 					},
-					"targetCluster": {
-						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-						"location": "eastus"
+					"agent": {
+						"logLevel": "debug"
+					},
+					"node": {
+						"kubelet": {
+							"clusterFQDN": "test-cluster-abc123.hcp.eastus.azmk8s.io",
+							"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
+						}
 					}
-				},
-				"agent": {
-					"logLevel": "debug"
-				},
-				"node": {
-					"kubelet": {
-						"serverURL": "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
-					}
-				}
-			}`,
+				}`,
 			wantErr: false,
 		},
 		{
@@ -507,8 +711,332 @@ func TestLoadConfig(t *testing.T) {
 				} else if config.Agent.LogLevel != "info" {
 					t.Errorf("Expected default log level 'info', got %s", config.Agent.LogLevel)
 				}
+				if config.Azure.TargetAgentPoolName != "flexnode-edge" {
+					t.Errorf("Expected target agent pool name 'flexnode-edge', got %s", config.Azure.TargetAgentPoolName)
+				}
 			}
 		})
+	}
+}
+
+func TestLoadConfigPoolBootstrapData(t *testing.T) {
+	t.Parallel()
+
+	configJSON := `{
+		"azure": {
+			"resourceManagerEndpoint": "https://management.azure.com/",
+			"targetAgentPoolName": "pool1",
+			"bootstrapToken": {
+				"token": "abcdef.0123456789abcdef"
+			},
+			"targetCluster": {
+				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+			}
+		},
+		"components": {
+			"kubernetes": "1.29.0",
+			"containerd": "2.0.5",
+			"runc": "1.2.3"
+		},
+		"networking": {
+			"dnsServiceIP": "10.42.0.10",
+			"cniVersion": "1.5.1"
+		},
+		"node": {
+			"maxPods": 30,
+			"labels": {
+				"env": "test"
+			},
+			"taints": [
+				"dedicated=flexnode:NoSchedule"
+			],
+			"kubelet": {
+				"clusterFQDN": "test-cluster-dns-12345678.hcp.eastus.azmk8s.io",
+				"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t"
+			}
+		}
+	}`
+
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig() unexpected error: %v", err)
+	}
+
+	if cfg.Azure.ResourceManagerEndpointURL != "https://management.azure.com" {
+		t.Fatalf("Azure.ResourceManagerEndpointURL = %q, want https://management.azure.com", cfg.Azure.ResourceManagerEndpointURL)
+	}
+	if cfg.Node.Kubelet.ClusterFQDN != "test-cluster-dns-12345678.hcp.eastus.azmk8s.io" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
+	}
+	if cfg.Node.Kubelet.CACertData != "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t" {
+		t.Fatalf("Node.Kubelet.CACertData = %q", cfg.Node.Kubelet.CACertData)
+	}
+	if cfg.Node.MaxPods != 30 {
+		t.Fatalf("Node.MaxPods = %d, want 30", cfg.Node.MaxPods)
+	}
+	if cfg.Node.Labels["env"] != "test" {
+		t.Fatalf("Node.Labels[env] = %q, want test", cfg.Node.Labels["env"])
+	}
+	if len(cfg.Node.Taints) != 1 || cfg.Node.Taints[0] != "dedicated=flexnode:NoSchedule" {
+		t.Fatalf("Node.Taints = %#v, want dedicated=flexnode:NoSchedule", cfg.Node.Taints)
+	}
+
+	agentCfg := ToAgentConfig(cfg, "flex-node-1")
+	if agentCfg.Cluster.Version != "1.29.0" {
+		t.Fatalf("Agent Cluster.Version = %q, want 1.29.0", agentCfg.Cluster.Version)
+	}
+	if agentCfg.Cluster.ClusterDNS != "10.42.0.10" {
+		t.Fatalf("Agent Cluster.ClusterDNS = %q, want 10.42.0.10", agentCfg.Cluster.ClusterDNS)
+	}
+	if agentCfg.CRI.Containerd.Version != "2.0.5" {
+		t.Fatalf("Agent CRI.Containerd.Version = %q, want 2.0.5", agentCfg.CRI.Containerd.Version)
+	}
+	if agentCfg.CRI.Runc.Version != "1.2.3" {
+		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
+	}
+	if agentCfg.CNI.PluginVersion != "1.5.1" {
+		t.Fatalf("Agent CNI.PluginVersion = %q, want 1.5.1", agentCfg.CNI.PluginVersion)
+	}
+	if agentCfg.Kubelet.ApiServer != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
+		t.Fatalf("Agent Kubelet.ApiServer = %q", agentCfg.Kubelet.ApiServer)
+	}
+	if agentCfg.Kubelet.Auth.BootstrapToken != "abcdef.0123456789abcdef" {
+		t.Fatalf("Agent bootstrap token = %q", agentCfg.Kubelet.Auth.BootstrapToken)
+	}
+	if len(agentCfg.Kubelet.Labels) == 0 || agentCfg.Kubelet.Labels["env"] != "test" {
+		t.Fatalf("Agent Kubelet.Labels = %#v, want env=test", agentCfg.Kubelet.Labels)
+	}
+	if len(agentCfg.Kubelet.RegisterWithTaints) != 1 || agentCfg.Kubelet.RegisterWithTaints[0] != "dedicated=flexnode:NoSchedule" {
+		t.Fatalf("Agent Kubelet.RegisterWithTaints = %#v", agentCfg.Kubelet.RegisterWithTaints)
+	}
+}
+
+func TestLoadConfigPoolBootstrapDataMissingOptionalFields(t *testing.T) {
+	t.Parallel()
+
+	configJSON := `{
+		"azure": {
+			"targetAgentPoolName": "pool1",
+			"bootstrapToken": {
+				"token": "abcdef.0123456789abcdef"
+			},
+			"targetCluster": {
+				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+			}
+		},
+		"components": {
+			"kubernetes": "1.29.0"
+		},
+		"node": {
+			"kubelet": {
+				"clusterFQDN": "test-cluster-dns-12345678.hcp.eastus.azmk8s.io",
+				"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t"
+			}
+		}
+	}`
+
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig() unexpected error: %v", err)
+	}
+
+	if cfg.Azure.Cloud != "" {
+		t.Fatalf("Azure.Cloud = %q, want empty when RP omits legacy cloud", cfg.Azure.Cloud)
+	}
+	if cfg.Azure.SubscriptionID != "12345678-1234-1234-1234-123456789012" {
+		t.Fatalf("Azure.SubscriptionID = %q", cfg.Azure.SubscriptionID)
+	}
+	if cfg.Azure.TargetAgentPoolName != "pool1" {
+		t.Fatalf("Azure.TargetAgentPoolName = %q, want pool1", cfg.Azure.TargetAgentPoolName)
+	}
+	if cfg.Networking.DNSServiceIP != "10.0.0.10" {
+		t.Fatalf("Node.Kubelet.DNSServiceIP = %q, want default 10.0.0.10", cfg.Networking.DNSServiceIP)
+	}
+	if cfg.Node.Kubelet.ClusterFQDN != "test-cluster-dns-12345678.hcp.eastus.azmk8s.io" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
+	}
+	if cfg.Components.Kubernetes != "1.29.0" {
+		t.Fatalf("Kubernetes.Version = %q, want 1.29.0", cfg.Components.Kubernetes)
+	}
+	if cfg.Components.Containerd != "" {
+		t.Fatalf("Containerd.Version = %q, want empty when RP omits it", cfg.Components.Containerd)
+	}
+	if cfg.Components.Runc != "1.1.12" {
+		t.Fatalf("Runc.Version = %q, want default 1.1.12", cfg.Components.Runc)
+	}
+	if cfg.Networking.CNIVersion != "" {
+		t.Fatalf("CNI.Version = %q, want empty when RP omits it", cfg.Networking.CNIVersion)
+	}
+}
+
+func TestLoadConfigUsesRPConfigOverLegacyAliases(t *testing.T) {
+	t.Parallel()
+
+	configJSON := `{
+		"azure": {
+			"subscriptionId": "12345678-1234-1234-1234-123456789012",
+			"tenantId": "12345678-1234-1234-1234-123456789012",
+			"cloud": "AzurePublicCloud",
+			"targetAgentPoolName": "aksflexnodes",
+			"bootstrapToken": {
+				"token": "abcdef.0123456789abcdef"
+			},
+			"targetCluster": {
+				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+				"location": "eastus"
+			}
+		},
+		"kubernetes": {
+			"version": "1.30.1"
+		},
+		"containerd": {
+			"version": "2.1.0"
+		},
+		"runc": {
+			"version": "1.3.0"
+		},
+		"cni": {
+			"version": "1.6.0"
+		},
+		"node": {
+			"maxPods": 35,
+			"labels": {
+				"legacy": "true"
+			},
+			"taints": [
+				"legacy=true:NoSchedule"
+			],
+			"kubelet": {
+				"serverURL": "https://legacy.example.test:443",
+				"clusterFQDN": "rp.example.test",
+				"dnsServiceIP": "10.0.0.10",
+				"caCertData": "bGVnYWN5LWNh"
+			}
+		},
+		"components": {
+			"kubernetes": "9.99.0",
+			"containerd": "9.99.0",
+			"runc": "9.99.0"
+		},
+		"networking": {
+			"dnsServiceIP": "10.42.0.10",
+			"cniVersion": "9.99.0"
+		}
+	}`
+
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig() unexpected error: %v", err)
+	}
+
+	if cfg.Components.Kubernetes != "9.99.0" {
+		t.Fatalf("Components.Kubernetes = %q, want RP value", cfg.Components.Kubernetes)
+	}
+	if cfg.Components.Containerd != "9.99.0" {
+		t.Fatalf("Components.Containerd = %q, want RP value", cfg.Components.Containerd)
+	}
+	if cfg.Components.Runc != "9.99.0" {
+		t.Fatalf("Components.Runc = %q, want RP value", cfg.Components.Runc)
+	}
+	if cfg.Networking.CNIVersion != "9.99.0" {
+		t.Fatalf("Networking.CNIVersion = %q, want RP value", cfg.Networking.CNIVersion)
+	}
+	if cfg.Networking.DNSServiceIP != "10.42.0.10" {
+		t.Fatalf("Networking.DNSServiceIP = %q, want RP value", cfg.Networking.DNSServiceIP)
+	}
+	if cfg.Node.Kubelet.ClusterFQDN != "rp.example.test" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q, want RP value", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://rp.example.test:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
+	}
+}
+
+func TestLoadConfigAdaptsLegacyConfigAliases(t *testing.T) {
+	t.Parallel()
+
+	configJSON := `{
+		"azure": {
+			"targetAgentPoolName": "pool1",
+			"bootstrapToken": {
+				"token": "abcdef.0123456789abcdef"
+			},
+			"targetCluster": {
+				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+			}
+		},
+		"kubernetes": {
+			"version": "1.30.1"
+		},
+		"containerd": {
+			"version": "2.1.0"
+		},
+		"runc": {
+			"version": "1.3.0"
+		},
+		"cni": {
+			"version": "1.6.0"
+		},
+		"node": {
+			"kubelet": {
+				"serverURL": "https://legacy.example.test:443",
+				"dnsServiceIP": "10.0.0.10",
+				"caCertData": "bGVnYWN5LWNh"
+			}
+		}
+	}`
+
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig() unexpected error: %v", err)
+	}
+
+	if cfg.Components.Kubernetes != "1.30.1" {
+		t.Fatalf("Components.Kubernetes = %q, want legacy value", cfg.Components.Kubernetes)
+	}
+	if cfg.Components.Containerd != "2.1.0" {
+		t.Fatalf("Components.Containerd = %q, want legacy value", cfg.Components.Containerd)
+	}
+	if cfg.Components.Runc != "1.3.0" {
+		t.Fatalf("Components.Runc = %q, want legacy value", cfg.Components.Runc)
+	}
+	if cfg.Networking.CNIVersion != "1.6.0" {
+		t.Fatalf("Networking.CNIVersion = %q, want legacy value", cfg.Networking.CNIVersion)
+	}
+	if cfg.Networking.DNSServiceIP != "10.0.0.10" {
+		t.Fatalf("Networking.DNSServiceIP = %q, want legacy value", cfg.Networking.DNSServiceIP)
+	}
+	if cfg.Node.Kubelet.ClusterFQDN != "legacy.example.test:443" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q, want legacy host", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://legacy.example.test:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
 	}
 }
 
@@ -665,43 +1193,66 @@ func TestValidateAzureResourceID(t *testing.T) {
 }
 
 func TestPopulateTargetClusterInfoFromConfig(t *testing.T) {
-	config := &Config{
-		Azure: AzureConfig{
-			TargetCluster: &TargetClusterConfig{
-				ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-				Location:   "eastus",
-			},
+	t.Parallel()
+
+	const resourceID = "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+
+	tests := []struct {
+		name     string
+		location string
+	}{
+		{
+			name:     "location present",
+			location: "eastus",
+		},
+		{
+			name: "location omitted",
 		},
 	}
 
-	populateTargetClusterInfoFromConfig(config)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	expected := TargetClusterConfig{
-		ResourceID:        "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-		Location:          "eastus",
-		Name:              "test-cluster",
-		ResourceGroup:     "test-rg",
-		SubscriptionID:    "12345678-1234-1234-1234-123456789012",
-		NodeResourceGroup: "MC_test-rg_test-cluster_eastus",
-	}
+			config := &Config{
+				Azure: AzureConfig{
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: resourceID,
+						Location:   tt.location,
+					},
+				},
+			}
 
-	if config.Azure.TargetCluster.Name != expected.Name {
-		t.Errorf("Expected Name %s, got %s", expected.Name, config.Azure.TargetCluster.Name)
-	}
-	if config.Azure.TargetCluster.ResourceGroup != expected.ResourceGroup {
-		t.Errorf("Expected ResourceGroup %s, got %s", expected.ResourceGroup, config.Azure.TargetCluster.ResourceGroup)
-	}
-	if config.Azure.TargetCluster.SubscriptionID != expected.SubscriptionID {
-		t.Errorf("Expected SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.TargetCluster.SubscriptionID)
-	}
-	if config.Azure.TargetCluster.NodeResourceGroup != expected.NodeResourceGroup {
-		t.Errorf("Expected NodeResourceGroup %s, got %s", expected.NodeResourceGroup, config.Azure.TargetCluster.NodeResourceGroup)
-	}
-	if config.Azure.TargetCluster.Location != expected.Location {
-		t.Errorf("Expected Location %s, got %s", expected.Location, config.Azure.TargetCluster.Location)
-	}
-	if config.Azure.TargetCluster.ResourceID != expected.ResourceID {
-		t.Errorf("Expected ResourceID %s, got %s", expected.ResourceID, config.Azure.TargetCluster.ResourceID)
+			populateTargetClusterInfoFromConfig(config)
+
+			expected := TargetClusterConfig{
+				ResourceID:     resourceID,
+				Location:       tt.location,
+				Name:           "test-cluster",
+				ResourceGroup:  "test-rg",
+				SubscriptionID: "12345678-1234-1234-1234-123456789012",
+			}
+
+			if config.Azure.TargetCluster.Name != expected.Name {
+				t.Errorf("Expected Name %s, got %s", expected.Name, config.Azure.TargetCluster.Name)
+			}
+			if config.Azure.TargetCluster.ResourceGroup != expected.ResourceGroup {
+				t.Errorf("Expected ResourceGroup %s, got %s", expected.ResourceGroup, config.Azure.TargetCluster.ResourceGroup)
+			}
+			if config.Azure.TargetCluster.SubscriptionID != expected.SubscriptionID {
+				t.Errorf("Expected SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.TargetCluster.SubscriptionID)
+			}
+			if config.Azure.SubscriptionID != expected.SubscriptionID {
+				t.Errorf("Expected Azure SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.SubscriptionID)
+			}
+			if config.Azure.TargetCluster.Location != expected.Location {
+				t.Errorf("Expected Location %s, got %s", expected.Location, config.Azure.TargetCluster.Location)
+			}
+			if config.Azure.TargetCluster.ResourceID != expected.ResourceID {
+				t.Errorf("Expected ResourceID %s, got %s", expected.ResourceID, config.Azure.TargetCluster.ResourceID)
+			}
+		})
 	}
 }
 
@@ -729,6 +1280,7 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 					"subscriptionId": "12345678-1234-1234-1234-123456789012",
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
+					"targetAgentPoolName": "aksflexnodes",
 					"managedIdentity": {},
 					"targetCluster": {
 						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
@@ -747,6 +1299,7 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 					"subscriptionId": "12345678-1234-1234-1234-123456789012",
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
+					"targetAgentPoolName": "aksflexnodes",
 					"managedIdentity": {
 						"clientId": "87654321-4321-4321-4321-210987654321"
 					},
@@ -767,6 +1320,7 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 					"subscriptionId": "12345678-1234-1234-1234-123456789012",
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
+					"targetAgentPoolName": "aksflexnodes",
 					"managedIdentity": {
 						"clientId": ""
 					},
@@ -787,6 +1341,7 @@ func TestManagedIdentityConfiguration(t *testing.T) {
 					"subscriptionId": "12345678-1234-1234-1234-123456789012",
 					"tenantId": "12345678-1234-1234-1234-123456789012",
 					"cloud": "AzurePublicCloud",
+					"targetAgentPoolName": "aksflexnodes",
 					"bootstrapToken": {
 						"token": "abcdef.0123456789abcdef"
 					},
@@ -888,8 +1443,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -905,8 +1460,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -923,8 +1478,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -941,8 +1496,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -959,8 +1514,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1014,8 +1569,8 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1162,14 +1717,41 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "only one authentication method can be enabled at a time",
+			errMsg:  "only one Azure authentication method can be enabled at a time",
 		},
 		{
-			name: "bootstrap token and service principal together fails",
+			name: "bootstrap token and managed identity together passes",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
-					TenantID:       "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "bootstrap token and service principal together passes",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					BootstrapToken: &BootstrapTokenConfig{
 						Token: "abcdef.0123456789abcdef",
@@ -1181,7 +1763,6 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 					},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-						Location:   "eastus",
 					},
 				},
 				Agent: AgentConfig{
@@ -1189,13 +1770,37 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
+			wantErr: false,
+		},
+		{
+			name: "service principal and managed identity together fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					ServicePrincipal: &ServicePrincipalConfig{
+						TenantID:     "12345678-1234-1234-1234-123456789012",
+						ClientID:     "12345678-1234-1234-1234-123456789012",
+						ClientSecret: "test-secret",
+					},
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+			},
 			wantErr: true,
-			errMsg:  "only one authentication method can be enabled at a time",
+			errMsg:  "only one Azure authentication method can be enabled at a time",
 		},
 		{
 			name: "arc and service principal together fails",
@@ -1225,7 +1830,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "only one authentication method can be enabled at a time",
+			errMsg:  "only one Azure authentication method can be enabled at a time",
 		},
 		{
 			name: "no authentication method configured fails",
@@ -1247,7 +1852,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			errMsg:  "at least one authentication method must be configured",
 		},
 		{
-			name: "bootstrap token without serverURL fails",
+			name: "bootstrap token without clusterFQDN fails",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -1271,7 +1876,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "node.kubelet.serverURL is required when using bootstrap token authentication",
+			errMsg:  "node.kubelet.clusterFQDN is required when using bootstrap token authentication",
 		},
 		{
 			name: "bootstrap token without caCertData fails",
@@ -1293,7 +1898,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
 					},
 				},
 			},
@@ -1304,6 +1909,8 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			setTestTargetAgentPoolName(tt.config)
+
 			err := tt.config.validate()
 			if tt.wantErr {
 				if err == nil {
@@ -1320,12 +1927,96 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 	}
 }
 
+func TestValidateBootstrapTokenAPIServerURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		clusterFQDN string
+		wantErr     string
+	}{
+		{
+			name:        "host only is accepted",
+			clusterFQDN: "test-cluster-abc123.hcp.eastus.azmk8s.io",
+		},
+		{
+			name:        "https URL is accepted",
+			clusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+		},
+		{
+			name:        "http URL is rejected",
+			clusterFQDN: "http://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+			wantErr:     "must use https",
+		},
+		{
+			name:        "malformed URL is rejected",
+			clusterFQDN: "://",
+			wantErr:     "must be an absolute https URL",
+		},
+		{
+			name:        "URL with user info is rejected",
+			clusterFQDN: "https://user@test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+			wantErr:     "must not include user info",
+		},
+		{
+			name:        "URL with path is rejected",
+			clusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443/api",
+			wantErr:     "must not include a path, query, or fragment",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ClusterFQDN: tt.clusterFQDN,
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
+			}
+			setTestTargetAgentPoolName(config)
+
+			err := config.validate()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("Validate() expected error but got none")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Validate() error = %v, want error containing %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Validate() unexpected error = %v", err)
+			}
+		})
+	}
+}
+
 // baseAzureJSON is the minimal valid azure config block shared across label tests.
 const baseAzureJSON = `{
 	"azure": {
 		"subscriptionId": "12345678-1234-1234-1234-123456789012",
 		"tenantId": "12345678-1234-1234-1234-123456789012",
 		"cloud": "AzurePublicCloud",
+		"targetAgentPoolName": "aksflexnodes",
 		"bootstrapToken": { "token": "abcdef.0123456789abcdef" },
 		"targetCluster": {
 			"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",

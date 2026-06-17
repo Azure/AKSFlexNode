@@ -13,12 +13,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
+	"github.com/Azure/AKSFlexNode/pkg/azclient"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-)
-
-const (
-	aksFlexNodePoolName = "aksflexnodes"
-	flexNodeTagKey      = "aks-flex-node"
 )
 
 type armMachineClient struct {
@@ -33,11 +29,12 @@ func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error
 	if err != nil {
 		return nil, err
 	}
-	cred, err := getCredential(cfg, logger)
+	clientOpts := azureClientOptionsFromConfig(cfg)
+	cred, err := getCredential(cfg, logger, clientOpts)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ARM credential: %w", err)
 	}
-	var armOpts *arm.ClientOptions // nil = default public ARM endpoint
+	armOpts := &arm.ClientOptions{ClientOptions: clientOpts}
 	client, err := armcontainerservice.NewMachinesClient(machineID.SubscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create machines client: %w", err)
@@ -53,12 +50,8 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 	if err := desired.validate(); err != nil {
 		return nil, fmt.Errorf("validate goal state: %w", err)
 	}
-	flexNodeTagValue := "true"
 	params := armcontainerservice.Machine{
 		Properties: &armcontainerservice.MachineProperties{
-			Tags: map[string]*string{
-				flexNodeTagKey: &flexNodeTagValue,
-			},
 			Kubernetes: buildK8sProfile(desired),
 		},
 	}
@@ -123,19 +116,48 @@ func (c *armMachineClient) PatchStatus(context.Context, Status) error {
 }
 
 func machineResourceIDFromConfig(cfg *config.Config) (*arm.ResourceID, error) {
-	if cfg.Azure.TargetCluster.ResourceID == "" || cfg.Agent.NodeName == "" || cfg.Kubernetes.Version == "" {
-		return nil, fmt.Errorf("incomplete AKS machine config: clusterResourceId=%q machineName=%q kubernetesVersion=%q",
-			cfg.Azure.TargetCluster.ResourceID, cfg.Agent.NodeName, cfg.Kubernetes.Version)
+	var clusterResourceID, agentPoolName, machineName, k8sVersion string
+	if cfg != nil {
+		if cfg.Azure.TargetCluster != nil {
+			clusterResourceID = cfg.Azure.TargetCluster.ResourceID
+		}
+		agentPoolName = strings.TrimSpace(cfg.Azure.TargetAgentPoolName)
+		machineName = cfg.Agent.NodeName
+		k8sVersion = cfg.Components.Kubernetes
 	}
-	machineResourceID := strings.TrimRight(cfg.Azure.TargetCluster.ResourceID, "/") + "/agentPools/" + aksFlexNodePoolName + "/machines/" + cfg.Agent.NodeName
+	if clusterResourceID == "" || agentPoolName == "" || machineName == "" || k8sVersion == "" {
+		return nil, fmt.Errorf("incomplete AKS machine config: clusterResourceId=%q targetAgentPoolName=%q machineName=%q kubernetesVersion=%q",
+			clusterResourceID, agentPoolName, machineName, k8sVersion)
+	}
+	machineResourceID := strings.TrimRight(clusterResourceID, "/") + "/agentPools/" + agentPoolName + "/machines/" + machineName
 	machineID, err := arm.ParseResourceID(machineResourceID)
 	if err != nil {
 		return nil, fmt.Errorf("parse AKS machine resource ID %q: %w", machineResourceID, err)
 	}
+	if err := validateMachineResourceID(machineID); err != nil {
+		return nil, err
+	}
 	return machineID, nil
 }
 
-func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredential, error) {
+func validateMachineResourceID(machineID *arm.ResourceID) error {
+	if machineID == nil || machineID.Parent == nil || machineID.Parent.Parent == nil {
+		return fmt.Errorf("invalid AKS machine resource ID: missing machine, agent pool, or cluster segment")
+	}
+	if !strings.EqualFold(machineID.ResourceType.Type, "managedClusters/agentPools/machines") {
+		return fmt.Errorf("invalid AKS machine resource type %q, want managedClusters/agentPools/machines", machineID.ResourceType.Type)
+	}
+	if !strings.EqualFold(machineID.ResourceType.Namespace, "Microsoft.ContainerService") {
+		return fmt.Errorf("invalid AKS machine provider %q, want Microsoft.ContainerService", machineID.ResourceType.Namespace)
+	}
+	return nil
+}
+
+func azureClientOptionsFromConfig(cfg *config.Config) azcore.ClientOptions {
+	return azclient.ClientOptionsFromConfig(cfg)
+}
+
+func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.ClientOptions) (azcore.TokenCredential, error) {
 	switch {
 	case cfg.IsSPConfigured():
 		logger.Debug(
@@ -147,10 +169,10 @@ func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredent
 			cfg.Azure.ServicePrincipal.TenantID,
 			cfg.Azure.ServicePrincipal.ClientID,
 			cfg.Azure.ServicePrincipal.ClientSecret,
-			nil,
+			&azidentity.ClientSecretCredentialOptions{ClientOptions: clientOpts},
 		)
 	case cfg.IsMIConfigured():
-		opts := &azidentity.ManagedIdentityCredentialOptions{}
+		opts := &azidentity.ManagedIdentityCredentialOptions{ClientOptions: clientOpts}
 		if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
 			opts.ID = azidentity.ClientID(cfg.Azure.ManagedIdentity.ClientID)
 			logger.Debug(
@@ -163,20 +185,19 @@ func getCredential(cfg *config.Config, logger *slog.Logger) (azcore.TokenCredent
 		return azidentity.NewManagedIdentityCredential(opts)
 	default:
 		logger.Debug("falling back to default credential for ARM")
-		return azidentity.NewDefaultAzureCredential(nil)
+		return azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{ClientOptions: clientOpts})
 	}
 }
 
 func buildK8sProfile(goal GoalState) *armcontainerservice.MachineKubernetesProfile {
+	// FlexNode RP accepts the registration surface below; local kubelet defaults
+	// are consumed during node bootstrap and must not be sent as Machine fields.
+	maxPods := int32(goal.MaxPods) //nolint:gosec // validated non-negative and small
 	p := &armcontainerservice.MachineKubernetesProfile{
 		OrchestratorVersion: &goal.KubernetesVersion,
-		MaxPods:             new(int32(goal.MaxPods)), //nolint:gosec // validated non-negative and small
+		MaxPods:             &maxPods,
 		NodeLabels:          stringPointerMap(goal.NodeLabels),
 		NodeTaints:          stringPointerSlice(goal.NodeTaints),
-		KubeletConfig: &armcontainerservice.KubeletConfig{
-			ImageGcHighThreshold: new(int32(goal.KubeletConfig.ImageGCHighThreshold)), //nolint:gosec // validated non-negative and small
-			ImageGcLowThreshold:  new(int32(goal.KubeletConfig.ImageGCLowThreshold)),  //nolint:gosec // validated non-negative and small
-		},
 	}
 	return p
 }

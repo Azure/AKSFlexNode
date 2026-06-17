@@ -18,6 +18,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/hybridcompute/armhybridcompute"
 	"github.com/google/uuid"
 
+	"github.com/Azure/AKSFlexNode/pkg/azclient"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilaz"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
@@ -94,18 +95,15 @@ func (t *installArcTask) ensureAuthentication(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	scope, err := t.cfg.Azure.ResourceManagerTokenScope()
-	if err != nil {
-		return err
-	}
-	_, err = getAccessToken(ctx, cred, scope)
+	_, err = getAccessToken(ctx, cred, azclient.ResourceManagerTokenScopeFromConfig(t.cfg))
 	return err
 }
 
 func (t *installArcTask) getCredential() (azcore.TokenCredential, error) {
 	var sources []azcore.TokenCredential
+	clientOpts := azclient.ClientOptionsFromConfig(t.cfg)
 
-	cred, err := azidentity.NewManagedIdentityCredential(nil)
+	cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{ClientOptions: clientOpts})
 	if err == nil {
 		sources = append(sources, cred)
 	} else {
@@ -113,14 +111,20 @@ func (t *installArcTask) getCredential() (azcore.TokenCredential, error) {
 		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "Arc managed identity", Err: err})
 	}
 
-	defaultCred, err := azidentity.NewDefaultAzureCredential(nil)
+	defaultCred, err := azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{
+		ClientOptions: clientOpts,
+		TenantID:      t.cfg.Azure.TenantID,
+	})
 	if err == nil {
 		sources = append(sources, defaultCred)
 	} else {
 		sources = append(sources, &utilaz.CredentialErrorReporter{CredentialType: "default Azure", Err: err})
 	}
 
-	cliCred, err := azidentity.NewAzureCLICredential(nil)
+	cliCred, err := azidentity.NewAzureCLICredential(&azidentity.AzureCLICredentialOptions{
+		Subscription: t.cfg.Azure.SubscriptionID,
+		TenantID:     t.cfg.Azure.TenantID,
+	})
 	if err == nil {
 		sources = append(sources, cliCred)
 	} else {
@@ -208,16 +212,17 @@ func (t *installArcTask) setUpClients(ctx context.Context) error {
 	}
 
 	subID := t.cfg.Azure.SubscriptionID
+	armOpts := azclient.ARMClientOptionsFromConfig(t.cfg)
 
-	t.hybridComputeClient, err = armhybridcompute.NewMachinesClient(subID, cred, nil)
+	t.hybridComputeClient, err = armhybridcompute.NewMachinesClient(subID, cred, armOpts)
 	if err != nil {
 		return fmt.Errorf("create hybrid compute client: %w", err)
 	}
-	t.mcClient, err = armcontainerservice.NewManagedClustersClient(subID, cred, nil)
+	t.mcClient, err = armcontainerservice.NewManagedClustersClient(subID, cred, armOpts)
 	if err != nil {
 		return fmt.Errorf("create managed clusters client: %w", err)
 	}
-	t.roleAssignmentsClient, err = armauthorization.NewRoleAssignmentsClient(subID, cred, nil)
+	t.roleAssignmentsClient, err = armauthorization.NewRoleAssignmentsClient(subID, cred, armOpts)
 	if err != nil {
 		return fmt.Errorf("create role assignments client: %w", err)
 	}
@@ -284,6 +289,9 @@ func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 		"--subscription-id", cfg.Azure.SubscriptionID,
 		"--resource-name", arcConfig.MachineName,
 	}
+	if cloudName := azclient.AzcmagentCloudNameFromConfig(cfg); cloudName != "" {
+		args = append(args, "--cloud", cloudName)
+	}
 
 	for key, value := range arcConfig.Tags {
 		args = append(args, "--tags", fmt.Sprintf("%s=%s", key, value))
@@ -294,11 +302,7 @@ func (t *installArcTask) runArcAgentConnect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("obtain credential for azcmagent: %w", err)
 	}
-	scope, err := t.cfg.Azure.ResourceManagerTokenScope()
-	if err != nil {
-		return err
-	}
-	accessToken, err := getAccessToken(ctx, cred, scope)
+	accessToken, err := getAccessToken(ctx, cred, azclient.ResourceManagerTokenScopeFromConfig(cfg))
 	if err != nil {
 		return fmt.Errorf("get access token: %w", err)
 	}

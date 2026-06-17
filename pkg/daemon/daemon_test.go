@@ -13,7 +13,7 @@ func TestBootstrapCredentialRESTConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{}
-	cfg.Node.Kubelet.ServerURL = "https://example.test"
+	cfg.Node.Kubelet.ClusterFQDN = "https://example.test"
 	cfg.Node.Kubelet.CACertData = base64.StdEncoding.EncodeToString([]byte("ca"))
 	cfg.Azure.BootstrapToken = &config.BootstrapTokenConfig{Token: "token.value"}
 
@@ -21,7 +21,7 @@ func TestBootstrapCredentialRESTConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bootstrapCredentialRESTConfig: %v", err)
 	}
-	if restCfg.Host != cfg.Node.Kubelet.ServerURL || restCfg.BearerToken != cfg.Azure.BootstrapToken.Token {
+	if restCfg.Host != cfg.Node.Kubelet.ClusterFQDN || restCfg.BearerToken != cfg.Azure.BootstrapToken.Token {
 		t.Fatalf("rest config = %#v", restCfg)
 	}
 }
@@ -30,10 +30,10 @@ func TestBootstrapCredentialRESTConfigExecCredential(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{}
-	cfg.Node.Kubelet.ServerURL = "https://example.test"
+	cfg.Node.Kubelet.ClusterFQDN = "https://example.test"
 	cfg.Node.Kubelet.CACertData = base64.StdEncoding.EncodeToString([]byte("ca"))
 	cfg.Azure.ServicePrincipal = &config.ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret"}
-	cfg.Kubernetes.Version = "1.34.0"
+	cfg.Components.Kubernetes = "1.34.0"
 
 	restCfg, err := bootstrapCredentialRESTConfig(cfg)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestBootstrapCredentialRESTConfigRequiresCredential(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{}
-	cfg.Node.Kubelet.ServerURL = "https://example.test"
+	cfg.Node.Kubelet.ClusterFQDN = "https://example.test"
 	cfg.Node.Kubelet.CACertData = base64.StdEncoding.EncodeToString([]byte("ca"))
 
 	_, err := bootstrapCredentialRESTConfig(cfg)

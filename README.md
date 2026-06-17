@@ -36,6 +36,7 @@ On your workstation, save the config helper script, setup node RBAC permissions,
 RESOURCE_GROUP="<resource-group>"
 CLUSTER_NAME="<cluster-name>"
 SUBSCRIPTION_ID="<subscription-id>"
+AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
 chmod +x ./aks-flex-config
@@ -49,6 +50,7 @@ chmod +x ./aks-flex-config
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```
@@ -65,7 +67,8 @@ The rendered config should look like this. Comments are shown here only to expla
   "azure": {
     "subscriptionId": "<subscription-id>", // Azure subscription that owns the AKS cluster.
     "tenantId": "<tenant-id>", // Microsoft Entra tenant for the subscription.
-    "cloud": "AzurePublicCloud", // Azure cloud environment.
+    "resourceManagerEndpoint": "https://management.azure.com", // Azure Resource Manager endpoint for ARM calls.
+    "targetAgentPoolName": "<agent-pool-name>", // AKS agent pool used for FlexNode machine registration.
     "bootstrapToken": {
       "token": "<token-id>.<token-secret>" // Kubernetes bootstrap token created by generate-node-config.
     },
@@ -77,15 +80,18 @@ The rendered config should look like this. Comments are shown here only to expla
   },
   "node": {
     "kubelet": {
-      "serverURL": "https://<aks-api-server>", // AKS API server endpoint.
+      "clusterFQDN": "<aks-api-server-fqdn>", // AKS API server FQDN.
       "caCertData": "<base64-ca-data>" // Cluster CA bundle from kubeconfig.
     }
+  },
+  "networking": {
+    "dnsServiceIP": "<cluster-dns-service-ip>" // Cluster DNS service IP from the AKS network profile.
   },
   "agent": {
     "logLevel": "info", // Agent log verbosity.
     "logDir": "/var/log/aks-flex-node" // Host log directory.
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" } // Kubelet version to install.
+  "components": { "kubernetes": "<aks-kubernetes-version>" } // Kubelet version to install.
 }
 ```
 

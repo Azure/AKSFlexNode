@@ -12,6 +12,10 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
+
+RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com"
+DEFAULT_AGENT_POOL_NAME = "aksflexnodes"
 
 
 def log_info(message: str) -> None:
@@ -132,7 +136,8 @@ def cluster_metadata(args: argparse.Namespace) -> dict[str, str]:
         "resource_id": run(["az", "aks", "show", *aks, "--query", "id", "-o", "tsv"], capture=True),
         "location": run(["az", "aks", "show", *aks, "--query", "location", "-o", "tsv"], capture=True),
         "kubernetes_version": run(
-            ["az", "aks", "show", *aks, "--query", "kubernetesVersion", "-o", "tsv"], capture=True
+            ["az", "aks", "show", *aks, "--query", "currentKubernetesVersion || kubernetesVersion", "-o", "tsv"],
+            capture=True,
         ),
         "dns_service_ip": run(
             ["az", "aks", "show", *aks, "--query", "networkProfile.dnsServiceIp", "-o", "tsv"], capture=True
@@ -140,11 +145,26 @@ def cluster_metadata(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def agent_pool_name(args: argparse.Namespace) -> str:
+    return (args.agent_pool_name or "").strip() or DEFAULT_AGENT_POOL_NAME
+
+
+def cluster_fqdn_from_server_url(server_url: str) -> str:
+    server_url = server_url.strip()
+    if not server_url:
+        return ""
+    parsed = urlsplit(server_url)
+    if parsed.scheme and parsed.netloc:
+        return parsed.netloc
+    return server_url
+
+
 def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str]) -> dict[str, object]:
     azure: dict[str, object] = {
         "subscriptionId": metadata["subscription_id"],
         "tenantId": metadata["tenant_id"],
-        "cloud": "AzurePublicCloud",
+        "resourceManagerEndpoint": RESOURCE_MANAGER_ENDPOINT,
+        "targetAgentPoolName": metadata["agent_pool_name"],
         "targetCluster": {
             "resourceId": metadata["resource_id"],
             "location": metadata["location"],
@@ -153,7 +173,7 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
     config: dict[str, object] = {
         "azure": azure,
         "agent": {"logLevel": "info", "logDir": "/var/log/aks-flex-node"},
-        "kubernetes": {"version": metadata["kubernetes_version"]},
+        "components": {"kubernetes": metadata["kubernetes_version"]},
     }
 
     if mode == "bootstrap-token":
@@ -178,9 +198,12 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
         )
         azure["bootstrapToken"] = {"token": token}
         azure["arc"] = {"enabled": False}
-        kubelet_config = {"serverURL": server_url, "caCertData": ca_cert_data}
+        kubelet_config = {
+            "clusterFQDN": cluster_fqdn_from_server_url(server_url),
+            "caCertData": ca_cert_data,
+        }
         if metadata["dns_service_ip"]:
-            kubelet_config["dnsServiceIP"] = metadata["dns_service_ip"]
+            config["networking"] = {"dnsServiceIP": metadata["dns_service_ip"]}
         config["node"] = {"kubelet": kubelet_config}
     elif mode == "identity":
         managed_identity = {}
@@ -230,6 +253,7 @@ def generate_node_config(args: argparse.Namespace) -> None:
     require_command("kubectl") if args.bootstrap_token else None
     mode = auth_mode(args)
     metadata = cluster_metadata(args)
+    metadata["agent_pool_name"] = agent_pool_name(args)
     config = render_config(args, mode, metadata)
     write_config(config, args.output)
 
@@ -249,6 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     generate = subparsers.add_parser("generate-node-config", help="Render a Flex Node config.")
     add_cluster_args(generate)
+    generate.add_argument(
+        "--agent-pool-name",
+        default=DEFAULT_AGENT_POOL_NAME,
+        help=f"AKS agent pool name written to azure.targetAgentPoolName (default: {DEFAULT_AGENT_POOL_NAME}).",
+    )
     generate.add_argument("--bootstrap-token", action="store_true")
     generate.add_argument("--identity", action="store_true")
     generate.add_argument("--service-principal", action="store_true")

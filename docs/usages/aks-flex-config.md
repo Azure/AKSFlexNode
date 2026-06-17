@@ -26,6 +26,7 @@ Most commands use the same AKS cluster selectors:
 RESOURCE_GROUP="<resource-group>"
 CLUSTER_NAME="<cluster-name>"
 SUBSCRIPTION_ID="<subscription-id>"
+AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 ```
 
 | Flag | Required | Description |
@@ -52,6 +53,11 @@ This applies the bootstrap-related `ClusterRoleBinding` objects for the `system:
 `generate-node-config` fetches AKS metadata and renders a config file. It requires exactly one auth mode.
 
 Use `--output <path>` to write a config file with mode `0600`. If omitted, the config is written to stdout.
+The helper writes `azure.resourceManagerEndpoint` with the public ARM endpoint and writes the selected agent pool name to `azure.targetAgentPoolName`. If `--agent-pool-name` is omitted, it defaults to the historical `aksflexnodes` pool name.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--agent-pool-name` | no | FlexNode agent pool name written into the generated config. Defaults to `aksflexnodes`. |
 
 ### Bootstrap Token
 
@@ -60,11 +66,12 @@ Use `--output <path>` to write a config file with mode `0600`. If omitted, the c
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```
 
-Bootstrap-token mode creates a Kubernetes bootstrap token `Secret`, reads the AKS API server and CA data from kubeconfig, and includes those values in the generated config.
+Bootstrap-token mode creates a Kubernetes bootstrap token `Secret`, reads the AKS API server and CA data from kubeconfig, and includes those values plus the AKS DNS service IP in the generated config.
 
 ### Managed Identity
 
@@ -73,6 +80,7 @@ Bootstrap-token mode creates a Kubernetes bootstrap token `Secret`, reads the AK
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --identity \
   --output ./aks-flex-node-config.json
 ```
@@ -84,6 +92,7 @@ For user-assigned managed identity, pass the client ID with `--username`:
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --identity \
   --username "<managed-identity-client-id>" \
   --output ./aks-flex-node-config.json
@@ -98,6 +107,7 @@ Service principal flags follow the `az login --service-principal` convention:
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --service-principal \
   --username "<client-id>" \
   --password "<client-secret>" \
@@ -114,6 +124,7 @@ Service principal flags follow the `az login --service-principal` convention:
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --arc \
   --arc-machine-name "<arc-machine-name>" \
   --arc-resource-group "<arc-resource-group>" \
