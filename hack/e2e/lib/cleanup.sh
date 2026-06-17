@@ -53,15 +53,18 @@ _collect_vm_logs() {
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
 
   remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
-machine_error="$(mktemp)"
-trap 'rm -f "${machine_error}"' EXIT
-machine="$(sudo python3 - <<'PY' 2>"${machine_error}"
+service="node-problem-detector.service"
+machine="$(sudo python3 - <<'PY'
 import json
 import sys
 
 try:
     with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
-        print(json.load(state).get("activeMachine", ""))
+        active_machine = json.load(state).get("activeMachine", "")
+    if active_machine:
+        print(active_machine)
+    else:
+        print("daemon state does not include activeMachine", file=sys.stderr)
 except FileNotFoundError as exc:
     print(f"daemon state not found: {exc}", file=sys.stderr)
 except json.JSONDecodeError as exc:
@@ -70,21 +73,15 @@ except PermissionError as exc:
     print(f"daemon state permission denied: {exc}", file=sys.stderr)
 PY
 )"
-if [ -s "${machine_error}" ]; then
-  echo "warning: unable to read active machine from daemon state"
-  cat "${machine_error}"
-fi
-rm -f "${machine_error}"
-trap - EXIT
 if [ -n "${machine}" ]; then
-  echo "=== node-problem-detector.service logs (${machine}) ==="
+  echo "=== ${service} logs (${machine}) ==="
   # Match the agent and kubelet log depth; NPD entries are sparse but useful across node lifecycle phases.
-  sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 500 --no-pager || \
-    echo "warning: failed to collect node-problem-detector logs from ${machine}"
+  sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u "${service}" -n 500 --no-pager || \
+    echo "warning: failed to collect ${service} logs from ${machine}"
 else
   echo "warning: active machine unknown; falling back to host journal"
-  sudo journalctl -u node-problem-detector.service -n 500 --no-pager || \
-    echo "warning: failed to collect node-problem-detector logs from host"
+  sudo journalctl -u "${service}" -n 500 --no-pager || \
+    echo "warning: failed to collect ${service} logs from host"
 fi
 REMOTE
 
