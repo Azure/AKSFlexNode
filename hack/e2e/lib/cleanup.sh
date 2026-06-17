@@ -53,8 +53,8 @@ _collect_vm_logs() {
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
 
   remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
-service="node-problem-detector.service"
-machine="$(sudo python3 - <<'PY'
+npd_service="node-problem-detector.service"
+active_machine="$(sudo python3 - <<'PY'
 import json
 import sys
 
@@ -73,15 +73,15 @@ except PermissionError as exc:
     print(f"daemon state permission denied: {exc}", file=sys.stderr)
 PY
 )"
-if [ -n "${machine}" ]; then
-  echo "=== ${service} logs (${machine}) ==="
+if [ -n "${active_machine}" ]; then
+  echo "=== ${npd_service} logs (${active_machine}) ==="
   # Match the agent and kubelet log depth; NPD entries are sparse but useful across node lifecycle phases.
-  sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u "${service}" -n 500 --no-pager || \
-    echo "warning: failed to collect ${service} logs from ${machine}"
+  sudo systemd-run --machine="${active_machine}" --quiet --pipe journalctl -u "${npd_service}" -n 500 --no-pager || \
+    echo "warning: failed to collect ${npd_service} logs from ${active_machine}"
 else
   echo "warning: active machine unknown; falling back to host journal"
-  sudo journalctl -u "${service}" -n 500 --no-pager || \
-    echo "warning: failed to collect ${service} logs from host"
+  sudo journalctl -u "${npd_service}" -n 500 --no-pager || \
+    echo "warning: failed to collect ${npd_service} logs from host"
 fi
 REMOTE
 
