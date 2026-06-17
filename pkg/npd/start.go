@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -21,8 +22,7 @@ import (
 var serviceTemplate string
 
 const (
-	KubeletKubeconfigPath = "/var/lib/kubelet/kubelet/kubeconfig"
-	systemdUnitNPD        = "node-problem-detector.service"
+	systemdUnitNPD = "node-problem-detector.service"
 )
 
 var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
@@ -42,7 +42,7 @@ func Start(cfg *config.Config, log *slog.Logger, machineDir, machineName string)
 	return &startTask{
 		log:            log,
 		apiServer:      cfg.Node.Kubelet.ServerURL,
-		kubeconfigPath: KubeletKubeconfigPath,
+		kubeconfigPath: goalstates.KubeletKubeconfigPath,
 		machineDir:     machineDir,
 		machineName:    machineName,
 	}
