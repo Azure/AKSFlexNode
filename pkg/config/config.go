@@ -489,6 +489,9 @@ func (c *AzureConfig) validateResourceManagerEndpointURL() error {
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("azure.resourceManagerEndpoint must use https")
 	}
+	if parsed.User != nil || parsed.Port() != "" {
+		return fmt.Errorf("azure.resourceManagerEndpoint must not include user info or port")
+	}
 	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("azure.resourceManagerEndpoint must not include a path, query, or fragment")
 	}

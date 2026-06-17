@@ -382,6 +382,40 @@ func TestValidate(t *testing.T) {
 			errMsg:  "azure.resourceManagerEndpoint must not include a path, query, or fragment",
 		},
 		{
+			name: "resource manager endpoint with port fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "https://management.azure.com:443",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must not include user info or port",
+		},
+		{
+			name: "resource manager endpoint with user info fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "https://user:pass@management.azure.com",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must not include user info or port",
+		},
+		{
 			name: "explicit resource manager endpoint is preserved",
 			config: &Config{
 				Azure: AzureConfig{
