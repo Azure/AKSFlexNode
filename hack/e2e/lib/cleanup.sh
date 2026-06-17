@@ -52,17 +52,27 @@ _collect_vm_logs() {
      fi" \
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
 
-  remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>/dev/null || true
-machine="$(sudo python3 - <<'PY' 2>/dev/null || true
+  remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
+machine_error="$(mktemp)"
+machine="$(sudo python3 - <<'PY' 2>"${machine_error}" || true
 import json
 with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
     print(json.load(state).get("activeMachine", ""))
 PY
 )"
+if [ -s "${machine_error}" ]; then
+  echo "warning: unable to read active machine from daemon state"
+  cat "${machine_error}"
+fi
+rm -f "${machine_error}"
 if [ -n "${machine}" ]; then
-  sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 500 --no-pager 2>/dev/null
+  echo "=== node-problem-detector.service logs (${machine}) ==="
+  sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 500 --no-pager || \
+    echo "warning: failed to collect node-problem-detector logs from ${machine}"
 else
-  sudo journalctl -u node-problem-detector.service -n 500 --no-pager 2>/dev/null
+  echo "warning: active machine unknown; falling back to host journal"
+  sudo journalctl -u node-problem-detector.service -n 500 --no-pager || \
+    echo "warning: failed to collect host node-problem-detector logs"
 fi
 REMOTE
 
