@@ -313,7 +313,7 @@ func TestValidate(t *testing.T) {
 			errMsg:  "invalid azure.targetCluster.resourceId:",
 		},
 		{
-			name: "azure cloud no longer controls resource manager endpoint",
+			name: "unknown azure cloud falls back to public endpoint",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -329,6 +329,57 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantErr: false,
+		},
+		{
+			name: "resource manager endpoint without scheme fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "management.azure.com",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must be an absolute https URL",
+		},
+		{
+			name: "resource manager endpoint with http fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "http://management.azure.com",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must use https",
+		},
+		{
+			name: "resource manager endpoint with path fails",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID:             "12345678-1234-1234-1234-123456789012",
+					ResourceManagerEndpointURL: "https://management.azure.com/path",
+					ManagedIdentity: &ManagedIdentityConfig{
+						ClientID: "12345678-1234-1234-1234-123456789012",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "azure.resourceManagerEndpoint must not include a path, query, or fragment",
 		},
 		{
 			name: "explicit resource manager endpoint is preserved",

@@ -453,6 +453,9 @@ func (c *AzureConfig) validate() error {
 	if c.SubscriptionID == "" {
 		return fmt.Errorf("azure.subscriptionId is required")
 	}
+	if err := c.validateResourceManagerEndpointURL(); err != nil {
+		return err
+	}
 	if err := c.ServicePrincipal.validate(); err != nil {
 		return err
 	}
@@ -473,6 +476,24 @@ func (c *AzureConfig) requiresTenantID() bool {
 		return false
 	}
 	return c.Arc.Enabled
+}
+
+func (c *AzureConfig) validateResourceManagerEndpointURL() error {
+	endpoint := strings.TrimSpace(c.ResourceManagerEndpointURL)
+	if endpoint == "" {
+		return fmt.Errorf("azure.resourceManagerEndpoint is required")
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("azure.resourceManagerEndpoint must be an absolute https URL")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("azure.resourceManagerEndpoint must use https")
+	}
+	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("azure.resourceManagerEndpoint must not include a path, query, or fragment")
+	}
+	return nil
 }
 
 func (c *ServicePrincipalConfig) validate() error {

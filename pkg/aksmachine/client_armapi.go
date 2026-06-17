@@ -129,7 +129,16 @@ func machineResourceIDFromConfig(cfg *config.Config) (*arm.ResourceID, error) {
 		return nil, fmt.Errorf("incomplete AKS machine config: clusterResourceId=%q targetAgentPoolName=%q machineName=%q kubernetesVersion=%q",
 			clusterResourceID, agentPoolName, machineName, k8sVersion)
 	}
-	machineResourceID := strings.TrimRight(clusterResourceID, "/") + "/agentPools/" + agentPoolName + "/machines/" + machineName
+	clusterID, err := arm.ParseResourceID(strings.TrimRight(clusterResourceID, "/"))
+	if err != nil {
+		return nil, fmt.Errorf("parse AKS cluster resource ID %q: %w", clusterResourceID, err)
+	}
+	agentPoolResourceID := clusterID.String() + "/agentPools/" + agentPoolName
+	agentPoolID, err := arm.ParseResourceID(agentPoolResourceID)
+	if err != nil {
+		return nil, fmt.Errorf("parse AKS agent pool resource ID %q: %w", agentPoolResourceID, err)
+	}
+	machineResourceID := agentPoolID.String() + "/machines/" + machineName
 	machineID, err := arm.ParseResourceID(machineResourceID)
 	if err != nil {
 		return nil, fmt.Errorf("parse AKS machine resource ID %q: %w", machineResourceID, err)
