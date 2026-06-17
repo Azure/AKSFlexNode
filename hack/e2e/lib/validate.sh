@@ -112,7 +112,7 @@ with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
 PY
 )"
   fi
-  if [[ -n "${active_machine}" ]] && machinectl show "${active_machine}" &>/dev/null; then
+  if [[ -n "${active_machine}" ]] && sudo machinectl show "${active_machine}" &>/dev/null; then
     status="$(sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl is-active node-problem-detector.service 2>"${status_error}" || true)"
     if [[ "${status}" == "active" ]]; then
       echo "node-problem-detector.service is active in ${active_machine}"
@@ -128,7 +128,7 @@ PY
     if [[ -s "${status_error}" ]]; then
       cat "${status_error}"
     fi
-    machinectl list --no-pager || true
+    sudo machinectl list --no-pager || true
     if [[ -n "${active_machine:-}" ]]; then
       sudo systemd-run --machine="${active_machine}" --quiet --pipe systemctl status node-problem-detector.service --no-pager -l || true
       sudo systemd-run --machine="${active_machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 50 --no-pager || true

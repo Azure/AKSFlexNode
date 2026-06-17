@@ -20,6 +20,7 @@ const wantKubeconfigPath = "/var/lib/kubelet/kubeconfig"
 // TestCanonicalKubeletKubeconfigPath guards the value of the shared library
 // constant so the doubled-segment typo cannot reappear from a dependency bump.
 func TestCanonicalKubeletKubeconfigPath(t *testing.T) {
+	t.Parallel()
 	if goalstates.KubeletKubeconfigPath != wantKubeconfigPath {
 		t.Fatalf("goalstates.KubeletKubeconfigPath = %q, want %q",
 			goalstates.KubeletKubeconfigPath, wantKubeconfigPath)
@@ -32,6 +33,7 @@ func TestCanonicalKubeletKubeconfigPath(t *testing.T) {
 // (the externally observable artifact) rather than internal fields keeps the
 // test stable across refactors while still exercising the Start() wiring.
 func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
+	t.Parallel()
 	machineDir := t.TempDir()
 	nodeStart := &goalstates.NodeStart{
 		MachineDir:  machineDir,
