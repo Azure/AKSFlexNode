@@ -74,6 +74,8 @@ if [ -s "${machine_error}" ]; then
   echo "warning: unable to read active machine from daemon state"
   cat "${machine_error}"
 fi
+rm -f "${machine_error}"
+trap - EXIT
 if [ -n "${machine}" ]; then
   echo "=== node-problem-detector.service logs (${machine}) ==="
   # Match the agent and kubelet log depth; NPD entries are sparse but useful across node lifecycle phases.
@@ -82,7 +84,7 @@ if [ -n "${machine}" ]; then
 else
   echo "warning: active machine unknown; falling back to host journal"
   sudo journalctl -u node-problem-detector.service -n 500 --no-pager || \
-    echo "warning: failed to collect host node-problem-detector logs"
+    echo "warning: failed to collect node-problem-detector logs from host"
 fi
 REMOTE
 
