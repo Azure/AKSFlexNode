@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -33,12 +32,16 @@ func TestCanonicalKubeletKubeconfigPath(t *testing.T) {
 // (the externally observable artifact) rather than internal fields keeps the
 // test stable across refactors while still exercising the Start() wiring.
 func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Agent.NodeName = "vm-e2e-token-1781659839"
-	cfg.Node.Kubelet.ServerURL = "https://example.hcp.westus.azmk8s.io:443"
-
 	machineDir := t.TempDir()
-	task, ok := Start(cfg, slog.Default(), machineDir, "kube1").(*startTask)
+	nodeStart := &goalstates.NodeStart{
+		MachineDir:  machineDir,
+		MachineName: "kube1",
+		NodeName:    "vm-e2e-token-1781659839",
+		Kubelet: goalstates.Kubelet{
+			APIServer: "https://example.hcp.westus.azmk8s.io:443",
+		},
+	}
+	task, ok := Start(slog.Default(), nodeStart).(*startTask)
 	if !ok {
 		t.Fatalf("Start did not return *startTask")
 	}
