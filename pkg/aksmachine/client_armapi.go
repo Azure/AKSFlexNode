@@ -129,21 +129,28 @@ func machineResourceIDFromConfig(cfg *config.Config) (*arm.ResourceID, error) {
 		return nil, fmt.Errorf("incomplete AKS machine config: clusterResourceId=%q targetAgentPoolName=%q machineName=%q kubernetesVersion=%q",
 			clusterResourceID, agentPoolName, machineName, k8sVersion)
 	}
-	clusterID, err := arm.ParseResourceID(strings.TrimRight(clusterResourceID, "/"))
-	if err != nil {
-		return nil, fmt.Errorf("parse AKS cluster resource ID %q: %w", clusterResourceID, err)
-	}
-	agentPoolResourceID := clusterID.String() + "/agentPools/" + agentPoolName
-	agentPoolID, err := arm.ParseResourceID(agentPoolResourceID)
-	if err != nil {
-		return nil, fmt.Errorf("parse AKS agent pool resource ID %q: %w", agentPoolResourceID, err)
-	}
-	machineResourceID := agentPoolID.String() + "/machines/" + machineName
+	machineResourceID := strings.TrimRight(clusterResourceID, "/") + "/agentPools/" + agentPoolName + "/machines/" + machineName
 	machineID, err := arm.ParseResourceID(machineResourceID)
 	if err != nil {
 		return nil, fmt.Errorf("parse AKS machine resource ID %q: %w", machineResourceID, err)
 	}
+	if err := validateMachineResourceID(machineID); err != nil {
+		return nil, err
+	}
 	return machineID, nil
+}
+
+func validateMachineResourceID(machineID *arm.ResourceID) error {
+	if machineID == nil || machineID.Parent == nil || machineID.Parent.Parent == nil {
+		return fmt.Errorf("invalid AKS machine resource ID: missing machine, agent pool, or cluster segment")
+	}
+	if !strings.EqualFold(machineID.ResourceType.Type, "managedClusters/agentPools/machines") {
+		return fmt.Errorf("invalid AKS machine resource type %q, want managedClusters/agentPools/machines", machineID.ResourceType.Type)
+	}
+	if !strings.EqualFold(machineID.ResourceType.Namespace, "Microsoft.ContainerService") {
+		return fmt.Errorf("invalid AKS machine provider %q, want Microsoft.ContainerService", machineID.ResourceType.Namespace)
+	}
+	return nil
 }
 
 func azureClientOptionsFromConfig(cfg *config.Config) azcore.ClientOptions {

@@ -61,6 +61,15 @@ func TestMachineResourceIDFromConfig(t *testing.T) {
 			wantPool: "flexnode-edge",
 		},
 		{
+			name: "rejects non cluster resource ID",
+			cfg: testARMConfig(
+				"/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/test-vm",
+				"flex-node-1",
+				"1.34.0",
+			),
+			wantErr: "invalid AKS machine resource type",
+		},
+		{
 			name: "missing cluster resource ID",
 			cfg: testARMConfig(
 				"",
