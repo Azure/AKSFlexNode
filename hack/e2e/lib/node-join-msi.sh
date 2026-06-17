@@ -54,7 +54,7 @@ node_join_msi() {
   },
   "node": {
     "kubelet": {
-      "serverURL": "${server_url}",
+      "clusterFQDN": "${server_url}",
       "caCertData": "${ca_cert_data}"
     }
   },
@@ -63,9 +63,11 @@ node_join_msi() {
     "logDir": "/var/log/aks-flex-node",
     "e2eMode": true
   },
-  "kubernetes": { "version": "${E2E_KUBERNETES_VERSION}" },
-  "containerd": { "version": "${E2E_CONTAINERD_VERSION}" },
-  "runc": { "version": "${E2E_RUNC_VERSION}" }
+  "components": {
+    "kubernetes": "${E2E_KUBERNETES_VERSION}",
+    "containerd": "${E2E_CONTAINERD_VERSION}",
+    "runc": "${E2E_RUNC_VERSION}"
+  }
 }
 EOF
 

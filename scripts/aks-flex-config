@@ -136,7 +136,8 @@ def cluster_metadata(args: argparse.Namespace) -> dict[str, str]:
         "resource_id": run(["az", "aks", "show", *aks, "--query", "id", "-o", "tsv"], capture=True),
         "location": run(["az", "aks", "show", *aks, "--query", "location", "-o", "tsv"], capture=True),
         "kubernetes_version": run(
-            ["az", "aks", "show", *aks, "--query", "kubernetesVersion", "-o", "tsv"], capture=True
+            ["az", "aks", "show", *aks, "--query", "currentKubernetesVersion || kubernetesVersion", "-o", "tsv"],
+            capture=True,
         ),
         "dns_service_ip": run(
             ["az", "aks", "show", *aks, "--query", "networkProfile.dnsServiceIp", "-o", "tsv"], capture=True

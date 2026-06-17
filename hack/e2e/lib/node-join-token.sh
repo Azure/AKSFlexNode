@@ -65,9 +65,11 @@ node_join_token() {
     '.agent.logLevel = "debug"
       | .agent.e2eMode = true
       | .node.kubelet.nodeIP = $nodeIP
-      | .kubernetes.version = $kubernetesVersion
-      | .containerd.version = $containerdVersion
-      | .runc.version = $runcVersion' \
+      | .components = (.components // {})
+      | .components.kubernetes = $kubernetesVersion
+      | .components.containerd = $containerdVersion
+      | .components.runc = $runcVersion
+      | del(.kubernetes, .containerd, .runc)' \
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
 
