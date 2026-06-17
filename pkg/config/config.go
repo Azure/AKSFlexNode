@@ -420,10 +420,30 @@ func (c *Config) validateBootstrapToken() error {
 	if c.APIServerURL() == "" {
 		return fmt.Errorf("node.kubelet.clusterFQDN is required when using bootstrap token authentication")
 	}
+	if err := validateKubeAPIServerURL(c.APIServerURL()); err != nil {
+		return fmt.Errorf("node.kubelet.clusterFQDN must resolve to a valid kube-apiserver URL: %w", err)
+	}
 	if c.Node.Kubelet.CACertData == "" {
 		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
 	}
 
+	return nil
+}
+
+func validateKubeAPIServerURL(serverURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("must be an absolute https URL")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("must use https")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("must not include user info")
+	}
+	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("must not include a path, query, or fragment")
+	}
 	return nil
 }
 

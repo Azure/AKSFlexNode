@@ -71,7 +71,7 @@ The helper writes `azure.resourceManagerEndpoint` with the public ARM endpoint a
   --output ./aks-flex-node-config.json
 ```
 
-Bootstrap-token mode creates a Kubernetes bootstrap token `Secret`, reads the AKS API server and CA data from kubeconfig, and includes those values in the generated config.
+Bootstrap-token mode creates a Kubernetes bootstrap token `Secret`, reads the AKS API server and CA data from kubeconfig, and includes those values plus the AKS DNS service IP in the generated config.
 
 ### Managed Identity
 

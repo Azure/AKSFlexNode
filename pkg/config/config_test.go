@@ -1927,6 +1927,89 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 	}
 }
 
+func TestValidateBootstrapTokenAPIServerURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		clusterFQDN string
+		wantErr     string
+	}{
+		{
+			name:        "host only is accepted",
+			clusterFQDN: "test-cluster-abc123.hcp.eastus.azmk8s.io",
+		},
+		{
+			name:        "https URL is accepted",
+			clusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+		},
+		{
+			name:        "http URL is rejected",
+			clusterFQDN: "http://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+			wantErr:     "must use https",
+		},
+		{
+			name:        "malformed URL is rejected",
+			clusterFQDN: "://",
+			wantErr:     "must be an absolute https URL",
+		},
+		{
+			name:        "URL with user info is rejected",
+			clusterFQDN: "https://user@test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+			wantErr:     "must not include user info",
+		},
+		{
+			name:        "URL with path is rejected",
+			clusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443/api",
+			wantErr:     "must not include a path, query, or fragment",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					BootstrapToken: &BootstrapTokenConfig{
+						Token: "abcdef.0123456789abcdef",
+					},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+				Agent: AgentConfig{
+					LogLevel: "info",
+				},
+				Node: NodeConfig{
+					Kubelet: KubeletConfig{
+						ClusterFQDN: tt.clusterFQDN,
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+					},
+				},
+			}
+			setTestTargetAgentPoolName(config)
+
+			err := config.validate()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("Validate() expected error but got none")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Validate() error = %v, want error containing %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Validate() unexpected error = %v", err)
+			}
+		})
+	}
+}
+
 // baseAzureJSON is the minimal valid azure config block shared across label tests.
 const baseAzureJSON = `{
 	"azure": {

@@ -323,6 +323,7 @@ show_next_steps() {
     "resourceManagerEndpoint": "https://management.azure.com",
     "targetAgentPoolName": "YOUR_AGENT_POOL_NAME",
     "arc": {
+      "enabled": true,
       "machineName": "YOUR_MACHINE_NAME",
       "tags": {
         "node-type": "edge"

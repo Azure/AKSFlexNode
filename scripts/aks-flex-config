@@ -12,6 +12,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com"
 DEFAULT_AGENT_POOL_NAME = "aksflexnodes"
@@ -147,6 +148,16 @@ def agent_pool_name(args: argparse.Namespace) -> str:
     return (args.agent_pool_name or "").strip() or DEFAULT_AGENT_POOL_NAME
 
 
+def cluster_fqdn_from_server_url(server_url: str) -> str:
+    server_url = server_url.strip()
+    if not server_url:
+        return ""
+    parsed = urlsplit(server_url)
+    if parsed.scheme and parsed.netloc:
+        return parsed.netloc
+    return server_url
+
+
 def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str]) -> dict[str, object]:
     azure: dict[str, object] = {
         "subscriptionId": metadata["subscription_id"],
@@ -161,7 +172,7 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
     config: dict[str, object] = {
         "azure": azure,
         "agent": {"logLevel": "info", "logDir": "/var/log/aks-flex-node"},
-        "kubernetes": {"version": metadata["kubernetes_version"]},
+        "components": {"kubernetes": metadata["kubernetes_version"]},
     }
 
     if mode == "bootstrap-token":
@@ -186,9 +197,12 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
         )
         azure["bootstrapToken"] = {"token": token}
         azure["arc"] = {"enabled": False}
-        kubelet_config = {"serverURL": server_url, "caCertData": ca_cert_data}
+        kubelet_config = {
+            "clusterFQDN": cluster_fqdn_from_server_url(server_url),
+            "caCertData": ca_cert_data,
+        }
         if metadata["dns_service_ip"]:
-            kubelet_config["dnsServiceIP"] = metadata["dns_service_ip"]
+            config["networking"] = {"dnsServiceIP": metadata["dns_service_ip"]}
         config["node"] = {"kubelet": kubelet_config}
     elif mode == "identity":
         managed_identity = {}

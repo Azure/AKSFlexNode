@@ -84,6 +84,9 @@ The rendered config should look like this. Comments are shown here only to expla
       "caCertData": "<base64-ca-data>" // Cluster CA bundle from kubeconfig.
     }
   },
+  "networking": {
+    "dnsServiceIP": "<cluster-dns-service-ip>" // Cluster DNS service IP from the AKS network profile.
+  },
   "agent": {
     "logLevel": "info", // Agent log verbosity.
     "logDir": "/var/log/aks-flex-node" // Host log directory.

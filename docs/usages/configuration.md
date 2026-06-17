@@ -172,6 +172,9 @@ Use this for the quickstart path where the host joins with Kubernetes TLS bootst
       "caCertData": "<base64-ca-data>"
     }
   },
+  "networking": {
+    "dnsServiceIP": "<cluster-dns-service-ip>"
+  },
   "agent": {
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
