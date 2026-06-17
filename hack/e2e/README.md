@@ -197,6 +197,6 @@ Logs are collected under `$E2E_WORK_DIR/logs/`.
 - **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `jq`, `kubectl`, `ssh`, `scp`, and `openssl` are available.
 - **Azure auth failures:** run `az account show` and `az login` if needed.
 - **SSH failures:** inspect `state.json` for VM public IPs and confirm the SSH key configured by `E2E_SSH_KEY_FILE` is available.
-- **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, and containerd logs.
+- **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, containerd, and node-problem-detector logs.
 - **Repave failures:** check `aks-flex-node-agent` logs, `machinectl list`, and kubelet versions inside `kube1` and `kube2`.
 - **Leftover resources:** run `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/run.sh cleanup`.

@@ -52,6 +52,20 @@ _collect_vm_logs() {
      fi" \
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
 
+  remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>/dev/null || true
+machine="$(sudo python3 - <<'PY' 2>/dev/null || true
+import json
+with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
+    print(json.load(state).get("activeMachine", ""))
+PY
+)"
+if [ -n "${machine}" ]; then
+  sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 500 --no-pager 2>/dev/null
+else
+  sudo journalctl -u node-problem-detector.service -n 500 --no-pager 2>/dev/null
+fi
+REMOTE
+
   # Collect CNI config and nspawn machine state for networking diagnostics.
   # Read directly from the nspawn rootfs at /var/lib/machines/kube1/.
   local kube1_root="/var/lib/machines/kube1"
