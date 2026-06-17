@@ -90,11 +90,20 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `false` |
 | `agent.machineOperationMode` | string | MachineOperation handling mode. | `auto` |
 
-## Kubernetes
+## Components
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `kubernetes.version` | string | Kubernetes version for kubelet and related binaries. For AKS joins, use the target cluster version. | `1.34.3` |
+| `components.kubernetes` | string | Kubernetes version for kubelet and related binaries. For AKS joins, use the target cluster version. | `1.34.3` |
+| `components.containerd` | string | Optional containerd version override. | `2.0.4` |
+| `components.runc` | string | Optional runc version override. | `1.1.12` |
+
+## Networking
+
+| Name | Type | Description | Sample Value |
+|------|------|-------------|--------------|
+| `networking.dnsServiceIP` | string | Cluster DNS service IP. | `10.0.0.10` |
+| `networking.cniVersion` | string | Optional CNI plugin version override. | `v1.6.2` |
 
 ## Node
 
@@ -112,8 +121,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `node.kubelet.verbosity` | integer | Kubelet log verbosity. | `2` |
 | `node.kubelet.imageGCHighThreshold` | integer | Image garbage collection high threshold percentage. | `85` |
 | `node.kubelet.imageGCLowThreshold` | integer | Image garbage collection low threshold percentage. | `80` |
-| `node.kubelet.dnsServiceIP` | string | Cluster DNS service IP. | `10.0.0.10` |
-| `node.kubelet.serverURL` | string | Kubernetes API server URL. Required for bootstrap token mode. | `https://example.hcp.canadacentral.azmk8s.io:443` |
+| `node.kubelet.clusterFQDN` | string | Kubernetes API server FQDN. Required for bootstrap token mode. | `example.hcp.canadacentral.azmk8s.io` |
 | `node.kubelet.caCertData` | string | Base64-encoded cluster CA data. Required for bootstrap token mode. | `<base64-ca-data>` |
 | `node.kubelet.nodeIP` | string | Optional node IP override for kubelet `--node-ip`. | `10.0.0.4` |
 
@@ -121,27 +129,20 @@ At least one join or Azure authentication method must be configured. `azure.boot
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `containerd.version` | string | Optional containerd version override. | `2.0.4` |
-| `runc.version` | string | Optional runc version override. | `1.1.12` |
-| `cni.version` | string | Optional CNI plugin version override. | `v1.6.2` |
 | `npd.version` | string | Optional node-problem-detector version override. | `v1.35.1` |
 
-## AKS RP Bootstrap Data
+## Legacy Config Compatibility
 
-AKS Flex Node also accepts the bootstrap payload returned by the AKS RP `listBootstrapData` operation. At load time, RP-only fields are normalized into the runtime config shape and are not retained as separate config sections.
+AKS Flex Node temporarily accepts the pre-RP config shape used by earlier builds. At load time, these legacy fields are adapted into the RP-shaped runtime config.
 
-| RP Bootstrap Field | Runtime Config Field |
-|--------------------|----------------------|
-| `components.kubernetes` | `kubernetes.version` |
-| `components.containerd` | `containerd.version` |
-| `components.runc` | `runc.version` |
-| `networking.dnsServiceIP` | `node.kubelet.dnsServiceIP` |
-| `networking.cniVersion` | `cni.version` |
-| `node.maxPods` | `node.maxPods` |
-| `node.labels` | `node.labels` |
-| `node.taints` | `node.taints` |
-| `node.kubelet.clusterFQDN` | `node.kubelet.serverURL` |
-| `node.kubelet.caCertData` | `node.kubelet.caCertData` |
+| Legacy Field | Runtime Config Field |
+|--------------|----------------------|
+| `kubernetes.version` | `components.kubernetes` |
+| `containerd.version` | `components.containerd` |
+| `runc.version` | `components.runc` |
+| `cni.version` | `networking.cniVersion` |
+| `node.kubelet.dnsServiceIP` | `networking.dnsServiceIP` |
+| `node.kubelet.serverURL` | `node.kubelet.clusterFQDN` |
 
 ## Sample Configurations
 
@@ -167,7 +168,7 @@ Use this for the quickstart path where the host joins with Kubernetes TLS bootst
   },
   "node": {
     "kubelet": {
-      "serverURL": "https://<aks-api-server>",
+      "clusterFQDN": "<aks-api-server-fqdn>",
       "caCertData": "<base64-ca-data>"
     }
   },
@@ -175,7 +176,7 @@ Use this for the quickstart path where the host joins with Kubernetes TLS bootst
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -201,7 +202,7 @@ Use this for an Azure VM with a managed identity assigned.
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -234,7 +235,7 @@ Use this when the host should be registered as an Arc-enabled server.
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -264,7 +265,7 @@ Use this when the host should authenticate with static service principal credent
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -274,17 +275,13 @@ Add these sections when you need to pin runtime component versions explicitly.
 
 ```json
 {
-  "kubernetes": {
-    "version": "1.34.3"
+  "components": {
+    "kubernetes": "1.34.3",
+    "containerd": "2.0.4",
+    "runc": "1.1.12"
   },
-  "containerd": {
-    "version": "2.0.4"
-  },
-  "runc": {
-    "version": "1.1.12"
-  },
-  "cni": {
-    "version": "v1.6.2"
+  "networking": {
+    "cniVersion": "v1.6.2"
   },
   "npd": {
     "version": "v1.35.1"

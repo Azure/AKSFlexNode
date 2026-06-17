@@ -53,7 +53,7 @@ func GoalStateFromConfig(cfg *config.Config) (GoalState, error) {
 	// ARM contract exposes it; leaving it empty makes bootstrap state differ from
 	// machineFromARM's Kubernetes-version fallback.
 	goal := GoalState{
-		KubernetesVersion: cfg.Kubernetes.Version,
+		KubernetesVersion: cfg.Components.Kubernetes,
 		MaxPods:           cfg.Node.MaxPods,
 		NodeLabels:        maps.Clone(cfg.Node.Labels),
 		NodeTaints:        slices.Clone(cfg.Node.Taints),

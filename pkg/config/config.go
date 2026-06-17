@@ -44,10 +44,8 @@ const (
 type Config struct {
 	Azure       AzureConfig       `json:"azure"`
 	Agent       AgentConfig       `json:"agent"`
-	Containerd  ContainerdConfig  `json:"containerd"`
-	Kubernetes  KubernetesConfig  `json:"kubernetes"`
-	CNI         CNIConfig         `json:"cni"`
-	Runc        RuncConfig        `json:"runc"`
+	Components  ComponentsConfig  `json:"components"`
+	Networking  NetworkingConfig  `json:"networking"`
 	Node        NodeConfig        `json:"node"`
 	Npd         NPDConfig         `json:"npd"`
 	HostRouting HostRoutingConfig `json:"hostRouting"`
@@ -161,19 +159,12 @@ type AgentConfig struct {
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
 }
 
-// KubernetesConfig holds configuration settings for Kubernetes components.
-type KubernetesConfig struct {
-	Version string `json:"version"`
-}
-
-// RuncConfig holds configuration settings for the container runtime (runc).
-type RuncConfig struct {
-	Version string `json:"version"`
-}
-
-// ContainerdConfig holds configuration settings for the containerd runtime.
-type ContainerdConfig struct {
-	Version string `json:"version"`
+// ComponentsConfig is the AKS RP component version contract used by the agent
+// at runtime.
+type ComponentsConfig struct {
+	Kubernetes string `json:"kubernetes,omitempty"`
+	Containerd string `json:"containerd,omitempty"`
+	Runc       string `json:"runc,omitempty"`
 }
 
 // NodeConfig holds configuration settings for the Kubernetes node.
@@ -192,15 +183,15 @@ type KubeletConfig struct {
 	Verbosity            int    `json:"verbosity"`
 	ImageGCHighThreshold int    `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int    `json:"imageGCLowThreshold"`
-	DNSServiceIP         string `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
-	ServerURL            string `json:"serverURL"`    // Kubernetes API server URL
-	CACertData           string `json:"caCertData"`   // Base64-encoded CA certificate data
-	NodeIP               string `json:"nodeIP"`       // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+	ClusterFQDN          string `json:"clusterFQDN,omitempty"` // Kubernetes API server FQDN from AKS RP bootstrap data
+	CACertData           string `json:"caCertData"`            // Base64-encoded CA certificate data
+	NodeIP               string `json:"nodeIP"`                // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
 }
 
-// CNIPathsConfig holds file system paths related to CNI plugins and configurations.
-type CNIConfig struct {
-	Version string `json:"version"`
+// NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
+type NetworkingConfig struct {
+	DNSServiceIP string `json:"dnsServiceIP,omitempty"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	CNIVersion   string `json:"cniVersion,omitempty"`
 }
 
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
@@ -277,8 +268,8 @@ func LoadConfig(configPath string) (*Config, error) {
 	if err := json.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
-	if err := adaptPoolBootstrapData(data, config); err != nil {
-		return nil, fmt.Errorf("adapt RP bootstrap data: %w", err)
+	if err := adaptLegacyConfigData(data, config); err != nil {
+		return nil, fmt.Errorf("adapt legacy config data: %w", err)
 	}
 
 	if err := config.validate(); err != nil {
@@ -378,15 +369,15 @@ func (c *Config) setNodeDefaults() {
 	// Set default DNS service IP if not provided
 	// Note: This default assumes the standard AKS service CIDR (10.0.0.0/16)
 	// Clusters with custom service CIDRs should specify this value explicitly
-	if c.Node.Kubelet.DNSServiceIP == "" {
-		c.Node.Kubelet.DNSServiceIP = "10.0.0.10"
+	if c.Networking.DNSServiceIP == "" {
+		c.Networking.DNSServiceIP = "10.0.0.10"
 	}
 }
 
 func (c *Config) setRuncDefaults() {
 	// Set default runc configuration if not provided
-	if c.Runc.Version == "" {
-		c.Runc.Version = "1.1.12"
+	if c.Components.Runc == "" {
+		c.Components.Runc = "1.1.12"
 	}
 }
 
@@ -425,16 +416,24 @@ func (c *Config) validateBootstrapToken() error {
 		return err
 	}
 
-	// When using bootstrap token, serverURL and caCertData are required in kubelet config
+	// When using bootstrap token, clusterFQDN and caCertData are required in kubelet config
 	// because there's no Azure authentication to fetch them
-	if c.Node.Kubelet.ServerURL == "" {
-		return fmt.Errorf("node.kubelet.serverURL is required when using bootstrap token authentication")
+	if c.APIServerURL() == "" {
+		return fmt.Errorf("node.kubelet.clusterFQDN is required when using bootstrap token authentication")
 	}
 	if c.Node.Kubelet.CACertData == "" {
 		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
 	}
 
 	return nil
+}
+
+// APIServerURL returns the kube-apiserver URL derived from the RP cluster FQDN.
+func (c *Config) APIServerURL() string {
+	if c == nil {
+		return ""
+	}
+	return serverURLFromClusterFQDN(c.Node.Kubelet.ClusterFQDN)
 }
 
 func (c *AzureConfig) validate() error {

@@ -123,7 +123,7 @@ func machineResourceIDFromConfig(cfg *config.Config) (*arm.ResourceID, error) {
 		}
 		agentPoolName = strings.TrimSpace(cfg.Azure.TargetAgentPoolName)
 		machineName = cfg.Agent.NodeName
-		k8sVersion = cfg.Kubernetes.Version
+		k8sVersion = cfg.Components.Kubernetes
 	}
 	if clusterResourceID == "" || agentPoolName == "" || machineName == "" || k8sVersion == "" {
 		return nil, fmt.Errorf("incomplete AKS machine config: clusterResourceId=%q targetAgentPoolName=%q machineName=%q kubernetesVersion=%q",

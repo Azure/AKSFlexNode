@@ -80,7 +80,7 @@ The rendered config should look like this. Comments are shown here only to expla
   },
   "node": {
     "kubelet": {
-      "serverURL": "https://<aks-api-server>", // AKS API server endpoint.
+      "clusterFQDN": "<aks-api-server-fqdn>", // AKS API server FQDN.
       "caCertData": "<base64-ca-data>" // Cluster CA bundle from kubeconfig.
     }
   },
@@ -88,7 +88,7 @@ The rendered config should look like this. Comments are shown here only to expla
     "logLevel": "info", // Agent log verbosity.
     "logDir": "/var/log/aks-flex-node" // Host log directory.
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" } // Kubelet version to install.
+  "components": { "kubernetes": "<aks-kubernetes-version>" } // Kubelet version to install.
 }
 ```
 

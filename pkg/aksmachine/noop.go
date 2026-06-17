@@ -16,8 +16,8 @@ type noopClient struct {
 // machine implementation is available.
 func NewNoopClient(cfg *config.Config) MachineClient {
 	version := "initial"
-	if cfg != nil && cfg.Kubernetes.Version != "" {
-		version = cfg.Kubernetes.Version
+	if cfg != nil && cfg.Components.Kubernetes != "" {
+		version = cfg.Components.Kubernetes
 	}
 	return &noopClient{goal: GoalState{KubernetesVersion: version, SettingsVersion: version}}
 }

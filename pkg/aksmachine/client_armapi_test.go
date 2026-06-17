@@ -379,8 +379,8 @@ func testARMConfig(clusterResourceID, nodeName, kubernetesVersion string) *confi
 		Agent: config.AgentConfig{
 			NodeName: nodeName,
 		},
-		Kubernetes: config.KubernetesConfig{
-			Version: kubernetesVersion,
+		Components: config.ComponentsConfig{
+			Kubernetes: kubernetesVersion,
 		},
 	}
 }

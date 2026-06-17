@@ -41,7 +41,7 @@ type startTask struct {
 func Start(cfg *config.Config, log *slog.Logger, machineDir, machineName string) phases.Task {
 	return &startTask{
 		log:            log,
-		apiServer:      cfg.Node.Kubelet.ServerURL,
+		apiServer:      cfg.APIServerURL(),
 		kubeconfigPath: KubeletKubeconfigPath,
 		machineDir:     machineDir,
 		machineName:    machineName,

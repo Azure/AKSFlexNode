@@ -36,7 +36,7 @@ func TestSetDefaults(t *testing.T) {
 					c.Agent.LogDir == "/var/log/aks-flex-node" &&
 					c.Agent.MachineOperationMode == "auto" &&
 					c.Node.MaxPods == 110 &&
-					c.Runc.Version == "1.1.12"
+					c.Components.Runc == "1.1.12"
 			},
 		},
 		{
@@ -215,8 +215,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -238,8 +238,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -399,8 +399,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -469,8 +469,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -497,8 +497,8 @@ func TestValidate(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -569,8 +569,8 @@ func TestValidateDefaultsTargetAgentPoolName(t *testing.T) {
 		},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
-				ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-				CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+				ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+				CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 			},
 		},
 	}
@@ -620,7 +620,7 @@ func TestLoadConfig(t *testing.T) {
 					},
 					"node": {
 						"kubelet": {
-							"serverURL": "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+							"clusterFQDN": "test-cluster-abc123.hcp.eastus.azmk8s.io",
 							"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R"
 						}
 					}
@@ -736,8 +736,11 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if cfg.Azure.ResourceManagerEndpointURL != "https://management.azure.com" {
 		t.Fatalf("Azure.ResourceManagerEndpointURL = %q, want https://management.azure.com", cfg.Azure.ResourceManagerEndpointURL)
 	}
-	if cfg.Node.Kubelet.ServerURL != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
-		t.Fatalf("Node.Kubelet.ServerURL = %q", cfg.Node.Kubelet.ServerURL)
+	if cfg.Node.Kubelet.ClusterFQDN != "test-cluster-dns-12345678.hcp.eastus.azmk8s.io" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
 	}
 	if cfg.Node.Kubelet.CACertData != "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t" {
 		t.Fatalf("Node.Kubelet.CACertData = %q", cfg.Node.Kubelet.CACertData)
@@ -825,27 +828,30 @@ func TestLoadConfigPoolBootstrapDataMissingOptionalFields(t *testing.T) {
 	if cfg.Azure.TargetAgentPoolName != "pool1" {
 		t.Fatalf("Azure.TargetAgentPoolName = %q, want pool1", cfg.Azure.TargetAgentPoolName)
 	}
-	if cfg.Node.Kubelet.DNSServiceIP != "10.0.0.10" {
-		t.Fatalf("Node.Kubelet.DNSServiceIP = %q, want default 10.0.0.10", cfg.Node.Kubelet.DNSServiceIP)
+	if cfg.Networking.DNSServiceIP != "10.0.0.10" {
+		t.Fatalf("Node.Kubelet.DNSServiceIP = %q, want default 10.0.0.10", cfg.Networking.DNSServiceIP)
 	}
-	if cfg.Node.Kubelet.ServerURL != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
-		t.Fatalf("Node.Kubelet.ServerURL = %q", cfg.Node.Kubelet.ServerURL)
+	if cfg.Node.Kubelet.ClusterFQDN != "test-cluster-dns-12345678.hcp.eastus.azmk8s.io" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q", cfg.Node.Kubelet.ClusterFQDN)
 	}
-	if cfg.Kubernetes.Version != "1.29.0" {
-		t.Fatalf("Kubernetes.Version = %q, want 1.29.0", cfg.Kubernetes.Version)
+	if cfg.APIServerURL() != "https://test-cluster-dns-12345678.hcp.eastus.azmk8s.io:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
 	}
-	if cfg.Containerd.Version != "" {
-		t.Fatalf("Containerd.Version = %q, want empty when RP omits it", cfg.Containerd.Version)
+	if cfg.Components.Kubernetes != "1.29.0" {
+		t.Fatalf("Kubernetes.Version = %q, want 1.29.0", cfg.Components.Kubernetes)
 	}
-	if cfg.Runc.Version != "1.1.12" {
-		t.Fatalf("Runc.Version = %q, want default 1.1.12", cfg.Runc.Version)
+	if cfg.Components.Containerd != "" {
+		t.Fatalf("Containerd.Version = %q, want empty when RP omits it", cfg.Components.Containerd)
 	}
-	if cfg.CNI.Version != "" {
-		t.Fatalf("CNI.Version = %q, want empty when RP omits it", cfg.CNI.Version)
+	if cfg.Components.Runc != "1.1.12" {
+		t.Fatalf("Runc.Version = %q, want default 1.1.12", cfg.Components.Runc)
+	}
+	if cfg.Networking.CNIVersion != "" {
+		t.Fatalf("CNI.Version = %q, want empty when RP omits it", cfg.Networking.CNIVersion)
 	}
 }
 
-func TestLoadConfigPreservesExistingConfigOverPoolBootstrapAliases(t *testing.T) {
+func TestLoadConfigUsesRPConfigOverLegacyAliases(t *testing.T) {
 	t.Parallel()
 
 	configJSON := `{
@@ -910,23 +916,93 @@ func TestLoadConfigPreservesExistingConfigOverPoolBootstrapAliases(t *testing.T)
 		t.Fatalf("LoadConfig() unexpected error: %v", err)
 	}
 
-	if cfg.Kubernetes.Version != "1.30.1" {
-		t.Fatalf("Kubernetes.Version = %q, want legacy value", cfg.Kubernetes.Version)
+	if cfg.Components.Kubernetes != "9.99.0" {
+		t.Fatalf("Components.Kubernetes = %q, want RP value", cfg.Components.Kubernetes)
 	}
-	if cfg.Containerd.Version != "2.1.0" {
-		t.Fatalf("Containerd.Version = %q, want legacy value", cfg.Containerd.Version)
+	if cfg.Components.Containerd != "9.99.0" {
+		t.Fatalf("Components.Containerd = %q, want RP value", cfg.Components.Containerd)
 	}
-	if cfg.Runc.Version != "1.3.0" {
-		t.Fatalf("Runc.Version = %q, want legacy value", cfg.Runc.Version)
+	if cfg.Components.Runc != "9.99.0" {
+		t.Fatalf("Components.Runc = %q, want RP value", cfg.Components.Runc)
 	}
-	if cfg.CNI.Version != "1.6.0" {
-		t.Fatalf("CNI.Version = %q, want legacy value", cfg.CNI.Version)
+	if cfg.Networking.CNIVersion != "9.99.0" {
+		t.Fatalf("Networking.CNIVersion = %q, want RP value", cfg.Networking.CNIVersion)
 	}
-	if cfg.Node.Kubelet.DNSServiceIP != "10.0.0.10" {
-		t.Fatalf("Node.Kubelet.DNSServiceIP = %q, want legacy value", cfg.Node.Kubelet.DNSServiceIP)
+	if cfg.Networking.DNSServiceIP != "10.42.0.10" {
+		t.Fatalf("Networking.DNSServiceIP = %q, want RP value", cfg.Networking.DNSServiceIP)
 	}
-	if cfg.Node.Kubelet.ServerURL != "https://legacy.example.test:443" {
-		t.Fatalf("Node.Kubelet.ServerURL = %q, want legacy value", cfg.Node.Kubelet.ServerURL)
+	if cfg.Node.Kubelet.ClusterFQDN != "rp.example.test" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q, want RP value", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://rp.example.test:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
+	}
+}
+
+func TestLoadConfigAdaptsLegacyConfigAliases(t *testing.T) {
+	t.Parallel()
+
+	configJSON := `{
+		"azure": {
+			"targetAgentPoolName": "pool1",
+			"bootstrapToken": {
+				"token": "abcdef.0123456789abcdef"
+			},
+			"targetCluster": {
+				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+			}
+		},
+		"kubernetes": {
+			"version": "1.30.1"
+		},
+		"containerd": {
+			"version": "2.1.0"
+		},
+		"runc": {
+			"version": "1.3.0"
+		},
+		"cni": {
+			"version": "1.6.0"
+		},
+		"node": {
+			"kubelet": {
+				"serverURL": "https://legacy.example.test:443",
+				"dnsServiceIP": "10.0.0.10",
+				"caCertData": "bGVnYWN5LWNh"
+			}
+		}
+	}`
+
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig() unexpected error: %v", err)
+	}
+
+	if cfg.Components.Kubernetes != "1.30.1" {
+		t.Fatalf("Components.Kubernetes = %q, want legacy value", cfg.Components.Kubernetes)
+	}
+	if cfg.Components.Containerd != "2.1.0" {
+		t.Fatalf("Components.Containerd = %q, want legacy value", cfg.Components.Containerd)
+	}
+	if cfg.Components.Runc != "1.3.0" {
+		t.Fatalf("Components.Runc = %q, want legacy value", cfg.Components.Runc)
+	}
+	if cfg.Networking.CNIVersion != "1.6.0" {
+		t.Fatalf("Networking.CNIVersion = %q, want legacy value", cfg.Networking.CNIVersion)
+	}
+	if cfg.Networking.DNSServiceIP != "10.0.0.10" {
+		t.Fatalf("Networking.DNSServiceIP = %q, want legacy value", cfg.Networking.DNSServiceIP)
+	}
+	if cfg.Node.Kubelet.ClusterFQDN != "legacy.example.test:443" {
+		t.Fatalf("Node.Kubelet.ClusterFQDN = %q, want legacy host", cfg.Node.Kubelet.ClusterFQDN)
+	}
+	if cfg.APIServerURL() != "https://legacy.example.test:443" {
+		t.Fatalf("APIServerURL = %q", cfg.APIServerURL())
 	}
 }
 
@@ -1313,8 +1389,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1330,8 +1406,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1348,8 +1424,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1366,8 +1442,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1384,8 +1460,8 @@ func TestValidateBootstrapToken(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1439,8 +1515,8 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1610,8 +1686,8 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1640,8 +1716,8 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL:  "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
-						CACertData: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						CACertData:  "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lSQU1kbzBZa0R",
 					},
 				},
 			},
@@ -1722,7 +1798,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			errMsg:  "at least one authentication method must be configured",
 		},
 		{
-			name: "bootstrap token without serverURL fails",
+			name: "bootstrap token without clusterFQDN fails",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -1746,7 +1822,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "node.kubelet.serverURL is required when using bootstrap token authentication",
+			errMsg:  "node.kubelet.clusterFQDN is required when using bootstrap token authentication",
 		},
 		{
 			name: "bootstrap token without caCertData fails",
@@ -1768,7 +1844,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
-						ServerURL: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
+						ClusterFQDN: "https://test-cluster-abc123.hcp.eastus.azmk8s.io:443",
 					},
 				},
 			},

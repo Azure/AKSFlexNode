@@ -19,7 +19,7 @@ const (
 // AgentConfig. The resulting struct can be passed to goalstates.ResolveMachine
 // to produce goal states for the nspawn-based bootstrap phases.
 //
-// cfg.Node.Kubelet.ServerURL and cfg.Node.Kubelet.CACertData must be populated.
+// cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName: machineName,
@@ -29,25 +29,25 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		// OCIImage: "",
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
-			ClusterDNS:   cfg.Node.Kubelet.DNSServiceIP,
-			Version:      cfg.Kubernetes.Version,
+			ClusterDNS:   cfg.Networking.DNSServiceIP,
+			Version:      cfg.Components.Kubernetes,
 		},
 		Kubelet: agentconfig.AgentKubeletConfig{
-			ApiServer:          cfg.Node.Kubelet.ServerURL,
+			ApiServer:          cfg.APIServerURL(),
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
 			Labels:             cfg.Node.Labels,
 			RegisterWithTaints: cfg.Node.Taints,
 		},
 		CRI: agentconfig.CRIConfig{
 			Containerd: agentconfig.ContainerdConfig{
-				Version: cfg.Containerd.Version,
+				Version: cfg.Components.Containerd,
 			},
 			Runc: agentconfig.RuncConfig{
-				Version: cfg.Runc.Version,
+				Version: cfg.Components.Runc,
 			},
 		},
 		CNI: agentconfig.CNIConfig{
-			PluginVersion: cfg.CNI.Version,
+			PluginVersion: cfg.Networking.CNIVersion,
 		},
 	}
 
