@@ -87,12 +87,11 @@ type BootstrapTokenConfig struct {
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
 type TargetClusterConfig struct {
-	ResourceID        string `json:"resourceId"` // Full resource ID of the target AKS cluster
-	Location          string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
-	Name              string // will be populated from ResourceID
-	ResourceGroup     string // will be populated from ResourceID
-	SubscriptionID    string // will be populated from ResourceID
-	NodeResourceGroup string // reserved for explicit AKS node resource group data; not derived from ResourceID
+	ResourceID     string `json:"resourceId"` // Full resource ID of the target AKS cluster
+	Location       string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
+	Name           string // will be populated from ResourceID
+	ResourceGroup  string // will be populated from ResourceID
+	SubscriptionID string // will be populated from ResourceID
 }
 
 // ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.

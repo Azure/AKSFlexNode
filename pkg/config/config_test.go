@@ -1246,9 +1246,6 @@ func TestPopulateTargetClusterInfoFromConfig(t *testing.T) {
 			if config.Azure.SubscriptionID != expected.SubscriptionID {
 				t.Errorf("Expected Azure SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.SubscriptionID)
 			}
-			if config.Azure.TargetCluster.NodeResourceGroup != "" {
-				t.Errorf("Expected NodeResourceGroup to remain empty, got %s", config.Azure.TargetCluster.NodeResourceGroup)
-			}
 			if config.Azure.TargetCluster.Location != expected.Location {
 				t.Errorf("Expected Location %s, got %s", expected.Location, config.Azure.TargetCluster.Location)
 			}
