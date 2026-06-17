@@ -29,7 +29,7 @@ The default `all` command runs:
 1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
 2. Deploy AKS and three VMs with Bicep.
 3. Join all three VMs.
-4. Validate node readiness and run smoke workloads.
+4. Validate node readiness, node-problem-detector status, and run smoke workloads.
 5. Unjoin all Flex Nodes and verify they are absent.
 6. Rejoin all Flex Nodes and validate again.
 7. Run local-machine-driven repave validation.
@@ -51,7 +51,7 @@ The default `all` command runs:
 | `unjoin-msi` | Unjoin only the managed-identity node. |
 | `unjoin-token` | Unjoin only the bootstrap-token node. |
 | `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
-| `validate` | Verify joined nodes and run smoke tests. |
+| `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
 | `upgrade-drift` | Validate local-machine-driven repave to the alternate nspawn side. |
@@ -198,6 +198,6 @@ Logs are collected under `$E2E_WORK_DIR/logs/`.
 - **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `jq`, `kubectl`, `ssh`, `scp`, and `openssl` are available.
 - **Azure auth failures:** run `az account show` and `az login` if needed.
 - **SSH failures:** inspect `state.json` for VM public IPs and confirm the SSH key configured by `E2E_SSH_KEY_FILE` is available.
-- **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, and containerd logs.
+- **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, containerd, and node-problem-detector logs.
 - **Repave failures:** check `aks-flex-node-agent` logs, `machinectl list`, and kubelet versions inside `kube1` and `kube2`.
 - **Leftover resources:** run `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/run.sh cleanup`.

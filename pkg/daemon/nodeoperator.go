@@ -52,7 +52,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
-		npd.Start(cfg, log, gs.RootFS.MachineDir, active.Name),
+		npd.Start(log, gs.NodeStart),
 	).Do(ctx)
 }
 
