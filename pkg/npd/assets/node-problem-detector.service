@@ -3,7 +3,7 @@ Description=Node Problem Detector
 After=network.target
 
 [Service]
-ExecStart={{.NPDBinaryPath}} --apiserver-override="{{.APIServerURL}}?inClusterConfig=false&auth={{.KubeconfigPath}}" --config.system-log-monitor={{.NPDConfigPath}}
+ExecStart={{.NPDBinaryPath}} --hostname-override={{.NodeName}} --apiserver-override="{{.APIServerURL}}?inClusterConfig=false&auth={{.KubeconfigPath}}" --config.system-log-monitor={{.NPDConfigPath}}
 Restart=on-failure
 RestartSec=5s
 

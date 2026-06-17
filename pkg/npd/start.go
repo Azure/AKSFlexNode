@@ -33,6 +33,7 @@ type startTask struct {
 	kubeconfigPath string
 	machineDir     string
 	machineName    string
+	nodeName       string
 }
 
 // Start returns a task that renders the NPD systemd unit file into the
@@ -45,6 +46,7 @@ func Start(cfg *config.Config, log *slog.Logger, machineDir, machineName string)
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
 		machineDir:     machineDir,
 		machineName:    machineName,
+		nodeName:       cfg.Agent.NodeName,
 	}
 }
 
@@ -66,6 +68,7 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 		"APIServerURL":   t.apiServer,
 		"KubeconfigPath": t.kubeconfigPath,
 		"NPDConfigPath":  npdConfigPath,
+		"NodeName":       t.nodeName,
 	}); err != nil {
 		return false, fmt.Errorf("render npd service template: %w", err)
 	}

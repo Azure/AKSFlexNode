@@ -34,6 +34,7 @@ func TestCanonicalKubeletKubeconfigPath(t *testing.T) {
 // test stable across refactors while still exercising the Start() wiring.
 func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 	cfg := &config.Config{}
+	cfg.Agent.NodeName = "vm-e2e-token-1781659839"
 	cfg.Node.Kubelet.ServerURL = "https://example.hcp.westus.azmk8s.io:443"
 
 	machineDir := t.TempDir()
@@ -57,5 +58,8 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 	}
 	if strings.Contains(rendered, "kubelet/kubelet") {
 		t.Fatalf("rendered unit contains doubled 'kubelet' segment:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "--hostname-override=vm-e2e-token-1781659839") {
+		t.Fatalf("rendered unit missing hostname override:\n%s", rendered)
 	}
 }
