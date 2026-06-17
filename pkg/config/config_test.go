@@ -1193,46 +1193,69 @@ func TestValidateAzureResourceID(t *testing.T) {
 }
 
 func TestPopulateTargetClusterInfoFromConfig(t *testing.T) {
-	config := &Config{
-		Azure: AzureConfig{
-			TargetCluster: &TargetClusterConfig{
-				ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-				Location:   "eastus",
-			},
+	t.Parallel()
+
+	const resourceID = "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+
+	tests := []struct {
+		name     string
+		location string
+	}{
+		{
+			name:     "location present",
+			location: "eastus",
+		},
+		{
+			name: "location omitted",
 		},
 	}
 
-	populateTargetClusterInfoFromConfig(config)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	expected := TargetClusterConfig{
-		ResourceID:        "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
-		Location:          "eastus",
-		Name:              "test-cluster",
-		ResourceGroup:     "test-rg",
-		SubscriptionID:    "12345678-1234-1234-1234-123456789012",
-		NodeResourceGroup: "MC_test-rg_test-cluster_eastus",
-	}
+			config := &Config{
+				Azure: AzureConfig{
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: resourceID,
+						Location:   tt.location,
+					},
+				},
+			}
 
-	if config.Azure.TargetCluster.Name != expected.Name {
-		t.Errorf("Expected Name %s, got %s", expected.Name, config.Azure.TargetCluster.Name)
-	}
-	if config.Azure.TargetCluster.ResourceGroup != expected.ResourceGroup {
-		t.Errorf("Expected ResourceGroup %s, got %s", expected.ResourceGroup, config.Azure.TargetCluster.ResourceGroup)
-	}
-	if config.Azure.TargetCluster.SubscriptionID != expected.SubscriptionID {
-		t.Errorf("Expected SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.TargetCluster.SubscriptionID)
-	}
-	if config.Azure.SubscriptionID != expected.SubscriptionID {
-		t.Errorf("Expected Azure SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.SubscriptionID)
-	}
-	if config.Azure.TargetCluster.NodeResourceGroup != expected.NodeResourceGroup {
-		t.Errorf("Expected NodeResourceGroup %s, got %s", expected.NodeResourceGroup, config.Azure.TargetCluster.NodeResourceGroup)
-	}
-	if config.Azure.TargetCluster.Location != expected.Location {
-		t.Errorf("Expected Location %s, got %s", expected.Location, config.Azure.TargetCluster.Location)
-	}
-	if config.Azure.TargetCluster.ResourceID != expected.ResourceID {
-		t.Errorf("Expected ResourceID %s, got %s", expected.ResourceID, config.Azure.TargetCluster.ResourceID)
+			populateTargetClusterInfoFromConfig(config)
+
+			expected := TargetClusterConfig{
+				ResourceID:     resourceID,
+				Location:       tt.location,
+				Name:           "test-cluster",
+				ResourceGroup:  "test-rg",
+				SubscriptionID: "12345678-1234-1234-1234-123456789012",
+			}
+
+			if config.Azure.TargetCluster.Name != expected.Name {
+				t.Errorf("Expected Name %s, got %s", expected.Name, config.Azure.TargetCluster.Name)
+			}
+			if config.Azure.TargetCluster.ResourceGroup != expected.ResourceGroup {
+				t.Errorf("Expected ResourceGroup %s, got %s", expected.ResourceGroup, config.Azure.TargetCluster.ResourceGroup)
+			}
+			if config.Azure.TargetCluster.SubscriptionID != expected.SubscriptionID {
+				t.Errorf("Expected SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.TargetCluster.SubscriptionID)
+			}
+			if config.Azure.SubscriptionID != expected.SubscriptionID {
+				t.Errorf("Expected Azure SubscriptionID %s, got %s", expected.SubscriptionID, config.Azure.SubscriptionID)
+			}
+			if config.Azure.TargetCluster.NodeResourceGroup != "" {
+				t.Errorf("Expected NodeResourceGroup to remain empty, got %s", config.Azure.TargetCluster.NodeResourceGroup)
+			}
+			if config.Azure.TargetCluster.Location != expected.Location {
+				t.Errorf("Expected Location %s, got %s", expected.Location, config.Azure.TargetCluster.Location)
+			}
+			if config.Azure.TargetCluster.ResourceID != expected.ResourceID {
+				t.Errorf("Expected ResourceID %s, got %s", expected.ResourceID, config.Azure.TargetCluster.ResourceID)
+			}
+		})
 	}
 }
 

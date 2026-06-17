@@ -92,7 +92,7 @@ type TargetClusterConfig struct {
 	Name              string // will be populated from ResourceID
 	ResourceGroup     string // will be populated from ResourceID
 	SubscriptionID    string // will be populated from ResourceID
-	NodeResourceGroup string // will be populated from ResourceID
+	NodeResourceGroup string // reserved for explicit AKS node resource group data; not derived from ResourceID
 }
 
 // ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.
@@ -630,8 +630,7 @@ func (c *Config) validateAuthSettings() error {
 
 // populateTargetClusterInfoFromConfig extracts cluster information from the resource ID.
 // Invalid or absent resource IDs are ignored so validation can return the canonical error.
-// TODO: Deprecate this helper; deriving cluster fields from resourceID/location is wrong
-// for cases like custom node resource groups. Use explicit config fields or an Azure lookup instead.
+// TODO: Deprecate this helper; use explicit config fields or an Azure lookup instead.
 func populateTargetClusterInfoFromConfig(cfg *Config) {
 	if cfg == nil || cfg.Azure.TargetCluster == nil {
 		return
@@ -645,16 +644,9 @@ func populateTargetClusterInfoFromConfig(cfg *Config) {
 	resourceGroupName := matches[2]
 	clusterName := matches[3]
 
-	// AKS node resource group follows the pattern: MC_{cluster-resource-group}_{cluster-name}_{location}
-	mcResourceGroup := fmt.Sprintf("MC_%s_%s_%s",
-		resourceGroupName,
-		clusterName,
-		cfg.Azure.TargetCluster.Location)
-
 	cfg.Azure.TargetCluster.Name = clusterName
 	cfg.Azure.TargetCluster.ResourceGroup = resourceGroupName
 	cfg.Azure.TargetCluster.SubscriptionID = subscriptionID
-	cfg.Azure.TargetCluster.NodeResourceGroup = mcResourceGroup
 	if cfg.Azure.SubscriptionID == "" {
 		cfg.Azure.SubscriptionID = subscriptionID
 	}
