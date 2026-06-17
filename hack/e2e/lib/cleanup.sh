@@ -54,19 +54,29 @@ _collect_vm_logs() {
 
   remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
 machine_error="$(mktemp)"
-machine="$(sudo python3 - <<'PY' 2>"${machine_error}" || true
+trap 'rm -f "${machine_error}"' EXIT
+machine="$(sudo python3 - <<'PY' 2>"${machine_error}"
 import json
-with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
-    print(json.load(state).get("activeMachine", ""))
+import sys
+
+try:
+    with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
+        print(json.load(state).get("activeMachine", ""))
+except FileNotFoundError as exc:
+    print(f"daemon state not found: {exc}", file=sys.stderr)
+except json.JSONDecodeError as exc:
+    print(f"daemon state is not valid JSON: {exc}", file=sys.stderr)
+except PermissionError as exc:
+    print(f"daemon state permission denied: {exc}", file=sys.stderr)
 PY
 )"
 if [ -s "${machine_error}" ]; then
   echo "warning: unable to read active machine from daemon state"
   cat "${machine_error}"
 fi
-rm -f "${machine_error}"
 if [ -n "${machine}" ]; then
   echo "=== node-problem-detector.service logs (${machine}) ==="
+  # Match the agent and kubelet log depth; NPD entries are sparse but useful across node lifecycle phases.
   sudo systemd-run --machine="${machine}" --quiet --pipe journalctl -u node-problem-detector.service -n 500 --no-pager || \
     echo "warning: failed to collect node-problem-detector logs from ${machine}"
 else
