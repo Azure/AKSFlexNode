@@ -23,10 +23,12 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `azure.subscriptionId` | string | Azure subscription that owns the target AKS cluster. | `44654aed-2753-4b88-9142-af7132933b6b` |
-| `azure.tenantId` | string | Microsoft Entra tenant ID for the subscription. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
-| `azure.cloud` | string | Azure cloud environment. Currently only Azure Public Cloud is supported. | `AzurePublicCloud` |
+| `azure.subscriptionId` | string | Optional Azure subscription that owns the target AKS cluster. Defaults from `azure.targetCluster.resourceId` when omitted. | `44654aed-2753-4b88-9142-af7132933b6b` |
+| `azure.tenantId` | string | Microsoft Entra tenant ID. Required only when Azure Arc is enabled. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
+| `azure.cloud` | string | Optional Azure cloud environment label used as a fallback when `azure.resourceManagerEndpoint` is omitted. | `AzurePublicCloud` |
+| `azure.resourceManagerEndpoint` | string | Optional Azure Resource Manager endpoint emitted by RP bootstrap data. When omitted, it is derived from `azure.cloud` and defaults to public Azure. | `https://management.azure.com` |
 | `azure.targetCluster` | object | Target AKS cluster metadata. | `{}` |
+| `azure.targetAgentPoolName` | string | Optional target AKS agent pool for FlexNode machine registration (`TargetAgentPoolName` in the agent config). Defaults to `aksflexnodes`. | `flexnode-edge` |
 
 ## Target Cluster
 
@@ -37,7 +39,7 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 ## Authentication
 
-Exactly one authentication mode must be configured.
+At least one join or Azure authentication method must be configured. `azure.bootstrapToken` can be combined with one Azure authentication method (`azure.arc`, `azure.managedIdentity`, or `azure.servicePrincipal`) so kubelet bootstrap and ARM Machine registration can use different credentials. Only one Azure authentication method can be enabled at a time.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
@@ -89,11 +91,20 @@ Exactly one authentication mode must be configured.
 | `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `false` |
 | `agent.machineOperationMode` | string | MachineOperation handling mode. | `auto` |
 
-## Kubernetes
+## Components
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `kubernetes.version` | string | Kubernetes version for kubelet and related binaries. For AKS joins, use the target cluster version. | `1.34.3` |
+| `components.kubernetes` | string | Kubernetes version for kubelet and related binaries. For AKS joins, use the target cluster version. | `1.34.3` |
+| `components.containerd` | string | Optional containerd version override. | `2.0.4` |
+| `components.runc` | string | Optional runc version override. | `1.1.12` |
+
+## Networking
+
+| Name | Type | Description | Sample Value |
+|------|------|-------------|--------------|
+| `networking.dnsServiceIP` | string | Cluster DNS service IP. | `10.0.0.10` |
+| `networking.cniVersion` | string | Optional CNI plugin version override. | `v1.6.2` |
 
 ## Node
 
@@ -111,8 +122,7 @@ Exactly one authentication mode must be configured.
 | `node.kubelet.verbosity` | integer | Kubelet log verbosity. | `2` |
 | `node.kubelet.imageGCHighThreshold` | integer | Image garbage collection high threshold percentage. | `85` |
 | `node.kubelet.imageGCLowThreshold` | integer | Image garbage collection low threshold percentage. | `80` |
-| `node.kubelet.dnsServiceIP` | string | Cluster DNS service IP. | `10.0.0.10` |
-| `node.kubelet.serverURL` | string | Kubernetes API server URL. Required for bootstrap token mode. | `https://example.hcp.canadacentral.azmk8s.io:443` |
+| `node.kubelet.clusterFQDN` | string | Kubernetes API server FQDN. Required for bootstrap token mode. | `example.hcp.canadacentral.azmk8s.io` |
 | `node.kubelet.caCertData` | string | Base64-encoded cluster CA data. Required for bootstrap token mode. | `<base64-ca-data>` |
 | `node.kubelet.nodeIP` | string | Optional node IP override for kubelet `--node-ip`. | `10.0.0.4` |
 
@@ -120,10 +130,20 @@ Exactly one authentication mode must be configured.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `containerd.version` | string | Optional containerd version override. | `2.0.4` |
-| `runc.version` | string | Optional runc version override. | `1.1.12` |
-| `cni.version` | string | Optional CNI plugin version override. | `v1.6.2` |
 | `npd.version` | string | Optional node-problem-detector version override. | `v1.35.1` |
+
+## Legacy Config Compatibility
+
+AKS Flex Node temporarily accepts the pre-RP config shape used by earlier builds. At load time, these legacy fields are adapted into the RP-shaped runtime config.
+
+| Legacy Field | Runtime Config Field |
+|--------------|----------------------|
+| `kubernetes.version` | `components.kubernetes` |
+| `containerd.version` | `components.containerd` |
+| `runc.version` | `components.runc` |
+| `cni.version` | `networking.cniVersion` |
+| `node.kubelet.dnsServiceIP` | `networking.dnsServiceIP` |
+| `node.kubelet.serverURL` | `node.kubelet.clusterFQDN` |
 
 ## Sample Configurations
 
@@ -136,7 +156,8 @@ Use this for the quickstart path where the host joins with Kubernetes TLS bootst
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "bootstrapToken": {
       "token": "<token-id>.<token-secret>"
     },
@@ -148,15 +169,18 @@ Use this for the quickstart path where the host joins with Kubernetes TLS bootst
   },
   "node": {
     "kubelet": {
-      "serverURL": "https://<aks-api-server>",
+      "clusterFQDN": "<aks-api-server-fqdn>",
       "caCertData": "<base64-ca-data>"
     }
+  },
+  "networking": {
+    "dnsServiceIP": "<cluster-dns-service-ip>"
   },
   "agent": {
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -169,7 +193,8 @@ Use this for an Azure VM with a managed identity assigned.
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "managedIdentity": {},
     "arc": { "enabled": false },
     "targetCluster": {
@@ -181,7 +206,7 @@ Use this for an Azure VM with a managed identity assigned.
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -194,7 +219,8 @@ Use this when the host should be registered as an Arc-enabled server.
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "arc": {
       "enabled": true,
       "machineName": "<arc-machine-name>",
@@ -213,7 +239,7 @@ Use this when the host should be registered as an Arc-enabled server.
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -226,7 +252,8 @@ Use this when the host should authenticate with static service principal credent
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "servicePrincipal": {
       "tenantId": "<tenant-id>",
       "clientId": "<client-id>",
@@ -242,7 +269,7 @@ Use this when the host should authenticate with static service principal credent
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
-  "kubernetes": { "version": "<aks-kubernetes-version>" }
+  "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
 
@@ -252,17 +279,13 @@ Add these sections when you need to pin runtime component versions explicitly.
 
 ```json
 {
-  "kubernetes": {
-    "version": "1.34.3"
+  "components": {
+    "kubernetes": "1.34.3",
+    "containerd": "2.0.4",
+    "runc": "1.1.12"
   },
-  "containerd": {
-    "version": "2.0.4"
-  },
-  "runc": {
-    "version": "1.1.12"
-  },
-  "cni": {
-    "version": "v1.6.2"
+  "networking": {
+    "cniVersion": "v1.6.2"
   },
   "npd": {
     "version": "v1.35.1"

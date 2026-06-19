@@ -23,8 +23,20 @@ const (
 	DefaultLogDir                   = "/var/log/aks-flex-node"
 	defaultLogLevel                 = "info"
 	defaultMachineOperationMode     = "auto"
-	defaultAzureCloud               = "AzurePublicCloud"
 	defaultMachineReconcileInterval = 10 * time.Minute
+	defaultTargetAgentPoolName      = "aksflexnodes"
+
+	// DefaultResourceManagerEndpointURL is the public Azure Resource Manager
+	// endpoint used when azure.resourceManagerEndpoint is omitted.
+	DefaultResourceManagerEndpointURL = "https://management.azure.com"
+
+	// DefaultResourceManagerAudience is the public Azure Resource Manager token
+	// audience used by Azure SDK for Go's ARM pipeline.
+	DefaultResourceManagerAudience = "https://management.azure.com"
+
+	// DefaultResourceManagerTokenScope is the OAuth scope for public Azure
+	// Resource Manager tokens.
+	DefaultResourceManagerTokenScope = DefaultResourceManagerAudience + "/.default"
 )
 
 // Config represents the complete agent configuration structure.
@@ -32,26 +44,25 @@ const (
 type Config struct {
 	Azure       AzureConfig       `json:"azure"`
 	Agent       AgentConfig       `json:"agent"`
-	Containerd  ContainerdConfig  `json:"containerd"`
-	Kubernetes  KubernetesConfig  `json:"kubernetes"`
-	CNI         CNIConfig         `json:"cni"`
-	Runc        RuncConfig        `json:"runc"`
+	Components  ComponentsConfig  `json:"components"`
+	Networking  NetworkingConfig  `json:"networking"`
 	Node        NodeConfig        `json:"node"`
 	Npd         NPDConfig         `json:"npd"`
 	HostRouting HostRoutingConfig `json:"hostRouting"`
 }
 
 // AzureConfig holds Azure-specific configuration required for connecting to Azure services.
-// All fields except Cloud are required for proper operation.
 type AzureConfig struct {
-	SubscriptionID   string                  `json:"subscriptionId"`             // Azure subscription ID
-	TenantID         string                  `json:"tenantId"`                   // Azure tenant ID
-	Cloud            string                  `json:"cloud"`                      // Azure cloud environment (defaults to AzurePublicCloud)
-	ServicePrincipal *ServicePrincipalConfig `json:"servicePrincipal,omitempty"` // Optional service principal authentication
-	ManagedIdentity  *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`  // Optional managed identity authentication
-	BootstrapToken   *BootstrapTokenConfig   `json:"bootstrapToken,omitempty"`   // Optional bootstrap token authentication
-	Arc              *ArcConfig              `json:"arc"`                        // Azure Arc machine configuration
-	TargetCluster    *TargetClusterConfig    `json:"targetCluster"`              // Target AKS cluster configuration
+	SubscriptionID             string                  `json:"subscriptionId"`                    // Azure subscription ID; defaults from targetCluster.resourceId when omitted
+	TenantID                   string                  `json:"tenantId"`                          // Azure tenant ID
+	Cloud                      string                  `json:"cloud,omitempty"`                   // Optional Azure cloud label used when resourceManagerEndpoint is omitted
+	ResourceManagerEndpointURL string                  `json:"resourceManagerEndpoint,omitempty"` // Azure Resource Manager endpoint; defaults to https://management.azure.com
+	ServicePrincipal           *ServicePrincipalConfig `json:"servicePrincipal,omitempty"`        // Optional service principal authentication
+	ManagedIdentity            *ManagedIdentityConfig  `json:"managedIdentity,omitempty"`         // Optional managed identity authentication
+	BootstrapToken             *BootstrapTokenConfig   `json:"bootstrapToken,omitempty"`          // Optional bootstrap token authentication
+	Arc                        *ArcConfig              `json:"arc"`                               // Azure Arc machine configuration
+	TargetCluster              *TargetClusterConfig    `json:"targetCluster"`                     // Target AKS cluster configuration
+	TargetAgentPoolName        string                  `json:"targetAgentPoolName"`               // Target AKS agent pool for FlexNode machines
 }
 
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
@@ -76,12 +87,11 @@ type BootstrapTokenConfig struct {
 
 // TargetClusterConfig holds configuration for the target AKS cluster the ARC machine will connect to.
 type TargetClusterConfig struct {
-	ResourceID        string `json:"resourceId"` // Full resource ID of the target AKS cluster
-	Location          string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
-	Name              string // will be populated from ResourceID
-	ResourceGroup     string // will be populated from ResourceID
-	SubscriptionID    string // will be populated from ResourceID
-	NodeResourceGroup string // will be populated from ResourceID
+	ResourceID     string `json:"resourceId"` // Full resource ID of the target AKS cluster
+	Location       string `json:"location"`   // Azure region of the cluster (e.g., "eastus", "westus2")
+	Name           string // will be populated from ResourceID
+	ResourceGroup  string // will be populated from ResourceID
+	SubscriptionID string // will be populated from ResourceID
 }
 
 // ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.
@@ -151,19 +161,12 @@ type AgentConfig struct {
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
 }
 
-// KubernetesConfig holds configuration settings for Kubernetes components.
-type KubernetesConfig struct {
-	Version string `json:"version"`
-}
-
-// RuncConfig holds configuration settings for the container runtime (runc).
-type RuncConfig struct {
-	Version string `json:"version"`
-}
-
-// ContainerdConfig holds configuration settings for the containerd runtime.
-type ContainerdConfig struct {
-	Version string `json:"version"`
+// ComponentsConfig is the AKS RP component version contract used by the agent
+// at runtime.
+type ComponentsConfig struct {
+	Kubernetes string `json:"kubernetes,omitempty"`
+	Containerd string `json:"containerd,omitempty"`
+	Runc       string `json:"runc,omitempty"`
 }
 
 // NodeConfig holds configuration settings for the Kubernetes node.
@@ -182,15 +185,15 @@ type KubeletConfig struct {
 	Verbosity            int    `json:"verbosity"`
 	ImageGCHighThreshold int    `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int    `json:"imageGCLowThreshold"`
-	DNSServiceIP         string `json:"dnsServiceIP"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
-	ServerURL            string `json:"serverURL"`    // Kubernetes API server URL
-	CACertData           string `json:"caCertData"`   // Base64-encoded CA certificate data
-	NodeIP               string `json:"nodeIP"`       // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+	ClusterFQDN          string `json:"clusterFQDN,omitempty"` // Kubernetes API server FQDN from AKS RP bootstrap data
+	CACertData           string `json:"caCertData"`            // Base64-encoded CA certificate data
+	NodeIP               string `json:"nodeIP"`                // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
 }
 
-// CNIPathsConfig holds file system paths related to CNI plugins and configurations.
-type CNIConfig struct {
-	Version string `json:"version"`
+// NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
+type NetworkingConfig struct {
+	DNSServiceIP string `json:"dnsServiceIP,omitempty"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	CNIVersion   string `json:"cniVersion,omitempty"`
 }
 
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
@@ -216,23 +219,6 @@ func (cfg *Config) IsMIConfigured() bool {
 // IsBootstrapTokenConfigured checks if bootstrap token authentication is selected.
 func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil
-}
-
-func (cfg AzureConfig) ResourceManagerEndpoint() (string, error) {
-	switch cfg.Cloud {
-	case "", "AzurePublicCloud":
-		return "https://management.azure.com", nil
-	default:
-		return "", fmt.Errorf("unsupported Azure cloud %q", cfg.Cloud)
-	}
-}
-
-func (cfg AzureConfig) ResourceManagerTokenScope() (string, error) {
-	endpoint, err := cfg.ResourceManagerEndpoint()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(endpoint, "/") + "/.default", nil
 }
 
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
@@ -284,6 +270,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	if err := json.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
+	if err := adaptLegacyConfigData(data, config); err != nil {
+		return nil, fmt.Errorf("adapt legacy config data: %w", err)
+	}
 
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -307,17 +296,35 @@ func (cfg *Config) DeepCopy() *Config {
 }
 
 func (c *Config) setDefaults() {
-	c.setAzureCloudDefaults()
+	c.setAzureDefaults()
 	c.setAgentDefaults()
 	c.setNodeDefaults()
 	c.setRuncDefaults()
 	c.setNpdDefaults()
 }
 
-func (c *Config) setAzureCloudDefaults() {
-	// Set default Azure cloud if not provided
-	if c.Azure.Cloud == "" {
-		c.Azure.Cloud = defaultAzureCloud
+func (c *Config) setAzureDefaults() {
+	if endpoint := strings.TrimSpace(c.Azure.ResourceManagerEndpointURL); endpoint == "" {
+		c.Azure.ResourceManagerEndpointURL = resourceManagerEndpointFromCloud(c.Azure.Cloud)
+	} else {
+		c.Azure.ResourceManagerEndpointURL = strings.TrimRight(endpoint, "/")
+	}
+	c.Azure.TargetAgentPoolName = strings.TrimSpace(c.Azure.TargetAgentPoolName)
+	if c.Azure.TargetAgentPoolName == "" {
+		c.Azure.TargetAgentPoolName = defaultTargetAgentPoolName
+	}
+}
+
+func resourceManagerEndpointFromCloud(cloud string) string {
+	switch strings.TrimSpace(cloud) {
+	case "AzureUSGovernment", "AzureGovernmentCloud":
+		return "https://management.usgovcloudapi.net"
+	case "AzureChinaCloud":
+		return "https://management.chinacloudapi.cn"
+	case "", "AzurePublicCloud":
+		return DefaultResourceManagerEndpointURL
+	default:
+		return DefaultResourceManagerEndpointURL
 	}
 }
 
@@ -364,15 +371,15 @@ func (c *Config) setNodeDefaults() {
 	// Set default DNS service IP if not provided
 	// Note: This default assumes the standard AKS service CIDR (10.0.0.0/16)
 	// Clusters with custom service CIDRs should specify this value explicitly
-	if c.Node.Kubelet.DNSServiceIP == "" {
-		c.Node.Kubelet.DNSServiceIP = "10.0.0.10"
+	if c.Networking.DNSServiceIP == "" {
+		c.Networking.DNSServiceIP = "10.0.0.10"
 	}
 }
 
 func (c *Config) setRuncDefaults() {
 	// Set default runc configuration if not provided
-	if c.Runc.Version == "" {
-		c.Runc.Version = "1.1.12"
+	if c.Components.Runc == "" {
+		c.Components.Runc = "1.1.12"
 	}
 }
 
@@ -411,10 +418,16 @@ func (c *Config) validateBootstrapToken() error {
 		return err
 	}
 
-	// When using bootstrap token, serverURL and caCertData are required in kubelet config
+	// When using bootstrap token, clusterFQDN and caCertData are required in kubelet config
 	// because there's no Azure authentication to fetch them
-	if c.Node.Kubelet.ServerURL == "" {
-		return fmt.Errorf("node.kubelet.serverURL is required when using bootstrap token authentication")
+	if c.APIServerURL() == "" {
+		return fmt.Errorf("node.kubelet.clusterFQDN is required when using bootstrap token authentication")
+	}
+	if err := validateAbsoluteHTTPSURL(c.APIServerURL(), httpsURLValidationOptions{
+		fieldName: "kube-apiserver URL",
+		allowPort: true,
+	}); err != nil {
+		return fmt.Errorf("node.kubelet.clusterFQDN must resolve to a valid kube-apiserver URL: %w", err)
 	}
 	if c.Node.Kubelet.CACertData == "" {
 		return fmt.Errorf("node.kubelet.caCertData is required when using bootstrap token authentication")
@@ -423,11 +436,16 @@ func (c *Config) validateBootstrapToken() error {
 	return nil
 }
 
-func (c *AzureConfig) validate() error {
-	if c.SubscriptionID == "" {
-		return fmt.Errorf("azure.subscriptionId is required")
+// APIServerURL returns the kube-apiserver URL derived from the RP cluster FQDN.
+func (c *Config) APIServerURL() string {
+	if c == nil {
+		return ""
 	}
-	if c.TenantID == "" {
+	return serverURLFromClusterFQDN(c.Node.Kubelet.ClusterFQDN)
+}
+
+func (c *AzureConfig) validate() error {
+	if c.requiresTenantID() && c.TenantID == "" {
 		return fmt.Errorf("azure.tenantId is required")
 	}
 	if c.TargetCluster == nil {
@@ -436,8 +454,14 @@ func (c *AzureConfig) validate() error {
 	if err := c.TargetCluster.validate(); err != nil {
 		return err
 	}
-	if !validAzureClouds[c.Cloud] {
-		return fmt.Errorf("invalid azure.cloud: %s. Valid values are: AzurePublicCloud", c.Cloud)
+	if strings.TrimSpace(c.TargetAgentPoolName) == "" {
+		return fmt.Errorf("azure.targetAgentPoolName is required")
+	}
+	if c.SubscriptionID == "" {
+		return fmt.Errorf("azure.subscriptionId is required")
+	}
+	if err := c.validateResourceManagerEndpointURL(); err != nil {
+		return err
 	}
 	if err := c.ServicePrincipal.validate(); err != nil {
 		return err
@@ -450,6 +474,52 @@ func (c *AzureConfig) validate() error {
 	}
 	if err := c.Arc.validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c *AzureConfig) requiresTenantID() bool {
+	if c == nil || c.Arc == nil {
+		return false
+	}
+	return c.Arc.Enabled
+}
+
+func (c *AzureConfig) validateResourceManagerEndpointURL() error {
+	endpoint := strings.TrimSpace(c.ResourceManagerEndpointURL)
+	if endpoint == "" {
+		return fmt.Errorf("azure.resourceManagerEndpoint is required")
+	}
+	return validateAbsoluteHTTPSURL(endpoint, httpsURLValidationOptions{
+		fieldName: "azure.resourceManagerEndpoint",
+		allowPort: false,
+	})
+}
+
+type httpsURLValidationOptions struct {
+	fieldName string
+	allowPort bool
+}
+
+func validateAbsoluteHTTPSURL(rawURL string, opts httpsURLValidationOptions) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be an absolute https URL", opts.fieldName)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use https", opts.fieldName)
+	}
+	if parsed.User != nil {
+		if opts.allowPort {
+			return fmt.Errorf("%s must not include user info", opts.fieldName)
+		}
+		return fmt.Errorf("%s must not include user info or port", opts.fieldName)
+	}
+	if !opts.allowPort && parsed.Port() != "" {
+		return fmt.Errorf("%s must not include user info or port", opts.fieldName)
+	}
+	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%s must not include a path, query, or fragment", opts.fieldName)
 	}
 	return nil
 }
@@ -475,9 +545,6 @@ func (c *ManagedIdentityConfig) validate() error {
 }
 
 func (c *TargetClusterConfig) validate() error {
-	if c.Location == "" {
-		return fmt.Errorf("azure.targetCluster.location is required")
-	}
 	if c.ResourceID == "" {
 		return fmt.Errorf("azure.targetCluster.resourceId is required")
 	}
@@ -539,12 +606,6 @@ func (c *AgentConfig) validate() error {
 	return nil
 }
 
-// validAzureClouds defines the supported Azure cloud environments
-// Currently only Azure Public Cloud is supported
-var validAzureClouds = map[string]bool{
-	"AzurePublicCloud": true,
-}
-
 var validMachineOperationModes = map[string]bool{
 	"auto":    true,
 	"disable": true,
@@ -557,6 +618,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("resolve node name: %w", err)
 	}
 
+	populateTargetClusterInfoFromConfig(c)
+
 	if err := c.Azure.validate(); err != nil {
 		return err
 	}
@@ -564,43 +627,42 @@ func (c *Config) validate() error {
 		return err
 	}
 
-	if err := c.validateExclusiveAuthSettings(); err != nil {
+	if err := c.validateAuthSettings(); err != nil {
 		return err
 	}
 	if err := c.validateBootstrapToken(); err != nil {
 		return fmt.Errorf("invalid bootstrap token configuration: %w", err)
 	}
 
-	populateTargetClusterInfoFromConfig(c)
-
 	return nil
 }
 
-func (c *Config) validateExclusiveAuthSettings() error {
-	authMethodCount := 0
-	for _, m := range []bool{c.IsARCEnabled(), c.IsSPConfigured(), c.IsMIConfigured(), c.IsBootstrapTokenConfigured()} {
+func (c *Config) validateAuthSettings() error {
+	armAuthMethodCount := 0
+	for _, m := range []bool{c.IsARCEnabled(), c.IsSPConfigured(), c.IsMIConfigured()} {
 		if m {
-			authMethodCount++
+			armAuthMethodCount++
 		}
 	}
-	if authMethodCount == 0 {
+	if armAuthMethodCount == 0 && !c.IsBootstrapTokenConfigured() {
 		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, or Bootstrap Token")
 	}
-	if authMethodCount > 1 {
-		return fmt.Errorf("only one authentication method can be enabled at a time: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	if armAuthMethodCount > 1 {
+		return fmt.Errorf("only one Azure authentication method can be enabled at a time: Arc, Service Principal, or Managed Identity")
 	}
 
 	return nil
 }
 
-// populateTargetClusterInfoFromConfig extracts cluster information from the resource ID
-// This function should only be called after validateAzureResourceID confirms the format is correct
-// TODO: Deprecate this helper; deriving cluster fields from resourceID/location is wrong
-// for cases like custom node resource groups. Use explicit config fields or an Azure lookup instead.
+// populateTargetClusterInfoFromConfig extracts cluster information from the resource ID.
+// Invalid or absent resource IDs are ignored so validation can return the canonical error.
+// TODO: Deprecate this helper; use explicit config fields or an Azure lookup instead.
 func populateTargetClusterInfoFromConfig(cfg *Config) {
+	if cfg == nil || cfg.Azure.TargetCluster == nil {
+		return
+	}
 	matches := AKSClusterResourceIDPattern.FindStringSubmatch(cfg.Azure.TargetCluster.ResourceID)
 	if len(matches) < 4 {
-		// This should not happen if validation occurred first, but handle gracefully
 		return
 	}
 
@@ -608,16 +670,12 @@ func populateTargetClusterInfoFromConfig(cfg *Config) {
 	resourceGroupName := matches[2]
 	clusterName := matches[3]
 
-	// AKS node resource group follows the pattern: MC_{cluster-resource-group}_{cluster-name}_{location}
-	mcResourceGroup := fmt.Sprintf("MC_%s_%s_%s",
-		resourceGroupName,
-		clusterName,
-		cfg.Azure.TargetCluster.Location)
-
 	cfg.Azure.TargetCluster.Name = clusterName
 	cfg.Azure.TargetCluster.ResourceGroup = resourceGroupName
 	cfg.Azure.TargetCluster.SubscriptionID = subscriptionID
-	cfg.Azure.TargetCluster.NodeResourceGroup = mcResourceGroup
+	if cfg.Azure.SubscriptionID == "" {
+		cfg.Azure.SubscriptionID = subscriptionID
+	}
 }
 
 // HostRoutingConfig groups host-level routing tasks that run before the nspawn

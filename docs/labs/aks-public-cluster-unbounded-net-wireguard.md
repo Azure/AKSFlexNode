@@ -93,6 +93,7 @@ AKS_REGION="eastus2"
 VM_REGION="southcentralus"
 AKS_VNET="aks-public-unbounded-vnet"
 FLEX_VNET="flex-public-unbounded-vnet"
+AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -440,6 +441,7 @@ chmod +x ./aks-flex-config
   --resource-group "$AKS_RG" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```
@@ -457,7 +459,7 @@ jq \
   --arg nodeIP "$VM_PRIVATE_IP" \
   --arg kubernetesVersion "$KUBERNETES_VERSION" \
   '.node.kubelet.nodeIP = $nodeIP
-   | .kubernetes.version = $kubernetesVersion' \
+   | .components.kubernetes = $kubernetesVersion' \
   ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
 mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
 ```

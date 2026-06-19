@@ -35,7 +35,8 @@ Minimal config shape:
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "managedIdentity": {},
     "arc": { "enabled": false },
     "targetCluster": {
@@ -59,7 +60,8 @@ Minimal config shape:
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "arc": {
       "enabled": true,
       "machineName": "<arc-machine-name>",
@@ -88,7 +90,8 @@ Minimal config shape:
   "azure": {
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "<agent-pool-name>",
     "servicePrincipal": {
       "tenantId": "<tenant-id>",
       "clientId": "<client-id>",

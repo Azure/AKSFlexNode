@@ -53,6 +53,7 @@
 #   E2E_ENABLE_AZLINUX3     Set to 1 to deploy and test Azure Linux 3 host VM
 #   E2E_AZLINUX3_VHD_URI    Generalized Azure Linux 3 VHD URI for host VM
 #   E2E_AZLINUX3_OCI_IMAGE  Azure Linux 3 nspawn OCI image
+#   E2E_TARGET_AGENT_POOL_NAME Target AKS agent pool name (default: aksflexnodes)
 #   AZURE_SUBSCRIPTION_ID   Azure subscription (auto-detected if not set)
 #   AZURE_TENANT_ID         Azure tenant (auto-detected if not set)
 #

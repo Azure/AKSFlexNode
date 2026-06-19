@@ -136,7 +136,8 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
-	if cfg.Node.Kubelet.ServerURL == "" {
+	apiServerURL := cfg.APIServerURL()
+	if apiServerURL == "" {
 		return nil, fmt.Errorf("kubernetes API server URL is empty")
 	}
 	if cfg.Node.Kubelet.CACertData == "" {
@@ -147,7 +148,7 @@ func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
 		return nil, fmt.Errorf("decode Kubernetes CA certificate: %w", err)
 	}
 	restCfg := &rest.Config{
-		Host: cfg.Node.Kubelet.ServerURL,
+		Host: apiServerURL,
 		TLSClientConfig: rest.TLSClientConfig{
 			CAData: caData,
 		},

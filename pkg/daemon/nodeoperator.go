@@ -40,7 +40,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 
 	cfg := o.cfg.DeepCopy()
 	if active.State.AppliedKubernetesVersion != "" {
-		cfg.Kubernetes.Version = active.State.AppliedKubernetesVersion
+		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 	}
 	agentCfg := config.ToAgentConfig(cfg, active.Name)
 	gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
@@ -52,7 +52,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
-		npd.Start(cfg, log, gs.RootFS.MachineDir, active.Name),
+		npd.Start(log, gs.NodeStart),
 	).Do(ctx)
 }
 
@@ -85,7 +85,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	// resolution to avoid rewriting shared config-shaped data here.
 	cfg := o.cfg.DeepCopy()
 	if goal.KubernetesVersion != "" {
-		cfg.Kubernetes.Version = goal.KubernetesVersion
+		cfg.Components.Kubernetes = goal.KubernetesVersion
 	}
 	oldMachine := active.Name
 	newMachine := goalstates.AlternateMachine(oldMachine)
@@ -93,7 +93,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		"oldMachine", oldMachine,
 		"newMachine", newMachine,
 		"settingsVersion", goal.SettingsVersion,
-		"kubernetesVersion", cfg.Kubernetes.Version,
+		"kubernetesVersion", cfg.Components.Kubernetes,
 	)
 
 	agentCfg := config.ToAgentConfig(cfg, newMachine)

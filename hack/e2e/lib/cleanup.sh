@@ -52,6 +52,39 @@ _collect_vm_logs() {
      fi" \
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
 
+  remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
+npd_service="node-problem-detector.service"
+active_machine="$(sudo python3 - <<'PY'
+import json
+import sys
+
+try:
+    with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
+        active_machine = json.load(state).get("activeMachine", "")
+    if active_machine:
+        print(active_machine)
+    else:
+        print("daemon state does not include activeMachine", file=sys.stderr)
+except FileNotFoundError as exc:
+    print(f"daemon state not found: {exc}", file=sys.stderr)
+except json.JSONDecodeError as exc:
+    print(f"daemon state is not valid JSON: {exc}", file=sys.stderr)
+except PermissionError as exc:
+    print(f"daemon state permission denied: {exc}", file=sys.stderr)
+PY
+)"
+if [ -n "${active_machine}" ]; then
+  echo "=== ${npd_service} logs (${active_machine}) ==="
+  # Match the agent and kubelet log depth; NPD entries are sparse but useful across node lifecycle phases.
+  sudo systemd-run --machine="${active_machine}" --quiet --pipe journalctl -u "${npd_service}" -n 500 --no-pager || \
+    echo "warning: failed to collect ${npd_service} logs from ${active_machine}"
+else
+  echo "warning: active machine unknown; falling back to host journal"
+  sudo journalctl -u "${npd_service}" -n 500 --no-pager || \
+    echo "warning: failed to collect ${npd_service} logs from host"
+fi
+REMOTE
+
   # Collect CNI config and nspawn machine state for networking diagnostics.
   # Read directly from the nspawn rootfs at /var/lib/machines/kube1/.
   local kube1_root="/var/lib/machines/kube1"

@@ -11,15 +11,15 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 		Azure: AzureConfig{
 			BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 		},
-		Kubernetes: KubernetesConfig{Version: "1.30.0"},
+		Components: ComponentsConfig{Kubernetes: "1.30.0"},
+		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
 		Node: NodeConfig{
 			Labels: map[string]string{"env": "test"},
 			Taints: []string{"dedicated=infra:NoSchedule"},
 			Kubelet: KubeletConfig{
-				DNSServiceIP: "10.0.0.10",
-				ServerURL:    "https://api.example.com:6443",
-				CACertData:   "dGVzdC1jYS1kYXRh",
-				NodeIP:       "10.225.0.4",
+				ClusterFQDN: "api.example.com:6443",
+				CACertData:  "dGVzdC1jYS1kYXRh",
+				NodeIP:      "10.225.0.4",
 			},
 		},
 	}
@@ -88,12 +88,12 @@ func TestToAgentConfig_ServicePrincipal(t *testing.T) {
 				ClientSecret: "secret-789",
 			},
 		},
-		Kubernetes: KubernetesConfig{Version: "1.31.0"},
+		Components: ComponentsConfig{Kubernetes: "1.31.0"},
+		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
-				DNSServiceIP: "10.0.0.10",
-				ServerURL:    "https://api.example.com:6443",
-				CACertData:   "ca-data",
+				ClusterFQDN: "api.example.com:6443",
+				CACertData:  "ca-data",
 			},
 		},
 	}
@@ -142,12 +142,12 @@ func TestToAgentConfig_ManagedIdentity(t *testing.T) {
 				ClientID: "mi-client-id",
 			},
 		},
-		Kubernetes: KubernetesConfig{Version: "1.31.0"},
+		Components: ComponentsConfig{Kubernetes: "1.31.0"},
+		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
-				DNSServiceIP: "10.0.0.10",
-				ServerURL:    "https://api.example.com:6443",
-				CACertData:   "ca-data",
+				ClusterFQDN: "api.example.com:6443",
+				CACertData:  "ca-data",
 			},
 		},
 	}
@@ -188,12 +188,12 @@ func TestToAgentConfig_ManagedIdentitySystemAssigned(t *testing.T) {
 		Azure: AzureConfig{
 			ManagedIdentity: &ManagedIdentityConfig{},
 		},
-		Kubernetes: KubernetesConfig{Version: "1.31.0"},
+		Components: ComponentsConfig{Kubernetes: "1.31.0"},
+		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
-				DNSServiceIP: "10.0.0.10",
-				ServerURL:    "https://api.example.com:6443",
-				CACertData:   "ca-data",
+				ClusterFQDN: "api.example.com:6443",
+				CACertData:  "ca-data",
 			},
 		},
 	}
@@ -223,15 +223,19 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 		Azure: AzureConfig{
 			BootstrapToken: &BootstrapTokenConfig{Token: "tok"},
 		},
-		Kubernetes: KubernetesConfig{Version: "1.30.0"},
-		Containerd: ContainerdConfig{Version: "2.1.0"},
-		Runc:       RuncConfig{Version: "1.2.0"},
-		CNI:        CNIConfig{Version: "1.6.0"},
+		Components: ComponentsConfig{
+			Kubernetes: "1.30.0",
+			Containerd: "2.1.0",
+			Runc:       "1.2.0",
+		},
+		Networking: NetworkingConfig{
+			DNSServiceIP: "10.0.0.10",
+			CNIVersion:   "1.6.0",
+		},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
-				DNSServiceIP: "10.0.0.10",
-				ServerURL:    "https://api.example.com:6443",
-				CACertData:   "ca",
+				ClusterFQDN: "api.example.com:6443",
+				CACertData:  "ca",
 			},
 		},
 	}
@@ -256,12 +260,12 @@ func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 		Azure: AzureConfig{
 			BootstrapToken: &BootstrapTokenConfig{Token: "tok"},
 		},
-		Kubernetes: KubernetesConfig{Version: "1.30.0"},
+		Components: ComponentsConfig{Kubernetes: "1.30.0"},
+		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
-				DNSServiceIP: "10.0.0.10",
-				ServerURL:    "https://api.example.com:6443",
-				CACertData:   "ca",
+				ClusterFQDN: "api.example.com:6443",
+				CACertData:  "ca",
 			},
 		},
 	}

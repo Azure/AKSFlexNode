@@ -142,6 +142,7 @@ AKS_REGION="<aks-region>"
 VM_REGION="<vm-region>"
 AKS_VNET="<aks-vnet-name>"
 FLEX_VNET="<flex-vnet-name>"
+AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -395,6 +396,7 @@ chmod +x ./aks-flex-config
   --resource-group "$AKS_RG" \
   --cluster-name "$CLUSTER_NAME" \
   --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```
@@ -406,7 +408,7 @@ TOKEN_ID=$(python3 -c 'import json; print(json.load(open("./aks-flex-node-config
 kubectl get secret -n kube-system "bootstrap-token-${TOKEN_ID}"
 ```
 
-For private clusters, if your workstation cannot reach the private API endpoint, run the RBAC/token creation from the admin VM and render the config from `az aks show` plus `az aks get-credentials --admin --file <path>`. The `kubernetes.version` value must be the full patch version, such as `1.34.7`, not the major/minor alias such as `1.34`; `aks-flex-node` uses this value to download Kubernetes binaries.
+For private clusters, if your workstation cannot reach the private API endpoint, run the RBAC/token creation from the admin VM and render the config from `az aks show` plus `az aks get-credentials --admin --file <path>`. The `components.kubernetes` value must be the full patch version, such as `1.34.7`, not the major/minor alias such as `1.34`; `aks-flex-node` uses this value to download Kubernetes binaries.
 
 ```bash
 KUBERNETES_VERSION=$(az aks show \
@@ -420,14 +422,16 @@ The config must contain:
 
 ```json
 {
-  "kubernetes": {
-    "version": "<full-kubernetes-version>"
+  "components": {
+    "kubernetes": "<full-kubernetes-version>"
+  },
+  "networking": {
+    "dnsServiceIP": "10.74.0.10"
   },
   "node": {
     "kubelet": {
-      "serverURL": "https://<private-aks-fqdn>:443",
+      "clusterFQDN": "<private-aks-fqdn>",
       "caCertData": "<base64-ca-data>",
-      "dnsServiceIP": "10.74.0.10",
       "nodeIP": "<flex-vm-private-ip>"
     }
   },

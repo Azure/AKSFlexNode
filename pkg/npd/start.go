@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -21,8 +21,7 @@ import (
 var serviceTemplate string
 
 const (
-	KubeletKubeconfigPath = "/var/lib/kubelet/kubelet/kubeconfig"
-	systemdUnitNPD        = "node-problem-detector.service"
+	systemdUnitNPD = "node-problem-detector.service"
 )
 
 var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
@@ -33,18 +32,20 @@ type startTask struct {
 	kubeconfigPath string
 	machineDir     string
 	machineName    string
+	nodeName       string
 }
 
 // Start returns a task that renders the NPD systemd unit file into the
 // nspawn machine rootfs and ensures the service is running inside the
 // container via systemd-run --machine.
-func Start(cfg *config.Config, log *slog.Logger, machineDir, machineName string) phases.Task {
+func Start(log *slog.Logger, nodeStart *goalstates.NodeStart) phases.Task {
 	return &startTask{
 		log:            log,
-		apiServer:      cfg.Node.Kubelet.ServerURL,
-		kubeconfigPath: KubeletKubeconfigPath,
-		machineDir:     machineDir,
-		machineName:    machineName,
+		apiServer:      nodeStart.Kubelet.APIServer,
+		kubeconfigPath: goalstates.KubeletKubeconfigPath,
+		machineDir:     nodeStart.MachineDir,
+		machineName:    nodeStart.MachineName,
+		nodeName:       nodeStart.NodeName,
 	}
 }
 
@@ -66,6 +67,7 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 		"APIServerURL":   t.apiServer,
 		"KubeconfigPath": t.kubeconfigPath,
 		"NPDConfigPath":  npdConfigPath,
+		"NodeName":       t.nodeName,
 	}); err != nil {
 		return false, fmt.Errorf("render npd service template: %w", err)
 	}

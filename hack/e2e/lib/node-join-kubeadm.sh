@@ -291,7 +291,8 @@ node_join_kubeadm() {
   "azure": {
     "subscriptionId": "${subscription_id}",
     "tenantId": "${tenant_id}",
-    "cloud": "AzurePublicCloud",
+    "resourceManagerEndpoint": "https://management.azure.com",
+    "targetAgentPoolName": "${E2E_TARGET_AGENT_POOL_NAME}",
     "bootstrapToken": {
       "token": "${bootstrap_token}"
     },
@@ -306,7 +307,7 @@ node_join_kubeadm() {
       "kubernetes.azure.com/managed": "false"
     },
     "kubelet": {
-      "serverURL": "${server_url}",
+      "clusterFQDN": "${server_url}",
       "caCertData": "${ca_cert_data}"
     }
   },
@@ -315,9 +316,11 @@ node_join_kubeadm() {
     "logDir": "/var/log/aks-flex-node",
     "e2eMode": true
   },
-  "kubernetes": { "version": "${E2E_KUBERNETES_VERSION}" },
-  "containerd": { "version": "${E2E_CONTAINERD_VERSION}" },
-  "runc": { "version": "${E2E_RUNC_VERSION}" }
+  "components": {
+    "kubernetes": "${E2E_KUBERNETES_VERSION}",
+    "containerd": "${E2E_CONTAINERD_VERSION}",
+    "runc": "${E2E_RUNC_VERSION}"
+  }
 }
 EOF
 

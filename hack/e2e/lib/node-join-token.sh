@@ -53,6 +53,7 @@ node_join_token() {
     --resource-group "${resource_group}" \
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}" \
+    --agent-pool-name "${E2E_TARGET_AGENT_POOL_NAME}" \
     --bootstrap-token \
     --output "${config_file}"
 
@@ -64,9 +65,11 @@ node_join_token() {
     '.agent.logLevel = "debug"
       | .agent.e2eMode = true
       | .node.kubelet.nodeIP = $nodeIP
-      | .kubernetes.version = $kubernetesVersion
-      | .containerd.version = $containerdVersion
-      | .runc.version = $runcVersion' \
+      | .components = (.components // {})
+      | .components.kubernetes = $kubernetesVersion
+      | .components.containerd = $containerdVersion
+      | .components.runc = $runcVersion
+      | del(.kubernetes, .containerd, .runc)' \
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
 
