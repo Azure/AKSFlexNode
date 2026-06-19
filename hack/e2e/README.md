@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions an AKS cluster, three Ubuntu VMs, and one Azure Linux 3 VM in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
@@ -27,8 +27,8 @@ make e2e
 The default `all` command runs:
 
 1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
-2. Deploy AKS and three VMs with Bicep.
-3. Join all three VMs.
+2. Deploy AKS and four VMs with Bicep.
+3. Join all four VMs.
 4. Validate node readiness, node-problem-detector status, and run smoke workloads.
 5. Unjoin all Flex Nodes and verify they are absent.
 6. Rejoin all Flex Nodes and validate again.
@@ -42,15 +42,17 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
-| `infra` | Deploy AKS cluster and three VMs via Bicep. |
+| `infra` | Deploy AKS cluster and four VMs via Bicep. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
 | `join-kubeadm` | Join only the kubeadm-style bootstrap-token node. |
+| `join-azlinux3` | Join only the Azure Linux 3 bootstrap-token node. |
 | `unjoin` | Unjoin all Flex Node VMs. |
 | `unjoin-msi` | Unjoin only the managed-identity node. |
 | `unjoin-token` | Unjoin only the bootstrap-token node. |
 | `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
+| `unjoin-azlinux3` | Unjoin only the Azure Linux 3 bootstrap-token node. |
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
@@ -77,6 +79,7 @@ Additional environment variables:
 |----------|---------|-------------|
 | `E2E_SSH_KEY_FILE` | auto-detected | SSH public key used for VM access. |
 | `E2E_WORK_DIR` | `/tmp/aks-flex-node-e2e` | Working directory for state, configs, and logs. |
+| `E2E_KUBECONFIG` | `$E2E_WORK_DIR/kubeconfig` | Per-run kubeconfig path. Defaults to an isolated file instead of the runner-global kubeconfig. |
 | `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
@@ -90,13 +93,14 @@ Additional environment variables:
 
 ## Join Modes
 
-The suite validates three join paths:
+The suite validates four join paths:
 
 | VM | Auth Mode | Join Path |
 |----|-----------|-----------|
 | `vm-e2e-msi-*` | Managed Identity | Generated managed-identity config and `aks-flex-node start` flow. |
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
+| `vm-e2e-azlinux3-*` | Bootstrap Token | Official Azure Linux 3 host image plus generated config with `agent.ociImage` pointing at the Azure Linux 3 nspawn image. |
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted
@@ -104,6 +108,8 @@ its Azure resource name remains lowercase. This verifies that an omitted
 cluster under the lowercase VM name.
 
 Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+
+The Azure Linux 3 path uses the official Azure marketplace image `MicrosoftCBLMariner:azure-linux-3:azure-linux-3-gen2:latest` for the VM and `ghcr.io/azure/agent-azlinux3:v20260619` for the nspawn rootfs.
 
 ## Repave Validation
 

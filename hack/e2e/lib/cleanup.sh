@@ -109,10 +109,11 @@ collect_logs() {
 
   mkdir -p "${E2E_LOG_DIR}"
 
-  local msi_vm_ip token_vm_ip kubeadm_vm_ip
+  local msi_vm_ip token_vm_ip kubeadm_vm_ip azlinux3_vm_ip
   msi_vm_ip="$(state_get msi_vm_ip)"
   token_vm_ip="$(state_get token_vm_ip)"
   kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
+  azlinux3_vm_ip="$(state_get azlinux3_vm_ip)"
 
   if [[ -n "${msi_vm_ip}" ]]; then
     _collect_vm_logs "${msi_vm_ip}" "msi" || true
@@ -124,6 +125,10 @@ collect_logs() {
 
   if [[ -n "${kubeadm_vm_ip}" ]]; then
     _collect_vm_logs "${kubeadm_vm_ip}" "kubeadm" || true
+  fi
+
+  if [[ -n "${azlinux3_vm_ip}" ]]; then
+    _collect_vm_logs "${azlinux3_vm_ip}" "azlinux3" || true
   fi
 
   # Also capture cluster-side info
@@ -167,12 +172,13 @@ cleanup() {
 
   stop_daemon_csr_approver
 
-  local resource_group cluster_name msi_vm_name token_vm_name kubeadm_vm_name
+  local resource_group cluster_name msi_vm_name token_vm_name kubeadm_vm_name azlinux3_vm_name
   resource_group="$(state_get resource_group)"
   cluster_name="$(state_get cluster_name)"
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  azlinux3_vm_name="$(state_get azlinux3_vm_name)"
   local deployment_name
   deployment_name="$(state_get deployment_name)"
 
@@ -193,6 +199,12 @@ cleanup() {
   log_info "[3/5] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${kubeadm_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
+
+  if [[ -n "${azlinux3_vm_name}" ]]; then
+    log_info "[3/5] Deleting Azure Linux 3 VM: ${azlinux3_vm_name}..."
+    az vm delete --resource-group "${resource_group}" --name "${azlinux3_vm_name}" \
+      --force-deletion yes --yes --no-wait 2>/dev/null || true
+  fi
 
   # Clean up leftover networking resources tied to our deployment
   log_info "[4/5] Cleaning up networking resources..."

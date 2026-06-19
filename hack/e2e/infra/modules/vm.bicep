@@ -1,8 +1,8 @@
 // =============================================================================
-// modules/vm.bicep - Reusable Ubuntu flex-node VM module
+// modules/vm.bicep - Reusable flex-node VM module
 //
-// Creates a public IP, NIC, and Ubuntu VM in the given subnet.
-// The VHD image defaults to Ubuntu 24.04 LTS (Noble) but can be overridden.
+// Creates a public IP, NIC, and Linux VM in the given subnet. The marketplace
+// image defaults to Ubuntu 24.04 LTS (Noble) but can be overridden.
 // =============================================================================
 
 @description('Azure region for all resources.')

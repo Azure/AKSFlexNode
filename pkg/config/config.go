@@ -136,6 +136,9 @@ type AgentConfig struct {
 	LogDir   string `json:"logDir"`   // Directory for log files
 	// NodeName is resolved from the host hostname when omitted.
 	NodeName string `json:"nodeName,omitempty"`
+	// OCIImage optionally selects the nspawn rootfs image. Leave empty to use
+	// the unbounded default image.
+	OCIImage string `json:"ociImage,omitempty"`
 
 	// MachineReconcileInterval controls how often the daemon re-reads the AKS
 	// machine resource when no Kubernetes Node event wakes the controller.

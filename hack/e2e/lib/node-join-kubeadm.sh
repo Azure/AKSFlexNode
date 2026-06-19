@@ -46,6 +46,9 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:kubeadm:default-node-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -59,6 +62,9 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:kubeadm:default-node-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -85,6 +91,9 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:bootstrappers:kubeadm:default-node-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -110,6 +119,9 @@ subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
   name: system:bootstrappers:aks-flex-node
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:bootstrappers:kubeadm:default-node-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -135,6 +147,9 @@ subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
   name: system:bootstrappers:aks-flex-node
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:bootstrappers:kubeadm:default-node-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -157,6 +172,9 @@ subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
   name: system:bootstrappers:aks-flex-node
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:bootstrappers:kubeadm:default-node-token
 EOF
 
   # Publish the ConfigMaps that kubeadm join reads during its preflight phase.
@@ -246,7 +264,7 @@ stringData:
   expiration: "${expiration}"
   usage-bootstrap-authentication: "true"
   usage-bootstrap-signing: "true"
-  auth-extra-groups: "system:bootstrappers:aks-flex-node"
+  auth-extra-groups: "system:bootstrappers:aks-flex-node,system:bootstrappers:kubeadm:default-node-token"
 EOF
 
   echo "${bootstrap_token}"

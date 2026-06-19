@@ -8,7 +8,7 @@
 #   node-join-kubeadm.sh - Kubeadm apply -f join/unjoin  (node_join_kubeadm, node_unjoin_kubeadm)
 #
 # Functions:
-#   node_join_all   - Join all nodes (MSI, token, and kubeadm) in parallel
+#   node_join_all   - Join all nodes (MSI, token, kubeadm, and optional Azure Linux 3) in parallel
 #   node_unjoin_all - Unjoin all nodes in parallel
 # =============================================================================
 set -euo pipefail
@@ -257,8 +257,8 @@ node_join_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
+  local msi_pid token_pid kubeadm_pid azlinux3_pid=""
+  local msi_exit=0 token_exit=0 kubeadm_exit=0 azlinux3_exit=0
 
   ensure_daemon_csr_approver
 
@@ -271,9 +271,13 @@ node_join_all() {
   node_join_kubeadm &
   kubeadm_pid=$!
 
+  node_join_azlinux3 &
+  azlinux3_pid=$!
+
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
+  wait "${azlinux3_pid}" || azlinux3_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
@@ -287,8 +291,11 @@ node_join_all() {
   if [[ "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Kubeadm node join failed (exit ${kubeadm_exit})"
   fi
+  if [[ "${azlinux3_exit}" -ne 0 ]]; then
+    log_error "Azure Linux 3 node join failed (exit ${azlinux3_exit})"
+  fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 || "${azlinux3_exit}" -ne 0 ]]; then
     log_error "Node joins failed (${duration}s)"
     return 1
   fi
@@ -304,8 +311,8 @@ node_unjoin_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
+  local msi_pid token_pid kubeadm_pid azlinux3_pid=""
+  local msi_exit=0 token_exit=0 kubeadm_exit=0 azlinux3_exit=0
 
   node_unjoin_msi &
   msi_pid=$!
@@ -316,9 +323,13 @@ node_unjoin_all() {
   node_unjoin_kubeadm &
   kubeadm_pid=$!
 
+  node_unjoin_azlinux3 &
+  azlinux3_pid=$!
+
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
+  wait "${azlinux3_pid}" || azlinux3_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
@@ -332,8 +343,11 @@ node_unjoin_all() {
   if [[ "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Kubeadm node unjoin failed (exit ${kubeadm_exit})"
   fi
+  if [[ "${azlinux3_exit}" -ne 0 ]]; then
+    log_error "Azure Linux 3 node unjoin failed (exit ${azlinux3_exit})"
+  fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 || "${azlinux3_exit}" -ne 0 ]]; then
     log_error "Node unjoins failed (${duration}s)"
     return 1
   fi

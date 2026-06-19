@@ -65,12 +65,15 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 func TestToAgentConfig_NodeName(t *testing.T) {
 	t.Parallel()
 
-	cfg := &Config{Agent: AgentConfig{NodeName: "worker-1"}}
+	cfg := &Config{Agent: AgentConfig{NodeName: "worker-1", OCIImage: "ghcr.io/azure/agent-azlinux3:tag"}}
 
 	ac := ToAgentConfig(cfg, "kube1")
 
 	if ac.NodeName != "worker-1" {
 		t.Fatalf("NodeName=%q, want worker-1", ac.NodeName)
+	}
+	if ac.OCIImage != "ghcr.io/azure/agent-azlinux3:tag" {
+		t.Fatalf("OCIImage=%q, want ghcr.io/azure/agent-azlinux3:tag", ac.OCIImage)
 	}
 }
 

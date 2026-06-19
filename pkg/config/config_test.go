@@ -50,11 +50,13 @@ func TestSetDefaults(t *testing.T) {
 				Agent: AgentConfig{
 					LogLevel: "debug",
 					LogDir:   "/custom/log/dir",
+					OCIImage: "ghcr.io/azure/agent-azlinux3:tag",
 				},
 			},
 			want: func(c *Config) bool {
 				return c.Agent.LogLevel == "debug" &&
 					c.Agent.LogDir == "/custom/log/dir" &&
+					c.Agent.OCIImage == "ghcr.io/azure/agent-azlinux3:tag" &&
 					c.Azure.Cloud == "AzurePublicCloud" &&
 					c.Azure.ResourceManagerEndpointURL == "https://management.example.test" &&
 					c.Azure.TargetAgentPoolName == "flexnode-edge"

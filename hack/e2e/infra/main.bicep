@@ -6,8 +6,9 @@
 //   - VM with system-assigned managed identity  (MSI auth mode)
 //   - VM without managed identity               (bootstrap token auth mode)
 //   - VM without managed identity               (kubeadm apply -f auth mode)
+//   - Azure Linux 3 VM                          (bootstrap token auth mode)
 //
-// All flex-node VMs run Ubuntu 22.04 LTS, have public IPs, and allow SSH
+// Flex-node VMs have public IPs and allow SSH
 // ingress.  VM creation is delegated to the reusable modules/vm.bicep module.
 // =============================================================================
 
@@ -40,6 +41,7 @@ var clusterName   = 'aks-e2e-${nameSuffix}'
 var msiVmName     = 'vm-e2e-msi-${nameSuffix}'
 var tokenVmName   = 'vm-e2e-token-${nameSuffix}'
 var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
+var azLinux3VmName = 'vm-e2e-azlinux3-${nameSuffix}'
 var vnetName      = 'vnet-e2e-${nameSuffix}'
 var nsgName       = 'nsg-e2e-${nameSuffix}'
 
@@ -185,6 +187,24 @@ module vmKubeadm 'modules/vm.bicep' = {
   }
 }
 
+module vmAzLinux3 'modules/vm.bicep' = {
+  name: 'deploy-vm-azlinux3'
+  params: {
+    location: location
+    vmName: azLinux3VmName
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: false
+    imagePublisher: 'MicrosoftCBLMariner'
+    imageOffer: 'azure-linux-3'
+    imageSku: 'azure-linux-3-gen2'
+    imageVersion: 'latest'
+    tags: tags
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Role assignments: grant MSI VM permissions on the AKS cluster
 // ---------------------------------------------------------------------------
@@ -227,5 +247,9 @@ output tokenVmPrivateIp string = vmToken.outputs.privateIpAddress
 
 output kubeadmVmName string = vmKubeadm.outputs.vmName
 output kubeadmVmIp string = vmKubeadm.outputs.publicIpAddress
+
+output azLinux3VmName string = vmAzLinux3.outputs.vmName
+output azLinux3VmIp string = vmAzLinux3.outputs.publicIpAddress
+output azLinux3VmPrivateIp string = vmAzLinux3.outputs.privateIpAddress
 
 output adminUsername string = adminUsername
