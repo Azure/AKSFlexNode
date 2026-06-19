@@ -173,6 +173,10 @@ load_config() {
   E2E_BINARY="${E2E_BINARY:-}"
   E2E_HELPER_BINARY="${E2E_HELPER_BINARY:-}"
 
+  # Keep E2E runs isolated from stale or corrupt runner-global kubeconfig state.
+  E2E_KUBECONFIG="${E2E_KUBECONFIG:-${E2E_WORK_DIR}/kubeconfig}"
+  export KUBECONFIG="${E2E_KUBECONFIG}"
+
   # Skip cleanup for debugging
   E2E_SKIP_CLEANUP="${E2E_SKIP_CLEANUP:-0}"
 
@@ -198,6 +202,7 @@ load_config() {
   log_info "  Subscription:     ${AZURE_SUBSCRIPTION_ID}"
   log_info "  Name Suffix:      ${E2E_NAME_SUFFIX}"
   log_info "  Agent Pool:       ${E2E_TARGET_AGENT_POOL_NAME}"
+  log_info "  Kubeconfig:       ${KUBECONFIG}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
 

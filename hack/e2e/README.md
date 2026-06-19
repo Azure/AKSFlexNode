@@ -77,6 +77,7 @@ Additional environment variables:
 |----------|---------|-------------|
 | `E2E_SSH_KEY_FILE` | auto-detected | SSH public key used for VM access. |
 | `E2E_WORK_DIR` | `/tmp/aks-flex-node-e2e` | Working directory for state, configs, and logs. |
+| `E2E_KUBECONFIG` | `$E2E_WORK_DIR/kubeconfig` | Per-run kubeconfig path. Defaults to an isolated file instead of the runner-global kubeconfig. |
 | `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
