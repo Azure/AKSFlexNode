@@ -197,16 +197,12 @@ validate_all_nodes() {
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
-  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
-    validate_node_joined "${azlinux3_vm_name}" || failed=1
-    validate_node_ip "${azlinux3_vm_name}" "${azlinux3_vm_private_ip}" || failed=1
-  fi
+  validate_node_joined "${azlinux3_vm_name}" || failed=1
+  validate_node_ip "${azlinux3_vm_name}" "${azlinux3_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
   validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
-  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
-    validate_npd_status "${azlinux3_vm_name}" "${azlinux3_vm_ip}" || failed=1
-  fi
+  validate_npd_status "${azlinux3_vm_name}" "${azlinux3_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
@@ -262,9 +258,7 @@ validate_all_nodes_absent() {
   log_info "Skipping MSI node absence validation (credential plugin auth not yet supported)"
   validate_node_absent "${token_vm_name}" || failed=1
   validate_node_absent "${kubeadm_vm_name}" || failed=1
-  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
-    validate_node_absent "${azlinux3_vm_name}" || failed=1
-  fi
+  validate_node_absent "${azlinux3_vm_name}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes still present after unjoin"
@@ -345,9 +339,7 @@ smoke_test_all() {
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1
   smoke_test "${kubeadm_vm_name}" "kubeadm" || failed=1
-  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
-    smoke_test "${azlinux3_vm_name}" "azlinux3" || failed=1
-  fi
+  smoke_test "${azlinux3_vm_name}" "azlinux3" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more smoke tests failed"

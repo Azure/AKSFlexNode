@@ -271,17 +271,13 @@ node_join_all() {
   node_join_kubeadm &
   kubeadm_pid=$!
 
-  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
-    node_join_azlinux3 &
-    azlinux3_pid=$!
-  fi
+  node_join_azlinux3 &
+  azlinux3_pid=$!
 
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
-  if [[ -n "${azlinux3_pid}" ]]; then
-    wait "${azlinux3_pid}" || azlinux3_exit=$?
-  fi
+  wait "${azlinux3_pid}" || azlinux3_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
@@ -327,17 +323,13 @@ node_unjoin_all() {
   node_unjoin_kubeadm &
   kubeadm_pid=$!
 
-  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
-    node_unjoin_azlinux3 &
-    azlinux3_pid=$!
-  fi
+  node_unjoin_azlinux3 &
+  azlinux3_pid=$!
 
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
-  if [[ -n "${azlinux3_pid}" ]]; then
-    wait "${azlinux3_pid}" || azlinux3_exit=$?
-  fi
+  wait "${azlinux3_pid}" || azlinux3_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")

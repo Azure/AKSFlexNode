@@ -6,7 +6,7 @@
 //   - VM with system-assigned managed identity  (MSI auth mode)
 //   - VM without managed identity               (bootstrap token auth mode)
 //   - VM without managed identity               (kubeadm apply -f auth mode)
-//   - Optional Azure Linux 3 VM from VHD         (bootstrap token auth mode)
+//   - Azure Linux 3 VM                          (bootstrap token auth mode)
 //
 // Flex-node VMs have public IPs and allow SSH
 // ingress.  VM creation is delegated to the reusable modules/vm.bicep module.
@@ -33,13 +33,6 @@ param sshPublicKey string
 
 @description('Tags applied to every resource.')
 param tags object = {}
-
-@description('Whether to deploy the optional Azure Linux 3 host VM scenario.')
-param enableAzLinux3Scenario bool = false
-
-@secure()
-@description('Generalized Azure Linux 3 VHD URI for the optional Azure Linux 3 host VM scenario.')
-param azLinux3VhdUri string = ''
 
 // ---------------------------------------------------------------------------
 // Variables
@@ -194,7 +187,7 @@ module vmKubeadm 'modules/vm.bicep' = {
   }
 }
 
-module vmAzLinux3 'modules/vm.bicep' = if (enableAzLinux3Scenario) {
+module vmAzLinux3 'modules/vm.bicep' = {
   name: 'deploy-vm-azlinux3'
   params: {
     location: location
@@ -204,9 +197,10 @@ module vmAzLinux3 'modules/vm.bicep' = if (enableAzLinux3Scenario) {
     sshPublicKey: sshPublicKey
     subnetId: vnet.properties.subnets[1].id
     assignManagedIdentity: false
-    imageSourceType: 'vhd'
-    imageVhdUri: azLinux3VhdUri
-    imageHyperVGeneration: 'V2'
+    imagePublisher: 'MicrosoftCBLMariner'
+    imageOffer: 'azure-linux-3'
+    imageSku: 'azure-linux-3-gen2'
+    imageVersion: 'latest'
     tags: tags
   }
 }
@@ -254,8 +248,8 @@ output tokenVmPrivateIp string = vmToken.outputs.privateIpAddress
 output kubeadmVmName string = vmKubeadm.outputs.vmName
 output kubeadmVmIp string = vmKubeadm.outputs.publicIpAddress
 
-output azLinux3VmName string = enableAzLinux3Scenario ? vmAzLinux3!.outputs.vmName : ''
-output azLinux3VmIp string = enableAzLinux3Scenario ? vmAzLinux3!.outputs.publicIpAddress : ''
-output azLinux3VmPrivateIp string = enableAzLinux3Scenario ? vmAzLinux3!.outputs.privateIpAddress : ''
+output azLinux3VmName string = vmAzLinux3.outputs.vmName
+output azLinux3VmIp string = vmAzLinux3.outputs.publicIpAddress
+output azLinux3VmPrivateIp string = vmAzLinux3.outputs.privateIpAddress
 
 output adminUsername string = adminUsername

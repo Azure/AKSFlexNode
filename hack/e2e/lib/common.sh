@@ -186,11 +186,6 @@ load_config() {
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
   E2E_TARGET_AGENT_POOL_NAME="${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}"
 
-  # Optional Azure Linux 3 host and nspawn image scenario.
-  E2E_ENABLE_AZLINUX3="${E2E_ENABLE_AZLINUX3:-0}"
-  E2E_AZLINUX3_VHD_URI="${E2E_AZLINUX3_VHD_URI:-}"
-  E2E_AZLINUX3_OCI_IMAGE="${E2E_AZLINUX3_OCI_IMAGE:-ghcr.io/azure/agent-azlinux3:v20260619}"
-
   # Timeouts (seconds)
   E2E_SSH_WAIT_TIMEOUT="${E2E_SSH_WAIT_TIMEOUT:-300}"
   E2E_NODE_JOIN_TIMEOUT="${E2E_NODE_JOIN_TIMEOUT:-300}"
@@ -204,7 +199,6 @@ load_config() {
   log_info "  Name Suffix:      ${E2E_NAME_SUFFIX}"
   log_info "  Agent Pool:       ${E2E_TARGET_AGENT_POOL_NAME}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
-  log_info "  Azure Linux 3:    ${E2E_ENABLE_AZLINUX3}"
 }
 
 # ---------------------------------------------------------------------------

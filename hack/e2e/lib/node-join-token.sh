@@ -84,11 +84,6 @@ node_join_token() {
 # Azure Linux 3 nspawn OCI image.
 # ---------------------------------------------------------------------------
 node_join_azlinux3() {
-  if [[ "$(state_get azlinux3_enabled 0)" != "1" ]]; then
-    log_info "Azure Linux 3 scenario disabled; skipping join"
-    return 0
-  fi
-
   log_section "Joining Azure Linux 3 Node"
   local start
   start=$(timer_start)
@@ -119,6 +114,7 @@ node_join_azlinux3() {
     --resource-group "${resource_group}" \
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}" \
+    --agent-pool-name "${E2E_TARGET_AGENT_POOL_NAME}" \
     --bootstrap-token \
     --output "${config_file}"
 
@@ -127,14 +123,15 @@ node_join_azlinux3() {
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
     --arg runcVersion "${E2E_RUNC_VERSION}" \
-    --arg ociImage "$(state_get azlinux3_oci_image "${E2E_AZLINUX3_OCI_IMAGE}")" \
     '.agent.logLevel = "debug"
       | .agent.e2eMode = true
-      | .agent.ociImage = $ociImage
+      | .agent.ociImage = "ghcr.io/azure/agent-azlinux3:v20260619"
       | .node.kubelet.nodeIP = $nodeIP
-      | .kubernetes.version = $kubernetesVersion
-      | .containerd.version = $containerdVersion
-      | .runc.version = $runcVersion' \
+      | .components = (.components // {})
+      | .components.kubernetes = $kubernetesVersion
+      | .components.containerd = $containerdVersion
+      | .components.runc = $runcVersion
+      | del(.kubernetes, .containerd, .runc)' \
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
 
@@ -161,11 +158,6 @@ node_unjoin_token() {
 }
 
 node_unjoin_azlinux3() {
-  if [[ "$(state_get azlinux3_enabled 0)" != "1" ]]; then
-    log_info "Azure Linux 3 scenario disabled; skipping unjoin"
-    return 0
-  fi
-
   log_section "Unjoining Azure Linux 3 Node"
   local start
   start=$(timer_start)
