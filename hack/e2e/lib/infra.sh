@@ -57,6 +57,11 @@ infra_deploy() {
     return 1
   fi
 
+  if [[ "${E2E_ENABLE_AZLINUX3}" == "1" && -z "${E2E_AZLINUX3_VHD_URI}" ]]; then
+    log_error "E2E_ENABLE_AZLINUX3=1 requires E2E_AZLINUX3_VHD_URI to point at a generalized Azure Linux 3 VHD"
+    return 1
+  fi
+
   # Ensure resource group exists
   if ! az group show --name "${E2E_RESOURCE_GROUP}" --output none 2>/dev/null; then
     log_info "Creating resource group: ${E2E_RESOURCE_GROUP} in ${E2E_LOCATION}"
@@ -93,6 +98,8 @@ infra_deploy() {
       nameSuffix="${E2E_NAME_SUFFIX}" \
       sshPublicKey="${ssh_key}" \
       tags="${tags_json}" \
+      enableAzLinux3Scenario="$([[ "${E2E_ENABLE_AZLINUX3}" == "1" ]] && echo true || echo false)" \
+      azLinux3VhdUri="${E2E_AZLINUX3_VHD_URI}" \
     --output none
 
   # Extract outputs
@@ -106,6 +113,7 @@ infra_deploy() {
 
   local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_principal_id
   local token_vm_name token_vm_ip token_vm_private_ip kubeadm_vm_name kubeadm_vm_ip admin_username
+  local azlinux3_vm_name azlinux3_vm_ip azlinux3_vm_private_ip
 
   cluster_name=$(echo "${outputs}"    | jq -r '.clusterName.value')
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
@@ -117,10 +125,18 @@ infra_deploy() {
   token_vm_private_ip=$(echo "${outputs}" | jq -r '.tokenVmPrivateIp.value // ""')
   kubeadm_vm_name=$(echo "${outputs}" | jq -r '.kubeadmVmName.value')
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
+  azlinux3_vm_name=$(echo "${outputs}" | jq -r '.azLinux3VmName.value // ""')
+  azlinux3_vm_ip=$(echo "${outputs}" | jq -r '.azLinux3VmIp.value // ""')
+  azlinux3_vm_private_ip=$(echo "${outputs}" | jq -r '.azLinux3VmPrivateIp.value // ""')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
 
   if [[ -z "${token_vm_private_ip}" ]] || ! is_valid_ipv4 "${token_vm_private_ip}"; then
     log_error "Missing or invalid token VM private IP from deployment outputs: '${token_vm_private_ip}'"
+    return 1
+  fi
+
+  if [[ "${E2E_ENABLE_AZLINUX3}" == "1" && ( -z "${azlinux3_vm_private_ip}" || ! is_valid_ipv4 "${azlinux3_vm_private_ip}" ) ]]; then
+    log_error "Missing or invalid Azure Linux 3 VM private IP from deployment outputs: '${azlinux3_vm_private_ip}'"
     return 1
   fi
 
@@ -135,6 +151,11 @@ infra_deploy() {
   state_set "token_vm_private_ip"  "${token_vm_private_ip}"
   state_set "kubeadm_vm_name"      "${kubeadm_vm_name}"
   state_set "kubeadm_vm_ip"        "${kubeadm_vm_ip}"
+  state_set "azlinux3_enabled"     "${E2E_ENABLE_AZLINUX3}"
+  state_set "azlinux3_vm_name"     "${azlinux3_vm_name}"
+  state_set "azlinux3_vm_ip"       "${azlinux3_vm_ip}"
+  state_set "azlinux3_vm_private_ip" "${azlinux3_vm_private_ip}"
+  state_set "azlinux3_oci_image"   "${E2E_AZLINUX3_OCI_IMAGE}"
   state_set "admin_username"       "${admin_username}"
   state_set "resource_group"       "${E2E_RESOURCE_GROUP}"
   state_set "location"             "${E2E_LOCATION}"
@@ -146,6 +167,9 @@ infra_deploy() {
   log_info "MSI VM:      ${msi_vm_name} @ ${msi_vm_ip}"
   log_info "Token VM:    ${token_vm_name} @ ${token_vm_ip}"
   log_info "Kubeadm VM:  ${kubeadm_vm_name} @ ${kubeadm_vm_ip}"
+  if [[ "${E2E_ENABLE_AZLINUX3}" == "1" ]]; then
+    log_info "AzLinux3 VM: ${azlinux3_vm_name} @ ${azlinux3_vm_ip}"
+  fi
 
   # Get kubeconfig and extract cluster info
   infra_get_kubeconfig
@@ -158,11 +182,19 @@ infra_deploy() {
   local pid_token=$!
   wait_for_ssh "${kubeadm_vm_ip}" &
   local pid_kubeadm=$!
+  local pid_azlinux3=""
+  if [[ "${E2E_ENABLE_AZLINUX3}" == "1" ]]; then
+    wait_for_ssh "${azlinux3_vm_ip}" &
+    pid_azlinux3=$!
+  fi
 
   local ssh_failed=0
   wait "${pid_msi}" || ssh_failed=1
   wait "${pid_token}" || ssh_failed=1
   wait "${pid_kubeadm}" || ssh_failed=1
+  if [[ -n "${pid_azlinux3}" ]]; then
+    wait "${pid_azlinux3}" || ssh_failed=1
+  fi
 
   if [[ "${ssh_failed}" -eq 1 ]]; then
     log_error "One or more VMs not reachable via SSH"

@@ -4,7 +4,7 @@
 #
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
-#   validate_all_nodes                - Verify MSI, token, and kubeadm nodes joined
+#   validate_all_nodes                - Verify MSI, token, kubeadm, and optional Azure Linux 3 nodes joined
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
 #   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
@@ -90,18 +90,24 @@ validate_all_nodes() {
     --overwrite-existing \
     --admin
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
-  local token_vm_private_ip
+  local msi_vm_name token_vm_name kubeadm_vm_name azlinux3_vm_name
+  local token_vm_private_ip azlinux3_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  azlinux3_vm_name="$(state_get azlinux3_vm_name)"
   token_vm_private_ip="$(state_get token_vm_private_ip)"
+  azlinux3_vm_private_ip="$(state_get azlinux3_vm_private_ip)"
 
   local failed=0
   validate_node_joined "${msi_vm_name}" || failed=1
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
+  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
+    validate_node_joined "${azlinux3_vm_name}" || failed=1
+    validate_node_ip "${azlinux3_vm_name}" "${azlinux3_vm_private_ip}" || failed=1
+  fi
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
@@ -146,16 +152,20 @@ validate_node_absent() {
 validate_all_nodes_absent() {
   log_section "Validating Nodes Absent After Unjoin"
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
+  local msi_vm_name token_vm_name kubeadm_vm_name azlinux3_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  azlinux3_vm_name="$(state_get azlinux3_vm_name)"
 
   local failed=0
   # TODO: MSI validation skipped until credential plugin auth is supported
   log_info "Skipping MSI node absence validation (credential plugin auth not yet supported)"
   validate_node_absent "${token_vm_name}" || failed=1
   validate_node_absent "${kubeadm_vm_name}" || failed=1
+  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
+    validate_node_absent "${azlinux3_vm_name}" || failed=1
+  fi
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes still present after unjoin"
@@ -224,10 +234,11 @@ EOF
 smoke_test_all() {
   log_section "Running Smoke Tests"
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
+  local msi_vm_name token_vm_name kubeadm_vm_name azlinux3_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  azlinux3_vm_name="$(state_get azlinux3_vm_name)"
 
   # A default bridge CNI config (99-bridge.conf) is written during bootstrap,
   # making nodes Ready without requiring unbounded-net-node DaemonSet.
@@ -235,6 +246,9 @@ smoke_test_all() {
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1
   smoke_test "${kubeadm_vm_name}" "kubeadm" || failed=1
+  if [[ "$(state_get azlinux3_enabled 0)" == "1" ]]; then
+    smoke_test "${azlinux3_vm_name}" "azlinux3" || failed=1
+  fi
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more smoke tests failed"

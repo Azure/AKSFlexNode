@@ -77,6 +77,70 @@ node_join_token() {
 }
 
 # ---------------------------------------------------------------------------
+# node_join_azlinux3 - Join the optional Azure Linux 3 host VM using the
+# Azure Linux 3 nspawn OCI image.
+# ---------------------------------------------------------------------------
+node_join_azlinux3() {
+  if [[ "$(state_get azlinux3_enabled 0)" != "1" ]]; then
+    log_info "Azure Linux 3 scenario disabled; skipping join"
+    return 0
+  fi
+
+  log_section "Joining Azure Linux 3 Node"
+  local start
+  start=$(timer_start)
+
+  local vm_ip vm_private_ip cluster_name resource_group subscription_id
+  vm_ip="$(state_get azlinux3_vm_ip)"
+  vm_private_ip="$(state_get azlinux3_vm_private_ip)"
+  cluster_name="$(state_get cluster_name)"
+  resource_group="$(state_get resource_group)"
+  subscription_id="$(state_get subscription_id)"
+
+  if [[ -z "${vm_private_ip}" ]] || ! is_valid_ipv4 "${vm_private_ip}"; then
+    log_error "Invalid Azure Linux 3 VM private IP in state: '${vm_private_ip}'"
+    return 1
+  fi
+
+  log_info "Setting up bootstrap token RBAC resources..."
+  "${REPO_ROOT}/scripts/aks-flex-config" setup-node-rbac \
+    --resource-group "${resource_group}" \
+    --cluster-name "${cluster_name}" \
+    --subscription "${subscription_id}"
+
+  ensure_daemon_csr_approver
+
+  log_info "Generating Azure Linux 3 token config..."
+  local config_file="${E2E_WORK_DIR}/config-azlinux3.json"
+  "${REPO_ROOT}/scripts/aks-flex-config" generate-node-config \
+    --resource-group "${resource_group}" \
+    --cluster-name "${cluster_name}" \
+    --subscription "${subscription_id}" \
+    --bootstrap-token \
+    --output "${config_file}"
+
+  jq \
+    --arg nodeIP "${vm_private_ip}" \
+    --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
+    --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
+    --arg runcVersion "${E2E_RUNC_VERSION}" \
+    --arg ociImage "$(state_get azlinux3_oci_image "${E2E_AZLINUX3_OCI_IMAGE}")" \
+    '.agent.logLevel = "debug"
+      | .agent.e2eMode = true
+      | .agent.ociImage = $ociImage
+      | .node.kubelet.nodeIP = $nodeIP
+      | .kubernetes.version = $kubernetesVersion
+      | .containerd.version = $containerdVersion
+      | .runc.version = $runcVersion' \
+    "${config_file}" > "${config_file}.tmp"
+  mv "${config_file}.tmp" "${config_file}"
+
+  _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-azlinux3"
+
+  log_success "Azure Linux 3 node joined in $(timer_elapsed "${start}")s"
+}
+
+# ---------------------------------------------------------------------------
 # node_unjoin_token - Simulate RP delete and verify node cleanup
 # ---------------------------------------------------------------------------
 node_unjoin_token() {
@@ -91,4 +155,23 @@ node_unjoin_token() {
   _rp_delete_unjoin_node "${vm_ip}" "${vm_name}"
 
   log_success "Token node unjoined in $(timer_elapsed "${start}")s"
+}
+
+node_unjoin_azlinux3() {
+  if [[ "$(state_get azlinux3_enabled 0)" != "1" ]]; then
+    log_info "Azure Linux 3 scenario disabled; skipping unjoin"
+    return 0
+  fi
+
+  log_section "Unjoining Azure Linux 3 Node"
+  local start
+  start=$(timer_start)
+
+  local vm_ip vm_name
+  vm_ip="$(state_get azlinux3_vm_ip)"
+  vm_name="$(state_get azlinux3_vm_name)"
+
+  _rp_delete_unjoin_node "${vm_ip}" "${vm_name}"
+
+  log_success "Azure Linux 3 node unjoined in $(timer_elapsed "${start}")s"
 }

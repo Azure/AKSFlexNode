@@ -12,10 +12,12 @@
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
+#   join-azlinux3 Join only the optional Azure Linux 3 token node
 #   join-kubeadm  Join only the kubeadm node (apply -f with KubeadmNodeJoin)
 #   unjoin        Unjoin all nodes from the cluster
 #   unjoin-msi    Unjoin only the MSI node
 #   unjoin-token  Unjoin only the token node
+#   unjoin-azlinux3 Unjoin only the optional Azure Linux 3 token node
 #   unjoin-kubeadm Reset the kubeadm node and remove it from the cluster
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
@@ -48,6 +50,9 @@
 #   E2E_KUBERNETES_VERSION  Kubernetes version (default: 1.35.0)
 #   E2E_CONTAINERD_VERSION  Containerd version (default: 2.0.4)
 #   E2E_RUNC_VERSION        Runc version (default: 1.1.12)
+#   E2E_ENABLE_AZLINUX3     Set to 1 to deploy and test Azure Linux 3 host VM
+#   E2E_AZLINUX3_VHD_URI    Generalized Azure Linux 3 VHD URI for host VM
+#   E2E_AZLINUX3_OCI_IMAGE  Azure Linux 3 nspawn OCI image
 #   AZURE_SUBSCRIPTION_ID   Azure subscription (auto-detected if not set)
 #   AZURE_TENANT_ID         Azure tenant (auto-detected if not set)
 #
@@ -114,7 +119,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|validate|validate-absent|smoke|upgrade-drift|logs|cleanup|status)
+      all|infra|join|join-msi|join-token|join-kubeadm|join-azlinux3|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|unjoin-azlinux3|validate|validate-absent|smoke|upgrade-drift|logs|cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -248,6 +253,10 @@ main() {
       ensure_binary
       node_join_kubeadm
       ;;
+    join-azlinux3)
+      ensure_binary
+      node_join_azlinux3
+      ;;
     unjoin)
       node_unjoin_all
       ;;
@@ -259,6 +268,9 @@ main() {
       ;;
     unjoin-kubeadm)
       node_unjoin_kubeadm
+      ;;
+    unjoin-azlinux3)
+      node_unjoin_azlinux3
       ;;
     validate)
       validate_all_nodes

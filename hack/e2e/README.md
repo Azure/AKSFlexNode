@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, validates repave, collects logs, and tears down the resources. It can optionally add an Azure Linux 3 host VM from a generalized VHD and join it with an Azure Linux 3 nspawn image.
 
 ## Prerequisites
 
@@ -47,10 +47,12 @@ The default `all` command runs:
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
 | `join-kubeadm` | Join only the kubeadm-style bootstrap-token node. |
+| `join-azlinux3` | Join only the optional Azure Linux 3 bootstrap-token node. |
 | `unjoin` | Unjoin all Flex Node VMs. |
 | `unjoin-msi` | Unjoin only the managed-identity node. |
 | `unjoin-token` | Unjoin only the bootstrap-token node. |
 | `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
+| `unjoin-azlinux3` | Unjoin only the optional Azure Linux 3 bootstrap-token node. |
 | `validate` | Verify joined nodes and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
@@ -80,6 +82,9 @@ Additional environment variables:
 | `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
+| `E2E_ENABLE_AZLINUX3` | `0` | Set to `1` to deploy and test the optional Azure Linux 3 host VM. |
+| `E2E_AZLINUX3_VHD_URI` | empty | Generalized Azure Linux 3 VHD URI used to create the optional host VM image. Required when `E2E_ENABLE_AZLINUX3=1`. |
+| `E2E_AZLINUX3_OCI_IMAGE` | `ghcr.io/azure/agent-azlinux3:v20260619` | Azure Linux 3 nspawn rootfs OCI image set as `agent.ociImage`. |
 | `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
 | `E2E_NODE_JOIN_TIMEOUT` | `300` | Timeout in seconds while waiting for node bootstrap. |
 | `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |
@@ -96,6 +101,7 @@ The suite validates three join paths:
 | `vm-e2e-msi-*` | Managed Identity | Generated managed-identity config and `aks-flex-node start` flow. |
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
+| `vm-e2e-azlinux3-*` | Bootstrap Token | Optional Azure Linux 3 host VM from VHD plus generated config with `agent.ociImage` pointing at the Azure Linux 3 nspawn image. |
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted
@@ -103,6 +109,22 @@ its Azure resource name remains lowercase. This verifies that an omitted
 cluster under the lowercase VM name.
 
 Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+
+## Azure Linux 3 Scenario
+
+The optional Azure Linux 3 scenario validates both host and nspawn Azure Linux support. Provide a generalized Azure Linux 3 VHD URI that Azure Compute can read, usually a blob URI with SAS, then enable the scenario:
+
+```bash
+export E2E_ENABLE_AZLINUX3=1
+export E2E_AZLINUX3_VHD_URI='https://<account>.blob.core.windows.net/<container>/<azlinux3>.vhd?<sas>'
+export E2E_AZLINUX3_OCI_IMAGE='ghcr.io/azure/agent-azlinux3:v20260619'
+
+./hack/e2e/run.sh infra
+./hack/e2e/run.sh join-azlinux3
+./hack/e2e/run.sh validate
+```
+
+The VHD must already include the host dependencies needed by Flex Node bootstrap, including systemd-nspawn support. The test creates a managed Compute image from the VHD and uses that image for the VM.
 
 ## Repave Validation
 

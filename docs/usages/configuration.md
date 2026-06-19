@@ -83,6 +83,7 @@ Exactly one authentication mode must be configured.
 | `agent.logLevel` | string | Agent log verbosity. | `info` |
 | `agent.logDir` | string | Host directory for agent logs. | `/var/log/aks-flex-node` |
 | `agent.nodeName` | string | Optional Kubernetes node name override. Defaults to the host hostname. | `edge-node-01` |
+| `agent.ociImage` | string | Optional nspawn rootfs OCI image. Set an Azure Linux image such as `ghcr.io/azure/agent-azlinux3:<tag>` to use Azure Linux in the nspawn machine. | `ghcr.io/azure/agent-azlinux3:<tag>` |
 | `agent.machineReconcileInterval` | duration string | Daemon interval for re-reading machine state. Uses Go duration syntax. | `10m` |
 | `agent.e2eMode` | boolean | Uses the local file-backed machine client for E2E tests. | `false` |
 | `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `false` |
