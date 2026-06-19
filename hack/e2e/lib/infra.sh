@@ -135,9 +135,11 @@ infra_deploy() {
     return 1
   fi
 
-  if [[ "${E2E_ENABLE_AZLINUX3}" == "1" && ( -z "${azlinux3_vm_private_ip}" || ! is_valid_ipv4 "${azlinux3_vm_private_ip}" ) ]]; then
-    log_error "Missing or invalid Azure Linux 3 VM private IP from deployment outputs: '${azlinux3_vm_private_ip}'"
-    return 1
+  if [[ "${E2E_ENABLE_AZLINUX3}" == "1" ]]; then
+    if [[ -z "${azlinux3_vm_private_ip}" ]] || ! is_valid_ipv4 "${azlinux3_vm_private_ip}"; then
+      log_error "Missing or invalid Azure Linux 3 VM private IP from deployment outputs: '${azlinux3_vm_private_ip}'"
+      return 1
+    fi
   fi
 
   # Persist to state
