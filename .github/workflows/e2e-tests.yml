@@ -41,6 +41,31 @@ jobs:
     environment: e2e-testing
 
     steps:
+      - name: Clean runner disk
+        run: |
+          set -euo pipefail
+
+          echo "Disk usage before cleanup:"
+          df -h
+
+          # Self-hosted runners keep state across jobs. Remove stale E2E
+          # artifacts before checkout/build so jobs do not fail with ENOSPC.
+          rm -rf /tmp/aks-flex-node-e2e-* || true
+          rm -rf /tmp/opencode/* || true
+          rm -rf "${HOME}/go/pkg/mod" "${HOME}/.cache/go-build" || true
+
+          if command -v docker >/dev/null 2>&1; then
+            docker system prune -af --volumes || true
+          fi
+          if command -v crictl >/dev/null 2>&1; then
+            sudo crictl rmi --prune || true
+          fi
+
+          sudo journalctl --vacuum-time=1d || true
+
+          echo "Disk usage after cleanup:"
+          df -h
+
       - name: Checkout code
         uses: actions/checkout@v4
 
