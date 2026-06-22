@@ -73,8 +73,6 @@ The helper writes `azure.resourceManagerEndpoint` with the public ARM endpoint a
 
 Bootstrap-token mode creates a Kubernetes bootstrap token `Secret`, reads the AKS API server and CA data from kubeconfig, and includes those values plus the AKS DNS service IP in the generated config.
 
-The generated config includes legacy field aliases (`kubernetes.version`, `node.kubelet.serverURL`, and `node.kubelet.dnsServiceIP`) so configs produced from `main` remain usable with the latest released `aks-flex-node` binary while the release catches up to the current config schema.
-
 ### Managed Identity
 
 ```bash
