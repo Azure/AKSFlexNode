@@ -174,6 +174,7 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
         "azure": azure,
         "agent": {"logLevel": "info", "logDir": "/var/log/aks-flex-node"},
         "components": {"kubernetes": metadata["kubernetes_version"]},
+        "kubernetes": {"version": metadata["kubernetes_version"]},
     }
 
     if mode == "bootstrap-token":
@@ -200,10 +201,12 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
         azure["arc"] = {"enabled": False}
         kubelet_config = {
             "clusterFQDN": cluster_fqdn_from_server_url(server_url),
+            "serverURL": server_url,
             "caCertData": ca_cert_data,
         }
         if metadata["dns_service_ip"]:
             config["networking"] = {"dnsServiceIP": metadata["dns_service_ip"]}
+            kubelet_config["dnsServiceIP"] = metadata["dns_service_ip"]
         config["node"] = {"kubelet": kubelet_config}
     elif mode == "identity":
         managed_identity = {}
