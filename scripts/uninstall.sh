@@ -21,7 +21,9 @@ SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
 # Interfaces created by unbounded-net that should not remain on the host after uninstall.
 KNOWN_NETWORK_INTERFACES=("geneve0" "vxlan0" "ipip0" "unbounded0" "cbr0")
+# Unbounded-net writes its host WireGuard key pair to these paths.
 WIREGUARD_KEYS=("/etc/wireguard/server.priv" "/etc/wireguard/server.pub")
+WIREGUARD_INTERFACE_PATTERN="^wg[0-9]+$"
 
 # Functions
 log_info() {
@@ -150,7 +152,7 @@ reset_host_network() {
         # ip may render names as iface@ifindex; trim that suffix before matching unbounded-net wg<port> interfaces.
         while IFS= read -r iface; do
             wireguard_interfaces+=("$iface")
-        done < <(ip -o link show 2>/dev/null | awk -F': ' '{name=$2; sub(/@.*/,"",name); if(name~/^wg[0-9]+$/) print name}')
+        done < <(ip -o link show 2>/dev/null | awk -F': ' -v pattern="$WIREGUARD_INTERFACE_PATTERN" '{name=$2; sub(/@.*/,"",name); if(name~pattern) print name}')
 
         for iface in "${wireguard_interfaces[@]}" "${KNOWN_NETWORK_INTERFACES[@]}"; do
             remove_network_interface "$iface"
@@ -164,7 +166,7 @@ reset_host_network() {
         if [[ -f "$key_path" ]]; then
             log_info "Removing WireGuard key: $key_path"
             if command -v shred &>/dev/null; then
-                if shred -u "$key_path" 2>/dev/null && [[ ! -e "$key_path" ]]; then
+                if shred -u "$key_path" 2>/dev/null; then
                     log_success "Removed WireGuard key: $key_path"
                     continue
                 fi
@@ -172,8 +174,11 @@ reset_host_network() {
             else
                 log_warning "shred command not found, removing WireGuard key without shredding: $key_path"
             fi
-            rm -f "$key_path"
-            log_success "Removed WireGuard key: $key_path"
+            if rm -f "$key_path" && [[ ! -e "$key_path" ]]; then
+                log_success "Removed WireGuard key: $key_path"
+            else
+                log_warning "Failed to remove WireGuard key: $key_path"
+            fi
         else
             log_info "WireGuard key not found: $key_path"
         fi
