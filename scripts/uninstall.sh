@@ -163,10 +163,15 @@ reset_host_network() {
         if [[ -f "$key_path" ]]; then
             log_info "Removing WireGuard key: $key_path"
             if command -v shred &>/dev/null; then
-                shred -u "$key_path"
+                if shred -u "$key_path" 2>/dev/null; then
+                    log_success "Removed WireGuard key: $key_path"
+                    continue
+                fi
+                log_warning "Failed to shred WireGuard key, removing without shredding: $key_path"
             else
-                rm -f "$key_path"
+                log_warning "shred command not found, removing WireGuard key without shredding: $key_path"
             fi
+            rm -f "$key_path"
             log_success "Removed WireGuard key: $key_path"
         else
             log_info "WireGuard key not found: $key_path"
