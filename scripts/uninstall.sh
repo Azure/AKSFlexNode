@@ -19,12 +19,6 @@ LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
-# Interfaces created by unbounded-net that should not remain on the host after uninstall.
-# Keep this aligned with https://github.com/Azure/unbounded/blob/main/pkg/agent/phases/reset/network.go.
-KNOWN_NETWORK_INTERFACES=("geneve0" "vxlan0" "ipip0" "unbounded0" "cbr0")
-# Matches unbounded reset cleanup for the host WireGuard key pair.
-WIREGUARD_KEYS=("/etc/wireguard/server.priv" "/etc/wireguard/server.pub")
-WIREGUARD_INTERFACE_PATTERN="^wg[0-9]+$"
 
 # Functions
 log_info() {
@@ -56,7 +50,7 @@ confirm_uninstall() {
     echo "• Host network state created by unbounded-net"
     echo "• Azure CLI"
     echo ""
-    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node reset' to clean up cluster and Arc resources.${NC}"
+    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node reset' to clean up cluster, Arc, and host network resources.${NC}"
         echo ""
 
     # Always prompt for confirmation, even when piped
@@ -73,7 +67,7 @@ confirm_uninstall() {
 }
 
 run_reset() {
-    log_info "Running reset to clean up cluster and Arc resources..."
+    log_info "Running reset to clean up cluster, Arc, and host network resources..."
 
     # Check if aks-flex-node binary exists
     if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
@@ -127,66 +121,6 @@ run_reset() {
     fi
 
     log_success "Reset completed"
-}
-
-remove_network_interface() {
-    local iface="$1"
-
-    if ip link show "$iface" &>/dev/null; then
-        log_info "Removing network interface: $iface"
-        if ip link delete "$iface" 2>/dev/null; then
-            log_success "Removed network interface: $iface"
-        else
-            log_warning "Failed to remove network interface: $iface"
-        fi
-    else
-        log_info "Network interface not found: $iface"
-    fi
-}
-
-reset_host_network() {
-    log_info "Resetting host network state..."
-
-    if command -v ip &>/dev/null; then
-        local iface
-        local wireguard_interfaces=()
-        # Expected input line: "2: wg51820: <POINTOPOINT,NOARP,UP,LOWER_UP> ..."
-        # Use field 2 as the interface name, trim ip's optional @ifindex suffix, then match wg followed by digits.
-        while IFS= read -r iface; do
-            [[ -n "$iface" ]] || continue
-            wireguard_interfaces+=("$iface")
-        done < <(ip -o link show 2>/dev/null | awk -F': ' -v pattern="$WIREGUARD_INTERFACE_PATTERN" '{name=$2; sub(/@.*/,"",name); if(name~pattern) print name}')
-
-        for iface in "${wireguard_interfaces[@]}" "${KNOWN_NETWORK_INTERFACES[@]}"; do
-            remove_network_interface "$iface"
-        done
-    else
-        log_warning "ip command not found - skipping network interface cleanup"
-    fi
-
-    local key_path
-    for key_path in "${WIREGUARD_KEYS[@]}"; do
-        if [[ -f "$key_path" ]]; then
-            log_info "Removing WireGuard key: $key_path"
-            if command -v shred &>/dev/null; then
-                # Secure deletion is best-effort; journaling/COW filesystems and SSD wear-leveling may retain old blocks.
-                if shred -u "$key_path" 2>/dev/null; then
-                    log_success "Shredded and removed WireGuard key: $key_path"
-                    continue
-                fi
-                log_warning "Failed to shred WireGuard key, removing without shredding: $key_path"
-            else
-                log_warning "shred command not found, removing WireGuard key without shredding: $key_path"
-            fi
-            if rm -f "$key_path"; then
-                log_success "Removed WireGuard key: $key_path"
-            else
-                log_warning "Failed to remove WireGuard key: $key_path"
-            fi
-        else
-            log_info "WireGuard key not found: $key_path"
-        fi
-    done
 }
 
 remove_directories() {
@@ -273,7 +207,6 @@ main() {
 
     # Uninstall components in reverse order of installation
     run_reset
-    reset_host_network
     remove_directories
     remove_binary
     remove_azure_cli
