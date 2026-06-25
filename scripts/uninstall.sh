@@ -21,7 +21,7 @@ SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
 # Interfaces created by unbounded-net that should not remain on the host after uninstall.
 KNOWN_NETWORK_INTERFACES=("geneve0" "vxlan0" "ipip0" "unbounded0" "cbr0")
-# Unbounded-net writes its host WireGuard key pair to these paths.
+# Matches unbounded reset cleanup for the host WireGuard key pair.
 WIREGUARD_KEYS=("/etc/wireguard/server.priv" "/etc/wireguard/server.pub")
 WIREGUARD_INTERFACE_PATTERN="^wg[0-9]+$"
 
@@ -150,6 +150,7 @@ reset_host_network() {
         local iface
         local wireguard_interfaces=()
         # Extract interface names, trim ip's optional @ifindex suffix, and keep only unbounded-net wg<port> interfaces.
+        # Expected input line: "2: wg51820: <POINTOPOINT> ..."
         while IFS= read -r iface; do
             wireguard_interfaces+=("$iface")
         done < <(ip -o link show 2>/dev/null | awk -F': ' -v pattern="$WIREGUARD_INTERFACE_PATTERN" '{name=$2; sub(/@.*/,"",name); if(name~pattern) print name}')
@@ -167,7 +168,7 @@ reset_host_network() {
             log_info "Removing WireGuard key: $key_path"
             if command -v shred &>/dev/null; then
                 if shred -u "$key_path" 2>/dev/null; then
-                    log_success "Removed WireGuard key: $key_path"
+                    log_success "Shredded and removed WireGuard key: $key_path"
                     continue
                 fi
                 log_warning "Failed to shred WireGuard key, removing without shredding: $key_path"
