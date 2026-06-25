@@ -20,6 +20,7 @@ SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
 # Interfaces created by unbounded-net that should not remain on the host after uninstall.
+# Keep this aligned with github.com/Azure/unbounded/pkg/agent/phases/reset/network.go.
 KNOWN_NETWORK_INTERFACES=("geneve0" "vxlan0" "ipip0" "unbounded0" "cbr0")
 # Matches unbounded reset cleanup for the host WireGuard key pair.
 WIREGUARD_KEYS=("/etc/wireguard/server.priv" "/etc/wireguard/server.pub")
@@ -149,8 +150,8 @@ reset_host_network() {
     if command -v ip &>/dev/null; then
         local iface
         local wireguard_interfaces=()
-        # Extract interface names, trim ip's optional @ifindex suffix, and keep only unbounded-net wg<port> interfaces.
         # Expected input line: "2: wg51820: <POINTOPOINT,NOARP,UP,LOWER_UP> ..."
+        # Use field 2 as the interface name, trim ip's optional @ifindex suffix, then match wg<port>.
         while IFS= read -r iface; do
             [[ -n "$iface" ]] || continue
             wireguard_interfaces+=("$iface")
@@ -168,7 +169,7 @@ reset_host_network() {
         if [[ -f "$key_path" ]]; then
             log_info "Removing WireGuard key: $key_path"
             if command -v shred &>/dev/null; then
-                # Secure deletion is best-effort and depends on filesystem and device behavior.
+                # Secure deletion is best-effort; copy-on-write filesystems and SSD wear-leveling may retain old blocks.
                 if shred -u "$key_path" 2>/dev/null; then
                     log_success "Shredded and removed WireGuard key: $key_path"
                     continue
