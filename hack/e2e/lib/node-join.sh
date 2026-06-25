@@ -208,7 +208,13 @@ set -euo pipefail
 
 validate_no_wireguard_interfaces() {
   local interfaces
-  interfaces="$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'wg*' -printf '%f\n' | sort)"
+  local matches
+
+  shopt -s nullglob
+  matches=(/sys/class/net/wg*)
+  shopt -u nullglob
+
+  interfaces="$(printf '%s\n' "${matches[@]##*/}" | sort)"
   if [[ -n "${interfaces}" ]]; then
     echo "WireGuard interfaces still exist after reset cleanup:"
     echo "${interfaces}"
