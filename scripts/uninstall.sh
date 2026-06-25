@@ -19,6 +19,7 @@ LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
+# Interfaces created by unbounded-net that should not remain on the host after uninstall.
 KNOWN_NETWORK_INTERFACES=("geneve0" "vxlan0" "ipip0" "unbounded0" "cbr0")
 WIREGUARD_KEYS=("/etc/wireguard/server.priv" "/etc/wireguard/server.pub")
 
@@ -146,12 +147,12 @@ reset_host_network() {
     if command -v ip &>/dev/null; then
         local iface
         local wireguard_interfaces=()
+        # ip may render names as iface@ifindex; trim that suffix before matching unbounded-net wg<port> interfaces.
         while IFS= read -r iface; do
             wireguard_interfaces+=("$iface")
         done < <(ip -o link show 2>/dev/null | awk -F': ' '{name=$2; sub(/@.*/,"",name); if(name~/^wg[0-9]+$/) print name}')
 
         for iface in "${wireguard_interfaces[@]}" "${KNOWN_NETWORK_INTERFACES[@]}"; do
-            [[ -n "$iface" ]] || continue
             remove_network_interface "$iface"
         done
     else
@@ -163,7 +164,7 @@ reset_host_network() {
         if [[ -f "$key_path" ]]; then
             log_info "Removing WireGuard key: $key_path"
             if command -v shred &>/dev/null; then
-                if shred -u "$key_path" 2>/dev/null; then
+                if shred -u "$key_path" 2>/dev/null && [[ ! -e "$key_path" ]]; then
                     log_success "Removed WireGuard key: $key_path"
                     continue
                 fi
