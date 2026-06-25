@@ -149,8 +149,6 @@ _rp_delete_unjoin_node() {
   local vm_ip="$1"
   local vm_name="$2"
 
-  _seed_reset_cleanup_artifacts "${vm_ip}"
-
   log_info "Deleting local Machine resource on ${vm_ip}..."
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
@@ -170,31 +168,6 @@ REMOTE
 
   log_info "Deleting any remaining node '${vm_name}' from cluster..."
   kubectl delete node "${vm_name}" --ignore-not-found --wait=false
-}
-
-_seed_reset_cleanup_artifacts() {
-  local vm_ip="$1"
-
-  log_info "Seeding reset cleanup artifacts on ${vm_ip}..."
-  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
-set -euo pipefail
-
-sudo mkdir -p /etc/wireguard
-printf 'e2e private key\n' | sudo tee /etc/wireguard/server.priv >/dev/null
-printf 'e2e public key\n' | sudo tee /etc/wireguard/server.pub >/dev/null
-
-sudo modprobe dummy 2>/dev/null || true
-for iface in wg51898 geneve0 vxlan0 ipip0 unbounded0 cbr0; do
-  if ! ip link show "${iface}" &>/dev/null; then
-    sudo ip link add "${iface}" type dummy
-  fi
-done
-
-sudo ip rule add fwmark 0xca6a table 51898 2>/dev/null || true
-sudo ip route replace blackhole 198.51.100.254/32 table 51898
-
-echo "Reset cleanup artifacts seeded"
-REMOTE
 }
 
 _wait_for_node_not_ready_or_absent() {
@@ -233,6 +206,19 @@ _validate_rp_delete_cleanup() {
   remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
 set -euo pipefail
 
+validate_no_wireguard_interfaces() {
+  local interfaces
+  interfaces="$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'wg*' -printf '%f\n' | sort)"
+  if [[ -n "${interfaces}" ]]; then
+    echo "WireGuard interfaces still exist after reset cleanup:"
+    echo "${interfaces}"
+    while IFS= read -r iface; do
+      ip link show "${iface}" || true
+    done <<<"${interfaces}"
+    exit 1
+  fi
+}
+
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; do
   if (( SECONDS >= deadline )); then
@@ -257,7 +243,9 @@ for machine in kube1 kube2; do
   fi
 done
 
-for iface in wg51898 geneve0 vxlan0 ipip0 unbounded0 cbr0; do
+validate_no_wireguard_interfaces
+
+for iface in geneve0 vxlan0 ipip0 unbounded0 cbr0; do
   if [[ -e "/sys/class/net/${iface}" ]]; then
     echo "reset cleanup interface ${iface} still exists"
     ip link show "${iface}" || true
