@@ -19,6 +19,8 @@ LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
+KNOWN_NETWORK_INTERFACES=("geneve0" "vxlan0" "ipip0" "unbounded0" "cbr0")
+WIREGUARD_KEYS=("/etc/wireguard/server.priv" "/etc/wireguard/server.pub")
 
 # Functions
 log_info() {
@@ -47,6 +49,7 @@ confirm_uninstall() {
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
+    echo "• Host network state created by unbounded-net"
     echo "• Azure CLI"
     echo ""
     echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node reset' to clean up cluster and Arc resources.${NC}"
@@ -122,6 +125,51 @@ run_reset() {
     log_success "Reset completed"
 }
 
+remove_network_interface() {
+    local iface="$1"
+
+    if ip link show "$iface" &>/dev/null; then
+        log_info "Removing network interface: $iface"
+        if ip link delete "$iface" 2>/dev/null; then
+            log_success "Removed network interface: $iface"
+        else
+            log_warning "Failed to remove network interface: $iface"
+        fi
+    else
+        log_info "Network interface not found: $iface"
+    fi
+}
+
+reset_host_network() {
+    log_info "Resetting host network state..."
+
+    if command -v ip &>/dev/null; then
+        local iface
+        local wireguard_interfaces=()
+        while IFS= read -r iface; do
+            wireguard_interfaces+=("$iface")
+        done < <(ip -o link show 2>/dev/null | awk -F': ' '{ name = $2; sub(/@.*/, "", name); if (name ~ /^wg[0-9]+$/) print name }')
+
+        for iface in "${wireguard_interfaces[@]}" "${KNOWN_NETWORK_INTERFACES[@]}"; do
+            [[ -n "$iface" ]] || continue
+            remove_network_interface "$iface"
+        done
+    else
+        log_warning "ip command not found - skipping network interface cleanup"
+    fi
+
+    local key_path
+    for key_path in "${WIREGUARD_KEYS[@]}"; do
+        if [[ -f "$key_path" ]]; then
+            log_info "Removing WireGuard key: $key_path"
+            rm -f "$key_path"
+            log_success "Removed WireGuard key: $key_path"
+        else
+            log_info "WireGuard key not found: $key_path"
+        fi
+    done
+}
+
 remove_directories() {
     log_info "Removing directories..."
 
@@ -183,6 +231,7 @@ show_completion_message() {
     echo "✅ Service user and permissions"
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
+    echo "✅ Host network state"
     echo "✅ Azure CLI"
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"
@@ -205,6 +254,7 @@ main() {
 
     # Uninstall components in reverse order of installation
     run_reset
+    reset_host_network
     remove_directories
     remove_binary
     remove_azure_cli
