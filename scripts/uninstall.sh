@@ -148,7 +148,7 @@ reset_host_network() {
         local wireguard_interfaces=()
         while IFS= read -r iface; do
             wireguard_interfaces+=("$iface")
-        done < <(ip -o link show 2>/dev/null | awk -F': ' '{ name = $2; sub(/@.*/, "", name); if (name ~ /^wg[0-9]+$/) print name }')
+        done < <(ip -o link show 2>/dev/null | awk -F': ' '{name=$2; sub(/@.*/,"",name); if(name~/^wg[0-9]+$/) print name}')
 
         for iface in "${wireguard_interfaces[@]}" "${KNOWN_NETWORK_INTERFACES[@]}"; do
             [[ -n "$iface" ]] || continue
@@ -162,7 +162,11 @@ reset_host_network() {
     for key_path in "${WIREGUARD_KEYS[@]}"; do
         if [[ -f "$key_path" ]]; then
             log_info "Removing WireGuard key: $key_path"
-            rm -f "$key_path"
+            if command -v shred &>/dev/null; then
+                shred -u "$key_path"
+            else
+                rm -f "$key_path"
+            fi
             log_success "Removed WireGuard key: $key_path"
         else
             log_info "WireGuard key not found: $key_path"
