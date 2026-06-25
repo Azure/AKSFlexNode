@@ -150,8 +150,9 @@ reset_host_network() {
         local iface
         local wireguard_interfaces=()
         # Extract interface names, trim ip's optional @ifindex suffix, and keep only unbounded-net wg<port> interfaces.
-        # Expected input line: "2: wg51820: <POINTOPOINT> ..."
+        # Expected input line: "2: wg51820: <POINTOPOINT,NOARP,UP,LOWER_UP> ..."
         while IFS= read -r iface; do
+            [[ -n "$iface" ]] || continue
             wireguard_interfaces+=("$iface")
         done < <(ip -o link show 2>/dev/null | awk -F': ' -v pattern="$WIREGUARD_INTERFACE_PATTERN" '{name=$2; sub(/@.*/,"",name); if(name~pattern) print name}')
 
@@ -167,6 +168,7 @@ reset_host_network() {
         if [[ -f "$key_path" ]]; then
             log_info "Removing WireGuard key: $key_path"
             if command -v shred &>/dev/null; then
+                # Secure deletion is best-effort and depends on filesystem and device behavior.
                 if shred -u "$key_path" 2>/dev/null; then
                     log_success "Shredded and removed WireGuard key: $key_path"
                     continue
