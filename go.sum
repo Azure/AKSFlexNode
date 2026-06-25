@@ -48,6 +48,8 @@ github.com/Azure/unbounded v0.1.19-0.20260625051614-ffa40c0343ca h1:tLaOIuKHbFtf
 github.com/Azure/unbounded v0.1.19-0.20260625051614-ffa40c0343ca/go.mod h1:Gidt1+u+bKW5uGvB8d1vMju/remIb38F5LaiPugE53M=
 github.com/Azure/unbounded v0.1.19-0.20260625061542-cae5d3e6b84c h1:62XpIjdUeOGdlZLD75rs7nrW3doOBPUNTkad33m4Leo=
 github.com/Azure/unbounded v0.1.19-0.20260625061542-cae5d3e6b84c/go.mod h1:Gidt1+u+bKW5uGvB8d1vMju/remIb38F5LaiPugE53M=
+github.com/Azure/unbounded v0.1.19 h1:Ly4DDbJN/Ipe1hkacsi/ghmGbAHszYgw83PpSDPGTog=
+github.com/Azure/unbounded v0.1.19/go.mod h1:Gidt1+u+bKW5uGvB8d1vMju/remIb38F5LaiPugE53M=
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1 h1:WJTmL004Abzc5wDB5VtZG2PJk5ndYDgVacGqfirKxjM=
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1/go.mod h1:tCcJZ0uHAmvjsVYzEFivsRTN00oz5BEsRgQHu5JZ9WE=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 h1:RHK7bS+HQMslb1sZpAokUt+zTVmue0hKSs2C791hhzU=
