@@ -32,7 +32,7 @@ fi
 RUNNER_RESOURCE_GROUP="${RUNNER_RESOURCE_GROUP:-rg-aksflexnode-e2e-runner}"
 RUNNER_LOCATION="${RUNNER_LOCATION:-westus2}"
 RUNNER_VM_NAME="${RUNNER_VM_NAME:-vm-e2e-runner}"
-RUNNER_VM_SIZE="${RUNNER_VM_SIZE:-Standard_B2ms}"
+RUNNER_VM_SIZE="${RUNNER_VM_SIZE:-Standard_B2as_v2}"
 RUNNER_USER="azureuser"
 
 print_header "Self-Hosted Runner Setup for E2E Testing"
