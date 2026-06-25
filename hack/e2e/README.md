@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ The default `all` command runs:
 2. Deploy AKS and three VMs with Bicep.
 3. Join all three VMs.
 4. Validate node readiness, node-problem-detector status, and run smoke workloads.
-5. Unjoin all Flex Nodes and verify they are absent.
+5. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 6. Rejoin all Flex Nodes and validate again.
 7. Run local-machine-driven repave validation.
 8. Collect logs and clean up Azure resources.
