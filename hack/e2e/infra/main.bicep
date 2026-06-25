@@ -21,7 +21,7 @@ param nameSuffix string = uniqueString(resourceGroup().id)
 param aksNodeVmSize string = 'Standard_B2s'
 
 @description('Flex node VM size.')
-param vmSize string = 'Standard_B2ms'
+param vmSize string = 'Standard_B2as_v2'
 
 @description('Admin username for VMs.')
 param adminUsername string = 'azureuser'
