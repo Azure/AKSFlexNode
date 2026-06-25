@@ -149,7 +149,7 @@ reset_host_network() {
     if command -v ip &>/dev/null; then
         local iface
         local wireguard_interfaces=()
-        # ip may render names as iface@ifindex; trim that suffix before matching unbounded-net wg<port> interfaces.
+        # Extract interface names, trim ip's optional @ifindex suffix, and keep only unbounded-net wg<port> interfaces.
         while IFS= read -r iface; do
             wireguard_interfaces+=("$iface")
         done < <(ip -o link show 2>/dev/null | awk -F': ' -v pattern="$WIREGUARD_INTERFACE_PATTERN" '{name=$2; sub(/@.*/,"",name); if(name~pattern) print name}')
@@ -174,7 +174,7 @@ reset_host_network() {
             else
                 log_warning "shred command not found, removing WireGuard key without shredding: $key_path"
             fi
-            if rm -f "$key_path" && [[ ! -e "$key_path" ]]; then
+            if rm -f "$key_path"; then
                 log_success "Removed WireGuard key: $key_path"
             else
                 log_warning "Failed to remove WireGuard key: $key_path"
