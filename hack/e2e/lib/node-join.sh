@@ -208,21 +208,23 @@ set -euo pipefail
 
 validate_no_wireguard_interfaces() {
   local interfaces
-  local matches
+  local -a matches
 
   shopt -s nullglob
   matches=(/sys/class/net/wg*)
   shopt -u nullglob
 
-  interfaces="$(printf '%s\n' "${matches[@]##*/}" | sort)"
-  if [[ -n "${interfaces}" ]]; then
-    echo "WireGuard interfaces still exist after reset cleanup:"
-    echo "${interfaces}"
-    while IFS= read -r iface; do
-      ip link show "${iface}" || true
-    done <<<"${interfaces}"
-    exit 1
+  if ((${#matches[@]} == 0)); then
+    return 0
   fi
+
+  interfaces="$(printf '%s\n' "${matches[@]##*/}" | sort)"
+  echo "WireGuard interfaces still exist after reset cleanup:"
+  echo "${interfaces}"
+  while IFS= read -r iface; do
+    ip link show "${iface}" || true
+  done <<<"${interfaces}"
+  exit 1
 }
 
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
