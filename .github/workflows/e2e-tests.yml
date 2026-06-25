@@ -74,3 +74,7 @@ jobs:
         env:
           E2E_SKIP_CLEANUP: ${{ inputs.skip_cleanup && '1' || '0' }}
         run: ./hack/e2e/run.sh cleanup
+
+      - name: Cleanup runner workspace
+        if: always()
+        run: ./hack/e2e/run.sh runner-cleanup

@@ -23,6 +23,7 @@
 #   upgrade-drift Run MSI-node Kubernetes version drift repave test
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
+#   runner-cleanup Reclaim local disk on the self-hosted runner
 #   status        Show current state (deployment outputs)
 #
 # Options:
@@ -41,6 +42,7 @@
 #   E2E_BINARY              Path to pre-built aks-flex-node binary
 #   E2E_NAME_SUFFIX         Unique suffix for resource names
 #   E2E_SKIP_CLEANUP        Set to 1 to keep resources after tests
+#   E2E_SKIP_RUNNER_CLEANUP Set to 1 to keep local runner artifacts after tests
 #   E2E_SKIP_BUILD          Set to 1 to skip building the binary
 #   E2E_DEBUG               Set to 1 for verbose logging
 #   E2E_SSH_KEY_FILE        SSH public key file for VM access
@@ -94,6 +96,8 @@ source "${SCRIPT_DIR}/lib/validate.sh"
 source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/cleanup.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/runner.sh"
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -115,7 +119,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|validate|validate-absent|smoke|upgrade-drift|logs|cleanup|status)
+      all|infra|join|join-msi|join-token|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-kubeadm|validate|validate-absent|smoke|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -215,6 +219,12 @@ cmd_status() {
 # ---------------------------------------------------------------------------
 main() {
   parse_args "$@"
+
+  if [[ "${COMMAND}" == "runner-cleanup" ]]; then
+    trap 'gha_end_group' EXIT
+    cleanup_runner_workspace
+    return
+  fi
 
   # Common initialization
   check_prerequisites
