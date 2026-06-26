@@ -47,9 +47,10 @@ confirm_uninstall() {
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
+    echo "• Host network state created by unbounded-net"
     echo "• Azure CLI"
     echo ""
-    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node reset' to clean up cluster and Arc resources.${NC}"
+    echo -e "${YELLOW}NOTE: This will first run 'aks-flex-node reset' to clean up cluster, Arc, and host network resources.${NC}"
         echo ""
 
     # Always prompt for confirmation, even when piped
@@ -66,7 +67,7 @@ confirm_uninstall() {
 }
 
 run_reset() {
-    log_info "Running reset to clean up cluster and Arc resources..."
+    log_info "Running reset to clean up cluster, Arc, and host network resources..."
 
     # Check if aks-flex-node binary exists
     if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
@@ -183,6 +184,7 @@ show_completion_message() {
     echo "✅ Service user and permissions"
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
+    echo "✅ Host network state"
     echo "✅ Azure CLI"
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"

@@ -206,6 +206,65 @@ _validate_rp_delete_cleanup() {
   remote_exec "${vm_ip}" "E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
 set -euo pipefail
 
+validate_no_wireguard_interfaces() {
+  local interfaces
+  local -a matches
+
+  shopt -s nullglob
+  matches=(/sys/class/net/wg*)
+  shopt -u nullglob
+
+  if ((${#matches[@]} == 0)); then
+    return 0
+  fi
+
+  interfaces="$(printf '%s\n' "${matches[@]##*/}" | sort)"
+  echo "WireGuard interfaces still exist after reset cleanup:"
+  echo "${interfaces}"
+  while IFS= read -r iface; do
+    ip link show "${iface}" || true
+  done <<<"${interfaces}"
+  exit 1
+}
+
+validate_no_overlay_interfaces() {
+  local iface
+
+  for iface in geneve0 vxlan0 ipip0 unbounded0 cbr0; do
+    if [[ -e "/sys/class/net/${iface}" ]]; then
+      echo "reset cleanup interface ${iface} still exists"
+      ip link show "${iface}" || true
+      exit 1
+    fi
+  done
+}
+
+validate_no_wireguard_keys() {
+  local path
+
+  for path in /etc/wireguard/server.priv /etc/wireguard/server.pub; do
+    if [[ -e "${path}" ]]; then
+      echo "reset cleanup WireGuard key ${path} still exists"
+      sudo ls -l "${path}" || true
+      exit 1
+    fi
+  done
+}
+
+validate_no_policy_routing_state() {
+  if ip rule show | grep -Eq 'lookup 51898|table 51898'; then
+    echo "reset cleanup policy routing rule for table 51898 still exists"
+    ip rule show
+    exit 1
+  fi
+
+  if ip route show table 51898 | grep -q .; then
+    echo "reset cleanup route table 51898 is not empty"
+    ip route show table 51898
+    exit 1
+  fi
+}
+
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; do
   if (( SECONDS >= deadline )); then
@@ -229,6 +288,11 @@ for machine in kube1 kube2; do
     exit 1
   fi
 done
+
+validate_no_wireguard_interfaces
+validate_no_overlay_interfaces
+validate_no_wireguard_keys
+validate_no_policy_routing_state
 
 for path in /etc/aks-flex-node /var/log/aks-flex-node; do
   if [[ -e "${path}" ]]; then
