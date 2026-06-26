@@ -13,6 +13,11 @@ set -euo pipefail
 [[ -n "${_E2E_NODE_JOIN_KUBEADM_LOADED:-}" ]] && return 0
 readonly _E2E_NODE_JOIN_KUBEADM_LOADED=1
 
+# Kubeadm-style bootstrap tokens must carry kubeadm's default bootstrap group.
+# AKS Flex Node also uses system:bootstrappers:aks-flex-node for E2E CSR
+# authorization, so this flow grants and emits both groups.
+readonly kubeadmBootstrapGroup="system:bootstrappers:kubeadm:default-node-token"
+
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -46,6 +51,9 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -59,6 +67,9 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -85,6 +96,9 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:bootstrappers:aks-flex-node
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -110,6 +124,9 @@ subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
   name: system:bootstrappers:aks-flex-node
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -135,6 +152,9 @@ subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
   name: system:bootstrappers:aks-flex-node
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -157,6 +177,9 @@ subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
   name: system:bootstrappers:aks-flex-node
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ${kubeadmBootstrapGroup}
 EOF
 
   # Publish the ConfigMaps that kubeadm join reads during its preflight phase.
@@ -246,7 +269,7 @@ stringData:
   expiration: "${expiration}"
   usage-bootstrap-authentication: "true"
   usage-bootstrap-signing: "true"
-  auth-extra-groups: "system:bootstrappers:aks-flex-node"
+  auth-extra-groups: "system:bootstrappers:aks-flex-node,${kubeadmBootstrapGroup}"
 EOF
 
   echo "${bootstrap_token}"
