@@ -546,11 +546,11 @@ sudo su
 curl -fsSL "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/install.sh" \
   | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}" bash
 
-umask 077
-mkdir -p /etc/aks-flex-node
-cp /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-chmod 600 /etc/aks-flex-node/config.json
+install -d -m 0755 /etc/aks-flex-node
+install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 
+# Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
+umask 022
 aks-flex-node version
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```

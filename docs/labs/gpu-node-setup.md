@@ -158,16 +158,16 @@ On the GPU host:
 
 ```bash
 sudo su
-umask 077
-mkdir -p /etc/aks-flex-node
-cp /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-chmod 600 /etc/aks-flex-node/config.json
+install -d -m 0755 /etc/aks-flex-node
+install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 cat /etc/aks-flex-node/config.json
 ```
 
 ### 5. Bootstrap and watch the node
 
 ```bash
+# Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
+umask 022
 aks-flex-node start --config /etc/aks-flex-node/config.json
 journalctl -u aks-flex-node-agent -f
 ```
