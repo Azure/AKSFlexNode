@@ -146,14 +146,13 @@ On the target host:
 
 ```bash
 sudo su
-umask 077
-mkdir -p /etc/aks-flex-node
-cp /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-chmod 600 /etc/aks-flex-node/config.json
+install -d -m 0755 /etc/aks-flex-node
+install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 ```
 
-Then start AKS Flex Node:
+Then start AKS Flex Node with a standard `022` umask. The config file stays `0600`, while bootstrap-created nspawn rootfs paths remain traversable by non-root service users such as `dbus`:
 
 ```bash
+umask 022
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```

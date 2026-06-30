@@ -115,17 +115,16 @@ sudo su
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
 aks-flex-node version
 
-umask 077
-mkdir -p /etc/aks-flex-node
-cp /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-chmod 600 /etc/aks-flex-node/config.json
+install -d -m 0755 /etc/aks-flex-node
+install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 
 cat /etc/aks-flex-node/config.json
 ```
 
-After reviewing the config, bootstrap the node. This installs the long-running agent service and starts the local Kubernetes worker environment.
+After reviewing the config, bootstrap the node. This installs the long-running agent service and starts the local Kubernetes worker environment. Use a standard `022` umask so bootstrap-created nspawn rootfs paths remain traversable by non-root service users such as `dbus`; the config file remains `0600`.
 
 ```bash
+umask 022
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
