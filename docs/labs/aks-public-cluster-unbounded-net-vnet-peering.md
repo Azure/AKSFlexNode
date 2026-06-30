@@ -10,7 +10,7 @@ The validated shape is intentionally different from the WireGuard gateway lab:
 - Cross-site pod traffic uses the private Azure VNet peering path.
 - No `GatewayPool` or WireGuard configuration is required.
 
-Because the AKS VNet and Flex VNet are privately reachable through VNet peering, the Unbounded configuration uses `SitePeering` with `meshNodes: false` and `tunnelProtocol: None`. Do not assign either site to a gateway pool for this private-L3 topology.
+Because the AKS VNet and Flex VNet are privately reachable through VNet peering, the Unbounded configuration uses `SitePeering` with `meshNodes: true` and `tunnelProtocol: Auto`. This lets `unbounded-net` own pod-to-pod connectivity through its mesh/tunnel datapath while Azure VNet peering provides node-to-node underlay reachability. Do not assign either site to a gateway pool for this topology.
 
 For unbounded-net concepts, custom resources, and operations, see the [Unbounded networking documentation](https://unbounded-cloud.io/concepts/networking/) and [unbounded-net operations guide](https://unbounded-cloud.io/reference/networking/operations/).
 
@@ -30,9 +30,9 @@ In this setup, `unbounded-net` does three important things:
 
 - Runs `unbounded-net-node` as a DaemonSet on AKS and Flex nodes. The node agent writes the host CNI config, watches `Site` and `SiteNodeSlice` resources, configures interfaces, and installs the routes needed for pod traffic.
 - Allocates per-node pod CIDRs from each site's `Site` resource.
-- Programs pod routes between the AKS site and Flex site using the existing VNet peering path.
+- Programs pod routes between the AKS site and Flex site using the existing VNet peering path as the node-to-node underlay.
 
-This private-L3 mode is intentionally different from Unbounded's public gateway mode. Since the AKS VNet and Flex VNet are already peered, the sites use `SitePeering` with `meshNodes: false` and `tunnelProtocol: None` so node and pod traffic can use the Azure private network instead of a public gateway or WireGuard overlay.
+This VNet-peered mode is intentionally different from Unbounded's public gateway mode. Since the AKS VNet and Flex VNet are already peered, the sites use `SitePeering` with `meshNodes: true` and `tunnelProtocol: Auto` so `unbounded-net` can provide the CNI mesh for pod traffic without a public `GatewayPool` or WireGuard gateway.
 
 ## Topology
 
@@ -67,8 +67,8 @@ flowchart LR
     aksKubelet --> publicApi
     workload -->|ClusterIP service traffic| kubeProxyFlex
     aksPods -->|ClusterIP service traffic| kubeProxyAks
-    unboundedAks <-->|SitePeering<br/>meshNodes=false<br/>tunnelProtocol=None| unboundedFlex
-    workload <-->|Pod traffic over existing private L3| aksPods
+    unboundedAks <-->|SitePeering<br/>meshNodes=true<br/>tunnelProtocol=Auto| unboundedFlex
+    workload <-->|Pod traffic over unbounded-net mesh<br/>using VNet peering underlay| aksPods
 
     classDef unbounded fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0f172a;
     classDef unboundedProxy fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#0f172a;
@@ -210,7 +210,7 @@ kubectl -n unbounded-net rollout status deploy/unbounded-net-controller --timeou
 kubectl -n unbounded-net rollout status ds/unbounded-net-node --timeout=5m
 ```
 
-## Create Sites And Private L3 Peering
+## Create Sites And Mesh Peering
 
 Create the AKS cluster site, the Flex site, and a `SitePeering` that tells `unbounded-net` the two sites are already privately reachable through VNet peering.
 
@@ -250,14 +250,12 @@ spec:
   sites:
   - aks-site
   - flex-site
-  meshNodes: false
-  tunnelProtocol: None
+  meshNodes: true
+  tunnelProtocol: Auto
 EOF
 ```
 
-This topology does not need a public `GatewayPool`, and neither site needs a gateway pool assignment. AKS control-plane-to-Flex-kubelet traffic should use the VNet peering path instead of unbounded-net's `unbounded0` interface.
-
-Because this lab intentionally avoids an overlay gateway, Azure must also know how to route the non-VNet pod CIDRs. The route table and host-route steps below make pod CIDRs reachable over the VNet peering path.
+This topology does not need a public `GatewayPool`, and neither site needs a gateway pool assignment. AKS control-plane-to-Flex-kubelet traffic should use the VNet peering path, while pod-to-pod traffic is handled by the `unbounded-net` mesh selected by `tunnelProtocol: Auto`.
 
 Verify site assignment:
 
@@ -314,141 +312,6 @@ Expected unauthenticated response:
 
 ```text
 HTTP/2 401
-```
-
-## Configure Azure Private-L3 Pod Routing
-
-The AKS and Flex pod CIDRs are not VNet address prefixes. Add Azure UDRs, enable IP forwarding, and allow pod/node CIDR traffic so Azure can carry routed pod packets across the peering path.
-
-This single-node lab routes the full site pod CIDR to the one node in each site. For multi-node sites, create more specific routes for each node's assigned pod CIDR to that node's private IP, or automate route reconciliation.
-
-```bash
-AKS_NODE_IP=$(kubectl get nodes \
-  -l net.unbounded-cloud.io/site=aks-site \
-  -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-
-# Route Flex pod CIDR from the AKS subnet to the Flex node.
-az network route-table create \
-  -g "$AKS_RG" \
-  -n aks-to-flex-pods-rt \
-  -l "$AKS_REGION"
-
-az network route-table route create \
-  -g "$AKS_RG" \
-  --route-table-name aks-to-flex-pods-rt \
-  -n flex-pods \
-  --address-prefix 10.95.0.0/16 \
-  --next-hop-type VirtualAppliance \
-  --next-hop-ip-address "$VM_PRIVATE_IP"
-
-az network vnet subnet update \
-  -g "$AKS_RG" \
-  --vnet-name "$AKS_VNET" \
-  -n aks-subnet \
-  --route-table aks-to-flex-pods-rt
-
-# Route AKS pod CIDR from the Flex subnet to the AKS node.
-az network route-table create \
-  -g "$VM_RG" \
-  -n flex-to-aks-pods-rt \
-  -l "$VM_REGION"
-
-az network route-table route create \
-  -g "$VM_RG" \
-  --route-table-name flex-to-aks-pods-rt \
-  -n aks-pods \
-  --address-prefix 10.93.0.0/16 \
-  --next-hop-type VirtualAppliance \
-  --next-hop-ip-address "$AKS_NODE_IP"
-
-az network vnet subnet update \
-  -g "$VM_RG" \
-  --vnet-name "$FLEX_VNET" \
-  -n flex-subnet \
-  --route-table flex-to-aks-pods-rt
-```
-
-Enable IP forwarding on the Flex VM NIC and the AKS VMSS NIC configuration:
-
-```bash
-FLEX_NIC_ID=$(az vm show \
-  -g "$VM_RG" \
-  -n "$VM_NAME" \
-  --query 'networkProfile.networkInterfaces[0].id' \
-  -o tsv)
-FLEX_NIC_NAME="${FLEX_NIC_ID##*/}"
-
-az network nic update \
-  -g "$VM_RG" \
-  -n "$FLEX_NIC_NAME" \
-  --ip-forwarding true
-
-NODE_RG=$(az aks show \
-  -g "$AKS_RG" \
-  -n "$CLUSTER_NAME" \
-  --query nodeResourceGroup \
-  -o tsv)
-VMSS_NAME=$(az vmss list \
-  -g "$NODE_RG" \
-  --query '[0].name' \
-  -o tsv)
-
-az vmss update \
-  -g "$NODE_RG" \
-  -n "$VMSS_NAME" \
-  --set virtualMachineProfile.networkProfile.networkInterfaceConfigurations[0].enableIPForwarding=true
-
-az vmss update-instances \
-  -g "$NODE_RG" \
-  -n "$VMSS_NAME" \
-  --instance-ids '*'
-```
-
-If your environment attaches NSGs to the AKS subnet, AKS node resource group, Flex subnet, or Flex NIC, add explicit allow rules for the node and pod CIDRs. Some policy-managed `NRMS-...` subnet NSGs do not treat pod CIDRs as `VirtualNetwork` traffic.
-
-```bash
-NODE_RG=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query nodeResourceGroup -o tsv)
-AKS_AGENT_NSG=$(az network nsg list -g "$NODE_RG" --query '[0].name' -o tsv)
-AKS_SUBNET_NSG_ID=$(az network vnet subnet show -g "$AKS_RG" --vnet-name "$AKS_VNET" -n aks-subnet --query networkSecurityGroup.id -o tsv)
-FLEX_SUBNET_NSG_ID=$(az network vnet subnet show -g "$VM_RG" --vnet-name "$FLEX_VNET" -n flex-subnet --query networkSecurityGroup.id -o tsv)
-FLEX_NIC_NSG_ID=$(az network nic show -g "$VM_RG" -n "$FLEX_NIC_NAME" --query networkSecurityGroup.id -o tsv)
-
-add_peered_pod_nsg_rules() {
-  local rg="$1"
-  local nsg="$2"
-  [ -z "$nsg" ] && return 0
-
-  az network nsg rule create \
-    -g "$rg" \
-    --nsg-name "$nsg" \
-    -n AllowAKSFlexPeeredPodNodeInbound \
-    --priority 100 \
-    --direction Inbound \
-    --access Allow \
-    --protocol '*' \
-    --source-address-prefixes 10.91.0.0/16 10.92.0.0/16 10.93.0.0/16 10.95.0.0/16 \
-    --source-port-ranges '*' \
-    --destination-address-prefixes 10.91.0.0/16 10.92.0.0/16 10.93.0.0/16 10.95.0.0/16 \
-    --destination-port-ranges '*' || true
-
-  az network nsg rule create \
-    -g "$rg" \
-    --nsg-name "$nsg" \
-    -n AllowAKSFlexPeeredPodNodeOutbound \
-    --priority 100 \
-    --direction Outbound \
-    --access Allow \
-    --protocol '*' \
-    --source-address-prefixes 10.91.0.0/16 10.92.0.0/16 10.93.0.0/16 10.95.0.0/16 \
-    --source-port-ranges '*' \
-    --destination-address-prefixes 10.91.0.0/16 10.92.0.0/16 10.93.0.0/16 10.95.0.0/16 \
-    --destination-port-ranges '*' || true
-}
-
-add_peered_pod_nsg_rules "$NODE_RG" "$AKS_AGENT_NSG"
-[ -n "$AKS_SUBNET_NSG_ID" ] && add_peered_pod_nsg_rules "$AKS_RG" "${AKS_SUBNET_NSG_ID##*/}"
-[ -n "$FLEX_SUBNET_NSG_ID" ] && add_peered_pod_nsg_rules "$VM_RG" "${FLEX_SUBNET_NSG_ID##*/}"
-[ -n "$FLEX_NIC_NSG_ID" ] && add_peered_pod_nsg_rules "$VM_RG" "${FLEX_NIC_NSG_ID##*/}"
 ```
 
 ## Generate Bootstrap Config
@@ -569,47 +432,6 @@ unbounded-net/unbounded-net-kube-proxy-flex-site
 
 Do not add `kubernetes.azure.com/cluster=<cluster-name>` for this unbounded-net setup. That label is only needed in the kubenet flow to make AKS-managed kube-proxy schedule on Flex Nodes. In this setup, kube-proxy for the Flex site is provided by `unbounded-net`.
 
-## Install Host Routes For Pod CIDRs
-
-With `meshNodes: false` and `tunnelProtocol: None`, do not create a `GatewayPool`; a gateway pool can advertise node CIDRs and break AKS API-server-to-Flex-kubelet callbacks. Instead, add host routes that send the remote site's pod CIDR to the local Azure subnet gateway. Azure UDRs then forward the packets to the correct remote node.
-
-These commands use the `unbounded-net-node` host-network pod to enter each node's network namespace. The route changes are sufficient for a lab validation run; for long-running environments, make them persistent with your preferred host route management mechanism.
-
-```bash
-AKS_NODE=$(kubectl get nodes -l net.unbounded-cloud.io/site=aks-site -o jsonpath='{.items[0].metadata.name}')
-FLEX_NODE="$VM_NAME"
-AKS_NODE_IP=$(kubectl get node "$AKS_NODE" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-AKS_NODE_POD_CIDR=$(kubectl get node "$AKS_NODE" -o jsonpath='{.spec.podCIDR}')
-FLEX_NODE_POD_CIDR=$(kubectl get node "$FLEX_NODE" -o jsonpath='{.spec.podCIDR}')
-AKS_SUBNET_GATEWAY="10.91.1.1"
-FLEX_SUBNET_GATEWAY="10.92.1.1"
-
-AKS_UNBOUNDED_POD=$(kubectl -n unbounded-net get pod \
-  -l app.kubernetes.io/name=unbounded-net-node \
-  --field-selector spec.nodeName="$AKS_NODE" \
-  -o jsonpath='{.items[0].metadata.name}')
-FLEX_UNBOUNDED_POD=$(kubectl -n unbounded-net get pod \
-  -l app.kubernetes.io/name=unbounded-net-node \
-  --field-selector spec.nodeName="$FLEX_NODE" \
-  -o jsonpath='{.items[0].metadata.name}')
-
-# Use the local Azure subnet gateway, not the remote node IP, as the Linux next hop.
-kubectl -n unbounded-net exec "$AKS_UNBOUNDED_POD" -- \
-  nsenter -t 1 -n ip route replace "$FLEX_NODE_POD_CIDR" via "$AKS_SUBNET_GATEWAY" dev eth0 src "$AKS_NODE_IP"
-
-kubectl -n unbounded-net exec "$FLEX_UNBOUNDED_POD" -- \
-  nsenter -t 1 -n ip route replace "$AKS_NODE_POD_CIDR" via "$FLEX_SUBNET_GATEWAY" dev eth0 src "$VM_PRIVATE_IP"
-```
-
-Verify that the host routes point at the local Azure subnet gateway:
-
-```bash
-kubectl -n unbounded-net exec "$AKS_UNBOUNDED_POD" -- \
-  nsenter -t 1 -n ip route show "$FLEX_NODE_POD_CIDR"
-kubectl -n unbounded-net exec "$FLEX_UNBOUNDED_POD" -- \
-  nsenter -t 1 -n ip route show "$AKS_NODE_POD_CIDR"
-```
-
 ## Verify
 
 Check nodes:
@@ -637,7 +459,7 @@ Expected result:
 ```text
 site.net.unbounded-cloud.io/aks-site    ...   NODES   1   SLICES   1
 site.net.unbounded-cloud.io/flex-site   ...   NODES   1   SLICES   1
-sitepeering.net.unbounded-cloud.io/aks-flex-private-l3   SITES   2   MESH NODES   false
+sitepeering.net.unbounded-cloud.io/aks-flex-private-l3   SITES   2   MESH NODES   true
 ```
 
 Check pods on the Flex Node:
@@ -748,17 +570,14 @@ If `kubectl exec` or `kubectl logs` to a Flex pod fails with a `502` while the F
 ip route get <flex-vm-private-ip>
 ```
 
-For a VNet-peered/private-L3 setup, the route should use the Azure VNet path, not `unbounded0`. Do not assign either site to a `GatewayPool`; that can advertise node CIDRs as gateway `NodeCidr` values and hijack kubelet traffic.
+For this VNet-peered setup, the route to the Flex node IP should use the Azure VNet path, not `unbounded0`. Do not assign either site to a `GatewayPool`; that can advertise node CIDRs as gateway `NodeCidr` values and hijack kubelet traffic.
 
 If pod traffic between AKS and Flex pods fails:
 
 - Verify both VNet peering objects are connected and have `--allow-vnet-access` enabled.
 - Verify NSGs allow traffic between AKS node private IPs and Flex node private IPs over the peering path.
 - Verify the `Site` `nodeCidrs` match the AKS and Flex VNet ranges.
-- Verify the `SitePeering` has `meshNodes: false` and `tunnelProtocol: None`.
+- Verify the `SitePeering` has `meshNodes: true` and `tunnelProtocol: Auto`.
 - Verify neither site has a `SiteGatewayPoolAssignment`.
 - Verify VNet peering has `allowForwardedTraffic=true` in both directions.
-- Verify Azure route tables route the remote pod CIDR to the remote node private IP.
-- Verify IP forwarding is enabled on the Flex NIC and AKS VMSS NIC configuration.
-- Verify NSGs explicitly allow node and pod CIDRs if policy-managed NSGs are attached.
-- Verify host routes send remote pod CIDRs to the local Azure subnet gateway, for example `10.91.1.1` on the AKS node and `10.92.1.1` on the Flex node.
+- Verify NSGs allow node-to-node traffic between the AKS VNet and Flex VNet. With `tunnelProtocol: Auto`, Azure route tables for pod CIDRs are not required.
