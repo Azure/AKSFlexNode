@@ -20,6 +20,8 @@ AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual
 
 Before you begin, [create or choose an existing AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli) and a virtual machine or bare metal host to join as a Flex Node. This example assumes a Linux workstation with Azure CLI, `kubectl`, `curl`, and `python3`. The target host must run systemd, allow root installation, and reach the AKS API server over outbound HTTPS. Use a VM size with enough CPU and memory for nspawn startup and Kubernetes components; the validated quickstart used a 4-vCPU Azure VM.
 
+For the quickstart network, place the target host in a peered or otherwise routed network with non-overlapping CIDRs. The Flex host and AKS node private IPs must have bidirectional reachability, and any NSGs or firewalls must allow the CNI's cross-node traffic (often TCP/UDP between node private IPs, and sometimes pod CIDR ranges depending on the CNI) so pod networking works after the node joins. For private AKS clusters, also ensure the host can resolve and reach the private API endpoint. For advanced network scenarios such as cross-region, gateway, or custom CNI topologies, follow the [lab guides](docs/labs/README.md).
+
 The flow below will:
 
 1. Apply the node bootstrap RBAC bindings on the AKS cluster.
