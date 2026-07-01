@@ -4,7 +4,7 @@
 #
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
-#   validate_all_nodes                - Verify MSI, token, and kubeadm nodes joined
+#   validate_all_nodes                - Verify MSI, token, offline, and kubeadm nodes joined
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
 #   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
@@ -162,7 +162,7 @@ REMOTE
 }
 
 # ---------------------------------------------------------------------------
-# validate_all_nodes - Check all MSI, token, and kubeadm VMs joined
+# validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
   log_section "Validating Node Join"
@@ -178,24 +178,30 @@ validate_all_nodes() {
     --overwrite-existing \
     --admin
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
-  local msi_vm_ip token_vm_ip kubeadm_vm_ip
-  local token_vm_private_ip
+  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
+  local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip
+  local token_vm_private_ip offline_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
+  offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
   msi_vm_ip="$(state_get msi_vm_ip)"
   token_vm_ip="$(state_get token_vm_ip)"
+  offline_vm_ip="$(state_get offline_vm_ip)"
   kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
   token_vm_private_ip="$(state_get token_vm_private_ip)"
+  offline_vm_private_ip="$(state_get offline_vm_private_ip)"
 
   local failed=0
   validate_node_joined "${msi_vm_name}" || failed=1
   validate_node_joined "${token_vm_name}" || failed=1
+  validate_node_joined "${offline_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
+  validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
+  validate_npd_status "${offline_vm_name}" "${offline_vm_ip}" || failed=1
   validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
@@ -241,15 +247,17 @@ validate_node_absent() {
 validate_all_nodes_absent() {
   log_section "Validating Nodes Absent After Unjoin"
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
+  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
+  offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
   local failed=0
   # TODO: MSI validation skipped until credential plugin auth is supported
   log_info "Skipping MSI node absence validation (credential plugin auth not yet supported)"
   validate_node_absent "${token_vm_name}" || failed=1
+  validate_node_absent "${offline_vm_name}" || failed=1
   validate_node_absent "${kubeadm_vm_name}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
@@ -319,9 +327,10 @@ EOF
 smoke_test_all() {
   log_section "Running Smoke Tests"
 
-  local msi_vm_name token_vm_name kubeadm_vm_name
+  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
+  offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
   # A default bridge CNI config (99-bridge.conf) is written during bootstrap,
@@ -329,6 +338,7 @@ smoke_test_all() {
   local failed=0
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1
+  smoke_test "${offline_vm_name}" "offline" || failed=1
   smoke_test "${kubeadm_vm_name}" "kubeadm" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then

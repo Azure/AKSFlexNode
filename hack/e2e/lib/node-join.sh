@@ -5,10 +5,11 @@
 # Sources:
 #   node-join-msi.sh     - MSI auth node join/unjoin     (node_join_msi, node_unjoin_msi)
 #   node-join-token.sh   - Bootstrap token join/unjoin   (node_join_token, node_unjoin_token)
+#   node-join-offline.sh - Offline artifact join/unjoin  (node_join_offline, node_unjoin_offline)
 #   node-join-kubeadm.sh - Kubeadm apply -f join/unjoin  (node_join_kubeadm, node_unjoin_kubeadm)
 #
 # Functions:
-#   node_join_all   - Join all nodes (MSI, token, and kubeadm) in parallel
+#   node_join_all   - Join all nodes (MSI, token, offline, and kubeadm) in parallel
 #   node_unjoin_all - Unjoin all nodes in parallel
 # =============================================================================
 set -euo pipefail
@@ -311,6 +312,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/node-join-msi.sh"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-token.sh"
 # shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/node-join-offline.sh"
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-kubeadm.sh"
 
 # ---------------------------------------------------------------------------
@@ -321,8 +324,8 @@ node_join_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
+  local msi_pid token_pid offline_pid kubeadm_pid
+  local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0
 
   ensure_daemon_csr_approver
 
@@ -332,11 +335,15 @@ node_join_all() {
   node_join_token &
   token_pid=$!
 
+  node_join_offline &
+  offline_pid=$!
+
   node_join_kubeadm &
   kubeadm_pid=$!
 
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
+  wait "${offline_pid}" || offline_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
 
   local duration
@@ -348,11 +355,14 @@ node_join_all() {
   if [[ "${token_exit}" -ne 0 ]]; then
     log_error "Token node join failed (exit ${token_exit})"
   fi
+  if [[ "${offline_exit}" -ne 0 ]]; then
+    log_error "Offline artifacts node join failed (exit ${offline_exit})"
+  fi
   if [[ "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Kubeadm node join failed (exit ${kubeadm_exit})"
   fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${offline_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Node joins failed (${duration}s)"
     return 1
   fi
@@ -368,8 +378,8 @@ node_unjoin_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 kubeadm_exit=0
+  local msi_pid token_pid offline_pid kubeadm_pid
+  local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0
 
   node_unjoin_msi &
   msi_pid=$!
@@ -377,11 +387,15 @@ node_unjoin_all() {
   node_unjoin_token &
   token_pid=$!
 
+  node_unjoin_offline &
+  offline_pid=$!
+
   node_unjoin_kubeadm &
   kubeadm_pid=$!
 
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
+  wait "${offline_pid}" || offline_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
 
   local duration
@@ -393,11 +407,14 @@ node_unjoin_all() {
   if [[ "${token_exit}" -ne 0 ]]; then
     log_error "Token node unjoin failed (exit ${token_exit})"
   fi
+  if [[ "${offline_exit}" -ne 0 ]]; then
+    log_error "Offline artifacts node unjoin failed (exit ${offline_exit})"
+  fi
   if [[ "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Kubeadm node unjoin failed (exit ${kubeadm_exit})"
   fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${offline_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Node unjoins failed (${duration}s)"
     return 1
   fi

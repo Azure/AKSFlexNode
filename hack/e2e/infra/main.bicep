@@ -5,6 +5,7 @@
 //   - AKS cluster (1-node control plane)
 //   - VM with system-assigned managed identity  (MSI auth mode)
 //   - VM without managed identity               (bootstrap token auth mode)
+//   - VM without managed identity               (offline bootstrap artifacts mode)
 //   - VM without managed identity               (kubeadm apply -f auth mode)
 //
 // All flex-node VMs run Ubuntu 22.04 LTS, have public IPs, and allow SSH
@@ -39,6 +40,7 @@ param tags object = {}
 var clusterName   = 'aks-e2e-${nameSuffix}'
 var msiVmName     = 'vm-e2e-msi-${nameSuffix}'
 var tokenVmName   = 'vm-e2e-token-${nameSuffix}'
+var offlineVmName = 'vm-e2e-offline-${nameSuffix}'
 var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
 var vnetName      = 'vnet-e2e-${nameSuffix}'
 var nsgName       = 'nsg-e2e-${nameSuffix}'
@@ -171,6 +173,20 @@ module vmToken 'modules/vm.bicep' = {
   }
 }
 
+module vmOffline 'modules/vm.bicep' = {
+  name: 'deploy-vm-offline'
+  params: {
+    location: location
+    vmName: offlineVmName
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: false
+    tags: tags
+  }
+}
+
 module vmKubeadm 'modules/vm.bicep' = {
   name: 'deploy-vm-kubeadm'
   params: {
@@ -224,6 +240,10 @@ output msiVmPrincipalId string = vmMsi.outputs.principalId
 output tokenVmName string = vmToken.outputs.vmName
 output tokenVmIp string = vmToken.outputs.publicIpAddress
 output tokenVmPrivateIp string = vmToken.outputs.privateIpAddress
+
+output offlineVmName string = vmOffline.outputs.vmName
+output offlineVmIp string = vmOffline.outputs.publicIpAddress
+output offlineVmPrivateIp string = vmOffline.outputs.privateIpAddress
 
 output kubeadmVmName string = vmKubeadm.outputs.vmName
 output kubeadmVmIp string = vmKubeadm.outputs.publicIpAddress
