@@ -7,7 +7,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
-	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
@@ -41,13 +40,11 @@ func StartNode(
 	return phases.Serial(log,
 		rootfs.Provision(log, gs.RootFS),
 		phases.Parallel(log,
-			npd.Download(cfg, gs.RootFS.MachineDir),
 			InstallBinary(gs.RootFS.MachineDir),
 			cni.WriteCNIConfig(gs.RootFS.MachineDir),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, machineName),
-		npd.Start(log, gs.NodeStart),
 		saveState(store, state),
 	)
 }

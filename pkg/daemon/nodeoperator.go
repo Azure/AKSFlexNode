@@ -7,7 +7,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
@@ -52,7 +51,6 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
-		npd.Start(log, gs.NodeStart),
 	).Do(ctx)
 }
 
