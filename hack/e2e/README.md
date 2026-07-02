@@ -42,14 +42,16 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
-| `infra` | Deploy AKS cluster and three VMs via Bicep. |
+| `infra` | Deploy AKS cluster and four VMs via Bicep. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
+| `join-offline` | Join only the offline-artifacts bootstrap-token node. |
 | `join-kubeadm` | Join only the kubeadm-style bootstrap-token node. |
 | `unjoin` | Unjoin all Flex Node VMs. |
 | `unjoin-msi` | Unjoin only the managed-identity node. |
 | `unjoin-token` | Unjoin only the bootstrap-token node. |
+| `unjoin-offline` | Unjoin only the offline-artifacts node. |
 | `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
@@ -91,12 +93,13 @@ Additional environment variables:
 
 ## Join Modes
 
-The suite validates three join paths:
+The suite validates four join paths:
 
 | VM | Auth Mode | Join Path |
 |----|-----------|-----------|
 | `vm-e2e-msi-*` | Managed Identity | Generated managed-identity config and `aks-flex-node start` flow. |
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
+| `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pinned to `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619` and `bootstrap.offlineArtifacts.source=oci://ghcr.io/azure/unbounded/bootstrap-artifacts:alpha-0cd4fe2-k8s-{{ .KubernetesVersion }}`. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while

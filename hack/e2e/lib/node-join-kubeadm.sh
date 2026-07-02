@@ -299,12 +299,12 @@ node_join_kubeadm() {
   location="$(state_get location)"
 
   # Step 1: Ensure RBAC / ConfigMaps and create a bootstrap token
-  _kubeadm_ensure_rbac "${server_url}" "${ca_cert_data}"
+  with_cluster_lock _kubeadm_ensure_rbac "${server_url}" "${ca_cert_data}"
   ensure_daemon_csr_approver
 
   log_info "Creating bootstrap token..."
   local bootstrap_token
-  bootstrap_token="$(_kubeadm_create_bootstrap_token)"
+  bootstrap_token="$(with_cluster_lock _kubeadm_create_bootstrap_token)"
   state_set "kubeadm_bootstrap_token" "${bootstrap_token}"
 
   # Step 2: Generate the config file for aks-flex-node agent
