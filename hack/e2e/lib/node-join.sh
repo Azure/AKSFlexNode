@@ -56,6 +56,12 @@ sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
 }
 EOF
 
+if command -v apt-get >/dev/null 2>&1; then
+  echo "Installing host packages required by preflight..."
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y systemd-container curl nftables util-linux
+fi
+
 preflight_log="/tmp/aks-flex-node-preflight.log"
 echo "Running preflight checks before bootstrap..."
 set +e
