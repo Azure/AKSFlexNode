@@ -18,6 +18,7 @@ Before starting a lab, prepare:
 - [Private AKS Cluster With Unmanaged Cilium And Cross-Region Flex Node](aks-private-cluster-cilium.md) - Private AKS with `--network-plugin none`, unmanaged Cilium, and VXLAN pod networking.
 - [Private AKS Cluster With Unbounded-Net And Cross-Region Flex Node](aks-private-cluster-unbounded-net.md) - Private AKS with `--network-plugin none`, `unbounded-net`, and private-L3 site peering.
 - [Public AKS Cluster With Unbounded-Net And Cross-Region VNet-Peered Flex Node](aks-public-cluster-unbounded-net-vnet-peering.md) - Public AKS with `--network-plugin none`, `unbounded-net`, and private-L3 site peering over cross-region VNet peering.
+- [AKS Flex Node With Offline Bootstrap Artifacts](aks-public-cluster-offline-bootstrap.md) - Flex VM bootstrap from local host packages, a mirrored rootfs image, and filesystem or local-registry offline artifacts. The walkthrough uses a public AKS cluster, but the same flow applies to private clusters with API reachability.
 - [Public AKS Cluster With Unbounded-Net WireGuard Flex Node](aks-public-cluster-unbounded-net-wireguard.md) - Public AKS with `--network-plugin none`, `unbounded-net`, and WireGuard gateway connectivity without VNet peering.
 
 ## Topic Matrix
@@ -31,7 +32,8 @@ Before starting a lab, prepare:
 | Private AKS API access | [Private AKS with unmanaged Cilium](aks-private-cluster-cilium.md), [Private AKS with unbounded-net](aks-private-cluster-unbounded-net.md) |
 | Cross-region VNet peering | [Private AKS with unmanaged Cilium](aks-private-cluster-cilium.md), [Private AKS with unbounded-net](aks-private-cluster-unbounded-net.md), [Public AKS with unbounded-net VNet peering](aks-public-cluster-unbounded-net-vnet-peering.md) |
 | `unbounded-net` CNI | [Private AKS with unbounded-net](aks-private-cluster-unbounded-net.md), [Public AKS with unbounded-net VNet peering](aks-public-cluster-unbounded-net-vnet-peering.md), [Public AKS with unbounded-net WireGuard](aks-public-cluster-unbounded-net-wireguard.md) |
-| Public AKS API access | [Public AKS with unbounded-net VNet peering](aks-public-cluster-unbounded-net-vnet-peering.md), [Public AKS with unbounded-net WireGuard](aks-public-cluster-unbounded-net-wireguard.md) |
+| Public AKS API access | [Public AKS with unbounded-net VNet peering](aks-public-cluster-unbounded-net-vnet-peering.md), [Offline bootstrap artifacts walkthrough](aks-public-cluster-offline-bootstrap.md), [Public AKS with unbounded-net WireGuard](aks-public-cluster-unbounded-net-wireguard.md) |
 | WireGuard gateway connectivity | [Public AKS with unbounded-net WireGuard](aks-public-cluster-unbounded-net-wireguard.md) |
 | No VNet peering | [Public AKS with unbounded-net WireGuard](aks-public-cluster-unbounded-net-wireguard.md) |
-| Private-L3 `SitePeering` | [Private AKS with unbounded-net](aks-private-cluster-unbounded-net.md), [Public AKS with unbounded-net VNet peering](aks-public-cluster-unbounded-net-vnet-peering.md) |
+| Offline bootstrap artifacts | [AKS Flex Node with offline bootstrap artifacts](aks-public-cluster-offline-bootstrap.md) |
+| Private-L3 `SitePeering` | [Private AKS with unbounded-net](aks-private-cluster-unbounded-net.md), [Public AKS with unbounded-net VNet peering](aks-public-cluster-unbounded-net-vnet-peering.md), [Offline bootstrap artifacts walkthrough](aks-public-cluster-offline-bootstrap.md) |
