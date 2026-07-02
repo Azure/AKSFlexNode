@@ -398,7 +398,11 @@ func (c *Config) setNodeDefaults() {
 }
 
 func (c *Config) setRuncDefaults() {
-	// Set default runc configuration if not provided
+	// Offline artifact manifests are the source of truth for runtime versions.
+	// Do not synthesize a runc version that would conflict with the manifest.
+	if c.Bootstrap.OfflineArtifacts.Source != "" {
+		return
+	}
 	if c.Components.Runc == "" {
 		c.Components.Runc = "1.1.12"
 	}

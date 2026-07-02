@@ -97,6 +97,15 @@ func TestSetDefaults(t *testing.T) {
 			},
 		},
 		{
+			name: "offline artifacts skip runc default",
+			config: &Config{Bootstrap: BootstrapConfig{
+				OfflineArtifacts: OfflineArtifactsConfig{Source: "/opt/artifacts/{{ .KubernetesVersion }}"},
+			}},
+			want: func(c *Config) bool {
+				return c.Components.Runc == ""
+			},
+		},
+		{
 			name:   "machine operation mode can be disabled",
 			config: &Config{Agent: AgentConfig{MachineOperationMode: "disable"}},
 			want: func(c *Config) bool {
