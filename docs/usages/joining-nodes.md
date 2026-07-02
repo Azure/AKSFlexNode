@@ -19,10 +19,11 @@ High-level flow:
 1. Run [`scripts/aks-flex-config setup-node-rbac`](../../scripts/aks-flex-config) to setup required node bootstrap RBAC permissions.
 2. Run `scripts/aks-flex-config generate-node-config --bootstrap-token` to create a bootstrap token, fetch AKS cluster metadata, and render the host config.
 3. Copy the generated config to `/etc/aks-flex-node/config.json` on the target host.
-4. Run `aks-flex-node start --config /etc/aks-flex-node/config.json`.
-5. Verify with `kubectl get nodes -o wide`.
+4. Run `aks-flex-node preflight --config /etc/aks-flex-node/config.json` to validate host, cluster, rootfs, and artifact prerequisites without mutating the node.
+5. Run `aks-flex-node start --config /etc/aks-flex-node/config.json`.
+6. Verify with `kubectl get nodes -o wide`.
 
-See the repository [README](../../README.md#getting-started) for the complete bootstrap token walkthrough, and [AKS Flex Config Helper](aks-flex-config.md) for all helper command options.
+See the repository [README](../../README.md#getting-started) for the complete bootstrap token walkthrough, [AKS Flex Config Helper](aks-flex-config.md) for all helper command options, and [Operations](operations.md#preflight) for preflight options and JSON output.
 
 ## Managed Identity
 

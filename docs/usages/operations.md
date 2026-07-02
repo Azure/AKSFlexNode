@@ -2,6 +2,31 @@
 
 This guide summarizes common host and cluster operations for AKS Flex Node.
 
+## Preflight
+
+Run preflight before mutating the host. The command validates the config, resolves the nspawn goal state, and checks host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources.
+
+```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+```
+
+Preflight exits non-zero when a fatal check fails. Use JSON output for automation:
+
+```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json --output json
+```
+
+Useful options:
+
+```bash
+aks-flex-node preflight \
+  --config /etc/aks-flex-node/config.json \
+  --ignore-preflight-errors=<check-name>[,<check-name>...] \
+  --fail-on-warnings
+```
+
+When `bootstrap.offlineArtifacts.source` is configured, missing host packages are fatal because offline bootstrap cannot rely on package installation during `start`.
+
 ## Start
 
 Start installs host components, starts the nspawn-backed worker, installs the systemd unit, and starts the agent daemon.

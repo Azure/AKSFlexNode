@@ -121,7 +121,13 @@ install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 cat /etc/aks-flex-node/config.json
 ```
 
-After reviewing the config, bootstrap the node. This installs the long-running agent service and starts the local Kubernetes worker environment. Use a standard `022` umask so bootstrap-created nspawn rootfs paths remain traversable by non-root service users such as `dbus`; the config file remains `0600`.
+After reviewing the config, run preflight checks. Preflight is non-mutating and validates host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources before bootstrap changes the host.
+
+```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+```
+
+Then bootstrap the node. This installs the long-running agent service and starts the local Kubernetes worker environment. Use a standard `022` umask so bootstrap-created nspawn rootfs paths remain traversable by non-root service users such as `dbus`; the config file remains `0600`.
 
 ```bash
 umask 022

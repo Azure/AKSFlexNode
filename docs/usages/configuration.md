@@ -6,6 +6,12 @@ AKS Flex Node reads a JSON config file passed with `--config`.
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
+Before starting bootstrap, validate the same config with the non-mutating preflight command:
+
+```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+```
+
 ## Top-Level Sections
 
 | Name | Type | Description |
@@ -103,7 +109,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
 | `bootstrap.ociImage` | string | Optional nspawn rootfs OCI image used during bootstrap. When omitted, the shared agent default image selection is used. | `ghcr.io/example/aks-flex-node-rootfs:ubuntu-24.04` |
-| `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
+| `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. Preflight treats missing host packages as fatal when this is set. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
 
 ## Networking
 
