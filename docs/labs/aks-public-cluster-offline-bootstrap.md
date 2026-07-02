@@ -3,7 +3,7 @@
 This lab shows how to join a Flex Node when the bootstrap binaries are served from an offline artifact source instead of public upstream URLs. The walkthrough uses a public AKS API server and the [public AKS + unbounded-net + VNet peering lab](aks-public-cluster-unbounded-net-vnet-peering.md) as the network and cluster base, but the same offline artifact flow also works with a private AKS cluster when the target VM can resolve and reach the private API endpoint. The lab changes the Flex VM bootstrap flow to use:
 
 - Host prerequisites installed before the node is isolated.
-- A mirrored rootfs OCI image in a registry reachable from the target VM.
+- A mirrored rootfs OCI image, either as a local OCI layout or in a registry reachable from the target VM.
 - A mirrored Unbounded bootstrap artifact bundle, either:
   - as files on the target VM, or
   - as an OCI artifact in a local registry running on the target VM.
@@ -99,29 +99,25 @@ If the Flex VM has multiple private IPs, or if you want to pin the node IP, set 
 
 ## Option A: Use A Filesystem Bootstrap Artifact Bundle
 
-In filesystem mode, the target VM reads bootstrap artifacts from a local directory or `file://` URL. The rootfs is still read from an OCI registry reference, so this option pairs well with a local registry for only the rootfs image.
+In filesystem mode, the target VM reads bootstrap artifacts from a local directory or `file://` URL. The rootfs is also staged on the filesystem as a local OCI image layout and referenced with `oci-layout://`.
 
-### Stage The Rootfs Image In A Local Registry
+### Stage The Rootfs Image As A Local OCI Layout
 
-On the target VM, start a loopback-only registry:
+Mirror the rootfs image into a local OCI layout while the VM still has egress, or perform this on a connected staging host and copy the OCI layout directory into the VM.
 
-```bash
-sudo podman run -d --name aks-flex-offline-registry --restart=always \
-  -p 127.0.0.1:5000:5000 \
-  docker.io/library/registry:2
-
-curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
-```
-
-Mirror the rootfs image into the local registry while the VM still has egress, or perform this on a connected staging host and copy the registry data into the VM.
+On the target VM:
 
 ```bash
-ROOTFS_IMAGE_LOCAL="127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619"
+ROOTFS_LAYOUT_DIR="/opt/aks-flex-node/offline/images/agent-ubuntu2404"
+ROOTFS_IMAGE_LOCAL="oci-layout://${ROOTFS_LAYOUT_DIR}:v20260619"
+
+sudo mkdir -p "$(dirname "$ROOTFS_LAYOUT_DIR")"
+sudo chown "$(id -u):$(id -g)" "$(dirname "$ROOTFS_LAYOUT_DIR")"
 
 oras copy \
-  --to-plain-http \
+  --to-oci-layout \
   "$ROOTFS_IMAGE_UPSTREAM" \
-  "$ROOTFS_IMAGE_LOCAL"
+  "${ROOTFS_LAYOUT_DIR}:v20260619"
 ```
 
 ### Pull The Bootstrap Artifact Bundle To Files
@@ -149,7 +145,7 @@ The directory should contain `manifest.json` and the paths referenced by that ma
 On your workstation:
 
 ```bash
-ROOTFS_IMAGE_LOCAL="127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619"
+ROOTFS_IMAGE_LOCAL="oci-layout:///opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619"
 ARTIFACTS_SOURCE="file:///opt/aks-flex-node/offline/bootstrap-artifacts/{{ .KubernetesVersion }}"
 
 jq \
@@ -163,6 +159,24 @@ jq \
    | .bootstrap.offlineArtifacts.source = $offlineSource' \
   ./aks-flex-node-config.json > ./aks-flex-node-config.offline-files.json
 ```
+
+The relevant fields in the rendered config should look like this:
+
+```json
+{
+  "components": {
+    "kubernetes": "1.35.0"
+  },
+  "bootstrap": {
+    "ociImage": "oci-layout:///opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619",
+    "offlineArtifacts": {
+      "source": "file:///opt/aks-flex-node/offline/bootstrap-artifacts/{{ .KubernetesVersion }}"
+    }
+  }
+}
+```
+
+Keep the rest of the generated config, including `azure`, `node`, `networking`, and authentication fields.
 
 Copy the config to the target VM:
 
@@ -262,6 +276,7 @@ The target VM still needs to reach:
 - The AKS API server over HTTPS 443.
 - Any control-plane or node networking paths required by the base VNet peering lab.
 - The local registry on `127.0.0.1:5000` if using local registry mode.
+- The local rootfs OCI layout path if using filesystem mode.
 
 For a strict validation, block public artifact endpoints such as:
 
@@ -407,10 +422,10 @@ pulling OCI image image=127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v2026061
 downloading kubernetes binary url=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:alpha-0cd4fe2-k8s-v1.35.0#kubernetes/v1.35.0/bin/linux/amd64/kubelet
 ```
 
-Expected evidence for filesystem mode includes URLs like:
+Expected evidence for filesystem mode includes log lines and URLs like:
 
 ```text
-pulling OCI image image=127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619
+using local OCI layout image image=oci-layout:///opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619 layout=/opt/aks-flex-node/offline/images/agent-ubuntu2404
 downloading kubernetes binary url=file:///opt/aks-flex-node/offline/bootstrap-artifacts/v1.35.0/kubernetes/v1.35.0/bin/linux/amd64/kubelet
 ```
 
@@ -434,7 +449,14 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y systemd-container curl nf
 
 ### Preflight Fails `oci-image-reachable`
 
-Check the rootfs image reference and local registry health:
+For filesystem mode, check that the local OCI layout exists and has the expected tag:
+
+```bash
+test -f /opt/aks-flex-node/offline/images/agent-ubuntu2404/oci-layout
+oras manifest fetch --oci-layout /opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619 >/dev/null
+```
+
+For local registry mode, check the rootfs image reference and local registry health:
 
 ```bash
 curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
