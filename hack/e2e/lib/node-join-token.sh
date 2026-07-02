@@ -40,7 +40,7 @@ node_join_token() {
   fi
 
   log_info "Setting up bootstrap token RBAC resources..."
-  "${REPO_ROOT}/scripts/aks-flex-config" setup-node-rbac \
+  with_cluster_lock "${REPO_ROOT}/scripts/aks-flex-config" setup-node-rbac \
     --resource-group "${resource_group}" \
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}"
@@ -49,7 +49,7 @@ node_join_token() {
 
   log_info "Generating token config..."
   local config_file="${E2E_WORK_DIR}/config-token.json"
-  "${REPO_ROOT}/scripts/aks-flex-config" generate-node-config \
+  with_cluster_lock "${REPO_ROOT}/scripts/aks-flex-config" generate-node-config \
     --resource-group "${resource_group}" \
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}" \
