@@ -104,7 +104,7 @@ check_linux_distribution() {
                         ;;
                 esac
                 ;;
-            azurelinux)
+            azurelinux|azlinux)
                 log_info "Detected Azure Linux $VERSION_ID - supported"
                 return 0
                 ;;
@@ -251,7 +251,7 @@ get_microsoft_rpm_repo_url() {
     local major_version="${VERSION_ID%%.*}"
 
     case "$ID" in
-        azurelinux)
+        azurelinux|azlinux)
             local azurelinux_version="$VERSION_ID"
             if [[ "$azurelinux_version" != *.* ]]; then
                 azurelinux_version="${azurelinux_version}.0"
