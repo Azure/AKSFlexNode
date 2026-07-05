@@ -233,11 +233,20 @@ install_host_prerequisites() {
     case "$(detect_package_manager)" in
         apt)
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update
-            apt-get install -y systemd-container
+            apt-get update || {
+                log_error "Failed to update apt package indexes"
+                return 1
+            }
+            apt-get install -y systemd-container || {
+                log_error "Failed to install systemd-container with apt"
+                return 1
+            }
             ;;
         dnf)
-            dnf install -y systemd-container
+            dnf install -y systemd-container || {
+                log_error "Failed to install systemd-container with dnf"
+                return 1
+            }
             ;;
     esac
 }
@@ -284,8 +293,14 @@ install_azure_cli_rpm() {
     local repo_url
     if repo_url=$(get_microsoft_rpm_repo_url); then
         if ! rpm -q packages-microsoft-prod &> /dev/null; then
-            rpm --import https://packages.microsoft.com/keys/microsoft.asc
-            dnf install -y "$repo_url"
+            rpm --import https://packages.microsoft.com/keys/microsoft.asc || {
+                log_error "Failed to import Microsoft package signing key"
+                return 1
+            }
+            dnf install -y "$repo_url" || {
+                log_error "Failed to install Microsoft package repository: $repo_url"
+                return 1
+            }
         fi
     else
         log_warning "No Microsoft package repository mapping found for this dnf-based distribution"
@@ -293,7 +308,10 @@ install_azure_cli_rpm() {
         log_warning "If installation fails, manually configure a Microsoft package repository for your distribution"
     fi
 
-    dnf install -y azure-cli
+    dnf install -y azure-cli || {
+        log_error "Failed to install azure-cli with dnf"
+        return 1
+    }
 }
 
 install_azure_cli() {
