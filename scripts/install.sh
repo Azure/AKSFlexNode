@@ -229,24 +229,28 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
+is_systemd_container_installed() {
+    case "$1" in
+        apt)
+            dpkg -s systemd-container &> /dev/null
+            ;;
+        dnf)
+            rpm -q systemd-container &> /dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 install_host_prerequisites() {
     local package_manager
     package_manager=$(detect_package_manager)
 
-    case "$package_manager" in
-        apt)
-            if dpkg -s systemd-container &> /dev/null; then
-                log_info "Host systemd container tools already installed"
-                return 0
-            fi
-            ;;
-        dnf)
-            if rpm -q systemd-container &> /dev/null; then
-                log_info "Host systemd container tools already installed"
-                return 0
-            fi
-            ;;
-    esac
+    if is_systemd_container_installed "$package_manager"; then
+        log_info "Host systemd container tools already installed"
+        return 0
+    fi
 
     log_info "Installing host systemd container tools..."
 
@@ -286,8 +290,11 @@ get_microsoft_rpm_repo_url() {
         almalinux)
             echo "https://packages.microsoft.com/config/alma/${major_version}/packages-microsoft-prod.rpm"
             ;;
-        rocky|rhel)
-            echo "https://packages.microsoft.com/config/${ID}/${major_version}/packages-microsoft-prod.rpm"
+        rocky)
+            echo "https://packages.microsoft.com/config/rocky/${major_version}/packages-microsoft-prod.rpm"
+            ;;
+        rhel)
+            echo "https://packages.microsoft.com/config/rhel/${major_version}/packages-microsoft-prod.rpm"
             ;;
         *)
             return 1
