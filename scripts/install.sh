@@ -85,7 +85,7 @@ detect_package_manager() {
         return 0
     fi
 
-    log_error "Unsupported package manager: neither apt-get nor dnf is available"
+    log_error "Unsupported package manager: AKS Flex Node requires either apt-get or dnf to be installed"
     return 1
 }
 
@@ -255,7 +255,7 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
-is_systemd_container_installed() {
+has_systemd_container() {
     case "$1" in
         apt)
             dpkg -s systemd-container &> /dev/null
@@ -273,7 +273,7 @@ install_host_prerequisites() {
     local package_manager
     package_manager=$(detect_package_manager) || return 1
 
-    if is_systemd_container_installed "$package_manager"; then
+    if has_systemd_container "$package_manager"; then
         log_info "Host systemd container tools already installed"
         return 0
     fi
@@ -389,7 +389,9 @@ install_azure_cli_rpm() {
             }
         fi
     else
-        log_warning $'No Microsoft package repository mapping found for this dnf-based distribution\nAttempting to install azure-cli from the currently configured repositories\nIf installation fails, manually configure a Microsoft package repository for your distribution'
+        log_warning "No Microsoft package repository mapping found for this dnf-based distribution"
+        log_warning "Attempting to install azure-cli from the currently configured repositories"
+        log_warning "If installation fails, manually configure a Microsoft package repository for your distribution"
     fi
 
     dnf install -y azure-cli || {
