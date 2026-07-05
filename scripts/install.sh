@@ -105,8 +105,15 @@ check_linux_distribution() {
                 esac
                 ;;
             azurelinux|azlinux)
-                log_info "Detected Azure Linux $VERSION_ID - supported"
-                return 0
+                case "${VERSION_ID%%.*}" in
+                    3)
+                        log_info "Detected Azure Linux $VERSION_ID - supported"
+                        return 0
+                        ;;
+                    *)
+                        log_warning "Detected Azure Linux $VERSION_ID - not officially supported"
+                        ;;
+                esac
                 ;;
             almalinux|rocky|rhel)
                 case "${VERSION_ID%%.*}" in
@@ -128,7 +135,7 @@ check_linux_distribution() {
                 ;;
         esac
 
-        log_warning "AKS Flex Node is tested on Ubuntu 22.04/24.04 LTS, Azure Linux 3.0, and RHEL-family 9+"
+        log_warning "AKS Flex Node is tested on Ubuntu 22.04/24.04 LTS, Azure Linux 3.x, and RHEL-family 9+"
         log_warning "Continuing installation but support may be limited"
     else
         log_warning "Cannot detect OS version - continuing installation"
@@ -280,23 +287,58 @@ get_microsoft_rpm_repo_url() {
 
 install_azure_cli_deb() {
     if command -v curl &> /dev/null; then
-        curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+        curl -sL https://aka.ms/InstallAzureCLIDeb | bash || {
+            log_error "Failed to install Azure CLI with the Debian install script"
+            return 1
+        }
     elif command -v wget &> /dev/null; then
-        wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
+        wget -qO- https://aka.ms/InstallAzureCLIDeb | bash || {
+            log_error "Failed to install Azure CLI with the Debian install script"
+            return 1
+        }
     else
         log_error "Neither curl nor wget is available for downloading Azure CLI. Please install curl or wget and retry."
         return 1
     fi
 }
 
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl &> /dev/null; then
+        curl -fsSL -o "$output" "$url"
+    elif command -v wget &> /dev/null; then
+        wget -qO "$output" "$url"
+    else
+        log_error "Neither curl nor wget is available for downloading $url. Please install curl or wget and retry."
+        return 1
+    fi
+}
+
+import_microsoft_rpm_key() {
+    local key_file
+    key_file=$(mktemp)
+
+    if ! download_file "https://packages.microsoft.com/keys/microsoft.asc" "$key_file"; then
+        rm -f "$key_file"
+        return 1
+    fi
+
+    rpm --import "$key_file" || {
+        rm -f "$key_file"
+        log_error "Failed to import Microsoft package signing key"
+        return 1
+    }
+
+    rm -f "$key_file"
+}
+
 install_azure_cli_rpm() {
     local repo_url
     if repo_url=$(get_microsoft_rpm_repo_url); then
         if ! rpm -q packages-microsoft-prod &> /dev/null; then
-            rpm --import https://packages.microsoft.com/keys/microsoft.asc || {
-                log_error "Failed to import Microsoft package signing key"
-                return 1
-            }
+            import_microsoft_rpm_key || return 1
             dnf install -y "$repo_url" || {
                 log_error "Failed to install Microsoft package repository: $repo_url"
                 return 1
@@ -326,10 +368,10 @@ install_azure_cli() {
         log_info "Downloading and installing Azure CLI..."
         case "$(detect_package_manager)" in
             apt)
-                install_azure_cli_deb
+                install_azure_cli_deb || return 1
                 ;;
             dnf)
-                install_azure_cli_rpm
+                install_azure_cli_rpm || return 1
                 ;;
         esac
 
