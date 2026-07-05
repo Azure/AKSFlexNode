@@ -86,12 +86,32 @@ detect_package_manager() {
     fi
 
     log_error "Unsupported package manager: neither apt-get nor dnf is available"
-    exit 1
+    return 1
+}
+
+load_os_release() {
+    if [[ ! -f /etc/os-release ]]; then
+        return 1
+    fi
+
+    ID=""
+    VERSION_ID=""
+    PRETTY_NAME=""
+
+    while IFS='=' read -r key value; do
+        value="${value%\"}"
+        value="${value#\"}"
+
+        case "$key" in
+            ID|VERSION_ID|PRETTY_NAME)
+                printf -v "$key" '%s' "$value"
+                ;;
+        esac
+    done < /etc/os-release
 }
 
 check_linux_distribution() {
-    if [[ -f /etc/os-release ]]; then
-        source /etc/os-release
+    if load_os_release; then
         case "$ID" in
             ubuntu)
                 case "$VERSION_ID" in
@@ -135,7 +155,7 @@ check_linux_distribution() {
                 ;;
         esac
 
-        log_warning "AKS Flex Node is tested on Ubuntu 22.04/24.04 LTS, Azure Linux 3.x, and RHEL-family 9+"
+        log_warning "AKS Flex Node is tested on Ubuntu 22.04/24.04 LTS, Azure Linux 3.x, and RHEL-family 9/10"
         log_warning "Continuing installation but support may be limited"
     else
         log_warning "Cannot detect OS version - continuing installation"
@@ -245,7 +265,7 @@ is_systemd_container_installed() {
 
 install_host_prerequisites() {
     local package_manager
-    package_manager=$(detect_package_manager)
+    package_manager=$(detect_package_manager) || return 1
 
     if is_systemd_container_installed "$package_manager"; then
         log_info "Host systemd container tools already installed"
@@ -276,11 +296,10 @@ install_host_prerequisites() {
 }
 
 get_microsoft_rpm_repo_url() {
-    if [[ ! -f /etc/os-release ]]; then
+    if ! load_os_release; then
         return 1
     fi
 
-    source /etc/os-release
     local major_version="${VERSION_ID%%.*}"
 
     case "$ID" in
@@ -303,20 +322,21 @@ get_microsoft_rpm_repo_url() {
 }
 
 install_azure_cli_deb() {
-    if command -v curl &> /dev/null; then
-        curl -sL https://aka.ms/InstallAzureCLIDeb | bash || {
-            log_error "Failed to install Azure CLI with the Debian install script"
-            return 1
-        }
-    elif command -v wget &> /dev/null; then
-        wget -qO- https://aka.ms/InstallAzureCLIDeb | bash || {
-            log_error "Failed to install Azure CLI with the Debian install script"
-            return 1
-        }
-    else
-        log_error "Neither curl nor wget is available for downloading Azure CLI. Please install curl or wget and retry."
+    local install_script
+    install_script=$(mktemp)
+
+    if ! download_file "https://aka.ms/InstallAzureCLIDeb" "$install_script"; then
+        rm -f "$install_script"
         return 1
     fi
+
+    bash "$install_script" || {
+        rm -f "$install_script"
+        log_error "Failed to install Azure CLI with the Debian install script"
+        return 1
+    }
+
+    rm -f "$install_script"
 }
 
 download_file() {
@@ -384,7 +404,9 @@ install_azure_cli() {
 
     if ! command -v az &> /dev/null; then
         log_info "Downloading and installing Azure CLI..."
-        case "$(detect_package_manager)" in
+        local package_manager
+        package_manager=$(detect_package_manager) || return 1
+        case "$package_manager" in
             apt)
                 install_azure_cli_deb || return 1
                 ;;
