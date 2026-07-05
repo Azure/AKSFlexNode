@@ -103,8 +103,14 @@ load_os_release() {
         value="${value#\"}"
 
         case "$key" in
-            ID|VERSION_ID|PRETTY_NAME)
-                printf -v "$key" '%s' "$value"
+            ID)
+                ID="$value"
+                ;;
+            VERSION_ID)
+                VERSION_ID="$value"
+                ;;
+            PRETTY_NAME)
+                PRETTY_NAME="$value"
                 ;;
         esac
     done < /etc/os-release
@@ -383,9 +389,7 @@ install_azure_cli_rpm() {
             }
         fi
     else
-        log_warning "No Microsoft package repository mapping found for this dnf-based distribution"
-        log_warning "Attempting to install azure-cli from the currently configured repositories"
-        log_warning "If installation fails, manually configure a Microsoft package repository for your distribution"
+        log_warning $'No Microsoft package repository mapping found for this dnf-based distribution\nAttempting to install azure-cli from the currently configured repositories\nIf installation fails, manually configure a Microsoft package repository for your distribution'
     fi
 
     dnf install -y azure-cli || {
