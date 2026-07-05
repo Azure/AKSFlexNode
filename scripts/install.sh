@@ -252,14 +252,13 @@ get_microsoft_rpm_repo_url() {
 
     case "$ID" in
         azurelinux|azlinux)
-            local azurelinux_version="$VERSION_ID"
-            if [[ "$azurelinux_version" != *.* ]]; then
-                azurelinux_version="${azurelinux_version}.0"
-            fi
-            echo "https://packages.microsoft.com/config/azurelinux/${azurelinux_version}/packages-microsoft-prod.rpm"
+            return 1
             ;;
-        almalinux|rocky|rhel)
-            echo "https://packages.microsoft.com/config/rhel/${major_version}.0/packages-microsoft-prod.rpm"
+        almalinux)
+            echo "https://packages.microsoft.com/config/alma/${major_version}/packages-microsoft-prod.rpm"
+            ;;
+        rocky|rhel)
+            echo "https://packages.microsoft.com/config/${ID}/${major_version}/packages-microsoft-prod.rpm"
             ;;
         fedora)
             echo "https://packages.microsoft.com/config/fedora/${VERSION_ID}/packages-microsoft-prod.rpm"
@@ -276,7 +275,7 @@ install_azure_cli_deb() {
     elif command -v wget &> /dev/null; then
         wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
     else
-        log_error "Neither curl nor wget is available for downloading Azure CLI"
+        log_error "Neither curl nor wget is available for downloading Azure CLI. Please install curl or wget and retry."
         return 1
     fi
 }
@@ -291,6 +290,7 @@ install_azure_cli_rpm() {
     else
         log_warning "No Microsoft package repository mapping found for this dnf-based distribution"
         log_warning "Attempting to install azure-cli from the currently configured repositories"
+        log_warning "If installation fails, manually configure a Microsoft package repository for your distribution"
     fi
 
     dnf install -y azure-cli
