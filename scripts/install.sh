@@ -255,52 +255,6 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
-has_systemd_container() {
-    case "$1" in
-        apt)
-            dpkg -s systemd-container &> /dev/null
-            ;;
-        dnf)
-            rpm -q systemd-container &> /dev/null
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-install_host_prerequisites() {
-    local package_manager
-    package_manager=$(detect_package_manager) || return 1
-
-    if has_systemd_container "$package_manager"; then
-        log_info "Host systemd container tools already installed"
-        return 0
-    fi
-
-    log_info "Installing host systemd container tools..."
-
-    case "$package_manager" in
-        apt)
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update || {
-                log_error "Failed to update apt package indexes"
-                return 1
-            }
-            apt-get install -y systemd-container || {
-                log_error "Failed to install systemd-container with apt"
-                return 1
-            }
-            ;;
-        dnf)
-            dnf install -y systemd-container || {
-                log_error "Failed to install systemd-container with dnf"
-                return 1
-            }
-            ;;
-    esac
-}
-
 get_microsoft_rpm_repo_url() {
     if ! load_os_release; then
         return 1
@@ -622,7 +576,6 @@ main() {
     install_binary "$binary_path"
 
     # Setup service components
-    install_host_prerequisites
     install_azure_cli
     check_azure_cli_auth
     setup_permissions
