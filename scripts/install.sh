@@ -230,14 +230,27 @@ install_binary() {
 }
 
 install_host_prerequisites() {
-    if command -v machinectl &> /dev/null && command -v systemd-nspawn &> /dev/null; then
-        log_info "Host systemd container tools already installed"
-        return 0
-    fi
+    local package_manager
+    package_manager=$(detect_package_manager)
+
+    case "$package_manager" in
+        apt)
+            if dpkg -s systemd-container &> /dev/null; then
+                log_info "Host systemd container tools already installed"
+                return 0
+            fi
+            ;;
+        dnf)
+            if rpm -q systemd-container &> /dev/null; then
+                log_info "Host systemd container tools already installed"
+                return 0
+            fi
+            ;;
+    esac
 
     log_info "Installing host systemd container tools..."
 
-    case "$(detect_package_manager)" in
+    case "$package_manager" in
         apt)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || {
@@ -275,9 +288,6 @@ get_microsoft_rpm_repo_url() {
             ;;
         rocky|rhel)
             echo "https://packages.microsoft.com/config/${ID}/${major_version}/packages-microsoft-prod.rpm"
-            ;;
-        fedora)
-            echo "https://packages.microsoft.com/config/fedora/${VERSION_ID}/packages-microsoft-prod.rpm"
             ;;
         *)
             return 1
@@ -338,6 +348,7 @@ install_azure_cli_rpm() {
     local repo_url
     if repo_url=$(get_microsoft_rpm_repo_url); then
         if ! rpm -q packages-microsoft-prod &> /dev/null; then
+            log_info "Microsoft package repository is not installed; configuring it now"
             import_microsoft_rpm_key || return 1
             dnf install -y "$repo_url" || {
                 log_error "Failed to install Microsoft package repository: $repo_url"
