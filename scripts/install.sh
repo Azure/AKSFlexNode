@@ -68,32 +68,68 @@ detect_os() {
             ;;
         *)
             log_error "Unsupported operating system: $os"
-            log_error "AKS Flex Node supports: Linux (Ubuntu 22.04 LTS, Ubuntu 24.04 LTS)"
+            log_error "AKS Flex Node supports: Linux"
             exit 1
             ;;
     esac
 }
 
-check_ubuntu_version() {
+detect_package_manager() {
+    if command -v apt-get &> /dev/null; then
+        echo "apt"
+        return 0
+    fi
+
+    if command -v dnf &> /dev/null; then
+        echo "dnf"
+        return 0
+    fi
+
+    log_error "Unsupported package manager: neither apt-get nor dnf is available"
+    exit 1
+}
+
+check_linux_distribution() {
     if [[ -f /etc/os-release ]]; then
         source /etc/os-release
-        if [[ "$ID" == "ubuntu" ]]; then
-            case "$VERSION_ID" in
-                "22.04"|"24.04")
-                    log_info "Detected Ubuntu $VERSION_ID LTS - supported"
-                    return 0
-                    ;;
-                *)
-                    log_warning "Detected Ubuntu $VERSION_ID - not officially supported"
-                    log_warning "AKS Flex Node is tested on Ubuntu 22.04 LTS and Ubuntu 24.04 LTS"
-                    log_warning "Continuing installation but support may be limited"
-                    ;;
-            esac
-        else
-            log_warning "Detected $PRETTY_NAME - not officially supported"
-            log_warning "AKS Flex Node is tested on Ubuntu 22.04 LTS and Ubuntu 24.04 LTS"
-            log_warning "Continuing installation but support may be limited"
-        fi
+        case "$ID" in
+            ubuntu)
+                case "$VERSION_ID" in
+                    "22.04"|"24.04")
+                        log_info "Detected Ubuntu $VERSION_ID LTS - supported"
+                        return 0
+                        ;;
+                    *)
+                        log_warning "Detected Ubuntu $VERSION_ID - not officially supported"
+                        ;;
+                esac
+                ;;
+            azurelinux)
+                log_info "Detected Azure Linux $VERSION_ID - supported"
+                return 0
+                ;;
+            almalinux|rocky|rhel)
+                case "${VERSION_ID%%.*}" in
+                    9|10)
+                        log_info "Detected $PRETTY_NAME - supported"
+                        return 0
+                        ;;
+                    *)
+                        log_warning "Detected $PRETTY_NAME - not officially supported"
+                        ;;
+                esac
+                ;;
+            *)
+                if command -v dnf &> /dev/null; then
+                    log_warning "Detected $PRETTY_NAME - not officially supported, but dnf is available"
+                else
+                    log_warning "Detected $PRETTY_NAME - not officially supported"
+                fi
+                ;;
+        esac
+
+        log_warning "AKS Flex Node is tested on Ubuntu 22.04/24.04 LTS, Azure Linux 3.0, and RHEL-family 9+"
+        log_warning "Continuing installation but support may be limited"
     else
         log_warning "Cannot detect OS version - continuing installation"
     fi
@@ -186,6 +222,80 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
+install_host_prerequisites() {
+    if command -v machinectl &> /dev/null && command -v systemd-nspawn &> /dev/null; then
+        log_info "Host systemd container tools already installed"
+        return 0
+    fi
+
+    log_info "Installing host systemd container tools..."
+
+    case "$(detect_package_manager)" in
+        apt)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y systemd-container
+            ;;
+        dnf)
+            dnf install -y systemd-container
+            ;;
+    esac
+}
+
+get_microsoft_rpm_repo_url() {
+    if [[ ! -f /etc/os-release ]]; then
+        return 1
+    fi
+
+    source /etc/os-release
+    local major_version="${VERSION_ID%%.*}"
+
+    case "$ID" in
+        azurelinux)
+            local azurelinux_version="$VERSION_ID"
+            if [[ "$azurelinux_version" != *.* ]]; then
+                azurelinux_version="${azurelinux_version}.0"
+            fi
+            echo "https://packages.microsoft.com/config/azurelinux/${azurelinux_version}/packages-microsoft-prod.rpm"
+            ;;
+        almalinux|rocky|rhel)
+            echo "https://packages.microsoft.com/config/rhel/${major_version}.0/packages-microsoft-prod.rpm"
+            ;;
+        fedora)
+            echo "https://packages.microsoft.com/config/fedora/${VERSION_ID}/packages-microsoft-prod.rpm"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_azure_cli_deb() {
+    if command -v curl &> /dev/null; then
+        curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+    elif command -v wget &> /dev/null; then
+        wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
+    else
+        log_error "Neither curl nor wget is available for downloading Azure CLI"
+        return 1
+    fi
+}
+
+install_azure_cli_rpm() {
+    local repo_url
+    if repo_url=$(get_microsoft_rpm_repo_url); then
+        if ! rpm -q packages-microsoft-prod &> /dev/null; then
+            rpm --import https://packages.microsoft.com/keys/microsoft.asc
+            dnf install -y "$repo_url"
+        fi
+    else
+        log_warning "No Microsoft package repository mapping found for this dnf-based distribution"
+        log_warning "Attempting to install azure-cli from the currently configured repositories"
+    fi
+
+    dnf install -y azure-cli
+}
+
 install_azure_cli() {
     if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
         log_info "Skipping Azure CLI installation (SKIP_AZCLI=$SKIP_AZCLI)"
@@ -196,14 +306,14 @@ install_azure_cli() {
 
     if ! command -v az &> /dev/null; then
         log_info "Downloading and installing Azure CLI..."
-        if command -v curl &> /dev/null; then
-            curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-        elif command -v wget &> /dev/null; then
-            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
-        else
-            log_error "Neither curl nor wget is available for downloading Azure CLI"
-            return 1
-        fi
+        case "$(detect_package_manager)" in
+            apt)
+                install_azure_cli_deb
+                ;;
+            dnf)
+                install_azure_cli_rpm
+                ;;
+        esac
 
         # Verify installation
         if command -v az &> /dev/null; then
@@ -378,7 +488,7 @@ main() {
     fi
 
     # Check OS compatibility
-    check_ubuntu_version
+    check_linux_distribution
 
     # Detect system architecture
     local os arch
@@ -406,6 +516,7 @@ main() {
     install_binary "$binary_path"
 
     # Setup service components
+    install_host_prerequisites
     install_azure_cli
     check_azure_cli_auth
     setup_permissions
