@@ -150,10 +150,15 @@ jobs:
           <!-- Add your changelog here -->
           EOF
 
+          release_flags=(--verify-tag)
+          if [[ "${RELEASE_VERSION}" =~ -(alpha|beta|rc)([.-]|$) ]]; then
+            release_flags+=(--prerelease)
+          fi
+
           gh release create "${RELEASE_VERSION}" \
             release-assets/*.tar.gz \
             release-assets/checksums.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Release ${RELEASE_VERSION}" \
             --notes-file release-notes.md \
-            --verify-tag
+            "${release_flags[@]}"
