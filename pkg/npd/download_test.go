@@ -82,6 +82,7 @@ func writeMinimalOfflineBundle(t *testing.T, root, arch string) {
 			"runc":       "1.5.0",
 			"cni":        "1.5.1",
 			"crictl":     "1.35.0",
+			"npd":        "v1.35.1",
 		},
 		"containerImages": []string{},
 	}
