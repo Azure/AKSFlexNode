@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
@@ -71,6 +72,7 @@ func (h *handler) execute(ctx context.Context) error {
 		host.Preflight(log, *agentCfg, gs),
 		nodestart.Preflight(log, *agentCfg, gs),
 		rootfs.Preflight(log, *agentCfg, gs),
+		npd.Preflight(cfg),
 	)
 
 	report := preflight.Run(ctx, checks, preflight.Options{

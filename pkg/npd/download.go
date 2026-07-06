@@ -3,15 +3,20 @@ package npd
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	utilexec "k8s.io/utils/exec"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/artifactsource"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
 const (
@@ -24,7 +29,13 @@ const (
 	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
 )
 
+const (
+	npdArtifactCheckName = "npd-artifact"
+	npdArtifactTarget    = "node-problem-detector artifact"
+)
+
 type downloadTask struct {
+	cfg        *config.Config
 	version    string
 	machineDir string
 }
@@ -37,7 +48,7 @@ func Download(cfg *config.Config, machineDir string) phases.Task {
 	if version == "" {
 		version = DefaultVersion
 	}
-	return &downloadTask{version: version, machineDir: machineDir}
+	return &downloadTask{cfg: cfg, version: version, machineDir: machineDir}
 }
 
 func (t *downloadTask) Name() string { return "download-npd" }
@@ -50,8 +61,12 @@ func (t *downloadTask) Do(ctx context.Context) error {
 		return nil // already installed at correct version
 	}
 
-	downloadURL := constructDownloadURL(t.version)
-	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, downloadURL) {
+	downloadSource, err := constructDownloadSource(t.cfg, t.version)
+	if err != nil {
+		return fmt.Errorf("construct npd download source: %w", err)
+	}
+
+	for tarFile, err := range downloadSource.DecompressTarGz(ctx) {
 		if err != nil {
 			return fmt.Errorf("decompress npd tar: %w", err)
 		}
@@ -76,6 +91,90 @@ func (t *downloadTask) Do(ctx context.Context) error {
 func constructDownloadURL(version string) string {
 	arch := utilhost.GetArch()
 	return fmt.Sprintf(defaultNPDURLTemplate, version, version, arch)
+}
+
+func constructDownloadSource(cfg *config.Config, version string) (artifactsource.Source, error) {
+	agentCfg := config.ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
+	if agentCfg.OfflineArtifactsConfigured() {
+		sourceRoot, err := renderOfflineArtifactsSource(agentCfg.OfflineArtifacts.Source, cfg.Components.Kubernetes)
+		if err != nil {
+			return artifactsource.Source{}, err
+		}
+
+		return artifactsource.Parse(joinOfflineArtifactSource(sourceRoot, npdArtifactPath(version, utilhost.GetArch())))
+	}
+
+	return artifactsource.Parse(constructDownloadURL(version))
+}
+
+func npdArtifactPath(version, arch string) string {
+	return fmt.Sprintf("npd/%s/node-problem-detector-%s-linux_%s.tar.gz", version, version, arch)
+}
+
+func renderOfflineArtifactsSource(source, kubernetesVersion string) (string, error) {
+	tmpl, err := template.New("offline-artifacts-source").Parse(source)
+	if err != nil {
+		return "", fmt.Errorf("parse offline artifact source template: %w", err)
+	}
+
+	kubernetesVersion = normalizeKubernetesVersion(kubernetesVersion)
+	var b strings.Builder
+	if err := tmpl.Execute(&b, map[string]string{
+		"KubernetesVersion":    kubernetesVersion,
+		"KubernetesVersionNoV": strings.TrimPrefix(kubernetesVersion, "v"),
+	}); err != nil {
+		return "", fmt.Errorf("render offline artifact source template: %w", err)
+	}
+
+	return b.String(), nil
+}
+
+func normalizeKubernetesVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" || strings.HasPrefix(version, "v") {
+		return version
+	}
+	return "v" + version
+}
+
+func joinOfflineArtifactSource(root, artifactPath string) string {
+	root = strings.TrimRight(root, "/")
+	if strings.HasPrefix(root, "oci://") {
+		return root + "#" + artifactPath
+	}
+
+	parsed, err := url.Parse(root)
+	if err == nil && (parsed.Scheme == "file" || parsed.Scheme == "http" || parsed.Scheme == "https") {
+		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + artifactPath
+		return parsed.String()
+	}
+
+	return filepath.Join(root, filepath.FromSlash(artifactPath))
+}
+
+// Preflight returns AKS Flex Node-specific preflight checks.
+func Preflight(cfg *config.Config) []preflight.Checker {
+	return []preflight.Checker{
+		artifactsource.ReachabilityChecker{
+			CheckName:  npdArtifactCheckName,
+			Target:     npdArtifactTarget,
+			OKMessage:  "node-problem-detector artifact is reachable",
+			ErrMessage: "node-problem-detector artifact is not reachable",
+			Sources: func() (artifactsource.Sources, error) {
+				version := DefaultVersion
+				if cfg != nil && cfg.Npd.Version != "" {
+					version = cfg.Npd.Version
+				}
+
+				source, err := constructDownloadSource(cfg, version)
+				if err != nil {
+					return nil, err
+				}
+
+				return artifactsource.Sources{"node-problem-detector": source}, nil
+			},
+		},
+	}
 }
 
 func versionMatch(hostBinaryPath, expectedVersion string) bool {
