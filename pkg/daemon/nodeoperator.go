@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 type activeMachine struct {
@@ -43,12 +44,17 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 	}
 	agentCfg := config.ToAgentConfig(cfg, active.Name)
+	_, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	if err != nil {
+		return fmt.Errorf("resolve download overrides for node restart: %w", err)
+	}
 	gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
 
 	return phases.Serial(log,
+		rootfs.DownloadContainerImageArchives(log, containerImageArchives),
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
@@ -97,7 +103,11 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	)
 
 	agentCfg := config.ToAgentConfig(cfg, newMachine)
-	gs, err := goalstates.ResolveMachine(log, agentCfg, newMachine, nil)
+	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve download overrides for repave: %w", err)
+	}
+	gs, err := goalstates.ResolveMachine(log, agentCfg, newMachine, downloads)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
@@ -105,7 +115,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
-		StartNode(cfg, log, newMachine, gs, o.state, newState),
+		StartNode(cfg, log, newMachine, gs, containerImageArchives, o.state, newState),
 		reset.CleanupMachine(log, oldMachine),
 	)
 	if err := tasks.Do(ctx); err != nil {

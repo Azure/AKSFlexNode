@@ -67,7 +67,11 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 
 	agentCfg := config.ToAgentConfig(cfg, machineName)
-	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName, nil)
+	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	if err != nil {
+		return fmt.Errorf("bootstrap failed to resolve download overrides: %w", err)
+	}
+	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName, downloads)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
@@ -76,7 +80,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		// Persist the goal state in AKS RP before mutating local host state.
 		aksmachine.EnsureMachine(machines, goal, cfg.Agent.RequireMachineRegistration, logger),
 		daemon.SetupHost(cfg, logger),
-		daemon.StartNode(cfg, logger, machineName, gs, stateStore, state),
+		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
 		daemon.InstallService(logger),
 	)
 	start := time.Now()

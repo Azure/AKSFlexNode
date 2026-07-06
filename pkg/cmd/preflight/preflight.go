@@ -63,7 +63,11 @@ func (h *handler) execute(ctx context.Context) error {
 	log := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
 
 	agentCfg := config.ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
-	gs, err := goalstates.ResolveMachine(log, agentCfg, goalstates.NSpawnMachineKube1, nil)
+	downloads, _, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	if err != nil {
+		return fmt.Errorf("preflight failed to resolve download overrides: %w", err)
+	}
+	gs, err := goalstates.ResolveMachine(log, agentCfg, goalstates.NSpawnMachineKube1, downloads)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
