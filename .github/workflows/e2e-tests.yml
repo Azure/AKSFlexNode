@@ -1,9 +1,10 @@
-name: E2E Tests - nodes join
+name: E2E Tests
 
-# End-to-end tests for both authentication modes (MSI + Bootstrap Token).
-# Deploys a single AKS cluster with two VMs via Bicep, joins one via MSI and
-# one via bootstrap token, verifies both nodes appear in the cluster, and runs
-# smoke tests scheduling pods on each flex node.
+# End-to-end tests for MSI, bootstrap-token, and kubeadm-style join flows.
+#
+# Security note: this workflow uses GitHub OIDC to obtain Azure access for the
+# protected e2e-testing environment. PR runs are allowed only when the PR branch
+# lives in this repository; fork PRs are blocked at the job level.
 
 on:
   workflow_dispatch:
@@ -15,15 +16,33 @@ on:
         type: boolean
 
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "hack/e2e/**"
+      - "scripts/aks-flex-config"
+      - "scripts/install.sh"
+      - ".github/workflows/e2e-tests.yml"
 
   pull_request:
-    branches: [main, dev]
+    branches:
+      - main
     types: [opened, synchronize, reopened]
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "hack/e2e/**"
+      - "scripts/aks-flex-config"
+      - "scripts/install.sh"
+      - ".github/workflows/e2e-tests.yml"
 
 permissions:
   contents: read
+  id-token: write
 
 env:
   E2E_RESOURCE_GROUP: ${{ secrets.E2E_RESOURCE_GROUP }}
@@ -35,20 +54,35 @@ env:
 
 jobs:
   e2e:
-    name: E2E Tests (MSI + Token)
-    runs-on: [self-hosted, e2e, azure]
+    name: E2E Tests
+    # Only run from the canonical repository, and never for fork PRs. Same-repo
+    # PRs still require the e2e-testing environment/OIDC policy to allow access.
+    if: >
+      github.repository == 'Azure/AKSFlexNode' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: e2e-testing
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Azure login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Run E2E tests
         env:
@@ -62,7 +96,7 @@ jobs:
         run: ./hack/e2e/run.sh logs
 
       - name: Upload logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: e2e-logs-${{ github.run_id }}

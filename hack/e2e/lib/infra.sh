@@ -35,7 +35,7 @@ _resolve_ssh_key() {
     # Generate a temporary keypair for the test run
     key_file="${E2E_WORK_DIR}/e2e_ssh_key.pub"
     if [[ ! -f "${key_file}" ]]; then
-      log_info "No SSH key found; generating a temporary keypair..."
+      log_info "No SSH key found; generating a temporary keypair..." >&2
       ssh-keygen -t ed25519 -f "${E2E_WORK_DIR}/e2e_ssh_key" -N "" -q
     fi
   fi
@@ -72,6 +72,9 @@ infra_deploy() {
   # Resolve SSH key
   local ssh_key
   ssh_key="$(_resolve_ssh_key)"
+  if [[ -f "${E2E_WORK_DIR}/e2e_ssh_key" && "${ssh_key}" == "$(cat "${E2E_WORK_DIR}/e2e_ssh_key.pub")" ]]; then
+    export E2E_SSH_OPTS="-i ${E2E_WORK_DIR}/e2e_ssh_key -o IdentitiesOnly=yes ${E2E_SSH_OPTS}"
+  fi
 
   # Build tags
   local run_id="${GITHUB_RUN_ID:-local-$(date +%s)}"

@@ -11,7 +11,10 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -29,22 +32,23 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          cache: false
 
-      - name: Get version
-        id: version
+      - name: Validate version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+            echo "Invalid release version: ${RELEASE_VERSION}" >&2
+            exit 1
           fi
 
       - name: Build binary
@@ -52,22 +56,22 @@ jobs:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
+          set -euo pipefail
           GIT_COMMIT=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          LDFLAGS="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_DATE} -w -s"
+          LDFLAGS="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${RELEASE_VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_DATE} -w -s"
 
-          BINARY_NAME="aks-flex-node-${{ matrix.os }}-${{ matrix.arch }}"
+          BINARY_NAME="aks-flex-node-${GOOS}-${GOARCH}"
 
           go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/aks-flex-node
 
           # Create tarball
           tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"
-          echo "ASSET=${BINARY_NAME}.tar.gz" >> $GITHUB_ENV
+          echo "ASSET=${BINARY_NAME}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: binaries-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ env.ASSET }}
@@ -80,19 +84,20 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - name: Get version
-        id: version
+      - name: Validate version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+            echo "Invalid release version: ${RELEASE_VERSION}" >&2
+            exit 1
           fi
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: binaries-*
           path: ./artifacts
@@ -110,44 +115,50 @@ jobs:
           cat checksums.txt
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.VERSION }}
-          name: Release ${{ steps.version.outputs.VERSION }}
-          generate_release_notes: true
-          body: |
-            ## AKS Flex Node ${{ steps.version.outputs.VERSION }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          ## AKS Flex Node ${RELEASE_VERSION}
 
-            ### Installation
+          ### Installation
 
-            **Quick install (Ubuntu 22.04/24.04):**
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ steps.version.outputs.VERSION }}/scripts/install.sh | sudo bash
-            ```
+          **Quick install (Ubuntu 22.04/24.04):**
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RELEASE_VERSION}/scripts/install.sh | sudo bash
+          \`\`\`
 
-            **Manual installation:**
-            1. Download the appropriate binary for your platform
-            2. Extract the archive: `tar -xzf aks-flex-node-*.tar.gz`
-            3. Move the binary to your PATH: `sudo mv aks-flex-node-* /usr/local/bin/aks-flex-node`
-            4. Make it executable: `sudo chmod +x /usr/local/bin/aks-flex-node`
+          **Manual installation:**
+          1. Download the appropriate binary for your platform
+          2. Extract the archive: \`tar -xzf aks-flex-node-*.tar.gz\`
+          3. Move the binary to your PATH: \`sudo mv aks-flex-node-* /usr/local/bin/aks-flex-node\`
+          4. Make it executable: \`sudo chmod +x /usr/local/bin/aks-flex-node\`
 
-            ### Supported Platforms
+          ### Supported Platforms
 
-            - **Ubuntu 22.04 LTS (AMD64)**: `aks-flex-node-linux-amd64.tar.gz`
-            - **Ubuntu 22.04 LTS (ARM64)**: `aks-flex-node-linux-arm64.tar.gz`
-            - **Ubuntu 24.04 LTS**: Compatible with AMD64 and ARM64 binaries above
+          - **Ubuntu 22.04 LTS (AMD64)**: \`aks-flex-node-linux-amd64.tar.gz\`
+          - **Ubuntu 22.04 LTS (ARM64)**: \`aks-flex-node-linux-arm64.tar.gz\`
+          - **Ubuntu 24.04 LTS**: Compatible with AMD64 and ARM64 binaries above
 
-            ### Verification
+          ### Verification
 
-            Verify your download with the checksums in `checksums.txt`.
+          Verify your download with the checksums in \`checksums.txt\`.
 
-            ### What's Changed
+          ### What's Changed
 
-            <!-- Add your changelog here -->
-          files: |
-            release-assets/*.tar.gz
-            release-assets/checksums.txt
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          <!-- Add your changelog here -->
+          EOF
+
+          release_flags=(--verify-tag)
+          if [[ "${RELEASE_VERSION}" =~ -(alpha|beta|rc)([.-]|$) ]]; then
+            release_flags+=(--prerelease)
+          fi
+
+          gh release create "${RELEASE_VERSION}" \
+            release-assets/*.tar.gz \
+            release-assets/checksums.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Release ${RELEASE_VERSION}" \
+            --notes-file release-notes.md \
+            "${release_flags[@]}"
