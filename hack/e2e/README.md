@@ -13,6 +13,22 @@ The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the
 | `openssl` | Bootstrap token generation. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
 
+## GitHub Actions Policy
+
+The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the protected `e2e-testing` environment. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
+
+Automatic E2E runs are allowed for:
+
+- pushes to `main` that touch Go files, `go.mod` / `go.sum`, E2E files, or E2E helper scripts;
+- same-repository pull requests targeting `main` with those same path changes.
+
+Fork pull requests are skipped by the workflow job condition. This prevents unreviewed fork code from receiving Azure OIDC access. To run full E2E for a trusted fork contribution, a maintainer should first review the change and then either:
+
+1. push the contributor's commit to a branch in the canonical repository and open/run E2E from that same-repo branch; or
+2. manually apply the change to a same-repo branch and run `workflow_dispatch`.
+
+Do not use `pull_request_target` to check out and execute fork code with Azure credentials.
+
 ## Quick Start
 
 ```bash
