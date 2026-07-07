@@ -23,6 +23,7 @@ GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
 LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
+AZURE_CLI_RPM_REPO_PATH="/etc/yum.repos.d/azure-cli.repo"
 
 # Functions
 log_info() {
@@ -255,32 +256,6 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
-get_microsoft_rpm_repo_url() {
-    if ! load_os_release; then
-        return 1
-    fi
-
-    local major_version="${VERSION_ID%%.*}"
-
-    case "$ID" in
-        azurelinux|azlinux)
-            return 1
-            ;;
-        almalinux)
-            echo "https://packages.microsoft.com/config/alma/${major_version}/packages-microsoft-prod.rpm"
-            ;;
-        rocky)
-            echo "https://packages.microsoft.com/config/rocky/${major_version}/packages-microsoft-prod.rpm"
-            ;;
-        rhel)
-            echo "https://packages.microsoft.com/config/rhel/${major_version}/packages-microsoft-prod.rpm"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 install_azure_cli_deb() {
     local install_script
     install_script=$(mktemp)
@@ -331,22 +306,36 @@ import_microsoft_rpm_key() {
     rm -f "$key_file"
 }
 
+configure_azure_cli_rpm_repo() {
+    log_info "Configuring Azure CLI dnf package source..."
+
+    import_microsoft_rpm_key || return 1
+
+    mkdir -p "$(dirname "$AZURE_CLI_RPM_REPO_PATH")" || {
+        log_error "Failed to create Azure CLI repo directory"
+        return 1
+    }
+
+    cat > "$AZURE_CLI_RPM_REPO_PATH" << 'EOF'
+[azure-cli]
+name=Azure CLI
+baseurl=https://packages.microsoft.com/yumrepos/azure-cli
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+}
+
 install_azure_cli_rpm() {
-    local repo_url
-    if repo_url=$(get_microsoft_rpm_repo_url); then
-        if ! rpm -q packages-microsoft-prod &> /dev/null; then
-            log_info "Microsoft package repository is not installed; configuring it now"
-            import_microsoft_rpm_key || return 1
-            dnf install -y "$repo_url" || {
-                log_error "Failed to install Microsoft package repository: $repo_url"
-                return 1
-            }
-        fi
-    else
-        log_warning "No Microsoft package repository mapping found for this dnf-based distribution"
-        log_warning "Attempting to install azure-cli from the currently configured repositories"
-        log_warning "If installation fails, manually configure a Microsoft package repository for your distribution"
-    fi
+    configure_azure_cli_rpm_repo || {
+        log_error "Failed to configure Azure CLI dnf package source"
+        return 1
+    }
+
+    dnf makecache -y --disablerepo='*' --enablerepo='azure-cli' || {
+        log_error "Failed to refresh Azure CLI dnf package metadata"
+        return 1
+    }
 
     dnf install -y azure-cli || {
         log_error "Failed to install azure-cli with dnf"
