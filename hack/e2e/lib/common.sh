@@ -206,6 +206,40 @@ load_config() {
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
 
+# Configure ssh/scp to use the private key matching the VM public key.
+configure_ssh_identity() {
+  if [[ "${E2E_SSH_OPTS}" =~ (^|[[:space:]])-i || "${E2E_SSH_OPTS}" == *"IdentityFile"* ]]; then
+    return 0
+  fi
+
+  local key_file="${E2E_SSH_PRIVATE_KEY_FILE:-}"
+
+  # E2E_SSH_KEY_FILE is the public key passed to Azure VM provisioning.
+  if [[ -z "${key_file}" && -n "${E2E_SSH_KEY_FILE:-}" && "${E2E_SSH_KEY_FILE}" == *.pub ]]; then
+    key_file="${E2E_SSH_KEY_FILE%.pub}"
+  fi
+
+  if [[ -z "${key_file}" && -f "${E2E_WORK_DIR}/e2e_ssh_key" ]]; then
+    key_file="${E2E_WORK_DIR}/e2e_ssh_key"
+  fi
+
+  if [[ -z "${key_file}" ]]; then
+    local candidate
+    # DSA keys are intentionally omitted because modern OpenSSH disables them.
+    for candidate in "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ecdsa"; do
+      if [[ -f "${candidate}" && -f "${candidate}.pub" ]]; then
+        key_file="${candidate}"
+        break
+      fi
+    done
+  fi
+
+  if [[ -n "${key_file}" && -f "${key_file}" ]]; then
+    export E2E_SSH_IDENTITY_FILE="${key_file}"
+    log_debug "Using SSH identity file: ${key_file}"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Work directory & state management
 # ---------------------------------------------------------------------------
@@ -253,6 +287,22 @@ state_dump() {
 # ---------------------------------------------------------------------------
 # SSH helpers
 # ---------------------------------------------------------------------------
+_build_ssh_opts() {
+  local -n out_opts="$1"
+  # E2E_SSH_OPTS is split on shell IFS whitespace; an unset or empty value
+  # produces no extra options. Identity-file paths are carried separately in
+  # E2E_SSH_IDENTITY_FILE so spaces are preserved there.
+  if [[ "${E2E_SSH_OPTS:-}" == *"'"* || "${E2E_SSH_OPTS:-}" == *'"'* || "${E2E_SSH_OPTS:-}" == *"\\"* ]]; then
+    log_error "E2E_SSH_OPTS must be an unquoted whitespace-delimited option list"
+    return 1
+  fi
+  read -r -a out_opts <<< "${E2E_SSH_OPTS:-}"
+
+  if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
+    out_opts=(-i "${E2E_SSH_IDENTITY_FILE}" -o IdentitiesOnly=yes "${out_opts[@]}")
+  fi
+}
+
 # Wait for SSH to become available on a host
 wait_for_ssh() {
   local host="$1"
@@ -261,8 +311,9 @@ wait_for_ssh() {
 
   log_info "Waiting for SSH on ${host} (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    # shellcheck disable=SC2086
-    if ssh ${E2E_SSH_OPTS} "${E2E_SSH_USER}@${host}" "echo ready" &>/dev/null; then
+    local -a ssh_opts
+    _build_ssh_opts ssh_opts
+    if ssh "${ssh_opts[@]}" "${E2E_SSH_USER}@${host}" "echo ready" &>/dev/null; then
       log_success "SSH ready on ${host} (${elapsed}s)"
       return 0
     fi
@@ -277,15 +328,17 @@ wait_for_ssh() {
 # Execute a command on a remote host via SSH
 remote_exec() {
   local host="$1"; shift
-  # shellcheck disable=SC2086
-  ssh ${E2E_SSH_OPTS} "${E2E_SSH_USER}@${host}" "$@"
+  local -a ssh_opts
+  _build_ssh_opts ssh_opts
+  ssh "${ssh_opts[@]}" "${E2E_SSH_USER}@${host}" "$@"
 }
 
 # Copy files to a remote host
 remote_copy() {
   local src="$1" host="$2" dest="$3"
-  # shellcheck disable=SC2086
-  scp ${E2E_SSH_OPTS} "${src}" "${E2E_SSH_USER}@${host}:${dest}"
+  local -a ssh_opts
+  _build_ssh_opts ssh_opts
+  scp "${ssh_opts[@]}" "${src}" "${E2E_SSH_USER}@${host}:${dest}"
 }
 
 # ---------------------------------------------------------------------------
