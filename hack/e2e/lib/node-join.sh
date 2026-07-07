@@ -55,6 +55,29 @@ sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
 }
 EOF
 
+if command -v apt-get >/dev/null 2>&1; then
+  echo "Installing host packages required by preflight..."
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y systemd-container curl nftables util-linux
+fi
+
+preflight_log="/tmp/aks-flex-node-preflight.log"
+echo "Running preflight checks before bootstrap..."
+set +e
+{
+  echo "=== preflight ${UNIT_NAME} $(date -Is) ==="
+  sudo /usr/local/bin/aks-flex-node preflight --config /etc/aks-flex-node/config.json --output text
+  preflight_rc=$?
+  echo "=== preflight ${UNIT_NAME} exit ${preflight_rc} ==="
+  exit "${preflight_rc}"
+} 2>&1 | sudo tee -a "${preflight_log}"
+preflight_rc=${PIPESTATUS[0]}
+set -e
+if (( preflight_rc != 0 )); then
+  echo "Preflight checks failed with exit code ${preflight_rc}"
+  exit "${preflight_rc}"
+fi
+
 # Clean up any leftover transient unit from a previous run
 sudo systemctl stop "${UNIT_NAME}" 2>/dev/null || true
 sudo systemctl reset-failed "${UNIT_NAME}" 2>/dev/null || true

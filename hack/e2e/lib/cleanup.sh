@@ -31,6 +31,10 @@ _collect_vm_logs() {
     "sudo journalctl -u 'aks-flex-node-*' -n 500 --no-pager 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-agent-journal.log" 2>/dev/null || true
 
+  remote_exec "${vm_ip}" \
+    "sudo cat /tmp/aks-flex-node-preflight.log 2>/dev/null" \
+    > "${E2E_LOG_DIR}/${prefix}-preflight.log" 2>/dev/null || true
+
   # Kubelet and containerd run inside the nspawn machine (kube1 or kube2).
   # Use nsenter via the machine leader PID to run journalctl inside the container.
   # Fall back to host journal for non-nspawn setups.

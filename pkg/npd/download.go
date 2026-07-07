@@ -11,7 +11,9 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/artifactsource"
 	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
 const (
@@ -22,6 +24,9 @@ const (
 	// Paths as they appear inside the container.
 	npdBinaryPath = "/usr/bin/node-problem-detector"
 	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
+
+	npdArtifactCheckName = "npd-artifact"
+	npdArtifactTarget    = "node-problem-detector artifact"
 )
 
 type downloadTask struct {
@@ -76,6 +81,31 @@ func (t *downloadTask) Do(ctx context.Context) error {
 func constructDownloadURL(version string) string {
 	arch := utilhost.GetArch()
 	return fmt.Sprintf(defaultNPDURLTemplate, version, version, arch)
+}
+
+// Preflight returns AKS Flex Node-specific preflight checks.
+func Preflight(cfg *config.Config) []preflight.Checker {
+	return []preflight.Checker{
+		artifactsource.ReachabilityChecker{
+			CheckName:  npdArtifactCheckName,
+			Target:     npdArtifactTarget,
+			OKMessage:  "node-problem-detector artifact is reachable",
+			ErrMessage: "node-problem-detector artifact is not reachable",
+			Sources: func() (artifactsource.Sources, error) {
+				version := DefaultVersion
+				if cfg != nil && cfg.Npd.Version != "" {
+					version = cfg.Npd.Version
+				}
+
+				source, err := artifactsource.Parse(constructDownloadURL(version))
+				if err != nil {
+					return nil, err
+				}
+
+				return artifactsource.Sources{"node-problem-detector": source}, nil
+			},
+		},
+	}
 }
 
 func versionMatch(hostBinaryPath, expectedVersion string) bool {
