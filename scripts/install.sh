@@ -18,7 +18,6 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
-PATH_PROFILE="/etc/profile.d/aks-flex-node-path.sh"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
@@ -256,69 +255,11 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
-path_update_script() {
-    local install_dir="$1"
-
-    printf '%s\n' \
-        '# Surrounding PATH with colons lets case matching guard against partial directory names,' \
-        '# such as treating /usr/local/binary as a match for /usr/local/bin.' \
-        'case ":${PATH:-}:" in' \
-        "    *:\"$install_dir\":*) ;;" \
-        "    *) export PATH=\"$install_dir\${PATH:+:\$PATH}\" ;;" \
-        'esac'
-}
-
-configure_install_dir_path() {
-    local install_dir install_dir_was_in_path profile_dir
-    install_dir="$INSTALL_DIR"
-    profile_dir=$(dirname "$PATH_PROFILE")
-    install_dir_was_in_path=false
-
+warn_install_dir_not_in_path() {
     case ":${PATH:-}:" in
-        *:"$install_dir":*) install_dir_was_in_path=true ;;
+        *:"$INSTALL_DIR":*) ;;
+        *) log_warning "$INSTALL_DIR is not in PATH; add it to PATH to run aks-flex-node without the full path." ;;
     esac
-
-    if ! mkdir -p "$profile_dir"; then
-        log_error "Failed to create PATH profile directory: $profile_dir"
-        return 1
-    fi
-
-    local expected_profile
-    expected_profile=$(path_update_script "$install_dir")
-    if ! printf '%s\n' "$expected_profile" > "$PATH_PROFILE"; then
-        log_error "Failed to write PATH profile to: $PATH_PROFILE. Check permissions and available disk space."
-        return 1
-    fi
-
-    if ! printf '%s\n' "$expected_profile" | cmp -s - "$PATH_PROFILE"; then
-        log_error "Content verification failed for PATH profile: $PATH_PROFILE. The written content does not match the expected content."
-        return 1
-    fi
-
-    if ! chmod 644 "$PATH_PROFILE"; then
-        log_error "Failed to set permissions on PATH profile: $PATH_PROFILE"
-        return 1
-    fi
-
-    # Source only after verifying the profile so this session uses the same logic as future shells.
-    if ! . "$PATH_PROFILE"; then
-        log_error "Failed to source PATH profile: $PATH_PROFILE. The profile may contain shell syntax errors."
-        return 1
-    fi
-
-    case ":${PATH:-}:" in
-        *:"$install_dir":*)
-            if ! $install_dir_was_in_path; then
-                log_info "Added $install_dir to PATH for this installer session"
-            fi
-            ;;
-        *)
-            log_error "Failed to add $install_dir to PATH after sourcing $PATH_PROFILE. The profile may be incompatible with the current shell or PATH may be read-only."
-            return 1
-            ;;
-    esac
-
-    log_success "Configured $INSTALL_DIR in PATH for future shell sessions"
 }
 
 install_azure_cli_deb() {
@@ -621,7 +562,7 @@ main() {
 
     # Install binary
     install_binary "$binary_path"
-    configure_install_dir_path
+    warn_install_dir_not_in_path
 
     # Setup service components
     install_azure_cli
