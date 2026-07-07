@@ -426,6 +426,9 @@ type blockingReader struct {
 }
 
 func (r *blockingReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if !r.sent {
 		r.sent = true
 		p[0] = 'x'
