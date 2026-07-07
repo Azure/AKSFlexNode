@@ -92,6 +92,8 @@ infra_deploy() {
     --parameters \
       location="${E2E_LOCATION}" \
       nameSuffix="${E2E_NAME_SUFFIX}" \
+      aksNodeVmSize="${E2E_AKS_NODE_VM_SIZE}" \
+      vmSize="${E2E_VM_SIZE}" \
       sshPublicKey="${ssh_key}" \
       tags="${tags_json}" \
     --output none
