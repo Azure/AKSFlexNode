@@ -13,7 +13,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
-	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 type activeMachine struct {
@@ -49,7 +48,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	}
 
 	return phases.Serial(log,
-		rootfs.DownloadContainerImageArchives(log, containerImageArchives),
+		stageContainerImageArchiveBindSource(log, containerImageArchives),
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
