@@ -12,7 +12,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -66,8 +65,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	agentCfg := config.ToAgentConfig(cfg, machineName)
-	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName, nil)
+	_, gs, err := config.ResolveMachineGoalState(logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
