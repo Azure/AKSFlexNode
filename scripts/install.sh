@@ -312,7 +312,7 @@ configure_azure_cli_rpm_repo() {
     import_microsoft_rpm_key || return 1
 
     if [[ -f "$AZURE_CLI_RPM_REPO_PATH" ]]; then
-        log_info "Updating existing Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
+        log_info "Replacing existing Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
     fi
 
     if ! cat > "$AZURE_CLI_RPM_REPO_PATH" << 'EOF'
@@ -330,10 +330,7 @@ EOF
 }
 
 install_azure_cli_rpm() {
-    configure_azure_cli_rpm_repo || {
-        log_error "Failed to configure Azure CLI dnf package source"
-        return 1
-    }
+    configure_azure_cli_rpm_repo || return 1
 
     dnf install -y azure-cli || {
         log_error "Failed to install azure-cli with dnf"
