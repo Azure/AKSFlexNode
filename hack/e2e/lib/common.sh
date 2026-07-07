@@ -208,7 +208,7 @@ load_config() {
 
 # Configure ssh/scp to use the private key matching the VM public key.
 configure_ssh_identity() {
-  if [[ "${E2E_SSH_OPTS}" =~ (^|[[:space:]])-i([[:space:]]|$) || "${E2E_SSH_OPTS}" == *"IdentityFile"* ]]; then
+  if [[ "${E2E_SSH_OPTS}" =~ (^|[[:space:]])-i || "${E2E_SSH_OPTS}" == *"IdentityFile"* ]]; then
     return 0
   fi
 
@@ -292,6 +292,10 @@ _build_ssh_opts() {
   # E2E_SSH_OPTS is split on shell IFS whitespace; an unset or empty value
   # produces no extra options. Identity-file paths are carried separately in
   # E2E_SSH_IDENTITY_FILE so spaces are preserved there.
+  if [[ "${E2E_SSH_OPTS:-}" == *"'"* || "${E2E_SSH_OPTS:-}" == *'"'* || "${E2E_SSH_OPTS:-}" == *"\\"* ]]; then
+    log_error "E2E_SSH_OPTS must be an unquoted whitespace-delimited option list"
+    return 1
+  fi
   read -r -a out_opts <<< "${E2E_SSH_OPTS:-}"
 
   if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
