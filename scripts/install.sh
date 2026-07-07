@@ -256,7 +256,10 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
-ensure_install_dir_in_path() {
+configure_install_dir_path() {
+    local profile_dir
+    profile_dir=$(dirname "$PATH_PROFILE")
+
     if [[ ":${PATH:-}:" != *":$INSTALL_DIR:"* ]]; then
         if [[ -n "${PATH:-}" ]]; then
             export PATH="$INSTALL_DIR:$PATH"
@@ -266,8 +269,8 @@ ensure_install_dir_in_path() {
         log_info "Added $INSTALL_DIR to PATH for this installer session"
     fi
 
-    if ! mkdir -p "$(dirname "$PATH_PROFILE")"; then
-        log_error "Failed to create PATH profile directory: $(dirname "$PATH_PROFILE")"
+    if ! mkdir -p "$profile_dir"; then
+        log_error "Failed to create PATH profile directory: $profile_dir"
         return 1
     fi
 
@@ -278,7 +281,7 @@ case ":\${PATH:-}:" in
 esac
 EOF
     then
-        log_error "Failed to configure $INSTALL_DIR in PATH: $PATH_PROFILE"
+        log_error "Failed to write PATH profile to: $PATH_PROFILE"
         return 1
     fi
 
@@ -590,7 +593,7 @@ main() {
 
     # Install binary
     install_binary "$binary_path"
-    ensure_install_dir_in_path
+    configure_install_dir_path
 
     # Setup service components
     install_azure_cli
