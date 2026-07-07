@@ -258,6 +258,7 @@ install_binary() {
 
 path_update_script() {
     cat << EOF
+# Surround PATH with colons so entries are matched exactly, not as partial directory names.
 case ":\${PATH:-}:" in
     *:"$INSTALL_DIR":*) ;;
     *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
@@ -266,14 +267,8 @@ EOF
 }
 
 configure_install_dir_path() {
-    local actual_profile expected_profile previous_path profile_dir
-    previous_path="${PATH:-}"
+    local expected_profile previous_path profile_dir
     profile_dir=$(dirname "$PATH_PROFILE")
-
-    eval "$(path_update_script)"
-    if [[ "${PATH:-}" != "$previous_path" ]]; then
-        log_info "Added $INSTALL_DIR to PATH for this installer session"
-    fi
 
     if ! mkdir -p "$profile_dir"; then
         log_error "Failed to create PATH profile directory: $profile_dir"
@@ -286,12 +281,7 @@ configure_install_dir_path() {
         return 1
     fi
 
-    if ! actual_profile=$(cat "$PATH_PROFILE"); then
-        log_error "Failed to read back PATH profile: $PATH_PROFILE"
-        return 1
-    fi
-
-    if [[ "$actual_profile" != "$expected_profile" ]]; then
+    if ! printf '%s\n' "$expected_profile" | cmp -s - "$PATH_PROFILE"; then
         log_error "Failed to verify PATH profile content: $PATH_PROFILE"
         return 1
     fi
@@ -299,6 +289,16 @@ configure_install_dir_path() {
     if ! chmod 644 "$PATH_PROFILE"; then
         log_error "Failed to set permissions on PATH profile: $PATH_PROFILE"
         return 1
+    fi
+
+    previous_path="${PATH:-}"
+    if ! . "$PATH_PROFILE"; then
+        log_error "Failed to apply PATH profile: $PATH_PROFILE"
+        return 1
+    fi
+
+    if [[ "${PATH:-}" != "$previous_path" ]]; then
+        log_info "Added $INSTALL_DIR to PATH for this installer session"
     fi
 
     log_success "Configured $INSTALL_DIR in PATH for future shell sessions"
