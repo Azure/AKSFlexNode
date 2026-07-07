@@ -309,6 +309,11 @@ import_microsoft_rpm_key() {
 configure_azure_cli_rpm_repo() {
     log_info "Configuring Azure CLI dnf package source..."
 
+    if [[ $EUID -ne 0 ]]; then
+        log_error "Configuring the Azure CLI dnf package source requires root privileges"
+        return 1
+    fi
+
     import_microsoft_rpm_key || return 1
 
     if [[ -f "$AZURE_CLI_RPM_REPO_PATH" ]]; then
