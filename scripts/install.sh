@@ -311,7 +311,11 @@ configure_azure_cli_rpm_repo() {
 
     import_microsoft_rpm_key || return 1
 
-    cat > "$AZURE_CLI_RPM_REPO_PATH" << 'EOF'
+    if [[ -f "$AZURE_CLI_RPM_REPO_PATH" ]]; then
+        log_info "Updating existing Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
+    fi
+
+    if ! cat > "$AZURE_CLI_RPM_REPO_PATH" << 'EOF'
 [azure-cli]
 name=Azure CLI
 baseurl=https://packages.microsoft.com/yumrepos/azure-cli
@@ -319,6 +323,10 @@ enabled=1
 gpgcheck=1
 gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
+    then
+        log_error "Failed to write Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
+        return 1
+    fi
 }
 
 install_azure_cli_rpm() {
