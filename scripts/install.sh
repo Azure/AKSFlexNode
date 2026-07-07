@@ -260,7 +260,7 @@ path_update_script() {
     local install_dir="$1"
 
     printf '%s\n' \
-        '# Surround PATH with colons so case matching guards against partial directory names,' \
+        '# Surrounding PATH with colons lets case matching guard against partial directory names,' \
         '# such as treating /usr/local/binary as a match for /usr/local/bin.' \
         'case ":${PATH:-}:" in' \
         "    *:\"$install_dir\":*) ;;" \
@@ -269,7 +269,7 @@ path_update_script() {
 }
 
 configure_install_dir_path() {
-    local expected_profile install_dir install_dir_was_in_path profile_dir
+    local install_dir install_dir_was_in_path profile_dir
     install_dir="$INSTALL_DIR"
     profile_dir=$(dirname "$PATH_PROFILE")
     install_dir_was_in_path=false
@@ -283,6 +283,7 @@ configure_install_dir_path() {
         return 1
     fi
 
+    local expected_profile
     expected_profile=$(path_update_script "$install_dir")
     if ! printf '%s\n' "$expected_profile" > "$PATH_PROFILE"; then
         log_error "Failed to write PATH profile to: $PATH_PROFILE. Check permissions and available disk space."
@@ -290,7 +291,7 @@ configure_install_dir_path() {
     fi
 
     if ! printf '%s\n' "$expected_profile" | cmp -s - "$PATH_PROFILE"; then
-        log_error "Content verification failed for PATH profile: $PATH_PROFILE. The disk write may not have completed successfully."
+        log_error "Content verification failed for PATH profile: $PATH_PROFILE. The written content does not match the expected content."
         return 1
     fi
 
@@ -307,12 +308,12 @@ configure_install_dir_path() {
 
     case ":${PATH:-}:" in
         *:"$install_dir":*)
-            if [[ "$install_dir_was_in_path" != "true" ]]; then
+            if ! $install_dir_was_in_path; then
                 log_info "Added $install_dir to PATH for this installer session"
             fi
             ;;
         *)
-            log_error "Failed to add $install_dir to PATH after sourcing $PATH_PROFILE. Verify the profile logic matches the current shell environment."
+            log_error "Failed to add $install_dir to PATH after sourcing $PATH_PROFILE. The profile may be incompatible with the current shell or PATH may be read-only."
             return 1
             ;;
     esac
