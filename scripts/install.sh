@@ -321,7 +321,7 @@ configure_azure_cli_rpm_repo() {
     fi
 
     local repo_write_error
-    if ! repo_write_error=$(tee "$AZURE_CLI_RPM_REPO_PATH" > /dev/null 2>&1 << 'EOF'
+    if ! repo_write_error=$(tee "$AZURE_CLI_RPM_REPO_PATH" 2>&1 > /dev/null << 'EOF'
 [azure-cli]
 name=Azure CLI
 baseurl=https://packages.microsoft.com/yumrepos/azure-cli
