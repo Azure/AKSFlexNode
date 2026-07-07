@@ -383,7 +383,7 @@ sudo install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.js
 sudo aks-flex-node preflight --config /etc/aks-flex-node/config.json
 ```
 
-Preflight should report successful host, API server, rootfs image, and artifact checks. In offline artifact mode, this is also the point where missing host packages are detected before bootstrap mutates the machine.
+Preflight should report successful host, API server, rootfs image, and artifact checks. It also reports a warning that node-problem-detector is disabled while offline artifacts are configured; this is temporary until NPD is included in upstream Unbounded bootstrap artifacts. In offline artifact mode, preflight is also the point where missing host packages are detected before bootstrap mutates the machine.
 
 For automation, use JSON output:
 

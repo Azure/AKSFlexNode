@@ -143,7 +143,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `npd.version` | string | Optional node-problem-detector version override. | `v1.35.1` |
+| `npd.version` | string | Optional node-problem-detector version override. NPD is temporarily disabled when `bootstrap.offlineArtifacts.source` is configured; preflight reports this as a warning until NPD is included in upstream Unbounded bootstrap artifacts. | `v1.35.1` |
 
 ## Legacy Config Compatibility
 
