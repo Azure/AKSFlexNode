@@ -258,7 +258,8 @@ install_binary() {
 
 path_update_script() {
     cat << EOF
-# Surround PATH with colons so entries are matched exactly, not as partial directory names.
+# Surround PATH with colons so case matching guards against partial directory names,
+# such as treating /usr/local/binary as a match for /usr/local/bin.
 case ":\${PATH:-}:" in
     *:"$INSTALL_DIR":*) ;;
     *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
@@ -287,7 +288,7 @@ configure_install_dir_path() {
     fi
 
     if ! printf '%s\n' "$expected_profile" | cmp -s - "$PATH_PROFILE"; then
-        log_error "Content mismatch after writing PATH profile: $PATH_PROFILE"
+        log_error "Content verification failed for PATH profile: $PATH_PROFILE. The file may have been modified by another process or the disk write may have failed."
         return 1
     fi
 
@@ -309,7 +310,7 @@ configure_install_dir_path() {
             fi
             ;;
         *)
-            log_error "Failed to add $INSTALL_DIR to PATH for this installer session"
+            log_error "Failed to add $INSTALL_DIR to PATH after sourcing $PATH_PROFILE. The PATH profile may not have executed correctly."
             return 1
             ;;
     esac
