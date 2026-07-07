@@ -98,6 +98,12 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `components.containerd` | string | Optional containerd version override. | `2.0.4` |
 | `components.runc` | string | Optional runc version override. | `1.1.12` |
 
+## Bootstrap
+
+| Name | Type | Description | Sample Value |
+|------|------|-------------|--------------|
+| `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |
+
 ## Networking
 
 | Name | Type | Description | Sample Value |
