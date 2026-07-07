@@ -2,8 +2,6 @@ package config
 
 import (
 	"testing"
-
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 func TestToAgentConfig_BootstrapToken(t *testing.T) {
@@ -61,46 +59,6 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	}
 	if len(ac.Kubelet.RegisterWithTaints) != 1 || ac.Kubelet.RegisterWithTaints[0] != "dedicated=infra:NoSchedule" {
 		t.Fatalf("Kubelet.RegisterWithTaints=%v, want [dedicated=infra:NoSchedule]", ac.Kubelet.RegisterWithTaints)
-	}
-}
-
-func TestSanitizeMachineGoalStateForFlexNode(t *testing.T) {
-	t.Parallel()
-
-	gs := &goalstates.MachineGoalState{
-		RootFS: &goalstates.RootFS{
-			HostDevices: goalstates.HostDevices{
-				KVM:        []string{"/dev/kvm"},
-				Network:    []string{"/dev/net/tun", "/dev/vhost-net"},
-				Block:      []string{"/dev/sda", "/dev/sda1"},
-				Infiniband: []string{"/dev/infiniband/rdma_cm"},
-				Additional: []string{"/dev/uinput"},
-			},
-		},
-	}
-
-	sanitizeMachineGoalStateForFlexNode(gs)
-
-	if len(gs.RootFS.HostDevices.Network) != 0 {
-		t.Fatalf("Network devices = %v, want none", gs.RootFS.HostDevices.Network)
-	}
-	if len(gs.RootFS.HostDevices.Infiniband) != 0 {
-		t.Fatalf("Infiniband devices = %v, want none", gs.RootFS.HostDevices.Infiniband)
-	}
-	assertStringSlice(t, gs.RootFS.HostDevices.KVM, []string{"/dev/kvm"})
-	assertStringSlice(t, gs.RootFS.HostDevices.Block, []string{"/dev/sda", "/dev/sda1"})
-	assertStringSlice(t, gs.RootFS.HostDevices.Additional, []string{"/dev/uinput"})
-}
-
-func assertStringSlice(t *testing.T, got, want []string) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v, want %v", got, want)
-		}
 	}
 }
 

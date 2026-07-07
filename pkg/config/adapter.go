@@ -89,24 +89,8 @@ func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve machine goal state: %w", err)
 	}
-	sanitizeMachineGoalStateForFlexNode(gs)
 
 	return agentCfg, gs, nil
-}
-
-func sanitizeMachineGoalStateForFlexNode(gs *goalstates.MachineGoalState) {
-	if gs == nil || gs.RootFS == nil {
-		return
-	}
-
-	// Unbounded v0.1.21 auto-discovers optional nested host devices such as
-	// /dev/net/tun and /dev/infiniband/rdma_cm. systemd-nspawn starts with a
-	// private /dev tmpfs, and binding individual files below missing /dev
-	// subdirectories can fail before the machine is registered. AKS Flex Node
-	// does not need these devices for node bootstrap, so keep the pre-v0.1.21
-	// stable device set until the shared agent provides parent-safe binds.
-	gs.RootFS.HostDevices.Network = nil
-	gs.RootFS.HostDevices.Infiniband = nil
 }
 
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node
