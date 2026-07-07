@@ -6,6 +6,12 @@ AKS Flex Node reads a JSON config file passed with `--config`.
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
+Before starting bootstrap, validate the same config with the preflight command:
+
+```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+```
+
 ## Top-Level Sections
 
 | Name | Type | Description |

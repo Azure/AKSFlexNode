@@ -42,13 +42,13 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	if active.State.AppliedKubernetesVersion != "" {
 		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 	}
-	agentCfg := config.ToAgentConfig(cfg, active.Name)
-	gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(log, cfg, active.Name)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
 
 	return phases.Serial(log,
+		stageContainerImageArchiveBindSource(log, containerImageArchives),
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
@@ -96,8 +96,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		"kubernetesVersion", cfg.Components.Kubernetes,
 	)
 
-	agentCfg := config.ToAgentConfig(cfg, newMachine)
-	gs, err := goalstates.ResolveMachine(log, agentCfg, newMachine, nil)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(log, cfg, newMachine)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
@@ -105,7 +104,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
-		StartNode(cfg, log, newMachine, gs, o.state, newState),
+		StartNode(cfg, log, newMachine, gs, containerImageArchives, o.state, newState),
 		reset.CleanupMachine(log, oldMachine),
 	)
 	if err := tasks.Do(ctx); err != nil {
