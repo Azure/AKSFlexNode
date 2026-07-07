@@ -225,6 +225,7 @@ configure_ssh_identity() {
 
   if [[ -z "${key_file}" ]]; then
     local candidate
+    # DSA keys are intentionally omitted because modern OpenSSH disables them.
     for candidate in "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ecdsa"; do
       if [[ -f "${candidate}" && -f "${candidate}.pub" ]]; then
         key_file="${candidate}"
@@ -288,8 +289,9 @@ state_dump() {
 # ---------------------------------------------------------------------------
 _build_ssh_opts() {
   local -n opts_ref="$1"
-  # E2E_SSH_OPTS is split on shell IFS whitespace; identity-file paths are
-  # carried separately in E2E_SSH_IDENTITY_FILE so spaces are preserved there.
+  # E2E_SSH_OPTS is split on shell IFS whitespace; an empty value produces no
+  # extra options. Identity-file paths are carried separately in
+  # E2E_SSH_IDENTITY_FILE so spaces are preserved there.
   read -r -a opts_ref <<< "${E2E_SSH_OPTS}"
 
   if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
