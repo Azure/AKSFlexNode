@@ -287,7 +287,7 @@ configure_install_dir_path() {
     fi
 
     if ! printf '%s\n' "$expected_profile" | cmp -s - "$PATH_PROFILE"; then
-        log_error "Failed to verify PATH profile content: $PATH_PROFILE"
+        log_error "Content mismatch after writing PATH profile: $PATH_PROFILE"
         return 1
     fi
 
@@ -296,6 +296,7 @@ configure_install_dir_path() {
         return 1
     fi
 
+    # Source only after verifying the profile so this session uses the same logic as future shells.
     if ! . "$PATH_PROFILE"; then
         log_error "Failed to apply PATH profile: $PATH_PROFILE"
         return 1
