@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-	"text/template"
 
 	utilexec "k8s.io/utils/exec"
 
@@ -96,7 +95,10 @@ func constructDownloadURL(version string) string {
 func constructDownloadSource(cfg *config.Config, version string) (artifactsource.Source, error) {
 	agentCfg := config.ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
 	if agentCfg.OfflineArtifactsConfigured() {
-		sourceRoot, err := renderOfflineArtifactsSource(agentCfg.OfflineArtifacts.Source, cfg.Components.Kubernetes)
+		sourceRoot, err := goalstates.RenderOfflineSource(
+			agentCfg.OfflineArtifacts.Source,
+			normalizeKubernetesVersion(cfg.Components.Kubernetes),
+		)
 		if err != nil {
 			return artifactsource.Source{}, err
 		}
@@ -109,24 +111,6 @@ func constructDownloadSource(cfg *config.Config, version string) (artifactsource
 
 func npdArtifactPath(version, arch string) string {
 	return fmt.Sprintf("npd/%s/node-problem-detector-%s-linux_%s.tar.gz", version, version, arch)
-}
-
-func renderOfflineArtifactsSource(source, kubernetesVersion string) (string, error) {
-	tmpl, err := template.New("offline-artifacts-source").Parse(source)
-	if err != nil {
-		return "", fmt.Errorf("parse offline artifact source template: %w", err)
-	}
-
-	kubernetesVersion = normalizeKubernetesVersion(kubernetesVersion)
-	var b strings.Builder
-	if err := tmpl.Execute(&b, map[string]string{
-		"KubernetesVersion":    kubernetesVersion,
-		"KubernetesVersionNoV": strings.TrimPrefix(kubernetesVersion, "v"),
-	}); err != nil {
-		return "", fmt.Errorf("render offline artifact source template: %w", err)
-	}
-
-	return b.String(), nil
 }
 
 func normalizeKubernetesVersion(version string) string {
