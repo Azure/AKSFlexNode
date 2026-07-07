@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -56,18 +57,18 @@ func NewCommand() *cobra.Command {
 }
 
 func (h *handler) execute(ctx context.Context) error {
+	output, err := normalizeOutput(h.output)
+	if err != nil {
+		return err
+	}
+
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config from %s: %w", h.configPath, err)
 	}
-	log := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
+	log := createPreflightLogger(cfg.Agent.LogLevel)
 
-	agentCfg := config.ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
-	downloads, _, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
-	if err != nil {
-		return fmt.Errorf("preflight failed to resolve download overrides: %w", err)
-	}
-	gs, err := goalstates.ResolveMachine(log, agentCfg, goalstates.NSpawnMachineKube1, downloads)
+	agentCfg, gs, _, err := config.ResolveMachineGoalState(log, cfg, goalstates.NSpawnMachineKube1)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
@@ -84,8 +85,8 @@ func (h *handler) execute(ctx context.Context) error {
 		FailOnWarnings: h.failOnWarnings,
 	})
 
-	switch strings.ToLower(h.output) {
-	case "", "text":
+	switch output {
+	case "text":
 		if err := writeText(h.writer, report); err != nil {
 			return err
 		}
@@ -95,11 +96,35 @@ func (h *handler) execute(ctx context.Context) error {
 		if err := enc.Encode(report); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("unsupported output format %q", h.output)
 	}
 
 	return report.Err(h.failOnWarnings)
+}
+
+func normalizeOutput(output string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(output)) {
+	case "", "text":
+		return "text", nil
+	case "json":
+		return "json", nil
+	default:
+		return "", fmt.Errorf("unsupported output format %q", output)
+	}
+}
+
+// createPreflightLogger keeps diagnostics on stderr so text and JSON reports on
+// stdout remain machine-readable, and avoids creating log files during preflight.
+func createPreflightLogger(level string) *slog.Logger {
+	logLevel, err := logger.ParseLogLevel(level)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: %v. Using 'info' level as default.\n", err)
+		logLevel = slog.LevelInfo
+	}
+
+	levelVar := &slog.LevelVar{}
+	levelVar.Set(logLevel)
+
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: levelVar}))
 }
 
 func writeText(w io.Writer, report preflight.Report) error {

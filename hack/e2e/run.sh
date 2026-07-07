@@ -232,6 +232,7 @@ main() {
   check_prerequisites
   load_config
   init_work_dir
+  configure_ssh_identity
 
   trap 'gha_end_group' EXIT
 

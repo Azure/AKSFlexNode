@@ -23,6 +23,44 @@ func TestNewCommand(t *testing.T) {
 	}
 }
 
+func TestNormalizeOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty defaults to text", input: "", want: "text"},
+		{name: "text", input: "text", want: "text"},
+		{name: "json", input: "json", want: "json"},
+		{name: "case insensitive", input: "JSON", want: "json"},
+		{name: "trimmed", input: " text ", want: "text"},
+		{name: "unsupported", input: "yaml", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := normalizeOutput(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeOutput() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeOutput() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeOutput() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestWriteText(t *testing.T) {
 	t.Parallel()
 

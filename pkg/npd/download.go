@@ -26,9 +26,7 @@ const (
 	// Paths as they appear inside the container.
 	npdBinaryPath = "/usr/bin/node-problem-detector"
 	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
-)
 
-const (
 	npdArtifactCheckName = "npd-artifact"
 	npdArtifactTarget    = "node-problem-detector artifact"
 )

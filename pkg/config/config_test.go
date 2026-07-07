@@ -752,6 +752,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04",
 			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
 		},
+		"bootstrap": {
+			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
+		},
 		"networking": {
 			"dnsServiceIP": "10.42.0.10",
 			"cniVersion": "1.5.1"
@@ -824,6 +827,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	}
 	if agentCfg.CRI.Runc.Version != "1.2.3" {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
+	}
+	if len(agentCfg.AdditionalHostDevices) != 2 || agentCfg.AdditionalHostDevices[0] != "/dev/uinput" || agentCfg.AdditionalHostDevices[1] != "/dev/input/event0" {
+		t.Fatalf("Agent AdditionalHostDevices = %#v", agentCfg.AdditionalHostDevices)
 	}
 	if agentCfg.CNI.PluginVersion != "1.5.1" {
 		t.Fatalf("Agent CNI.PluginVersion = %q, want 1.5.1", agentCfg.CNI.PluginVersion)

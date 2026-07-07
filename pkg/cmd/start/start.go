@@ -12,7 +12,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -66,12 +65,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	agentCfg := config.ToAgentConfig(cfg, machineName)
-	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
-	if err != nil {
-		return fmt.Errorf("bootstrap failed to resolve download overrides: %w", err)
-	}
-	gs, err := goalstates.ResolveMachine(logger, agentCfg, machineName, downloads)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}

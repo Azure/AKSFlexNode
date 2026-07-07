@@ -1,0 +1,59 @@
+name: Fork PR E2E Notice
+
+on:
+  # zizmor: ignore[dangerous-triggers] This workflow only comments on fork PRs and never checks out or executes PR code.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Comment on fork PRs
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upsert E2E fork notice
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- aks-flex-node-fork-e2e-notice -->"
+          body_file="${RUNNER_TEMP}/fork-e2e-notice.md"
+          cat > "${body_file}" <<'EOF'
+          <!-- aks-flex-node-fork-e2e-notice -->
+          Thanks for the contribution! This pull request comes from a fork, so the Azure E2E workflow is intentionally skipped for security reasons.
+
+          Merge will remain blocked until the E2E tests have been run from a branch in the `Azure/AKSFlexNode` repository by a maintainer/contributor with access to this repo.
+
+          Maintainer options:
+          1. Review the fork changes.
+          2. Push the trusted commit to a branch in `Azure/AKSFlexNode`.
+          3. Run the `E2E Tests` workflow from that same-repository branch, or open a same-repository PR so the workflow can run automatically.
+
+          We do not run Azure E2E directly from fork PR code because it requires Azure OIDC access.
+          EOF
+
+          existing_comment_id="$(gh api \
+            --paginate \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${marker}\"))) | .id" \
+            | head -n 1)"
+
+          if [[ -n "${existing_comment_id}" ]]; then
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_comment_id}" \
+              --field "body=@${body_file}" \
+              >/dev/null
+          else
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --field "body=@${body_file}" \
+              >/dev/null
+          fi
