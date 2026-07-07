@@ -321,12 +321,7 @@ configure_azure_cli_rpm_repo() {
     fi
 
     local repo_write_error
-    repo_write_error=$(mktemp) || {
-        log_error "Failed to create temporary file for Azure CLI repo write errors"
-        return 1
-    }
-
-    if ! cat 2> "$repo_write_error" > "$AZURE_CLI_RPM_REPO_PATH" << 'EOF'
+    if ! repo_write_error=$(tee "$AZURE_CLI_RPM_REPO_PATH" > /dev/null 2>&1 << 'EOF'
 [azure-cli]
 name=Azure CLI
 baseurl=https://packages.microsoft.com/yumrepos/azure-cli
@@ -334,19 +329,15 @@ enabled=1
 gpgcheck=1
 gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
+    )
     then
-        local reason
-        reason=$(< "$repo_write_error")
-        rm -f "$repo_write_error"
-        if [[ -n "$reason" ]]; then
-            log_error "Failed to write Azure CLI dnf package source $AZURE_CLI_RPM_REPO_PATH: $reason"
+        if [[ -n "$repo_write_error" ]]; then
+            log_error "Failed to write Azure CLI dnf package source $AZURE_CLI_RPM_REPO_PATH: $repo_write_error"
         else
             log_error "Failed to write Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
         fi
         return 1
     fi
-
-    rm -f "$repo_write_error"
 }
 
 install_azure_cli_rpm() {
