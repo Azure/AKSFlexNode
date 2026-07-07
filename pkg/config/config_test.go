@@ -97,6 +97,15 @@ func TestSetDefaults(t *testing.T) {
 			},
 		},
 		{
+			name: "offline artifacts skip runc default",
+			config: &Config{Bootstrap: BootstrapConfig{
+				OfflineArtifacts: OfflineArtifactsConfig{Source: "/opt/artifacts/{{ .KubernetesVersion }}"},
+			}},
+			want: func(c *Config) bool {
+				return c.Components.Runc == ""
+			},
+		},
+		{
 			name:   "machine operation mode can be disabled",
 			config: &Config{Agent: AgentConfig{MachineOperationMode: "disable"}},
 			want: func(c *Config) bool {
@@ -736,7 +745,12 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 		"components": {
 			"kubernetes": "1.29.0",
 			"containerd": "2.0.5",
-			"runc": "1.2.3"
+			"runc": "1.2.3",
+			"sandboxImage": "registry.example.test/pause:3.9"
+		},
+		"bootstrap": {
+			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04",
+			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
 		},
 		"bootstrap": {
 			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
@@ -801,6 +815,15 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	}
 	if agentCfg.CRI.Containerd.Version != "2.0.5" {
 		t.Fatalf("Agent CRI.Containerd.Version = %q, want 2.0.5", agentCfg.CRI.Containerd.Version)
+	}
+	if agentCfg.CRI.Containerd.SandboxImage != "registry.example.test/pause:3.9" {
+		t.Fatalf("Agent CRI.Containerd.SandboxImage = %q, want registry.example.test/pause:3.9", agentCfg.CRI.Containerd.SandboxImage)
+	}
+	if agentCfg.OCIImage != "registry.example.test/flex/rootfs:ubuntu-24.04" {
+		t.Fatalf("Agent OCIImage = %q, want registry.example.test/flex/rootfs:ubuntu-24.04", agentCfg.OCIImage)
+	}
+	if len(agentCfg.AdditionalHostDevices) != 2 || agentCfg.AdditionalHostDevices[0] != "/dev/uinput" || agentCfg.AdditionalHostDevices[1] != "/dev/input/event0" {
+		t.Fatalf("Agent AdditionalHostDevices = %#v", agentCfg.AdditionalHostDevices)
 	}
 	if agentCfg.CRI.Runc.Version != "1.2.3" {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)

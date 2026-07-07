@@ -291,6 +291,31 @@ state_dump() {
 }
 
 # ---------------------------------------------------------------------------
+# Cluster command serialization
+# ---------------------------------------------------------------------------
+# Several join flows run in parallel and some helper commands call
+# `az aks get-credentials`, which rewrites the shared E2E kubeconfig. Serialize
+# local cluster/kubeconfig operations so concurrent kubectl calls never observe a
+# partially-written or context-less kubeconfig and fall back to localhost:8080.
+with_cluster_lock() {
+  local lock_dir="${E2E_WORK_DIR}/cluster.lock"
+  local rc
+
+  mkdir -p "${E2E_WORK_DIR}"
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    sleep 1
+  done
+
+  set +e
+  "$@"
+  rc=$?
+  set -e
+
+  rmdir "${lock_dir}" 2>/dev/null || true
+  return "${rc}"
+}
+
+# ---------------------------------------------------------------------------
 # SSH helpers
 # ---------------------------------------------------------------------------
 _build_ssh_opts() {
@@ -394,7 +419,7 @@ ensure_daemon_csr_approver() {
 
   log_info "Starting e2e daemon CSR approver..."
   local approver_kubeconfig="${E2E_WORK_DIR}/daemon-csr-approver.kubeconfig"
-  kubectl config view --raw --minify > "${approver_kubeconfig}"
+  with_cluster_lock kubectl config view --raw --minify > "${approver_kubeconfig}"
   chmod 600 "${approver_kubeconfig}"
 
   pkill -f 'e2ehelper daemon-csr-approver' 2>/dev/null || true

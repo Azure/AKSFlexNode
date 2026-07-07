@@ -221,9 +221,13 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 			BootstrapToken: &BootstrapTokenConfig{Token: "tok"},
 		},
 		Components: ComponentsConfig{
-			Kubernetes: "1.30.0",
-			Containerd: "2.1.0",
-			Runc:       "1.2.0",
+			Kubernetes:   "1.30.0",
+			Containerd:   "2.1.0",
+			Runc:         "1.2.0",
+			SandboxImage: "registry.example.test/pause:3.9",
+		},
+		Bootstrap: BootstrapConfig{
+			OCIImage: "registry.example.test/flex/rootfs:ubuntu-24.04",
 		},
 		Networking: NetworkingConfig{
 			DNSServiceIP: "10.0.0.10",
@@ -242,11 +246,35 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 	if ac.CRI.Containerd.Version != "2.1.0" {
 		t.Fatalf("CRI.Containerd.Version=%q, want %q", ac.CRI.Containerd.Version, "2.1.0")
 	}
+	if ac.CRI.Containerd.SandboxImage != "registry.example.test/pause:3.9" {
+		t.Fatalf("CRI.Containerd.SandboxImage=%q, want registry.example.test/pause:3.9", ac.CRI.Containerd.SandboxImage)
+	}
+	if ac.OCIImage != "registry.example.test/flex/rootfs:ubuntu-24.04" {
+		t.Fatalf("OCIImage=%q, want registry.example.test/flex/rootfs:ubuntu-24.04", ac.OCIImage)
+	}
 	if ac.CRI.Runc.Version != "1.2.0" {
 		t.Fatalf("CRI.Runc.Version=%q, want %q", ac.CRI.Runc.Version, "1.2.0")
 	}
 	if ac.CNI.PluginVersion != "1.6.0" {
 		t.Fatalf("CNI.PluginVersion=%q, want %q", ac.CNI.PluginVersion, "1.6.0")
+	}
+}
+
+func TestToAgentConfig_OfflineArtifacts(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Bootstrap: BootstrapConfig{
+			OfflineArtifacts: OfflineArtifactsConfig{Source: "/opt/artifacts/{{ .KubernetesVersion }}"},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+	if ac.OfflineArtifacts == nil {
+		t.Fatal("OfflineArtifacts is nil")
+	}
+	if ac.OfflineArtifacts.Source != "/opt/artifacts/{{ .KubernetesVersion }}" {
+		t.Fatalf("OfflineArtifacts.Source=%q", ac.OfflineArtifacts.Source)
 	}
 }
 
@@ -291,6 +319,12 @@ func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 	// goalstates.ResolveMachine when empty.
 	if ac.CRI.Containerd.Version != "" {
 		t.Fatalf("CRI.Containerd.Version=%q, want empty", ac.CRI.Containerd.Version)
+	}
+	if ac.CRI.Containerd.SandboxImage != "" {
+		t.Fatalf("CRI.Containerd.SandboxImage=%q, want empty", ac.CRI.Containerd.SandboxImage)
+	}
+	if ac.OCIImage != "" {
+		t.Fatalf("OCIImage=%q, want empty", ac.OCIImage)
 	}
 	if ac.CRI.Runc.Version != "" {
 		t.Fatalf("CRI.Runc.Version=%q, want empty", ac.CRI.Runc.Version)

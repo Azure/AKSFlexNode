@@ -121,7 +121,7 @@ install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 cat /etc/aks-flex-node/config.json
 ```
 
-After reviewing the config, run preflight checks. Preflight validates host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources before bootstrap changes the host.
+After reviewing the config, run preflight checks. Preflight is non-mutating and validates host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources before bootstrap changes the host.
 
 ```bash
 aks-flex-node preflight --config /etc/aks-flex-node/config.json

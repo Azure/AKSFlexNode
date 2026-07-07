@@ -3,6 +3,7 @@ package npd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +30,30 @@ const (
 	npdArtifactTarget    = "node-problem-detector artifact"
 )
 
+type disabledTask struct {
+	name string
+	log  *slog.Logger
+}
+
+func (t disabledTask) Name() string { return t.name }
+func (t disabledTask) Do(context.Context) error {
+	t.log.Info(t.name + " is disabled in offline mode")
+	return nil
+}
+
+type disabledPreflightCheck struct{}
+
+func (disabledPreflightCheck) Name() string { return npdArtifactCheckName }
+func (disabledPreflightCheck) Check(context.Context) []preflight.Result {
+	return preflight.ResultsWarning(
+		npdArtifactCheckName,
+		npdArtifactTarget,
+		"node-problem-detector is disabled in offline mode until NPD is included in upstream bootstrap artifacts",
+	)
+}
+
 type downloadTask struct {
+	cfg        *config.Config
 	version    string
 	machineDir string
 }
@@ -37,12 +61,16 @@ type downloadTask struct {
 // Download returns a task that downloads the node-problem-detector binary
 // and config from the upstream GitHub release tarball into the nspawn
 // machine rootfs at machineDir.
-func Download(cfg *config.Config, machineDir string) phases.Task {
+func Download(log *slog.Logger, cfg *config.Config, machineDir string) phases.Task {
+	if disabledForOfflineArtifacts(cfg) {
+		return disabledTask{name: "download-npd", log: log}
+	}
+
 	version := cfg.Npd.Version
 	if version == "" {
 		version = DefaultVersion
 	}
-	return &downloadTask{version: version, machineDir: machineDir}
+	return &downloadTask{cfg: cfg, version: version, machineDir: machineDir}
 }
 
 func (t *downloadTask) Name() string { return "download-npd" }
@@ -55,8 +83,12 @@ func (t *downloadTask) Do(ctx context.Context) error {
 		return nil // already installed at correct version
 	}
 
-	downloadURL := constructDownloadURL(t.version)
-	for tarFile, err := range utilio.DecompressTarGzFromRemote(ctx, downloadURL) {
+	downloadSource, err := constructDownloadSource(t.cfg, t.version)
+	if err != nil {
+		return fmt.Errorf("construct npd download source: %w", err)
+	}
+
+	for tarFile, err := range downloadSource.DecompressTarGz(ctx) {
 		if err != nil {
 			return fmt.Errorf("decompress npd tar: %w", err)
 		}
@@ -83,8 +115,23 @@ func constructDownloadURL(version string) string {
 	return fmt.Sprintf(defaultNPDURLTemplate, version, version, arch)
 }
 
+func constructDownloadSource(_ *config.Config, version string) (artifactsource.Source, error) {
+	return artifactsource.Parse(constructDownloadURL(version))
+}
+
+// disabledForOfflineArtifacts skips NPD when offline bootstrap artifacts are
+// configured. TODO: re-enable this once NPD is included in the upstream
+// Unbounded bootstrap artifact bundle and resolver.
+func disabledForOfflineArtifacts(cfg *config.Config) bool {
+	return cfg != nil && strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
+}
+
 // Preflight returns AKS Flex Node-specific preflight checks.
 func Preflight(cfg *config.Config) []preflight.Checker {
+	if disabledForOfflineArtifacts(cfg) {
+		return []preflight.Checker{disabledPreflightCheck{}}
+	}
+
 	return []preflight.Checker{
 		artifactsource.ReachabilityChecker{
 			CheckName:  npdArtifactCheckName,
@@ -97,7 +144,7 @@ func Preflight(cfg *config.Config) []preflight.Checker {
 					version = cfg.Npd.Version
 				}
 
-				source, err := artifactsource.Parse(constructDownloadURL(version))
+				source, err := constructDownloadSource(cfg, version)
 				if err != nil {
 					return nil, err
 				}

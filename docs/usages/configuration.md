@@ -6,7 +6,7 @@ AKS Flex Node reads a JSON config file passed with `--config`.
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
-Before starting bootstrap, validate the same config with the preflight command:
+Before starting bootstrap, validate the same config with the non-mutating preflight command:
 
 ```bash
 aks-flex-node preflight --config /etc/aks-flex-node/config.json
@@ -18,10 +18,9 @@ aks-flex-node preflight --config /etc/aks-flex-node/config.json
 |------|------|-------------|
 | `azure` | object | Azure subscription, target AKS cluster, and authentication settings. |
 | `agent` | object | Local agent logging and runtime behavior. |
-| `containerd` | object | Optional containerd version override. |
-| `kubernetes` | object | Kubernetes component settings. |
-| `cni` | object | Optional CNI plugin version override. |
-| `runc` | object | Optional runc version override. |
+| `components` | object | Kubernetes, container runtime, and sandbox image settings. |
+| `bootstrap` | object | Bootstrap settings such as the rootfs OCI image. |
+| `networking` | object | Cluster networking settings and optional CNI plugin version override. |
 | `node` | object | Kubelet, labels, taints, and node registration settings. |
 | `npd` | object | Optional node-problem-detector version override. |
 
@@ -103,11 +102,14 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `components.kubernetes` | string | Kubernetes version for kubelet and related binaries. For AKS joins, use the target cluster version. | `1.34.3` |
 | `components.containerd` | string | Optional containerd version override. | `2.0.4` |
 | `components.runc` | string | Optional runc version override. | `1.1.12` |
+| `components.sandboxImage` | string | Optional CRI sandbox/pause image used by containerd. When omitted, the shared agent default is used. | `mcr.microsoft.com/oss/kubernetes/pause:3.9` |
 
 ## Bootstrap
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
+| `bootstrap.ociImage` | string | Optional nspawn rootfs OCI image used during bootstrap. When omitted, the shared agent default image selection is used. | `ghcr.io/example/aks-flex-node-rootfs:ubuntu-24.04` |
+| `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. Preflight treats missing host packages as fatal when this is set. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
 | `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |
 
 ## Networking
@@ -141,7 +143,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `npd.version` | string | Optional node-problem-detector version override. | `v1.35.1` |
+| `npd.version` | string | Optional node-problem-detector version override. NPD is temporarily disabled when `bootstrap.offlineArtifacts.source` is configured; preflight reports this as a warning until NPD is included in upstream Unbounded bootstrap artifacts. | `v1.35.1` |
 
 ## Legacy Config Compatibility
 
@@ -293,13 +295,29 @@ Add these sections when you need to pin runtime component versions explicitly.
   "components": {
     "kubernetes": "1.34.3",
     "containerd": "2.0.4",
-    "runc": "1.1.12"
+    "runc": "1.1.12",
+    "sandboxImage": "mcr.microsoft.com/oss/kubernetes/pause:3.9"
   },
   "networking": {
     "cniVersion": "v1.6.2"
   },
   "npd": {
     "version": "v1.35.1"
+  }
+}
+```
+
+### Bootstrap Image And Offline Artifact Overrides
+
+Add this section when you need to pin the nspawn rootfs image or use a complete offline binary artifact bundle. `offlineArtifacts.source` follows the Unbounded offline artifact bundle layout and includes `manifest.json` plus Kubernetes, containerd, runc, CNI, crictl, and optional sandbox image archive artifacts.
+
+```json
+{
+  "bootstrap": {
+    "ociImage": "ghcr.io/example/aks-flex-node-rootfs:ubuntu-24.04",
+    "offlineArtifacts": {
+      "source": "/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}"
+    }
   }
 }
 ```

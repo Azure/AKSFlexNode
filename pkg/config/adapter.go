@@ -28,10 +28,8 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
+		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
-		// TODO: implement support for overriding rootfs image from flex node config.
-		//       Using empty string here means the agent will detect and use the default image.
-		// OCIImage: "",
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,
@@ -45,7 +43,8 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		},
 		CRI: agentconfig.CRIConfig{
 			Containerd: agentconfig.ContainerdConfig{
-				Version: cfg.Components.Containerd,
+				Version:      cfg.Components.Containerd,
+				SandboxImage: cfg.Components.SandboxImage,
 			},
 			Runc: agentconfig.RuncConfig{
 				Version: cfg.Components.Runc,
@@ -54,6 +53,12 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		CNI: agentconfig.CNIConfig{
 			PluginVersion: cfg.Networking.CNIVersion,
 		},
+	}
+
+	if cfg.Bootstrap.OfflineArtifacts.Source != "" {
+		ac.OfflineArtifacts = &agentconfig.AgentOfflineArtifacts{
+			Source: cfg.Bootstrap.OfflineArtifacts.Source,
+		}
 	}
 
 	switch {

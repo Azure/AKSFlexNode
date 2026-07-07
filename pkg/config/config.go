@@ -163,17 +163,36 @@ type AgentConfig struct {
 // ComponentsConfig is the AKS RP component version contract used by the agent
 // at runtime.
 type ComponentsConfig struct {
-	Kubernetes string `json:"kubernetes,omitempty"`
-	Containerd string `json:"containerd,omitempty"`
-	Runc       string `json:"runc,omitempty"`
+	Kubernetes   string `json:"kubernetes,omitempty"`
+	Containerd   string `json:"containerd,omitempty"`
+	Runc         string `json:"runc,omitempty"`
+	SandboxImage string `json:"sandboxImage,omitempty"`
 }
 
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component
 // versions.
 type BootstrapConfig struct {
+	// OCIImage is the nspawn rootfs OCI image used by the shared agent library.
+	// When empty, the agent uses its built-in default image selection.
+	OCIImage string `json:"ociImage,omitempty"`
+
+	// OfflineArtifacts points at a complete offline binary artifact source.
+	// When source is set, bootstrap resolves Kubernetes, containerd, runc, CNI,
+	// crictl, and optional sandbox image archive artifacts from this source.
+	OfflineArtifacts OfflineArtifactsConfig `json:"offlineArtifacts,omitempty"`
+
 	// AdditionalHostDevices lists extra host device nodes under /dev to expose to
 	// the nspawn machine in addition to devices discovered by the shared agent.
 	AdditionalHostDevices []string `json:"additionalHostDevices,omitempty"`
+}
+
+// OfflineArtifactsConfig mirrors Unbounded's OfflineArtifacts bootstrap
+// setting in the AKS Flex public config shape.
+type OfflineArtifactsConfig struct {
+	// Source is a Go template string that resolves to an absolute filesystem
+	// path, file:// URL, or oci:// artifact reference. The template may use
+	// .KubernetesVersion and .KubernetesVersionNoV.
+	Source string `json:"source,omitempty"`
 }
 
 // NodeConfig holds configuration settings for the Kubernetes node.
@@ -384,7 +403,11 @@ func (c *Config) setNodeDefaults() {
 }
 
 func (c *Config) setRuncDefaults() {
-	// Set default runc configuration if not provided
+	// Offline artifact manifests are the source of truth for runtime versions.
+	// Do not synthesize a runc version that would conflict with the manifest.
+	if c.Bootstrap.OfflineArtifacts.Source != "" {
+		return
+	}
 	if c.Components.Runc == "" {
 		c.Components.Runc = "1.1.12"
 	}

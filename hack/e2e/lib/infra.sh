@@ -108,7 +108,8 @@ infra_deploy() {
     -o json)
 
   local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_principal_id
-  local token_vm_name token_vm_ip token_vm_private_ip kubeadm_vm_name kubeadm_vm_ip admin_username
+  local token_vm_name token_vm_ip token_vm_private_ip offline_vm_name offline_vm_ip offline_vm_private_ip
+  local kubeadm_vm_name kubeadm_vm_ip admin_username
 
   cluster_name=$(echo "${outputs}"    | jq -r '.clusterName.value')
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
@@ -118,12 +119,19 @@ infra_deploy() {
   token_vm_name=$(echo "${outputs}"   | jq -r '.tokenVmName.value')
   token_vm_ip=$(echo "${outputs}"     | jq -r '.tokenVmIp.value')
   token_vm_private_ip=$(echo "${outputs}" | jq -r '.tokenVmPrivateIp.value // ""')
+  offline_vm_name=$(echo "${outputs}" | jq -r '.offlineVmName.value')
+  offline_vm_ip=$(echo "${outputs}"   | jq -r '.offlineVmIp.value')
+  offline_vm_private_ip=$(echo "${outputs}" | jq -r '.offlineVmPrivateIp.value // ""')
   kubeadm_vm_name=$(echo "${outputs}" | jq -r '.kubeadmVmName.value')
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
 
   if [[ -z "${token_vm_private_ip}" ]] || ! is_valid_ipv4 "${token_vm_private_ip}"; then
     log_error "Missing or invalid token VM private IP from deployment outputs: '${token_vm_private_ip}'"
+    return 1
+  fi
+  if [[ -z "${offline_vm_private_ip}" ]] || ! is_valid_ipv4 "${offline_vm_private_ip}"; then
+    log_error "Missing or invalid offline VM private IP from deployment outputs: '${offline_vm_private_ip}'"
     return 1
   fi
 
@@ -136,6 +144,9 @@ infra_deploy() {
   state_set "token_vm_name"        "${token_vm_name}"
   state_set "token_vm_ip"          "${token_vm_ip}"
   state_set "token_vm_private_ip"  "${token_vm_private_ip}"
+  state_set "offline_vm_name"      "${offline_vm_name}"
+  state_set "offline_vm_ip"        "${offline_vm_ip}"
+  state_set "offline_vm_private_ip" "${offline_vm_private_ip}"
   state_set "kubeadm_vm_name"      "${kubeadm_vm_name}"
   state_set "kubeadm_vm_ip"        "${kubeadm_vm_ip}"
   state_set "admin_username"       "${admin_username}"
@@ -148,6 +159,7 @@ infra_deploy() {
   log_info "Cluster:     ${cluster_name} (${cluster_id})"
   log_info "MSI VM:      ${msi_vm_name} @ ${msi_vm_ip}"
   log_info "Token VM:    ${token_vm_name} @ ${token_vm_ip}"
+  log_info "Offline VM:  ${offline_vm_name} @ ${offline_vm_ip}"
   log_info "Kubeadm VM:  ${kubeadm_vm_name} @ ${kubeadm_vm_ip}"
 
   # Get kubeconfig and extract cluster info
@@ -159,12 +171,15 @@ infra_deploy() {
   local pid_msi=$!
   wait_for_ssh "${token_vm_ip}" &
   local pid_token=$!
+  wait_for_ssh "${offline_vm_ip}" &
+  local pid_offline=$!
   wait_for_ssh "${kubeadm_vm_ip}" &
   local pid_kubeadm=$!
 
   local ssh_failed=0
   wait "${pid_msi}" || ssh_failed=1
   wait "${pid_token}" || ssh_failed=1
+  wait "${pid_offline}" || ssh_failed=1
   wait "${pid_kubeadm}" || ssh_failed=1
 
   if [[ "${ssh_failed}" -eq 1 ]]; then

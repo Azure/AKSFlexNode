@@ -25,6 +25,8 @@ aks-flex-node preflight \
   --fail-on-warnings
 ```
 
+When `bootstrap.offlineArtifacts.source` is configured, missing host packages are fatal because offline bootstrap cannot rely on package installation during `start`.
+
 ## Start
 
 Start installs host components, starts the nspawn-backed worker, installs the systemd unit, and starts the agent daemon.
