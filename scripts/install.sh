@@ -18,6 +18,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
+PATH_PROFILE="/etc/profile.d/aks-flex-node-path.sh"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
@@ -253,6 +254,32 @@ install_binary() {
     chown root:root "$INSTALL_DIR/aks-flex-node"
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
+}
+
+ensure_install_dir_in_path() {
+    if [[ ":${PATH:-}:" != *":$INSTALL_DIR:"* ]]; then
+        if [[ -n "${PATH:-}" ]]; then
+            export PATH="$INSTALL_DIR:$PATH"
+        else
+            export PATH="$INSTALL_DIR"
+        fi
+        log_info "Added $INSTALL_DIR to PATH for this installer session"
+    fi
+
+    mkdir -p "$(dirname "$PATH_PROFILE")"
+    if ! tee "$PATH_PROFILE" > /dev/null << EOF
+case ":\${PATH:-}:" in
+    *:"$INSTALL_DIR":*) ;;
+    *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
+esac
+EOF
+    then
+        log_error "Failed to configure $INSTALL_DIR in PATH: $PATH_PROFILE"
+        return 1
+    fi
+
+    chmod 644 "$PATH_PROFILE"
+    log_success "Configured $INSTALL_DIR in PATH for future shell sessions"
 }
 
 install_azure_cli_deb() {
@@ -555,6 +582,7 @@ main() {
 
     # Install binary
     install_binary "$binary_path"
+    ensure_install_dir_in_path
 
     # Setup service components
     install_azure_cli

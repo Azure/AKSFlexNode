@@ -18,6 +18,7 @@ DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
+PATH_PROFILE="/etc/profile.d/aks-flex-node-path.sh"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
@@ -61,6 +62,7 @@ confirm_uninstall() {
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
     echo "• Log directory ($LOG_DIR)"
+    echo "• PATH configuration ($PATH_PROFILE)"
     echo "• Host network state created by unbounded-net"
     echo "• Azure CLI"
     echo ""
@@ -163,6 +165,15 @@ remove_binary() {
     fi
 }
 
+remove_path_profile() {
+    if [[ -f "$PATH_PROFILE" ]]; then
+        rm -f "$PATH_PROFILE"
+        log_success "Removed PATH configuration: $PATH_PROFILE"
+    else
+        log_info "PATH configuration not found: $PATH_PROFILE"
+    fi
+}
+
 remove_azure_cli() {
     if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
         log_info "Skipping Azure CLI removal (SKIP_AZCLI=$SKIP_AZCLI)"
@@ -208,6 +219,7 @@ show_completion_message() {
     echo "✅ Service user and permissions"
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
+    echo "✅ PATH configuration"
     echo "✅ Host network state"
     echo "✅ Azure CLI"
     echo ""
@@ -233,6 +245,7 @@ main() {
     run_reset
     remove_directories
     remove_binary
+    remove_path_profile
     remove_azure_cli
 
     # Show completion message
