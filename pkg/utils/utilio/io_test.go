@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWriteFile(t *testing.T) {
@@ -156,6 +157,36 @@ func TestInstallFile(t *testing.T) {
 				t.Fatalf("file content mismatch: got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInstallFileWithLimitedSizeCreatesTempFileInTargetDir(t *testing.T) {
+	targetDir := t.TempDir()
+	tmpDir := t.TempDir()
+	t.Setenv("TMPDIR", tmpDir)
+
+	filename := filepath.Join(targetDir, "target.txt")
+	reader := &blockingReader{
+		started: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- InstallFileWithLimitedSize(filename, reader, 0o644, 1024)
+	}()
+
+	<-reader.started
+
+	if !waitForTempFile(t, targetDir, filepath.Base(filename)) {
+		t.Fatalf("expected pending temp file in target directory %q", targetDir)
+	}
+	if hasTempFile(t, tmpDir, filepath.Base(filename)) {
+		t.Fatalf("expected no pending temp file in TMPDIR %q", tmpDir)
+	}
+
+	close(reader.unblock)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -390,4 +421,45 @@ type errReader struct {
 
 func (e *errReader) Read(_ []byte) (int, error) {
 	return 0, e.err
+}
+
+type blockingReader struct {
+	started chan struct{}
+	unblock chan struct{}
+	sent    bool
+}
+
+func (r *blockingReader) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		p[0] = 'x'
+		close(r.started)
+		return 1, nil
+	}
+
+	<-r.unblock
+	return 0, io.EOF
+}
+
+func waitForTempFile(t *testing.T, dir, targetBase string) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if hasTempFile(t, dir, targetBase) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func hasTempFile(t *testing.T, dir, targetBase string) bool {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(dir, "."+targetBase+"*"))
+	if err != nil {
+		t.Fatalf("glob temp files: %v", err)
+	}
+	return len(matches) > 0
 }
