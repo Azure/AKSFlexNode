@@ -257,22 +257,25 @@ install_binary() {
 }
 
 path_update_script() {
+    local install_dir="$1"
+
     printf '%s\n' \
         '# Surround PATH with colons so case matching guards against partial directory names,' \
         '# such as treating /usr/local/binary as a match for /usr/local/bin.' \
         'case ":${PATH:-}:" in' \
-        "    *:\"$INSTALL_DIR\":*) ;;" \
-        "    *) export PATH=\"$INSTALL_DIR\${PATH:+:\$PATH}\" ;;" \
+        "    *:\"$install_dir\":*) ;;" \
+        "    *) export PATH=\"$install_dir\${PATH:+:\$PATH}\" ;;" \
         'esac'
 }
 
 configure_install_dir_path() {
-    local expected_profile install_dir_was_in_path profile_dir
+    local expected_profile install_dir install_dir_was_in_path profile_dir
+    install_dir="$INSTALL_DIR"
     profile_dir=$(dirname "$PATH_PROFILE")
     install_dir_was_in_path=false
 
     case ":${PATH:-}:" in
-        *:"$INSTALL_DIR":*) install_dir_was_in_path=true ;;
+        *:"$install_dir":*) install_dir_was_in_path=true ;;
     esac
 
     if ! mkdir -p "$profile_dir"; then
@@ -280,14 +283,14 @@ configure_install_dir_path() {
         return 1
     fi
 
-    expected_profile=$(path_update_script)
+    expected_profile=$(path_update_script "$install_dir")
     if ! printf '%s\n' "$expected_profile" > "$PATH_PROFILE"; then
         log_error "Failed to write PATH profile to: $PATH_PROFILE. Check permissions and available disk space."
         return 1
     fi
 
     if ! printf '%s\n' "$expected_profile" | cmp -s - "$PATH_PROFILE"; then
-        log_error "Content verification failed for PATH profile: $PATH_PROFILE. The file may have been modified by another process or the disk write may have failed."
+        log_error "Content verification failed for PATH profile: $PATH_PROFILE. The disk write may not have completed successfully."
         return 1
     fi
 
@@ -298,18 +301,18 @@ configure_install_dir_path() {
 
     # Source only after verifying the profile so this session uses the same logic as future shells.
     if ! . "$PATH_PROFILE"; then
-        log_error "Failed to apply PATH profile: $PATH_PROFILE"
+        log_error "Failed to source PATH profile: $PATH_PROFILE. The profile may contain shell syntax errors."
         return 1
     fi
 
     case ":${PATH:-}:" in
-        *:"$INSTALL_DIR":*)
+        *:"$install_dir":*)
             if [[ "$install_dir_was_in_path" != "true" ]]; then
-                log_info "Added $INSTALL_DIR to PATH for this installer session"
+                log_info "Added $install_dir to PATH for this installer session"
             fi
             ;;
         *)
-            log_error "Failed to add $INSTALL_DIR to PATH after sourcing $PATH_PROFILE. The PATH profile may not have executed correctly."
+            log_error "Failed to add $install_dir to PATH after sourcing $PATH_PROFILE. Verify the profile logic matches the current shell environment."
             return 1
             ;;
     esac
