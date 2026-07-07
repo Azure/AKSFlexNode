@@ -208,12 +208,13 @@ load_config() {
 
 # Configure ssh/scp to use the private key matching the VM public key.
 configure_ssh_identity() {
-  if [[ " ${E2E_SSH_OPTS} " == *" -i "* || "${E2E_SSH_OPTS}" == *"IdentityFile"* ]]; then
+  if [[ "${E2E_SSH_OPTS}" =~ (^|[[:space:]])-i([[:space:]]|$) || "${E2E_SSH_OPTS}" == *"IdentityFile"* ]]; then
     return 0
   fi
 
   local key_file="${E2E_SSH_PRIVATE_KEY_FILE:-}"
 
+  # E2E_SSH_KEY_FILE is the public key passed to Azure VM provisioning.
   if [[ -z "${key_file}" && -n "${E2E_SSH_KEY_FILE:-}" && "${E2E_SSH_KEY_FILE}" == *.pub ]]; then
     key_file="${E2E_SSH_KEY_FILE%.pub}"
   fi
@@ -287,7 +288,7 @@ state_dump() {
 # ---------------------------------------------------------------------------
 _build_ssh_opts() {
   local -n opts_ref="$1"
-  # E2E_SSH_OPTS is a whitespace-delimited option list; identity-file paths are
+  # E2E_SSH_OPTS is split on shell IFS whitespace; identity-file paths are
   # carried separately in E2E_SSH_IDENTITY_FILE so spaces are preserved there.
   read -r -a opts_ref <<< "${E2E_SSH_OPTS}"
 
