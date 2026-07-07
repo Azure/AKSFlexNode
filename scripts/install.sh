@@ -266,8 +266,12 @@ ensure_install_dir_in_path() {
         log_info "Added $INSTALL_DIR to PATH for this installer session"
     fi
 
-    mkdir -p "$(dirname "$PATH_PROFILE")"
-    if ! tee "$PATH_PROFILE" > /dev/null << EOF
+    if ! mkdir -p "$(dirname "$PATH_PROFILE")"; then
+        log_error "Failed to create PATH profile directory: $(dirname "$PATH_PROFILE")"
+        return 1
+    fi
+
+    if ! cat > "$PATH_PROFILE" << EOF
 case ":\${PATH:-}:" in
     *:"$INSTALL_DIR":*) ;;
     *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
@@ -278,7 +282,11 @@ EOF
         return 1
     fi
 
-    chmod 644 "$PATH_PROFILE"
+    if ! chmod 644 "$PATH_PROFILE"; then
+        log_error "Failed to set permissions on PATH profile: $PATH_PROFILE"
+        return 1
+    fi
+
     log_success "Configured $INSTALL_DIR in PATH for future shell sessions"
 }
 
