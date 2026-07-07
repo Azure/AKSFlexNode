@@ -311,10 +311,6 @@ configure_azure_cli_rpm_repo() {
 
     import_microsoft_rpm_key || return 1
 
-    if [[ -f "$AZURE_CLI_RPM_REPO_PATH" ]]; then
-        log_info "Replacing existing Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
-    fi
-
     local repo_write_error
     if ! repo_write_error=$(
         {
@@ -328,7 +324,7 @@ gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
         } 2>&1
     ); then
-        log_error "Failed to write Azure CLI dnf package source $AZURE_CLI_RPM_REPO_PATH: $repo_write_error"
+        log_error "Failed to write $AZURE_CLI_RPM_REPO_PATH: $repo_write_error"
         return 1
     fi
 }
