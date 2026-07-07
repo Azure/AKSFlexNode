@@ -256,31 +256,43 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
+path_update_script() {
+    cat << EOF
+case ":\${PATH:-}:" in
+    *:"$INSTALL_DIR":*) ;;
+    *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
+esac
+EOF
+}
+
 configure_install_dir_path() {
-    local profile_dir
+    local actual_profile expected_profile previous_path profile_dir
+    previous_path="${PATH:-}"
     profile_dir=$(dirname "$PATH_PROFILE")
 
-    case ":${PATH:-}:" in
-        *:"$INSTALL_DIR":*) ;;
-        *)
-            export PATH="$INSTALL_DIR${PATH:+:$PATH}"
-            log_info "Added $INSTALL_DIR to PATH for this installer session"
-            ;;
-    esac
+    eval "$(path_update_script)"
+    if [[ "${PATH:-}" != "$previous_path" ]]; then
+        log_info "Added $INSTALL_DIR to PATH for this installer session"
+    fi
 
     if ! mkdir -p "$profile_dir"; then
         log_error "Failed to create PATH profile directory: $profile_dir"
         return 1
     fi
 
-    if ! cat > "$PATH_PROFILE" << EOF
-case ":\${PATH:-}:" in
-    *:"$INSTALL_DIR":*) ;;
-    *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
-esac
-EOF
-    then
+    expected_profile=$(path_update_script)
+    if ! printf '%s\n' "$expected_profile" > "$PATH_PROFILE"; then
         log_error "Failed to write PATH profile to: $PATH_PROFILE. Check permissions and available disk space."
+        return 1
+    fi
+
+    if ! actual_profile=$(cat "$PATH_PROFILE"); then
+        log_error "Failed to read back PATH profile: $PATH_PROFILE"
+        return 1
+    fi
+
+    if [[ "$actual_profile" != "$expected_profile" ]]; then
+        log_error "Failed to verify PATH profile content: $PATH_PROFILE"
         return 1
     fi
 
