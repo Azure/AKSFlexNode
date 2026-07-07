@@ -309,11 +309,6 @@ import_microsoft_rpm_key() {
 configure_azure_cli_rpm_repo() {
     log_info "Configuring Azure CLI dnf package source..."
 
-    if [[ $EUID -ne 0 ]]; then
-        log_error "Configuring the Azure CLI dnf package source requires root privileges"
-        return 1
-    fi
-
     import_microsoft_rpm_key || return 1
 
     if [[ -f "$AZURE_CLI_RPM_REPO_PATH" ]]; then
@@ -333,11 +328,7 @@ gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
         } 2>&1
     ); then
-        if [[ -n "$repo_write_error" ]]; then
-            log_error "Failed to write Azure CLI dnf package source $AZURE_CLI_RPM_REPO_PATH: $repo_write_error"
-        else
-            log_error "Failed to write Azure CLI dnf package source: $AZURE_CLI_RPM_REPO_PATH"
-        fi
+        log_error "Failed to write Azure CLI dnf package source $AZURE_CLI_RPM_REPO_PATH: $repo_write_error"
         return 1
     fi
 }
