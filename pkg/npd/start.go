@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"text/template"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -38,7 +39,11 @@ type startTask struct {
 // Start returns a task that renders the NPD systemd unit file into the
 // nspawn machine rootfs and ensures the service is running inside the
 // container via systemd-run --machine.
-func Start(log *slog.Logger, nodeStart *goalstates.NodeStart) phases.Task {
+func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart) phases.Task {
+	if disabledForOfflineArtifacts(cfg) {
+		return disabledTask{name: "start-npd", log: log}
+	}
+
 	return &startTask{
 		log:            log,
 		apiServer:      nodeStart.Kubelet.APIServer,

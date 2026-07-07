@@ -201,7 +201,10 @@ validate_all_nodes() {
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
-  validate_npd_status "${offline_vm_name}" "${offline_vm_ip}" || failed=1
+  # TODO: make this fatal again once NPD is included in the upstream Unbounded
+  # bootstrap artifact bundle and resolver used by offline artifact mode.
+  validate_npd_status "${offline_vm_name}" "${offline_vm_ip}" || \
+    log_info "Ignoring node-problem-detector validation failure on offline node '${offline_vm_name}'"
   validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then

@@ -51,13 +51,13 @@ func StartNode(
 		stageContainerImageArchiveBindSource(log, containerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
 		phases.Parallel(log,
-			npd.Download(cfg, gs.RootFS.MachineDir),
+			npd.Download(log, cfg, gs.RootFS.MachineDir),
 			InstallBinary(gs.RootFS.MachineDir),
 			cni.WriteCNIConfig(gs.RootFS.MachineDir),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, machineName),
-		npd.Start(log, gs.NodeStart),
+		npd.Start(log, cfg, gs.NodeStart),
 		saveState(store, state),
 	)
 }

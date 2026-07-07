@@ -3,7 +3,7 @@ package npd
 import (
 	"context"
 	"fmt"
-	"net/url"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -13,7 +13,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/artifactsource"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
@@ -31,6 +30,28 @@ const (
 	npdArtifactTarget    = "node-problem-detector artifact"
 )
 
+type disabledTask struct {
+	name string
+	log  *slog.Logger
+}
+
+func (t disabledTask) Name() string { return t.name }
+func (t disabledTask) Do(context.Context) error {
+	t.log.Info(t.name + " is disabled in offline mode")
+	return nil
+}
+
+type disabledPreflightCheck struct{}
+
+func (disabledPreflightCheck) Name() string { return npdArtifactCheckName }
+func (disabledPreflightCheck) Check(context.Context) []preflight.Result {
+	return preflight.ResultsWarning(
+		npdArtifactCheckName,
+		npdArtifactTarget,
+		"node-problem-detector is disabled in offline mode until NPD is included in upstream bootstrap artifacts",
+	)
+}
+
 type downloadTask struct {
 	cfg        *config.Config
 	version    string
@@ -40,7 +61,11 @@ type downloadTask struct {
 // Download returns a task that downloads the node-problem-detector binary
 // and config from the upstream GitHub release tarball into the nspawn
 // machine rootfs at machineDir.
-func Download(cfg *config.Config, machineDir string) phases.Task {
+func Download(log *slog.Logger, cfg *config.Config, machineDir string) phases.Task {
+	if disabledForOfflineArtifacts(cfg) {
+		return disabledTask{name: "download-npd", log: log}
+	}
+
 	version := cfg.Npd.Version
 	if version == "" {
 		version = DefaultVersion
@@ -90,52 +115,23 @@ func constructDownloadURL(version string) string {
 	return fmt.Sprintf(defaultNPDURLTemplate, version, version, arch)
 }
 
-func constructDownloadSource(cfg *config.Config, version string) (artifactsource.Source, error) {
-	agentCfg := config.ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
-	if agentCfg.OfflineArtifactsConfigured() {
-		sourceRoot, err := goalstates.RenderOfflineSource(
-			agentCfg.OfflineArtifacts.Source,
-			normalizeKubernetesVersion(cfg.Components.Kubernetes),
-		)
-		if err != nil {
-			return artifactsource.Source{}, err
-		}
-
-		return artifactsource.Parse(joinOfflineArtifactSource(sourceRoot, npdArtifactPath(version, utilhost.GetArch())))
-	}
-
+func constructDownloadSource(_ *config.Config, version string) (artifactsource.Source, error) {
 	return artifactsource.Parse(constructDownloadURL(version))
 }
 
-func npdArtifactPath(version, arch string) string {
-	return fmt.Sprintf("npd/%s/node-problem-detector-%s-linux_%s.tar.gz", version, version, arch)
-}
-
-func normalizeKubernetesVersion(version string) string {
-	version = strings.TrimSpace(version)
-	if version == "" || strings.HasPrefix(version, "v") {
-		return version
-	}
-	return "v" + version
-}
-
-func joinOfflineArtifactSource(root, artifactPath string) string {
-	root = strings.TrimRight(root, "/")
-	if strings.HasPrefix(root, "oci://") {
-		return root + "#" + artifactPath
-	}
-
-	parsed, err := url.Parse(root)
-	if err == nil && (parsed.Scheme == "file" || parsed.Scheme == "http" || parsed.Scheme == "https") {
-		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + artifactPath
-		return parsed.String()
-	}
-
-	return filepath.Join(root, filepath.FromSlash(artifactPath))
+// disabledForOfflineArtifacts skips NPD when offline bootstrap artifacts are
+// configured. TODO: re-enable this once NPD is included in the upstream
+// Unbounded bootstrap artifact bundle and resolver.
+func disabledForOfflineArtifacts(cfg *config.Config) bool {
+	return cfg != nil && strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
 }
 
 // Preflight returns AKS Flex Node-specific preflight checks.
 func Preflight(cfg *config.Config) []preflight.Checker {
+	if disabledForOfflineArtifacts(cfg) {
+		return []preflight.Checker{disabledPreflightCheck{}}
+	}
+
 	return []preflight.Checker{
 		artifactsource.ReachabilityChecker{
 			CheckName:  npdArtifactCheckName,

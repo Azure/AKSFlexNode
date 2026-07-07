@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -43,7 +44,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 			APIServer: "https://example.hcp.westus.azmk8s.io:443",
 		},
 	}
-	task, ok := Start(slog.Default(), nodeStart).(*startTask)
+	task, ok := Start(slog.Default(), &config.Config{}, nodeStart).(*startTask)
 	if !ok {
 		t.Fatalf("Start did not return *startTask")
 	}

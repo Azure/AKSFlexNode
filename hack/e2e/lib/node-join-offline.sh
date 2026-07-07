@@ -13,7 +13,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 readonly offlineArtifactsSource='oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:e2e-k8s-{{ .KubernetesVersion }}'
 readonly offlineOCIImage='ghcr.io/azure/agent-ubuntu2404:v20260619'
-readonly offlineNPDVersion='v1.35.1'
 readonly offlineContainerdVersion='2.1.8'
 readonly offlineRuncVersion='1.5.0'
 readonly offlineCNIVersion='1.5.1'
@@ -63,8 +62,7 @@ _build_offline_artifacts_tarball() {
     "containerd": "${offlineContainerdVersion}",
     "runc": "${offlineRuncVersion}",
     "cni": "${offlineCNIVersion}",
-    "crictl": "${crictl_version}",
-    "npd": "${offlineNPDVersion}"
+    "crictl": "${crictl_version}"
   },
   "containerImages": []
 }
@@ -75,12 +73,6 @@ EOF
     --output-dir "${output_dir}" \
     --manifest "${manifest_file}" \
     --arch amd64
-
-  log_info "Adding node-problem-detector ${offlineNPDVersion} to offline artifacts..."
-  mkdir -p "${output_dir}/npd/${offlineNPDVersion}"
-  curl -fsSL \
-    -o "${output_dir}/npd/${offlineNPDVersion}/node-problem-detector-${offlineNPDVersion}-linux_amd64.tar.gz" \
-    "https://github.com/kubernetes/node-problem-detector/releases/download/${offlineNPDVersion}/node-problem-detector-${offlineNPDVersion}-linux_amd64.tar.gz"
 
   tar -czf "${tarball}" -C "${output_root}" "${kube_version_v}"
   printf '%s\n' "${tarball}"
@@ -191,7 +183,6 @@ node_join_offline() {
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg offlineArtifactsSource "${offlineArtifactsSource}" \
     --arg ociImage "${offlineOCIImage}" \
-    --arg npdVersion "${offlineNPDVersion}" \
     '.agent.logLevel = "debug"
       | .agent.e2eMode = true
       | .node.kubelet.nodeIP = $nodeIP
@@ -201,8 +192,6 @@ node_join_offline() {
       | .bootstrap = (.bootstrap // {})
       | .bootstrap.ociImage = $ociImage
       | .bootstrap.offlineArtifacts.source = $offlineArtifactsSource
-      | .npd = (.npd // {})
-      | .npd.version = $npdVersion
       | del(.kubernetes, .containerd, .runc)' \
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
@@ -214,7 +203,7 @@ node_join_offline() {
     "${config_file}" >/dev/null
   log_info "Offline node artifact source: ${offlineArtifactsSource}"
   log_info "Offline node OCI image: ${offlineOCIImage}"
-  log_info "Offline node NPD artifact: npd/${offlineNPDVersion}/node-problem-detector-${offlineNPDVersion}-linux_amd64.tar.gz"
+  log_info "Offline node NPD disabled while offline artifacts are configured"
 
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-offline"
 
