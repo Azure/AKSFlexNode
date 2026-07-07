@@ -83,14 +83,18 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 // ResolveMachineGoalState converts FlexNode config to the shared agent config
 // and resolves the nspawn machine goal state. Bootstrap and preflight both use
 // this helper so preflight validates the same sources that bootstrap consumes.
-func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, error) {
+func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	agentCfg := ToAgentConfig(cfg, machineName)
-	gs, err := goalstates.ResolveMachine(log, agentCfg, machineName, nil)
+	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve machine goal state: %w", err)
+		return nil, nil, nil, fmt.Errorf("resolve download overrides: %w", err)
+	}
+	gs, err := goalstates.ResolveMachine(log, agentCfg, machineName, downloads)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolve machine goal state: %w", err)
 	}
 
-	return agentCfg, gs, nil
+	return agentCfg, gs, containerImageArchives, nil
 }
 
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node

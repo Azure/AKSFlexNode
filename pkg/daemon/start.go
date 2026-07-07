@@ -35,10 +35,12 @@ func StartNode(
 	log *slog.Logger,
 	machineName string,
 	gs *goalstates.MachineGoalState,
+	containerImageArchives *goalstates.ContainerImageArchiveStaging,
 	store stateStore,
 	state *State,
 ) phases.Task {
 	return phases.Serial(log,
+		rootfs.DownloadContainerImageArchives(log, containerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
 		phases.Parallel(log,
 			npd.Download(cfg, gs.RootFS.MachineDir),

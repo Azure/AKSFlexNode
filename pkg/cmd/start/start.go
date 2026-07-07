@@ -65,7 +65,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	_, gs, err := config.ResolveMachineGoalState(logger, cfg, machineName)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
@@ -74,7 +74,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		// Persist the goal state in AKS RP before mutating local host state.
 		aksmachine.EnsureMachine(machines, goal, cfg.Agent.RequireMachineRegistration, logger),
 		daemon.SetupHost(cfg, logger),
-		daemon.StartNode(cfg, logger, machineName, gs, stateStore, state),
+		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
 		daemon.InstallService(logger),
 	)
 	start := time.Now()
