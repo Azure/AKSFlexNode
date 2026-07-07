@@ -23,7 +23,6 @@ GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
 LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
-AZURE_CLI_RPM_REPO_PATH="/etc/yum.repos.d/azure-cli.repo"
 
 # Functions
 log_info() {
@@ -307,14 +306,13 @@ import_microsoft_rpm_key() {
 }
 
 configure_azure_cli_rpm_repo() {
+    local repo_path="/etc/yum.repos.d/azure-cli.repo"
+
     log_info "Configuring Azure CLI dnf package source..."
 
     import_microsoft_rpm_key || return 1
 
-    local repo_write_error
-    if ! repo_write_error=$(
-        {
-            tee "$AZURE_CLI_RPM_REPO_PATH" > /dev/null << 'EOF'
+    if ! tee "$repo_path" > /dev/null << 'EOF'
 [azure-cli]
 name=Azure CLI
 baseurl=https://packages.microsoft.com/yumrepos/azure-cli
@@ -322,9 +320,8 @@ enabled=1
 gpgcheck=1
 gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
-        } 2>&1
-    ); then
-        log_error "Failed to write $AZURE_CLI_RPM_REPO_PATH: $repo_write_error"
+    then
+        log_error "Failed to write Azure CLI dnf package source: $repo_path"
         return 1
     fi
 }
