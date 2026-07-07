@@ -72,9 +72,7 @@ infra_deploy() {
   # Resolve SSH key
   local ssh_key
   ssh_key="$(_resolve_ssh_key)"
-  if [[ -f "${E2E_WORK_DIR}/e2e_ssh_key" && "${ssh_key}" == "$(cat "${E2E_WORK_DIR}/e2e_ssh_key.pub")" ]]; then
-    export E2E_SSH_OPTS="-i ${E2E_WORK_DIR}/e2e_ssh_key -o IdentitiesOnly=yes ${E2E_SSH_OPTS}"
-  fi
+  configure_ssh_identity
 
   # Build tags
   local run_id="${GITHUB_RUN_ID:-local-$(date +%s)}"

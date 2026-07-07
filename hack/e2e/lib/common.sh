@@ -206,6 +206,38 @@ load_config() {
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
 
+# Configure ssh/scp to use the private key matching the VM public key.
+configure_ssh_identity() {
+  if [[ " ${E2E_SSH_OPTS} " == *" -i "* || " ${E2E_SSH_OPTS} " == *" IdentityFile="* ]]; then
+    return 0
+  fi
+
+  local key_file="${E2E_SSH_PRIVATE_KEY_FILE:-}"
+
+  if [[ -z "${key_file}" && -n "${E2E_SSH_KEY_FILE:-}" && "${E2E_SSH_KEY_FILE}" == *.pub ]]; then
+    key_file="${E2E_SSH_KEY_FILE%.pub}"
+  fi
+
+  if [[ -z "${key_file}" && -f "${E2E_WORK_DIR}/e2e_ssh_key" ]]; then
+    key_file="${E2E_WORK_DIR}/e2e_ssh_key"
+  fi
+
+  if [[ -z "${key_file}" ]]; then
+    local candidate
+    for candidate in "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ecdsa"; do
+      if [[ -f "${candidate}.pub" ]]; then
+        key_file="${candidate}"
+        break
+      fi
+    done
+  fi
+
+  if [[ -n "${key_file}" && -f "${key_file}" ]]; then
+    export E2E_SSH_OPTS="-i ${key_file} -o IdentitiesOnly=yes ${E2E_SSH_OPTS}"
+    log_debug "Using SSH identity file for e2e VM access"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Work directory & state management
 # ---------------------------------------------------------------------------
