@@ -24,6 +24,8 @@ func InstallFile(filename string, r io.Reader, perm os.FileMode) error {
 
 // InstallFileWithLimitedSize streams content to local file with limited size and specified permissions.
 // It ensures that the target directory exists and handles the file writing atomically.
+// The temp file is created in the same directory as the destination to preserve the
+// correct SELinux label (avoiding the user_tmp_t label from /tmp).
 //
 // NOTE: we assume the filename is trusted and cleaned without path traversal characters.
 func InstallFileWithLimitedSize(filename string, r io.Reader, perm os.FileMode, maxBytes int64) error {
@@ -34,7 +36,7 @@ func InstallFileWithLimitedSize(filename string, r io.Reader, perm os.FileMode, 
 		return err
 	}
 
-	pf, err := renameio.NewPendingFile(filename, renameio.WithPermissions(perm))
+	pf, err := renameio.NewPendingFile(filename, renameio.WithPermissions(perm), renameio.WithTempDir(filepath.Dir(filename)))
 	if err != nil {
 		return err
 	}
@@ -57,6 +59,8 @@ func InstallFileWithLimitedSize(filename string, r io.Reader, perm os.FileMode, 
 
 // WriteFile writes the provided content to a local file with specified permissions.
 // It ensures that the target directory exists and handles the file writing atomically.
+// The temp file is created in the same directory as the destination to preserve the
+// correct SELinux label (avoiding the user_tmp_t label from /tmp).
 //
 // NOTE: we assume the filename is trusted and cleaned without path traversal characters.
 func WriteFile(filename string, content []byte, perm os.FileMode) error {
@@ -64,5 +68,5 @@ func WriteFile(filename string, content []byte, perm os.FileMode) error {
 		return err
 	}
 
-	return renameio.WriteFile(filename, content, perm)
+	return renameio.WriteFile(filename, content, perm, renameio.WithTempDir(filepath.Dir(filename)))
 }
