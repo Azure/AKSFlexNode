@@ -225,7 +225,7 @@ configure_ssh_identity() {
   if [[ -z "${key_file}" ]]; then
     local candidate
     for candidate in "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ecdsa"; do
-      if [[ -f "${candidate}.pub" ]]; then
+      if [[ -f "${candidate}" && -f "${candidate}.pub" ]]; then
         key_file="${candidate}"
         break
       fi
@@ -233,7 +233,7 @@ configure_ssh_identity() {
   fi
 
   if [[ -n "${key_file}" && -f "${key_file}" ]]; then
-    export E2E_SSH_OPTS="-i ${key_file} -o IdentitiesOnly=yes ${E2E_SSH_OPTS}"
+    export E2E_SSH_IDENTITY_FILE="${key_file}"
     log_debug "Using SSH identity file for e2e VM access"
   fi
 }
@@ -285,6 +285,16 @@ state_dump() {
 # ---------------------------------------------------------------------------
 # SSH helpers
 # ---------------------------------------------------------------------------
+_build_ssh_opts() {
+  local -n opts_ref="$1"
+  # shellcheck disable=SC2206
+  opts_ref=(${E2E_SSH_OPTS})
+
+  if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
+    opts_ref=(-i "${E2E_SSH_IDENTITY_FILE}" -o IdentitiesOnly=yes "${opts_ref[@]}")
+  fi
+}
+
 # Wait for SSH to become available on a host
 wait_for_ssh() {
   local host="$1"
@@ -293,8 +303,9 @@ wait_for_ssh() {
 
   log_info "Waiting for SSH on ${host} (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    # shellcheck disable=SC2086
-    if ssh ${E2E_SSH_OPTS} "${E2E_SSH_USER}@${host}" "echo ready" &>/dev/null; then
+    local -a ssh_opts
+    _build_ssh_opts ssh_opts
+    if ssh "${ssh_opts[@]}" "${E2E_SSH_USER}@${host}" "echo ready" &>/dev/null; then
       log_success "SSH ready on ${host} (${elapsed}s)"
       return 0
     fi
@@ -309,15 +320,17 @@ wait_for_ssh() {
 # Execute a command on a remote host via SSH
 remote_exec() {
   local host="$1"; shift
-  # shellcheck disable=SC2086
-  ssh ${E2E_SSH_OPTS} "${E2E_SSH_USER}@${host}" "$@"
+  local -a ssh_opts
+  _build_ssh_opts ssh_opts
+  ssh "${ssh_opts[@]}" "${E2E_SSH_USER}@${host}" "$@"
 }
 
 # Copy files to a remote host
 remote_copy() {
   local src="$1" host="$2" dest="$3"
-  # shellcheck disable=SC2086
-  scp ${E2E_SSH_OPTS} "${src}" "${E2E_SSH_USER}@${host}:${dest}"
+  local -a ssh_opts
+  _build_ssh_opts ssh_opts
+  scp "${ssh_opts[@]}" "${src}" "${E2E_SSH_USER}@${host}:${dest}"
 }
 
 # ---------------------------------------------------------------------------
