@@ -288,14 +288,14 @@ state_dump() {
 # SSH helpers
 # ---------------------------------------------------------------------------
 _build_ssh_opts() {
-  local -n opts_ref="$1"
-  # E2E_SSH_OPTS is split on shell IFS whitespace; an empty value produces no
-  # extra options. Identity-file paths are carried separately in
+  local -n out_opts="$1"
+  # E2E_SSH_OPTS is split on shell IFS whitespace; an unset or empty value
+  # produces no extra options. Identity-file paths are carried separately in
   # E2E_SSH_IDENTITY_FILE so spaces are preserved there.
-  read -r -a opts_ref <<< "${E2E_SSH_OPTS}"
+  read -r -a out_opts <<< "${E2E_SSH_OPTS:-}"
 
   if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
-    opts_ref=(-i "${E2E_SSH_IDENTITY_FILE}" -o IdentitiesOnly=yes "${opts_ref[@]}")
+    out_opts=(-i "${E2E_SSH_IDENTITY_FILE}" -o IdentitiesOnly=yes "${out_opts[@]}")
   fi
 }
 
