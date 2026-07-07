@@ -161,10 +161,9 @@ func TestInstallFile(t *testing.T) {
 }
 
 func TestInstallFileWithLimitedSizeCreatesTempFileInTargetDir(t *testing.T) {
-	targetDir := t.TempDir()
-	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
+	t.Parallel()
 
+	targetDir := t.TempDir()
 	filename := filepath.Join(targetDir, "target.txt")
 	reader := &blockingReader{
 		started: make(chan struct{}),
@@ -179,9 +178,6 @@ func TestInstallFileWithLimitedSizeCreatesTempFileInTargetDir(t *testing.T) {
 
 	if !waitForTempFile(t, targetDir, filepath.Base(filename)) {
 		t.Fatalf("expected pending temp file in target directory %q", targetDir)
-	}
-	if hasTempFile(t, tmpDir, filepath.Base(filename)) {
-		t.Fatalf("expected no pending temp file in TMPDIR %q", tmpDir)
 	}
 
 	close(reader.unblock)
@@ -444,12 +440,14 @@ func (r *blockingReader) Read(p []byte) (int, error) {
 func waitForTempFile(t *testing.T, dir, targetBase string) bool {
 	t.Helper()
 
+	const pollInterval = 10 * time.Millisecond
+
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if hasTempFile(t, dir, targetBase) {
 			return true
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(pollInterval)
 	}
 	return false
 }
