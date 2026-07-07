@@ -311,11 +311,6 @@ configure_azure_cli_rpm_repo() {
 
     import_microsoft_rpm_key || return 1
 
-    mkdir -p "$(dirname "$AZURE_CLI_RPM_REPO_PATH")" || {
-        log_error "Failed to create Azure CLI repo directory"
-        return 1
-    }
-
     cat > "$AZURE_CLI_RPM_REPO_PATH" << 'EOF'
 [azure-cli]
 name=Azure CLI
@@ -329,11 +324,6 @@ EOF
 install_azure_cli_rpm() {
     configure_azure_cli_rpm_repo || {
         log_error "Failed to configure Azure CLI dnf package source"
-        return 1
-    }
-
-    dnf makecache -y --disablerepo='*' --enablerepo='azure-cli' || {
-        log_error "Failed to refresh Azure CLI dnf package metadata"
         return 1
     }
 
