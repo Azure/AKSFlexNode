@@ -267,8 +267,13 @@ EOF
 }
 
 configure_install_dir_path() {
-    local expected_profile previous_path profile_dir
+    local expected_profile install_dir_was_in_path profile_dir
     profile_dir=$(dirname "$PATH_PROFILE")
+    install_dir_was_in_path=false
+
+    case ":${PATH:-}:" in
+        *:"$INSTALL_DIR":*) install_dir_was_in_path=true ;;
+    esac
 
     if ! mkdir -p "$profile_dir"; then
         log_error "Failed to create PATH profile directory: $profile_dir"
@@ -291,15 +296,22 @@ configure_install_dir_path() {
         return 1
     fi
 
-    previous_path="${PATH:-}"
     if ! . "$PATH_PROFILE"; then
         log_error "Failed to apply PATH profile: $PATH_PROFILE"
         return 1
     fi
 
-    if [[ "${PATH:-}" != "$previous_path" ]]; then
-        log_info "Added $INSTALL_DIR to PATH for this installer session"
-    fi
+    case ":${PATH:-}:" in
+        *:"$INSTALL_DIR":*)
+            if [[ "$install_dir_was_in_path" != "true" ]]; then
+                log_info "Added $INSTALL_DIR to PATH for this installer session"
+            fi
+            ;;
+        *)
+            log_error "Failed to add $INSTALL_DIR to PATH for this installer session"
+            return 1
+            ;;
+    esac
 
     log_success "Configured $INSTALL_DIR in PATH for future shell sessions"
 }
