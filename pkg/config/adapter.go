@@ -22,9 +22,10 @@ const (
 // cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
-		MachineName: machineName,
-		NodeName:    cfg.Agent.NodeName,
-		OCIImage:    cfg.Bootstrap.OCIImage,
+		MachineName:           machineName,
+		NodeName:              cfg.Agent.NodeName,
+		OCIImage:              cfg.Bootstrap.OCIImage,
+		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,

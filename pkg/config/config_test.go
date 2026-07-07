@@ -749,7 +749,8 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			"sandboxImage": "registry.example.test/pause:3.9"
 		},
 		"bootstrap": {
-			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04"
+			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04",
+			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
 		},
 		"networking": {
 			"dnsServiceIP": "10.42.0.10",
@@ -818,6 +819,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if agentCfg.OCIImage != "registry.example.test/flex/rootfs:ubuntu-24.04" {
 		t.Fatalf("Agent OCIImage = %q, want registry.example.test/flex/rootfs:ubuntu-24.04", agentCfg.OCIImage)
 	}
+	if len(agentCfg.AdditionalHostDevices) != 2 || agentCfg.AdditionalHostDevices[0] != "/dev/uinput" || agentCfg.AdditionalHostDevices[1] != "/dev/input/event0" {
+		t.Fatalf("Agent AdditionalHostDevices = %#v", agentCfg.AdditionalHostDevices)
+	}
 	if agentCfg.CRI.Runc.Version != "1.2.3" {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
 	}
@@ -835,6 +839,42 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	}
 	if len(agentCfg.Kubelet.RegisterWithTaints) != 1 || agentCfg.Kubelet.RegisterWithTaints[0] != "dedicated=flexnode:NoSchedule" {
 		t.Fatalf("Agent Kubelet.RegisterWithTaints = %#v", agentCfg.Kubelet.RegisterWithTaints)
+	}
+}
+
+func TestLoadConfigRejectsInvalidAdditionalHostDevice(t *testing.T) {
+	t.Parallel()
+
+	configJSON := `{
+		"azure": {
+			"targetAgentPoolName": "pool1",
+			"bootstrapToken": {"token": "abcdef.0123456789abcdef"},
+			"targetCluster": {
+				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+			}
+		},
+		"components": {"kubernetes": "1.29.0"},
+		"bootstrap": {"additionalHostDevices": ["/etc/passwd"]},
+		"networking": {"dnsServiceIP": "10.42.0.10"},
+		"node": {
+			"kubelet": {
+				"clusterFQDN": "test-cluster-dns-12345678.hcp.eastus.azmk8s.io",
+				"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t"
+			}
+		}
+	}`
+
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configFile, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	_, err := LoadConfig(configFile)
+	if err == nil {
+		t.Fatal("LoadConfig() expected error")
+	}
+	if !strings.Contains(err.Error(), "bootstrap.additionalHostDevices") {
+		t.Fatalf("LoadConfig() error = %v, want bootstrap.additionalHostDevices", err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -179,6 +180,10 @@ type BootstrapConfig struct {
 	// When source is set, bootstrap resolves Kubernetes, containerd, runc, CNI,
 	// crictl, and optional sandbox image archive artifacts from this source.
 	OfflineArtifacts OfflineArtifactsConfig `json:"offlineArtifacts,omitempty"`
+
+	// AdditionalHostDevices lists extra host device nodes under /dev to expose to
+	// the nspawn machine in addition to devices discovered by the shared agent.
+	AdditionalHostDevices []string `json:"additionalHostDevices,omitempty"`
 }
 
 // OfflineArtifactsConfig mirrors Unbounded's OfflineArtifacts bootstrap
@@ -609,6 +614,14 @@ func (c *BootstrapTokenConfig) validate() error {
 	return nil
 }
 
+func (c *BootstrapConfig) validate() error {
+	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
+		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
+	}
+
+	return nil
+}
+
 func (c *AgentConfig) validate() error {
 	if _, err := logger.ParseLogLevel(c.LogLevel); err != nil {
 		return fmt.Errorf("invalid agent.logLevel: %w", err)
@@ -649,6 +662,9 @@ func (c *Config) validate() error {
 		return err
 	}
 	if err := c.Agent.validate(); err != nil {
+		return err
+	}
+	if err := c.Bootstrap.validate(); err != nil {
 		return err
 	}
 

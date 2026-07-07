@@ -278,6 +278,24 @@ func TestToAgentConfig_OfflineArtifacts(t *testing.T) {
 	}
 }
 
+func TestToAgentConfig_AdditionalHostDevices(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Bootstrap: BootstrapConfig{
+			AdditionalHostDevices: []string{"/dev/uinput", "/dev/input/event0"},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+	if len(ac.AdditionalHostDevices) != 2 {
+		t.Fatalf("AdditionalHostDevices=%#v, want 2 entries", ac.AdditionalHostDevices)
+	}
+	if ac.AdditionalHostDevices[0] != "/dev/uinput" || ac.AdditionalHostDevices[1] != "/dev/input/event0" {
+		t.Fatalf("AdditionalHostDevices=%#v", ac.AdditionalHostDevices)
+	}
+}
+
 func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 	t.Parallel()
 
