@@ -234,7 +234,7 @@ configure_ssh_identity() {
 
   if [[ -n "${key_file}" && -f "${key_file}" ]]; then
     export E2E_SSH_IDENTITY_FILE="${key_file}"
-    log_debug "Using SSH identity file for e2e VM access"
+    log_debug "Using SSH identity file: ${key_file}"
   fi
 }
 
@@ -287,8 +287,7 @@ state_dump() {
 # ---------------------------------------------------------------------------
 _build_ssh_opts() {
   local -n opts_ref="$1"
-  # shellcheck disable=SC2206
-  opts_ref=(${E2E_SSH_OPTS})
+  read -r -a opts_ref <<< "${E2E_SSH_OPTS}"
 
   if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
     opts_ref=(-i "${E2E_SSH_IDENTITY_FILE}" -o IdentitiesOnly=yes "${opts_ref[@]}")
