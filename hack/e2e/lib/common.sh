@@ -208,7 +208,7 @@ load_config() {
 
 # Configure ssh/scp to use the private key matching the VM public key.
 configure_ssh_identity() {
-  if [[ " ${E2E_SSH_OPTS} " == *" -i "* || " ${E2E_SSH_OPTS} " == *" IdentityFile="* ]]; then
+  if [[ " ${E2E_SSH_OPTS} " == *" -i "* || "${E2E_SSH_OPTS}" == *"IdentityFile"* ]]; then
     return 0
   fi
 
@@ -287,6 +287,8 @@ state_dump() {
 # ---------------------------------------------------------------------------
 _build_ssh_opts() {
   local -n opts_ref="$1"
+  # E2E_SSH_OPTS is a whitespace-delimited option list; identity-file paths are
+  # carried separately in E2E_SSH_IDENTITY_FILE so spaces are preserved there.
   read -r -a opts_ref <<< "${E2E_SSH_OPTS}"
 
   if [[ -n "${E2E_SSH_IDENTITY_FILE:-}" ]]; then
