@@ -190,6 +190,10 @@ load_config() {
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
   E2E_TARGET_AGENT_POOL_NAME="${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}"
 
+  # Azure infrastructure sizing. Defaults match the Bicep template defaults.
+  E2E_AKS_NODE_VM_SIZE="${E2E_AKS_NODE_VM_SIZE:-Standard_B2s}"
+  E2E_VM_SIZE="${E2E_VM_SIZE:-Standard_B2as_v2}"
+
   # Timeouts (seconds)
   E2E_SSH_WAIT_TIMEOUT="${E2E_SSH_WAIT_TIMEOUT:-300}"
   E2E_NODE_JOIN_TIMEOUT="${E2E_NODE_JOIN_TIMEOUT:-300}"
@@ -202,6 +206,8 @@ load_config() {
   log_info "  Subscription:     ${AZURE_SUBSCRIPTION_ID}"
   log_info "  Name Suffix:      ${E2E_NAME_SUFFIX}"
   log_info "  Agent Pool:       ${E2E_TARGET_AGENT_POOL_NAME}"
+  log_info "  AKS Node VM Size: ${E2E_AKS_NODE_VM_SIZE}"
+  log_info "  Flex VM Size:     ${E2E_VM_SIZE}"
   log_info "  Kubeconfig:       ${KUBECONFIG}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
