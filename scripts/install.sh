@@ -257,14 +257,13 @@ install_binary() {
 }
 
 path_update_script() {
-    cat << EOF
-# Surround PATH with colons so case matching guards against partial directory names,
-# such as treating /usr/local/binary as a match for /usr/local/bin.
-case ":\${PATH:-}:" in
-    *:"$INSTALL_DIR":*) ;;
-    *) export PATH="$INSTALL_DIR\${PATH:+:\$PATH}" ;;
-esac
-EOF
+    printf '%s\n' \
+        '# Surround PATH with colons so case matching guards against partial directory names,' \
+        '# such as treating /usr/local/binary as a match for /usr/local/bin.' \
+        'case ":${PATH:-}:" in' \
+        "    *:\"$INSTALL_DIR\":*) ;;" \
+        "    *) export PATH=\"$INSTALL_DIR\${PATH:+:\$PATH}\" ;;" \
+        'esac'
 }
 
 configure_install_dir_path() {
