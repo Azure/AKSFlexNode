@@ -260,14 +260,13 @@ configure_install_dir_path() {
     local profile_dir
     profile_dir=$(dirname "$PATH_PROFILE")
 
-    if [[ ":${PATH:-}:" != *":$INSTALL_DIR:"* ]]; then
-        if [[ -n "${PATH:-}" ]]; then
-            export PATH="$INSTALL_DIR:$PATH"
-        else
-            export PATH="$INSTALL_DIR"
-        fi
-        log_info "Added $INSTALL_DIR to PATH for this installer session"
-    fi
+    case ":${PATH:-}:" in
+        *:"$INSTALL_DIR":*) ;;
+        *)
+            export PATH="$INSTALL_DIR${PATH:+:$PATH}"
+            log_info "Added $INSTALL_DIR to PATH for this installer session"
+            ;;
+    esac
 
     if ! mkdir -p "$profile_dir"; then
         log_error "Failed to create PATH profile directory: $profile_dir"
@@ -281,7 +280,7 @@ case ":\${PATH:-}:" in
 esac
 EOF
     then
-        log_error "Failed to write PATH profile to: $PATH_PROFILE"
+        log_error "Failed to write PATH profile to: $PATH_PROFILE. Check permissions and available disk space."
         return 1
     fi
 
