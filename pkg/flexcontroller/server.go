@@ -30,7 +30,7 @@ const (
 	DefaultShutdownTimeout           = 15 * time.Second
 	DefaultBootstrapGroup            = "system:bootstrappers:aks-flex-node"
 	DefaultDaemonGroup               = "aks-flex-node-daemons"
-	DefaultMachineConfigMapNamespace = "aks-flex-system"
+	DefaultMachineConfigMapNamespace = "kube-system"
 	DefaultMachineConfigMapName      = "aks-flex-machines"
 )
 
