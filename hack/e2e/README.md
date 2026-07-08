@@ -117,7 +117,7 @@ The suite validates four join paths:
 |----|-----------|-----------|
 | `vm-e2e-msi-*` | Managed Identity | Generated managed-identity config and `aks-flex-node start` flow. |
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
-| `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test builds a bootstrap artifact bundle at runtime, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:e2e-k8s-{{ .KubernetesVersion }}`. |
+| `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test builds a bootstrap artifact bundle at runtime, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}`. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
