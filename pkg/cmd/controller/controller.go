@@ -13,7 +13,6 @@ import (
 
 func NewCommand() *cobra.Command {
 	var opts flexcontroller.Options
-	opts.EnableCSRApprover = true
 	cmd := &cobra.Command{
 		Use:   "aks-flex-controller",
 		Short: "Run the AKS Flex in-cluster machine endpoint",
@@ -32,7 +31,7 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig; empty uses in-cluster config")
 	cmd.Flags().StringVar(&opts.MachineConfigMapNamespace, "machine-configmap-namespace", flexcontroller.DefaultMachineConfigMapNamespace, "Namespace containing machine data ConfigMap")
 	cmd.Flags().StringVar(&opts.MachineConfigMapName, "machine-configmap-name", flexcontroller.DefaultMachineConfigMapName, "ConfigMap containing ARM-shaped machine JSON entries")
-	cmd.Flags().BoolVar(&opts.EnableCSRApprover, "enable-csr-approver", true, "Approve daemon-controller CSRs for pre-created AKS Machines")
+	cmd.Flags().BoolVar(&opts.EnableCSRApprover, "enable-csr-approver", false, "Approve daemon-controller CSRs for pre-created AKS Machines")
 	cmd.Flags().StringVar(&opts.BootstrapGroup, "bootstrap-group", flexcontroller.DefaultBootstrapGroup, "Bootstrap requester group allowed to request daemon certificates")
 	cmd.Flags().StringVar(&opts.DaemonGroup, "daemon-group", flexcontroller.DefaultDaemonGroup, "Daemon certificate group to approve")
 	cmd.Flags().Int32Var(&opts.MaxExpirationSeconds, "max-expiration-seconds", 0, "Maximum daemon certificate expiration in seconds; 0 uses the approver default")
