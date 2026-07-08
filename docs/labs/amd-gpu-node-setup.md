@@ -36,7 +36,7 @@ This guide has been validated for the host preparation portion on:
 - ROCm package stream: `7.2.4`
 - AMDGPU package stream: `30.30.4`
 
-The validation installed the minimal host package set, loaded the AMDGPU driver, rebooted the VM, and verified that ROCm still detected all 8 MI300X devices after reboot.
+The validation installed the minimal host package set, removed the Ubuntu cloud image `amdgpu` blacklist entry, loaded the AMDGPU driver, rebooted the VM, and verified that ROCm still detected all 8 MI300X devices after reboot.
 
 ## Before you begin
 
@@ -126,11 +126,11 @@ Pin-Priority: 600
 EOF
 
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends \
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "linux-headers-$(uname -r)" \
   "linux-modules-extra-$(uname -r)"
 
-sudo apt-get install -y --no-install-recommends \
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "amdgpu-dkms=${AMDGPU_DKMS_VERSION}" \
   "libdrm-amdgpu-dev=${LIBDRM_AMDGPU_DEV_VERSION}" \
   "rocm-core=${ROCM_CORE_VERSION}" \
@@ -138,7 +138,19 @@ sudo apt-get install -y --no-install-recommends \
   "rocm-smi-lib=${ROCM_SMI_LIB_VERSION}"
 
 sudo ldconfig
-echo amdgpu | sudo tee /etc/modules-load.d/amdgpu.conf >/dev/null
+
+# Ubuntu 24.04 cloud images can deny-list amdgpu by default. Remove only the
+# amdgpu deny-list entry; leave other entries such as radeon in place.
+amdgpu_blacklist_files="$(mktemp)"
+sudo grep -RslE '^[[:space:]]*blacklist[[:space:]]+amdgpu([[:space:]]|$)' \
+  /etc/modprobe.d /lib/modprobe.d /usr/lib/modprobe.d \
+  > "${amdgpu_blacklist_files}" 2>/dev/null || true
+while IFS= read -r blacklist_file; do
+  [ -n "${blacklist_file}" ] || continue
+  sudo sed -i.bak -E '/^[[:space:]]*blacklist[[:space:]]+amdgpu([[:space:]]|$)/d' "${blacklist_file}"
+done < "${amdgpu_blacklist_files}"
+rm -f "${amdgpu_blacklist_files}"
+
 sudo modprobe amdgpu
 ```
 
@@ -156,6 +168,10 @@ Validate the host before running AKS Flex Node. Run ROCm validation commands as 
 ```bash
 dkms status amdgpu
 modinfo amdgpu | head
+if modprobe -c | grep -E '^[[:space:]]*blacklist[[:space:]]+amdgpu'; then
+  echo "amdgpu is still deny-listed" >&2
+  exit 1
+fi
 lsmod | grep '^amdgpu'
 ls -l /dev/kfd /dev/dri/renderD*
 sudo /opt/rocm/bin/rocm-smi --showproductname
@@ -165,6 +181,8 @@ sudo /opt/rocm/bin/rocminfo | grep -E 'Marketing Name:|gfx942'
 For `Standard_ND96isr_MI300X_v5`, expect 8 `AMD Instinct MI300X VF` devices and 8 `gfx942` entries.
 
 Reboot once and repeat the validation commands before joining the host. This catches module autoload, kernel/initramfs, and device-node issues before Flex Node bootstrap.
+
+Do not add `amdgpu` to `/etc/modules-load.d` for this validation path. After the blacklist entry is removed, PCI device discovery loads the driver after reboot without forcing it through the early `systemd-modules-load` path.
 
 ## Cluster GPU stack (manual)
 
