@@ -9,4 +9,4 @@ This section collects scenario-focused guides for installing, joining, operating
 - [Operations](usages/operations.md) - Start, inspect, reset, uninstall, and troubleshoot a Flex Node host.
 - [Configuration](usages/configuration.md) - Configuration file structure, required fields, defaults, and authentication mode selection.
 - [NVIDIA GPU Flex Node setup](labs/gpu-node-setup.md) - NVIDIA host image and driver contract, cluster GPU stack, validation, and troubleshooting.
-- [AMD GPU Flex Node setup](labs/amd-gpu-node-setup.md) - AMD MI300X and ROCm host preparation contract, cluster GPU stack, validation, and troubleshooting.
+- [AMD GPU Flex Node setup](labs/amd-gpu-node-setup.md) - AMD Instinct and ROCm host preparation contract, cluster GPU stack, validation, and troubleshooting.

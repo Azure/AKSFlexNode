@@ -2,7 +2,7 @@
 
 How to add an AMD Instinct GPU host to an AKS cluster as an AKS Flex Node.
 
-> **Status:** AMD GPU Flex Node support is under active validation. The current validation target is Ubuntu 24.04 on AMD Instinct MI300X hosts.
+> **Status:** AMD GPU Flex Node support is under active validation. The current validated host-preparation path is Ubuntu 24.04 on AMD Instinct MI300X hosts. Other AMD GPU families, OS images, and kernel versions are candidates to validate against the same prepared-host contract.
 
 ## Overview
 
@@ -25,7 +25,9 @@ Use this contract:
 - AKS Flex Node joins the already prepared host to AKS.
 - The cluster GPU stack exposes devices to Kubernetes after the node is `Ready`.
 
-## Validated scope
+## Validated scope and OS policy
+
+AKS Flex Node has the same bootstrap contract across GPU vendors: join a prepared host after the GPU driver works. The OS-specific work is the host image and driver preparation before `aks-flex-node start`.
 
 This guide has been validated for the host preparation portion on:
 
@@ -37,6 +39,8 @@ This guide has been validated for the host preparation portion on:
 - AMDGPU package stream: `30.30.4`
 
 The validation installed the minimal host package set, removed the Ubuntu cloud image `amdgpu` blacklist entry, loaded the AMDGPU driver, rebooted the VM, and verified that ROCm still detected all 8 MI300X devices after reboot.
+
+Treat other combinations as separate validation targets. Do not assume this exact apt package set works on Ubuntu 22.04, non-Ubuntu distributions, different kernels, or other AMD GPU families without a clean install plus reboot validation.
 
 ## Before you begin
 
@@ -61,9 +65,9 @@ If the image has no driver, you own driver installation, signing for Secure Boot
 
 ### Image options
 
-1. **Custom Ubuntu 24.04 image with a minimal ROCm host package set.** This is the preferred production contract after validation. Bake only the host packages needed for Kubernetes workloads and validation, not the full ROCm developer stack.
+1. **Custom ROCm-capable image with a minimal host package set.** This is the preferred production contract after validation. Bake only the host packages needed for Kubernetes workloads and validation, not the full ROCm developer stack. The current validated base is Ubuntu 24.04.
 2. **AgentBaker-style host preparation for validation.** For early testing, run the same AMD CSE preparation flow that installs the minimal AMDGPU/ROCm host packages and validates the device nodes before running AKS Flex Node.
-3. **Other GPU marketplace or partner images.** Treat as candidates to validate per region, OS, kernel, GPU family, and ROCm version.
+3. **Other OS releases, GPU marketplace images, or partner images.** Treat as candidates to validate per region, OS, kernel, GPU family, and ROCm version.
 
 For MI300X validation, the minimal host package families are:
 
@@ -81,6 +85,8 @@ Pin exact package versions for repeatable validation runs. For production, use a
 Use this example only as a validation path for Ubuntu 24.04 MI300X hosts. In production, prefer a prebaked image or a Microsoft-controlled package mirror so Flex Node bootstrap does not depend on `repo.radeon.com` at runtime.
 
 This script intentionally installs only the host packages needed to load and validate AMDGPU/ROCm. It does not install the full ROCm developer stack.
+
+For other OS images, keep the same prepared-host contract but replace this block with an OS-specific installation path and record the validated kernel, package stream, GPU family, and reboot result.
 
 ```bash
 set -euo pipefail
@@ -223,7 +229,7 @@ Use direct host bootstrap when you manage the GPU host lifecycle directly. This 
 
 Create the VM or prepare the bare metal host with:
 
-- Ubuntu 24.04 for the current MI300X validation path.
+- An OS image whose AMDGPU/ROCm driver path has been validated for the target GPU family. Use Ubuntu 24.04 for the current MI300X validation path.
 - Outbound HTTPS reachability to the AKS API server.
 - A ROCm-capable image or host preparation script.
 - Any host-specific networking required to reach the AKS VNet, overlay, or gateway.

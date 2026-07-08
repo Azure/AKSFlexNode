@@ -15,7 +15,7 @@ Before starting a lab, prepare:
 ## Available Labs
 
 - [NVIDIA GPU Flex Node setup](gpu-node-setup.md) - NVIDIA host image and driver contract, cluster GPU stack, validation, and troubleshooting.
-- [AMD GPU Flex Node setup](amd-gpu-node-setup.md) - AMD MI300X and ROCm host preparation contract, cluster GPU stack, validation, and troubleshooting.
+- [AMD GPU Flex Node setup](amd-gpu-node-setup.md) - AMD Instinct and ROCm host preparation contract, cluster GPU stack, validation, and troubleshooting.
 - [Private AKS Cluster With Unmanaged Cilium And Cross-Region Flex Node](aks-private-cluster-cilium.md) - Private AKS with `--network-plugin none`, unmanaged Cilium, and VXLAN pod networking.
 - [Private AKS Cluster With Unbounded-Net And Cross-Region Flex Node](aks-private-cluster-unbounded-net.md) - Private AKS with `--network-plugin none`, `unbounded-net`, and private-L3 site peering.
 - [Public AKS Cluster With Unbounded-Net And Cross-Region VNet-Peered Flex Node](aks-public-cluster-unbounded-net-vnet-peering.md) - Public AKS with `--network-plugin none`, `unbounded-net`, and private-L3 site peering over cross-region VNet peering.
