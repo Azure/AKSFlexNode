@@ -3,7 +3,7 @@
 # Deploy:
 #   kubectl apply -f hack/demo/sample-application.yaml
 #
-# Watch placement across europe-site nodes:
+# Watch placement across demo-site nodes:
 #   kubectl -n aks-flex-demo get pods -o wide -w
 #
 # The deployment is intentionally not a DaemonSet. It uses node affinity for the
@@ -39,7 +39,7 @@ spec:
                   - key: net.unbounded-cloud.io/site
                     operator: In
                     values:
-                      - europe-site
+                      - demo
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
