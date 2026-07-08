@@ -13,6 +13,31 @@ AKS Flex Node joins a prepared host to an AKS cluster. For AMD GPU hosts there a
 
 Plan for both before you start.
 
+## Responsibility boundary
+
+For managed AKS GPU node pools, the node provisioning path owns GPU driver preparation. That work belongs in the AKS image, AgentBaker, CSE, or another node-image pipeline before kubelet starts accepting GPU workloads.
+
+For AKS Flex Node, the Flex Node agent does not own GPU driver installation. Flex Node starts from a host you already control, then joins that host to AKS. Keep AMDGPU/ROCm preparation outside `aks-flex-node start` so driver failures, kernel-header mismatches, Secure Boot signing, apt-source policy, and required reboots are handled before the node bootstrap path.
+
+Use this contract:
+
+- Host preparation installs and validates AMDGPU/ROCm.
+- AKS Flex Node joins the already prepared host to AKS.
+- The cluster GPU stack exposes devices to Kubernetes after the node is `Ready`.
+
+## Validated scope
+
+This guide has been validated for the host preparation portion on:
+
+- VM size: `Standard_ND96isr_MI300X_v5`
+- Region: `francecentral`
+- OS image: Ubuntu 24.04 marketplace image
+- Kernel tested: `6.17.0-1018-azure`
+- ROCm package stream: `7.2.4`
+- AMDGPU package stream: `30.30.4`
+
+The validation installed the minimal host package set, loaded the AMDGPU driver, rebooted the VM, and verified that ROCm still detected all 8 MI300X devices after reboot.
+
 ## Before you begin
 
 - An Azure subscription and AKS cluster with `kubectl` admin access.
@@ -50,6 +75,96 @@ For MI300X validation, the minimal host package families are:
 - `rocm-smi-lib`
 
 Pin exact package versions for repeatable validation runs. For production, use a Microsoft-controlled package source or a prebaked image instead of depending on a third-party apt source at node boot.
+
+## Host preparation example
+
+Use this example only as a validation path for Ubuntu 24.04 MI300X hosts. In production, prefer a prebaked image or a Microsoft-controlled package mirror so Flex Node bootstrap does not depend on `repo.radeon.com` at runtime.
+
+This script intentionally installs only the host packages needed to load and validate AMDGPU/ROCm. It does not install the full ROCm developer stack.
+
+```bash
+set -euo pipefail
+
+ROCM_VERSION="7.2.4"
+AMDGPU_REPO_VERSION="30.30.4"
+AMDGPU_DKMS_VERSION="1:6.16.13.30300400-2341068.24.04"
+LIBDRM_AMDGPU_DEV_VERSION="1:2.4.125.07020400-2341098.24.04"
+ROCM_CORE_VERSION="7.2.4.70204-93~24.04"
+ROCMINFO_VERSION="1.0.0.70204-93~24.04"
+ROCM_SMI_LIB_VERSION="7.8.0.70204-93~24.04"
+ROCM_KEY_FINGERPRINT="CA8BB4727A47B4D09B4EE8969386B48A1A693C5C"
+
+. /etc/os-release
+if [ "${ID}" != "ubuntu" ] || [ "${VERSION_ID}" != "24.04" ]; then
+  echo "This validation path is only for Ubuntu 24.04. Found ${ID} ${VERSION_ID}." >&2
+  exit 1
+fi
+
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSLo /tmp/rocm.gpg.key https://repo.radeon.com/rocm/rocm.gpg.key
+actual_fingerprint="$(gpg --show-keys --with-colons /tmp/rocm.gpg.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+if [ "${actual_fingerprint}" != "${ROCM_KEY_FINGERPRINT}" ]; then
+  echo "Unexpected ROCm GPG key fingerprint: ${actual_fingerprint}" >&2
+  exit 1
+fi
+sudo gpg --dearmor --yes -o /etc/apt/keyrings/rocm.gpg /tmp/rocm.gpg.key
+rm -f /tmp/rocm.gpg.key
+
+cat <<EOF | sudo tee /etc/apt/sources.list.d/rocm.list >/dev/null
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/graphics/${ROCM_VERSION}/ubuntu noble main
+EOF
+
+cat <<EOF | sudo tee /etc/apt/sources.list.d/amdgpu.list >/dev/null
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/${AMDGPU_REPO_VERSION}/ubuntu noble main
+EOF
+
+cat <<EOF | sudo tee /etc/apt/preferences.d/repo-radeon-pin-600 >/dev/null
+Package: *
+Pin: release o=repo.radeon.com
+Pin-Priority: 600
+EOF
+
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  "linux-headers-$(uname -r)" \
+  "linux-modules-extra-$(uname -r)"
+
+sudo apt-get install -y --no-install-recommends \
+  "amdgpu-dkms=${AMDGPU_DKMS_VERSION}" \
+  "libdrm-amdgpu-dev=${LIBDRM_AMDGPU_DEV_VERSION}" \
+  "rocm-core=${ROCM_CORE_VERSION}" \
+  "rocminfo=${ROCMINFO_VERSION}" \
+  "rocm-smi-lib=${ROCM_SMI_LIB_VERSION}"
+
+sudo ldconfig
+echo amdgpu | sudo tee /etc/modules-load.d/amdgpu.conf >/dev/null
+sudo modprobe amdgpu
+```
+
+After installation, clean the temporary AMD apt source if the host will not use it for future patching:
+
+```bash
+sudo rm -f /etc/apt/sources.list.d/rocm.list
+sudo rm -f /etc/apt/sources.list.d/amdgpu.list
+sudo rm -f /etc/apt/preferences.d/repo-radeon-pin-600
+sudo rm -f /etc/apt/keyrings/rocm.gpg
+```
+
+Validate the host before running AKS Flex Node. Run ROCm validation commands as root, or make sure the user is in the group that can access `/dev/kfd` and `/dev/dri/renderD*`.
+
+```bash
+dkms status amdgpu
+modinfo amdgpu | head
+lsmod | grep '^amdgpu'
+ls -l /dev/kfd /dev/dri/renderD*
+sudo /opt/rocm/bin/rocm-smi --showproductname
+sudo /opt/rocm/bin/rocminfo | grep -E 'Marketing Name:|gfx942'
+```
+
+For `Standard_ND96isr_MI300X_v5`, expect 8 `AMD Instinct MI300X VF` devices and 8 `gfx942` entries.
+
+Reboot once and repeat the validation commands before joining the host. This catches module autoload, kernel/initramfs, and device-node issues before Flex Node bootstrap.
 
 ## Cluster GPU stack (manual)
 
@@ -100,8 +215,8 @@ Before running AKS Flex Node, confirm the host driver works:
 ```bash
 lsmod | grep amdgpu
 ls -l /dev/kfd /dev/dri/renderD*
-/opt/rocm/bin/rocminfo | grep -E 'Name:|Marketing Name:|gfx'
-/opt/rocm/bin/rocm-smi --showproductname
+sudo /opt/rocm/bin/rocminfo | grep -E 'Name:|Marketing Name:|gfx'
+sudo /opt/rocm/bin/rocm-smi --showproductname
 ```
 
 If these fail, fix the image or driver installation first. AKS Flex Node bootstrap should not be the first component to discover a missing or mismatched driver.
@@ -189,8 +304,8 @@ kubectl describe node <amd-gpu-flex-node-name> | grep -A5 -E 'Capacity|Allocatab
 # Host driver and runtime.
 lsmod | grep amdgpu
 ls -l /dev/kfd /dev/dri/renderD*
-/opt/rocm/bin/rocm-smi --showproductname
-/opt/rocm/bin/rocminfo | grep -E 'Marketing Name:|gfx'
+sudo /opt/rocm/bin/rocm-smi --showproductname
+sudo /opt/rocm/bin/rocminfo | grep -E 'Marketing Name:|gfx'
 systemctl is-active containerd aks-flex-node-agent
 ```
 
