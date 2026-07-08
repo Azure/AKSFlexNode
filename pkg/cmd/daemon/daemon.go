@@ -37,9 +37,13 @@ func NewCommand() *cobra.Command {
 }
 
 func runDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	machines, err := aksmachine.NewMachineClient(cfg, logger)
-	if err != nil {
-		return fmt.Errorf("create AKS machine client: %w", err)
+	var machines aksmachine.MachineClient
+	if !aksmachine.UsesInClusterEndpoint(cfg) {
+		var err error
+		machines, err = aksmachine.NewMachineClient(cfg, logger)
+		if err != nil {
+			return fmt.Errorf("create AKS machine client: %w", err)
+		}
 	}
 
 	return daemon.Run(ctx, cfg, logger, machines)

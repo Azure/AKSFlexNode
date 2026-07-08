@@ -61,7 +61,9 @@ node_join_msi() {
   "agent": {
     "logLevel": "debug",
     "logDir": "/var/log/aks-flex-node",
-    "e2eMode": true
+    "machineClient": {
+      "mode": "e2e"
+    }
   },
   "components": {
     "kubernetes": "${E2E_KUBERNETES_VERSION}",

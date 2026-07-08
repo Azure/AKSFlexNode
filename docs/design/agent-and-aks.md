@@ -146,7 +146,7 @@ The daemon uses two inputs:
 
 In E2E mode, the machine client is file-backed at `/run/aks-flex-node/e2e-machine.json` so tests can simulate AKS RP machine updates without production ARM integration.
 
-The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`. E2E configs use `agent.e2eMode` to select the local file-backed machine client.
+The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`. E2E configs use `agent.machineClient.mode: "e2e"` to select the local file-backed machine client.
 
 Production AKS RP machine client integration is still pending. Until then, non-E2E daemon mode blocks after startup and bootstrap uses a no-op machine client.
 

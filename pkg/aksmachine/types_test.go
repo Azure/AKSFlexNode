@@ -41,6 +41,9 @@ func TestGoalStateFromConfig(t *testing.T) {
 	if goal.KubernetesVersion != "1.35.1" {
 		t.Fatalf("KubernetesVersion = %q, want 1.35.1", goal.KubernetesVersion)
 	}
+	if goal.SettingsVersion != "1.35.1" {
+		t.Fatalf("SettingsVersion = %q, want 1.35.1", goal.SettingsVersion)
+	}
 	if goal.MaxPods != 42 {
 		t.Fatalf("MaxPods = %d, want 42", goal.MaxPods)
 	}

@@ -109,7 +109,7 @@ var _ MachineClient = (*LocalClient)(nil)
 
 // NewMachineClient creates a MachineClient instance from config.
 func NewMachineClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
-	if cfg.Agent.E2EMode {
+	if cfg.Agent.MachineClient.Mode == config.MachineClientModeE2E {
 		logger.Info("using local file-backed machine client for e2e testing", "path", e2eMachineFilePath)
 		return newLocalClient(e2eMachineFilePath)
 	}

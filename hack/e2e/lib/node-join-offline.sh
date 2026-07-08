@@ -184,7 +184,7 @@ node_join_offline() {
     --arg offlineArtifactsSource "${offlineArtifactsSource}" \
     --arg ociImage "${offlineOCIImage}" \
     '.agent.logLevel = "debug"
-      | .agent.e2eMode = true
+      | .agent.machineClient.mode = "e2e"
       | .node.kubelet.nodeIP = $nodeIP
       | .components = (.components // {})
       | .components.kubernetes = $kubernetesVersion

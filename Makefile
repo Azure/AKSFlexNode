@@ -17,6 +17,11 @@ build-e2ehelper:
 	@echo "Building E2E helper for current platform..."
 	@go build -o e2ehelper ./cmd/e2ehelper
 
+.PHONY: build-controller
+build-controller:
+	@echo "Building AKS Flex controller for current platform..."
+	@go build -ldflags "$(LDFLAGS)" -o aks-flex-controller ./cmd/aks-flex-controller
+
 # Cross-platform builds for supported architectures
 .PHONY: build-linux-amd64
 build-linux-amd64:
@@ -134,7 +139,8 @@ e2e-cleanup: ## Clean up E2E test resources
 clean:
 	@echo "Cleaning build artifacts..."
 	@go clean
-	@rm -f aks-flex-node-*
+	@rm -f aks-flex-node aks-flex-node-*
+	@rm -f aks-flex-controller
 	@rm -f *.tar.gz
 	@rm -f coverage.out coverage.html
 	@rm -rf hack/bin
@@ -154,6 +160,7 @@ help:
 	@echo "Build Targets:"
 	@echo "  build              Build for current platform"
 	@echo "  build-e2ehelper    Build E2E helper for current platform"
+	@echo "  build-controller   Build AKS Flex controller for current platform"
 	@echo "  build-linux-amd64  Build for Linux AMD64"
 	@echo "  build-linux-arm64  Build for Linux ARM64"
 	@echo "  build-all          Build for all supported platforms"
