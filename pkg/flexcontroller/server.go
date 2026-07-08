@@ -14,11 +14,13 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
+	"github.com/go-logr/logr"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -166,7 +168,8 @@ func NewServer(log *slog.Logger, machines MachinesGetter, resourceGroupName, clu
 }
 
 func setupCSRApprover(opts Options, log *slog.Logger, server *Server) (ctrl.Manager, error) {
-	cfg, err := clientcmd.BuildConfigFromFlags("", opts.Kubeconfig)
+	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
+	cfg, err := csrApproverRESTConfig(opts.Kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("build Kubernetes config for CSR approver: %w", err)
 	}
@@ -204,6 +207,17 @@ func setupCSRApprover(opts Options, log *slog.Logger, server *Server) (ctrl.Mana
 		return nil, fmt.Errorf("setup CSR approver reconciler: %w", err)
 	}
 	return mgr, nil
+}
+
+func csrApproverRESTConfig(kubeconfig string) (*rest.Config, error) {
+	if strings.TrimSpace(kubeconfig) != "" {
+		return clientcmd.BuildConfigFromFlags("", kubeconfig)
+	}
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("create in-cluster config: %w", err)
+	}
+	return cfg, nil
 }
 
 func effectiveBootstrapGroup(opts Options) string {
