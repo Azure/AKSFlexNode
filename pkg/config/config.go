@@ -33,7 +33,7 @@ const (
 	MachineClientModeInCluster = "in-cluster"
 	MachineClientModeE2E       = "e2e"
 
-	defaultInClusterMachineEndpointURL = "/api/v1/namespaces/aks-flex-system/services/http:aks-flex-controller:80/proxy"
+	defaultInClusterMachineEndpointURL = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
 
 	// DefaultResourceManagerEndpointURL is the public Azure Resource Manager
 	// endpoint used when azure.resourceManagerEndpoint is omitted.
