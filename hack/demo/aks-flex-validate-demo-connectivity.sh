@@ -20,6 +20,8 @@ PING_COUNT=${PING_COUNT:-5}
 PING_TIMEOUT=${PING_TIMEOUT:-10}
 WAIT_TIMEOUT=${WAIT_TIMEOUT:-180s}
 KEEP_PODS=${KEEP_PODS:-false}
+SUMMARY_ROWS=()
+VALIDATION_FAILURES=0
 
 if [[ -z "${NO_COLOR:-}" ]]; then
   BOLD=$'\033[1m'
@@ -156,17 +158,22 @@ run_ping_check() {
   local source_pod="$1"
   local dest_pod="$2"
   local description="$3"
-  local dest_ip output avg
+  local dest_ip output avg source_node dest_node http_status http_output http_error
 
+  source_node="$(pod_node "${source_pod}")"
+  dest_node="$(pod_node "${dest_pod}")"
   dest_ip="$(pod_ip "${dest_pod}")"
   [[ -n "${dest_ip}" ]] || fail "destination pod ${dest_pod} does not have a pod IP"
 
   highlight "${description}"
-  log "source=$(pod_node "${source_pod}")/${source_pod} destination=$(pod_node "${dest_pod}")/${dest_pod} ip=${dest_ip}"
+  log "source=${source_node}/${source_pod} destination=${dest_node}/${dest_pod} ip=${dest_ip}"
 
   if ! output="$(${KUBECTL} -n "${NAMESPACE}" exec "${source_pod}" -- ping -c "${PING_COUNT}" -w "${PING_TIMEOUT}" "${dest_ip}" 2>&1)"; then
     printf '%s\n' "${output}"
-    fail "ping failed for ${description}"
+    warn "Ping failed for ${description}"
+    SUMMARY_ROWS+=("${description}|${source_node}|${dest_node}|${dest_ip}|failed|SKIPPED")
+    VALIDATION_FAILURES=$((VALIDATION_FAILURES + 1))
+    return 0
   fi
 
   printf '%s\n' "${output}" | tail -3
@@ -177,12 +184,33 @@ run_ping_check() {
     success "Ping succeeded"
   fi
 
-  if ${KUBECTL} -n "${NAMESPACE}" exec "${source_pod}" -- wget -qO- --timeout=3 "http://${dest_ip}:8080/hostname" >/tmp/aks-flex-demo-http-check 2>/tmp/aks-flex-demo-http-error; then
-    success "HTTP connectivity OK: $(cat /tmp/aks-flex-demo-http-check)"
+  http_output="$(mktemp)"
+  http_error="$(mktemp)"
+  if ${KUBECTL} -n "${NAMESPACE}" exec "${source_pod}" -- wget -qO- --timeout=3 "http://${dest_ip}:8080/hostname" >"${http_output}" 2>"${http_error}"; then
+    http_status="OK"
+    success "HTTP connectivity OK: $(cat "${http_output}")"
   else
-    warn "HTTP connectivity check failed: $(cat /tmp/aks-flex-demo-http-error)"
+    http_status="FAILED"
+    warn "HTTP connectivity check failed: $(cat "${http_error}")"
   fi
-  rm -f /tmp/aks-flex-demo-http-check /tmp/aks-flex-demo-http-error
+  rm -f "${http_output}" "${http_error}"
+
+  SUMMARY_ROWS+=("${description}|${source_node}|${dest_node}|${dest_ip}|${avg:-n/a}|${http_status}")
+}
+
+print_summary() {
+  highlight "Connectivity validation summary"
+  printf '%-46s %-32s %-32s %-15s %-14s %-8s\n' "Check" "Source node" "Destination node" "Dest pod IP" "Ping avg" "HTTP"
+  printf '%-46s %-32s %-32s %-15s %-14s %-8s\n' "-----" "-----------" "----------------" "-----------" "--------" "----"
+
+  local row description source_node dest_node dest_ip avg http_status
+  for row in "${SUMMARY_ROWS[@]}"; do
+    IFS='|' read -r description source_node dest_node dest_ip avg http_status <<<"${row}"
+    if [[ "${avg}" != "n/a" && "${avg}" != "failed" ]]; then
+      avg="${avg} ms"
+    fi
+    printf '%-46s %-32s %-32s %-15s %-14s %-8s\n' "${description}" "${source_node}" "${dest_node}" "${dest_ip}" "${avg}" "${http_status}"
+  done
 }
 
 cleanup() {
@@ -238,6 +266,10 @@ main() {
   run_ping_check "${pod_for_node[${first_demo}]}" "${pod_for_node[${second_demo}]}" "Demo node to demo node connectivity and latency"
   run_ping_check "${pod_for_node[${second_demo}]}" "${pod_for_node[${first_demo}]}" "Reverse demo node to demo node connectivity and latency"
 
+  print_summary
+  if (( VALIDATION_FAILURES > 0 )); then
+    fail "Demo connectivity validation completed with ${VALIDATION_FAILURES} failed check(s)."
+  fi
   success "Demo connectivity validation complete."
 }
 
