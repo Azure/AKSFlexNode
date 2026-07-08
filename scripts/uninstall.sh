@@ -37,6 +37,20 @@ log_error() {
     echo -e "${RED}ERROR:${NC} $1"
 }
 
+detect_package_manager() {
+    if command -v apt-get &> /dev/null; then
+        echo "apt"
+        return 0
+    fi
+
+    if command -v dnf &> /dev/null; then
+        echo "dnf"
+        return 0
+    fi
+
+    return 1
+}
+
 confirm_uninstall() {
     echo -e "${YELLOW}AKS Flex Node Uninstaller${NC}"
     echo -e "${YELLOW}===========================${NC}"
@@ -160,9 +174,19 @@ remove_azure_cli() {
     if command -v az &> /dev/null; then
         # Uninstall Azure CLI package
         log_info "Uninstalling Azure CLI package..."
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get remove -y azure-cli 2>/dev/null || true
-        apt-get purge -y azure-cli 2>/dev/null || true
+        case "$(detect_package_manager)" in
+            apt)
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get remove -y azure-cli 2>/dev/null || true
+                apt-get purge -y azure-cli 2>/dev/null || true
+                ;;
+            dnf)
+                dnf remove -y azure-cli 2>/dev/null || true
+                ;;
+            *)
+                log_warning "No supported package manager found for Azure CLI removal"
+                ;;
+        esac
 
         # Verify removal
         if command -v az &> /dev/null; then

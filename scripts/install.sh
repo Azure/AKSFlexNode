@@ -68,32 +68,101 @@ detect_os() {
             ;;
         *)
             log_error "Unsupported operating system: $os"
-            log_error "AKS Flex Node supports: Linux (Ubuntu 22.04 LTS, Ubuntu 24.04 LTS)"
+            log_error "AKS Flex Node supports: Linux"
             exit 1
             ;;
     esac
 }
 
-check_ubuntu_version() {
-    if [[ -f /etc/os-release ]]; then
-        source /etc/os-release
-        if [[ "$ID" == "ubuntu" ]]; then
-            case "$VERSION_ID" in
-                "22.04"|"24.04")
-                    log_info "Detected Ubuntu $VERSION_ID LTS - supported"
-                    return 0
-                    ;;
-                *)
-                    log_warning "Detected Ubuntu $VERSION_ID - not officially supported"
-                    log_warning "AKS Flex Node is tested on Ubuntu 22.04 LTS and Ubuntu 24.04 LTS"
-                    log_warning "Continuing installation but support may be limited"
-                    ;;
-            esac
-        else
-            log_warning "Detected $PRETTY_NAME - not officially supported"
-            log_warning "AKS Flex Node is tested on Ubuntu 22.04 LTS and Ubuntu 24.04 LTS"
-            log_warning "Continuing installation but support may be limited"
-        fi
+detect_package_manager() {
+    if command -v apt-get &> /dev/null; then
+        echo "apt"
+        return 0
+    fi
+
+    if command -v dnf &> /dev/null; then
+        echo "dnf"
+        return 0
+    fi
+
+    log_error "Unsupported package manager: AKS Flex Node requires either apt-get or dnf to be installed"
+    return 1
+}
+
+load_os_release() {
+    if [[ ! -f /etc/os-release ]]; then
+        return 1
+    fi
+
+    ID=""
+    VERSION_ID=""
+    PRETTY_NAME=""
+
+    while IFS='=' read -r key value; do
+        value="${value%\"}"
+        value="${value#\"}"
+
+        case "$key" in
+            ID)
+                ID="$value"
+                ;;
+            VERSION_ID)
+                VERSION_ID="$value"
+                ;;
+            PRETTY_NAME)
+                PRETTY_NAME="$value"
+                ;;
+        esac
+    done < /etc/os-release
+}
+
+check_linux_distribution() {
+    if load_os_release; then
+        case "$ID" in
+            ubuntu)
+                case "$VERSION_ID" in
+                    "22.04"|"24.04")
+                        log_info "Detected Ubuntu $VERSION_ID LTS - supported"
+                        return 0
+                        ;;
+                    *)
+                        log_warning "Detected Ubuntu $VERSION_ID - not officially supported"
+                        ;;
+                esac
+                ;;
+            azurelinux|azlinux)
+                case "${VERSION_ID%%.*}" in
+                    3)
+                        log_info "Detected Azure Linux $VERSION_ID - supported"
+                        return 0
+                        ;;
+                    *)
+                        log_warning "Detected Azure Linux $VERSION_ID - not officially supported"
+                        ;;
+                esac
+                ;;
+            almalinux|rocky|rhel)
+                case "${VERSION_ID%%.*}" in
+                    9|10)
+                        log_info "Detected $PRETTY_NAME - supported"
+                        return 0
+                        ;;
+                    *)
+                        log_warning "Detected $PRETTY_NAME - not officially supported"
+                        ;;
+                esac
+                ;;
+            *)
+                if command -v dnf &> /dev/null; then
+                    log_warning "Detected $PRETTY_NAME - not officially supported, but dnf is available"
+                else
+                    log_warning "Detected $PRETTY_NAME - not officially supported"
+                fi
+                ;;
+        esac
+
+        log_warning "AKS Flex Node is tested on Ubuntu 22.04/24.04 LTS, Azure Linux 3.x, and RHEL-family 9/10"
+        log_warning "Continuing installation but support may be limited"
     else
         log_warning "Cannot detect OS version - continuing installation"
     fi
@@ -186,6 +255,93 @@ install_binary() {
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
+warn_install_dir_not_in_path() {
+    case ":${PATH:-}:" in
+        *:"$INSTALL_DIR":*) ;;
+        *) log_warning "$INSTALL_DIR is not in PATH; add it to PATH to run aks-flex-node without the full path." ;;
+    esac
+}
+
+install_azure_cli_deb() {
+    local install_script
+    install_script=$(mktemp)
+
+    if ! download_file "https://aka.ms/InstallAzureCLIDeb" "$install_script"; then
+        rm -f "$install_script"
+        return 1
+    fi
+
+    bash "$install_script" || {
+        rm -f "$install_script"
+        log_error "Failed to install Azure CLI with the Debian install script"
+        return 1
+    }
+
+    rm -f "$install_script"
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl &> /dev/null; then
+        curl -fsSL -o "$output" "$url"
+    elif command -v wget &> /dev/null; then
+        wget -qO "$output" "$url"
+    else
+        log_error "Neither curl nor wget is available for downloading $url. Please install curl or wget and retry."
+        return 1
+    fi
+}
+
+import_microsoft_rpm_key() {
+    local key_file
+    key_file=$(mktemp)
+
+    if ! download_file "https://packages.microsoft.com/keys/microsoft.asc" "$key_file"; then
+        rm -f "$key_file"
+        return 1
+    fi
+
+    rpm --import "$key_file" || {
+        rm -f "$key_file"
+        log_error "Failed to import Microsoft package signing key"
+        return 1
+    }
+
+    rm -f "$key_file"
+}
+
+configure_azure_cli_rpm_repo() {
+    local repo_path="/etc/yum.repos.d/azure-cli.repo"
+
+    log_info "Configuring Azure CLI dnf package source..."
+
+    import_microsoft_rpm_key || return 1
+
+    if ! tee "$repo_path" > /dev/null << 'EOF'
+[azure-cli]
+name=Azure CLI
+baseurl=https://packages.microsoft.com/yumrepos/azure-cli
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+    then
+        log_error "Failed to write Azure CLI dnf package source: $repo_path"
+        return 1
+    fi
+}
+
+install_azure_cli_rpm() {
+    configure_azure_cli_rpm_repo || return 1
+
+    dnf install -y azure-cli || {
+        log_error "Failed to install azure-cli with dnf"
+        return 1
+    }
+}
+
 install_azure_cli() {
     if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
         log_info "Skipping Azure CLI installation (SKIP_AZCLI=$SKIP_AZCLI)"
@@ -196,14 +352,16 @@ install_azure_cli() {
 
     if ! command -v az &> /dev/null; then
         log_info "Downloading and installing Azure CLI..."
-        if command -v curl &> /dev/null; then
-            curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-        elif command -v wget &> /dev/null; then
-            wget -qO- https://aka.ms/InstallAzureCLIDeb | bash
-        else
-            log_error "Neither curl nor wget is available for downloading Azure CLI"
-            return 1
-        fi
+        local package_manager
+        package_manager=$(detect_package_manager) || return 1
+        case "$package_manager" in
+            apt)
+                install_azure_cli_deb || return 1
+                ;;
+            dnf)
+                install_azure_cli_rpm || return 1
+                ;;
+        esac
 
         # Verify installation
         if command -v az &> /dev/null; then
@@ -378,7 +536,7 @@ main() {
     fi
 
     # Check OS compatibility
-    check_ubuntu_version
+    check_linux_distribution
 
     # Detect system architecture
     local os arch
@@ -404,6 +562,7 @@ main() {
 
     # Install binary
     install_binary "$binary_path"
+    warn_install_dir_not_in_path
 
     # Setup service components
     install_azure_cli
