@@ -1,0 +1,93 @@
+name: AKS Flex Controller Image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_PACKAGE: aks-flex-controller
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  build:
+    name: Build controller image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Configure Docker Buildx
+        run: |
+          set -euo pipefail
+          docker buildx create --name aks-flex-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build image
+        env:
+          PUSH_IMAGE: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/${IMAGE_PACKAGE}"
+          short_sha="${GITHUB_SHA::12}"
+          build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          version="${GITHUB_REF_NAME}"
+
+          tags=("${image}:sha-${short_sha}")
+          labels=(
+            "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            "org.opencontainers.image.revision=${GITHUB_SHA}"
+            "org.opencontainers.image.created=${build_time}"
+            "org.opencontainers.image.title=aks-flex-controller"
+            "org.opencontainers.image.description=In-cluster AKS Flex Node machine endpoint and daemon CSR approver"
+          )
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "branch" ]]; then
+            branch_tag="$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+            tags+=("${image}:${branch_tag}")
+            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+              tags+=("${image}:latest")
+            fi
+          elif [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tags+=("${image}:${GITHUB_REF_NAME}")
+            labels+=("org.opencontainers.image.version=${GITHUB_REF_NAME}")
+          fi
+
+          build_args=(
+            --file Dockerfile.aks-flex-controller
+            --platform "${PLATFORMS}"
+            --build-arg "VERSION=${version}"
+            --build-arg "GIT_COMMIT=${short_sha}"
+            --build-arg "BUILD_TIME=${build_time}"
+          )
+
+          for tag in "${tags[@]}"; do
+            build_args+=(--tag "${tag}")
+          done
+          for label in "${labels[@]}"; do
+            build_args+=(--label "${label}")
+          done
+
+          if [[ "${PUSH_IMAGE}" == "true" ]]; then
+            build_args+=(--push)
+          fi
+
+          docker buildx build "${build_args[@]}" .
