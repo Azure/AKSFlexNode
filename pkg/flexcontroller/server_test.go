@@ -2,6 +2,7 @@ package flexcontroller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,20 +21,8 @@ import (
 func TestServerGetMachine(t *testing.T) {
 	t.Parallel()
 
-	getter := &fakeMachinesGetter{
-		response: armcontainerservice.MachinesClientGetResponse{
-			Machine: armcontainerservice.Machine{
-				ID:   ptr("machine-id"),
-				Name: ptr("node1"),
-				Properties: &armcontainerservice.MachineProperties{
-					Kubernetes: &armcontainerservice.MachineKubernetesProfile{
-						OrchestratorVersion: ptr("1.34.0"),
-					},
-				},
-			},
-		},
-	}
-	server := NewServer(nil, getter, "rg1", "cluster1", "pool1")
+	store := &fakeMachineStore{machine: json.RawMessage(`{"id":"machine-id","name":"node1","properties":{"settings":{"kubernetesVersion":"1.34.0"}}}`)}
+	server := NewServer(nil, store)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/machines/node1", nil)
 
@@ -44,8 +31,8 @@ func TestServerGetMachine(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body %s", recorder.Code, recorder.Body.String())
 	}
-	if getter.machineName != "node1" || getter.resourceGroup != "rg1" || getter.clusterName != "cluster1" || getter.agentPoolName != "pool1" {
-		t.Fatalf("getter call = %#v", getter)
+	if store.machineName != "node1" {
+		t.Fatalf("machineName = %q, want node1", store.machineName)
 	}
 	if !strings.Contains(recorder.Body.String(), "node1") {
 		t.Fatalf("body = %s, want machine JSON", recorder.Body.String())
@@ -55,7 +42,7 @@ func TestServerGetMachine(t *testing.T) {
 func TestServerMachineNotFound(t *testing.T) {
 	t.Parallel()
 
-	server := NewServer(nil, &fakeMachinesGetter{err: &azcore.ResponseError{StatusCode: http.StatusNotFound, ErrorCode: "NotFound"}}, "rg1", "cluster1", "pool1")
+	server := NewServer(nil, &fakeMachineStore{err: &MachineNotFoundError{Name: "node1"}})
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/machines/node1", nil)
 
@@ -63,6 +50,20 @@ func TestServerMachineNotFound(t *testing.T) {
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", recorder.Code)
+	}
+}
+
+func TestServerMachineStoreUnavailable(t *testing.T) {
+	t.Parallel()
+
+	server := NewServer(nil, &fakeMachineStore{err: errors.New("config map unavailable")})
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/machines/node1", nil)
+
+	server.Handler().ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
 	}
 }
 
@@ -95,7 +96,7 @@ func TestServerRejectsInvalidRequests(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			server := NewServer(nil, &fakeMachinesGetter{}, "rg1", "cluster1", "pool1")
+			server := NewServer(nil, &fakeMachineStore{})
 			recorder := httptest.NewRecorder()
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 
@@ -108,20 +109,51 @@ func TestServerRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
-func TestParseManagedClusterResourceID(t *testing.T) {
+func TestConfigMapMachineStore(t *testing.T) {
 	t.Parallel()
 
-	id := "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.ContainerService/managedClusters/cluster1"
-	parsed, err := parseManagedClusterResourceID(id)
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      DefaultMachineConfigMapName,
+			Namespace: DefaultMachineConfigMapNamespace,
+		},
+		Data: map[string]string{
+			"node1.json": `{"name":"node1"}`,
+		},
+	})
+	store := NewConfigMapMachineStore(client, DefaultMachineConfigMapNamespace, DefaultMachineConfigMapName)
+
+	machine, err := store.Get(context.Background(), "node1")
 	if err != nil {
-		t.Fatalf("parseManagedClusterResourceID() error = %v", err)
+		t.Fatalf("Get() error = %v", err)
 	}
-	if parsed.SubscriptionID != "sub1" || parsed.ResourceGroupName != "rg1" || parsed.Name != "cluster1" {
-		t.Fatalf("parsed = %#v", parsed)
+	if string(machine) != `{"name":"node1"}` {
+		t.Fatalf("machine = %s", machine)
 	}
-	_, err = parseManagedClusterResourceID("/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1")
-	if err == nil {
-		t.Fatal("parseManagedClusterResourceID() error = nil, want invalid type")
+	_, err = store.Get(context.Background(), "node2")
+	var notFound *MachineNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("Get() error = %v, want MachineNotFoundError", err)
+	}
+}
+
+func TestConfigMapMachineStoreInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      DefaultMachineConfigMapName,
+			Namespace: DefaultMachineConfigMapNamespace,
+		},
+		Data: map[string]string{
+			"node1": `not-json`,
+		},
+	})
+	store := NewConfigMapMachineStore(client, DefaultMachineConfigMapNamespace, DefaultMachineConfigMapName)
+
+	_, err := store.Get(context.Background(), "node1")
+	if err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("Get() error = %v, want invalid JSON", err)
 	}
 }
 
@@ -209,8 +241,8 @@ func TestAuthorizeBootstrapCSRRequiresBootstrapSecretAndMachine(t *testing.T) {
 			Username: daemoncred.BootstrapUserPrefix + "abc123",
 		},
 	}
-	getter := &fakeMachinesGetter{response: armcontainerservice.MachinesClientGetResponse{Machine: armcontainerservice.Machine{Name: ptr("node1")}}}
-	server := NewServer(nil, getter, "rg1", "cluster1", "pool1")
+	store := &fakeMachineStore{machine: json.RawMessage(`{"name":"node1"}`)}
+	server := NewServer(nil, store)
 
 	allowed, err := server.authorizeBootstrapCSR(context.Background(), fake.NewSimpleClientset(secret), csr, "node1", DefaultBootstrapGroup)
 	if err != nil {
@@ -219,15 +251,15 @@ func TestAuthorizeBootstrapCSRRequiresBootstrapSecretAndMachine(t *testing.T) {
 	if !allowed {
 		t.Fatal("authorizeBootstrapCSR() = false, want true")
 	}
-	if getter.machineName != "node1" {
-		t.Fatalf("machineName = %q, want node1", getter.machineName)
+	if store.machineName != "node1" {
+		t.Fatalf("machineName = %q, want node1", store.machineName)
 	}
 }
 
 func TestMachineExistsMissingMachine(t *testing.T) {
 	t.Parallel()
 
-	server := NewServer(nil, &fakeMachinesGetter{err: &azcore.ResponseError{StatusCode: http.StatusNotFound}}, "rg1", "cluster1", "pool1")
+	server := NewServer(nil, &fakeMachineStore{err: &MachineNotFoundError{Name: "node1"}})
 	exists, err := server.machineExists(context.Background(), "node1")
 	if err != nil {
 		t.Fatalf("machineExists() error = %v", err)
@@ -237,29 +269,19 @@ func TestMachineExistsMissingMachine(t *testing.T) {
 	}
 }
 
-type fakeMachinesGetter struct {
-	response      armcontainerservice.MachinesClientGetResponse
-	err           error
-	resourceGroup string
-	clusterName   string
-	agentPoolName string
-	machineName   string
+type fakeMachineStore struct {
+	machine     json.RawMessage
+	err         error
+	machineName string
 }
 
-func (f *fakeMachinesGetter) Get(_ context.Context, resourceGroupName string, resourceName string, agentPoolName string, machineName string, _ *armcontainerservice.MachinesClientGetOptions) (armcontainerservice.MachinesClientGetResponse, error) {
-	f.resourceGroup = resourceGroupName
-	f.clusterName = resourceName
-	f.agentPoolName = agentPoolName
+func (f *fakeMachineStore) Get(_ context.Context, machineName string) (json.RawMessage, error) {
 	f.machineName = machineName
 	if f.err != nil {
-		return armcontainerservice.MachinesClientGetResponse{}, f.err
+		return nil, f.err
 	}
-	if f.response.Machine.Name == nil && f.response.Machine.ID == nil && f.response.Machine.Properties == nil {
-		return armcontainerservice.MachinesClientGetResponse{}, errors.New("missing fake response")
+	if f.machine == nil {
+		return nil, errors.New("missing fake machine")
 	}
-	return f.response, nil
-}
-
-func ptr[T any](v T) *T {
-	return &v
+	return f.machine, nil
 }

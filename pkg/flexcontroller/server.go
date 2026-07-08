@@ -10,10 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"github.com/go-logr/logr"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,48 +22,54 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/Azure/AKSFlexNode/pkg/azclient"
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/daemoncred"
 )
 
 const (
-	DefaultListenAddress   = ":8080"
-	DefaultShutdownTimeout = 15 * time.Second
-	DefaultBootstrapGroup  = "system:bootstrappers:aks-flex-node"
-	DefaultDaemonGroup     = "aks-flex-node-daemons"
+	DefaultListenAddress             = ":8080"
+	DefaultShutdownTimeout           = 15 * time.Second
+	DefaultBootstrapGroup            = "system:bootstrappers:aks-flex-node"
+	DefaultDaemonGroup               = "aks-flex-node-daemons"
+	DefaultMachineConfigMapNamespace = "aks-flex-system"
+	DefaultMachineConfigMapName      = "aks-flex-machines"
 )
 
-type MachinesGetter interface {
-	Get(
-		ctx context.Context,
-		resourceGroupName string,
-		resourceName string,
-		agentPoolName string,
-		machineName string,
-		options *armcontainerservice.MachinesClientGetOptions,
-	) (armcontainerservice.MachinesClientGetResponse, error)
+type MachineStore interface {
+	Get(ctx context.Context, machineName string) (json.RawMessage, error)
+}
+
+type MachineNotFoundError struct {
+	Name string
+}
+
+func (e *MachineNotFoundError) Error() string {
+	if e == nil || e.Name == "" {
+		return "machine not found"
+	}
+	return fmt.Sprintf("machine %q not found", e.Name)
 }
 
 type Options struct {
-	ListenAddress           string
-	ClusterResourceID       string
-	AgentPoolName           string
-	ResourceManagerEndpoint string
-	ShutdownTimeout         time.Duration
-	EnableCSRApprover       bool
-	Kubeconfig              string
-	BootstrapGroup          string
-	DaemonGroup             string
-	MaxExpirationSeconds    int32
+	ListenAddress             string
+	ShutdownTimeout           time.Duration
+	Kubeconfig                string
+	MachineConfigMapNamespace string
+	MachineConfigMapName      string
+	EnableCSRApprover         bool
+	BootstrapGroup            string
+	DaemonGroup               string
+	MaxExpirationSeconds      int32
 }
 
 type Server struct {
-	log           *slog.Logger
-	machines      MachinesGetter
-	resourceGroup string
-	clusterName   string
-	agentPoolName string
+	log      *slog.Logger
+	machines MachineStore
+}
+
+type configMapMachineStore struct {
+	kubeClient kubernetes.Interface
+	namespace  string
+	name       string
 }
 
 func Run(ctx context.Context, opts Options, log *slog.Logger) error {
@@ -80,14 +82,20 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) error {
 	if opts.ShutdownTimeout == 0 {
 		opts.ShutdownTimeout = DefaultShutdownTimeout
 	}
-	server, err := NewARMServer(opts, log)
+	cfg, err := kubernetesRESTConfig(opts.Kubeconfig)
 	if err != nil {
-		return err
+		return fmt.Errorf("build Kubernetes config: %w", err)
 	}
+	kubeClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes client: %w", err)
+	}
+	store := NewConfigMapMachineStore(kubeClient, effectiveMachineConfigMapNamespace(opts), effectiveMachineConfigMapName(opts))
+	server := NewServer(log, store)
 
 	var mgr ctrl.Manager
 	if opts.EnableCSRApprover {
-		mgr, err = setupCSRApprover(opts, log, server)
+		mgr, err = setupCSRApprover(opts, log, server, cfg, kubeClient)
 		if err != nil {
 			return err
 		}
@@ -101,7 +109,12 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) error {
 
 	errCh := make(chan error, 2)
 	go func() {
-		log.Info("starting aks-flex-controller", "listenAddress", opts.ListenAddress)
+		log.Info(
+			"starting aks-flex-controller",
+			"listenAddress", opts.ListenAddress,
+			"machineConfigMapNamespace", effectiveMachineConfigMapNamespace(opts),
+			"machineConfigMapName", effectiveMachineConfigMapName(opts),
+		)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -133,50 +146,48 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) error {
 	}
 }
 
-func NewARMServer(opts Options, log *slog.Logger) (*Server, error) {
-	clusterID, err := parseManagedClusterResourceID(opts.ClusterResourceID)
-	if err != nil {
-		return nil, err
-	}
-	agentPoolName := strings.TrimSpace(opts.AgentPoolName)
-	if agentPoolName == "" {
-		return nil, fmt.Errorf("agent pool name is empty")
-	}
-	clientOpts := azureClientOptions(opts.ResourceManagerEndpoint)
-	cred, err := azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{ClientOptions: clientOpts})
-	if err != nil {
-		return nil, fmt.Errorf("create Azure credential: %w", err)
-	}
-	client, err := armcontainerservice.NewMachinesClient(clusterID.SubscriptionID, cred, &arm.ClientOptions{ClientOptions: clientOpts})
-	if err != nil {
-		return nil, fmt.Errorf("create ARM machines client: %w", err)
-	}
-	return NewServer(log, client, clusterID.ResourceGroupName, clusterID.Name, agentPoolName), nil
+func NewConfigMapMachineStore(kubeClient kubernetes.Interface, namespace, name string) MachineStore {
+	return &configMapMachineStore{kubeClient: kubeClient, namespace: namespace, name: name}
 }
 
-func NewServer(log *slog.Logger, machines MachinesGetter, resourceGroupName, clusterName, agentPoolName string) *Server {
+func (s *configMapMachineStore) Get(ctx context.Context, machineName string) (json.RawMessage, error) {
+	if s.kubeClient == nil {
+		return nil, fmt.Errorf("Kubernetes client is nil")
+	}
+	configMap, err := s.kubeClient.CoreV1().ConfigMaps(s.namespace).Get(ctx, s.name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("machine config map %s/%s not found", s.namespace, s.name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get machine config map %s/%s: %w", s.namespace, s.name, err)
+	}
+	for _, key := range []string{machineName + ".json", machineName} {
+		if raw, ok := configMap.Data[key]; ok {
+			data := json.RawMessage(strings.TrimSpace(raw))
+			if !json.Valid(data) {
+				return nil, fmt.Errorf("machine config map key %q is not valid JSON", key)
+			}
+			return data, nil
+		}
+	}
+	return nil, &MachineNotFoundError{Name: machineName}
+}
+
+func NewServer(log *slog.Logger, machines MachineStore) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{
-		log:           log,
-		machines:      machines,
-		resourceGroup: resourceGroupName,
-		clusterName:   clusterName,
-		agentPoolName: agentPoolName,
-	}
+	return &Server{log: log, machines: machines}
 }
 
-func setupCSRApprover(opts Options, log *slog.Logger, server *Server) (ctrl.Manager, error) {
+func setupCSRApprover(
+	opts Options,
+	log *slog.Logger,
+	server *Server,
+	cfg *rest.Config,
+	kubeClient kubernetes.Interface,
+) (ctrl.Manager, error) {
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
-	cfg, err := csrApproverRESTConfig(opts.Kubeconfig)
-	if err != nil {
-		return nil, fmt.Errorf("build Kubernetes config for CSR approver: %w", err)
-	}
-	kubeClient, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("create Kubernetes client for CSR approver: %w", err)
-	}
 	bootstrapGroup := effectiveBootstrapGroup(opts)
 	daemonGroup := effectiveDaemonGroup(opts)
 	approver, err := daemoncred.NewCSRApprover(daemoncred.CSRApproverOptions{
@@ -209,7 +220,7 @@ func setupCSRApprover(opts Options, log *slog.Logger, server *Server) (ctrl.Mana
 	return mgr, nil
 }
 
-func csrApproverRESTConfig(kubeconfig string) (*rest.Config, error) {
+func kubernetesRESTConfig(kubeconfig string) (*rest.Config, error) {
 	if strings.TrimSpace(kubeconfig) != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
@@ -218,6 +229,20 @@ func csrApproverRESTConfig(kubeconfig string) (*rest.Config, error) {
 		return nil, fmt.Errorf("create in-cluster config: %w", err)
 	}
 	return cfg, nil
+}
+
+func effectiveMachineConfigMapNamespace(opts Options) string {
+	if opts.MachineConfigMapNamespace != "" {
+		return opts.MachineConfigMapNamespace
+	}
+	return DefaultMachineConfigMapNamespace
+}
+
+func effectiveMachineConfigMapName(opts Options) string {
+	if opts.MachineConfigMapName != "" {
+		return opts.MachineConfigMapName
+	}
+	return DefaultMachineConfigMapName
 }
 
 func effectiveBootstrapGroup(opts Options) string {
@@ -259,34 +284,30 @@ func (s *Server) handleMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.machines == nil {
-		writeError(w, http.StatusServiceUnavailable, "NotReady", "machine client is not configured")
+		writeError(w, http.StatusServiceUnavailable, "NotReady", "machine store is not configured")
 		return
 	}
 
-	resp, err := s.machines.Get(r.Context(), s.resourceGroup, s.clusterName, s.agentPoolName, machineName, nil)
+	machine, err := s.machines.Get(r.Context(), machineName)
 	if err != nil {
-		s.writeARMError(w, err)
+		s.writeMachineError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp.Machine)
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	writeJSON(w, http.StatusOK, machine)
 }
 
-func (s *Server) writeARMError(w http.ResponseWriter, err error) {
-	var responseErr *azcore.ResponseError
-	if errors.As(err, &responseErr) {
-		status := responseErr.StatusCode
-		if status == 0 {
-			status = http.StatusBadGateway
-		}
-		code := responseErr.ErrorCode
-		if code == "" {
-			code = http.StatusText(status)
-		}
-		writeError(w, status, code, responseErr.Error())
+func (s *Server) writeMachineError(w http.ResponseWriter, err error) {
+	var notFound *MachineNotFoundError
+	if errors.As(err, &notFound) {
+		writeError(w, http.StatusNotFound, "NotFound", err.Error())
 		return
 	}
-	s.log.Error("ARM machine request failed", "error", err)
-	writeError(w, http.StatusBadGateway, "UpstreamError", "failed to read AKS machine")
+	s.log.Error("machine config map read failed", "error", err)
+	writeError(w, http.StatusServiceUnavailable, "MachineStoreUnavailable", "failed to read machine data source")
 }
 
 func (s *Server) authorizeBootstrapCSR(
@@ -315,14 +336,15 @@ func (s *Server) authorizeBootstrapCSR(
 
 func (s *Server) machineExists(ctx context.Context, machineName string) (bool, error) {
 	if s.machines == nil {
-		return false, fmt.Errorf("machine client is not configured")
+		return false, fmt.Errorf("machine store is not configured")
 	}
-	_, err := s.machines.Get(ctx, s.resourceGroup, s.clusterName, s.agentPoolName, machineName, nil)
-	if isARMNotFound(err) {
+	_, err := s.machines.Get(ctx, machineName)
+	var notFound *MachineNotFoundError
+	if errors.As(err, &notFound) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("get AKS machine %q: %w", machineName, err)
+		return false, fmt.Errorf("get machine %q: %w", machineName, err)
 	}
 	return true, nil
 }
@@ -365,34 +387,6 @@ func isExpired(raw []byte, now time.Time) bool {
 		return true
 	}
 	return !now.Before(expiresAt)
-}
-
-func isARMNotFound(err error) bool {
-	var responseErr *azcore.ResponseError
-	return errors.As(err, &responseErr) && responseErr.StatusCode == http.StatusNotFound
-}
-
-func parseManagedClusterResourceID(resourceID string) (*arm.ResourceID, error) {
-	resourceID = strings.TrimSpace(resourceID)
-	if resourceID == "" {
-		return nil, fmt.Errorf("cluster resource ID is empty")
-	}
-	parsed, err := arm.ParseResourceID(resourceID)
-	if err != nil {
-		return nil, fmt.Errorf("parse cluster resource ID: %w", err)
-	}
-	if !strings.EqualFold(parsed.ResourceType.Namespace, "Microsoft.ContainerService") || !strings.EqualFold(parsed.ResourceType.Type, "managedClusters") {
-		return nil, fmt.Errorf("cluster resource ID type %q/%q is not Microsoft.ContainerService/managedClusters", parsed.ResourceType.Namespace, parsed.ResourceType.Type)
-	}
-	return parsed, nil
-}
-
-func azureClientOptions(resourceManagerEndpoint string) azcore.ClientOptions {
-	cfg := &config.Config{}
-	if strings.TrimSpace(resourceManagerEndpoint) != "" {
-		cfg.Azure.ResourceManagerEndpointURL = strings.TrimRight(strings.TrimSpace(resourceManagerEndpoint), "/")
-	}
-	return azclient.ClientOptionsFromConfig(cfg)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
