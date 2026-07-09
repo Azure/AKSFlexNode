@@ -144,7 +144,7 @@ The daemon uses two inputs:
 - Desired state from the AKS machine client.
 - Applied state persisted locally by the daemon.
 
-For E2E and dev-test clusters, the in-cluster AKS Flex Controller serves pre-created machine JSON from the `kube-system/aks-flex-machines` ConfigMap through the Kubernetes service proxy. E2E configs use `agent.machineClient.mode: "in-cluster"` so the same daemon path reads machine state from the controller instead of a host-local test file.
+For E2E and dev-test clusters, the in-cluster AKS Flex Controller serves pre-created machine JSON from the `kube-system/aks-flex-machines` ConfigMap through the Kubernetes service proxy. E2E configs set `agent.machineClient.mode: "in-cluster"` and `agent.machineClient.endpointUrl` to the controller service-proxy path so the same daemon path reads machine state from the controller instead of a host-local test file.
 
 The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`.
 

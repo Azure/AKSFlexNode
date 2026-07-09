@@ -32,8 +32,6 @@ const (
 	MachineClientModeARM       = "arm"
 	MachineClientModeInCluster = "in-cluster"
 
-	defaultInClusterMachineEndpointURL = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
-
 	// DefaultResourceManagerEndpointURL is the public Azure Resource Manager
 	// endpoint used when azure.resourceManagerEndpoint is omitted.
 	DefaultResourceManagerEndpointURL = "https://management.azure.com"
@@ -46,13 +44,6 @@ const (
 	// Resource Manager tokens.
 	DefaultResourceManagerTokenScope = DefaultResourceManagerAudience + "/.default"
 )
-
-// DefaultInClusterMachineEndpointURL returns the Kubernetes API service-proxy
-// path used when agent.machineClient.mode is "in-cluster" and endpointUrl is
-// omitted.
-func DefaultInClusterMachineEndpointURL() string {
-	return defaultInClusterMachineEndpointURL
-}
 
 // Config represents the complete agent configuration structure.
 // It contains Azure-specific settings and agent operational settings.
@@ -385,9 +376,6 @@ func (c *Config) setAgentDefaults() {
 	if c.Agent.MachineClient.Mode == "" {
 		c.Agent.MachineClient.Mode = defaultMachineClientMode
 	}
-	if c.Agent.MachineClient.Mode == MachineClientModeInCluster && c.Agent.MachineClient.EndpointURL == "" {
-		c.Agent.MachineClient.EndpointURL = defaultInClusterMachineEndpointURL
-	}
 	if c.Agent.MachineReconcileInterval == 0 {
 		c.Agent.MachineReconcileInterval = JSONDuration(defaultMachineReconcileInterval)
 	}
@@ -678,10 +666,14 @@ func (c MachineClientConfig) validate() error {
 	if c.Mode != "" && !validMachineClientModes[c.Mode] {
 		return fmt.Errorf("invalid agent.machineClient.mode: %s. Valid values are: arm, in-cluster", c.Mode)
 	}
-	if c.EndpointURL == "" {
+	endpointURL := strings.TrimSpace(c.EndpointURL)
+	if c.Mode == MachineClientModeInCluster && endpointURL == "" {
+		return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster mode requires endpointUrl")
+	}
+	if endpointURL == "" {
 		return nil
 	}
-	parsed, err := url.Parse(strings.TrimSpace(c.EndpointURL))
+	parsed, err := url.Parse(endpointURL)
 	if err != nil {
 		return fmt.Errorf("invalid agent.machineClient.endpointUrl: %w", err)
 	}
@@ -695,7 +687,7 @@ func (c MachineClientConfig) validate() error {
 		}
 	case MachineClientModeInCluster:
 		if parsed.Scheme == "" {
-			if !strings.HasPrefix(c.EndpointURL, "/") {
+			if !strings.HasPrefix(endpointURL, "/") {
 				return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster mode requires an absolute URL or absolute Kubernetes API path")
 			}
 			return nil

@@ -120,7 +120,7 @@ check_prerequisites() {
   log_info "Checking prerequisites..."
   local missing=0
 
-  for cmd in az go jq kubectl ssh scp openssl; do
+  for cmd in az docker go jq kubectl python3 ssh scp openssl; do
     if ! command -v "${cmd}" &>/dev/null; then
       log_error "Missing required tool: ${cmd}"
       missing=1

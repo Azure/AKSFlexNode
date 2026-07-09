@@ -62,7 +62,8 @@ node_join_msi() {
     "logLevel": "debug",
     "logDir": "/var/log/aks-flex-node",
     "machineClient": {
-      "mode": "in-cluster"
+      "mode": "in-cluster",
+      "endpointUrl": "${E2E_CONTROLLER_SERVICE_PROXY_PATH}"
     },
     "requireMachineRegistration": true
   },

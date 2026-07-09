@@ -173,10 +173,9 @@ cleanup() {
     return 0
   fi
 
-  local resource_group cluster_name acr_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
+  local resource_group cluster_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
   resource_group="$(state_get resource_group)"
   cluster_name="$(state_get cluster_name)"
-  acr_name="$(state_get acr_name)"
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
@@ -190,24 +189,24 @@ cleanup() {
   fi
 
   # Delete VMs first (faster than waiting for full RG delete)
-  log_info "[1/7] Deleting MSI VM: ${msi_vm_name}..."
+  log_info "[1/6] Deleting MSI VM: ${msi_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${msi_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[2/7] Deleting Token VM: ${token_vm_name}..."
+  log_info "[2/6] Deleting Token VM: ${token_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${token_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[3/7] Deleting Offline VM: ${offline_vm_name}..."
+  log_info "[3/6] Deleting Offline VM: ${offline_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${offline_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[4/7] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
+  log_info "[4/6] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${kubeadm_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
   # Clean up leftover networking resources tied to our deployment
-  log_info "[5/7] Cleaning up networking resources..."
+  log_info "[5/6] Cleaning up networking resources..."
   local run_id="${GITHUB_RUN_ID:-}"
   if [[ -n "${run_id}" ]]; then
     for res_type in networkInterfaces publicIPAddresses networkSecurityGroups disks; do
@@ -219,16 +218,9 @@ cleanup() {
     done
   fi
 
-  log_info "[6/7] Deleting AKS cluster: ${cluster_name}..."
+  log_info "[6/6] Deleting AKS cluster: ${cluster_name}..."
   az aks delete --resource-group "${resource_group}" --name "${cluster_name}" \
     --yes --no-wait 2>/dev/null || true
-
-  if [[ -n "${acr_name}" ]]; then
-    log_info "[7/7] Deleting ACR: ${acr_name}..."
-    az acr delete --resource-group "${resource_group}" --name "${acr_name}" --yes 2>/dev/null || true
-  else
-    log_info "[7/7] No ACR name in state; skipping ACR cleanup"
-  fi
 
   # If we created the VNet/NSG via Bicep, they'll be cleaned up when no
   # resources reference them, or on next deployment.  We don't delete the

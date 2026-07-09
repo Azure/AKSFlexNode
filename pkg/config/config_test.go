@@ -19,6 +19,15 @@ func setTestTargetAgentPoolName(c *Config) {
 	}
 }
 
+func TestMachineClientConfigInClusterRequiresEndpointURL(t *testing.T) {
+	t.Parallel()
+
+	err := (MachineClientConfig{Mode: MachineClientModeInCluster}).validate()
+	if err == nil || !strings.Contains(err.Error(), "in-cluster mode requires endpointUrl") {
+		t.Fatalf("MachineClientConfig.validate() error = %v, want endpointUrl requirement", err)
+	}
+}
+
 func TestSetDefaults(t *testing.T) {
 	tests := []struct {
 		name   string

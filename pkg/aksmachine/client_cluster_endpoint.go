@@ -113,10 +113,11 @@ func newClusterEndpointClient(cfg *config.Config, logger *slog.Logger, restCfg *
 }
 
 func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL, error) {
+	endpointURL = strings.TrimSpace(endpointURL)
 	if endpointURL == "" {
-		endpointURL = config.DefaultInClusterMachineEndpointURL()
+		return nil, fmt.Errorf("in-cluster machine endpoint URL is empty")
 	}
-	parsedEndpoint, err := url.Parse(strings.TrimSpace(endpointURL))
+	parsedEndpoint, err := url.Parse(endpointURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse in-cluster machine endpoint URL: %w", err)
 	}

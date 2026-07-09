@@ -3,7 +3,7 @@
 # hack/e2e/lib/infra.sh - Infrastructure provisioning via Bicep
 #
 # Functions:
-#   infra_deploy   - Deploy AKS cluster, ACR, and Flex Node VMs via Bicep template
+#   infra_deploy   - Deploy AKS cluster and Flex Node VMs via Bicep template
 #   infra_get_kubeconfig - Fetch admin kubeconfig for the AKS cluster
 # =============================================================================
 set -euo pipefail
@@ -107,14 +107,12 @@ infra_deploy() {
     --query properties.outputs \
     -o json)
 
-  local cluster_name cluster_id acr_name acr_login_server msi_vm_name msi_vm_ip msi_vm_principal_id
+  local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_principal_id
   local token_vm_name token_vm_ip token_vm_private_ip offline_vm_name offline_vm_ip offline_vm_private_ip
   local kubeadm_vm_name kubeadm_vm_ip admin_username
 
   cluster_name=$(echo "${outputs}"    | jq -r '.clusterName.value')
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
-  acr_name=$(echo "${outputs}"        | jq -r '.acrName.value')
-  acr_login_server=$(echo "${outputs}" | jq -r '.acrLoginServer.value')
   msi_vm_name=$(echo "${outputs}"     | jq -r '.msiVmName.value')
   msi_vm_ip=$(echo "${outputs}"       | jq -r '.msiVmIp.value')
   msi_vm_principal_id=$(echo "${outputs}" | jq -r '.msiVmPrincipalId.value')
@@ -128,11 +126,6 @@ infra_deploy() {
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
 
-  if [[ -z "${acr_name}" || "${acr_name}" == "null" || -z "${acr_login_server}" || "${acr_login_server}" == "null" ]]; then
-    log_error "Missing ACR outputs from deployment"
-    return 1
-  fi
-
   if [[ -z "${token_vm_private_ip}" ]] || ! is_valid_ipv4 "${token_vm_private_ip}"; then
     log_error "Missing or invalid token VM private IP from deployment outputs: '${token_vm_private_ip}'"
     return 1
@@ -145,8 +138,6 @@ infra_deploy() {
   # Persist to state
   state_set "cluster_name"         "${cluster_name}"
   state_set "cluster_id"           "${cluster_id}"
-  state_set "acr_name"             "${acr_name}"
-  state_set "acr_login_server"     "${acr_login_server}"
   state_set "msi_vm_name"          "${msi_vm_name}"
   state_set "msi_vm_ip"            "${msi_vm_ip}"
   state_set "msi_vm_principal_id"  "${msi_vm_principal_id}"
@@ -166,7 +157,6 @@ infra_deploy() {
   state_set "deployment_name"      "${deployment_name}"
 
   log_info "Cluster:     ${cluster_name} (${cluster_id})"
-  log_info "ACR:         ${acr_login_server}"
   log_info "MSI VM:      ${msi_vm_name} @ ${msi_vm_ip}"
   log_info "Token VM:    ${token_vm_name} @ ${token_vm_ip}"
   log_info "Offline VM:  ${offline_vm_name} @ ${offline_vm_ip}"

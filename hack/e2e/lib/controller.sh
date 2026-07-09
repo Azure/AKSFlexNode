@@ -12,7 +12,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 readonly E2E_CONTROLLER_NAMESPACE="kube-system"
 readonly E2E_CONTROLLER_DEPLOYMENT="aks-flex-controller"
+readonly E2E_CONTROLLER_REGISTRY="aks-flex-controller-registry"
 readonly E2E_MACHINE_CONFIGMAP="aks-flex-machines"
+readonly E2E_CONTROLLER_SERVICE_PROXY_PATH="/api/v1/namespaces/${E2E_CONTROLLER_NAMESPACE}/services/http:${E2E_CONTROLLER_DEPLOYMENT}:80/proxy"
 readonly E2E_CONTROLLER_BASE_IMAGE="ghcr.io/azure/aks-flex-controller"
 
 _sanitize_image_tag() {
@@ -26,40 +28,187 @@ _sanitize_image_tag() {
   echo "${tag}"
 }
 
+_controller_registry_hostport() {
+  echo "${E2E_CONTROLLER_REGISTRY_HOSTPORT:-5000}"
+}
+
+_controller_registry_local_port() {
+  echo "${E2E_CONTROLLER_REGISTRY_LOCAL_PORT:-5001}"
+}
+
+_wait_for_tcp_port() {
+  local port="$1"
+  local elapsed=0
+
+  while [[ "${elapsed}" -lt 60 ]]; do
+    if python3 - "${port}" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.create_connection(("127.0.0.1", port), timeout=1):
+    pass
+PY
+    then
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  return 1
+}
+
+_ensure_local_registry_unlocked() {
+  local host_port registry_image
+  host_port="$(_controller_registry_hostport)"
+  registry_image="${E2E_CONTROLLER_REGISTRY_IMAGE:-registry:2}"
+
+  log_section "Deploying Local Controller Image Registry"
+  log_info "Ensuring registry ${E2E_CONTROLLER_REGISTRY} on node localhost:${host_port}"
+  kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${E2E_CONTROLLER_REGISTRY}
+  namespace: ${E2E_CONTROLLER_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
+    spec:
+      containers:
+        - name: registry
+          image: ${registry_image}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
+              value: /var/lib/registry
+          ports:
+            - name: registry
+              containerPort: 5000
+              hostPort: ${host_port}
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: registry-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${E2E_CONTROLLER_REGISTRY}
+  namespace: ${E2E_CONTROLLER_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
+spec:
+  selector:
+    app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: registry
+EOF
+
+  kubectl -n "${E2E_CONTROLLER_NAMESPACE}" rollout status "deployment/${E2E_CONTROLLER_REGISTRY}" --timeout=300s
+  local registry_node
+  registry_node="$(kubectl -n "${E2E_CONTROLLER_NAMESPACE}" get pod \
+    -l "app.kubernetes.io/name=${E2E_CONTROLLER_REGISTRY}" \
+    -o jsonpath='{.items[0].spec.nodeName}')"
+  if [[ -z "${registry_node}" ]]; then
+    log_error "Failed to resolve local registry node"
+    return 1
+  fi
+  state_set controller_registry_node "${registry_node}"
+  log_success "Local registry is ready on node ${registry_node}"
+}
+
+_start_registry_port_forward() {
+  local -n out_pid="$1"
+  local local_port="$2"
+  local log_file="${E2E_LOG_DIR}/controller-registry-port-forward.log"
+
+  kubectl -n "${E2E_CONTROLLER_NAMESPACE}" port-forward \
+    "service/${E2E_CONTROLLER_REGISTRY}" \
+    "${local_port}:5000" \
+    > "${log_file}" 2>&1 &
+  out_pid=$!
+
+  if ! _wait_for_tcp_port "${local_port}"; then
+    log_error "Timed out waiting for registry port-forward on localhost:${local_port}; see ${log_file}"
+    kill "${out_pid}" 2>/dev/null || true
+    wait "${out_pid}" 2>/dev/null || true
+    return 1
+  fi
+}
+
+_stop_registry_port_forward() {
+  local pid="${1:-}"
+  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+  fi
+}
+
 _build_controller_image() {
   local -n out_image="$1"
 
-  local acr_name acr_login_server
-  acr_name="$(state_get acr_name)"
-  acr_login_server="$(state_get acr_login_server)"
-  if [[ -z "${acr_name}" || -z "${acr_login_server}" ]]; then
-    log_error "ACR outputs are missing from E2E state; run ./hack/e2e/run.sh infra first"
-    return 1
-  fi
+  _ensure_local_registry_unlocked
 
-  local version git_commit build_time tag image
+  local version git_commit build_time tag local_port host_port local_image cluster_image pf_pid
   version="${VERSION:-dev}"
   git_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   tag="$(_sanitize_image_tag "e2e-${GITHUB_RUN_ID:-local}-${E2E_NAME_SUFFIX}-${git_commit}")"
-  image="${acr_login_server}/aks-flex-controller:${tag}"
+  local_port="$(_controller_registry_local_port)"
+  host_port="$(_controller_registry_hostport)"
+  local_image="localhost:${local_port}/aks-flex-controller:${tag}"
+  cluster_image="localhost:${host_port}/aks-flex-controller:${tag}"
 
   log_section "Building AKS Flex Controller Image"
-  log_info "Building and pushing controller image with ACR Tasks: ${image}"
-  (
+  log_info "Building controller image ${local_image} and pushing to in-cluster local registry"
+  pf_pid=""
+  _start_registry_port_forward pf_pid "${local_port}"
+
+  if ! (
     cd "${REPO_ROOT}"
-    az acr build \
-      --registry "${acr_name}" \
-      --image "aks-flex-controller:${tag}" \
-      --file Dockerfile.aks-flex-controller \
+    DOCKER_BUILDKIT=1 docker build \
       --platform linux/amd64 \
+      --file Dockerfile.aks-flex-controller \
       --build-arg "VERSION=${version}" \
       --build-arg "GIT_COMMIT=${git_commit}" \
       --build-arg "BUILD_TIME=${build_time}" \
+      --tag "${local_image}" \
       .
-  )
+    docker push "${local_image}"
+  ); then
+    _stop_registry_port_forward "${pf_pid}"
+    return 1
+  fi
 
-  out_image="${image}"
+  _stop_registry_port_forward "${pf_pid}"
+  docker image rm "${local_image}" >/dev/null 2>&1 || true
+  out_image="${cluster_image}"
 }
 
 _controller_image_from_state_or_env() {
@@ -67,17 +216,7 @@ _controller_image_from_state_or_env() {
     echo "${E2E_CONTROLLER_IMAGE}"
     return 0
   fi
-
-  local image acr_login_server
-  image="$(state_get controller_image)"
-  acr_login_server="$(state_get acr_login_server)"
-  if [[ -n "${image}" && -n "${acr_login_server}" && "${image}" != "${acr_login_server}/"* ]]; then
-    # A new infra deployment creates a new per-run ACR. Ignore stale image state
-    # that points at an older registry so the controller is rebuilt and pushed.
-    echo ""
-    return 0
-  fi
-  echo "${image}"
+  state_get controller_image
 }
 
 _controller_deployment_uses_image() {
@@ -96,13 +235,24 @@ _deploy_controller_image() {
     return 1
   fi
 
-  local image_repo image_tag overlay_dir
+  local image_repo image_tag overlay_dir registry_node node_patch host_port
   image_repo="${image%:*}"
   image_tag="${image##*:}"
   overlay_dir="${E2E_WORK_DIR}/controller-deployment"
   rm -rf "${overlay_dir}"
   mkdir -p "${overlay_dir}/base"
   cp -R "${REPO_ROOT}/hack/controller-deployment/." "${overlay_dir}/base/"
+
+  node_patch=""
+  host_port="$(_controller_registry_hostport)"
+  if [[ "${image}" == "localhost:${host_port}/"* ]]; then
+    registry_node="$(state_get controller_registry_node)"
+    if [[ -z "${registry_node}" ]]; then
+      log_error "Local controller image requires controller_registry_node in E2E state"
+      return 1
+    fi
+    node_patch="            nodeName: ${registry_node}"
+  fi
 
   cat > "${overlay_dir}/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -129,6 +279,7 @@ patches:
       spec:
         template:
           spec:
+${node_patch}
             containers:
               - name: aks-flex-controller
                 args:
@@ -145,7 +296,7 @@ EOF
 }
 
 _controller_healthz() {
-  kubectl get --raw "/api/v1/namespaces/${E2E_CONTROLLER_NAMESPACE}/services/http:${E2E_CONTROLLER_DEPLOYMENT}:80/proxy/healthz" >/dev/null
+  kubectl get --raw "${E2E_CONTROLLER_SERVICE_PROXY_PATH}/healthz" >/dev/null
 }
 
 _wait_for_controller_ready() {
@@ -165,13 +316,14 @@ _ensure_flex_controller_unlocked() {
   local image
   image="$(_controller_image_from_state_or_env)"
 
-  if [[ -z "${image}" ]]; then
-    _build_controller_image image
-    state_set controller_image "${image}"
+  if [[ -n "${E2E_CONTROLLER_IMAGE:-}" ]]; then
+    log_info "Using provided controller image: ${image}"
   else
-    log_info "Using controller image: ${image}"
-    state_set controller_image "${image}"
+    # The local registry is cluster-local and empty after each infra deployment,
+    # so rebuild/push whenever the current controller is not already healthy.
+    _build_controller_image image
   fi
+  state_set controller_image "${image}"
 
   if _controller_deployment_uses_image "${image}"; then
     log_debug "Controller deployment already uses ${image}"

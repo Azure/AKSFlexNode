@@ -105,7 +105,7 @@ func newTestClusterEndpointClient(t *testing.T, host, nodeName string) *clusterE
 			NodeName: nodeName,
 			MachineClient: config.MachineClientConfig{
 				Mode:        config.MachineClientModeInCluster,
-				EndpointURL: config.DefaultInClusterMachineEndpointURL(),
+				EndpointURL: "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy",
 			},
 		},
 	}

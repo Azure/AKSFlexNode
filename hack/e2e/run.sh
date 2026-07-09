@@ -8,7 +8,7 @@
 # Commands:
 #   all           Run the full E2E flow (default): build, infra, controller,
 #                 join, validate, unjoin, validate-absent, rejoin, validate, cleanup
-#   infra         Deploy infrastructure and controller (Bicep: AKS + ACR + 4 VMs)
+#   infra         Deploy infrastructure and controller (Bicep: AKS + 4 VMs)
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
@@ -65,7 +65,7 @@
 #   cp .env.example .env && vim .env
 #   ./hack/e2e/run.sh
 #
-#   # Deploy infra only, then iterate on join/validate
+#   # Deploy infra/controller, then iterate on join/validate
 #   ./hack/e2e/run.sh infra
 #   ./hack/e2e/run.sh join
 #   ./hack/e2e/run.sh validate

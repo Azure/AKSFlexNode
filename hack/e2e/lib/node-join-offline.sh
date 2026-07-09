@@ -180,11 +180,13 @@ node_join_offline() {
 
   jq \
     --arg nodeIP "${vm_private_ip}" \
+    --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg offlineArtifactsSource "${offlineArtifactsSource}" \
     --arg ociImage "${offlineOCIImage}" \
     '.agent.logLevel = "debug"
       | .agent.machineClient.mode = "in-cluster"
+      | .agent.machineClient.endpointUrl = $machineEndpointURL
       | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
       | .components = (.components // {})

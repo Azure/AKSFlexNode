@@ -59,11 +59,13 @@ node_join_token() {
 
   jq \
     --arg nodeIP "${vm_private_ip}" \
+    --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
     --arg runcVersion "${E2E_RUNC_VERSION}" \
     '.agent.logLevel = "debug"
       | .agent.machineClient.mode = "in-cluster"
+      | .agent.machineClient.endpointUrl = $machineEndpointURL
       | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
       | .components = (.components // {})

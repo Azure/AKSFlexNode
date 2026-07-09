@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions an AKS cluster, an Azure Container Registry, the in-cluster AKS Flex Controller, and four Ubuntu VMs in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions an AKS cluster, an in-cluster local registry for the AKS Flex Controller image, and four Ubuntu VMs in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
@@ -9,8 +9,10 @@ The E2E suite provisions an AKS cluster, an Azure Container Registry, the in-clu
 | `az` | Azure CLI, authenticated with `az login`. |
 | `jq` | JSON processing. |
 | `kubectl` | Kubernetes operations. |
+| `python3` | Local registry port readiness checks and helper scripts. |
 | `ssh` / `scp` | VM access and artifact copy. |
 | `openssl` | Bootstrap token generation. |
+| `docker` | Build and push the controller image into the in-cluster local registry. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
 
 ## GitHub Actions Policy
@@ -43,8 +45,8 @@ make e2e
 The default `all` command runs:
 
 1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
-2. Deploy AKS, ACR, and four VMs with Bicep.
-3. Build and push the `aks-flex-controller` image into the per-run ACR, then deploy it in `kube-system`.
+2. Deploy AKS and four VMs with Bicep.
+3. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
 4. Join all four VMs.
 5. Validate node readiness, node-problem-detector status, and run smoke workloads.
 6. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
@@ -59,7 +61,7 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
-| `infra` | Deploy AKS cluster, ACR, four VMs, and the in-cluster controller. |
+| `infra` | Deploy AKS cluster, four VMs, the local registry, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
@@ -101,7 +103,9 @@ Additional environment variables:
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Target AKS agent pool name written to generated node configs. |
-| `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the per-run ACR. |
+| `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the in-cluster local registry. |
+| `E2E_CONTROLLER_REGISTRY_HOSTPORT` | `5000` | Host port exposed by the in-cluster local registry for node-local image pulls. |
+| `E2E_CONTROLLER_REGISTRY_LOCAL_PORT` | `5001` | Runner-local port used for `kubectl port-forward` while pushing the controller image. |
 | `E2E_AKS_NODE_VM_SIZE` | `Standard_B2s` | VM size for the AKS cluster system node pool. |
 | `E2E_VM_SIZE` | `Standard_B2as_v2` | VM size for Flex Node test VMs. |
 | `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
@@ -221,7 +225,7 @@ Logs are collected under `$E2E_WORK_DIR/logs/`.
 
 ## Troubleshooting
 
-- **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `go`, `jq`, `kubectl`, `ssh`, `scp`, and `openssl` are available.
+- **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `docker`, `go`, `jq`, `kubectl`, `python3`, `ssh`, `scp`, and `openssl` are available.
 - **Azure auth failures:** run `az account show` and `az login` if needed.
 - **SSH failures:** inspect `state.json` for VM public IPs and confirm the SSH key configured by `E2E_SSH_KEY_FILE` is available.
 - **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, containerd, and node-problem-detector logs.
