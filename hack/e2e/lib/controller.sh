@@ -66,7 +66,7 @@ _ensure_local_registry_unlocked() {
 
   log_section "Deploying Local Controller Image Registry"
   log_info "Ensuring registry ${E2E_CONTROLLER_REGISTRY} on node localhost:${host_port}"
-  kubectl apply -f - <<EOF
+  kubectl apply -f - <<EOF || return 1
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -130,11 +130,11 @@ spec:
       targetPort: registry
 EOF
 
-  kubectl -n "${E2E_CONTROLLER_NAMESPACE}" rollout status "deployment/${E2E_CONTROLLER_REGISTRY}" --timeout=300s
+  kubectl -n "${E2E_CONTROLLER_NAMESPACE}" rollout status "deployment/${E2E_CONTROLLER_REGISTRY}" --timeout=300s || return 1
   local registry_node
   registry_node="$(kubectl -n "${E2E_CONTROLLER_NAMESPACE}" get pod \
     -l "app.kubernetes.io/name=${E2E_CONTROLLER_REGISTRY}" \
-    -o jsonpath='{.items[0].spec.nodeName}')"
+    -o jsonpath='{.items[0].spec.nodeName}')" || return 1
   if [[ -z "${registry_node}" ]]; then
     log_error "Failed to resolve local registry node"
     return 1
@@ -173,7 +173,7 @@ _stop_registry_port_forward() {
 _build_controller_image() {
   local -n out_image="$1"
 
-  _ensure_local_registry_unlocked
+  _ensure_local_registry_unlocked || return 1
 
   local version git_commit build_time tag local_port host_port local_image cluster_image pf_pid
   version="${VERSION:-dev}"
@@ -182,13 +182,13 @@ _build_controller_image() {
   tag="$(_sanitize_image_tag "e2e-${GITHUB_RUN_ID:-local}-${E2E_NAME_SUFFIX}-${git_commit}")"
   local_port="$(_controller_registry_local_port)"
   host_port="$(_controller_registry_hostport)"
-  local_image="localhost:${local_port}/aks-flex-controller:${tag}"
+  local_image="127.0.0.1:${local_port}/aks-flex-controller:${tag}"
   cluster_image="localhost:${host_port}/aks-flex-controller:${tag}"
 
   log_section "Building AKS Flex Controller Image"
   log_info "Building controller image ${local_image} and pushing to in-cluster local registry"
   pf_pid=""
-  _start_registry_port_forward pf_pid "${local_port}"
+  _start_registry_port_forward pf_pid "${local_port}" || return 1
 
   if ! (
     cd "${REPO_ROOT}"
@@ -291,7 +291,7 @@ EOF
 
   log_section "Deploying AKS Flex Controller"
   log_info "Applying controller manifests with image ${image}"
-  kubectl apply -k "${overlay_dir}"
+  kubectl apply -k "${overlay_dir}" || return 1
   _wait_for_controller_ready
 }
 
@@ -300,15 +300,15 @@ _controller_healthz() {
 }
 
 _wait_for_controller_ready() {
-  kubectl -n "${E2E_CONTROLLER_NAMESPACE}" rollout status "deployment/${E2E_CONTROLLER_DEPLOYMENT}" --timeout=300s
+  kubectl -n "${E2E_CONTROLLER_NAMESPACE}" rollout status "deployment/${E2E_CONTROLLER_DEPLOYMENT}" --timeout=300s || return 1
   kubectl -n "${E2E_CONTROLLER_NAMESPACE}" wait \
     --for=condition=Ready \
     "pod" \
     -l "app.kubernetes.io/name=${E2E_CONTROLLER_DEPLOYMENT}" \
-    --timeout=300s
+    --timeout=300s || return 1
 
   log_info "Checking controller service-proxy health endpoint"
-  _controller_healthz
+  _controller_healthz || return 1
   log_success "AKS Flex Controller is ready"
 }
 
@@ -321,7 +321,7 @@ _ensure_flex_controller_unlocked() {
   else
     # The local registry is cluster-local and empty after each infra deployment,
     # so rebuild/push whenever the current controller is not already healthy.
-    _build_controller_image image
+    _build_controller_image image || return 1
   fi
   state_set controller_image "${image}"
 
