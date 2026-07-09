@@ -11,7 +11,7 @@ readonly _E2E_NODE_JOIN_OFFLINE_LOADED=1
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-readonly offlineArtifactsSource='oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:e2e-k8s-{{ .KubernetesVersion }}'
+readonly offlineArtifactsSource='oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}'
 readonly offlineOCIImage='ghcr.io/azure/agent-ubuntu2404:v20260619'
 readonly offlineContainerdVersion='2.1.8'
 readonly offlineRuncVersion='1.5.0'
@@ -82,7 +82,7 @@ _prepare_remote_offline_registry() {
   local vm_ip="$1"
   local kube_version_v="$2"
   local tarball="$3"
-  local remote_ref="127.0.0.1:5000/aks-flex/bootstrap-artifacts:e2e-k8s-${kube_version_v}"
+  local remote_ref="127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-${kube_version_v}"
 
   log_info "Uploading offline bootstrap artifacts to ${vm_ip}..."
   remote_copy "${tarball}" "${vm_ip}" "/tmp/offline-bootstrap-artifacts.tar.gz"

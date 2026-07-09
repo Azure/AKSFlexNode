@@ -34,7 +34,7 @@ This lab uses these example artifact versions:
 KUBERNETES_VERSION="1.35.0"
 KUBERNETES_VERSION_V="v${KUBERNETES_VERSION#v}"
 ROOTFS_IMAGE_UPSTREAM="ghcr.io/azure/agent-ubuntu2404:v20260619"
-ARTIFACT_TAG="alpha-0cd4fe2-k8s-${KUBERNETES_VERSION_V}"
+ARTIFACT_TAG="v20260708-k8s-${KUBERNETES_VERSION_V}"
 ARTIFACT_BUNDLE_UPSTREAM="ghcr.io/azure/unbounded/bootstrap-artifacts:${ARTIFACT_TAG}"
 ```
 
@@ -228,7 +228,7 @@ On your workstation:
 
 ```bash
 ROOTFS_IMAGE_LOCAL="127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619"
-ARTIFACTS_SOURCE="oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:alpha-0cd4fe2-k8s-{{ .KubernetesVersion }}"
+ARTIFACTS_SOURCE="oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}"
 
 jq \
   --arg kubernetesVersion "$KUBERNETES_VERSION" \
@@ -252,7 +252,7 @@ The relevant fields in the rendered config should look like this:
   "bootstrap": {
     "ociImage": "127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619",
     "offlineArtifacts": {
-      "source": "oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:alpha-0cd4fe2-k8s-{{ .KubernetesVersion }}"
+      "source": "oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}"
     }
   }
 }
@@ -419,7 +419,7 @@ Expected evidence for local registry mode includes URLs like:
 
 ```text
 pulling OCI image image=127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619
-downloading kubernetes binary url=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:alpha-0cd4fe2-k8s-v1.35.0#kubernetes/v1.35.0/bin/linux/amd64/kubelet
+downloading kubernetes binary url=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-v1.35.0#kubernetes/v1.35.0/bin/linux/amd64/kubelet
 ```
 
 Expected evidence for filesystem mode includes log lines and URLs like:
