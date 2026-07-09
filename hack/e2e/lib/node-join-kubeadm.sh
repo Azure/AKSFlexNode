@@ -14,8 +14,9 @@ set -euo pipefail
 readonly _E2E_NODE_JOIN_KUBEADM_LOADED=1
 
 # Kubeadm-style bootstrap tokens must carry kubeadm's default bootstrap group.
-# AKS Flex Node also uses system:bootstrappers:aks-flex-node for E2E CSR
-# authorization, so this flow grants and emits both groups.
+# AKS Flex Node also uses system:bootstrappers:aks-flex-node for controller
+# machine endpoint access and daemon CSR authorization, so this flow grants and
+# emits both groups.
 readonly kubeadmBootstrapGroup="system:bootstrappers:kubeadm:default-node-token"
 
 # shellcheck disable=SC1091
@@ -259,8 +260,6 @@ kind: Secret
 metadata:
   name: bootstrap-token-${token_id}
   namespace: kube-system
-  labels:
-    aks-flex-node/e2e-daemon-csr: "true"
 type: bootstrap.kubernetes.io/token
 stringData:
   description: "AKS Flex Node E2E kubeadm bootstrap token"
@@ -300,7 +299,7 @@ node_join_kubeadm() {
 
   # Step 1: Ensure RBAC / ConfigMaps and create a bootstrap token
   with_cluster_lock _kubeadm_ensure_rbac "${server_url}" "${ca_cert_data}"
-  ensure_daemon_csr_approver
+  ensure_flex_controller
 
   log_info "Creating bootstrap token..."
   local bootstrap_token
@@ -338,8 +337,9 @@ node_join_kubeadm() {
     "logLevel": "debug",
     "logDir": "/var/log/aks-flex-node",
     "machineClient": {
-      "mode": "e2e"
-    }
+      "mode": "in-cluster"
+    },
+    "requireMachineRegistration": true
   },
   "components": {
     "kubernetes": "${E2E_KUBERNETES_VERSION}",
@@ -349,7 +349,8 @@ node_join_kubeadm() {
 }
 EOF
 
-  # Step 3: Deploy and start the agent
+  # Step 3: Publish the AKS Machine goal and deploy the agent.
+  machine_configmap_upsert "$(state_get kubeadm_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-kubeadm"
 
   log_success "Kubeadm node joined in $(timer_elapsed "${start}")s"

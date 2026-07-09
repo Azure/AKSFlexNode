@@ -23,6 +23,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "hack/e2e/**"
+      - "hack/controller-deployment/**"
+      - "Dockerfile.aks-flex-controller"
       - "scripts/aks-flex-config"
       - "scripts/install.sh"
       - ".github/workflows/e2e-tests.yml"
@@ -36,6 +38,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "hack/e2e/**"
+      - "hack/controller-deployment/**"
+      - "Dockerfile.aks-flex-controller"
       - "scripts/aks-flex-config"
       - "scripts/install.sh"
       - ".github/workflows/e2e-tests.yml"
@@ -64,7 +68,7 @@ jobs:
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: e2e-testing
 
     steps:

@@ -6,9 +6,9 @@
 #   ./hack/e2e/run.sh [command] [options]
 #
 # Commands:
-#   all           Run the full E2E flow (default): build, infra, join, validate,
-#                 unjoin, validate-absent, rejoin, validate, cleanup
-#   infra         Deploy infrastructure only (Bicep: AKS + 4 VMs)
+#   all           Run the full E2E flow (default): build, infra, controller,
+#                 join, validate, unjoin, validate-absent, rejoin, validate, cleanup
+#   infra         Deploy infrastructure and controller (Bicep: AKS + ACR + 4 VMs)
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
@@ -22,7 +22,7 @@
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
-#   upgrade-drift Run MSI-node Kubernetes version drift repave test
+#   upgrade-drift Run controller-machine Kubernetes version drift repave test
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
 #   runner-cleanup Reclaim local disk on the self-hosted runner
@@ -42,6 +42,7 @@
 #   E2E_RESOURCE_GROUP      Azure resource group for test resources
 #   E2E_LOCATION            Azure region (e.g. westus2)
 #   E2E_BINARY              Path to pre-built aks-flex-node binary
+#   E2E_CONTROLLER_IMAGE    Optional pre-built aks-flex-controller image
 #   E2E_NAME_SUFFIX         Unique suffix for resource names
 #   E2E_SKIP_CLEANUP        Set to 1 to keep resources after tests
 #   E2E_SKIP_RUNNER_CLEANUP Set to 1 to keep local runner artifacts after tests
@@ -90,6 +91,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/infra.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/controller.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/node-join.sh"
 # shellcheck disable=SC1091
@@ -161,8 +164,9 @@ cmd_all() {
     log_info "Skipping build, using: ${E2E_BINARY}"
   fi
 
-  # Infrastructure
+  # Infrastructure and in-cluster machine endpoint
   infra_deploy
+  ensure_flex_controller
 
   # ── First join ──────────────────────────────────────────────────────
   node_join_all
@@ -245,25 +249,31 @@ main() {
         ensure_binary
       fi
       infra_deploy
+      ensure_flex_controller
       ;;
     join)
       ensure_binary
+      ensure_flex_controller
       node_join_all
       ;;
     join-msi)
       ensure_binary
+      ensure_flex_controller
       node_join_msi
       ;;
     join-token)
       ensure_binary
+      ensure_flex_controller
       node_join_token
       ;;
     join-offline)
       ensure_binary
+      ensure_flex_controller
       node_join_offline
       ;;
     join-kubeadm)
       ensure_binary
+      ensure_flex_controller
       node_join_kubeadm
       ;;
     unjoin)
@@ -293,6 +303,7 @@ main() {
       ;;
     upgrade-drift)
       ensure_binary
+      ensure_flex_controller
       upgrade_drift_all
       ;;
     logs)

@@ -12,11 +12,6 @@ build:
 	@echo "Building for current platform..."
 	@go build -ldflags "$(LDFLAGS)" -o aks-flex-node ./cmd/aks-flex-node
 
-.PHONY: build-e2ehelper
-build-e2ehelper:
-	@echo "Building E2E helper for current platform..."
-	@go build -o e2ehelper ./cmd/e2ehelper
-
 .PHONY: build-controller
 build-controller:
 	@echo "Building AKS Flex controller for current platform..."
@@ -60,8 +55,6 @@ package-all: package-linux-amd64 package-linux-arm64
 test:
 	@echo "Running tests..."
 	@go test -v ./...
-	@echo "Running local_e2e build-tag tests..."
-	@go test -v -tags local_e2e ./pkg/aksmachine ./pkg/cmd/daemon
 
 .PHONY: test-coverage
 test-coverage:
@@ -128,7 +121,7 @@ e2e: ## Run E2E tests (requires E2E_RESOURCE_GROUP and E2E_LOCATION)
 	@hack/e2e/run.sh all
 
 .PHONY: e2e-infra
-e2e-infra: ## Deploy E2E infrastructure only
+e2e-infra: ## Deploy E2E infrastructure and controller
 	@hack/e2e/run.sh infra
 
 .PHONY: e2e-cleanup
@@ -159,7 +152,6 @@ help:
 	@echo ""
 	@echo "Build Targets:"
 	@echo "  build              Build for current platform"
-	@echo "  build-e2ehelper    Build E2E helper for current platform"
 	@echo "  build-controller   Build AKS Flex controller for current platform"
 	@echo "  build-linux-amd64  Build for Linux AMD64"
 	@echo "  build-linux-arm64  Build for Linux ARM64"
@@ -184,7 +176,7 @@ help:
 	@echo ""
 	@echo "E2E Targets:"
 	@echo "  e2e                Run full E2E test suite"
-	@echo "  e2e-infra          Deploy E2E infrastructure only"
+	@echo "  e2e-infra          Deploy E2E infrastructure and controller"
 	@echo "  e2e-cleanup        Clean up E2E test resources"
 	@echo ""
 	@echo "Other Targets:"

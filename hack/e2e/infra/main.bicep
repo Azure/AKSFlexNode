@@ -3,6 +3,7 @@
 //
 // Deploys:
 //   - AKS cluster (1-node control plane)
+//   - Azure Container Registry for the per-run controller image
 //   - VM with system-assigned managed identity  (MSI auth mode)
 //   - VM without managed identity               (bootstrap token auth mode)
 //   - VM without managed identity               (offline bootstrap artifacts mode)
@@ -44,6 +45,7 @@ var offlineVmName = 'vm-e2e-offline-${nameSuffix}'
 var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
 var vnetName      = 'vnet-e2e-${nameSuffix}'
 var nsgName       = 'nsg-e2e-${nameSuffix}'
+var acrName       = 'acre2e${uniqueString(resourceGroup().id, nameSuffix)}'
 
 var subnetAksName = 'snet-aks'
 var subnetVmName  = 'snet-vm'
@@ -141,6 +143,21 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
 }
 
 // ---------------------------------------------------------------------------
+// Azure Container Registry for the per-run controller image
+// ---------------------------------------------------------------------------
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: acrName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Flex-node VMs (via reusable module)
 // ---------------------------------------------------------------------------
 module vmMsi 'modules/vm.bicep' = {
@@ -202,6 +219,19 @@ module vmKubeadm 'modules/vm.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Role assignments: grant the AKS kubelet identity pull access to the E2E ACR
+// ---------------------------------------------------------------------------
+resource roleAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, aksCluster.name, 'acr-pull')
+  scope: containerRegistry
+  properties: {
+    principalId: aksCluster.properties.identityProfile.kubeletidentity.objectId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Role assignments: grant MSI VM permissions on the AKS cluster
 // ---------------------------------------------------------------------------
 // Azure Kubernetes Service Cluster Admin Role
@@ -232,6 +262,8 @@ resource roleRbacAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 output clusterName string = aksCluster.name
 output clusterId string = aksCluster.id
 output clusterFqdn string = aksCluster.properties.fqdn
+output acrName string = containerRegistry.name
+output acrLoginServer string = containerRegistry.properties.loginServer
 
 output msiVmName string = vmMsi.outputs.vmName
 output msiVmIp string = vmMsi.outputs.publicIpAddress

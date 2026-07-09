@@ -8,4 +8,4 @@ resources:
   - service.yaml
 images:
   - name: ghcr.io/azure/aks-flex-controller
-    newTag: controller-hbc-proxy-65aa5b2
+    newTag: latest

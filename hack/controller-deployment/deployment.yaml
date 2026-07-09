@@ -16,7 +16,7 @@ spec:
       serviceAccountName: aks-flex-controller
       containers:
         - name: aks-flex-controller
-          image: ghcr.io/azure/aks-flex-controller:controller-hbc-proxy-65aa5b2
+          image: ghcr.io/azure/aks-flex-controller:latest
           imagePullPolicy: Always
           args:
             - --listen-address=:8080

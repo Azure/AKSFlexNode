@@ -90,7 +90,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `agent.logLevel` | string | Agent log verbosity. | `info` |
 | `agent.logDir` | string | Host directory for agent logs. | `/var/log/aks-flex-node` |
 | `agent.nodeName` | string | Optional Kubernetes node name override. Defaults to the host hostname. | `edge-node-01` |
-| `agent.machineClient.mode` | string | Machine source. Use `arm` for direct ARM reads, `in-cluster` for the in-cluster read-only endpoint via Kubernetes service proxy, or `e2e` for local file-backed E2E tests. | `in-cluster` |
+| `agent.machineClient.mode` | string | Machine source. Use `arm` for direct ARM reads or `in-cluster` for the in-cluster read-only endpoint via Kubernetes service proxy. | `in-cluster` |
 | `agent.machineClient.endpointUrl` | string | Optional backend endpoint. In `arm` mode this is a dev-test ARM proxy URL. In `in-cluster` mode this is the Kubernetes API service-proxy path or absolute URL. | `/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy` |
 | `agent.machineReconcileInterval` | duration string | Daemon interval for re-reading machine state. Uses Go duration syntax. | `10m` |
 | `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `false` |

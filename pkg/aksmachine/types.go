@@ -95,8 +95,8 @@ type Machine struct {
 
 // MachineClient provides access to the AKS-side machine representation.
 // Production should use the official Azure SDK implementation once the public
-// SDK contains the finalized resource shape; e2e tests can provide a local or
-// remote implementation of this interface.
+// SDK contains the finalized resource shape; tests can provide fake or remote
+// implementations of this interface.
 type MachineClient interface {
 	Create(ctx context.Context, desired GoalState) (*Machine, error)
 	Get(ctx context.Context) (*Machine, error)

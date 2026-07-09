@@ -19,6 +19,8 @@ readonly _E2E_NODE_JOIN_LOADED=1
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/controller.sh"
 
 # ---------------------------------------------------------------------------
 # Internal: upload binary & config, start agent on a VM
@@ -45,16 +47,6 @@ sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
 aks-flex-node version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
-sudo mkdir -p /run/aks-flex-node
-sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
-{
-  "id": "local-test-machine",
-  "goal": {
-    "kubernetesVersion": "${E2E_KUBERNETES_VERSION}",
-    "settingsVersion": "${E2E_KUBERNETES_VERSION}"
-  }
-}
-EOF
 
 if command -v apt-get >/dev/null 2>&1; then
   echo "Installing host packages required by preflight..."
@@ -167,17 +159,14 @@ REMOTE
 }
 
 # ---------------------------------------------------------------------------
-# Internal: simulate AKS RP machine deletion for a joined local_e2e node.
+# Internal: simulate AKS RP machine deletion for a joined node.
 # ---------------------------------------------------------------------------
 _rp_delete_unjoin_node() {
   local vm_ip="$1"
   local vm_name="$2"
 
-  log_info "Deleting local Machine resource on ${vm_ip}..."
-  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
-set -euo pipefail
-sudo rm -f /run/aks-flex-node/e2e-machine.json
-REMOTE
+  log_info "Deleting Machine resource for ${vm_name} from the in-cluster controller source..."
+  machine_configmap_delete "${vm_name}"
 
   log_info "Tainting node '${vm_name}' with RP deletion signal..."
   if kubectl get node "${vm_name}" &>/dev/null; then
@@ -300,11 +289,6 @@ while systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -
   sleep 5
 done
 
-if [[ -e /run/aks-flex-node/e2e-machine.json ]]; then
-  echo "local Machine file still exists after delete"
-  exit 1
-fi
-
 for machine in kube1 kube2; do
   if machinectl show "${machine}" &>/dev/null; then
     echo "nspawn machine ${machine} still exists after delete"
@@ -350,7 +334,7 @@ node_join_all() {
   local msi_pid token_pid offline_pid kubeadm_pid
   local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0
 
-  ensure_daemon_csr_approver
+  ensure_flex_controller
 
   node_join_msi &
   msi_pid=$!

@@ -166,7 +166,7 @@ node_join_offline() {
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}"
 
-  ensure_daemon_csr_approver
+  ensure_flex_controller
 
   log_info "Generating offline artifacts config..."
   local config_file="${E2E_WORK_DIR}/config-offline.json"
@@ -184,7 +184,8 @@ node_join_offline() {
     --arg offlineArtifactsSource "${offlineArtifactsSource}" \
     --arg ociImage "${offlineOCIImage}" \
     '.agent.logLevel = "debug"
-      | .agent.machineClient.mode = "e2e"
+      | .agent.machineClient.mode = "in-cluster"
+      | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
       | .components = (.components // {})
       | .components.kubernetes = $kubernetesVersion
@@ -205,6 +206,7 @@ node_join_offline() {
   log_info "Offline node OCI image: ${offlineOCIImage}"
   log_info "Offline node NPD disabled while offline artifacts are configured"
 
+  machine_configmap_upsert "$(state_get offline_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-offline"
 
   log_success "Offline artifacts node joined in $(timer_elapsed "${start}")s"

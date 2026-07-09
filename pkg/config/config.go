@@ -31,7 +31,6 @@ const (
 	// Machine client modes.
 	MachineClientModeARM       = "arm"
 	MachineClientModeInCluster = "in-cluster"
-	MachineClientModeE2E       = "e2e"
 
 	defaultInClusterMachineEndpointURL = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
 
@@ -172,13 +171,12 @@ type AgentConfig struct {
 
 // MachineClientConfig configures the machine resource backend.
 type MachineClientConfig struct {
-	// Mode selects the machine backend: "arm", "in-cluster", or "e2e".
+	// Mode selects the machine backend: "arm" or "in-cluster".
 	Mode string `json:"mode,omitempty"`
 
 	// EndpointURL optionally points at the selected backend. In arm mode it is a
 	// dev-test ARM proxy URL. In in-cluster mode it is the Kubernetes API service
-	// proxy path or absolute URL for the read-only machine endpoint. E2E mode uses
-	// the built-in local file path unless a future test backend consumes this.
+	// proxy path or absolute URL for the read-only machine endpoint.
 	EndpointURL string `json:"endpointUrl,omitempty"`
 }
 
@@ -669,7 +667,6 @@ func (c *AgentConfig) validate() error {
 var validMachineClientModes = map[string]bool{
 	MachineClientModeARM:       true,
 	MachineClientModeInCluster: true,
-	MachineClientModeE2E:       true,
 }
 
 var validMachineOperationModes = map[string]bool{
@@ -679,7 +676,7 @@ var validMachineOperationModes = map[string]bool{
 
 func (c MachineClientConfig) validate() error {
 	if c.Mode != "" && !validMachineClientModes[c.Mode] {
-		return fmt.Errorf("invalid agent.machineClient.mode: %s. Valid values are: arm, in-cluster, e2e", c.Mode)
+		return fmt.Errorf("invalid agent.machineClient.mode: %s. Valid values are: arm, in-cluster", c.Mode)
 	}
 	if c.EndpointURL == "" {
 		return nil
@@ -709,8 +706,6 @@ func (c MachineClientConfig) validate() error {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return fmt.Errorf("invalid agent.machineClient.endpointUrl: scheme must be http or https")
 		}
-	case MachineClientModeE2E:
-		return fmt.Errorf("invalid agent.machineClient.endpointUrl: e2e mode does not support endpointUrl")
 	}
 	return nil
 }

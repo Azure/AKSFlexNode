@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions an AKS cluster and three Ubuntu VMs in Azure, joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions an AKS cluster, an Azure Container Registry, the in-cluster AKS Flex Controller, and four Ubuntu VMs in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the prote
 
 Automatic E2E runs are allowed for:
 
-- pushes to `main` that touch Go files, `go.mod` / `go.sum`, E2E files, or E2E helper scripts;
+- pushes to `main` that touch Go files, `go.mod` / `go.sum`, E2E files, controller deployment files, the controller Dockerfile, or install/config scripts;
 - same-repository pull requests targeting `main` with those same path changes.
 
 Fork pull requests are skipped by the workflow job condition. This prevents unreviewed fork code from receiving Azure OIDC access. To run full E2E for a trusted fork contribution, a maintainer should first review the change and then either:
@@ -43,13 +43,14 @@ make e2e
 The default `all` command runs:
 
 1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
-2. Deploy AKS and three VMs with Bicep.
-3. Join all three VMs.
-4. Validate node readiness, node-problem-detector status, and run smoke workloads.
-5. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
-6. Rejoin all Flex Nodes and validate again.
-7. Run local-machine-driven repave validation.
-8. Collect logs and clean up Azure resources.
+2. Deploy AKS, ACR, and four VMs with Bicep.
+3. Build and push the `aks-flex-controller` image into the per-run ACR, then deploy it in `kube-system`.
+4. Join all four VMs.
+5. Validate node readiness, node-problem-detector status, and run smoke workloads.
+6. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
+7. Rejoin all Flex Nodes and validate again.
+8. Run controller-machine-driven repave validation.
+9. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -58,7 +59,7 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
-| `infra` | Deploy AKS cluster and four VMs via Bicep. |
+| `infra` | Deploy AKS cluster, ACR, four VMs, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
@@ -72,7 +73,7 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
-| `upgrade-drift` | Validate local-machine-driven repave to the alternate nspawn side. |
+| `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
 | `status` | Print the current E2E state file. |
@@ -100,6 +101,7 @@ Additional environment variables:
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Target AKS agent pool name written to generated node configs. |
+| `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the per-run ACR. |
 | `E2E_AKS_NODE_VM_SIZE` | `Standard_B2s` | VM size for the AKS cluster system node pool. |
 | `E2E_VM_SIZE` | `Standard_B2as_v2` | VM size for Flex Node test VMs. |
 | `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
@@ -129,10 +131,10 @@ Each join path uploads the locally built binary, renders a config file, installs
 
 ## Repave Validation
 
-The `upgrade-drift` command validates the local-machine-driven repave path:
+The `upgrade-drift` command validates the controller-machine-driven repave path:
 
 1. Ensure the selected mode is joined.
-2. Update the local machine goal on the VM.
+2. Update the machine goal in the controller's `kube-system/aks-flex-machines` ConfigMap.
 3. Delete the Kubernetes `Node` object to trigger repave.
 4. Wait for the active nspawn side to report the desired kubelet version.
 5. Wait for the Kubernetes `Node` to become `Ready` again.
@@ -179,7 +181,7 @@ Keep resources for debugging:
 
 ```bash
 make e2e          # Full E2E run.
-make e2e-infra    # Deploy infrastructure only.
+make e2e-infra    # Deploy infrastructure and controller.
 make e2e-cleanup  # Clean up E2E resources.
 ```
 
@@ -193,11 +195,13 @@ hack/e2e/
   lib/
     common.sh             Logging, prerequisites, config, state, and SSH helpers.
     infra.sh              Bicep deployment, outputs, and kubeconfig setup.
+    controller.sh         Controller image build/deploy and ConfigMap-backed machine goals.
     node-join.sh          Shared join/unjoin orchestration and remote install helper.
     node-join-msi.sh      Managed identity join/unjoin.
     node-join-token.sh    Bootstrap token join/unjoin.
+    node-join-offline.sh  Offline artifacts join/unjoin.
     node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.
-    upgrade-drift.sh      Local machine goal repave validation.
+    upgrade-drift.sh      Controller machine goal repave validation.
     validate.sh           Node readiness and smoke tests.
     cleanup.sh            Log collection and Azure resource cleanup.
 ```
@@ -217,7 +221,7 @@ Logs are collected under `$E2E_WORK_DIR/logs/`.
 
 ## Troubleshooting
 
-- **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `jq`, `kubectl`, `ssh`, `scp`, and `openssl` are available.
+- **Missing prerequisites:** run `./hack/e2e/run.sh --help` and confirm `az`, `go`, `jq`, `kubectl`, `ssh`, `scp`, and `openssl` are available.
 - **Azure auth failures:** run `az account show` and `az login` if needed.
 - **SSH failures:** inspect `state.json` for VM public IPs and confirm the SSH key configured by `E2E_SSH_KEY_FILE` is available.
 - **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, containerd, and node-problem-detector logs.
