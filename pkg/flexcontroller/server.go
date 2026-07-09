@@ -152,7 +152,7 @@ func NewConfigMapMachineStore(kubeClient kubernetes.Interface, namespace, name s
 
 func (s *configMapMachineStore) Get(ctx context.Context, machineName string) (json.RawMessage, error) {
 	if s.kubeClient == nil {
-		return nil, fmt.Errorf("Kubernetes client is nil")
+		return nil, fmt.Errorf("kubernetes client is nil")
 	}
 	configMap, err := s.kubeClient.CoreV1().ConfigMaps(s.namespace).Get(ctx, s.name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -273,22 +273,42 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleMachine(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "only GET is supported")
-		return
-	}
-	machineName := strings.TrimPrefix(r.URL.Path, "/machines/")
-	machineName = strings.Trim(machineName, "/")
-	if machineName == "" || strings.Contains(machineName, "/") {
+	machineName, subresource, ok := parseMachinePath(r.URL.Path)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "InvalidMachineName", "machine name must be a single path segment")
 		return
 	}
-	if s.machines == nil {
-		writeError(w, http.StatusServiceUnavailable, "NotReady", "machine store is not configured")
+
+	if subresource == "status" {
+		s.handleMachineStatusMutation(w, r, machineName)
 		return
 	}
 
-	machine, err := s.machines.Get(r.Context(), machineName)
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		s.handleMachineRead(w, r, machineName)
+	case http.MethodPut, http.MethodPost:
+		s.handleMachineMutation(w, r, machineName)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "only GET, HEAD, PUT, and POST are supported")
+	}
+}
+
+func parseMachinePath(requestPath string) (machineName string, subresource string, ok bool) {
+	machinePath := strings.TrimPrefix(requestPath, "/machines/")
+	machinePath = strings.Trim(machinePath, "/")
+	parts := strings.Split(machinePath, "/")
+	if len(parts) == 1 && parts[0] != "" {
+		return parts[0], "", true
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "status" {
+		return parts[0], parts[1], true
+	}
+	return "", "", false
+}
+
+func (s *Server) handleMachineRead(w http.ResponseWriter, r *http.Request, machineName string) {
+	machine, err := s.machineJSON(r.Context(), machineName)
 	if err != nil {
 		s.writeMachineError(w, err)
 		return
@@ -298,6 +318,35 @@ func (s *Server) handleMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, machine)
+}
+
+func (s *Server) handleMachineMutation(w http.ResponseWriter, r *http.Request, machineName string) {
+	machine, err := s.machineJSON(r.Context(), machineName)
+	if err != nil {
+		s.writeMachineError(w, err)
+		return
+	}
+	s.log.Debug("ignoring read-only machine mutation", "method", r.Method, "machine", machineName)
+	writeJSON(w, http.StatusOK, machine)
+}
+
+func (s *Server) handleMachineStatusMutation(w http.ResponseWriter, r *http.Request, machineName string) {
+	if r.Method != http.MethodPatch {
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "only PATCH is supported for machine status")
+		return
+	}
+	// The controller is backed by a read-only test/dev data source. Accepting and
+	// ignoring status updates lets agents exercise the production mutation path
+	// without granting this endpoint write access to the data source.
+	s.log.Debug("ignoring read-only machine status mutation", "machine", machineName)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) machineJSON(ctx context.Context, machineName string) (json.RawMessage, error) {
+	if s.machines == nil {
+		return nil, fmt.Errorf("machine store is not configured")
+	}
+	return s.machines.Get(ctx, machineName)
 }
 
 func (s *Server) writeMachineError(w http.ResponseWriter, err error) {

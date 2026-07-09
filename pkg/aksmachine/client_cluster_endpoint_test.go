@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -79,6 +80,38 @@ func TestClusterEndpointClientNotFound(t *testing.T) {
 	}
 }
 
+func TestClusterEndpointCreateSendsMutation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, fmt.Sprintf("method = %q, want PUT", r.Method), http.StatusInternalServerError)
+			return
+		}
+		if got, want := r.URL.Path, "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy/machines/node1"; got != want {
+			http.Error(w, fmt.Sprintf("path = %q, want %q", got, want), http.StatusInternalServerError)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !strings.Contains(string(body), `"kubernetesVersion":"1.34.0"`) {
+			http.Error(w, fmt.Sprintf("body = %s, want desired version", body), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"properties":{"settings":{"kubernetesVersion":"1.34.0","settingsVersion":"42"}}}`)
+	}))
+	defer server.Close()
+
+	client := newTestClusterEndpointClient(t, server.URL, "node1")
+	if _, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+}
+
 func TestClusterEndpointCreateVerifiesPrecreatedMachine(t *testing.T) {
 	t.Parallel()
 
@@ -89,12 +122,40 @@ func TestClusterEndpointCreateVerifiesPrecreatedMachine(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClusterEndpointClient(t, server.URL, "node1")
-	if _, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}); err != nil {
-		t.Fatalf("Create() error = %v", err)
-	}
 	_, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.35.0", SettingsVersion: "42"})
 	if err == nil || !strings.Contains(err.Error(), "Kubernetes version") {
 		t.Fatalf("Create() error = %v, want version mismatch", err)
+	}
+}
+
+func TestClusterEndpointPatchStatusSendsMutation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			http.Error(w, fmt.Sprintf("method = %q, want PATCH", r.Method), http.StatusInternalServerError)
+			return
+		}
+		if got, want := r.URL.Path, "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy/machines/node1/status"; got != want {
+			http.Error(w, fmt.Sprintf("path = %q, want %q", got, want), http.StatusInternalServerError)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !strings.Contains(string(body), `"provisioningState":"Succeeded"`) {
+			http.Error(w, fmt.Sprintf("body = %s, want status", body), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := newTestClusterEndpointClient(t, server.URL, "node1")
+	if err := client.PatchStatus(context.Background(), Status{ProvisioningState: ProvisioningStateSucceeded}); err != nil {
+		t.Fatalf("PatchStatus() error = %v", err)
 	}
 }
 

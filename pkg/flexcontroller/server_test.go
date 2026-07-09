@@ -75,8 +75,8 @@ func TestServerRejectsInvalidRequests(t *testing.T) {
 		path   string
 		want   int
 	}{
-		"post": {
-			method: http.MethodPost,
+		"delete": {
+			method: http.MethodDelete,
 			path:   "/machines/node1",
 			want:   http.StatusMethodNotAllowed,
 		},
@@ -106,6 +106,33 @@ func TestServerRejectsInvalidRequests(t *testing.T) {
 				t.Fatalf("status = %d, want %d", recorder.Code, tt.want)
 			}
 		})
+	}
+}
+
+func TestServerIgnoresMachineMutations(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeMachineStore{machine: json.RawMessage(`{"name":"node1"}`)}
+	server := NewServer(nil, store)
+
+	putRecorder := httptest.NewRecorder()
+	putReq := httptest.NewRequest(http.MethodPut, "/machines/node1", strings.NewReader(`{"properties":{"settings":{"kubernetesVersion":"1.35.0"}}}`))
+	server.Handler().ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200, body %s", putRecorder.Code, putRecorder.Body.String())
+	}
+	if !strings.Contains(putRecorder.Body.String(), "node1") {
+		t.Fatalf("PUT body = %s, want existing machine", putRecorder.Body.String())
+	}
+	if store.machineName != "node1" {
+		t.Fatalf("PUT machineName = %q, want node1", store.machineName)
+	}
+
+	statusRecorder := httptest.NewRecorder()
+	statusReq := httptest.NewRequest(http.MethodPatch, "/machines/node1/status", strings.NewReader(`{"properties":{"status":{"provisioningState":"Succeeded"}}}`))
+	server.Handler().ServeHTTP(statusRecorder, statusReq)
+	if statusRecorder.Code != http.StatusNoContent {
+		t.Fatalf("PATCH status = %d, want 204, body %s", statusRecorder.Code, statusRecorder.Body.String())
 	}
 }
 

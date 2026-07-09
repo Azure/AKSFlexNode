@@ -145,6 +145,60 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 }
 
 func (c *clusterEndpointClient) Create(ctx context.Context, desired GoalState) (*Machine, error) {
+	requestURL := c.machineURL(c.nodeName)
+	payload := map[string]any{
+		"properties": map[string]any{
+			"settings": desired,
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal cluster endpoint machine create request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create cluster endpoint machine create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("create machine through cluster endpoint: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNoContent {
+		c.logger.Debug("cluster endpoint did not apply machine create request; verifying pre-created machine", "status", resp.Status)
+		return c.adoptExistingMachine(ctx, desired)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, clusterEndpointHTTPError("create machine through cluster endpoint", requestURL, resp)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read cluster endpoint machine create response: %w", err)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return c.adoptExistingMachine(ctx, desired)
+	}
+	machine, err := machineFromEndpointJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	if machine.ID == "" {
+		machine.ID = requestURL.String()
+	}
+	if machine.Name == "" {
+		machine.Name = c.nodeName
+	}
+	if err := validateAdoptedMachine(machine, desired); err != nil {
+		return nil, err
+	}
+	return machine, nil
+}
+
+func (c *clusterEndpointClient) adoptExistingMachine(ctx context.Context, desired GoalState) (*Machine, error) {
 	machine, err := c.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("verify pre-created machine from cluster endpoint: %w", err)
@@ -177,18 +231,10 @@ func (c *clusterEndpointClient) Get(ctx context.Context) (*Machine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get machine from cluster endpoint: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusNotFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxEndpointErrorBody))
-		if isKubernetesServiceProxyNotFound(body) {
-			return nil, fmt.Errorf("get machine from cluster endpoint: status %s: %s", resp.Status, strings.TrimSpace(string(body)))
-		}
-		return nil, &NotFoundError{Resource: requestURL.String()}
-	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxEndpointErrorBody))
-		return nil, fmt.Errorf("get machine from cluster endpoint: status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, clusterEndpointHTTPError("get machine from cluster endpoint", requestURL, resp)
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -208,8 +254,37 @@ func (c *clusterEndpointClient) Get(ctx context.Context) (*Machine, error) {
 	return machine, nil
 }
 
-func (c *clusterEndpointClient) PatchStatus(context.Context, Status) error {
-	c.logger.Debug("skipping machine status update; cluster endpoint machine client is read-only")
+func (c *clusterEndpointClient) PatchStatus(ctx context.Context, status Status) error {
+	requestURL := c.machineStatusURL(c.nodeName)
+	payload := map[string]any{
+		"properties": map[string]any{
+			"status": status,
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal cluster endpoint machine status request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, requestURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create cluster endpoint machine status request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("patch machine status through cluster endpoint: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed {
+		c.logger.Debug("cluster endpoint rejected machine status mutation", "status", resp.Status)
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return clusterEndpointHTTPError("patch machine status through cluster endpoint", requestURL, resp)
+	}
 	return nil
 }
 
@@ -218,6 +293,24 @@ func (c *clusterEndpointClient) machineURL(machineName string) *url.URL {
 	u.Path = joinEndpointURLPath(u.Path, "machines", machineName)
 	u.RawPath = ""
 	return &u
+}
+
+func (c *clusterEndpointClient) machineStatusURL(machineName string) *url.URL {
+	u := *c.baseURL
+	u.Path = joinEndpointURLPath(u.Path, "machines", machineName, "status")
+	u.RawPath = ""
+	return &u
+}
+
+func clusterEndpointHTTPError(operation string, requestURL *url.URL, resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxEndpointErrorBody))
+	if resp.StatusCode == http.StatusNotFound {
+		if isKubernetesServiceProxyNotFound(body) {
+			return fmt.Errorf("%s: status %s: %s", operation, resp.Status, strings.TrimSpace(string(body)))
+		}
+		return &NotFoundError{Resource: requestURL.String()}
+	}
+	return fmt.Errorf("%s: status %s: %s", operation, resp.Status, strings.TrimSpace(string(body)))
 }
 
 func isKubernetesServiceProxyNotFound(data []byte) bool {
