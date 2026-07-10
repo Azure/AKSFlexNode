@@ -181,6 +181,51 @@ func TestClusterEndpointPatchStatusSendsMutation(t *testing.T) {
 	}
 }
 
+func TestClusterEndpointPatchStatusReturnsMutationErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{name: "forbidden", statusCode: http.StatusForbidden},
+		{name: "method not allowed", statusCode: http.StatusMethodNotAllowed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(tt.statusCode), tt.statusCode)
+			}))
+			defer server.Close()
+
+			client := newTestClusterEndpointClient(t, server.URL, "node1")
+			err := client.PatchStatus(context.Background(), Status{ProvisioningState: ProvisioningStateSucceeded})
+			if err == nil || !strings.Contains(err.Error(), http.StatusText(tt.statusCode)) {
+				t.Fatalf("PatchStatus() error = %v, want status %s", err, http.StatusText(tt.statusCode))
+			}
+		})
+	}
+}
+
+func TestClusterEndpointBaseURLRejectsExternalURL(t *testing.T) {
+	t.Parallel()
+
+	for _, endpointURL := range []string{"https://example.com/machines", "//example.com/machines"} {
+		endpointURL := endpointURL
+		t.Run(endpointURL, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := clusterEndpointBaseURL(&rest.Config{Host: "https://cluster.example"}, endpointURL)
+			if err == nil || !strings.Contains(err.Error(), "absolute Kubernetes API path") {
+				t.Fatalf("clusterEndpointBaseURL() error = %v, want absolute Kubernetes API path error", err)
+			}
+		})
+	}
+}
+
 func TestNewMachineClientRoutesToInClusterClient(t *testing.T) {
 	t.Parallel()
 

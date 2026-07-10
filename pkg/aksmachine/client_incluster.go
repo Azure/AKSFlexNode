@@ -87,14 +87,8 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 	if err != nil {
 		return nil, fmt.Errorf("parse in-cluster machine endpoint URL: %w", err)
 	}
-	if parsedEndpoint.Scheme != "" {
-		if parsedEndpoint.Host == "" {
-			return nil, fmt.Errorf("in-cluster machine endpoint URL host is empty")
-		}
-		return parsedEndpoint, nil
-	}
-	if !strings.HasPrefix(endpointURL, "/") {
-		return nil, fmt.Errorf("in-cluster machine endpoint URL must be absolute or start with /")
+	if parsedEndpoint.Scheme != "" || parsedEndpoint.Host != "" || !strings.HasPrefix(parsedEndpoint.Path, "/") || parsedEndpoint.Fragment != "" {
+		return nil, fmt.Errorf("in-cluster machine endpoint URL must be an absolute Kubernetes API path")
 	}
 	if restCfg.Host == "" {
 		return nil, fmt.Errorf("kubernetes REST config host is empty")
@@ -241,10 +235,6 @@ func (c *clusterEndpointClient) PatchStatus(ctx context.Context, status Status) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed {
-		c.logger.Debug("cluster endpoint rejected machine status mutation", "status", resp.Status)
-		return nil
-	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return clusterEndpointHTTPError("patch machine status through cluster endpoint", requestURL, resp)
 	}
