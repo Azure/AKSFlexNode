@@ -12,7 +12,10 @@ ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
-ENV CGO_ENABLED=0
+# Microsoft Go defaults to systemcrypto, which requires cgo on Go 1.26 Linux.
+# Select its cgo-less OpenSSL backend so cross-platform builds can keep cgo off.
+ENV CGO_ENABLED=0 \
+    GOEXPERIMENT=ms_nocgo_opensslcrypto
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
