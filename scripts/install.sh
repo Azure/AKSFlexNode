@@ -1,6 +1,6 @@
 #!/bin/bash
 # AKS Flex Node Installation Script
-# This script downloads and installs the latest AKS Flex Node binary from GitHub releases.
+# This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 
 set -euo pipefail
 
@@ -24,6 +24,7 @@ ASSUME_YES=false
 # Release tag to install; skips the GitHub latest-release API lookup.
 AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}"
 # Full release archive URL; bypasses the default GitHub URL layout.
+# Set AKS_FLEX_NODE_VERSION with it to avoid the GitHub latest-release API lookup.
 AKS_FLEX_NODE_DOWNLOAD_URL="${AKS_FLEX_NODE_DOWNLOAD_URL:-}"
 LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
