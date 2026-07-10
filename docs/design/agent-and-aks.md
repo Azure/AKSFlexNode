@@ -144,18 +144,18 @@ The daemon uses two inputs:
 - Desired state from the AKS machine client.
 - Applied state persisted locally by the daemon.
 
-In E2E mode, the machine client is file-backed at `/run/aks-flex-node/e2e-machine.json` so tests can simulate AKS RP machine updates without production ARM integration.
+For E2E and dev-test clusters, the in-cluster AKS Flex Controller serves pre-created machine JSON from the `kube-system/aks-flex-machines` ConfigMap through the Kubernetes service proxy. E2E configs set `agent.machineClient.mode: "in-cluster"` and `agent.machineClient.endpointUrl` to the controller service-proxy path so the same daemon path reads machine state from the controller instead of a host-local test file.
 
-The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`. E2E configs use `agent.e2eMode` to select the local file-backed machine client.
+The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`.
 
-Production AKS RP machine client integration is still pending. Until then, non-E2E daemon mode blocks after startup and bootstrap uses a no-op machine client.
+Production AKS RP machine client integration is still pending. Until then, deployments can use the in-cluster controller as a read-only bridge for pre-created machine state, while direct ARM mode remains the target integration path.
 
 Repave requires both conditions:
 
 - The machine goal differs from the locally applied daemon state.
 - The Kubernetes `Node` object for the current nspawn side is absent.
 
-This keeps scheduling and disruption decisions outside the agent. AKS RP, an operator, or an E2E helper updates the machine goal and deletes the Kubernetes `Node`; the daemon reacts by applying the new goal.
+This keeps scheduling and disruption decisions outside the agent. AKS RP, an operator, or the in-cluster controller's machine data source updates the machine goal and deletes the Kubernetes `Node`; the daemon reacts by applying the new goal.
 
 `daemon.NSpawnNodeOperator.ApplyGoalState` performs the nspawn side replacement:
 
@@ -179,9 +179,9 @@ AKS Flex Node uses two local nspawn machine names:
 
 The initial bootstrap starts `kube1` and seeds daemon state with `ActiveMachine: kube1`. Repave loads `ActiveMachine` from persisted daemon state, treats that value as the old side, then provisions and starts the alternate side. Runtime `machinectl` state is not the source of truth for side selection.
 
-The default E2E `all` flow includes local-machine-driven repave coverage for MSI, bootstrap-token, and kubeadm modes. The suite also exposes an explicit `upgrade-drift` command for running only the repave scenario after infra is deployed.
+The default E2E `all` flow includes controller-machine-driven repave coverage for MSI, bootstrap-token, and kubeadm modes. The suite also exposes an explicit `upgrade-drift` command for running only the repave scenario after infra is deployed.
 
-The flow updates the local E2E machine goal, deletes the Kubernetes `Node`, waits for the daemon to repave to `kube2`, validates the host kubelet and Kubernetes Node-reported kubelet major/minor match the AKS desired version, and runs a smoke pod.
+The flow updates the machine goal in `kube-system/aks-flex-machines`, deletes the Kubernetes `Node`, waits for the daemon to repave to `kube2`, validates the host kubelet and Kubernetes Node-reported kubelet major/minor match the AKS desired version, and runs a smoke pod.
 
 Run it after infra is deployed:
 
@@ -232,7 +232,7 @@ sequenceDiagram
 5. The Flex Node agent observes the node deletion event and fetches the latest ARM machine goal state.
 6. The agent compares the ARM settings version with its locally applied settings version to confirm drift.
 7. The agent provisions the inactive nspawn side using the ARM machine goal state.
-8. The agent applies AKS-specific rootfs customization, such as node-problem-detector, the `aks-flex-node` binary, and CNI configuration.
+8. The agent applies AKS-specific rootfs customization, such as node-problem-detector and the `aks-flex-node` binary. Pod networking is provided by the cluster CNI, such as Unbounded-Net in E2E.
 9. The agent stops the old nspawn side and starts the newly provisioned side.
 10. The agent waits for kubelet and required local services to become healthy.
 11. The agent marks the new side as the active applied state and reports success.

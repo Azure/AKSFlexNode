@@ -252,8 +252,8 @@ If coverage drops below 30%:
 ```
 AKSFlexNode/
 ├── cmd/                     # Command-line interface
-│   ├── aks-flex-node/       # Main agent CLI
-│   └── e2ehelper/           # E2E helper CLI
+│   ├── aks-flex-controller/ # In-cluster machine endpoint and CSR approver
+│   └── aks-flex-node/       # Main agent CLI
 ├── pkg/
 │   ├── aksmachine/          # AKS machine goal/state client abstractions
 │   ├── cmd/                 # Cobra command implementations
