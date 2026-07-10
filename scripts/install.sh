@@ -223,13 +223,13 @@ download_binary() {
     cd "$temp_dir"
 
     if command -v curl &> /dev/null; then
-        if ! curl -L -f -o "$archive_name" "$download_url"; then
+        if ! curl -fsSL -o "$archive_name" "$download_url"; then
             log_error "Failed to download $archive_name"
             rm -rf "$temp_dir"
             exit 1
         fi
     elif command -v wget &> /dev/null; then
-        if ! wget -O "$archive_name" "$download_url"; then
+        if ! wget -qO "$archive_name" "$download_url"; then
             log_error "Failed to download $archive_name"
             rm -rf "$temp_dir"
             exit 1
