@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions an AKS cluster, an in-cluster local registry for the AKS Flex Controller image, and four Ubuntu VMs in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the cluster CNI, deploys an in-cluster local registry for the AKS Flex Controller image, and creates four Ubuntu VMs in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
@@ -13,6 +13,7 @@ The E2E suite provisions an AKS cluster, an in-cluster local registry for the AK
 | `ssh` / `scp` | VM access and artifact copy. |
 | `openssl` | Bootstrap token generation. |
 | `docker` | Build and push the controller image into the in-cluster local registry. |
+| `git` / `make` | Fetch and render Unbounded-Net manifests. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
 
 ## GitHub Actions Policy
@@ -46,13 +47,14 @@ The default `all` command runs:
 
 1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
 2. Deploy AKS and four VMs with Bicep.
-3. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
-4. Join all four VMs.
-5. Validate node readiness, node-problem-detector status, and run smoke workloads.
-6. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
-7. Rejoin all Flex Nodes and validate again.
-8. Run controller-machine-driven repave validation.
-9. Collect logs and clean up Azure resources.
+3. Install Unbounded-Net as the real cluster CNI.
+4. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
+5. Join all four VMs.
+6. Validate node readiness, node-problem-detector status, and run smoke workloads.
+7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
+8. Rejoin all Flex Nodes and validate again.
+9. Run controller-machine-driven repave validation.
+10. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -61,7 +63,7 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
-| `infra` | Deploy AKS cluster, four VMs, the local registry, and the in-cluster controller. |
+| `infra` | Deploy AKS cluster, four VMs, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
@@ -104,6 +106,14 @@ Additional environment variables:
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Target AKS agent pool name written to generated node configs. |
 | `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the in-cluster local registry. |
+| `E2E_UNBOUNDED_NET_VERSION` | `v0.1.21` | Unbounded-Net release tag used for CNI manifests and default images. |
+| `E2E_UNBOUNDED_NET_CONTROLLER_IMAGE` | `ghcr.io/azure/unbounded-net-controller:$E2E_UNBOUNDED_NET_VERSION` | Optional controller image override. |
+| `E2E_UNBOUNDED_NET_NODE_IMAGE` | `ghcr.io/azure/unbounded-net-node:$E2E_UNBOUNDED_NET_VERSION` | Optional node-agent image override. |
+| `E2E_UNBOUNDED_NET_SITE_NAME` | `aks-flex-e2e` | Site name used by Unbounded-Net in E2E. |
+| `E2E_UNBOUNDED_NET_NODE_CIDR` | `10.224.0.0/12` | Node CIDR selector for the E2E Unbounded-Net site. |
+| `E2E_UNBOUNDED_NET_POD_CIDR` | `10.240.0.0/16` | Pod CIDR assigned by Unbounded-Net in E2E. |
+| `E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT` | `300` | Timeout in seconds while waiting for Unbounded-Net rollout. |
+| `E2E_GO_PROXY` | `https://proxy.golang.org,direct` | Go module proxy used while rendering Unbounded-Net manifests. |
 | `E2E_CONTROLLER_REGISTRY_HOSTPORT` | `5000` | Host port exposed by the in-cluster local registry for node-local image pulls. |
 | `E2E_CONTROLLER_REGISTRY_LOCAL_PORT` | `5001` | Runner-local port used for `kubectl port-forward` while pushing the controller image. |
 | `E2E_AKS_NODE_VM_SIZE` | `Standard_B2s` | VM size for the AKS cluster system node pool. |
@@ -141,7 +151,7 @@ The `upgrade-drift` command validates the controller-machine-driven repave path:
 2. Update the machine goal in the controller's `kube-system/aks-flex-machines` ConfigMap.
 3. Delete the Kubernetes `Node` object to trigger repave.
 4. Wait for the active nspawn side to report the desired kubelet version.
-5. Wait for the Kubernetes `Node` to become `Ready` again.
+5. Wait for the Kubernetes `Node` to become `Ready` again with the desired kubelet version.
 6. Run a smoke workload on the repaved node.
 
 Run it after infrastructure is deployed:

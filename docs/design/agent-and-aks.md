@@ -232,7 +232,7 @@ sequenceDiagram
 5. The Flex Node agent observes the node deletion event and fetches the latest ARM machine goal state.
 6. The agent compares the ARM settings version with its locally applied settings version to confirm drift.
 7. The agent provisions the inactive nspawn side using the ARM machine goal state.
-8. The agent applies AKS-specific rootfs customization, such as node-problem-detector, the `aks-flex-node` binary, and CNI configuration.
+8. The agent applies AKS-specific rootfs customization, such as node-problem-detector and the `aks-flex-node` binary. Pod networking is provided by the cluster CNI, such as Unbounded-Net in E2E.
 9. The agent stops the old nspawn side and starts the newly provisioned side.
 10. The agent waits for kubelet and required local services to become healthy.
 11. The agent marks the new side as the active applied state and reports success.

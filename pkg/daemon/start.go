@@ -4,7 +4,6 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/arc"
-	"github.com/Azure/AKSFlexNode/pkg/cni"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
@@ -53,7 +52,6 @@ func StartNode(
 		phases.Parallel(log,
 			npd.Download(log, cfg, gs.RootFS.MachineDir),
 			InstallBinary(gs.RootFS.MachineDir),
-			cni.WriteCNIConfig(gs.RootFS.MachineDir),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, machineName),

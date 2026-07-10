@@ -120,7 +120,7 @@ check_prerequisites() {
   log_info "Checking prerequisites..."
   local missing=0
 
-  for cmd in az docker go jq kubectl python3 ssh scp openssl; do
+  for cmd in az docker git go jq kubectl make python3 ssh scp openssl; do
     if ! command -v "${cmd}" &>/dev/null; then
       log_error "Missing required tool: ${cmd}"
       missing=1
@@ -173,6 +173,14 @@ load_config() {
   E2E_BINARY="${E2E_BINARY:-}"
   E2E_CONTROLLER_IMAGE="${E2E_CONTROLLER_IMAGE:-}"
 
+  # Unbounded-Net provides the real CNI for E2E Flex nodes. Defaults match the
+  # static VNet/subnet prefixes in hack/e2e/infra/main.bicep.
+  E2E_UNBOUNDED_NET_VERSION="${E2E_UNBOUNDED_NET_VERSION:-v0.1.21}"
+  E2E_UNBOUNDED_NET_SITE_NAME="${E2E_UNBOUNDED_NET_SITE_NAME:-aks-flex-e2e}"
+  E2E_UNBOUNDED_NET_NODE_CIDR="${E2E_UNBOUNDED_NET_NODE_CIDR:-10.224.0.0/12}"
+  E2E_UNBOUNDED_NET_POD_CIDR="${E2E_UNBOUNDED_NET_POD_CIDR:-10.240.0.0/16}"
+  E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT:-300}"
+
   # Keep E2E runs isolated from stale or corrupt runner-global kubeconfig state.
   E2E_KUBECONFIG="${E2E_KUBECONFIG:-${E2E_WORK_DIR}/kubeconfig}"
   export KUBECONFIG="${E2E_KUBECONFIG}"
@@ -212,6 +220,7 @@ load_config() {
   if [[ -n "${E2E_CONTROLLER_IMAGE}" ]]; then
     log_info "  Controller Image: ${E2E_CONTROLLER_IMAGE}"
   fi
+  log_info "  Unbounded-Net:    ${E2E_UNBOUNDED_NET_VERSION}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
 
