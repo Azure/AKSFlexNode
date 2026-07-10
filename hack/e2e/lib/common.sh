@@ -120,7 +120,7 @@ check_prerequisites() {
   log_info "Checking prerequisites..."
   local missing=0
 
-  for cmd in az jq kubectl ssh scp openssl; do
+  for cmd in az git go jq kubectl make ssh scp openssl; do
     if ! command -v "${cmd}" &>/dev/null; then
       log_error "Missing required tool: ${cmd}"
       missing=1
@@ -173,6 +173,14 @@ load_config() {
   E2E_BINARY="${E2E_BINARY:-}"
   E2E_HELPER_BINARY="${E2E_HELPER_BINARY:-}"
 
+  # Unbounded-Net provides the real CNI for E2E Flex nodes. Defaults match the
+  # static VNet/subnet prefixes in hack/e2e/infra/main.bicep.
+  E2E_UNBOUNDED_NET_VERSION="${E2E_UNBOUNDED_NET_VERSION:-v0.1.21}"
+  E2E_UNBOUNDED_NET_SITE_NAME="${E2E_UNBOUNDED_NET_SITE_NAME:-aks-flex-e2e}"
+  E2E_UNBOUNDED_NET_NODE_CIDR="${E2E_UNBOUNDED_NET_NODE_CIDR:-10.224.0.0/12}"
+  E2E_UNBOUNDED_NET_POD_CIDR="${E2E_UNBOUNDED_NET_POD_CIDR:-10.240.0.0/16}"
+  E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT:-300}"
+
   # Keep E2E runs isolated from stale or corrupt runner-global kubeconfig state.
   E2E_KUBECONFIG="${E2E_KUBECONFIG:-${E2E_WORK_DIR}/kubeconfig}"
   export KUBECONFIG="${E2E_KUBECONFIG}"
@@ -209,6 +217,7 @@ load_config() {
   log_info "  AKS Node VM Size: ${E2E_AKS_NODE_VM_SIZE}"
   log_info "  Flex VM Size:     ${E2E_VM_SIZE}"
   log_info "  Kubeconfig:       ${KUBECONFIG}"
+  log_info "  Unbounded-Net:    ${E2E_UNBOUNDED_NET_VERSION}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
 
