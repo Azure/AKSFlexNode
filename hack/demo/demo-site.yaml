@@ -1,0 +1,28 @@
+# Demo site used for AKS Flex Node video recordings.
+#
+# The demo site uses a dedicated node CIDR and pod CIDR so demo VMs can be
+# isolated from existing europe-site nodes while still peering through the
+# existing aks-gw gateway pool.
+apiVersion: net.unbounded-cloud.io/v1alpha1
+kind: Site
+metadata:
+  name: demo
+spec:
+  manageCniPlugin: true
+  nodeCidrs:
+    - 10.96.0.0/16
+  podCidrAssignments:
+    - assignmentEnabled: true
+      cidrBlocks:
+        - 10.97.0.0/16
+---
+apiVersion: net.unbounded-cloud.io/v1alpha1
+kind: SiteGatewayPoolAssignment
+metadata:
+  name: demo-gw-assignment
+spec:
+  gatewayPools:
+    - aks-gw
+  sites:
+    - demo
+  tunnelProtocol: WireGuard
