@@ -25,6 +25,7 @@ func ResetNode(log *slog.Logger) phases.Task {
 			reset.RemoveNetworkInterfaces(log),
 			reset.RemoveWireGuardKeys(log),
 			reset.CleanupRoutes(log),
+			cleanupLegacyBridgeCNI(log),
 		),
 		reset.ReloadSystemd(log),
 		config.RemoveRuntimeDirs(log),

@@ -254,13 +254,35 @@ validate_no_wireguard_interfaces() {
 validate_no_overlay_interfaces() {
   local iface
 
-  for iface in geneve0 vxlan0 ipip0 unbounded0 cbr0; do
+  for iface in cni0 geneve0 vxlan0 ipip0 unbounded0 cbr0; do
     if [[ -e "/sys/class/net/${iface}" ]]; then
       echo "reset cleanup interface ${iface} still exists"
       ip link show "${iface}" || true
       exit 1
     fi
   done
+}
+
+validate_no_legacy_cni_rules() {
+  local rules
+
+  if command -v iptables-save >/dev/null 2>&1; then
+    rules="$(sudo iptables-save -t nat 2>/dev/null || true)"
+    if grep -Fq 'name: \"bridge\"' <<<"${rules}" || grep -Fq 'name: "bridge"' <<<"${rules}"; then
+      echo "legacy bridge CNI iptables rules still exist after reset cleanup"
+      grep 'bridge' <<<"${rules}" || true
+      exit 1
+    fi
+  fi
+
+  if command -v nft >/dev/null 2>&1; then
+    rules="$(sudo nft -a list chain inet cni_plugins_masquerade masq_checks 2>/dev/null || true)"
+    if grep -Fq 'net: bridge,' <<<"${rules}"; then
+      echo "legacy bridge CNI nftables rules still exist after reset cleanup"
+      grep 'net: bridge,' <<<"${rules}" || true
+      exit 1
+    fi
+  fi
 }
 
 validate_no_wireguard_keys() {
@@ -315,6 +337,7 @@ done
 
 validate_no_wireguard_interfaces
 validate_no_overlay_interfaces
+validate_no_legacy_cni_rules
 validate_no_wireguard_keys
 validate_no_policy_routing_state
 

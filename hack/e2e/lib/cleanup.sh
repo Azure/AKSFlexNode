@@ -140,12 +140,24 @@ collect_logs() {
     echo "=== Nodes ==="
     kubectl get nodes -o wide 2>/dev/null || true
     echo ""
+    echo "=== Unbounded-Net Pods ==="
+    kubectl -n unbounded-net get pods -o wide 2>/dev/null || true
+    echo ""
+    echo "=== Unbounded-Net Resources ==="
+    kubectl get sites,sitenodeslices,sitepeerings -o wide 2>/dev/null || true
+    echo ""
     echo "=== CSRs ==="
     kubectl get csr 2>/dev/null || true
     echo ""
     echo "=== Events (last 50) ==="
     kubectl get events --sort-by='.lastTimestamp' -A 2>/dev/null | tail -50 || true
   } > "${E2E_LOG_DIR}/cluster-info.log" 2>&1
+
+  kubectl -n unbounded-net logs "deployment/unbounded-net-controller" --tail=500 \
+    > "${E2E_LOG_DIR}/unbounded-net-controller.log" 2>&1 || true
+  kubectl -n unbounded-net logs -l app.kubernetes.io/name=unbounded-net-node --tail=500 --all-containers \
+    > "${E2E_LOG_DIR}/unbounded-net-node.log" 2>&1 || true
+
 
   log_success "Logs collected in ${E2E_LOG_DIR}/"
   ls -la "${E2E_LOG_DIR}/"
