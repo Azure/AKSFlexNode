@@ -146,6 +146,12 @@ collect_logs() {
     echo "=== Machine ConfigMap Keys ==="
     kubectl -n kube-system get configmap aks-flex-machines -o json 2>/dev/null | jq -r '.data | keys[]?' || true
     echo ""
+    echo "=== Unbounded-Net Pods ==="
+    kubectl -n unbounded-net get pods -o wide 2>/dev/null || true
+    echo ""
+    echo "=== Unbounded-Net Resources ==="
+    kubectl get sites,sitenodeslices,sitepeerings -o wide 2>/dev/null || true
+    echo ""
     echo "=== CSRs ==="
     kubectl get csr 2>/dev/null || true
     echo ""
@@ -155,6 +161,10 @@ collect_logs() {
 
   kubectl -n kube-system logs "deployment/aks-flex-controller" --tail=500 \
     > "${E2E_LOG_DIR}/aks-flex-controller.log" 2>&1 || true
+  kubectl -n unbounded-net logs "deployment/unbounded-net-controller" --tail=500 \
+    > "${E2E_LOG_DIR}/unbounded-net-controller.log" 2>&1 || true
+  kubectl -n unbounded-net logs -l app.kubernetes.io/name=unbounded-net-node --tail=500 --all-containers \
+    > "${E2E_LOG_DIR}/unbounded-net-node.log" 2>&1 || true
 
   log_success "Logs collected in ${E2E_LOG_DIR}/"
   ls -la "${E2E_LOG_DIR}/"

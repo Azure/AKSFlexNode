@@ -1,6 +1,6 @@
 #!/bin/bash
 # AKS Flex Node Installation Script
-# This script downloads and installs the latest AKS Flex Node binary from GitHub releases
+# This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 
 set -euo pipefail
 
@@ -21,6 +21,11 @@ LOG_DIR="/var/log/aks-flex-node"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
+# Release tag to install; skips the GitHub latest-release API lookup.
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}"
+# Full release archive URL; bypasses the default GitHub URL layout.
+# Set AKS_FLEX_NODE_VERSION with it to avoid the GitHub latest-release API lookup.
+AKS_FLEX_NODE_DOWNLOAD_URL="${AKS_FLEX_NODE_DOWNLOAD_URL:-}"
 LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
 SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
@@ -169,8 +174,8 @@ check_linux_distribution() {
 }
 
 get_latest_release() {
-    if [[ -n "${AKS_FLEX_NODE_VERSION:-}" ]]; then
-        echo "${AKS_FLEX_NODE_VERSION}"
+    if [[ -n "$AKS_FLEX_NODE_VERSION" ]]; then
+        echo "$AKS_FLEX_NODE_VERSION"
         return 0
     fi
 
@@ -204,23 +209,28 @@ download_binary() {
 
     local binary_name="aks-flex-node-${os}-${arch}"
     local archive_name="${binary_name}.tar.gz"
-    local download_url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
+    local download_url="${AKS_FLEX_NODE_DOWNLOAD_URL:-https://github.com/${REPO}/releases/download/${version}/${archive_name}}"
 
     log_info "Downloading AKS Flex Node ${version} for ${os}/${arch}..." >&2
-    log_info "Download URL: $download_url" >&2
+    if [[ -n "$AKS_FLEX_NODE_DOWNLOAD_URL" ]]; then
+        # Custom URLs may contain embedded credentials or signed query parameters.
+        log_info "Using custom AKS Flex Node download URL" >&2
+    else
+        log_info "Download URL: $download_url" >&2
+    fi
 
     local temp_dir
     temp_dir=$(mktemp -d)
     cd "$temp_dir"
 
     if command -v curl &> /dev/null; then
-        if ! curl -L -f -o "$archive_name" "$download_url"; then
+        if ! curl -fsSL -o "$archive_name" "$download_url"; then
             log_error "Failed to download $archive_name"
             rm -rf "$temp_dir"
             exit 1
         fi
     elif command -v wget &> /dev/null; then
-        if ! wget -O "$archive_name" "$download_url"; then
+        if ! wget -qO "$archive_name" "$download_url"; then
             log_error "Failed to download $archive_name"
             rm -rf "$temp_dir"
             exit 1

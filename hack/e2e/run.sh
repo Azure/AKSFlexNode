@@ -6,9 +6,9 @@
 #   ./hack/e2e/run.sh [command] [options]
 #
 # Commands:
-#   all           Run the full E2E flow (default): build, infra, controller,
+#   all           Run the full E2E flow (default): build, infra, CNI, controller,
 #                 join, validate, unjoin, validate-absent, rejoin, validate, cleanup
-#   infra         Deploy infrastructure and controller (Bicep: AKS + 4 VMs)
+#   infra         Deploy infrastructure, CNI, and controller (Bicep: AKS + 4 VMs)
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
@@ -43,6 +43,8 @@
 #   E2E_LOCATION            Azure region (e.g. westus2)
 #   E2E_BINARY              Path to pre-built aks-flex-node binary
 #   E2E_CONTROLLER_IMAGE    Optional pre-built aks-flex-controller image
+#   E2E_UNBOUNDED_NET_VERSION Unbounded-Net release tag to install
+#   E2E_GO_PROXY            Go module proxy for rendering Unbounded-Net manifests
 #   E2E_NAME_SUFFIX         Unique suffix for resource names
 #   E2E_SKIP_CLEANUP        Set to 1 to keep resources after tests
 #   E2E_SKIP_RUNNER_CLEANUP Set to 1 to keep local runner artifacts after tests
@@ -91,6 +93,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/infra.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/unbounded-net.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/controller.sh"
 # shellcheck disable=SC1091
@@ -143,6 +147,11 @@ parse_args() {
   done
 }
 
+ensure_cluster_dependencies() {
+  ensure_unbounded_net
+  ensure_flex_controller
+}
+
 # ---------------------------------------------------------------------------
 # Command: all (full E2E flow)
 # ---------------------------------------------------------------------------
@@ -164,9 +173,9 @@ cmd_all() {
     log_info "Skipping build, using: ${E2E_BINARY}"
   fi
 
-  # Infrastructure and in-cluster machine endpoint
+  # Infrastructure, CNI, and in-cluster machine endpoint
   infra_deploy
-  ensure_flex_controller
+  ensure_cluster_dependencies
 
   # ── First join ──────────────────────────────────────────────────────
   node_join_all
@@ -188,7 +197,7 @@ cmd_all() {
   validate_all_nodes
   smoke_test_all || exit_code=1
 
-  # ── Local machine repave ────────────────────────────────────────────────
+  # ── Controller-backed machine repave ───────────────────────────────────
   upgrade_drift_all
 
   # Collect logs (always, even if tests fail)
@@ -249,31 +258,31 @@ main() {
         ensure_binary
       fi
       infra_deploy
-      ensure_flex_controller
+      ensure_cluster_dependencies
       ;;
     join)
       ensure_binary
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_all
       ;;
     join-msi)
       ensure_binary
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_msi
       ;;
     join-token)
       ensure_binary
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_token
       ;;
     join-offline)
       ensure_binary
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_offline
       ;;
     join-kubeadm)
       ensure_binary
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_kubeadm
       ;;
     unjoin)
@@ -303,7 +312,7 @@ main() {
       ;;
     upgrade-drift)
       ensure_binary
-      ensure_flex_controller
+      ensure_cluster_dependencies
       upgrade_drift_all
       ;;
     logs)

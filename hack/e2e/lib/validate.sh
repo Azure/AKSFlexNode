@@ -27,20 +27,26 @@ validate_node_joined() {
   local timeout="${E2E_NODE_JOIN_TIMEOUT}"
   local elapsed=0
 
-  log_info "Waiting for node '${vm_name}' to join cluster (timeout: ${timeout}s)..."
+  log_info "Waiting for node '${vm_name}' to join cluster and become Ready (timeout: ${timeout}s)..."
 
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    if kubectl get nodes 2>/dev/null | grep -q "${vm_name}"; then
-      log_success "Node '${vm_name}' joined the cluster"
+    local ready
+    ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [[ "${ready}" == "True" ]]; then
+      log_success "Node '${vm_name}' joined the cluster and is Ready"
       kubectl get node "${vm_name}" -o wide
       return 0
     fi
     sleep 10
     elapsed=$((elapsed + 10))
-    log_debug "Waiting for ${vm_name}... (${elapsed}/${timeout}s)"
+    if [[ -n "${ready}" ]]; then
+      log_debug "Waiting for ${vm_name} to become Ready (current Ready=${ready})... (${elapsed}/${timeout}s)"
+    else
+      log_debug "Waiting for ${vm_name} to register... (${elapsed}/${timeout}s)"
+    fi
   done
 
-  log_error "Node '${vm_name}' did not join cluster within ${timeout}s"
+  log_error "Node '${vm_name}' did not become Ready within ${timeout}s"
   log_error "Current nodes:"
   kubectl get nodes 2>&1 || true
   echo ""
@@ -335,8 +341,8 @@ smoke_test_all() {
   offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
 
-  # A default bridge CNI config (99-bridge.conf) is written during bootstrap,
-  # making nodes Ready without requiring unbounded-net-node DaemonSet.
+  # Unbounded-Net is installed as the E2E CNI, so smoke pods exercise normal pod
+  # sandbox networking instead of relying on a synthetic bridge config.
   local failed=0
   smoke_test "${msi_vm_name}" "msi" || failed=1
   smoke_test "${token_vm_name}" "token" || failed=1

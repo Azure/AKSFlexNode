@@ -123,7 +123,8 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       enableAzureRBAC: true
     }
     networkProfile: {
-      networkPlugin: 'azure'
+      // E2E installs unbounded-net as the cluster CNI after provisioning.
+      networkPlugin: 'none'
       serviceCidr: '10.0.0.0/16'
       dnsServiceIP: '10.0.0.10'
     }
