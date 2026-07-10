@@ -19,6 +19,15 @@ func setTestTargetAgentPoolName(c *Config) {
 	}
 }
 
+func TestMachineClientConfigInClusterRequiresEndpointURL(t *testing.T) {
+	t.Parallel()
+
+	err := (MachineClientConfig{Mode: MachineClientModeInCluster}).validate()
+	if err == nil || !strings.Contains(err.Error(), "in-cluster mode requires endpointUrl") {
+		t.Fatalf("MachineClientConfig.validate() error = %v, want endpointUrl requirement", err)
+	}
+}
+
 func TestSetDefaults(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -492,7 +501,7 @@ func TestValidate(t *testing.T) {
 			errMsg:  "invalid agent.machineOperationMode",
 		},
 		{
-			name: "valid ARM proxy override passes",
+			name: "valid ARM machine endpoint URL passes",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -507,8 +516,11 @@ func TestValidate(t *testing.T) {
 					},
 				},
 				Agent: AgentConfig{
-					LogLevel:                  "info",
-					ARMProxyURLOverrideForE2E: "http://127.0.0.1:8080/proxy",
+					LogLevel: "info",
+					MachineClient: MachineClientConfig{
+						Mode:        MachineClientModeARM,
+						EndpointURL: "http://127.0.0.1:8080/proxy",
+					},
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
@@ -520,7 +532,7 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "invalid ARM proxy override fails",
+			name: "invalid ARM machine endpoint URL fails",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -535,8 +547,11 @@ func TestValidate(t *testing.T) {
 					},
 				},
 				Agent: AgentConfig{
-					LogLevel:                  "info",
-					ARMProxyURLOverrideForE2E: "/proxy",
+					LogLevel: "info",
+					MachineClient: MachineClientConfig{
+						Mode:        MachineClientModeARM,
+						EndpointURL: "/proxy",
+					},
 				},
 				Node: NodeConfig{
 					Kubelet: KubeletConfig{
@@ -546,7 +561,7 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid agent.armProxyURLOverrideForE2E",
+			errMsg:  "invalid agent.machineClient.endpointUrl",
 		},
 		{
 			name: "valid arc config passes",

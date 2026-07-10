@@ -29,7 +29,7 @@ func newARMProxyClient(cfg *config.Config, logger *slog.Logger) (MachineClient, 
 	if err != nil {
 		return nil, err
 	}
-	transport, err := newARMProxyTransport(cfg.Agent.ARMProxyURLOverrideForE2E, nil)
+	transport, err := newARMProxyTransport(cfg.Agent.MachineClient.EndpointURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("configure ARM proxy override: %w", err)
 	}

@@ -3,7 +3,7 @@
 # hack/e2e/lib/upgrade-drift.sh - Kubernetes version drift / repave E2E test
 #
 # Functions:
-#   upgrade_drift_all - Trigger local-machine-driven repave on all joined modes.
+#   upgrade_drift_all - Trigger controller-machine-driven repave on all joined modes.
 # =============================================================================
 set -euo pipefail
 
@@ -12,6 +12,8 @@ readonly _E2E_UPGRADE_DRIFT_LOADED=1
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/controller.sh"
 
 _version_major_minor() {
   local version="${1#v}"
@@ -102,21 +104,9 @@ _trigger_mode_repave() {
   vm_ip="$(_mode_vm_ip "${mode}")"
   vm_name="$(_mode_vm_name "${mode}")"
 
-  log_info "Updating local machine goal on ${mode} node to Kubernetes ${desired_version} (${settings_version})"
-  remote_exec "${vm_ip}" "DESIRED_VERSION=${desired_version} SETTINGS_VERSION=${settings_version} bash -s" <<'REMOTE'
-set -euo pipefail
-sudo mkdir -p /run/aks-flex-node
-sudo tee /run/aks-flex-node/e2e-machine.json >/dev/null <<EOF
-{
-  "id": "local-test-machine",
-  "goal": {
-    "kubernetesVersion": "${DESIRED_VERSION}",
-    "settingsVersion": "${SETTINGS_VERSION}"
-  }
-}
-EOF
-sudo systemctl status aks-flex-node-agent.service --no-pager -l || true
-REMOTE
+  log_info "Updating controller machine goal for ${mode} node to Kubernetes ${desired_version} (${settings_version})"
+  machine_configmap_upsert "${vm_name}" "${desired_version}" "${settings_version}"
+  remote_exec "${vm_ip}" 'sudo systemctl status aks-flex-node-agent.service --no-pager -l || true'
 
   log_info "Deleting Kubernetes Node ${vm_name} to trigger ${mode} repave"
   kubectl delete node "${vm_name}" --ignore-not-found --wait=false
@@ -183,7 +173,7 @@ REMOTE
 
 upgrade_drift_mode() {
   local mode="$1"
-  log_section "Local Machine Repave (${mode} node)"
+  log_section "Controller Machine Repave (${mode} node)"
   local start desired_version settings_version vm_name
   start="$(timer_start)"
 
@@ -198,11 +188,11 @@ upgrade_drift_mode() {
   _wait_for_mode_repave "${mode}" "${desired_version}"
   smoke_test "${vm_name}" "${mode}-repave"
 
-  log_success "${mode} local machine repave passed in $(timer_elapsed "${start}")s"
+  log_success "${mode} controller machine repave passed in $(timer_elapsed "${start}")s"
 }
 
 upgrade_drift_all() {
-  log_section "Local Machine Repave (all modes)"
+  log_section "Controller Machine Repave (all modes)"
   upgrade_drift_mode msi
   upgrade_drift_mode token
   upgrade_drift_mode kubeadm

@@ -23,9 +23,14 @@ const (
 	// Default configuration values
 	DefaultLogDir                   = "/var/log/aks-flex-node"
 	defaultLogLevel                 = "info"
+	defaultMachineClientMode        = MachineClientModeARM
 	defaultMachineOperationMode     = "auto"
 	defaultMachineReconcileInterval = 10 * time.Minute
 	defaultTargetAgentPoolName      = "aksflexnodes"
+
+	// Machine client modes.
+	MachineClientModeARM       = "arm"
+	MachineClientModeInCluster = "in-cluster"
 
 	// DefaultResourceManagerEndpointURL is the public Azure Resource Manager
 	// endpoint used when azure.resourceManagerEndpoint is omitted.
@@ -139,17 +144,12 @@ type AgentConfig struct {
 	// NodeName is resolved from the host hostname when omitted.
 	NodeName string `json:"nodeName,omitempty"`
 
+	// MachineClient selects how the agent reads the AKS machine resource.
+	MachineClient MachineClientConfig `json:"machineClient,omitempty"`
+
 	// MachineReconcileInterval controls how often the daemon re-reads the AKS
 	// machine resource when no Kubernetes Node event wakes the controller.
 	MachineReconcileInterval JSONDuration `json:"machineReconcileInterval,omitempty"`
-
-	// E2EMode uses the local file-backed AKS machine client for local testing.
-	// It is a no-op in production builds.
-	E2EMode bool `json:"e2eMode,omitempty"`
-
-	// ARMProxyURLOverrideForE2E redirects ARM requests to a dev-test proxy.
-	// It must not be set in production configurations.
-	ARMProxyURLOverrideForE2E string `json:"armProxyURLOverrideForE2E,omitempty"`
 
 	// RequireMachineRegistration fails bootstrap if the AKS machine resource
 	// cannot be read or created. When false, registration is best-effort.
@@ -158,6 +158,17 @@ type AgentConfig struct {
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
+}
+
+// MachineClientConfig configures the machine resource backend.
+type MachineClientConfig struct {
+	// Mode selects the machine backend: "arm" or "in-cluster".
+	Mode string `json:"mode,omitempty"`
+
+	// EndpointURL optionally points at the selected backend. In arm mode it is a
+	// dev-test ARM proxy URL. In in-cluster mode it is the Kubernetes API service
+	// proxy path or absolute URL for the read-only machine endpoint.
+	EndpointURL string `json:"endpointUrl,omitempty"`
 }
 
 // ComponentsConfig is the AKS RP component version contract used by the agent
@@ -361,6 +372,9 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.LogDir == "" {
 		c.Agent.LogDir = DefaultLogDir
+	}
+	if c.Agent.MachineClient.Mode == "" {
+		c.Agent.MachineClient.Mode = defaultMachineClientMode
 	}
 	if c.Agent.MachineReconcileInterval == 0 {
 		c.Agent.MachineReconcileInterval = JSONDuration(defaultMachineReconcileInterval)
@@ -626,17 +640,11 @@ func (c *AgentConfig) validate() error {
 	if _, err := logger.ParseLogLevel(c.LogLevel); err != nil {
 		return fmt.Errorf("invalid agent.logLevel: %w", err)
 	}
+	if err := c.MachineClient.validate(); err != nil {
+		return err
+	}
 	if c.MachineReconcileInterval < 0 {
 		return fmt.Errorf("agent.machineReconcileInterval must be non-negative")
-	}
-	if c.ARMProxyURLOverrideForE2E != "" {
-		proxyURL, err := url.Parse(c.ARMProxyURLOverrideForE2E)
-		if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
-			return fmt.Errorf("invalid agent.armProxyURLOverrideForE2E: must be an absolute URL")
-		}
-		if proxyURL.Scheme != "http" && proxyURL.Scheme != "https" {
-			return fmt.Errorf("invalid agent.armProxyURLOverrideForE2E: scheme must be http or https")
-		}
 	}
 	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
 		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)
@@ -644,9 +652,54 @@ func (c *AgentConfig) validate() error {
 	return nil
 }
 
+var validMachineClientModes = map[string]bool{
+	MachineClientModeARM:       true,
+	MachineClientModeInCluster: true,
+}
+
 var validMachineOperationModes = map[string]bool{
 	"auto":    true,
 	"disable": true,
+}
+
+func (c MachineClientConfig) validate() error {
+	if c.Mode != "" && !validMachineClientModes[c.Mode] {
+		return fmt.Errorf("invalid agent.machineClient.mode: %s. Valid values are: arm, in-cluster", c.Mode)
+	}
+	endpointURL := strings.TrimSpace(c.EndpointURL)
+	if c.Mode == MachineClientModeInCluster && endpointURL == "" {
+		return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster mode requires endpointUrl")
+	}
+	if endpointURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(endpointURL)
+	if err != nil {
+		return fmt.Errorf("invalid agent.machineClient.endpointUrl: %w", err)
+	}
+	switch c.Mode {
+	case MachineClientModeARM:
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("invalid agent.machineClient.endpointUrl: arm mode requires an absolute URL")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("invalid agent.machineClient.endpointUrl: scheme must be http or https")
+		}
+	case MachineClientModeInCluster:
+		if parsed.Scheme == "" {
+			if !strings.HasPrefix(endpointURL, "/") {
+				return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster mode requires an absolute URL or absolute Kubernetes API path")
+			}
+			return nil
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster absolute URL requires a host")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("invalid agent.machineClient.endpointUrl: scheme must be http or https")
+		}
+	}
+	return nil
 }
 
 func (c *Config) validate() error {

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/daemoncred"
 )
@@ -38,6 +38,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aks
 		return err
 	}
 	defer stopCredentials()
+	if aksmachine.UsesInClusterEndpoint(cfg) {
+		machines, err = aksmachine.NewMachineClientWithRESTConfig(cfg, log, restCfg)
+		if err != nil {
+			return fmt.Errorf("create cluster endpoint AKS machine client: %w", err)
+		}
+	}
+	if machines == nil {
+		return fmt.Errorf("AKS machine client is nil")
+	}
 	store, err := NewFileStateStore()
 	if err != nil {
 		return err
@@ -136,31 +145,5 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 }
 
 func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
-	apiServerURL := cfg.APIServerURL()
-	if apiServerURL == "" {
-		return nil, fmt.Errorf("kubernetes API server URL is empty")
-	}
-	if cfg.Node.Kubelet.CACertData == "" {
-		return nil, fmt.Errorf("kubernetes CA certificate data is empty")
-	}
-	caData, err := base64.StdEncoding.DecodeString(cfg.Node.Kubelet.CACertData)
-	if err != nil {
-		return nil, fmt.Errorf("decode Kubernetes CA certificate: %w", err)
-	}
-	restCfg := &rest.Config{
-		Host: apiServerURL,
-		TLSClientConfig: rest.TLSClientConfig{
-			CAData: caData,
-		},
-	}
-	if cfg.IsBootstrapTokenConfigured() {
-		restCfg.BearerToken = cfg.Azure.BootstrapToken.Token
-		return restCfg, nil
-	}
-	agentCfg := config.ToAgentConfig(cfg, cfg.Agent.NodeName)
-	if agentCfg.Kubelet.Auth.ExecCredential == nil {
-		return nil, fmt.Errorf("daemon node client requires bootstrap token or exec credential")
-	}
-	restCfg.ExecProvider = agentCfg.Kubelet.Auth.ExecCredential.DeepCopy()
-	return restCfg, nil
+	return kubeauth.BootstrapRESTConfig(cfg)
 }

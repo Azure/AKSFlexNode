@@ -140,6 +140,12 @@ collect_logs() {
     echo "=== Nodes ==="
     kubectl get nodes -o wide 2>/dev/null || true
     echo ""
+    echo "=== Controller Pods ==="
+    kubectl -n kube-system get pods -l app.kubernetes.io/name=aks-flex-controller -o wide 2>/dev/null || true
+    echo ""
+    echo "=== Machine ConfigMap Keys ==="
+    kubectl -n kube-system get configmap aks-flex-machines -o json 2>/dev/null | jq -r '.data | keys[]?' || true
+    echo ""
     echo "=== CSRs ==="
     kubectl get csr 2>/dev/null || true
     echo ""
@@ -147,18 +153,11 @@ collect_logs() {
     kubectl get events --sort-by='.lastTimestamp' -A 2>/dev/null | tail -50 || true
   } > "${E2E_LOG_DIR}/cluster-info.log" 2>&1
 
+  kubectl -n kube-system logs "deployment/aks-flex-controller" --tail=500 \
+    > "${E2E_LOG_DIR}/aks-flex-controller.log" 2>&1 || true
+
   log_success "Logs collected in ${E2E_LOG_DIR}/"
   ls -la "${E2E_LOG_DIR}/"
-}
-
-stop_daemon_csr_approver() {
-  local pid
-  pid="$(state_get daemon_csr_approver_pid)"
-  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-    log_info "Stopping e2e daemon CSR approver (${pid})..."
-    kill "${pid}" 2>/dev/null || true
-    wait "${pid}" 2>/dev/null || true
-  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -173,8 +172,6 @@ cleanup() {
     state_dump
     return 0
   fi
-
-  stop_daemon_csr_approver
 
   local resource_group cluster_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
   resource_group="$(state_get resource_group)"
@@ -192,11 +189,11 @@ cleanup() {
   fi
 
   # Delete VMs first (faster than waiting for full RG delete)
-  log_info "[1/5] Deleting MSI VM: ${msi_vm_name}..."
+  log_info "[1/6] Deleting MSI VM: ${msi_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${msi_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[2/5] Deleting Token VM: ${token_vm_name}..."
+  log_info "[2/6] Deleting Token VM: ${token_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${token_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
