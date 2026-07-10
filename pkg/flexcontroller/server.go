@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	"github.com/go-logr/logr"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,7 +36,7 @@ const (
 )
 
 type MachineStore interface {
-	Get(ctx context.Context, machineName string) (json.RawMessage, error)
+	Get(ctx context.Context, machineName string) (armcontainerservice.Machine, error)
 }
 
 type MachineNotFoundError struct {
@@ -150,27 +151,27 @@ func NewConfigMapMachineStore(kubeClient kubernetes.Interface, namespace, name s
 	return &configMapMachineStore{kubeClient: kubeClient, namespace: namespace, name: name}
 }
 
-func (s *configMapMachineStore) Get(ctx context.Context, machineName string) (json.RawMessage, error) {
+func (s *configMapMachineStore) Get(ctx context.Context, machineName string) (armcontainerservice.Machine, error) {
 	if s.kubeClient == nil {
-		return nil, fmt.Errorf("kubernetes client is nil")
+		return armcontainerservice.Machine{}, fmt.Errorf("kubernetes client is nil")
 	}
 	configMap, err := s.kubeClient.CoreV1().ConfigMaps(s.namespace).Get(ctx, s.name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("machine config map %s/%s not found", s.namespace, s.name)
+		return armcontainerservice.Machine{}, fmt.Errorf("machine config map %s/%s not found", s.namespace, s.name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get machine config map %s/%s: %w", s.namespace, s.name, err)
+		return armcontainerservice.Machine{}, fmt.Errorf("get machine config map %s/%s: %w", s.namespace, s.name, err)
 	}
 	for _, key := range []string{machineName + ".json", machineName} {
 		if raw, ok := configMap.Data[key]; ok {
-			data := json.RawMessage(strings.TrimSpace(raw))
-			if !json.Valid(data) {
-				return nil, fmt.Errorf("machine config map key %q is not valid JSON", key)
+			var machine armcontainerservice.Machine
+			if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &machine); err != nil {
+				return armcontainerservice.Machine{}, fmt.Errorf("machine config map key %q is not valid ARM machine JSON: %w", key, err)
 			}
-			return data, nil
+			return machine, nil
 		}
 	}
-	return nil, &MachineNotFoundError{Name: machineName}
+	return armcontainerservice.Machine{}, &MachineNotFoundError{Name: machineName}
 }
 
 func NewServer(log *slog.Logger, machines MachineStore) *Server {
@@ -342,9 +343,9 @@ func (s *Server) handleMachineStatusMutation(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) machineJSON(ctx context.Context, machineName string) (json.RawMessage, error) {
+func (s *Server) machineJSON(ctx context.Context, machineName string) (armcontainerservice.Machine, error) {
 	if s.machines == nil {
-		return nil, fmt.Errorf("machine store is not configured")
+		return armcontainerservice.Machine{}, fmt.Errorf("machine store is not configured")
 	}
 	return s.machines.Get(ctx, machineName)
 }

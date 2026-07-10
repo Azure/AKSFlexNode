@@ -352,24 +352,24 @@ _render_machine_json() {
     --arg id "${machine_id}" \
     --arg name "${node_name}" \
     --arg kubernetesVersion "${kubernetes_version}" \
-    --arg settingsVersion "${settings_version}" \
+    --arg eTag "${settings_version}" \
     '{
       id: $id,
       name: $name,
       type: "Microsoft.ContainerService/managedClusters/agentPools/machines",
       properties: {
+        eTag: $eTag,
         provisioningState: "Succeeded",
-        settings: {
-          kubernetesVersion: $kubernetesVersion,
-          settingsVersion: $settingsVersion,
+        kubernetes: {
+          orchestratorVersion: $kubernetesVersion,
           maxPods: 110,
           nodeLabels: {
             "kubernetes.azure.com/managed": "false"
           },
           nodeTaints: [],
           kubeletConfig: {
-            imageGCHighThreshold: 85,
-            imageGCLowThreshold: 80
+            imageGcHighThreshold: 85,
+            imageGcLowThreshold: 80
           }
         }
       }
