@@ -132,12 +132,12 @@ flowchart TD
 
 AKS Flex Node no longer runs a standalone local drift detector. Desired node settings come from an AKS machine resource. The agent compares the desired machine goal with locally persisted daemon state and repaves the nspawn-backed worker when Kubernetes `Node` deletion indicates AKS has approved replacement.
 
-The current machine goal includes:
+The current machine goal comes from the ARM machine model:
 
-- `kubernetesVersion`
-- `settingsVersion`
+- `properties.kubernetes` contains the desired Kubernetes version and node settings.
+- `properties.eTag` is exposed internally as the settings version.
 
-`settingsVersion` is the drift key. If it differs from locally applied state, the agent waits for the Kubernetes `Node` object to disappear before mutating host state.
+The ETag is the drift key. If it differs from the locally applied ETag, the agent waits for the Kubernetes `Node` object to disappear before mutating host state. Status-only updates must not change the ETag.
 
 The daemon uses two inputs:
 
@@ -397,25 +397,35 @@ The agent needs a separate Kubernetes credential or explicitly granted RBAC for 
 
 ## Appendix: Minimal ARM Machine Model
 
-The initial ARM machine model can stay minimal. It only needs desired Kubernetes version, settings version, and status.
+The machine read response follows the ARM SDK model. The Kubernetes profile carries desired settings, and the machine properties ETag is the opaque settings version.
 
 ```json
 {
   "properties": {
-    "settings": {
-      "kubernetesVersion": "1.34.0",
-      "settingsVersion": "42"
+    "eTag": "settings-42",
+    "kubernetes": {
+      "orchestratorVersion": "1.34.0"
     },
+    "provisioningState": "Succeeded"
+  }
+}
+```
+
+Agent operation status uses a separate status-patch model:
+
+```json
+{
+  "properties": {
     "status": {
       "provisioningState": "Succeeded",
-      "observedSettingsVersion": "42",
+      "observedSettingsVersion": "settings-42",
       "message": ""
     }
   }
 }
 ```
 
-The `settingsVersion` is the drift key. The agent compares it with the locally applied settings version before reconciling host state. Kubernetes `Node` deletion is the upgrade trigger; the ARM machine resource supplies the target settings.
+The ETag is the drift key. The agent compares it with the locally applied ETag before reconciling host state. Status patches do not update the ETag. Kubernetes `Node` deletion is the upgrade trigger; the ARM machine resource supplies the target settings.
 
 Previous known-good settings are persisted locally on the host so rollback does not require ARM to carry historical settings.
 
