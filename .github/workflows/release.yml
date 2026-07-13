@@ -150,7 +150,7 @@ jobs:
           <!-- Add your changelog here -->
           EOF
 
-          release_flags=(--verify-tag)
+          release_flags=(--verify-tag --latest=false)
           if [[ "${RELEASE_VERSION}" =~ -(alpha|beta|rc)([.-]|$) ]]; then
             release_flags+=(--prerelease)
           fi
