@@ -17,8 +17,10 @@ type ensureMachineTask struct {
 }
 
 // EnsureMachine returns a task that ensures this machine is registered in AKS.
-// The task updates goal.SettingsVersion from the ETag returned by AKS so the
-// initial daemon state records the remote version of the locally applied goal.
+// Local configuration remains authoritative during bootstrap. When the remote
+// Kubernetes version already matches, the task adopts only the remote ETag as
+// the reconciliation baseline; other remote settings do not replace the local
+// goal. Subsequent ETag changes are handled by the daemon as new remote goals.
 func EnsureMachine(machines MachineClient, goal *GoalState, require bool, logger *slog.Logger) phases.Task {
 	return &ensureMachineTask{machines: machines, goal: goal, require: require, logger: logger}
 }

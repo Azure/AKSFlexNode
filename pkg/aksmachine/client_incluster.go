@@ -98,7 +98,7 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 		return nil, fmt.Errorf("invalid Kubernetes REST config host %q", restCfg.Host)
 	}
 	base := *host
-	base.Path = path.Clean(endpointURL)
+	base.Path = path.Clean(parsedEndpoint.Path)
 	base.RawPath = ""
 	base.RawQuery = parsedEndpoint.RawQuery
 	return &base, nil

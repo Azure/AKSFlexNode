@@ -166,8 +166,8 @@ type MachineClientConfig struct {
 	Mode string `json:"mode,omitempty"`
 
 	// EndpointURL optionally points at the selected backend. In arm mode it is a
-	// dev-test ARM proxy URL. In in-cluster mode it is the Kubernetes API service
-	// proxy path or absolute URL for the read-only machine endpoint.
+	// dev-test ARM proxy URL. In in-cluster mode it is an absolute Kubernetes API
+	// service-proxy path for the read-only machine endpoint.
 	EndpointURL string `json:"endpointUrl,omitempty"`
 }
 

@@ -102,13 +102,30 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 	}
 }
 
-func TestEnsureMachineAdoptsExistingSettingsVersion(t *testing.T) {
+func TestEnsureMachineAdoptsExistingSettingsVersionWithoutReplacingLocalGoal(t *testing.T) {
 	t.Parallel()
 
-	goal := GoalState{KubernetesVersion: "1.35.1", SettingsVersion: "1.35.1"}
+	goal := GoalState{
+		KubernetesVersion: "1.35.1",
+		SettingsVersion:   "1.35.1",
+		MaxPods:           30,
+		NodeLabels:        map[string]string{"source": "local"},
+		NodeTaints:        []string{"local=true:NoSchedule"},
+		KubeletConfig: KubeletConfig{
+			ImageGCHighThreshold: 85,
+			ImageGCLowThreshold:  80,
+		},
+	}
 	client := &ensureMachineClient{machine: &Machine{Goal: GoalState{
 		KubernetesVersion: "1.35.1",
 		SettingsVersion:   "etag-42",
+		MaxPods:           110,
+		NodeLabels:        map[string]string{"source": "remote"},
+		NodeTaints:        []string{"remote=true:NoSchedule"},
+		KubeletConfig: KubeletConfig{
+			ImageGCHighThreshold: 70,
+			ImageGCLowThreshold:  60,
+		},
 	}}}
 	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -120,6 +137,12 @@ func TestEnsureMachineAdoptsExistingSettingsVersion(t *testing.T) {
 	}
 	if goal.SettingsVersion != "etag-42" {
 		t.Fatalf("SettingsVersion = %q, want etag-42", goal.SettingsVersion)
+	}
+	if goal.MaxPods != 30 || goal.NodeLabels["source"] != "local" || goal.NodeTaints[0] != "local=true:NoSchedule" {
+		t.Fatalf("local goal was replaced by remote settings: %#v", goal)
+	}
+	if goal.KubeletConfig.ImageGCHighThreshold != 85 || goal.KubeletConfig.ImageGCLowThreshold != 80 {
+		t.Fatalf("local kubelet config was replaced by remote settings: %#v", goal.KubeletConfig)
 	}
 }
 

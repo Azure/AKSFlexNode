@@ -3,6 +3,7 @@ package flexcontroller
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,49 @@ import (
 
 	"github.com/Azure/unbounded/pkg/agent/daemoncred"
 )
+
+func TestWaitForServerExitShutsDownHTTPServerAfterCleanComponentExit(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+
+	httpServer := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() { _ = httpServer.Close() })
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- httpServer.Serve(listener)
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Get("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatalf("initial GET error = %v", err)
+	}
+	_ = response.Body.Close()
+
+	componentErrCh := make(chan error, 1)
+	componentErrCh <- nil
+	if err := waitForServerExit(context.Background(), httpServer, componentErrCh, time.Second); err != nil {
+		t.Fatalf("waitForServerExit() error = %v", err)
+	}
+
+	select {
+	case err := <-serveErrCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("Serve() error = %v, want http.ErrServerClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HTTP server did not stop")
+	}
+}
 
 func TestServerGetMachine(t *testing.T) {
 	t.Parallel()

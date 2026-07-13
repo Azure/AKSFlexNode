@@ -34,8 +34,9 @@ The local bootstrap configuration is authoritative while `aks-flex-node start` i
 3. `EnsureMachine` reads the machine through the Kubernetes service proxy.
 4. If the machine is absent, the client sends a PUT using the local bootstrap goal.
 5. If its Kubernetes version differs, the client sends a PUT that overwrites the remote goal with the local version.
-6. The returned machine is verified against the local version, and its ETag becomes the applied settings version.
-7. The daemon state is seeded from that ETag before host or nspawn state is mutated.
+6. If its Kubernetes version already matches, local bootstrap settings remain authoritative; remote settings other than the ETag do not replace them.
+7. The returned ETag becomes the reconciliation baseline for the locally applied goal.
+8. The daemon state is seeded from that ETag before host or nspawn state is mutated. A later ETag change is treated as a new remote goal.
 
 The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created machine. Its fixture must therefore already match the local bootstrap version. When machine registration is required, a mismatch fails bootstrap before host mutation.
 

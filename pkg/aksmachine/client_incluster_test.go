@@ -210,6 +210,27 @@ func TestClusterEndpointPatchStatusReturnsMutationErrors(t *testing.T) {
 	}
 }
 
+func TestClusterEndpointBaseURLPreservesQueryOutsidePath(t *testing.T) {
+	t.Parallel()
+
+	baseURL, err := clusterEndpointBaseURL(
+		&rest.Config{Host: "https://cluster.example"},
+		"/api/v1/namespaces/kube-system/services/controller/proxy?timeout=30s",
+	)
+	if err != nil {
+		t.Fatalf("clusterEndpointBaseURL() error = %v", err)
+	}
+	if got, want := baseURL.Path, "/api/v1/namespaces/kube-system/services/controller/proxy"; got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+	if got, want := baseURL.RawQuery, "timeout=30s"; got != want {
+		t.Fatalf("RawQuery = %q, want %q", got, want)
+	}
+	if strings.Contains(baseURL.EscapedPath(), "%3F") {
+		t.Fatalf("EscapedPath = %q, query was encoded into path", baseURL.EscapedPath())
+	}
+}
+
 func TestClusterEndpointBaseURLRejectsExternalURL(t *testing.T) {
 	t.Parallel()
 
