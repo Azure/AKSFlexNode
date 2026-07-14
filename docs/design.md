@@ -67,7 +67,7 @@ AKS Flex Node reuses that foundation for:
 AKS Flex Node owns the AKS-specific layer on top:
 
 - AKS cluster authentication and join configuration.
-- AKS-specific kubelet, CNI, node-problem-detector, and runtime customization.
+- AKS-specific kubelet, node-problem-detector, and runtime customization, plus CNI version wiring for the cluster CNI.
 - Flex Node config and CLI commands.
 - Future AKS RP lifecycle integration through ARM machine state and Kubernetes `Node` signals.
 

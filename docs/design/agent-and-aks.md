@@ -132,30 +132,30 @@ flowchart TD
 
 AKS Flex Node no longer runs a standalone local drift detector. Desired node settings come from an AKS machine resource. The agent compares the desired machine goal with locally persisted daemon state and repaves the nspawn-backed worker when Kubernetes `Node` deletion indicates AKS has approved replacement.
 
-The current machine goal includes:
+The current machine goal comes from the ARM machine model:
 
-- `kubernetesVersion`
-- `settingsVersion`
+- `properties.kubernetes` contains the desired Kubernetes version and node settings.
+- `properties.eTag` is exposed internally as the settings version.
 
-`settingsVersion` is the drift key. If it differs from locally applied state, the agent waits for the Kubernetes `Node` object to disappear before mutating host state.
+The ETag is the drift key. If it differs from the locally applied ETag, the agent waits for the Kubernetes `Node` object to disappear before mutating host state. Status-only updates must not change the ETag.
 
 The daemon uses two inputs:
 
 - Desired state from the AKS machine client.
 - Applied state persisted locally by the daemon.
 
-In E2E mode, the machine client is file-backed at `/run/aks-flex-node/e2e-machine.json` so tests can simulate AKS RP machine updates without production ARM integration.
+For E2E and dev-test clusters, the in-cluster AKS Flex Controller serves pre-created machine JSON from the `kube-system/aks-flex-machines` ConfigMap through the Kubernetes service proxy. E2E configs set `agent.machineClient.mode: "in-cluster"` and `agent.machineClient.endpointUrl` to the controller service-proxy path so the same daemon path reads machine state from the controller instead of a host-local test file.
 
-The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`. E2E configs use `agent.e2eMode` to select the local file-backed machine client.
+The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`.
 
-Production AKS RP machine client integration is still pending. Until then, non-E2E daemon mode blocks after startup and bootstrap uses a no-op machine client.
+Production AKS RP machine client integration is still pending. Until then, deployments can use the in-cluster controller as a read-only bridge for pre-created machine state, while direct ARM mode remains the target integration path.
 
 Repave requires both conditions:
 
 - The machine goal differs from the locally applied daemon state.
 - The Kubernetes `Node` object for the current nspawn side is absent.
 
-This keeps scheduling and disruption decisions outside the agent. AKS RP, an operator, or an E2E helper updates the machine goal and deletes the Kubernetes `Node`; the daemon reacts by applying the new goal.
+This keeps scheduling and disruption decisions outside the agent. AKS RP, an operator, or the in-cluster controller's machine data source updates the machine goal and deletes the Kubernetes `Node`; the daemon reacts by applying the new goal.
 
 `daemon.NSpawnNodeOperator.ApplyGoalState` performs the nspawn side replacement:
 
@@ -179,9 +179,9 @@ AKS Flex Node uses two local nspawn machine names:
 
 The initial bootstrap starts `kube1` and seeds daemon state with `ActiveMachine: kube1`. Repave loads `ActiveMachine` from persisted daemon state, treats that value as the old side, then provisions and starts the alternate side. Runtime `machinectl` state is not the source of truth for side selection.
 
-The default E2E `all` flow includes local-machine-driven repave coverage for MSI, bootstrap-token, and kubeadm modes. The suite also exposes an explicit `upgrade-drift` command for running only the repave scenario after infra is deployed.
+The default E2E `all` flow includes controller-machine-driven repave coverage for MSI, bootstrap-token, and kubeadm modes. The suite also exposes an explicit `upgrade-drift` command for running only the repave scenario after infra is deployed.
 
-The flow updates the local E2E machine goal, deletes the Kubernetes `Node`, waits for the daemon to repave to `kube2`, validates the host kubelet and Kubernetes Node-reported kubelet major/minor match the AKS desired version, and runs a smoke pod.
+The flow updates the machine goal in `kube-system/aks-flex-machines`, deletes the Kubernetes `Node`, waits for the daemon to repave to `kube2`, validates the host kubelet and Kubernetes Node-reported kubelet major/minor match the AKS desired version, and runs a smoke pod.
 
 Run it after infra is deployed:
 
@@ -232,7 +232,7 @@ sequenceDiagram
 5. The Flex Node agent observes the node deletion event and fetches the latest ARM machine goal state.
 6. The agent compares the ARM settings version with its locally applied settings version to confirm drift.
 7. The agent provisions the inactive nspawn side using the ARM machine goal state.
-8. The agent applies AKS-specific rootfs customization, such as node-problem-detector, the `aks-flex-node` binary, and CNI configuration.
+8. The agent applies AKS-specific rootfs customization, such as node-problem-detector and the `aks-flex-node` binary. Pod networking is provided by the cluster CNI, such as Unbounded-Net in E2E.
 9. The agent stops the old nspawn side and starts the newly provisioned side.
 10. The agent waits for kubelet and required local services to become healthy.
 11. The agent marks the new side as the active applied state and reports success.
@@ -397,25 +397,35 @@ The agent needs a separate Kubernetes credential or explicitly granted RBAC for 
 
 ## Appendix: Minimal ARM Machine Model
 
-The initial ARM machine model can stay minimal. It only needs desired Kubernetes version, settings version, and status.
+The machine read response follows the ARM SDK model. The Kubernetes profile carries desired settings, and the machine properties ETag is the opaque settings version.
 
 ```json
 {
   "properties": {
-    "settings": {
-      "kubernetesVersion": "1.34.0",
-      "settingsVersion": "42"
+    "eTag": "settings-42",
+    "kubernetes": {
+      "orchestratorVersion": "1.34.0"
     },
+    "provisioningState": "Succeeded"
+  }
+}
+```
+
+Agent operation status uses a separate status-patch model:
+
+```json
+{
+  "properties": {
     "status": {
       "provisioningState": "Succeeded",
-      "observedSettingsVersion": "42",
+      "observedSettingsVersion": "settings-42",
       "message": ""
     }
   }
 }
 ```
 
-The `settingsVersion` is the drift key. The agent compares it with the locally applied settings version before reconciling host state. Kubernetes `Node` deletion is the upgrade trigger; the ARM machine resource supplies the target settings.
+The ETag is the drift key. The agent compares it with the locally applied ETag before reconciling host state. Status patches do not update the ETag. Kubernetes `Node` deletion is the upgrade trigger; the ARM machine resource supplies the target settings.
 
 Previous known-good settings are persisted locally on the host so rollback does not require ARM to carry historical settings.
 
