@@ -60,75 +60,47 @@ PY
 }
 
 _ensure_local_registry_unlocked() {
-  local host_port registry_image
+  local host_port registry_image overlay_dir
   host_port="$(_controller_registry_hostport)"
   registry_image="${E2E_CONTROLLER_REGISTRY_IMAGE:-registry:2}"
+  overlay_dir="${E2E_WORK_DIR}/controller-registry"
+
+  rm -rf "${overlay_dir}"
+  mkdir -p "${overlay_dir}/base"
+  cp -R "${REPO_ROOT}/hack/e2e/controller-registry/." "${overlay_dir}/base/"
+  cat > "${overlay_dir}/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ${E2E_CONTROLLER_REGISTRY}
+      namespace: ${E2E_CONTROLLER_NAMESPACE}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ${E2E_CONTROLLER_REGISTRY}
+        namespace: ${E2E_CONTROLLER_NAMESPACE}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: registry
+                image: ${registry_image}
+                ports:
+                  - name: registry
+                    containerPort: 5000
+                    hostPort: ${host_port}
+EOF
 
   log_section "Deploying Local Controller Image Registry"
   log_info "Ensuring registry ${E2E_CONTROLLER_REGISTRY} on node localhost:${host_port}"
-  kubectl apply -f - <<EOF || return 1
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${E2E_CONTROLLER_REGISTRY}
-  namespace: ${E2E_CONTROLLER_NAMESPACE}
-  labels:
-    app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
-    spec:
-      containers:
-        - name: registry
-          image: ${registry_image}
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
-              value: /var/lib/registry
-          ports:
-            - name: registry
-              containerPort: 5000
-              hostPort: ${host_port}
-          readinessProbe:
-            httpGet:
-              path: /v2/
-              port: registry
-            initialDelaySeconds: 2
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /v2/
-              port: registry
-            initialDelaySeconds: 5
-            periodSeconds: 20
-          volumeMounts:
-            - name: registry-data
-              mountPath: /var/lib/registry
-      volumes:
-        - name: registry-data
-          emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${E2E_CONTROLLER_REGISTRY}
-  namespace: ${E2E_CONTROLLER_NAMESPACE}
-  labels:
-    app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
-spec:
-  selector:
-    app.kubernetes.io/name: ${E2E_CONTROLLER_REGISTRY}
-  ports:
-    - name: registry
-      port: 5000
-      targetPort: registry
-EOF
+  kubectl apply -k "${overlay_dir}" || return 1
 
   kubectl -n "${E2E_CONTROLLER_NAMESPACE}" rollout status "deployment/${E2E_CONTROLLER_REGISTRY}" --timeout=300s || return 1
   local registry_node
@@ -352,24 +324,24 @@ _render_machine_json() {
     --arg id "${machine_id}" \
     --arg name "${node_name}" \
     --arg kubernetesVersion "${kubernetes_version}" \
-    --arg settingsVersion "${settings_version}" \
+    --arg eTag "${settings_version}" \
     '{
       id: $id,
       name: $name,
       type: "Microsoft.ContainerService/managedClusters/agentPools/machines",
       properties: {
+        eTag: $eTag,
         provisioningState: "Succeeded",
-        settings: {
-          kubernetesVersion: $kubernetesVersion,
-          settingsVersion: $settingsVersion,
+        kubernetes: {
+          orchestratorVersion: $kubernetesVersion,
           maxPods: 110,
           nodeLabels: {
             "kubernetes.azure.com/managed": "false"
           },
           nodeTaints: [],
           kubeletConfig: {
-            imageGCHighThreshold: 85,
-            imageGCLowThreshold: 80
+            imageGcHighThreshold: 85,
+            imageGcLowThreshold: 80
           }
         }
       }

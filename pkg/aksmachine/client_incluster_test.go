@@ -29,19 +29,15 @@ func TestClusterEndpointClientGet(t *testing.T) {
   "id": "machine-id",
   "name": "node1",
   "properties": {
-    "settings": {
-      "kubernetesVersion": "1.34.0",
-      "settingsVersion": "42",
+    "eTag": "42",
+    "kubernetes": {
+      "orchestratorVersion": "1.34.0",
       "maxPods": 42,
       "nodeLabels": {"workload": "flex"},
       "nodeTaints": ["dedicated=flex:NoSchedule"],
-      "kubeletConfig": {"imageGCHighThreshold": 85, "imageGCLowThreshold": 80}
+      "kubeletConfig": {"imageGcHighThreshold": 85, "imageGcLowThreshold": 80}
     },
-    "status": {
-      "provisioningState": "Succeeded",
-      "observedSettingsVersion": "42",
-      "message": "ok"
-    }
+    "provisioningState": "Succeeded"
   }
 }`)
 	}))
@@ -61,7 +57,33 @@ func TestClusterEndpointClientGet(t *testing.T) {
 	if machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" || len(machine.Goal.NodeTaints) != 1 {
 		t.Fatalf("extended goal = %#v", machine.Goal)
 	}
-	if machine.Status.ProvisioningState != ProvisioningStateSucceeded || machine.Status.ObservedSettingsVersion != "42" {
+	if machine.Status.ProvisioningState != ProvisioningStateSucceeded {
+		t.Fatalf("status = %#v", machine.Status)
+	}
+}
+
+func TestMachineFromEndpointJSONUsesARMModel(t *testing.T) {
+	t.Parallel()
+
+	machine, err := machineFromEndpointJSON([]byte(`{
+  "id": "machine-id",
+  "name": "node1",
+  "properties": {
+    "eTag": "42",
+    "kubernetes": {"orchestratorVersion": "1.34.0"},
+    "provisioningState": "Succeeded"
+  }
+}`))
+	if err != nil {
+		t.Fatalf("machineFromEndpointJSON() error = %v", err)
+	}
+	if machine.ID != "machine-id" || machine.Name != "node1" {
+		t.Fatalf("machine identity = %#v", machine)
+	}
+	if machine.Goal.KubernetesVersion != "1.34.0" || machine.Goal.SettingsVersion != "42" {
+		t.Fatalf("goal = %#v", machine.Goal)
+	}
+	if machine.Status.ProvisioningState != ProvisioningStateSucceeded {
 		t.Fatalf("status = %#v", machine.Status)
 	}
 }
@@ -97,12 +119,12 @@ func TestClusterEndpointCreateSendsMutation(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if !strings.Contains(string(body), `"kubernetesVersion":"1.34.0"`) {
+		if !strings.Contains(string(body), `"orchestratorVersion":"1.34.0"`) {
 			http.Error(w, fmt.Sprintf("body = %s, want desired version", body), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"properties":{"settings":{"kubernetesVersion":"1.34.0","settingsVersion":"42"}}}`)
+		_, _ = fmt.Fprint(w, `{"properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0"}}}`)
 	}))
 	defer server.Close()
 
@@ -117,7 +139,7 @@ func TestClusterEndpointCreateVerifiesPrecreatedMachine(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"properties":{"settings":{"kubernetesVersion":"1.34.0","settingsVersion":"42"}}}`)
+		_, _ = fmt.Fprint(w, `{"properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0"}}}`)
 	}))
 	defer server.Close()
 
@@ -156,6 +178,95 @@ func TestClusterEndpointPatchStatusSendsMutation(t *testing.T) {
 	client := newTestClusterEndpointClient(t, server.URL, "node1")
 	if err := client.PatchStatus(context.Background(), Status{ProvisioningState: ProvisioningStateSucceeded}); err != nil {
 		t.Fatalf("PatchStatus() error = %v", err)
+	}
+}
+
+func TestClusterEndpointPatchStatusReturnsMutationErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{name: "forbidden", statusCode: http.StatusForbidden},
+		{name: "method not allowed", statusCode: http.StatusMethodNotAllowed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(tt.statusCode), tt.statusCode)
+			}))
+			defer server.Close()
+
+			client := newTestClusterEndpointClient(t, server.URL, "node1")
+			err := client.PatchStatus(context.Background(), Status{ProvisioningState: ProvisioningStateSucceeded})
+			if err == nil || !strings.Contains(err.Error(), http.StatusText(tt.statusCode)) {
+				t.Fatalf("PatchStatus() error = %v, want status %s", err, http.StatusText(tt.statusCode))
+			}
+		})
+	}
+}
+
+func TestClusterEndpointBaseURLPreservesQueryOutsidePath(t *testing.T) {
+	t.Parallel()
+
+	baseURL, err := clusterEndpointBaseURL(
+		&rest.Config{Host: "https://cluster.example"},
+		"/api/v1/namespaces/kube-system/services/controller/proxy?timeout=30s",
+	)
+	if err != nil {
+		t.Fatalf("clusterEndpointBaseURL() error = %v", err)
+	}
+	if got, want := baseURL.Path, "/api/v1/namespaces/kube-system/services/controller/proxy"; got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+	if got, want := baseURL.RawQuery, "timeout=30s"; got != want {
+		t.Fatalf("RawQuery = %q, want %q", got, want)
+	}
+	if strings.Contains(baseURL.EscapedPath(), "%3F") {
+		t.Fatalf("EscapedPath = %q, query was encoded into path", baseURL.EscapedPath())
+	}
+}
+
+func TestClusterEndpointBaseURLRejectsExternalURL(t *testing.T) {
+	t.Parallel()
+
+	for _, endpointURL := range []string{"https://example.com/machines", "//example.com/machines"} {
+		endpointURL := endpointURL
+		t.Run(endpointURL, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := clusterEndpointBaseURL(&rest.Config{Host: "https://cluster.example"}, endpointURL)
+			if err == nil || !strings.Contains(err.Error(), "absolute Kubernetes API path") {
+				t.Fatalf("clusterEndpointBaseURL() error = %v, want absolute Kubernetes API path error", err)
+			}
+		})
+	}
+}
+
+func TestNewMachineClientRoutesToInClusterClient(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			NodeName: "node1",
+			MachineClient: config.MachineClientConfig{
+				Mode:        config.MachineClientModeInCluster,
+				EndpointURL: "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy",
+			},
+		},
+	}
+	client, err := NewMachineClient(cfg, slog.Default(), MachineClientOptions{
+		KubernetesRESTConfig: &rest.Config{Host: "https://cluster.example"},
+	})
+	if err != nil {
+		t.Fatalf("NewMachineClient() error = %v", err)
+	}
+	if _, ok := client.(*clusterEndpointClient); !ok {
+		t.Fatalf("NewMachineClient() type = %T, want *clusterEndpointClient", client)
 	}
 }
 

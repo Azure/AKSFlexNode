@@ -2,14 +2,15 @@ package flexcontroller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,10 +19,53 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/daemoncred"
 )
 
+func TestWaitForServerExitShutsDownHTTPServerAfterCleanComponentExit(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+
+	httpServer := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() { _ = httpServer.Close() })
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- httpServer.Serve(listener)
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Get("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatalf("initial GET error = %v", err)
+	}
+	_ = response.Body.Close()
+
+	componentErrCh := make(chan error, 1)
+	componentErrCh <- nil
+	if err := waitForServerExit(context.Background(), httpServer, componentErrCh, time.Second); err != nil {
+		t.Fatalf("waitForServerExit() error = %v", err)
+	}
+
+	select {
+	case err := <-serveErrCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("Serve() error = %v, want http.ErrServerClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HTTP server did not stop")
+	}
+}
+
 func TestServerGetMachine(t *testing.T) {
 	t.Parallel()
 
-	store := &fakeMachineStore{machine: json.RawMessage(`{"id":"machine-id","name":"node1","properties":{"settings":{"kubernetesVersion":"1.34.0"}}}`)}
+	store := &fakeMachineStore{machine: testMachine("node1", "1.34.0", "42")}
 	server := NewServer(nil, store)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/machines/node1", nil)
@@ -34,8 +78,11 @@ func TestServerGetMachine(t *testing.T) {
 	if store.machineName != "node1" {
 		t.Fatalf("machineName = %q, want node1", store.machineName)
 	}
-	if !strings.Contains(recorder.Body.String(), "node1") {
-		t.Fatalf("body = %s, want machine JSON", recorder.Body.String())
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"name":"node1"`) ||
+		!strings.Contains(body, `"eTag":"42"`) ||
+		!strings.Contains(body, `"orchestratorVersion":"1.34.0"`) {
+		t.Fatalf("body = %s, want ARM machine JSON", body)
 	}
 }
 
@@ -112,11 +159,11 @@ func TestServerRejectsInvalidRequests(t *testing.T) {
 func TestServerIgnoresMachineMutations(t *testing.T) {
 	t.Parallel()
 
-	store := &fakeMachineStore{machine: json.RawMessage(`{"name":"node1"}`)}
+	store := &fakeMachineStore{machine: testMachine("node1", "1.34.0", "42")}
 	server := NewServer(nil, store)
 
 	putRecorder := httptest.NewRecorder()
-	putReq := httptest.NewRequest(http.MethodPut, "/machines/node1", strings.NewReader(`{"properties":{"settings":{"kubernetesVersion":"1.35.0"}}}`))
+	putReq := httptest.NewRequest(http.MethodPut, "/machines/node1", strings.NewReader(`{"properties":{"kubernetes":{"orchestratorVersion":"1.35.0"}}}`))
 	server.Handler().ServeHTTP(putRecorder, putReq)
 	if putRecorder.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200, body %s", putRecorder.Code, putRecorder.Body.String())
@@ -145,7 +192,7 @@ func TestConfigMapMachineStore(t *testing.T) {
 			Namespace: DefaultMachineConfigMapNamespace,
 		},
 		Data: map[string]string{
-			"node1.json": `{"name":"node1"}`,
+			"node1.json": `{"name":"node1","properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0"}}}`,
 		},
 	})
 	store := NewConfigMapMachineStore(client, DefaultMachineConfigMapNamespace, DefaultMachineConfigMapName)
@@ -154,8 +201,11 @@ func TestConfigMapMachineStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if string(machine) != `{"name":"node1"}` {
-		t.Fatalf("machine = %s", machine)
+	if machine.Name == nil || *machine.Name != "node1" {
+		t.Fatalf("machine = %#v", machine)
+	}
+	if machine.Properties == nil || machine.Properties.ETag == nil || *machine.Properties.ETag != "42" {
+		t.Fatalf("machine properties = %#v", machine.Properties)
 	}
 	_, err = store.Get(context.Background(), "node2")
 	var notFound *MachineNotFoundError
@@ -179,8 +229,8 @@ func TestConfigMapMachineStoreInvalidJSON(t *testing.T) {
 	store := NewConfigMapMachineStore(client, DefaultMachineConfigMapNamespace, DefaultMachineConfigMapName)
 
 	_, err := store.Get(context.Background(), "node1")
-	if err == nil || !strings.Contains(err.Error(), "not valid JSON") {
-		t.Fatalf("Get() error = %v, want invalid JSON", err)
+	if err == nil || !strings.Contains(err.Error(), "not valid ARM machine JSON") {
+		t.Fatalf("Get() error = %v, want invalid ARM machine JSON", err)
 	}
 }
 
@@ -268,7 +318,7 @@ func TestAuthorizeBootstrapCSRRequiresBootstrapSecretAndMachine(t *testing.T) {
 			Username: daemoncred.BootstrapUserPrefix + "abc123",
 		},
 	}
-	store := &fakeMachineStore{machine: json.RawMessage(`{"name":"node1"}`)}
+	store := &fakeMachineStore{machine: testMachine("node1", "1.34.0", "42")}
 	server := NewServer(nil, store)
 
 	allowed, err := server.authorizeBootstrapCSR(context.Background(), fake.NewSimpleClientset(secret), csr, "node1", DefaultBootstrapGroup)
@@ -297,18 +347,30 @@ func TestMachineExistsMissingMachine(t *testing.T) {
 }
 
 type fakeMachineStore struct {
-	machine     json.RawMessage
+	machine     *armcontainerservice.Machine
 	err         error
 	machineName string
 }
 
-func (f *fakeMachineStore) Get(_ context.Context, machineName string) (json.RawMessage, error) {
+func (f *fakeMachineStore) Get(_ context.Context, machineName string) (armcontainerservice.Machine, error) {
 	f.machineName = machineName
 	if f.err != nil {
-		return nil, f.err
+		return armcontainerservice.Machine{}, f.err
 	}
 	if f.machine == nil {
-		return nil, errors.New("missing fake machine")
+		return armcontainerservice.Machine{}, errors.New("missing fake machine")
 	}
-	return f.machine, nil
+	return *f.machine, nil
+}
+
+func testMachine(name, kubernetesVersion, etag string) *armcontainerservice.Machine {
+	return &armcontainerservice.Machine{
+		Name: &name,
+		Properties: &armcontainerservice.MachineProperties{
+			ETag: &etag,
+			Kubernetes: &armcontainerservice.MachineKubernetesProfile{
+				OrchestratorVersion: &kubernetesVersion,
+			},
+		},
+	}
 }

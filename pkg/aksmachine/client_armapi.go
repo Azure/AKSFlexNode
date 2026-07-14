@@ -238,23 +238,70 @@ func (c *armMachineClient) validateMachineIdentity(machine armcontainerservice.M
 
 func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Machine {
 	result := &Machine{Goal: fallback}
-	if machine.Properties != nil {
-		if machine.Properties.Kubernetes != nil {
-			// TODO: Read all supported machine goal fields from ARM, not only the
-			// Kubernetes version. Otherwise daemon repaves can ignore settings such as
-			// max pods, labels, taints, and kubelet config while reporting success.
-			if machine.Properties.Kubernetes.OrchestratorVersion != nil {
-				result.Goal.KubernetesVersion = *machine.Properties.Kubernetes.OrchestratorVersion
+	if machine.ID != nil {
+		result.ID = *machine.ID
+	}
+	if machine.Name != nil {
+		result.Name = *machine.Name
+	}
+	if machine.Properties == nil {
+		return result
+	}
+
+	properties := machine.Properties
+	if properties.Kubernetes != nil {
+		kubernetes := properties.Kubernetes
+		if kubernetes.OrchestratorVersion != nil {
+			result.Goal.KubernetesVersion = *kubernetes.OrchestratorVersion
+		}
+		if result.Goal.KubernetesVersion == "" && kubernetes.CurrentOrchestratorVersion != nil {
+			result.Goal.KubernetesVersion = *kubernetes.CurrentOrchestratorVersion
+		}
+		if kubernetes.MaxPods != nil {
+			result.Goal.MaxPods = int(*kubernetes.MaxPods)
+		}
+		if kubernetes.NodeLabels != nil {
+			result.Goal.NodeLabels = stringMapFromPointers(kubernetes.NodeLabels)
+		}
+		if kubernetes.NodeTaints != nil {
+			result.Goal.NodeTaints = stringSliceFromPointers(kubernetes.NodeTaints)
+		}
+		if kubernetes.KubeletConfig != nil {
+			if kubernetes.KubeletConfig.ImageGcHighThreshold != nil {
+				result.Goal.KubeletConfig.ImageGCHighThreshold = int(*kubernetes.KubeletConfig.ImageGcHighThreshold)
 			}
-			if result.Goal.KubernetesVersion == "" && machine.Properties.Kubernetes.CurrentOrchestratorVersion != nil {
-				result.Goal.KubernetesVersion = *machine.Properties.Kubernetes.CurrentOrchestratorVersion
+			if kubernetes.KubeletConfig.ImageGcLowThreshold != nil {
+				result.Goal.KubeletConfig.ImageGCLowThreshold = int(*kubernetes.KubeletConfig.ImageGcLowThreshold)
 			}
 		}
-		if result.Goal.SettingsVersion == "" {
-			result.Goal.SettingsVersion = result.Goal.KubernetesVersion
+	}
+	if properties.ETag != nil {
+		result.Goal.SettingsVersion = *properties.ETag
+	}
+	if result.Goal.SettingsVersion == "" {
+		result.Goal.SettingsVersion = result.Goal.KubernetesVersion
+	}
+	if properties.ProvisioningState != nil {
+		result.Status.ProvisioningState = ProvisioningState(*properties.ProvisioningState)
+	}
+	return result
+}
+
+func stringMapFromPointers(values map[string]*string) map[string]string {
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		if value != nil {
+			result[key] = *value
 		}
-		if machine.Properties.ProvisioningState != nil {
-			result.Status.ProvisioningState = ProvisioningState(*machine.Properties.ProvisioningState)
+	}
+	return result
+}
+
+func stringSliceFromPointers(values []*string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != nil {
+			result = append(result, *value)
 		}
 	}
 	return result

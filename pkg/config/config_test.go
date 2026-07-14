@@ -19,12 +19,59 @@ func setTestTargetAgentPoolName(c *Config) {
 	}
 }
 
-func TestMachineClientConfigInClusterRequiresEndpointURL(t *testing.T) {
+func TestMachineClientConfigInClusterEndpointURL(t *testing.T) {
 	t.Parallel()
 
-	err := (MachineClientConfig{Mode: MachineClientModeInCluster}).validate()
-	if err == nil || !strings.Contains(err.Error(), "in-cluster mode requires endpointUrl") {
-		t.Fatalf("MachineClientConfig.validate() error = %v, want endpointUrl requirement", err)
+	tests := []struct {
+		name        string
+		endpointURL string
+		wantErr     string
+	}{
+		{
+			name:    "empty endpoint",
+			wantErr: "in-cluster mode requires endpointUrl",
+		},
+		{
+			name:        "Kubernetes API path",
+			endpointURL: "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy",
+		},
+		{
+			name:        "external URL",
+			endpointURL: "https://example.com/machines",
+			wantErr:     "requires an absolute Kubernetes API path",
+		},
+		{
+			name:        "protocol-relative URL",
+			endpointURL: "//example.com/machines",
+			wantErr:     "requires an absolute Kubernetes API path",
+		},
+		{
+			name:        "relative path",
+			endpointURL: "api/v1/machines",
+			wantErr:     "requires an absolute Kubernetes API path",
+		},
+		{
+			name:        "path with fragment",
+			endpointURL: "/api/v1/machines#fragment",
+			wantErr:     "requires an absolute Kubernetes API path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := (MachineClientConfig{Mode: MachineClientModeInCluster, EndpointURL: tt.endpointURL}).validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("MachineClientConfig.validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("MachineClientConfig.validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

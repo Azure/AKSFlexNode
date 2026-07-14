@@ -28,25 +28,10 @@ type clusterEndpointClient struct {
 	logger     *slog.Logger
 }
 
-type endpointMachine struct {
-	ID         string `json:"id,omitempty"`
-	Name       string `json:"name,omitempty"`
+type machineStatusPatch struct {
 	Properties struct {
-		Settings *struct {
-			KubernetesVersion string            `json:"kubernetesVersion,omitempty"`
-			SettingsVersion   string            `json:"settingsVersion,omitempty"`
-			MaxPods           int               `json:"maxPods,omitempty"`
-			NodeLabels        map[string]string `json:"nodeLabels,omitempty"`
-			NodeTaints        []string          `json:"nodeTaints,omitempty"`
-			KubeletConfig     KubeletConfig     `json:"kubeletConfig"`
-		} `json:"settings,omitempty"`
-		Status *struct {
-			ProvisioningState       ProvisioningState `json:"provisioningState,omitempty"`
-			ObservedSettingsVersion string            `json:"observedSettingsVersion,omitempty"`
-			Message                 string            `json:"message,omitempty"`
-		} `json:"status,omitempty"`
-		ProvisioningState *string `json:"provisioningState,omitempty"`
-	} `json:"properties,omitempty"`
+		Status Status `json:"status"`
+	} `json:"properties"`
 }
 
 type kubernetesStatusError struct {
@@ -59,34 +44,18 @@ type kubernetesStatusError struct {
 	} `json:"details,omitempty"`
 }
 
-// UsesInClusterEndpoint reports whether the config selects the in-cluster
-// read-only machine endpoint backend.
-func UsesInClusterEndpoint(cfg *config.Config) bool {
-	return cfg != nil && cfg.Agent.MachineClient.Mode == config.MachineClientModeInCluster
-}
-
+// newClusterEndpointClientFromBootstrapConfig is used by start for EnsureMachine
+// before daemon credentials exist. EnsureMachine is a no-op when the controller
+// has already created the machine.
 func newClusterEndpointClientFromBootstrapConfig(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
 	restCfg, err := kubeauth.BootstrapRESTConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return NewMachineClientWithRESTConfig(cfg, logger, restCfg)
-}
-
-// NewMachineClientWithRESTConfig creates a MachineClient using a Kubernetes
-// REST config when the selected backend needs one. Non-Kubernetes backends fall
-// back to the normal config-based construction path.
-func NewMachineClientWithRESTConfig(cfg *config.Config, logger *slog.Logger, restCfg *rest.Config) (MachineClient, error) {
-	if !UsesInClusterEndpoint(cfg) {
-		return newMachineClientFromConfig(cfg, logger)
-	}
 	return newClusterEndpointClient(cfg, logger, restCfg)
 }
 
 func newClusterEndpointClient(cfg *config.Config, logger *slog.Logger, restCfg *rest.Config) (*clusterEndpointClient, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
 	if restCfg == nil {
 		return nil, fmt.Errorf("kubernetes REST config is nil")
 	}
@@ -100,9 +69,6 @@ func newClusterEndpointClient(cfg *config.Config, logger *slog.Logger, restCfg *
 	httpClient, err := rest.HTTPClientFor(restCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes HTTP client for machine endpoint: %w", err)
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &clusterEndpointClient{
 		httpClient: httpClient,
@@ -121,14 +87,8 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 	if err != nil {
 		return nil, fmt.Errorf("parse in-cluster machine endpoint URL: %w", err)
 	}
-	if parsedEndpoint.Scheme != "" {
-		if parsedEndpoint.Host == "" {
-			return nil, fmt.Errorf("in-cluster machine endpoint URL host is empty")
-		}
-		return parsedEndpoint, nil
-	}
-	if !strings.HasPrefix(endpointURL, "/") {
-		return nil, fmt.Errorf("in-cluster machine endpoint URL must be absolute or start with /")
+	if parsedEndpoint.Scheme != "" || parsedEndpoint.Host != "" || !strings.HasPrefix(parsedEndpoint.Path, "/") || parsedEndpoint.Fragment != "" {
+		return nil, fmt.Errorf("in-cluster machine endpoint URL must be an absolute Kubernetes API path")
 	}
 	if restCfg.Host == "" {
 		return nil, fmt.Errorf("kubernetes REST config host is empty")
@@ -138,7 +98,7 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 		return nil, fmt.Errorf("invalid Kubernetes REST config host %q", restCfg.Host)
 	}
 	base := *host
-	base.Path = path.Clean(endpointURL)
+	base.Path = path.Clean(parsedEndpoint.Path)
 	base.RawPath = ""
 	base.RawQuery = parsedEndpoint.RawQuery
 	return &base, nil
@@ -146,9 +106,9 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 
 func (c *clusterEndpointClient) Create(ctx context.Context, desired GoalState) (*Machine, error) {
 	requestURL := c.machineURL(c.nodeName)
-	payload := map[string]any{
-		"properties": map[string]any{
-			"settings": desired,
+	payload := armcontainerservice.Machine{
+		Properties: &armcontainerservice.MachineProperties{
+			Kubernetes: buildK8sProfile(desired),
 		},
 	}
 	body, err := json.Marshal(payload)
@@ -256,11 +216,8 @@ func (c *clusterEndpointClient) Get(ctx context.Context) (*Machine, error) {
 
 func (c *clusterEndpointClient) PatchStatus(ctx context.Context, status Status) error {
 	requestURL := c.machineStatusURL(c.nodeName)
-	payload := map[string]any{
-		"properties": map[string]any{
-			"status": status,
-		},
-	}
+	payload := machineStatusPatch{}
+	payload.Properties.Status = status
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal cluster endpoint machine status request: %w", err)
@@ -278,10 +235,6 @@ func (c *clusterEndpointClient) PatchStatus(ctx context.Context, status Status) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed {
-		c.logger.Debug("cluster endpoint rejected machine status mutation", "status", resp.Status)
-		return nil
-	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return clusterEndpointHTTPError("patch machine status through cluster endpoint", requestURL, resp)
 	}
@@ -326,61 +279,7 @@ func machineFromEndpointJSON(data []byte) (*Machine, error) {
 	if err := json.Unmarshal(data, &armMachine); err != nil {
 		return nil, fmt.Errorf("decode cluster endpoint machine response: %w", err)
 	}
-	result := machineFromARM(armMachine, GoalState{})
-	if armMachine.ID != nil {
-		result.ID = *armMachine.ID
-	}
-	if armMachine.Name != nil {
-		result.Name = *armMachine.Name
-	}
-
-	var endpoint endpointMachine
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&endpoint); err == nil {
-		mergeEndpointMachine(result, endpoint)
-	}
-	return result, nil
-}
-
-func mergeEndpointMachine(result *Machine, endpoint endpointMachine) {
-	if endpoint.ID != "" {
-		result.ID = endpoint.ID
-	}
-	if endpoint.Name != "" {
-		result.Name = endpoint.Name
-	}
-	if endpoint.Properties.Settings != nil {
-		settings := endpoint.Properties.Settings
-		if settings.KubernetesVersion != "" {
-			result.Goal.KubernetesVersion = settings.KubernetesVersion
-		}
-		if settings.SettingsVersion != "" {
-			result.Goal.SettingsVersion = settings.SettingsVersion
-		}
-		if settings.MaxPods != 0 {
-			result.Goal.MaxPods = settings.MaxPods
-		}
-		if settings.NodeLabels != nil {
-			result.Goal.NodeLabels = settings.NodeLabels
-		}
-		if settings.NodeTaints != nil {
-			result.Goal.NodeTaints = settings.NodeTaints
-		}
-		result.Goal.KubeletConfig = settings.KubeletConfig
-	}
-	if endpoint.Properties.Status != nil {
-		status := Status{
-			ProvisioningState:       endpoint.Properties.Status.ProvisioningState,
-			ObservedSettingsVersion: endpoint.Properties.Status.ObservedSettingsVersion,
-			Message:                 endpoint.Properties.Status.Message,
-		}
-		if status.ProvisioningState != "" || status.ObservedSettingsVersion != "" || status.Message != "" {
-			result.Status = status
-		}
-	}
-	if result.Status.ProvisioningState == "" && endpoint.Properties.ProvisioningState != nil {
-		result.Status.ProvisioningState = ProvisioningState(*endpoint.Properties.ProvisioningState)
-	}
+	return machineFromARM(armMachine, GoalState{}), nil
 }
 
 func joinEndpointURLPath(base string, elem ...string) string {

@@ -29,23 +29,18 @@ const (
 	daemonCredentialGroup = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
 )
 
-// Run starts the ARM-machine-driven daemon loop. The AKS machine client is
-// injected so production ARM, remote test, and local file-backed clients can
-// share the same daemon controller.
-func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, machines aksmachine.MachineClient) error {
+// Run starts the machine-driven daemon loop.
+func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer stopCredentials()
-	if aksmachine.UsesInClusterEndpoint(cfg) {
-		machines, err = aksmachine.NewMachineClientWithRESTConfig(cfg, log, restCfg)
-		if err != nil {
-			return fmt.Errorf("create cluster endpoint AKS machine client: %w", err)
-		}
-	}
-	if machines == nil {
-		return fmt.Errorf("AKS machine client is nil")
+	machines, err := aksmachine.NewMachineClient(cfg, log, aksmachine.MachineClientOptions{
+		KubernetesRESTConfig: restCfg,
+	})
+	if err != nil {
+		return fmt.Errorf("create AKS machine client: %w", err)
 	}
 	store, err := NewFileStateStore()
 	if err != nil {

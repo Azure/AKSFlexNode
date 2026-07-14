@@ -128,10 +128,10 @@ update_machine_goal() {
       .id = (.id // ("configmap://" + $node)) |
       .name = $node |
       .properties = (.properties // {}) |
-      .properties.settings = (.properties.settings // {}) |
-      .properties.settings.kubernetesVersion = $version |
-      .properties.settings.settingsVersion = $settings |
-      .properties.settings.nodeLabels = (.properties.settings.nodeLabels // {"kubernetes.azure.com/managed":"false"})
+      .properties.eTag = $settings |
+      .properties.kubernetes = (.properties.kubernetes // {}) |
+      .properties.kubernetes.orchestratorVersion = $version |
+      .properties.kubernetes.nodeLabels = (.properties.kubernetes.nodeLabels // {"kubernetes.azure.com/managed":"false"})
     ' <<<"${current_json}" > "${tmp}"
 
   if [[ -z "${cm_json}" ]]; then

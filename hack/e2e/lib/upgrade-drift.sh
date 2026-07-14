@@ -51,18 +51,20 @@ _cluster_current_kubernetes_version() {
   echo "${version#v}"
 }
 
-_remote_active_machine_state_and_version() {
+_remote_active_machine_snapshot() {
   local vm_ip="$1"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set +e
-machine="$(sudo sed -n 's/.*"activeMachine"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/aks-flex-node/daemon-state.json 2>/dev/null)"
+state_file="/etc/aks-flex-node/daemon-state.json"
+machine="$(sudo sed -n 's/.*"activeMachine"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${state_file}" 2>/dev/null)"
+applied_settings_version="$(sudo sed -n 's/.*"appliedSettingsVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${state_file}" 2>/dev/null)"
 state=""
 version=""
 if [[ -n "${machine}" ]]; then
   state="$(machinectl show "${machine}" --property=State --value 2>/dev/null)"
   version="$(sudo systemd-run --machine="${machine}" --quiet --pipe /usr/local/bin/kubelet --version 2>/dev/null | awk '{print $2}' | sed 's/^v//')"
 fi
-printf '%s|%s|%s\n' "${machine}" "${state}" "${version}"
+printf '%s|%s|%s|%s\n' "${machine}" "${state}" "${version}" "${applied_settings_version}"
 REMOTE
 }
 
@@ -113,7 +115,7 @@ _trigger_mode_repave() {
 }
 
 _wait_for_mode_repave() {
-  local mode="$1" desired_version="$2"
+  local mode="$1" desired_version="$2" settings_version="$3" old_active_machine="$4" old_node_uid="$5"
   local desired_major_minor
   desired_major_minor="$(_version_major_minor "${desired_version}")"
 
@@ -125,9 +127,9 @@ _wait_for_mode_repave() {
 
   log_info "Waiting for ${mode} node repave to active side (timeout: ${timeout}s)..."
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    local machine_state_and_version active_machine state kubelet_version kubelet_major_minor ready node_kubelet_version node_kubelet_major_minor
-    machine_state_and_version="$(_remote_active_machine_state_and_version "${vm_ip}" || true)"
-    IFS='|' read -r active_machine state kubelet_version <<<"${machine_state_and_version}"
+    local machine_snapshot active_machine state kubelet_version applied_settings_version kubelet_major_minor ready node_uid node_kubelet_version node_kubelet_major_minor
+    machine_snapshot="$(_remote_active_machine_snapshot "${vm_ip}" || true)"
+    IFS='|' read -r active_machine state kubelet_version applied_settings_version <<<"${machine_snapshot}"
     if [[ -n "${kubelet_version}" ]]; then
       kubelet_major_minor="$(_version_major_minor "${kubelet_version}")"
     else
@@ -135,6 +137,7 @@ _wait_for_mode_repave() {
     fi
 
     ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    node_uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
     node_kubelet_version="$(kubectl get node "${vm_name}" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | sed 's/^v//' || true)"
     if [[ -n "${node_kubelet_version}" ]]; then
       node_kubelet_major_minor="$(_version_major_minor "${node_kubelet_version}")"
@@ -142,9 +145,13 @@ _wait_for_mode_repave() {
       node_kubelet_major_minor=""
     fi
 
-    log_debug "${mode} repave poll: active_machine=${active_machine:-unknown} state=${state:-unknown} kubelet=${kubelet_version:-unknown} node_ready=${ready:-unknown} node_kubelet=${node_kubelet_version:-unknown}"
-    if [[ "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && "${ready}" == "True" && "${node_kubelet_major_minor}" == "${desired_major_minor}" ]]; then
-      log_success "Repaved ${mode} node to ${active_machine} with kubelet ${kubelet_version}; node reports kubelet ${node_kubelet_version}"
+    log_debug "${mode} repave poll: active_machine=${active_machine:-unknown} previous_machine=${old_active_machine} state=${state:-unknown} kubelet=${kubelet_version:-unknown} applied_settings=${applied_settings_version:-unknown} node_uid=${node_uid:-unknown} previous_node_uid=${old_node_uid} node_ready=${ready:-unknown} node_kubelet=${node_kubelet_version:-unknown}"
+    if [[ -n "${active_machine}" && "${active_machine}" != "${old_active_machine}" && \
+      "${state}" == "running" && "${kubelet_major_minor}" == "${desired_major_minor}" && \
+      "${applied_settings_version}" == "${settings_version}" && -n "${node_uid}" && \
+      "${node_uid}" != "${old_node_uid}" && "${ready}" == "True" && \
+      "${node_kubelet_major_minor}" == "${desired_major_minor}" ]]; then
+      log_success "Repaved ${mode} node to ${active_machine} with kubelet ${kubelet_version}; node reports kubelet ${node_kubelet_version} and applied settings ${applied_settings_version}"
       kubectl get nodes -o wide || true
       return 0
     fi
@@ -174,18 +181,29 @@ REMOTE
 upgrade_drift_mode() {
   local mode="$1"
   log_section "Controller Machine Repave (${mode} node)"
-  local start desired_version settings_version vm_name
+  local start desired_version settings_version vm_name vm_ip old_machine_snapshot old_active_machine old_state old_version old_settings_version old_node_uid
   start="$(timer_start)"
 
   desired_version="$(_cluster_current_kubernetes_version)"
   settings_version="repave-${mode}-$(date +%s)"
   vm_name="$(_mode_vm_name "${mode}")"
+  vm_ip="$(_mode_vm_ip "${mode}")"
 
   log_info "AKS desired Kubernetes version: ${desired_version}"
   _ensure_mode_joined "${mode}"
   validate_node_joined "${vm_name}"
+
+  old_machine_snapshot="$(_remote_active_machine_snapshot "${vm_ip}")"
+  IFS='|' read -r old_active_machine old_state old_version old_settings_version <<<"${old_machine_snapshot}"
+  old_node_uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}')"
+  if [[ -z "${old_active_machine}" || -z "${old_node_uid}" ]]; then
+    log_error "Failed to capture pre-repave state for ${mode}: active_machine=${old_active_machine:-unknown} node_uid=${old_node_uid:-unknown}"
+    return 1
+  fi
+  log_debug "${mode} pre-repave state: active_machine=${old_active_machine} state=${old_state:-unknown} kubelet=${old_version:-unknown} applied_settings=${old_settings_version:-unknown} node_uid=${old_node_uid}"
+
   _trigger_mode_repave "${mode}" "${desired_version}" "${settings_version}"
-  _wait_for_mode_repave "${mode}" "${desired_version}"
+  _wait_for_mode_repave "${mode}" "${desired_version}" "${settings_version}" "${old_active_machine}" "${old_node_uid}"
   smoke_test "${vm_name}" "${mode}-repave"
 
   log_success "${mode} controller machine repave passed in $(timer_elapsed "${start}")s"

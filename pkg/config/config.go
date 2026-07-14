@@ -166,8 +166,8 @@ type MachineClientConfig struct {
 	Mode string `json:"mode,omitempty"`
 
 	// EndpointURL optionally points at the selected backend. In arm mode it is a
-	// dev-test ARM proxy URL. In in-cluster mode it is the Kubernetes API service
-	// proxy path or absolute URL for the read-only machine endpoint.
+	// dev-test ARM proxy URL. In in-cluster mode it is an absolute Kubernetes API
+	// service-proxy path for the read-only machine endpoint.
 	EndpointURL string `json:"endpointUrl,omitempty"`
 }
 
@@ -686,17 +686,8 @@ func (c MachineClientConfig) validate() error {
 			return fmt.Errorf("invalid agent.machineClient.endpointUrl: scheme must be http or https")
 		}
 	case MachineClientModeInCluster:
-		if parsed.Scheme == "" {
-			if !strings.HasPrefix(endpointURL, "/") {
-				return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster mode requires an absolute URL or absolute Kubernetes API path")
-			}
-			return nil
-		}
-		if parsed.Host == "" {
-			return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster absolute URL requires a host")
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return fmt.Errorf("invalid agent.machineClient.endpointUrl: scheme must be http or https")
+		if parsed.Scheme != "" || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") || parsed.Fragment != "" {
+			return fmt.Errorf("invalid agent.machineClient.endpointUrl: in-cluster mode requires an absolute Kubernetes API path")
 		}
 	}
 	return nil

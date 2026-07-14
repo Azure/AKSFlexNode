@@ -147,6 +147,11 @@ parse_args() {
   done
 }
 
+ensure_cluster_dependencies() {
+  ensure_unbounded_net
+  ensure_flex_controller
+}
+
 # ---------------------------------------------------------------------------
 # Command: all (full E2E flow)
 # ---------------------------------------------------------------------------
@@ -170,8 +175,7 @@ cmd_all() {
 
   # Infrastructure, CNI, and in-cluster machine endpoint
   infra_deploy
-  ensure_unbounded_net
-  ensure_flex_controller
+  ensure_cluster_dependencies
 
   # ── First join ──────────────────────────────────────────────────────
   node_join_all
@@ -193,7 +197,7 @@ cmd_all() {
   validate_all_nodes
   smoke_test_all || exit_code=1
 
-  # ── Local machine repave ────────────────────────────────────────────────
+  # ── Controller-backed machine repave ───────────────────────────────────
   upgrade_drift_all
 
   # Collect logs (always, even if tests fail)
@@ -254,37 +258,31 @@ main() {
         ensure_binary
       fi
       infra_deploy
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       ;;
     join)
       ensure_binary
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_all
       ;;
     join-msi)
       ensure_binary
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_msi
       ;;
     join-token)
       ensure_binary
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_token
       ;;
     join-offline)
       ensure_binary
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_offline
       ;;
     join-kubeadm)
       ensure_binary
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       node_join_kubeadm
       ;;
     unjoin)
@@ -314,8 +312,7 @@ main() {
       ;;
     upgrade-drift)
       ensure_binary
-      ensure_unbounded_net
-      ensure_flex_controller
+      ensure_cluster_dependencies
       upgrade_drift_all
       ;;
     logs)
