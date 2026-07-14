@@ -2,7 +2,7 @@
 
 How to add an NVIDIA GPU host to an AKS cluster as an AKS Flex Node.
 
-> **Status:** GPU Flex Node support is under active validation.
+> **Status:** NVIDIA GPU Flex Node support is under active validation.
 
 ## Overview
 

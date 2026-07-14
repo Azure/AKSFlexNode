@@ -48,6 +48,7 @@ Treat other combinations as separate validation targets. Do not assume this exac
 - Azure CLI logged in to the target subscription.
 - `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
 - An AMD Instinct GPU host with root or sudo access and outbound reach to the AKS API server.
+- `curl` and GnuPG (`gpg`) installed on the GPU host for the example ROCm repository setup.
 - A host image or host preparation script that installs and validates ROCm.
 - Non-overlapping network ranges for the AKS cluster, host network, pods, services, and any connected networks.
 
