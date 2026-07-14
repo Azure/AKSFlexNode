@@ -15,7 +15,7 @@ Plan for both before you start.
 
 ## Responsibility boundary
 
-For managed AKS GPU node pools, the node provisioning path owns GPU driver preparation. That work belongs in the AKS image, AgentBaker, CSE, or another node-image pipeline before kubelet starts accepting GPU workloads.
+For managed AKS GPU node pools, the node provisioning path owns GPU driver preparation. For external Flex Node hosts, use your own host image or host-preparation pipeline before kubelet starts accepting GPU workloads.
 
 For AKS Flex Node, the Flex Node agent does not own GPU driver installation. Flex Node starts from a host you already control, then joins that host to AKS. Keep AMDGPU/ROCm preparation outside `aks-flex-node start` so driver failures, kernel-header mismatches, Secure Boot signing, apt-source policy, and required reboots are handled before the node bootstrap path.
 
@@ -66,8 +66,7 @@ If the image has no driver, you own driver installation, signing for Secure Boot
 ### Image options
 
 1. **Custom ROCm-capable image with a minimal host package set.** This is the preferred production contract after validation. Bake only the host packages needed for Kubernetes workloads and validation, not the full ROCm developer stack. The current validated base is Ubuntu 24.04.
-2. **AgentBaker-style host preparation for validation.** For early testing, run the same AMD CSE preparation flow that installs the minimal AMDGPU/ROCm host packages and validates the device nodes before running AKS Flex Node.
-3. **Other OS releases, GPU marketplace images, or partner images.** Treat as candidates to validate per region, OS, kernel, GPU family, and ROCm version.
+2. **Other OS releases, GPU marketplace images, or partner images.** Treat as candidates to validate per region, OS, kernel, GPU family, and ROCm version.
 
 For MI300X validation, the minimal host package families are:
 
@@ -194,28 +193,88 @@ Do not add `amdgpu` to `/etc/modules-load.d` for this validation path. After the
 
 After the Flex node is `Ready`, **you must install the cluster AMD GPU stack yourself**. AKS Flex Node does not deploy any of this. Use one of these paths:
 
-- **AMD GPU Operator** - recommended when you want operator-managed device plugin, node labels, metrics, tests, and optional DRA support. Keep host driver ownership explicit; if the driver is already prepared on the host, configure the operator so it does not replace that contract.
-- **AMD Kubernetes device plugin** - lighter manual path when you only need legacy Kubernetes device plugin resources.
+- **AMD GPU Operator** - recommended when you want operator-managed device plugin, node labels, metrics, tests, and optional DRA support. The configuration below disables operator driver and KMM management so the preinstalled host driver remains outside the operator's ownership.
+- **AMD Kubernetes device plugin** - lighter manual path when you only need standard Kubernetes extended resources such as `amd.com/gpu`.
 
-Example AMD GPU Operator install:
+### AMD GPU Operator
+
+This path pins AMD GPU Operator chart `v1.5.0`, cert-manager `v1.15.1`, and device plugin `1.31.0.10`. These versions and the Kubernetes 1.29+ requirement come from the [AMD GPU Operator v1.5.0 installation guide](https://github.com/ROCm/gpu-operator/blob/v1.5.0/docs/installation/kubernetes-helm.md). Install cert-manager first because the operator uses it for webhook certificates:
 
 ```bash
+helm repo add jetstack https://charts.jetstack.io --force-update
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.15.1 \
+  --set crds.enabled=true \
+  --wait
+
 helm repo add rocm https://rocm.github.io/gpu-operator
 helm repo update
 
-helm install amd-gpu-operator rocm/gpu-operator-charts \
+cat > amd-gpu-operator-values.yaml <<'EOF'
+# Standard_ND96isr_MI300X_v5 exposes MI300X VFs. NFD labels those devices
+# amd-vgpu, while the chart's default DeviceConfig selects amd-gpu.
+crds:
+  defaultCR:
+    # Avoid Helm map merging with the chart's amd-gpu selector. Apply the
+    # MI300X VF DeviceConfig explicitly after the operator is ready.
+    install: false
+kmm:
+  enabled: false
+  watch: false
+remediation:
+  enabled: false
+  installCRDs: false
+EOF
+
+helm upgrade --install amd-gpu-operator rocm/gpu-operator-charts \
   --namespace kube-amd-gpu \
-  --create-namespace
+  --create-namespace \
+  --version v1.5.0 \
+  --values amd-gpu-operator-values.yaml \
+  --wait
+
+cat <<'EOF' | kubectl apply -f -
+apiVersion: amd.com/v1alpha1
+kind: DeviceConfig
+metadata:
+  name: mi300x-vf
+  namespace: kube-amd-gpu
+spec:
+  selector:
+    feature.node.kubernetes.io/amd-vgpu: "true"
+  driver:
+    # The host preparation contract owns AMDGPU. Never replace it in-cluster.
+    enable: false
+    blacklist: false
+  devicePlugin:
+    enableDevicePlugin: true
+    devicePluginImage: rocm/k8s-device-plugin:1.31.0.10
+    nodeLabellerImage: rocm/k8s-device-plugin:labeller-1.31.0.10
+  metricsExporter:
+    enable: false
+  draDriver:
+    enable: false
+EOF
+
+kubectl get deviceconfig -n kube-amd-gpu mi300x-vf -o yaml
+kubectl get pods -n kube-amd-gpu -o wide
 ```
 
-Example lightweight device plugin install:
+If your AMD host has the physical-GPU label `feature.node.kubernetes.io/amd-gpu=true` instead, change the selector in the `DeviceConfig` manifest. Confirm the actual label before installation with `kubectl get node <amd-gpu-flex-node-name> --show-labels`.
+
+### Lightweight device plugin
+
+The alternative below pins the upstream manifests to the `v1.31.0.10` release tag rather than tracking `master`. It does not install or manage the host driver:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-labeller.yaml
+AMD_DEVICE_PLUGIN_VERSION="v1.31.0.10"
+kubectl apply -f "https://raw.githubusercontent.com/ROCm/k8s-device-plugin/${AMD_DEVICE_PLUGIN_VERSION}/k8s-ds-amdgpu-dp.yaml"
+kubectl apply -f "https://raw.githubusercontent.com/ROCm/k8s-device-plugin/${AMD_DEVICE_PLUGIN_VERSION}/k8s-ds-amdgpu-labeller.yaml"
 ```
 
-Use the AMD GPU Operator DRA driver only when your workloads request DRA `DeviceClass` resources. If your workloads request legacy `amd.com/gpu` resources, install the device plugin path.
+Use the AMD GPU Operator DRA driver only when your workloads request DRA `DeviceClass` resources. If your workloads request standard `amd.com/gpu` extended resources, install the device plugin path.
 
 ## Provisioning path
 
@@ -255,7 +314,9 @@ CLUSTER_NAME="<aks-cluster-name>"
 SUBSCRIPTION_ID="<subscription-id>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
-curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
+AKS_FLEX_NODE_VERSION="v0.14"
+curl -fsSLo ./aks-flex-config \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
 
 ./aks-flex-config setup-node-rbac \
@@ -278,7 +339,9 @@ Copy `./aks-flex-node-config.json` to the AMD GPU host.
 
 ```bash
 sudo su
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
+AKS_FLEX_NODE_VERSION="v0.14"
+curl -fsSL \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh" | bash
 aks-flex-node version
 ```
 
@@ -295,7 +358,8 @@ On the AMD GPU host:
 sudo su
 install -d -m 0755 /etc/aks-flex-node
 install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-cat /etc/aks-flex-node/config.json
+# Do not print this file: azure.bootstrapToken.token is a credential.
+stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
 ```
 
 ### 5. Bootstrap and watch the node
@@ -318,6 +382,8 @@ After the node is `Ready`, install the cluster AMD GPU stack from the **Cluster 
 
 ## Validation
 
+The following validation uses a ROCm `7.2.4` userspace image to match the documented host package stream. Flex Node exposes the AMD device files and sysfs data; it does not add ROCm libraries to workload images. Each GPU workload image must contain a ROCm userspace compatible with the host driver.
+
 ```bash
 # Node Ready, then identify your AMD GPU node name.
 kubectl get nodes -o wide
@@ -325,15 +391,41 @@ kubectl get nodes -o wide
 # GPU capacity from the device plugin path.
 kubectl describe node <amd-gpu-flex-node-name> | grep -A5 -E 'Capacity|Allocatable|amd.com/gpu'
 
-# Host driver and runtime.
+# Run a real in-Pod diagnostic while requesting one GPU.
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: amd-rocm-validation
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    feature.node.kubernetes.io/amd-vgpu: "true"
+  containers:
+  - name: rocm
+    image: rocm/dev-ubuntu-24.04:7.2.4
+    command: ["bash", "-ceu", "rocm-smi --showproductname; rocminfo | grep -E 'Marketing Name:|gfx942'"]
+    resources:
+      limits:
+        amd.com/gpu: "1"
+EOF
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/amd-rocm-validation --timeout=5m
+kubectl logs amd-rocm-validation
+
+# On the Flex Node host, validate the driver and the two service boundaries.
 lsmod | grep amdgpu
 ls -l /dev/kfd /dev/dri/renderD*
 sudo /opt/rocm/bin/rocm-smi --showproductname
 sudo /opt/rocm/bin/rocminfo | grep -E 'Marketing Name:|gfx'
-systemctl is-active containerd aks-flex-node-agent
+systemctl is-active aks-flex-node-agent
+active_machine="$(machinectl list --no-legend | awk '$1 == "kube1" || $1 == "kube2" { print $1; exit }')"
+test -n "${active_machine}"
+systemctl --machine="${active_machine}" is-active containerd
 ```
 
-Expect: node `Ready`, `amd.com/gpu` capacity present when the device plugin path is installed, ROCm tools list the GPUs, and agent plus containerd are active.
+For the documented `Standard_ND96isr_MI300X_v5` SKU, expect the node to be `Ready`, `amd.com/gpu` capacity and allocatable to equal `8`, the validation Pod to complete using one assigned GPU, the host agent to be active, and containerd to be active inside the current `kube1` or `kube2` nspawn machine. Delete the validation Pod when finished with `kubectl delete pod amd-rocm-validation`.
+
+The recorded evidence for this guide covers host preparation and post-reboot detection of 8 MI300X VFs. End-to-end Flex Node, operator/device-plugin, allocatable-resource, and workload-Pod validation still requires an authorized MI300X test environment; do not treat the expected results above as recorded test results.
 
 ## Troubleshooting
 
@@ -342,13 +434,14 @@ Expect: node `Ready`, `amd.com/gpu` capacity present when the device plugin path
 | Node not `Ready` | `journalctl -u aks-flex-node-agent`, API-server reachability, bootstrap creds. |
 | Node `Ready`, no GPU capacity | AMD GPU Operator or device plugin installed? `/dev/kfd` and render nodes present on host? |
 | Operator selects no nodes | Check node labels such as `feature.node.kubernetes.io/amd-gpu` or `feature.node.kubernetes.io/amd-vgpu`, then adjust the operator `DeviceConfig` selector. |
-| Pods pending for GPU | Workload uses DRA but DRA driver is not installed, or uses legacy `amd.com/gpu` but only DRA is installed. Match request style to install. |
-| ROCm validation fails after kernel update | Rebuild or repave from an image whose driver matches the running kernel. |
+| Pods pending for GPU | Workload uses DRA but DRA driver is not installed, or uses standard `amd.com/gpu` extended resources but only DRA is installed. Match request style to install. |
+| ROCm validation fails after kernel update | Repair or replace the external host with an image whose driver matches the running host kernel. A Flex Node nspawn repave replaces the Kubernetes worker userspace, not the host kernel or AMDGPU driver. |
 | Driver version drift | Pin the image version and ROCm package versions. |
 
 ## Caveats
 
 - AKS Flex Node does not install the AMDGPU kernel driver or ROCm packages.
 - AKS Flex Node does not install AMD GPU Operator, AMD device plugin, node labeller, metrics exporter, or DRA driver.
+- Workload containers must provide a compatible ROCm userspace; Flex Node only makes the host devices and sysfs data available to the Kubernetes worker and scheduled containers.
 - Image + driver + kernel + containerd versions are part of the AMD GPU node contract. Record them per validation run.
 - The MI300X path is the first validation target. Validate other AMD GPU families before using this document as a production runbook for them.
