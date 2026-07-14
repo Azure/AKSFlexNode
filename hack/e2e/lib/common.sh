@@ -120,7 +120,7 @@ check_prerequisites() {
   log_info "Checking prerequisites..."
   local missing=0
 
-  for cmd in az git go jq kubectl make ssh scp openssl; do
+  for cmd in az docker git go jq kubectl make python3 ssh scp openssl; do
     if ! command -v "${cmd}" &>/dev/null; then
       log_error "Missing required tool: ${cmd}"
       missing=1
@@ -171,7 +171,7 @@ load_config() {
 
   # Binary path - build if not provided
   E2E_BINARY="${E2E_BINARY:-}"
-  E2E_HELPER_BINARY="${E2E_HELPER_BINARY:-}"
+  E2E_CONTROLLER_IMAGE="${E2E_CONTROLLER_IMAGE:-}"
 
   # Unbounded-Net provides the real CNI for E2E Flex nodes. Defaults match the
   # static VNet/subnet prefixes in hack/e2e/infra/main.bicep.
@@ -217,6 +217,9 @@ load_config() {
   log_info "  AKS Node VM Size: ${E2E_AKS_NODE_VM_SIZE}"
   log_info "  Flex VM Size:     ${E2E_VM_SIZE}"
   log_info "  Kubeconfig:       ${KUBECONFIG}"
+  if [[ -n "${E2E_CONTROLLER_IMAGE}" ]]; then
+    log_info "  Controller Image: ${E2E_CONTROLLER_IMAGE}"
+  fi
   log_info "  Unbounded-Net:    ${E2E_UNBOUNDED_NET_VERSION}"
   log_info "  Skip Cleanup:     ${E2E_SKIP_CLEANUP}"
 }
@@ -402,40 +405,11 @@ ensure_binary() {
   local ldflags="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${version} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${git_commit} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${build_date}"
 
   E2E_BINARY="${E2E_WORK_DIR}/aks-flex-node"
-  E2E_HELPER_BINARY="${E2E_WORK_DIR}/e2ehelper"
   (
     cd "${REPO_ROOT}"
-    GOOS=linux GOARCH=amd64 go build -tags local_e2e -ldflags "${ldflags}" -o "${E2E_BINARY}" ./cmd/aks-flex-node
-    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_HELPER_BINARY}" ./cmd/e2ehelper
+    GOOS=linux GOARCH=amd64 go build -ldflags "${ldflags}" -o "${E2E_BINARY}" ./cmd/aks-flex-node
   )
   chmod +x "${E2E_BINARY}"
-  chmod +x "${E2E_HELPER_BINARY}"
 
   log_success "Binary built in $(timer_elapsed "${start}")s -> ${E2E_BINARY}"
-}
-
-ensure_daemon_csr_approver() {
-  local pid
-  pid="$(state_get daemon_csr_approver_pid)"
-  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-    return 0
-  fi
-
-  local helper_binary="${E2E_HELPER_BINARY:-}"
-  if [[ -z "${helper_binary}" || ! -f "${helper_binary}" ]]; then
-    helper_binary="${E2E_WORK_DIR}/e2ehelper"
-  fi
-
-  log_info "Starting e2e daemon CSR approver..."
-  local approver_kubeconfig="${E2E_WORK_DIR}/daemon-csr-approver.kubeconfig"
-  with_cluster_lock kubectl config view --raw --minify > "${approver_kubeconfig}"
-  chmod 600 "${approver_kubeconfig}"
-
-  pkill -f 'e2ehelper daemon-csr-approver' 2>/dev/null || true
-  "${helper_binary}" daemon-csr-approver \
-    --kubeconfig "${approver_kubeconfig}" \
-    --daemon-group aks-flex-node-daemons \
-    --bootstrap-group system:bootstrappers:aks-flex-node \
-    > "${E2E_LOG_DIR}/daemon-csr-approver.log" 2>&1 &
-  state_set daemon_csr_approver_pid "$!"
 }

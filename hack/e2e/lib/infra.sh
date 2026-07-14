@@ -3,7 +3,7 @@
 # hack/e2e/lib/infra.sh - Infrastructure provisioning via Bicep
 #
 # Functions:
-#   infra_deploy   - Deploy AKS cluster + 2 VMs via Bicep template
+#   infra_deploy   - Deploy AKS cluster and Flex Node VMs via Bicep template
 #   infra_get_kubeconfig - Fetch admin kubeconfig for the AKS cluster
 # =============================================================================
 set -euo pipefail

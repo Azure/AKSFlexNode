@@ -261,28 +261,39 @@ func TestGoalStateValidate(t *testing.T) {
 func TestMachineFromARM(t *testing.T) {
 	t.Parallel()
 
-	orchestratorVersion := "1.35.1"
-	provisioningState := "Succeeded"
 	machine := machineFromARM(armcontainerservice.Machine{
+		ID:   ptr("machine-id"),
+		Name: ptr("node1"),
 		Properties: &armcontainerservice.MachineProperties{
+			ETag: ptr("settings-42"),
 			Kubernetes: &armcontainerservice.MachineKubernetesProfile{
-				OrchestratorVersion: &orchestratorVersion,
+				OrchestratorVersion: ptr("1.35.1"),
+				MaxPods:             ptr(int32(42)),
+				NodeLabels:          map[string]*string{"workload": ptr("flex")},
+				NodeTaints:          []*string{ptr("dedicated=flex:NoSchedule")},
+				KubeletConfig: &armcontainerservice.KubeletConfig{
+					ImageGcHighThreshold: ptr(int32(85)),
+					ImageGcLowThreshold:  ptr(int32(80)),
+				},
 			},
-			ProvisioningState: &provisioningState,
+			ProvisioningState: ptr("Succeeded"),
 		},
 	}, GoalState{SettingsVersion: "fallback-settings"})
 
-	if machine.ID != "" {
-		t.Fatalf("ID = %q, want empty", machine.ID)
+	if machine.ID != "machine-id" || machine.Name != "node1" {
+		t.Fatalf("machine identity = %#v", machine)
 	}
-	if machine.Name != "" {
-		t.Fatalf("Name = %q, want empty", machine.Name)
+	if machine.Goal.KubernetesVersion != "1.35.1" || machine.Goal.SettingsVersion != "settings-42" {
+		t.Fatalf("goal versions = %#v", machine.Goal)
 	}
-	if machine.Goal.KubernetesVersion != orchestratorVersion {
-		t.Fatalf("KubernetesVersion = %q, want %q", machine.Goal.KubernetesVersion, orchestratorVersion)
+	if machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" {
+		t.Fatalf("goal settings = %#v", machine.Goal)
 	}
-	if machine.Goal.SettingsVersion != "fallback-settings" {
-		t.Fatalf("SettingsVersion = %q, want fallback-settings", machine.Goal.SettingsVersion)
+	if len(machine.Goal.NodeTaints) != 1 || machine.Goal.NodeTaints[0] != "dedicated=flex:NoSchedule" {
+		t.Fatalf("goal taints = %#v", machine.Goal.NodeTaints)
+	}
+	if machine.Goal.KubeletConfig.ImageGCHighThreshold != 85 || machine.Goal.KubeletConfig.ImageGCLowThreshold != 80 {
+		t.Fatalf("kubelet config = %#v", machine.Goal.KubeletConfig)
 	}
 	if machine.Status.ProvisioningState != ProvisioningStateSucceeded {
 		t.Fatalf("ProvisioningState = %q, want %q", machine.Status.ProvisioningState, ProvisioningStateSucceeded)

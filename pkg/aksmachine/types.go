@@ -49,11 +49,11 @@ func (g GoalState) validate() error {
 // GoalStateFromConfig builds and validates the initial AKS machine goal state
 // from local agent configuration.
 func GoalStateFromConfig(cfg *config.Config) (GoalState, error) {
-	// TODO: Populate SettingsVersion from the accepted machine settings once the
-	// ARM contract exposes it; leaving it empty makes bootstrap state differ from
-	// machineFromARM's Kubernetes-version fallback.
+	// Until the finalized Machine API exposes a settings version in all paths,
+	// use KubernetesVersion as the same stable fallback used by ARM reads.
 	goal := GoalState{
 		KubernetesVersion: cfg.Components.Kubernetes,
+		SettingsVersion:   cfg.Components.Kubernetes,
 		MaxPods:           cfg.Node.MaxPods,
 		NodeLabels:        maps.Clone(cfg.Node.Labels),
 		NodeTaints:        slices.Clone(cfg.Node.Taints),
@@ -95,8 +95,8 @@ type Machine struct {
 
 // MachineClient provides access to the AKS-side machine representation.
 // Production should use the official Azure SDK implementation once the public
-// SDK contains the finalized resource shape; e2e tests can provide a local or
-// remote implementation of this interface.
+// SDK contains the finalized resource shape; tests can provide fake or remote
+// implementations of this interface.
 type MachineClient interface {
 	Create(ctx context.Context, desired GoalState) (*Machine, error)
 	Get(ctx context.Context) (*Machine, error)
