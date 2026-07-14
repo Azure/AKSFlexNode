@@ -315,7 +315,8 @@ CLUSTER_NAME="<aks-cluster-name>"
 SUBSCRIPTION_ID="<subscription-id>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
-AKS_FLEX_NODE_VERSION="v0.14"
+# Override this value to validate a different release deliberately.
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.14}"
 curl -fsSLo ./aks-flex-config \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
@@ -340,9 +341,11 @@ Copy `./aks-flex-node-config.json` to the AMD GPU host.
 
 ```bash
 sudo su
-AKS_FLEX_NODE_VERSION="v0.14"
+# Override this value to validate a different release deliberately.
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.14}"
 curl -fsSL \
-  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh" | bash
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh" \
+  | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION}" bash
 aks-flex-node version
 ```
 
