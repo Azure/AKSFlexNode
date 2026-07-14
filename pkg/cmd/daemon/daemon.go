@@ -1,13 +1,10 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
@@ -28,19 +25,10 @@ func NewCommand() *cobra.Command {
 			}
 			logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
 
-			return runDaemon(cmd.Context(), cfg, logger)
+			return daemon.Run(cmd.Context(), cfg, logger)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "Path to configuration JSON file (required)")
 	_ = cmd.MarkFlagRequired("config")
 	return cmd
-}
-
-func runDaemon(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	machines, err := aksmachine.NewMachineClient(cfg, logger)
-	if err != nil {
-		return fmt.Errorf("create AKS machine client: %w", err)
-	}
-
-	return daemon.Run(ctx, cfg, logger, machines)
 }

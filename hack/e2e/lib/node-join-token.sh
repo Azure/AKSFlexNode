@@ -45,7 +45,7 @@ node_join_token() {
     --cluster-name "${cluster_name}" \
     --subscription "${subscription_id}"
 
-  ensure_daemon_csr_approver
+  ensure_flex_controller
 
   log_info "Generating token config..."
   local config_file="${E2E_WORK_DIR}/config-token.json"
@@ -59,11 +59,14 @@ node_join_token() {
 
   jq \
     --arg nodeIP "${vm_private_ip}" \
+    --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
     --arg runcVersion "${E2E_RUNC_VERSION}" \
     '.agent.logLevel = "debug"
-      | .agent.e2eMode = true
+      | .agent.machineClient.mode = "in-cluster"
+      | .agent.machineClient.endpointUrl = $machineEndpointURL
+      | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
       | .components = (.components // {})
       | .components.kubernetes = $kubernetesVersion
@@ -73,7 +76,8 @@ node_join_token() {
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
 
-  # Step 3: Deploy and start
+  # Step 3: Publish the AKS Machine goal and deploy the agent.
+  machine_configmap_upsert "$(state_get token_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-token"
 
   log_success "Token node joined in $(timer_elapsed "${start}")s"

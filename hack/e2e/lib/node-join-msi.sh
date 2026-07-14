@@ -61,7 +61,11 @@ node_join_msi() {
   "agent": {
     "logLevel": "debug",
     "logDir": "/var/log/aks-flex-node",
-    "e2eMode": true
+    "machineClient": {
+      "mode": "in-cluster",
+      "endpointUrl": "${E2E_CONTROLLER_SERVICE_PROXY_PATH}"
+    },
+    "requireMachineRegistration": true
   },
   "components": {
     "kubernetes": "${E2E_KUBERNETES_VERSION}",
@@ -71,7 +75,9 @@ node_join_msi() {
 }
 EOF
 
-  # Step 2: Deploy and start
+  # Step 2: Publish the AKS Machine goal and deploy the agent.
+  ensure_flex_controller
+  machine_configmap_upsert "$(state_get msi_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-msi"
 
   log_success "MSI node joined in $(timer_elapsed "${start}")s"

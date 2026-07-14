@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.7
+
+ARG GO_IMAGE_VERSION=1.26.5-1
+
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:${GO_IMAGE_VERSION}-bookworm AS build
+
+WORKDIR /src
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+# Microsoft Go defaults to systemcrypto, which requires cgo on Go 1.26 Linux.
+# Select its cgo-less OpenSSL backend so cross-platform builds can keep cgo off.
+ENV CGO_ENABLED=0 \
+    GOEXPERIMENT=ms_nocgo_opensslcrypto
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath \
+      -ldflags "-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_TIME} -w -s" \
+      -o /out/aks-flex-controller \
+      ./cmd/aks-flex-controller
+
+FROM mcr.microsoft.com/azurelinux/distroless/base:3.0
+
+LABEL org.opencontainers.image.title="aks-flex-controller" \
+      org.opencontainers.image.description="In-cluster AKS Flex Node machine endpoint and daemon CSR approver"
+
+COPY --from=build /out/aks-flex-controller /usr/local/bin/aks-flex-controller
+
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/aks-flex-controller"]

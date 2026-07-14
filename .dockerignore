@@ -1,0 +1,13 @@
+.git
+.github
+.tmp
+tmp
+hack/bin
+coverage.out
+coverage.html
+*.tar.gz
+aks-flex-node
+aks-flex-node-*
+aks-flex-controller
+e2ehelper
+test_hbc.kubeconfig

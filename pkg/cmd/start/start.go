@@ -54,10 +54,20 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	if err != nil {
 		return fmt.Errorf("build goal state from config: %w", err)
 	}
-	machines, err := aksmachine.NewMachineClient(cfg, logger)
+	machines, err := aksmachine.NewMachineClient(cfg, logger, aksmachine.MachineClientOptions{})
 	if err != nil {
 		return fmt.Errorf("create AKS machine client: %w", err)
 	}
+	start := time.Now()
+	if err := phases.ExecuteTask(ctx, logger, aksmachine.EnsureMachine(
+		machines,
+		&goal,
+		cfg.Agent.RequireMachineRegistration,
+		logger,
+	)); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
+
 	state := daemon.SeededState(goal)
 	machineName := state.ActiveMachine
 	stateStore, err := daemon.NewFileStateStore()
@@ -71,13 +81,10 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 
 	tasks := phases.Serial(logger,
-		// Persist the goal state in AKS RP before mutating local host state.
-		aksmachine.EnsureMachine(machines, goal, cfg.Agent.RequireMachineRegistration, logger),
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
 		daemon.InstallService(logger),
 	)
-	start := time.Now()
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
