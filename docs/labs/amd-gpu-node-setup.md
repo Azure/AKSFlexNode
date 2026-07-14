@@ -192,7 +192,7 @@ Do not add `amdgpu` to `/etc/modules-load.d` for this validation path. After the
 
 ## Cluster GPU stack (manual)
 
-After the Flex node is `Ready`, **you must install the cluster AMD GPU stack yourself**. AKS Flex Node does not deploy any of this. Use one of these paths:
+After the Flex Node is `Ready`, **you must install the cluster AMD GPU stack yourself**. AKS Flex Node does not deploy any of this. Use one of these paths:
 
 - **AMD GPU Operator** - recommended when you want operator-managed device plugin, node labels, metrics, tests, and optional DRA support. The configuration below disables operator driver and KMM management so the preinstalled host driver remains outside the operator's ownership.
 - **AMD Kubernetes device plugin** - lighter manual path when you only need standard Kubernetes extended resources such as `amd.com/gpu`.
