@@ -104,6 +104,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
+		reset.CleanupNetwork(log),
 		StartNode(cfg, log, newMachine, gs, containerImageArchives, o.state, newState),
 		reset.CleanupMachine(log, oldMachine),
 	)
