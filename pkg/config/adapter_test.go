@@ -296,6 +296,30 @@ func TestToAgentConfig_AdditionalHostDevices(t *testing.T) {
 	}
 }
 
+func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Bootstrap: BootstrapConfig{
+			AdditionalHostMounts: []AdditionalHostMount{
+				{Source: "/opt/config", Target: "/etc/config", ReadOnly: true},
+				{Source: "/var/lib/example"},
+			},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+	if len(ac.AdditionalHostMounts) != 2 {
+		t.Fatalf("AdditionalHostMounts=%#v, want 2 entries", ac.AdditionalHostMounts)
+	}
+	if got := ac.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
+		t.Fatalf("AdditionalHostMounts[0]=%#v", got)
+	}
+	if got := ac.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
+		t.Fatalf("AdditionalHostMounts[1]=%#v", got)
+	}
+}
+
 func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 	t.Parallel()
 

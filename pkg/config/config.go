@@ -195,7 +195,15 @@ type BootstrapConfig struct {
 	// AdditionalHostDevices lists extra host device nodes under /dev to expose to
 	// the nspawn machine in addition to devices discovered by the shared agent.
 	AdditionalHostDevices []string `json:"additionalHostDevices,omitempty"`
+
+	// AdditionalHostMounts lists non-device host paths to bind mount into the
+	// nspawn machine. Read-only mounts should be preferred unless write access is
+	// required.
+	AdditionalHostMounts []AdditionalHostMount `json:"additionalHostMounts,omitempty"`
 }
+
+// AdditionalHostMount re-exports the shared agent's host bind-mount config.
+type AdditionalHostMount = agentconfig.AdditionalHostMount
 
 // OfflineArtifactsConfig mirrors Unbounded's OfflineArtifacts bootstrap
 // setting in the AKS Flex public config shape.
@@ -631,6 +639,9 @@ func (c *BootstrapTokenConfig) validate() error {
 func (c *BootstrapConfig) validate() error {
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
+	}
+	if err := agentconfig.ValidateAdditionalHostMounts(c.AdditionalHostMounts); err != nil {
+		return fmt.Errorf("invalid bootstrap.additionalHostMounts: %w", err)
 	}
 
 	return nil

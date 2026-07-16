@@ -112,6 +112,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `bootstrap.ociImage` | string | Optional nspawn rootfs OCI image used during bootstrap. When omitted, the shared agent default image selection is used. | `ghcr.io/example/aks-flex-node-rootfs:ubuntu-24.04` |
 | `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. Preflight treats missing host packages as fatal when this is set. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
 | `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |
+| `bootstrap.additionalHostMounts` | array of objects | Optional non-device host paths to bind mount into the nspawn machine. `source` is required, `target` defaults to `source`, and `readOnly` defaults to `false`. Source and target must be clean absolute paths without whitespace, control characters, or `:`. Prefer read-only mounts unless write access is required. | `[{"source":"/opt/config","target":"/etc/config","readOnly":true}]` |
 
 ## Networking
 
@@ -322,3 +323,26 @@ Add this section when you need to pin the nspawn rootfs image or use a complete 
   }
 }
 ```
+
+### Additional Host Mounts
+
+Use `bootstrap.additionalHostMounts` to expose host files or directories inside the nspawn worker. This is separate from `additionalHostDevices`, which is only for device nodes under `/dev`. The source is not required to exist during configuration validation, but it must exist when systemd-nspawn starts the machine. When `target` is omitted, the source path is also used inside the worker.
+
+```json
+{
+  "bootstrap": {
+    "additionalHostMounts": [
+      {
+        "source": "/opt/config",
+        "target": "/etc/config",
+        "readOnly": true
+      },
+      {
+        "source": "/var/lib/shared-data"
+      }
+    ]
+  }
+}
+```
+
+Read-only entries render as systemd-nspawn `BindReadOnly=` directives; writable entries render as `Bind=` directives.

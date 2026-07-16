@@ -30,6 +30,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
+		AdditionalHostMounts:  cfg.Bootstrap.AdditionalHostMounts,
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,
