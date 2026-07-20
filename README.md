@@ -28,7 +28,7 @@ This quickstart involves two machines. Keep them distinct:
 - **Your Flex Node machine** is the on-premises physical server or virtual machine you are joining to the cluster as a worker node. Every step labeled **Run on: your Flex Node machine** happens there.
 
 > **Tip**
-> The **Run on: your Flex Node machine** steps are run on that machine after you SSH in. If you would rather stay on your workstation, you can run them remotely by wrapping the command, for example `ssh "$TARGET_HOST" "sudo aks-flex-node preflight --config /etc/aks-flex-node/config.json"`. This requires passwordless sudo on the Flex Node machine.
+> Steps 4 to 6 use a single interactive SSH session: you connect once in Step 4, stay on the Flex Node machine through Step 6, then return to your workstation for Step 7. As an alternative, you can skip the interactive session and run each host command from your workstation by wrapping it, for example `ssh "$TARGET_HOST" "sudo aks-flex-node preflight --config /etc/aks-flex-node/config.json"`. Use one approach or the other, not both. Wrapping requires passwordless sudo on the Flex Node machine.
 
 Before you begin, make sure you have:
 
@@ -151,13 +151,17 @@ scp ./aks-flex-node-config.json "$TARGET_HOST:/tmp/aks-flex-node-config.json"
 
 ### Step 4: Install the agent on your Flex Node machine
 
-**Run on: your Flex Node machine**
+First, from your workstation, open an SSH session on the Flex Node machine.
 
-Connect to the Flex Node machine, then install the agent and move the generated config into place.
+**Run on: your workstation**
 
 ```bash
 ssh "$TARGET_HOST"
 ```
+
+You are now connected to the Flex Node machine. Install the agent and move the generated config into place, as root.
+
+**Run on: your Flex Node machine**
 
 ```bash
 sudo su
@@ -217,6 +221,8 @@ Started aks-flex-node-agent.service - AKS Flex Node Agent.
 aks-flex-node[3800]: level=INFO msg="running agent daemon" nodeName=aks-flex-config-test
 aks-flex-node[3800]: level=INFO msg="machine state reconciled" status=healthy
 ```
+
+When you are finished, press `Ctrl+C` to stop following the logs, then run `exit` twice, once to leave the root shell and once to close the SSH session, to return to your workstation.
 
 ### Step 7: Verify the node joined
 
