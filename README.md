@@ -27,6 +27,9 @@ This quickstart involves two machines. Keep them distinct:
 - **Your workstation** is the computer you drive the setup from, using the Azure CLI and `kubectl` (for example, your laptop). It is not joined to the cluster; it only generates the configuration and runs commands. Every step labeled **Run on: your workstation** happens here.
 - **Your Flex Node machine** is the on-premises physical server or virtual machine you are joining to the cluster as a worker node. Every step labeled **Run on: your Flex Node machine** happens there.
 
+> **Tip**
+> The **Run on: your Flex Node machine** steps are run on that machine after you SSH in. If you would rather stay on your workstation, you can run them remotely by wrapping the command, for example `ssh "$TARGET_HOST" "sudo aks-flex-node preflight --config /etc/aks-flex-node/config.json"`. This requires passwordless sudo on the Flex Node machine.
+
 Before you begin, make sure you have:
 
 - An Azure subscription. [Create one for free](https://azure.microsoft.com/free/).
