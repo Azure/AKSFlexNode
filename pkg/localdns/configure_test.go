@@ -71,6 +71,30 @@ func TestAddCriticalFQDN(t *testing.T) {
 	}
 }
 
+func TestFQDNHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "hostname", value: "cluster.example.com", want: "cluster.example.com"},
+		{name: "hostname with port", value: "cluster.example.com:6443", want: "cluster.example.com"},
+		{name: "URL", value: "https://cluster.example.com:443", want: "cluster.example.com"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := fqdnHost(tt.value); got != tt.want {
+				t.Fatalf("fqdnHost(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfigureTask(t *testing.T) {
 	t.Parallel()
 

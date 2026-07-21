@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -27,13 +28,9 @@ type configureTask struct {
 }
 
 func Configure(cfg *config.Config, logger *slog.Logger) phases.Task {
-	fqdn := cfg.Node.Kubelet.ClusterFQDN
-	if host, _, err := net.SplitHostPort(fqdn); err == nil {
-		fqdn = host
-	}
 	return &configureTask{
 		logger:          logger,
-		fqdn:            fqdn,
+		fqdn:            fqdnHost(cfg.Node.Kubelet.ClusterFQDN),
 		environmentPath: environmentPath,
 	}
 }
@@ -96,4 +93,15 @@ func addCriticalFQDN(environment, fqdn string) (string, bool) {
 		suffix = "\n"
 	}
 	return environment + suffix + prefix + fqdn + "\n", true
+}
+
+func fqdnHost(value string) string {
+	value = strings.TrimSpace(value)
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		return host
+	}
+	return value
 }
