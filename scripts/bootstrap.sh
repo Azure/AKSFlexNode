@@ -6,6 +6,7 @@
 #
 # The publisher must replace the marker in write_embedded_base_config with a
 # cluster/pool-specific partial config before distributing this script.
+# Usage guide: docs/usages/bootstrap-script.md
 
 set -euo pipefail
 umask 077
