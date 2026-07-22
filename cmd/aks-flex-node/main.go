@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/AKSFlexNode/pkg/cmd/bootstrap"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/preflight"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/reset"
@@ -25,6 +26,10 @@ func main() {
 		Long:  "Azure Kubernetes Service Flex Node Agent for edge computing scenarios",
 	}
 
+	// Register the explicit bootstrap command before start, whose legacy alias is
+	// also "bootstrap". Exact bootstrap invocations use the end-to-end flow while
+	// existing start invocations remain unchanged.
+	rootCmd.AddCommand(bootstrap.NewCommand())
 	rootCmd.AddCommand(start.NewCommand())
 	rootCmd.AddCommand(preflight.NewCommand())
 	rootCmd.AddCommand(daemon.NewCommand())
