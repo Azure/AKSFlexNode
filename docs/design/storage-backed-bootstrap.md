@@ -82,6 +82,218 @@ The script must not be committed after generation.
 `AKS_FLEX_NODE_BASE_CONFIG_FILE` exists as a development/test escape hatch. The
 normal distributed flow uses the embedded config.
 
+## Expected first-boot flow
+
+The flow has four actors with deliberately separate responsibilities:
+
+- The **script publisher** obtains cluster bootstrap data and renders the
+  cluster-specific script.
+- The **image owner** prepares a reusable host image with operating-system
+  prerequisites, but no cluster credentials or node identity.
+- The **provisioner** creates the machine, configures network and Azure identity,
+  and gives the machine a way to download the generated script.
+- The **first-boot environment** downloads and invokes the script once, then
+  records success outside the script.
+
+Keeping these responsibilities separate prevents the generic VHD from becoming
+cluster-specific and makes it clear that `--auth` configures the installed
+agent, not the initial script download.
+
+### 1. Prepare the reusable image
+
+Before the image is captured, install the documented host dependencies:
+
+- Bash, curl, tar, jq, and standard core utilities;
+- systemd and nspawn prerequisites;
+- nftables and other packages required by agent preflight;
+- optional organization-specific CA certificates and proxy configuration.
+
+Do not place any of the following in the reusable image:
+
+- the generated bootstrap script;
+- a bootstrap token or SP credential;
+- `/etc/aks-flex-node/config.json` from another node;
+- `/var/lib/aks-flex-node` state;
+- a first-boot completion marker from image construction.
+
+The image can include a wrapper or systemd oneshot unit that performs the
+caller-owned script download, but it should obtain all cluster-specific inputs
+from provisioning data at instance creation time.
+
+### 2. Publish a bounded-lifetime script
+
+For each pool or node enrollment operation, the publisher:
+
+1. Obtains fresh bootstrap data, preferably from the pool's
+   `listBootstrapData` operation.
+2. Adds the target cluster location, runtime machine-client policy, and any
+   other config fields not returned by that operation.
+3. Leaves host-derived fields such as node name and node IP unset.
+4. Replaces the single marker in `scripts/bootstrap.sh` with that JSON.
+5. Selects an agent version or exact archive URL and records the archive
+   SHA-256.
+6. Uploads the generated script to a protected location.
+7. Returns the script URL plus non-embedded invocation metadata to the
+   provisioner.
+
+The generated script should not outlive its bootstrap token. A pool-level script
+can be reused only when the token and policy intentionally permit that. A
+node-level script should be preferred when enrollment is tied to a specific
+machine resource.
+
+The publisher must never log the generated script body. Diagnostics can report
+the cluster, pool, script object path, token expiry, and artifact digest without
+reporting the token or config.
+
+### 3. Provision identity, network, and download access
+
+Before first boot runs, the provisioner prepares the host's external
+prerequisites:
+
+- network reachability to the AKS API server, artifact URL, and required image
+  registries;
+- a unique host name suitable for a Kubernetes Node name;
+- the selected managed identity or service principal with the permissions
+  required by the agent's runtime machine-client mode;
+- authorization to download the generated script when its URL is private;
+- a readable agent artifact URL, such as a short-lived read-only SAS URL.
+
+For MSI runtime auth, grant the identity the required AKS role before invoking
+bootstrap and allow time for role-assignment propagation. For a user-assigned
+identity, provide the same client ID both to the runtime config override and to
+any caller-owned script-download logic that uses that identity.
+
+Script-download authorization and agent runtime authorization are independent.
+For example, cloud-init can use a user-assigned identity to download a private
+script, while the generated script receives a signed agent archive URL and
+writes that identity into `azure.managedIdentity` for ARM Machine operations.
+
+### 4. Download the generated script
+
+The caller downloads the generated script before invoking it. The bootstrap
+script does not authenticate its own download because it is not running yet.
+Depending on the environment, the caller can use a signed URL, cloud-init's
+provisioning channel, IMDS plus an OAuth request, or an existing configuration
+management system.
+
+For a URL that curl can already read:
+
+```console
+install -d -m 0700 /run/aks-flex-node-bootstrap
+curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh "$BOOTSTRAP_SCRIPT_URL"
+chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
+```
+
+When the script is stored in a private Blob container, caller-owned code should
+obtain a Storage token and download it without printing the token or URL. The
+caller should validate the HTTP result before execution. If the publisher also
+returns a script digest or signature, verify it at this boundary.
+
+Do not use `curl ... | bash` for a generated credential-bearing script. Saving
+it first allows permissions, download success, and optional integrity metadata
+to be checked before root execution.
+
+### 5. Invoke once with runtime overrides
+
+Run the script as root after all roles and network paths are ready. Environment
+overrides are convenient for cloud-init and orchestration systems:
+
+```console
+sudo env \
+  AKS_FLEX_NODE_AUTH=msi \
+  AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+  AKS_FLEX_NODE_AGENT_SHA256="$AGENT_SHA256" \
+  AKS_FLEX_NODE_CONFIG_OVERRIDES='{"node":{"labels":{"bootstrap":"first-boot"}}}' \
+  bash /run/aks-flex-node-bootstrap/bootstrap.sh
+```
+
+A user-assigned identity can be selected explicitly:
+
+```console
+sudo bash /run/aks-flex-node-bootstrap/bootstrap.sh \
+  --auth msi \
+  --msi-client-id "$MANAGED_IDENTITY_CLIENT_ID" \
+  --agent-url "$AGENT_URL" \
+  --agent-sha256 "$AGENT_SHA256"
+```
+
+For SP auth, deliver the credential as a root-only file and pass its path. Do
+not place the secret in cloud-init command arguments, a systemd `ExecStart`, or
+a generic JSON override.
+
+The caller does not need to set node IP. The script leaves it absent unless the
+base config or a generic override intentionally supplies it.
+
+During invocation, the script:
+
+1. validates prerequisites and the embedded JSON;
+2. applies generic environment and CLI overrides;
+3. resolves node name and runtime auth;
+4. downloads, verifies, and atomically installs the agent;
+5. atomically writes the mode `0600` config;
+6. runs non-mutating preflight;
+7. invokes the existing start lifecycle only after preflight succeeds.
+
+### 6. Record completion and remove the downloaded script
+
+A successful invocation ends only after `aks-flex-node start` installs and
+starts the long-running service. The first-boot wrapper should then:
+
+1. remove the downloaded generated script;
+2. remove transient SP secret files when their lifecycle permits;
+3. create a root-owned completion marker outside the reusable image;
+4. stop retrying the full bootstrap workflow.
+
+For example:
+
+```bash
+if bash /run/aks-flex-node-bootstrap/bootstrap.sh; then
+    rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
+    install -d -m 0755 /var/lib/aks-flex-node
+    touch /var/lib/aks-flex-node/first-boot-complete
+fi
+```
+
+The completion marker is caller-owned because the caller decides whether and
+how to retry failed provisioning. A systemd oneshot wrapper can use
+`ConditionPathExists=!/var/lib/aks-flex-node/first-boot-complete` to prevent a
+successful node from being bootstrapped again after reboot.
+
+### 7. Verify convergence
+
+The provisioning system should not treat script exit alone as complete cluster
+convergence. Verify at least:
+
+- `/etc/aks-flex-node/config.json` is `0600 root:root`;
+- `aks-flex-node-agent.service` is active;
+- the ARM Machine exists and has reached `Succeeded`;
+- the Kubernetes Node has the expected host-derived name and is Ready;
+- the Node's InternalIP matches the expected host address even when node IP was
+  omitted from config;
+- the Node joined the intended network site and received a pod CIDR;
+- a test workload can start on the node when the environment requires an
+  end-to-end networking check.
+
+If the cluster does not run the daemon CSR controller, certificate approval is
+an explicit environment prerequisite. A pending daemon CSR can otherwise cause
+service retries even after kubelet registration succeeds.
+
+### Failure and retry expectations
+
+A nonzero script exit means the first-boot wrapper must not write its completion
+marker. Preserve root-only logs and config for diagnosis. The safe retry point
+depends on where failure occurred:
+
+- Download, checksum, JSON rendering, and preflight failures occur before
+  `start` and can be retried after correcting the input.
+- A failure during `start` may leave partial host or ARM Machine state; use the
+  existing agent diagnostics and lifecycle guidance before retrying.
+- After a successful start, do not rerun the full script. The
+  existing-deployment preflight is expected to reject a second first-boot
+  attempt.
+- If the embedded bootstrap token expires before retry, publish a new generated
+  script rather than editing the old one on the host.
+
 ## Suggested storage layout
 
 A private container per cluster keeps generated scripts and artifacts organized
@@ -207,7 +419,12 @@ The script processes JSON in this order:
 5. Set `agent.nodeName` from the lowercase host name only when absent.
 6. Apply the dedicated auth selection.
 7. Validate the final JSON with jq.
-8. Atomically install it at `/etc/aks-flex-node/config.json` with mode `0600`.
+8. Keep the rendered result in the protected workspace while the agent archive
+   is downloaded and installed.
+9. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
+   `0600`.
+10. Clear bootstrap environment variables, including signed artifact URLs and any
+   direct SP secret, before launching the agent commands.
 
 Dedicated auth selection runs last so generic overrides cannot accidentally
 leave multiple incompatible Azure runtime authentication methods configured.
@@ -353,6 +570,8 @@ considered.
 - Final config is root-owned mode `0600`.
 - Service-principal secrets are not accepted as CLI arguments.
 - Secret files are rejected when accessible by group/other users.
+- Bootstrap environment values and signed agent URLs are cleared before
+  preflight and start child processes are launched.
 - jq performs JSON encoding rather than shell string interpolation.
 - Download URLs are not logged by the script.
 - Archive traversal paths are rejected.

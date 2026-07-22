@@ -30,6 +30,9 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES; do
+    [[ -z "${!variable+x}" ]] || exit 23
+done
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
 AGENT
     chmod 0755 "$dir/aks-flex-node-linux-$ARCH"

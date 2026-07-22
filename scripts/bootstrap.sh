@@ -319,12 +319,30 @@ download_and_install_agent() {
     log "installed agent at $INSTALL_DIR/aks-flex-node"
 }
 
+clear_bootstrap_environment() {
+    SP_CLIENT_SECRET=""
+    AGENT_URL=""
+    ENV_CONFIG_OVERRIDES=""
+    unset \
+        AKS_FLEX_NODE_AUTH \
+        AKS_FLEX_NODE_MSI_CLIENT_ID \
+        AKS_FLEX_NODE_SP_TENANT_ID \
+        AKS_FLEX_NODE_SP_CLIENT_ID \
+        AKS_FLEX_NODE_SP_CLIENT_SECRET \
+        AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE \
+        AKS_FLEX_NODE_AGENT_URL \
+        AKS_FLEX_NODE_AGENT_VERSION \
+        AKS_FLEX_NODE_AGENT_SHA256 \
+        AKS_FLEX_NODE_CONFIG_OVERRIDES \
+        AKS_FLEX_NODE_INSTALL_DIR \
+        AKS_FLEX_NODE_CONFIG_PATH || true
+}
+
 install_config() {
-    local rendered="$TEMP_DIR/config.json"
+    local rendered="$1"
     local config_dir staged
     config_dir=$(dirname "$CONFIG_PATH")
     install -d -o root -g root -m 0755 "$config_dir"
-    render_config "$rendered"
     staged=$(mktemp "$config_dir/.config.json.XXXXXX")
     install -o root -g root -m 0600 "$rendered" "$staged"
     mv -f "$staged" "$CONFIG_PATH"
@@ -340,10 +358,13 @@ main() {
     chmod 0700 "$TEMP_DIR"
     trap cleanup EXIT
 
-    local arch
+    local arch rendered_config
     arch=$(detect_architecture)
+    rendered_config="$TEMP_DIR/config.json"
+    render_config "$rendered_config"
     download_and_install_agent "$arch"
-    install_config
+    install_config "$rendered_config"
+    clear_bootstrap_environment
 
     log "running preflight"
     "$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output text
