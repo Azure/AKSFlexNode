@@ -30,7 +30,6 @@ type options struct {
 	storageAuth             string
 	storageTenantID         string
 	storageClientID         string
-	storageClientSecret     string
 	storageClientSecretFile string
 	storageAuthorityHost    string
 	storageTokenScope       string
@@ -62,20 +61,6 @@ func NewCommand() *cobra.Command {
 		writeConfig:   writeConfig,
 		newDownloader: nodebootstrap.NewDownloader,
 	}
-	h.options.startConfigURL = os.Getenv("AKS_FLEX_NODE_START_CONFIG_URL")
-	h.options.agentBinaryURL = os.Getenv("AKS_FLEX_NODE_AGENT_BINARY_URL")
-	h.options.agentBinarySHA256 = os.Getenv("AKS_FLEX_NODE_AGENT_BINARY_SHA256")
-	h.options.agentBinaryFormat = envOrDefault("AKS_FLEX_NODE_AGENT_BINARY_FORMAT", "auto")
-	h.options.storageAuth = envOrDefault("AKS_FLEX_NODE_STORAGE_AUTH", "none")
-	h.options.storageTenantID = os.Getenv("AKS_FLEX_NODE_STORAGE_TENANT_ID")
-	h.options.storageClientID = os.Getenv("AKS_FLEX_NODE_STORAGE_CLIENT_ID")
-	h.options.storageClientSecret = os.Getenv("AKS_FLEX_NODE_STORAGE_CLIENT_SECRET")
-	h.options.storageClientSecretFile = os.Getenv("AKS_FLEX_NODE_STORAGE_CLIENT_SECRET_FILE")
-	h.options.storageAuthorityHost = os.Getenv("AKS_FLEX_NODE_STORAGE_AUTHORITY_HOST")
-	h.options.storageTokenScope = envOrDefault("AKS_FLEX_NODE_STORAGE_TOKEN_SCOPE", nodebootstrap.DefaultStorageScope)
-	h.options.agentBinaryPath = envOrDefault("AKS_FLEX_NODE_AGENT_BINARY_PATH", "/usr/local/bin/aks-flex-node")
-	h.options.configPath = envOrDefault("AKS_FLEX_NODE_CONFIG_PATH", defaultConfigPath)
-
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
 		Short: "Prepare configuration, run preflight, and start the node",
@@ -98,9 +83,14 @@ func NewCommand() *cobra.Command {
   # System-assigned MSI; add --storage-client-id for a user-assigned identity.
   aks-flex-node bootstrap \
     --start-config-url "$START_CONFIG_URL" \
+    --storage-auth msi
+
+  # Optional runtime customization uses jq variables without changing join credentials.
+  aks-flex-node bootstrap \
+    --start-config-url "$START_CONFIG_URL" \
     --storage-auth msi \
-    --jq-arg nodeIP=10.0.0.4 \
-    --jq '.node.kubelet.nodeIP = $nodeIP'`,
+    --jq-arg scenario=edge-vhd \
+    --jq '.node.labels["aks-flex-node.azure.com/bootstrap-scenario"] = $scenario'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return h.execute(cmd.Context())
@@ -108,21 +98,18 @@ func NewCommand() *cobra.Command {
 	}
 
 	flags := cmd.Flags()
-	flags.StringVar(&h.options.startConfigURL, "start-config-url", h.options.startConfigURL, "Partial node start config URL, file:// URL, or local path")
-	flags.StringVar(&h.options.configPath, "config", h.options.configPath, "Final config path, or an existing config when --start-config-url is omitted")
-	flags.StringVar(&h.options.agentBinaryURL, "agent-binary-url", h.options.agentBinaryURL, "Optional agent binary/archive URL, file:// URL, or local path")
-	flags.StringVar(&h.options.agentBinarySHA256, "agent-binary-sha256", h.options.agentBinarySHA256, "Expected SHA-256 of the downloaded agent artifact")
-	flags.StringVar(&h.options.agentBinaryFormat, "agent-binary-format", h.options.agentBinaryFormat, "Agent artifact format: auto, binary, or tar.gz")
-	// URL defaults can contain SAS credentials and must never appear in help output.
-	flags.Lookup("start-config-url").DefValue = ""
-	flags.Lookup("agent-binary-url").DefValue = ""
-	flags.StringVar(&h.options.agentBinaryPath, "agent-binary-path", h.options.agentBinaryPath, "Active agent binary destination")
-	flags.StringVar(&h.options.storageAuth, "storage-auth", h.options.storageAuth, "Storage auth: none, sas, service-principal, or msi")
-	flags.StringVar(&h.options.storageTenantID, "storage-tenant-id", h.options.storageTenantID, "Service-principal tenant ID")
-	flags.StringVar(&h.options.storageClientID, "storage-client-id", h.options.storageClientID, "Service-principal or user-assigned managed identity client ID")
-	flags.StringVar(&h.options.storageClientSecretFile, "storage-client-secret-file", h.options.storageClientSecretFile, "Protected service-principal client secret file")
-	flags.StringVar(&h.options.storageAuthorityHost, "storage-authority-host", h.options.storageAuthorityHost, "Optional Microsoft Entra authority host")
-	flags.StringVar(&h.options.storageTokenScope, "storage-token-scope", h.options.storageTokenScope, "Azure Storage OAuth token scope")
+	flags.StringVar(&h.options.startConfigURL, "start-config-url", "", "Partial node start config URL, file:// URL, or local path")
+	flags.StringVar(&h.options.configPath, "config", defaultConfigPath, "Final config path, or an existing config when --start-config-url is omitted")
+	flags.StringVar(&h.options.agentBinaryURL, "agent-binary-url", "", "Optional agent binary/archive URL, file:// URL, or local path")
+	flags.StringVar(&h.options.agentBinarySHA256, "agent-binary-sha256", "", "Expected SHA-256 of the downloaded agent artifact")
+	flags.StringVar(&h.options.agentBinaryFormat, "agent-binary-format", "auto", "Agent artifact format: auto, binary, or tar.gz")
+	flags.StringVar(&h.options.agentBinaryPath, "agent-binary-path", "/usr/local/bin/aks-flex-node", "Active agent binary destination")
+	flags.StringVar(&h.options.storageAuth, "storage-auth", "none", "Storage auth: none, sas, service-principal, or msi")
+	flags.StringVar(&h.options.storageTenantID, "storage-tenant-id", "", "Service-principal tenant ID")
+	flags.StringVar(&h.options.storageClientID, "storage-client-id", "", "Service-principal or user-assigned managed identity client ID")
+	flags.StringVar(&h.options.storageClientSecretFile, "storage-client-secret-file", "", "Protected service-principal client secret file")
+	flags.StringVar(&h.options.storageAuthorityHost, "storage-authority-host", "", "Optional Microsoft Entra authority host")
+	flags.StringVar(&h.options.storageTokenScope, "storage-token-scope", nodebootstrap.DefaultStorageScope, "Azure Storage OAuth token scope")
 	flags.StringArrayVar(&h.options.jqQueries, "jq", nil, "gojq config transformation; repeatable")
 	flags.StringArrayVar(&h.options.jqArgs, "jq-arg", nil, "Bind a gojq string variable as NAME=VALUE; repeatable")
 	flags.StringArrayVar(&h.options.jqJSONArgs, "jq-argjson", nil, "Bind a JSON-typed gojq variable as NAME=JSON; repeatable")
@@ -153,7 +140,6 @@ func (h *handler) execute(ctx context.Context) error {
 		Mode:             h.options.storageAuth,
 		TenantID:         h.options.storageTenantID,
 		ClientID:         h.options.storageClientID,
-		ClientSecret:     h.options.storageClientSecret,
 		ClientSecretFile: h.options.storageClientSecretFile,
 		AuthorityHost:    h.options.storageAuthorityHost,
 		TokenScope:       h.options.storageTokenScope,
@@ -267,11 +253,4 @@ func storageSecretFilteredEnvironment() []string {
 		}
 	}
 	return environment
-}
-
-func envOrDefault(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
 }

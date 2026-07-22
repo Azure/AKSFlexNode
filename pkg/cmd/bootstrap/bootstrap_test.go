@@ -1,12 +1,10 @@
 package bootstrap
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/nodebootstrap"
@@ -43,22 +41,6 @@ func TestNewCommand(t *testing.T) {
 	} {
 		if command.Flags().Lookup(name) == nil {
 			t.Errorf("flag --%s is missing", name)
-		}
-	}
-}
-
-func TestNewCommandRedactsURLDefaults(t *testing.T) {
-	t.Setenv("AKS_FLEX_NODE_START_CONFIG_URL", "https://account.example/config?sig=start-secret")
-	t.Setenv("AKS_FLEX_NODE_AGENT_BINARY_URL", "https://account.example/agent?sig=agent-secret")
-	command := NewCommand()
-	var output bytes.Buffer
-	command.SetOut(&output)
-	if err := command.Help(); err != nil {
-		t.Fatalf("Help() error = %v", err)
-	}
-	for _, secret := range []string{"start-secret", "agent-secret"} {
-		if strings.Contains(output.String(), secret) {
-			t.Fatalf("help output contains URL credential %q", secret)
 		}
 	}
 }
