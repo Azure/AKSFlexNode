@@ -104,6 +104,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `components.containerd` | string | Optional containerd version override. | `2.0.4` |
 | `components.runc` | string | Optional runc version override. | `1.1.12` |
 | `components.sandboxImage` | string | Optional CRI sandbox/pause image used by containerd. When omitted, the shared agent default is used. | `mcr.microsoft.com/oss/kubernetes/pause:3.9` |
+| `components.gantry.disabled` | boolean | Optional breakglass setting that disables the Gantry containerd registry routing managed by the shared agent. Gantry is enabled by default when this setting or the `gantry` object is omitted. | `false` |
 
 ## Bootstrap
 

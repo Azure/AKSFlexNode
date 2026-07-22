@@ -62,6 +62,12 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
+	if cfg.Components.Gantry != nil {
+		ac.Gantry = &agentconfig.GantryConfig{
+			Disabled: cfg.Components.Gantry.Disabled,
+		}
+	}
+
 	switch {
 	case cfg.IsBootstrapTokenConfigured():
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token

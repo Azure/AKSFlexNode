@@ -808,7 +808,10 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			"kubernetes": "1.29.0",
 			"containerd": "2.0.5",
 			"runc": "1.2.3",
-			"sandboxImage": "registry.example.test/pause:3.9"
+			"sandboxImage": "registry.example.test/pause:3.9",
+			"gantry": {
+				"disabled": true
+			}
 		},
 		"bootstrap": {
 			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04",
@@ -868,6 +871,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if len(cfg.Node.Taints) != 1 || cfg.Node.Taints[0] != "dedicated=flexnode:NoSchedule" {
 		t.Fatalf("Node.Taints = %#v, want dedicated=flexnode:NoSchedule", cfg.Node.Taints)
 	}
+	if cfg.Components.Gantry == nil || !cfg.Components.Gantry.Disabled {
+		t.Fatalf("Components.Gantry = %#v, want disabled", cfg.Components.Gantry)
+	}
 
 	agentCfg := ToAgentConfig(cfg, "flex-node-1")
 	if agentCfg.Cluster.Version != "1.29.0" {
@@ -881,6 +887,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	}
 	if agentCfg.CRI.Containerd.SandboxImage != "registry.example.test/pause:3.9" {
 		t.Fatalf("Agent CRI.Containerd.SandboxImage = %q, want registry.example.test/pause:3.9", agentCfg.CRI.Containerd.SandboxImage)
+	}
+	if agentCfg.Gantry == nil || !agentCfg.Gantry.Disabled {
+		t.Fatalf("Agent Gantry = %#v, want disabled", agentCfg.Gantry)
 	}
 	if agentCfg.OCIImage != "registry.example.test/flex/rootfs:ubuntu-24.04" {
 		t.Fatalf("Agent OCIImage = %q, want registry.example.test/flex/rootfs:ubuntu-24.04", agentCfg.OCIImage)

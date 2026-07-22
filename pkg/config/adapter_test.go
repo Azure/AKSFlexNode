@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 func TestToAgentConfig_BootstrapToken(t *testing.T) {
@@ -257,6 +259,48 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 	}
 	if ac.CNI.PluginVersion != "1.6.0" {
 		t.Fatalf("CNI.PluginVersion=%q, want %q", ac.CNI.PluginVersion, "1.6.0")
+	}
+}
+
+func TestToAgentConfig_Gantry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		gantry       *GantryConfig
+		wantConfig   bool
+		wantDisabled bool
+	}{
+		{
+			name: "omitted is enabled by default",
+		},
+		{
+			name:       "explicitly enabled",
+			gantry:     &GantryConfig{},
+			wantConfig: true,
+		},
+		{
+			name:         "disabled",
+			gantry:       &GantryConfig{Disabled: true},
+			wantConfig:   true,
+			wantDisabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{Components: ComponentsConfig{Gantry: tt.gantry}}
+			ac := ToAgentConfig(cfg, "kube1")
+
+			if got := ac.Gantry != nil; got != tt.wantConfig {
+				t.Fatalf("Gantry config present=%t, want %t", got, tt.wantConfig)
+			}
+			if got := goalstates.ResolveGantry(ac.Gantry).Disabled; got != tt.wantDisabled {
+				t.Fatalf("Gantry.Disabled=%t, want %t", got, tt.wantDisabled)
+			}
+		})
 	}
 }
 

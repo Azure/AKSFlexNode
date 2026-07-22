@@ -174,10 +174,18 @@ type MachineClientConfig struct {
 // ComponentsConfig is the AKS RP component version contract used by the agent
 // at runtime.
 type ComponentsConfig struct {
-	Kubernetes   string `json:"kubernetes,omitempty"`
-	Containerd   string `json:"containerd,omitempty"`
-	Runc         string `json:"runc,omitempty"`
-	SandboxImage string `json:"sandboxImage,omitempty"`
+	Kubernetes   string        `json:"kubernetes,omitempty"`
+	Containerd   string        `json:"containerd,omitempty"`
+	Runc         string        `json:"runc,omitempty"`
+	SandboxImage string        `json:"sandboxImage,omitempty"`
+	Gantry       *GantryConfig `json:"gantry,omitempty"`
+}
+
+// GantryConfig holds optional Gantry integration settings.
+type GantryConfig struct {
+	// Disabled opts out of the Gantry containerd registry routing that the
+	// shared agent enables by default.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component

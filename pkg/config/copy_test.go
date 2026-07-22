@@ -13,6 +13,7 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 			TargetCluster:    &TargetClusterConfig{ResourceID: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster", Location: "eastus"},
 			Arc:              &ArcConfig{Enabled: true, MachineName: "m", Location: "eastus", ResourceGroup: "rg", Tags: map[string]string{"k": "v"}},
 		},
+		Components: ComponentsConfig{Gantry: &GantryConfig{Disabled: true}},
 		Node: NodeConfig{
 			Labels: map[string]string{"l": "1"},
 			Taints: []string{"dedicated=infra:NoSchedule"},
@@ -42,6 +43,9 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	}
 	if cfg.Azure.Arc == nil || copy.Azure.Arc == nil || cfg.Azure.Arc == copy.Azure.Arc {
 		t.Fatalf("Arc pointer shared or nil")
+	}
+	if cfg.Components.Gantry == nil || copy.Components.Gantry == nil || cfg.Components.Gantry == copy.Components.Gantry {
+		t.Fatalf("Gantry pointer shared or nil")
 	}
 
 	// Maps should not be shared (validate via independent mutation behavior).
