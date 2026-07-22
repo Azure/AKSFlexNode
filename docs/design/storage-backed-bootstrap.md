@@ -1,117 +1,128 @@
-# Storage-backed node bootstrap
+# Generated bootstrap script
 
 ## Status
 
-Draft implementation design for `aks-flex-node bootstrap`.
+Draft design for a minimal, cluster-specific AKS Flex Node bootstrap script.
 
 ## Context
 
-A reusable VHD cannot contain node-specific AKS join data. It can, however,
-contain a known-good `aks-flex-node` binary. At first boot, the host needs a
-small set of cluster-issued settings, optional agent update metadata, and live
-host identity before it can run preflight and join an AKS FlexNodes pool.
+A reusable host does not need Azure CLI or a configuration-generation tool. The
+control-plane-side publisher already has the cluster bootstrap data and can
+render it into a shell script. The caller only needs to download that script,
+select runtime Azure authentication when necessary, and run it as root.
 
-The bootstrap flow therefore treats the VHD binary as the trust anchor and
-retrieves a partial start configuration from an explicitly configured source.
-It does not install Azure CLI and does not require Python or jq on the host.
+The script downloads `aks-flex-node`, writes the final config, runs preflight,
+and starts the node. Configuration manipulation uses the host's existing `jq`
+binary rather than adding a bootstrap subcommand to `aks-flex-node`.
 
 ## Goals
 
-- Support one-command first-boot onboarding from a reusable VHD.
-- Retrieve a partial start config and optional agent update from Azure Blob
-  Storage, HTTPS, `file://`, or a local path.
-- Authenticate Blob reads with an embedded SAS, a service principal, or a
-  system/user-assigned managed identity.
-- Materialize a complete, validated, node-specific config without requiring the
-  source to know the host name or host IP.
-- Allow controlled runtime customization with gojq.
-- Run the same preflight and start commands operators use manually.
-- Keep existing `start --config` behavior and `scripts/install.sh` unchanged.
+- Keep first-boot orchestration in one portable shell script.
+- Embed the cluster/pool-specific base config in the distributed script.
+- Support CLI and environment overrides with deterministic precedence.
+- Select managed identity or service-principal runtime authentication.
+- Download an agent archive from an exact URL or a versioned default URL.
+- Generate a protected config and run preflight before start.
+- Work from cloud-init, image provisioning, or an interactive root shell.
+- Leave the existing agent commands and `scripts/install.sh` unchanged.
 
 ## Non-goals
 
-- Creating the AKS cluster, FlexNodes pool, bootstrap RBAC, or bootstrap token.
-- Installing host package prerequisites.
-- Installing Azure CLI.
-- Implementing full artifact rollback or release-channel selection.
-- Persisting Storage retrieval credentials in the agent runtime config.
-- Providing environment-variable equivalents for bootstrap flags.
+- Discovering cluster metadata from the host.
+- Creating bootstrap tokens or cluster RBAC.
+- Authenticating to the URL used to download the script itself.
+- Installing host packages, Azure CLI, curl, tar, or jq.
+- Providing a new Go bootstrap command.
+- Providing an agent artifact signing or rollback system.
 
-## CLI contract
+## Host requirements
 
-A VHD with a usable baked agent needs only the partial start config:
+The publisher and operator must call out these prerequisites:
 
-```console
-aks-flex-node bootstrap \
-  --start-config-url "https://<account>.blob.core.windows.net/<cluster>/pools/<pool>/start-config.json" \
-  --storage-auth msi
+- Bash
+- curl
+- tar
+- jq
+- standard Linux core utilities
+- `sha256sum` when an artifact checksum is supplied
+- the packages required by normal `aks-flex-node preflight`, such as
+  `systemd-container`, `nftables`, and `util-linux`
+
+The script verifies its direct command dependencies and fails with an actionable
+message. It never installs missing software.
+
+## Publishing model
+
+`scripts/bootstrap.sh` contains exactly one config marker:
+
+```text
+__AKS_FLEX_NODE_BASE_CONFIG_JSON__
 ```
 
-An optional update is applied before config rendering:
+The publisher replaces that marker with a valid cluster/pool-specific partial
+config and stores the generated script at a caller-accessible URL. The
+replacement must preserve the shell heredoc delimiters.
 
-```console
-aks-flex-node bootstrap \
-  --start-config-url "$START_CONFIG_URL" \
-  --agent-binary-url "$AGENT_BINARY_URL" \
-  --agent-binary-sha256 "$AGENT_BINARY_SHA256" \
-  --storage-auth msi
+A simple publisher operation is conceptually:
+
+```python
+script = open("scripts/bootstrap.sh").read()
+config = open("start-config.json").read().rstrip()
+assert script.count("__AKS_FLEX_NODE_BASE_CONFIG_JSON__") == 1
+open("generated-bootstrap.sh", "w").write(
+    script.replace("__AKS_FLEX_NODE_BASE_CONFIG_JSON__", config)
+)
 ```
 
-All bootstrap inputs are flags. Service-principal secrets are read from a
-protected file rather than a process-visible flag:
+The generated script contains a bootstrap token and CA material. It is a secret
+for the lifetime of those credentials. Its download URL and backing object must
+therefore use appropriate confidentiality, expiry, and authorization controls.
+The script must not be committed after generation.
 
-```console
-aks-flex-node bootstrap \
-  --start-config-url "$START_CONFIG_URL" \
-  --storage-auth service-principal \
-  --storage-tenant-id "$TENANT_ID" \
-  --storage-client-id "$CLIENT_ID" \
-  --storage-client-secret-file /run/credentials/storage-client-secret
-```
+`AKS_FLEX_NODE_BASE_CONFIG_FILE` exists as a development/test escape hatch. The
+normal distributed flow uses the embedded config.
 
-## Storage organization
+## Suggested storage layout
 
-A storage account can host assets for multiple clusters. Use one private
-container per cluster so data-plane RBAC can be scoped to that cluster:
+A private container per cluster keeps generated scripts and artifacts organized
+and permits cluster-level data-plane role scoping:
 
 ```text
 <cluster-container>/
-  pools/<pool>/start-config.json
-  pools/<pool>/nodes/<node>/start-config.json
+  pools/<pool>/bootstrap.sh
+  pools/<pool>/nodes/<node>/bootstrap.sh
   agents/<version>/linux/amd64/aks-flex-node.tar.gz
   agents/<version>/linux/arm64/aks-flex-node.tar.gz
 ```
 
-Use a pool-level config when all join data is reusable for the bootstrap token's
-bounded lifetime. Use a node-level config when the control plane issues
-node-specific credentials or settings. Agent artifacts may be shared by every
-pool in the cluster container.
+A pool-level script is appropriate when the bootstrap payload can be reused by
+multiple nodes for its bounded lifetime. A node-level script is appropriate
+when the payload is issued for one machine.
 
-Blob paths are virtual directories; Azure RBAC applies at the account,
-container, or a broader ARM scope unless an additional role-assignment condition
-is used.
+The script's agent URL must already be readable by curl. It may be public,
+network-restricted but anonymously readable from the host, a `file://` URL, or
+an HTTPS URL with an embedded SAS. Runtime MSI/SP selection changes the rendered
+agent config; it does not add OAuth to curl downloads.
 
-## Partial start config
+## Base config contract
 
-The start config uses the existing agent config JSON shape but may omit values
-that the host or config package can derive. It typically contains:
+The embedded JSON follows the existing agent config shape and supplies values
+that the host cannot derive:
 
+- subscription and tenant;
 - target cluster resource ID and location;
-- tenant, subscription, and target agent pool;
-- bootstrap token and API server CA/FQDN;
-- Kubernetes and component versions;
-- DNS and CNI settings;
-- runtime Azure authentication selection;
-- machine-client settings and cluster-issued node defaults.
+- target FlexNodes pool;
+- bootstrap token;
+- API server FQDN and CA;
+- Kubernetes/component versions;
+- DNS/CNI settings;
+- machine-client policy and cluster-issued node defaults.
 
-It should normally omit:
+The base config should omit `agent.nodeName`. The script defaults it to the
+lowercase host name. It should also omit `node.kubelet.nodeIP`; the node runtime
+can discover the host's primary address.
 
-- `agent.nodeName`, which defaults to the lowercase host name;
-- `node.kubelet.nodeIP`, which is optional and can be discovered by the node
-  runtime;
-- local filesystem paths unless the image intentionally overrides them.
-
-A representative partial config is:
+Example shape, with credentials redacted:
 
 ```json
 {
@@ -119,7 +130,6 @@ A representative partial config is:
     "subscriptionId": "<subscription-id>",
     "tenantId": "<tenant-id>",
     "targetAgentPoolName": "aksflexnodes",
-    "managedIdentity": {},
     "bootstrapToken": {
       "token": "<bootstrap-token>"
     },
@@ -149,220 +159,240 @@ A representative partial config is:
 }
 ```
 
-The config is a credential-bearing object and must not be printed or committed.
+## Input precedence
 
-## Config rendering pipeline
+Runtime values use this precedence:
 
-The bootstrap command processes config in the following order:
-
-1. Download the partial JSON into memory with a 16 MiB limit.
-2. Require a top-level JSON object.
-3. Set live values required before normal config validation:
-   - default `agent.nodeName` to the lowercase host name;
-   - default `azure.arc.machineName` to the node name when Arc is enabled.
-4. Run the existing config defaulting and validation logic through a protected,
-   mode `0600` staging file in a mode `0700` temporary directory.
-5. Convert the defaulted config back to a JSON object.
-6. Apply each `--jq` transformation in order.
-7. Run typed config defaulting and validation again.
-8. Atomically write the final config, normally
-   `/etc/aks-flex-node/config.json`, with mode `0600`.
-
-The renderer keeps materialization-specific cleanup local. In particular, it
-removes derived target-cluster helper fields instead of changing the existing
-public config structure.
-
-### gojq customization
-
-The command embeds `github.com/itchyny/gojq`; the host does not need a `jq`
-executable.
-
-```console
-aks-flex-node bootstrap \
-  --start-config-url "$START_CONFIG_URL" \
-  --storage-auth msi \
-  --jq-arg scenario=edge-vhd \
-  --jq-argjson maxPods=200 \
-  --jq '.node.labels["aks-flex-node.azure.com/bootstrap-scenario"] = $scenario' \
-  --jq '.node.maxPods = $maxPods'
+```text
+CLI flags > environment variables > embedded base config/script defaults
 ```
 
-Supported bindings are:
+The script supports:
 
-- `--jq-arg NAME=VALUE` for a string;
-- `--jq-argjson NAME=JSON` for typed JSON.
+```text
+AKS_FLEX_NODE_AUTH
+AKS_FLEX_NODE_MSI_CLIENT_ID
+AKS_FLEX_NODE_SP_TENANT_ID
+AKS_FLEX_NODE_SP_CLIENT_ID
+AKS_FLEX_NODE_SP_CLIENT_SECRET
+AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE
+AKS_FLEX_NODE_AGENT_URL
+AKS_FLEX_NODE_AGENT_VERSION
+AKS_FLEX_NODE_AGENT_SHA256
+AKS_FLEX_NODE_CONFIG_OVERRIDES
+AKS_FLEX_NODE_INSTALL_DIR
+AKS_FLEX_NODE_CONFIG_PATH
+```
 
-The following read-only live bindings are always available:
+The equivalent non-secret values have CLI flags. A service-principal client
+secret has no CLI value because command arguments are process-visible. Use a
+protected secret file or, when unavoidable, the dedicated environment variable.
+The secret file takes precedence over the direct secret environment value.
 
-- `$hostName`
-- `$nodeName`
-- `$os`
-- `$arch`
+When using sudo, the caller must explicitly preserve the needed variables:
 
-Each query has a ten-second execution limit and must return exactly one JSON
-object. Empty, multi-result, error, and scalar results fail bootstrap. Argument
-names must be unique and cannot replace built-in bindings.
+```console
+sudo --preserve-env=AKS_FLEX_NODE_AUTH,AKS_FLEX_NODE_AGENT_URL \
+  bash bootstrap.sh
+```
 
-## Storage authentication
+## Config generation
 
-Storage authentication authorizes only retrieval of bootstrap inputs. Agent
-runtime authentication remains defined by the rendered start config.
+The script processes JSON in this order:
 
-### SAS
+1. Write the embedded base config into a mode `0700` temporary workspace.
+2. Validate that it is a JSON object.
+3. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
+4. Deep-merge each CLI `--config-overrides` object in invocation order.
+5. Set `agent.nodeName` from the lowercase host name only when absent.
+6. Apply the dedicated auth selection.
+7. Validate the final JSON with jq.
+8. Atomically install it at `/etc/aks-flex-node/config.json` with mode `0600`.
 
-`--storage-auth sas` expects the SAS to be embedded in each signed URL. A
-separate SAS token file is not currently supported. The downloader detects the
-`sig` query parameter and does not add a bearer token.
-
-### Service principal
-
-`--storage-auth service-principal` constructs an Azure SDK client-secret
-credential from tenant/client IDs and a protected secret file. The secret file
-must not be accessible by group or other users. The authority host and Storage
-token scope are explicit optional flags for sovereign-cloud support.
+Dedicated auth selection runs last so generic overrides cannot accidentally
+leave multiple incompatible Azure runtime authentication methods configured.
+Generic override arguments must not contain secrets because they are visible in
+the process list.
 
 ### Managed identity
 
-`--storage-auth msi` uses the Azure SDK managed identity credential. Omitting
-`--storage-client-id` selects the system-assigned identity. Supplying it selects
-a user-assigned identity. The identity should receive only `Storage Blob Data
-Reader`, scoped to the cluster container when possible.
+```console
+AKS_FLEX_NODE_AUTH=msi \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+sudo --preserve-env=AKS_FLEX_NODE_AUTH,AKS_FLEX_NODE_AGENT_URL \
+  bash bootstrap.sh
+```
 
-## Agent update
+For a user-assigned identity:
 
-A VHD contains a baseline binary capable of understanding the bootstrap CLI.
-When `--agent-binary-url` is supplied, the baseline performs these steps before
-config retrieval:
+```console
+bash bootstrap.sh \
+  --auth msi \
+  --msi-client-id "$MANAGED_IDENTITY_CLIENT_ID" \
+  --agent-url "$AGENT_URL"
+```
 
-1. Replace `{{OS}}` and `{{ARCH}}` in the artifact source.
-2. Download at most 1 GiB.
-3. Verify `--agent-binary-sha256` against the downloaded artifact when supplied.
-4. Treat the source as a raw binary or extract `aks-flex-node-<os>-<arch>` or
-   `aks-flex-node` from a gzip-compressed tar archive.
-5. Compare the extracted binary with the active destination.
-6. Atomically write the destination with mode `0755` when it differs.
-7. Re-exec the active destination with an internal one-process update guard.
+The renderer removes `azure.servicePrincipal`, disables Arc authentication, and
+writes either an empty `azure.managedIdentity` object or one with `clientId`.
+Bootstrap-token authentication can remain alongside MSI because it serves the
+Kubernetes bootstrap path.
 
-The new process parses the same flags and continues with config retrieval,
-preflight, and start. A same-content artifact still transitions into the guarded
-process, preventing an update loop while ensuring a baked fallback launches the
-active destination.
+### Service principal
 
-The SHA-256 covers the downloaded artifact, not only the extracted executable.
-Signing and rollback slots are possible future additions.
+```console
+bash bootstrap.sh \
+  --auth service-principal \
+  --sp-client-id "$CLIENT_ID" \
+  --sp-client-secret-file /run/credentials/aks-flex-node-sp \
+  --agent-url "$AGENT_URL"
+```
 
-## End-to-end sequence
+The secret file must not be group/world accessible. The tenant defaults to
+`azure.tenantId` in the base config and can be overridden separately. jq reads
+the secret from the file, preserving JSON correctness for quotes, slashes, and
+other special characters. The renderer removes managed identity and disables
+Arc authentication.
+
+## Agent download and installation
+
+The caller supplies either:
+
+- `--agent-url` / `AKS_FLEX_NODE_AGENT_URL`; or
+- `--agent-version` / `AKS_FLEX_NODE_AGENT_VERSION`.
+
+A version resolves to the normal GitHub release archive:
+
+```text
+https://github.com/Azure/AKSFlexNode/releases/download/<version>/aks-flex-node-linux-<arch>.tar.gz
+```
+
+An exact URL may use these placeholders:
+
+- `{{OS}}`
+- `{{ARCH}}`
+- `{{VERSION}}`
+- `{{ARCHIVE_NAME}}`
+
+The script:
+
+1. Detects AMD64 or ARM64.
+2. Downloads the tar.gz with curl retries without printing the URL.
+3. Optionally validates the archive SHA-256.
+4. Rejects absolute and parent-traversal tar paths.
+5. Extracts `aks-flex-node-linux-<arch>` or `aks-flex-node`.
+6. Atomically replaces `/usr/local/bin/aks-flex-node` with mode `0755`.
+
+The checksum covers the downloaded archive. Supplying a digest is strongly
+recommended, especially for signed URLs or mirrors.
+
+## Execution flow
+
+After installing the binary and config, the script executes:
+
+```console
+aks-flex-node preflight --config /etc/aks-flex-node/config.json --output text
+aks-flex-node start --config /etc/aks-flex-node/config.json
+```
+
+Preflight failure stops the script before start. The existing binary owns host
+mutation, ARM Machine registration, nspawn provisioning, and systemd service
+installation.
 
 ```mermaid
 sequenceDiagram
-    participant Init as VHD/cloud-init
-    participant Agent as Baked agent
-    participant Blob as Cluster Blob container
-    participant Entra as Microsoft Entra/IMDS
-    participant AKS as AKS API and ARM Machine
-    participant Host as Host and nspawn worker
+    participant Caller
+    participant Script as Generated bootstrap.sh
+    participant Artifact as Agent artifact URL
+    participant Agent as aks-flex-node
+    participant AKS
 
-    Init->>Agent: bootstrap flags
-    opt MSI or service principal
-        Agent->>Entra: request Storage token
-        Entra-->>Agent: scoped access token
-    end
-    opt agent update configured
-        Agent->>Blob: GET agent artifact
-        Blob-->>Agent: binary or tar.gz
-        Agent->>Agent: verify, atomic replace, re-exec
-    end
-    Agent->>Blob: GET partial start config
-    Blob-->>Agent: credential-bearing JSON
-    Agent->>Agent: live defaults + config defaults + gojq + validation
-    Agent->>Host: atomically write config mode 0600
-    Agent->>Host: run preflight
-    Agent->>AKS: ensure ARM Machine
-    Agent->>Host: run existing start flow
-    Host->>AKS: bootstrap kubelet and register Node
+    Caller->>Script: download and run with flags/environment
+    Script->>Script: base config + overrides + host name + auth
+    Script->>Artifact: curl tar.gz
+    Artifact-->>Script: agent archive
+    Script->>Script: checksum, extract, atomic install
+    Script->>Script: atomic config install mode 0600
+    Script->>Agent: preflight
+    Agent-->>Script: checks pass
+    Script->>Agent: start
+    Agent->>AKS: ensure Machine and register Node
 ```
 
-## Cloud-init usage
+## Cloud-init
 
-Production VHDs should already contain the baseline binary. A cloud-init flow
-can invoke it directly after installing image-specific host prerequisites:
+A stock-image test or image-build pipeline can install prerequisites and invoke
+the downloaded generated script:
 
 ```yaml
 #cloud-config
 packages:
+  - curl
+  - jq
   - nftables
   - systemd-container
+  - tar
   - util-linux
 runcmd:
-  - - /usr/local/bin/aks-flex-node
-    - bootstrap
-    - --start-config-url
-    - https://<account>.blob.core.windows.net/<cluster>/pools/<pool>/start-config.json
-    - --storage-auth
-    - msi
+  - - env
+    - AKS_FLEX_NODE_AUTH=msi
+    - AKS_FLEX_NODE_AGENT_URL=https://example/aks-flex-node-linux-amd64.tar.gz
+    - AKS_FLEX_NODE_CONFIG_OVERRIDES={"node":{"labels":{"bootstrap":"cloud-init"}}}
+    - bash
+    - /var/lib/aks-flex-node/bootstrap.sh
 ```
 
-A test that starts from a stock marketplace image can first download the
-baseline with a pre-authorized user-assigned identity, then invoke the same
-command. This models the first-boot orchestration but is not a replacement for
-baking the baseline into the production VHD.
+The mechanism that downloads the generated script is caller-owned. For a
+private Blob, cloud-init can use a pre-authorized managed identity; for a signed
+URL, the custom-data security implications of embedding that URL must be
+considered.
 
 ## Security properties
 
-- Authenticated Storage downloads require HTTPS.
-- Bearer headers are removed on cross-host redirects.
-- Authenticated redirects to non-HTTPS URLs are rejected.
-- Signed URLs are omitted from downloader errors.
-- The command never prints config contents, access tokens, or client secrets.
-- Service-principal secrets are file-based and are removed from child-process
-  environments.
-- Download and extraction sizes are bounded.
-- Tar entries are read in memory rather than extracted by path.
-- Config and update installation use atomic replacement.
-- Final config is owner-only mode `0600`.
-- Preflight runs before host bootstrap mutations.
+- The generated script and final config are credential-bearing secrets.
+- Temporary files use a mode `0700` directory and process umask `077`.
+- Final config is root-owned mode `0600`.
+- Service-principal secrets are not accepted as CLI arguments.
+- Secret files are rejected when accessible by group/other users.
+- jq performs JSON encoding rather than shell string interpolation.
+- Download URLs are not logged by the script.
+- Archive traversal paths are rejected.
+- Binary and config installation use same-filesystem atomic replacement.
+- An optional SHA-256 detects artifact corruption or substitution.
+- Preflight must pass before start.
 
-Callers should use short-lived bootstrap tokens, short-lived SAS URLs, narrow
-Storage data-plane roles, and an expected artifact digest. Retrieval credentials
-must not be copied into the runtime config unless they are independently the
-chosen runtime authentication mechanism.
+An embedded SAS is still visible to privileged process inspection while curl is
+running. Prefer short expiry and read-only scope. Protect cloud-init custom data
+when it contains signed artifact URLs.
 
-## Compatibility and recovery
+## Recovery and idempotency
 
-The explicit root `bootstrap` command is registered before the existing
-`start` command, which retains `bootstrap` as a legacy alias. Exact bootstrap
-invocations therefore use the new workflow. `bootstrap --config <path>` with no
-remote inputs delegates to the existing `start --config <path>` behavior.
+This is a first-boot script. Download and config rendering are safe to repeat
+before host mutation. Once `start` has completed, rerunning the whole script may
+fail the existing-deployment preflight. A caller should record first-boot
+completion and avoid automatic reruns after success.
 
-The remote bootstrap workflow is currently intended as a first-boot operation.
-A retry before host mutation safely repeats download, rendering, and update. A
-retry after a complete deployment may fail the existing-deployment preflight;
-a future reconciliation mode can distinguish an already-healthy deployment
-from a partial bootstrap and restart only the long-running service when needed.
-
-The baked binary remains the recovery path when no update URL is provided. The
-current update mechanism does not preserve an additional on-disk rollback slot.
+If agent download or checksum validation fails, the installed binary is not
+replaced. If preflight fails, the rendered config remains available for root-only
+diagnostics. The script does not keep an additional rollback binary.
 
 ## Validation
 
-The implementation has been validated with fresh Ubuntu 24.04 Flex VMs in the
-following scenarios:
+The final generated-script flow was validated on a fresh Ubuntu 24.04 VM using
+cloud-init:
 
-| Scenario | Config retrieval | Agent source | Node IP in config | Result |
-|---|---|---|---|---|
-| System MSI update | System-assigned MSI | Baseline updated from private Blob archive | Explicit for initial coverage | Ready |
-| System MSI baked agent | System-assigned MSI | Already-baked candidate | Omitted | Ready; host IP detected |
-| SAS update | Embedded container SAS | Baseline updated from signed Blob archive | Omitted | Ready; jq label applied |
-| Cloud-init | User-assigned MSI | Baseline fetched by cloud-init, then updated | Omitted | Cloud-init completed; Ready |
+- cloud-init installed curl, tar, jq, and host prerequisites;
+- a user-assigned identity downloaded the private generated script;
+- runtime settings were supplied through environment overrides;
+- the script downloaded a signed agent archive and verified SHA-256;
+- the embedded config omitted node name and node IP;
+- the generated node name matched the host name;
+- the node runtime discovered the expected private IP;
+- config was root-owned mode `0600`;
+- all preflight checks passed;
+- ARM Machine provisioning reached `Succeeded`;
+- the Kubernetes node became Ready in the expected Unbounded site;
+- the configured jq label appeared on the Node.
 
-All scenarios created an ARM Machine in `Succeeded`, generated a root-owned mode
-`0600` config, passed preflight, joined the expected Unbounded site, and received
-a distinct pod CIDR. A cross-site ClusterIP request was also validated.
-
-The lab did not have the daemon CSR controller deployed, so one daemon CSR per
-node required manual approval. This is an environment prerequisite independent
-of Storage retrieval and config rendering.
-
-Unit tests cover service-principal credential construction and secret-file
-permissions. A live service-principal Storage scenario remains useful future
-coverage when a disposable application credential is available.
+The lab lacked the daemon CSR controller, so the daemon CSR required manual
+approval. That prerequisite is independent of script download, config rendering,
+and agent installation.
