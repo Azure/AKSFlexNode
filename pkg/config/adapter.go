@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -30,6 +31,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
+		AdditionalHostMounts:  cfg.Bootstrap.AdditionalHostMounts,
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,
@@ -61,6 +63,12 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
+	if cfg.Components.Gantry != nil {
+		ac.Gantry = &agentconfig.GantryConfig{
+			Disabled: cfg.Components.Gantry.Disabled,
+		}
+	}
+
 	switch {
 	case cfg.IsBootstrapTokenConfigured():
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
@@ -89,9 +97,9 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 // ResolveMachineGoalState converts FlexNode config to the shared agent config
 // and resolves the nspawn machine goal state. Bootstrap and preflight both use
 // this helper so preflight validates the same sources that bootstrap consumes.
-func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	agentCfg := ToAgentConfig(cfg, machineName)
-	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(ctx, agentCfg, nil)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve download overrides: %w", err)
 	}

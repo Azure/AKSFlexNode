@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 func TestToAgentConfig_BootstrapToken(t *testing.T) {
@@ -260,6 +262,48 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 	}
 }
 
+func TestToAgentConfig_Gantry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		gantry       *GantryConfig
+		wantConfig   bool
+		wantDisabled bool
+	}{
+		{
+			name: "omitted is enabled by default",
+		},
+		{
+			name:       "explicitly enabled",
+			gantry:     &GantryConfig{},
+			wantConfig: true,
+		},
+		{
+			name:         "disabled",
+			gantry:       &GantryConfig{Disabled: true},
+			wantConfig:   true,
+			wantDisabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{Components: ComponentsConfig{Gantry: tt.gantry}}
+			ac := ToAgentConfig(cfg, "kube1")
+
+			if got := ac.Gantry != nil; got != tt.wantConfig {
+				t.Fatalf("Gantry config present=%t, want %t", got, tt.wantConfig)
+			}
+			if got := goalstates.ResolveGantry(ac.Gantry).Disabled; got != tt.wantDisabled {
+				t.Fatalf("Gantry.Disabled=%t, want %t", got, tt.wantDisabled)
+			}
+		})
+	}
+}
+
 func TestToAgentConfig_OfflineArtifacts(t *testing.T) {
 	t.Parallel()
 
@@ -293,6 +337,30 @@ func TestToAgentConfig_AdditionalHostDevices(t *testing.T) {
 	}
 	if ac.AdditionalHostDevices[0] != "/dev/uinput" || ac.AdditionalHostDevices[1] != "/dev/input/event0" {
 		t.Fatalf("AdditionalHostDevices=%#v", ac.AdditionalHostDevices)
+	}
+}
+
+func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Bootstrap: BootstrapConfig{
+			AdditionalHostMounts: []AdditionalHostMount{
+				{Source: "/opt/config", Target: "/etc/config", ReadOnly: true},
+				{Source: "/var/lib/example"},
+			},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+	if len(ac.AdditionalHostMounts) != 2 {
+		t.Fatalf("AdditionalHostMounts=%#v, want 2 entries", ac.AdditionalHostMounts)
+	}
+	if got := ac.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
+		t.Fatalf("AdditionalHostMounts[0]=%#v", got)
+	}
+	if got := ac.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
+		t.Fatalf("AdditionalHostMounts[1]=%#v", got)
 	}
 }
 
