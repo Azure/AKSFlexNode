@@ -75,7 +75,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(logger, cfg, machineName)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}

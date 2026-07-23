@@ -42,7 +42,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	if active.State.AppliedKubernetesVersion != "" {
 		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 	}
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(log, cfg, active.Name)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, log, cfg, active.Name)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
@@ -96,7 +96,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		"kubernetesVersion", cfg.Components.Kubernetes,
 	)
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(log, cfg, newMachine)
+	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, log, cfg, newMachine)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}

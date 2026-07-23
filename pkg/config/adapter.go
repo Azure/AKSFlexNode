@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -96,9 +97,9 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 // ResolveMachineGoalState converts FlexNode config to the shared agent config
 // and resolves the nspawn machine goal state. Bootstrap and preflight both use
 // this helper so preflight validates the same sources that bootstrap consumes.
-func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	agentCfg := ToAgentConfig(cfg, machineName)
-	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(ctx, agentCfg, nil)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve download overrides: %w", err)
 	}
