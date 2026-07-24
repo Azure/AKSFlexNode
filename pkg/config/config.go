@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 
@@ -613,6 +615,9 @@ func (c *ServicePrincipalConfig) validate() error {
 			}
 			c.clientCertificatePEM = clientCertificatePEM
 		} else {
+			if credentialLooksLikeCertificate(data) {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: parse service principal client certificate file: %w", certificateErr)
+			}
 			c.ClientSecret = strings.TrimRight(string(data), "\r\n")
 			if c.ClientSecret == "" {
 				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: service principal credential file is empty")
@@ -643,6 +648,13 @@ func loadServicePrincipalCredentialFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("read service principal credential file: %w", err)
 	}
 	return data, nil
+}
+
+func credentialLooksLikeCertificate(data []byte) bool {
+	return bytes.Contains(data, []byte("-----BEGIN CERTIFICATE-----")) ||
+		bytes.Contains(data, []byte("-----BEGIN PRIVATE KEY-----")) ||
+		bytes.Contains(data, []byte("-----BEGIN RSA PRIVATE KEY-----")) ||
+		!utf8.Valid(data)
 }
 
 // LoadClientCertificate loads the service principal certificate and private key

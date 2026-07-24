@@ -2141,6 +2141,10 @@ func TestServicePrincipalCertificateFile(t *testing.T) {
 	dir := t.TempDir()
 	validFile := filepath.Join(dir, "client-certificate.pem")
 	writeTestClientCertificate(t, validFile)
+	invalidFile := filepath.Join(dir, "invalid-certificate.pem")
+	if err := os.WriteFile(invalidFile, []byte("-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
 	insecureFile := filepath.Join(dir, "insecure")
 	writeTestClientCertificate(t, insecureFile)
 	if err := os.Chmod(insecureFile, 0o644); err != nil {
@@ -2160,6 +2164,11 @@ func TestServicePrincipalCertificateFile(t *testing.T) {
 			name:    "rejects secret and certificate",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret", ClientSecretFile: validFile},
 			wantErr: "only one of",
+		},
+		{
+			name:    "rejects malformed certificate",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: invalidFile},
+			wantErr: "parse service principal client certificate file",
 		},
 		{
 			name:    "rejects insecure permissions",
