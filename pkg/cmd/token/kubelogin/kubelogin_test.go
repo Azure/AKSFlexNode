@@ -25,6 +25,10 @@ func TestValidateClientCertificateFile(t *testing.T) {
 	if err := os.Chmod(insecureFile, 0o644); err != nil {
 		t.Fatalf("os.Chmod: %v", err)
 	}
+	invalidFile := filepath.Join(dir, "client-certificate-invalid.pem")
+	if err := os.WriteFile(invalidFile, []byte("not-a-certificate"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -36,6 +40,11 @@ func TestValidateClientCertificateFile(t *testing.T) {
 			name:    "rejects insecure permissions",
 			path:    insecureFile,
 			wantErr: "must not be accessible by group or other users",
+		},
+		{
+			name:    "rejects malformed certificate file contents",
+			path:    invalidFile,
+			wantErr: "parse service principal client certificate file",
 		},
 	}
 

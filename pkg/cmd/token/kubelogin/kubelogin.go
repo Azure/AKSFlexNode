@@ -89,8 +89,8 @@ func run(ctx context.Context, out io.Writer) error {
 }
 
 func validateClientCertificateFile(certificateFile string) error {
-	if _, err := config.LoadServicePrincipalCredentialFile(certificateFile); err != nil {
-		return fmt.Errorf("load client certificate file: %w", err)
+	if err := config.ValidateServicePrincipalCertificateFile(certificateFile); err != nil {
+		return fmt.Errorf("validate client certificate file: %w", err)
 	}
 	return nil
 }

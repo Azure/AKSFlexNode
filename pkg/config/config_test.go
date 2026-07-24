@@ -2271,6 +2271,51 @@ func TestServicePrincipalCertificateFile(t *testing.T) {
 	}
 }
 
+func TestValidatePKCS12FileSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		path    string
+		data    []byte
+		wantErr string
+	}{
+		{
+			name: "allows utf8 data with non-pfx suffix",
+			path: "client-secret",
+			data: []byte("client-secret"),
+		},
+		{
+			name: "allows binary data with pfx suffix",
+			path: "client-certificate.pfx",
+			data: []byte{0xff, 0x00, 0x01},
+		},
+		{
+			name:    "rejects binary data without pfx suffix",
+			path:    "client-certificate",
+			data:    []byte{0xff, 0x00, 0x01},
+			wantErr: "must use a .pfx suffix",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validatePKCS12FileSuffix(tt.path, tt.data)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("validatePKCS12FileSuffix() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validatePKCS12FileSuffix() error = %v", err)
+			}
+		})
+	}
+}
+
 func writeTestClientCertificate(t *testing.T, path string) {
 	t.Helper()
 

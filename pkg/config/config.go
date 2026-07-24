@@ -625,6 +625,9 @@ func (c *ServicePrincipalConfig) validate() error {
 		}
 		certificates, privateKey, certificateErr := azidentity.ParseCertificates(data, nil)
 		if certificateErr == nil {
+			if err := validatePKCS12FileSuffix(c.ClientSecretFile, data); err != nil {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
+			}
 			clientCertificatePEM, err := MarshalClientCertificatePEM(certificates, privateKey)
 			if err != nil {
 				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
@@ -640,6 +643,26 @@ func (c *ServicePrincipalConfig) validate() error {
 			}
 			c.ClientSecretFile = ""
 		}
+	}
+	return nil
+}
+
+// ValidateServicePrincipalCertificateFile verifies that a certificate credential
+// file is protected, well-formed, and compatible with service principal auth.
+func ValidateServicePrincipalCertificateFile(path string) error {
+	data, err := LoadServicePrincipalCredentialFile(path)
+	if err != nil {
+		return err
+	}
+	if err := validatePKCS12FileSuffix(path, data); err != nil {
+		return err
+	}
+	certificates, privateKey, err := azidentity.ParseCertificates(data, nil)
+	if err != nil {
+		return fmt.Errorf("parse service principal client certificate file: %w", err)
+	}
+	if _, err := MarshalClientCertificatePEM(certificates, privateKey); err != nil {
+		return err
 	}
 	return nil
 }
@@ -666,6 +689,16 @@ func LoadServicePrincipalCredentialFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("read service principal credential file: %w", err)
 	}
 	return data, nil
+}
+
+func validatePKCS12FileSuffix(path string, data []byte) error {
+	if utf8.Valid(data) {
+		return nil
+	}
+	if !strings.EqualFold(filepath.Ext(path), ".pfx") {
+		return fmt.Errorf("PFX service principal credential files must use a .pfx suffix")
+	}
+	return nil
 }
 
 func credentialLooksLikeCertificate(data []byte) bool {
