@@ -51,7 +51,7 @@ export AKS_LOCATION="<aks-region>"
 export AKS_SUBNET_ID="<aks-subnet-resource-id>"
 
 export AKS_VERSION="1.36.2"
-export FLEX_VERSION="1.35.6"
+export FLEX_VERSION="${FLEX_VERSION:-$AKS_VERSION}"
 export FLEX_POOL_NAME="aksflexnodes"
 
 export SERVICE_CIDR="10.94.0.0/16"
@@ -72,6 +72,12 @@ export AKS_FLEX_NODE_AGENT_URL="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/aks-flex-
 export BOOTSTRAP_OCI_IMAGE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
 export BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
 ```
+
+`FLEX_VERSION` defaults to the AKS control-plane version so the new FlexNodes
+pool is aligned with the cluster. Override it only when intentionally using an
+AKS-supported version skew. Host bootstrap does not need a separate version
+flag; `listBootstrapData` returns the pool's accepted full patch version and the
+artifact template resolves from that value.
 
 The cluster and Flex host networks must have private L3 connectivity. Use one
 routed VNet, VNet peering, VPN, ExpressRoute, or an equivalent network design.
