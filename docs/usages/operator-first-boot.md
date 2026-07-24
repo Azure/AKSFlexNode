@@ -367,7 +367,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   util-linux
 ```
 
-Do not install Azure CLI on the host.
+Azure CLI does not need to be installed on the host; the bootstrap script uses
+MSI or service-principal OAuth directly.
 
 ## 6. Download and run the bootstrap script
 
