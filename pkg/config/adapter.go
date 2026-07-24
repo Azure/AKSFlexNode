@@ -66,12 +66,17 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
 
 	case cfg.IsSPConfigured():
-		ac.Kubelet.Auth.ExecCredential = buildExecCredential(map[string]string{
-			"AAD_LOGIN_METHOD":                    "spn",
-			"AAD_SERVICE_PRINCIPAL_CLIENT_ID":     cfg.Azure.ServicePrincipal.ClientID,
-			"AAD_SERVICE_PRINCIPAL_CLIENT_SECRET": cfg.Azure.ServicePrincipal.ClientSecret,
-			"AZURE_TENANT_ID":                     cfg.Azure.ServicePrincipal.TenantID,
-		})
+		env := map[string]string{
+			"AAD_LOGIN_METHOD":                "spn",
+			"AAD_SERVICE_PRINCIPAL_CLIENT_ID": cfg.Azure.ServicePrincipal.ClientID,
+			"AZURE_TENANT_ID":                 cfg.Azure.ServicePrincipal.TenantID,
+		}
+		if cfg.Azure.ServicePrincipal.ClientCertificateFile != "" {
+			env["AAD_SERVICE_PRINCIPAL_CLIENT_CERTIFICATE"] = cfg.Azure.ServicePrincipal.ClientCertificateFile
+		} else {
+			env["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] = cfg.Azure.ServicePrincipal.ClientSecret
+		}
+		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
 
 	case cfg.IsMIConfigured():
 		env := map[string]string{

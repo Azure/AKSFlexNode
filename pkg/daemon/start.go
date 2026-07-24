@@ -52,10 +52,18 @@ func StartNode(
 		phases.Parallel(log,
 			npd.Download(log, cfg, gs.RootFS.MachineDir),
 			InstallBinary(gs.RootFS.MachineDir),
+			InstallClientCertificate(servicePrincipalClientCertificateFile(cfg), gs.RootFS.MachineDir),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, machineName),
 		npd.Start(log, cfg, gs.NodeStart),
 		saveState(store, state),
 	)
+}
+
+func servicePrincipalClientCertificateFile(cfg *config.Config) string {
+	if cfg.Azure.ServicePrincipal == nil {
+		return ""
+	}
+	return cfg.Azure.ServicePrincipal.ClientCertificateFile
 }
