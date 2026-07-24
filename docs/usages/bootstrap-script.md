@@ -328,9 +328,9 @@ Example using an Azure Front Door mirror:
 ```bash
 sudo bash bootstrap.sh \
   --bootstrap-oci-image \
-    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-azlinux3-v20260619.oci.tar.gz' \
+    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.2.0/rootfs/rootfs-agent-azlinux3-v20260619.oci.tar.gz' \
   --bootstrap-offline-artifacts-source \
-    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz' \
+    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.2.0/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz' \
   --agent-version v0.1.5.alpha-9
 ```
 

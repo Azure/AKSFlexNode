@@ -61,7 +61,7 @@ export CLUSTER_POD_CIDR="10.93.0.0/16"
 export FLEX_NODE_CIDR="10.92.0.0/16"
 export FLEX_POD_CIDR="10.95.0.0/16"
 
-export UNBOUNDED_VERSION="v0.1.24-rc.18"
+export UNBOUNDED_VERSION="v0.2.0"
 export AKS_FLEX_NODE_VERSION="v0.1.5.alpha-9"
 ```
 
@@ -402,7 +402,7 @@ Download the raw script instead of piping it directly to Bash:
 install -d -m 0700 /run/aks-flex-node-bootstrap
 
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
-  https://raw.githubusercontent.com/Azure/AKSFlexNode/refs/heads/hbc/install-script/scripts/bootstrap.sh
+  https://raw.githubusercontent.com/Azure/AKSFlexNode/refs/heads/main/scripts/bootstrap.sh
 
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
@@ -438,9 +438,9 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --agent-pool-name "$FLEX_POOL_NAME" \
   --agent-version "$AKS_FLEX_NODE_VERSION" \
   --bootstrap-oci-image \
-    "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz" \
+    "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz" \
   --bootstrap-offline-artifacts-source \
-    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz'
+    "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
 ```
 
 For an Azure VM with a system-assigned managed identity, use the same command
