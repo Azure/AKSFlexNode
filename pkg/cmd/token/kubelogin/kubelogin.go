@@ -2,6 +2,7 @@ package kubelogin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 )
 
 const aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
+const clientCertificateDataEnv = "AKS_FLEX_NODE_CLIENT_CERTIFICATE_DATA"
 
 var flagServerID string
 var flagPopEnabled bool
@@ -63,6 +65,14 @@ func run(ctx context.Context, out io.Writer) error {
 	tokOpts.ServerID = flagServerID
 	tokOpts.IsPoPTokenEnabled = flagPopEnabled
 	tokOpts.PoPTokenClaims = flagPopClaims
+	if certificateData := os.Getenv(clientCertificateDataEnv); certificateData != "" {
+		certificatePath, cleanup, err := prepareClientCertificate(certificateData)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		tokOpts.ClientCert = certificatePath
+	}
 	// TODO: logging to show login details
 	provider, err := token.GetTokenProvider(tokOpts)
 	if err != nil {
@@ -74,6 +84,28 @@ func run(ctx context.Context, out io.Writer) error {
 	}
 
 	return outputToken(out, ec, accessToken)
+}
+
+func prepareClientCertificate(encodedData string) (string, func(), error) {
+	data, err := base64.StdEncoding.DecodeString(encodedData)
+	if err != nil {
+		return "", nil, fmt.Errorf("decode client certificate data: %w", err)
+	}
+	file, err := os.CreateTemp("", "aks-flex-node-client-certificate-*.pem")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temporary client certificate: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(file.Name()) }
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("write temporary client certificate: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close temporary client certificate: %w", err)
+	}
+	return file.Name(), cleanup, nil
 }
 
 const execInfoEnv = "KUBERNETES_EXEC_INFO"

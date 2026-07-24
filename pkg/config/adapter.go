@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 
@@ -17,6 +18,8 @@ const (
 
 	// aksAADServerID is the Azure AD server application ID for AKS.
 	aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
+
+	clientCertificateDataEnv = "AKS_FLEX_NODE_CLIENT_CERTIFICATE_DATA"
 )
 
 // ToAgentConfig converts a FlexNode Config to the shared agent library's
@@ -72,7 +75,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			"AZURE_TENANT_ID":                 cfg.Azure.ServicePrincipal.TenantID,
 		}
 		if cfg.Azure.ServicePrincipal.ClientCertificateFile != "" {
-			env["AAD_SERVICE_PRINCIPAL_CLIENT_CERTIFICATE"] = cfg.Azure.ServicePrincipal.ClientCertificateFile
+			env[clientCertificateDataEnv] = base64.StdEncoding.EncodeToString([]byte(cfg.Azure.ServicePrincipal.clientCertificateData()))
 		} else {
 			env["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] = cfg.Azure.ServicePrincipal.ClientSecret
 		}

@@ -14,11 +14,6 @@ type installBinaryTask struct {
 	machineDir string
 }
 
-type installClientCertificateTask struct {
-	sourcePath string
-	machineDir string
-}
-
 // InstallBinary returns a task that copies the current process binary into
 // the nspawn rootfs at /usr/local/bin/aks-flex-node.
 func InstallBinary(machineDir string) phases.Task {
@@ -54,54 +49,5 @@ func (t *installBinaryTask) Do(_ context.Context) error {
 		return fmt.Errorf("copy binary: %w", err)
 	}
 
-	return nil
-}
-
-// InstallClientCertificate returns a task that copies a configured service
-// principal certificate to the same absolute path inside the nspawn rootfs.
-func InstallClientCertificate(sourcePath, machineDir string) phases.Task {
-	return &installClientCertificateTask{sourcePath: sourcePath, machineDir: machineDir}
-}
-
-func (t *installClientCertificateTask) Name() string { return "install-client-certificate-in-rootfs" }
-
-func (t *installClientCertificateTask) Do(_ context.Context) error {
-	if t.sourcePath == "" {
-		return nil
-	}
-	if !filepath.IsAbs(t.sourcePath) {
-		return fmt.Errorf("client certificate path must be absolute")
-	}
-
-	source, err := os.Open(filepath.Clean(t.sourcePath)) //nolint:gosec // validated config path
-	if err != nil {
-		return fmt.Errorf("open client certificate: %w", err)
-	}
-	defer func() { _ = source.Close() }()
-
-	relativePath, err := filepath.Rel(string(filepath.Separator), t.sourcePath)
-	if err != nil {
-		return fmt.Errorf("resolve client certificate path in rootfs: %w", err)
-	}
-	machineRoot, err := os.OpenRoot(t.machineDir)
-	if err != nil {
-		return fmt.Errorf("open machine rootfs: %w", err)
-	}
-	defer func() { _ = machineRoot.Close() }()
-	if err := machineRoot.MkdirAll(filepath.Dir(relativePath), 0o750); err != nil {
-		return fmt.Errorf("create client certificate directory: %w", err)
-	}
-	destination, err := machineRoot.OpenFile(relativePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("create client certificate: %w", err)
-	}
-	defer func() { _ = destination.Close() }()
-	if err := destination.Chmod(0o600); err != nil {
-		return fmt.Errorf("set client certificate permissions: %w", err)
-	}
-
-	if _, err := io.Copy(destination, source); err != nil {
-		return fmt.Errorf("copy client certificate: %w", err)
-	}
 	return nil
 }

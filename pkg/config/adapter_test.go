@@ -169,7 +169,8 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 func TestToAgentConfig_ServicePrincipalClientCertificateFile(t *testing.T) {
 	t.Parallel()
 
-	certificateFile := "/run/credentials/aks-flex-node-sp.pem"
+	certificateFile := filepath.Join(t.TempDir(), "client-certificate.pem")
+	writeTestClientCertificate(t, certificateFile)
 	cfg := &Config{
 		Azure: AzureConfig{
 			ServicePrincipal: &ServicePrincipalConfig{
@@ -178,6 +179,9 @@ func TestToAgentConfig_ServicePrincipalClientCertificateFile(t *testing.T) {
 				ClientCertificateFile: certificateFile,
 			},
 		},
+	}
+	if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
+		t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
 	}
 
 	exec := ToAgentConfig(cfg, "kube1").Kubelet.Auth.ExecCredential
@@ -188,8 +192,8 @@ func TestToAgentConfig_ServicePrincipalClientCertificateFile(t *testing.T) {
 	for _, e := range exec.Env {
 		envMap[e.Name] = e.Value
 	}
-	if envMap["AAD_SERVICE_PRINCIPAL_CLIENT_CERTIFICATE"] != certificateFile {
-		t.Fatalf("AAD_SERVICE_PRINCIPAL_CLIENT_CERTIFICATE=%q, want %q", envMap["AAD_SERVICE_PRINCIPAL_CLIENT_CERTIFICATE"], certificateFile)
+	if envMap[clientCertificateDataEnv] == "" {
+		t.Fatalf("%s should contain the certificate data", clientCertificateDataEnv)
 	}
 	if _, ok := envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"]; ok {
 		t.Fatal("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET should not be set for certificate auth")

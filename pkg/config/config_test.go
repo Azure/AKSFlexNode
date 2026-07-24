@@ -2198,6 +2198,10 @@ func TestServicePrincipalClientCertificateFile(t *testing.T) {
 			if len(certificates) != 1 || privateKey == nil {
 				t.Fatalf("LoadClientCertificate() returned %d certificates and key %T", len(certificates), privateKey)
 			}
+			copied := (&Config{Azure: AzureConfig{ServicePrincipal: tt.config}}).DeepCopy()
+			if copied == nil || copied.Azure.ServicePrincipal.clientCertificateData() == "" {
+				t.Fatal("DeepCopy() did not preserve normalized client certificate data")
+			}
 		})
 	}
 }

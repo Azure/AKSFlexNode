@@ -2,8 +2,10 @@ package config
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/url"
 	"os"
@@ -84,6 +86,7 @@ type ServicePrincipalConfig struct {
 	ClientSecret          string `json:"clientSecret,omitempty"`          // Azure AD application client secret
 	ClientSecretFile      string `json:"clientSecretFile,omitempty"`      // File containing the Azure AD application client secret
 	ClientCertificateFile string `json:"clientCertificateFile,omitempty"` // File containing an Azure AD application certificate and private key
+	clientCertificatePEM  string
 }
 
 // ManagedIdentityConfig holds managed identity authentication configuration.
@@ -334,6 +337,9 @@ func (cfg *Config) DeepCopy() *Config {
 	var out Config
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil
+	}
+	if cfg.Azure.ServicePrincipal != nil && out.Azure.ServicePrincipal != nil {
+		out.Azure.ServicePrincipal.clientCertificatePEM = cfg.Azure.ServicePrincipal.clientCertificatePEM
 	}
 	return &out
 }
@@ -610,9 +616,15 @@ func (c *ServicePrincipalConfig) validate() error {
 			return fmt.Errorf("invalid azure.servicePrincipal.clientCertificateFile: resolve absolute path: %w", err)
 		}
 		c.ClientCertificateFile = absolutePath
-		if _, _, err := c.LoadClientCertificate(); err != nil {
+		certificates, privateKey, err := c.LoadClientCertificate()
+		if err != nil {
 			return fmt.Errorf("invalid azure.servicePrincipal.clientCertificateFile: %w", err)
 		}
+		clientCertificatePEM, err := marshalClientCertificatePEM(certificates, privateKey)
+		if err != nil {
+			return fmt.Errorf("invalid azure.servicePrincipal.clientCertificateFile: %w", err)
+		}
+		c.clientCertificatePEM = clientCertificatePEM
 	}
 	return nil
 }
@@ -672,6 +684,26 @@ func (c *ServicePrincipalConfig) LoadClientCertificate() ([]*x509.Certificate, c
 		return nil, nil, fmt.Errorf("parse service principal client certificate file: %w", err)
 	}
 	return certificates, privateKey, nil
+}
+
+func marshalClientCertificatePEM(certificates []*x509.Certificate, privateKey crypto.PrivateKey) (string, error) {
+	if _, ok := privateKey.(*rsa.PrivateKey); !ok {
+		return "", fmt.Errorf("service principal client certificate private key must be RSA")
+	}
+	privateKeyData, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal service principal client certificate private key: %w", err)
+	}
+	var data []byte
+	for _, certificate := range certificates {
+		data = append(data, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})...)
+	}
+	data = append(data, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyData})...)
+	return string(data), nil
+}
+
+func (c *ServicePrincipalConfig) clientCertificateData() string {
+	return c.clientCertificatePEM
 }
 
 func (c *ManagedIdentityConfig) validate() error {
