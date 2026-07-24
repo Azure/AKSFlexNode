@@ -1747,7 +1747,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "azure.servicePrincipal.clientSecret is required when service principal is configured",
+			errMsg:  "azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured",
 		},
 		{
 			name: "managed identity authentication enabled",
@@ -2049,6 +2049,71 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				if err != nil {
 					t.Errorf("Validate() unexpected error = %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestServicePrincipalClientSecretFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validFile := filepath.Join(dir, "client-secret")
+	if err := os.WriteFile(validFile, []byte("file-secret\r\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	emptyFile := filepath.Join(dir, "empty")
+	if err := os.WriteFile(emptyFile, nil, 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		config  *ServicePrincipalConfig
+		want    string
+		wantErr string
+	}{
+		{
+			name:   "loads secret",
+			config: &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: validFile},
+			want:   "file-secret",
+		},
+		{
+			name:    "rejects inline and file secrets",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "inline", ClientSecretFile: validFile},
+			wantErr: "only one of",
+		},
+		{
+			name:    "rejects missing file",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: filepath.Join(dir, "missing")},
+			wantErr: "read service principal client secret file",
+		},
+		{
+			name:    "rejects empty file",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: emptyFile},
+			wantErr: "service principal client secret file is empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.config.validate()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ServicePrincipalConfig.validate() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
+			}
+			if tt.config.ClientSecret != tt.want {
+				t.Fatalf("ServicePrincipalConfig.ClientSecret = %q, want %q", tt.config.ClientSecret, tt.want)
+			}
+			if tt.config.ClientSecretFile != "" {
+				t.Fatalf("ServicePrincipalConfig.ClientSecretFile = %q, want empty after loading", tt.config.ClientSecretFile)
 			}
 		})
 	}
