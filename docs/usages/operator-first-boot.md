@@ -269,6 +269,10 @@ automatically is deployed in the target region.
 
 ## 4. Create the FlexNodes pool
 
+> **TODO:** Azure CLI will support creating FlexNodes pools in a future release.
+> Replace this preview `az rest` flow with the supported `az aks nodepool`
+> command when that capability becomes available.
+
 Use the preview agent-pool ARM API. A FlexNodes pool supports only a minimal set
 of properties.
 
