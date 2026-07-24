@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -127,6 +129,39 @@ func TestToAgentConfig_ServicePrincipal(t *testing.T) {
 	}
 	if envMap["AZURE_TENANT_ID"] != "tenant-123" {
 		t.Fatalf("AZURE_TENANT_ID=%q, want %q", envMap["AZURE_TENANT_ID"], "tenant-123")
+	}
+}
+
+func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
+	t.Parallel()
+
+	clientSecretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(clientSecretFile, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	cfg := &Config{
+		Azure: AzureConfig{
+			ServicePrincipal: &ServicePrincipalConfig{
+				TenantID:         "tenant-123",
+				ClientID:         "client-456",
+				ClientSecretFile: clientSecretFile,
+			},
+		},
+	}
+	if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
+		t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
+	}
+
+	exec := ToAgentConfig(cfg, "kube1").Kubelet.Auth.ExecCredential
+	if exec == nil {
+		t.Fatal("ExecCredential should be set for SP auth")
+	}
+	envMap := make(map[string]string)
+	for _, e := range exec.Env {
+		envMap[e.Name] = e.Value
+	}
+	if envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] != "file-secret" {
+		t.Fatalf("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET=%q, want file secret", envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"])
 	}
 }
 
