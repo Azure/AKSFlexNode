@@ -14,6 +14,9 @@ umask 077
 readonly DEFAULT_REPOSITORY="Azure/AKSFlexNode"
 readonly DEFAULT_INSTALL_DIR="/usr/local/bin"
 readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
+readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
+readonly DEFAULT_AUTHORITY_HOST="https://login.microsoftonline.com"
+readonly DEFAULT_IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"
 
 # Publisher-managed cluster/pool config. Keep this block near the top so the
 # script generation path only needs to replace the single marker below.
@@ -36,6 +39,10 @@ INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BASE_CONFIG_FILE="${AKS_FLEX_NODE_BASE_CONFIG_FILE:-}"
+FETCH_BOOTSTRAP_DATA="${AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA:-false}"
+BOOTSTRAP_DATA_API_VERSION="${AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION:-$DEFAULT_BOOTSTRAP_DATA_API_VERSION}"
+AUTHORITY_HOST="${AKS_FLEX_NODE_AUTHORITY_HOST:-$DEFAULT_AUTHORITY_HOST}"
+IMDS_ENDPOINT="${AKS_FLEX_NODE_IMDS_ENDPOINT:-$DEFAULT_IMDS_ENDPOINT}"
 CONFIG_OVERRIDES=()
 TEMP_DIR=""
 
@@ -65,6 +72,8 @@ Options:
   --agent-url URL                Exact agent tar.gz URL; may contain a SAS
   --agent-version VERSION        Version used with the default GitHub release URL
   --agent-sha256 SHA256          Expected SHA-256 of the downloaded tar.gz
+  --fetch-bootstrap-data         Fetch and merge fresh AKS RP bootstrap data
+  --bootstrap-data-api-version V API version for listBootstrapData
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
   --install-dir PATH             Binary destination directory
@@ -81,6 +90,9 @@ Environment overrides:
   AKS_FLEX_NODE_AGENT_URL
   AKS_FLEX_NODE_AGENT_VERSION
   AKS_FLEX_NODE_AGENT_SHA256
+  AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
+  AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
+  AKS_FLEX_NODE_AUTHORITY_HOST
   AKS_FLEX_NODE_CONFIG_OVERRIDES
   AKS_FLEX_NODE_INSTALL_DIR
   AKS_FLEX_NODE_CONFIG_PATH
@@ -100,7 +112,7 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--config-overrides|--install-dir|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -111,11 +123,16 @@ parse_args() {
                     --agent-url) AGENT_URL="$2" ;;
                     --agent-version) AGENT_VERSION="$2" ;;
                     --agent-sha256) AGENT_SHA256="$2" ;;
+                    --bootstrap-data-api-version) BOOTSTRAP_DATA_API_VERSION="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
                     --install-dir) INSTALL_DIR="$2" ;;
                     --config-path) CONFIG_PATH="$2" ;;
                 esac
                 shift 2
+                ;;
+            --fetch-bootstrap-data)
+                FETCH_BOOTSTRAP_DATA=true
+                shift
                 ;;
             -h|--help)
                 usage
@@ -184,6 +201,133 @@ check_secret_file_permissions() {
     fi
 }
 
+is_true() {
+    case "${1,,}" in
+        true|1|yes|y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+resolve_fetch_auth_mode() {
+    local current="$1"
+    local mode="${AUTH_MODE,,}"
+    if [[ -z "$mode" ]]; then
+        if jq -e '.azure.managedIdentity != null' "$current" >/dev/null; then
+            mode=msi
+        elif jq -e '.azure.servicePrincipal != null' "$current" >/dev/null; then
+            mode=service-principal
+        else
+            fatal "fetching bootstrap data requires MSI or service-principal authentication"
+        fi
+    fi
+    case "$mode" in
+        msi|managed-identity) printf 'msi' ;;
+        sp|service-principal) printf 'service-principal' ;;
+        *) fatal "fetching bootstrap data does not support auth mode: $mode" ;;
+    esac
+}
+
+resolve_sp_secret_file() {
+    local current="$1"
+    local secret_file="$SP_CLIENT_SECRET_FILE"
+    if [[ -n "$secret_file" ]]; then
+        check_secret_file_permissions "$secret_file"
+    elif [[ -n "$SP_CLIENT_SECRET" ]]; then
+        secret_file="$TEMP_DIR/fetch-sp-client-secret"
+        printf '%s' "$SP_CLIENT_SECRET" > "$secret_file"
+        chmod 0600 "$secret_file"
+    else
+        secret_file="$TEMP_DIR/fetch-sp-client-secret"
+        jq -er '.azure.servicePrincipal.clientSecret' "$current" > "$secret_file" || \
+            fatal "service-principal bootstrap-data fetch requires a client secret"
+        chmod 0600 "$secret_file"
+    fi
+    printf '%s' "$secret_file"
+}
+
+acquire_arm_token() {
+    local current="$1"
+    local arm_endpoint="$2"
+    local output="$3"
+    local mode token_response
+    mode=$(resolve_fetch_auth_mode "$current")
+    token_response="$TEMP_DIR/arm-token-response.json"
+
+    case "$mode" in
+        msi)
+            local client_id="$MSI_CLIENT_ID"
+            if [[ -z "$client_id" ]]; then
+                client_id=$(jq -r '.azure.managedIdentity.clientId // ""' "$current")
+            fi
+            local curl_args=(
+                -fsS --get
+                -H 'Metadata: true'
+                --data-urlencode 'api-version=2018-02-01'
+                --data-urlencode "resource=${arm_endpoint%/}/"
+                -o "$token_response"
+            )
+            if [[ -n "$client_id" ]]; then
+                curl_args+=(--data-urlencode "client_id=$client_id")
+            fi
+            curl "${curl_args[@]}" "$IMDS_ENDPOINT" || fatal "failed to acquire managed identity ARM token"
+            ;;
+        service-principal)
+            local tenant_id="$SP_TENANT_ID"
+            local client_id="$SP_CLIENT_ID"
+            local secret_file request_body token_url
+            [[ -n "$tenant_id" ]] || tenant_id=$(jq -er '.azure.servicePrincipal.tenantId // .azure.tenantId' "$current")
+            [[ -n "$client_id" ]] || client_id=$(jq -er '.azure.servicePrincipal.clientId' "$current")
+            secret_file=$(resolve_sp_secret_file "$current")
+            request_body="$TEMP_DIR/sp-token-request"
+            jq -nr --arg clientID "$client_id" --arg scope "${arm_endpoint%/}/.default" --rawfile clientSecret "$secret_file" '
+                ($clientSecret | rtrimstr("\n") | rtrimstr("\r")) as $secret |
+                "client_id=\($clientID | @uri)&client_secret=\($secret | @uri)&scope=\($scope | @uri)&grant_type=client_credentials"
+            ' > "$request_body"
+            chmod 0600 "$request_body"
+            token_url="${AUTHORITY_HOST%/}/${tenant_id}/oauth2/v2.0/token"
+            curl -fsS -H 'Content-Type: application/x-www-form-urlencoded' \
+                --data-binary "@$request_body" -o "$token_response" "$token_url" || \
+                fatal "failed to acquire service-principal ARM token"
+            ;;
+    esac
+
+    jq -erj '.access_token' "$token_response" > "$output" || fatal "ARM token response did not contain an access token"
+    chmod 0600 "$output"
+}
+
+fetch_latest_bootstrap_data() {
+    local current="$1"
+    local arm_endpoint resource_id pool_name token_file header_file response merged url
+    arm_endpoint=$(jq -r '.azure.resourceManagerEndpoint // "https://management.azure.com"' "$current")
+    resource_id=$(jq -er '.azure.targetCluster.resourceId' "$current")
+    pool_name=$(jq -er '.azure.targetAgentPoolName' "$current")
+    [[ "$resource_id" == /subscriptions/*/providers/Microsoft.ContainerService/managedClusters/* ]] || \
+        fatal "embedded config contains an invalid target cluster resource ID"
+    [[ "$pool_name" =~ ^[A-Za-z0-9-]+$ ]] || fatal "embedded config contains an invalid target agent pool name"
+
+    token_file="$TEMP_DIR/arm-access-token"
+    header_file="$TEMP_DIR/arm-headers"
+    response="$TEMP_DIR/bootstrap-data.json"
+    merged="$TEMP_DIR/config-with-bootstrap-data.json"
+    acquire_arm_token "$current" "$arm_endpoint" "$token_file"
+    {
+        printf 'Authorization: Bearer '
+        cat "$token_file"
+        printf '\nContent-Type: application/json\n'
+    } > "$header_file"
+    chmod 0600 "$header_file"
+
+    url="${arm_endpoint%/}${resource_id}/agentPools/${pool_name}/listBootstrapData?api-version=${BOOTSTRAP_DATA_API_VERSION}"
+    log "fetching fresh bootstrap data from AKS RP"
+    curl -fsS -X POST -H "@$header_file" --data '' -o "$response" "$url" || \
+        fatal "failed to fetch AKS bootstrap data"
+    chmod 0600 "$response"
+    jq -e 'type == "object" and (.azure.bootstrapToken.token | type == "string" and length > 0)' "$response" >/dev/null || \
+        fatal "AKS bootstrap-data response did not contain a bootstrap token"
+    jq -s '.[0] * .[1]' "$current" "$response" > "$merged"
+    mv -f "$merged" "$current"
+}
+
 apply_auth_override() {
     local current="$1"
     local rendered="$TEMP_DIR/config-auth.json"
@@ -236,6 +380,10 @@ render_config() {
 
     write_base_config "$current"
     jq -e 'type == "object"' "$current" >/dev/null || fatal "embedded base config must be a JSON object"
+
+    if is_true "$FETCH_BOOTSTRAP_DATA"; then
+        fetch_latest_bootstrap_data "$current"
+    fi
 
     if [[ -n "$ENV_CONFIG_OVERRIDES" ]]; then
         merge_config_override "$current" "$ENV_CONFIG_OVERRIDES" "AKS_FLEX_NODE_CONFIG_OVERRIDES"
@@ -334,6 +482,10 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_AGENT_URL \
         AKS_FLEX_NODE_AGENT_VERSION \
         AKS_FLEX_NODE_AGENT_SHA256 \
+        AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA \
+        AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION \
+        AKS_FLEX_NODE_AUTHORITY_HOST \
+        AKS_FLEX_NODE_IMDS_ENDPOINT \
         AKS_FLEX_NODE_CONFIG_OVERRIDES \
         AKS_FLEX_NODE_INSTALL_DIR \
         AKS_FLEX_NODE_CONFIG_PATH || true

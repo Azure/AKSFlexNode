@@ -147,9 +147,57 @@ The script resolves values in this order:
 CLI flags > environment variables > embedded config/script defaults
 ```
 
-Dedicated authentication flags are applied after generic JSON overrides. This
+When enabled, fresh AKS RP bootstrap data is merged after the embedded base and
+before caller overrides. Dedicated authentication flags are applied last. This
 prevents a generic override from accidentally leaving both MSI and SP runtime
 authentication configured.
+
+## Refresh bootstrap data from AKS RP
+
+The generated script can contain durable cluster and pool metadata while
+retrieving a fresh bootstrap token and current pool settings at first boot:
+
+```bash
+sudo bash bootstrap.sh \
+  --fetch-bootstrap-data \
+  --auth msi \
+  --agent-version v0.1.5.alpha-9
+```
+
+The script derives these values from the embedded base config:
+
+```text
+azure.resourceManagerEndpoint
+azure.targetCluster.resourceId
+azure.targetAgentPoolName
+```
+
+It acquires an ARM token directly with the selected managed identity or service
+principal and sends:
+
+```text
+POST <cluster-resource-id>/agentPools/<pool>/listBootstrapData
+     ?api-version=2026-05-02-preview
+```
+
+No Azure CLI is required. The response is kept in the protected temporary
+workspace and deep-merged into the base config. It is never printed. The
+resulting precedence is:
+
+```text
+embedded base
+→ listBootstrapData response
+→ environment JSON override
+→ CLI JSON overrides
+→ dedicated MSI/SP auth override
+```
+
+The embedded config must still identify the cluster and pool and contain enough
+runtime policy to complete the final config. The selected identity must have
+permission to invoke the AKS `listBootstrapData` action.
+
+This behavior is opt-in. Omit `--fetch-bootstrap-data` in disconnected
+environments or when the embedded bootstrap data is already authoritative.
 
 ## Command reference
 
@@ -215,6 +263,14 @@ Verify the downloaded archive before extraction. Supplying a digest is strongly
 recommended.
 
 ```text
+--fetch-bootstrap-data
+--bootstrap-data-api-version VERSION
+```
+
+Fetch and merge fresh pool bootstrap data from AKS RP. The API version defaults
+to `2026-05-02-preview` and normally should not be overridden.
+
+```text
 --config-overrides JSON
 ```
 
@@ -244,6 +300,9 @@ normal production paths.
 | `AKS_FLEX_NODE_AGENT_URL` | Exact agent archive URL |
 | `AKS_FLEX_NODE_AGENT_VERSION` | Version for the default release URL |
 | `AKS_FLEX_NODE_AGENT_SHA256` | Expected archive SHA-256 |
+| `AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA` | Set to `true` to call `listBootstrapData` |
+| `AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION` | Optional API version override |
+| `AKS_FLEX_NODE_AUTHORITY_HOST` | Microsoft Entra authority for SP token acquisition |
 | `AKS_FLEX_NODE_CONFIG_OVERRIDES` | One JSON object merged before CLI overrides |
 | `AKS_FLEX_NODE_INSTALL_DIR` | Binary directory override |
 | `AKS_FLEX_NODE_CONFIG_PATH` | Config path override |

@@ -9,7 +9,14 @@ fi
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$REPO_ROOT/scripts/bootstrap.sh"
 WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
+SERVER_PID=""
+cleanup() {
+    if [[ -n "$SERVER_PID" ]]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+    fi
+    rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
 
 fail() {
     printf 'bootstrap_test: %s\n' "$*" >&2
@@ -30,7 +37,7 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
@@ -108,5 +115,144 @@ jq -e '
   (.azure | has("managedIdentity") | not) and
   .azure.arc.enabled == false
 ' "$WORK_DIR/sp-etc/config.json" >/dev/null
+
+command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
+cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def write_json(self, value):
+        data = json.dumps(value).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.startswith("/metadata/identity/oauth2/token?"):
+            self.write_json({"access_token": "test-arm-token", "expires_in": "3600"})
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        if self.path == "/base-tenant/oauth2/v2.0/token":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode()
+            if "client_id=base-sp-client" not in body or "client_secret=base-sp-secret" not in body:
+                self.send_error(401)
+                return
+            self.write_json({"access_token": "test-arm-token", "expires_in": 3600})
+            return
+        if not self.path.endswith("listBootstrapData?api-version=2026-05-02-preview"):
+            self.send_error(404)
+            return
+        if self.headers.get("Authorization") != "Bearer test-arm-token":
+            self.send_error(401)
+            return
+        self.write_json({
+            "azure": {"bootstrapToken": {"token": "fresh1.0123456789abcdef"}},
+            "components": {"kubernetes": "1.35.6"},
+            "networking": {"dnsServiceIP": "10.0.0.10"},
+        })
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+with open(sys.argv[1], "w") as handle:
+    handle.write(str(server.server_address[1]))
+server.serve_forever()
+PY
+python3 "$WORK_DIR/bootstrap-data-server.py" "$WORK_DIR/bootstrap-data-port" &
+SERVER_PID=$!
+for _ in $(seq 1 50); do
+    [[ -s "$WORK_DIR/bootstrap-data-port" ]] && break
+    sleep 0.1
+done
+[[ -s "$WORK_DIR/bootstrap-data-port" ]] || fail "bootstrap-data test server did not start"
+port=$(<"$WORK_DIR/bootstrap-data-port")
+cat > "$WORK_DIR/fetch-base.json" <<JSON
+{
+  "azure": {
+    "tenantId": "base-tenant",
+    "resourceManagerEndpoint": "http://127.0.0.1:${port}",
+    "targetAgentPoolName": "aksflexnodes",
+    "managedIdentity": {"clientId": "base-msi-client"},
+    "arc": {"enabled": false},
+    "targetCluster": {
+      "resourceId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+      "location": "region"
+    }
+  },
+  "components": {"kubernetes": "stale"},
+  "agent": {}
+}
+JSON
+chmod 0600 "$WORK_DIR/fetch-base.json"
+
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
+AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" \
+        --fetch-bootstrap-data \
+        --auth msi \
+        --config-overrides '{"node":{"labels":{"fresh":"true"}}}' \
+        --install-dir "$WORK_DIR/fetch-bin" \
+        --config-path "$WORK_DIR/fetch-etc/config.json" >/dev/null
+
+jq -e '
+  .azure.tenantId == "base-tenant" and
+  .azure.bootstrapToken.token == "fresh1.0123456789abcdef" and
+  .azure.managedIdentity == {} and
+  .components.kubernetes == "1.35.6" and
+  .networking.dnsServiceIP == "10.0.0.10" and
+  .node.labels.fresh == "true"
+' "$WORK_DIR/fetch-etc/config.json" >/dev/null
+
+cat > "$WORK_DIR/fetch-sp-base.json" <<JSON
+{
+  "azure": {
+    "tenantId": "base-tenant",
+    "resourceManagerEndpoint": "http://127.0.0.1:${port}",
+    "targetAgentPoolName": "aksflexnodes",
+    "servicePrincipal": {
+      "tenantId": "base-tenant",
+      "clientId": "base-sp-client",
+      "clientSecret": "base-sp-secret"
+    },
+    "arc": {"enabled": false},
+    "targetCluster": {
+      "resourceId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+      "location": "region"
+    }
+  },
+  "components": {"kubernetes": "stale"},
+  "agent": {}
+}
+JSON
+chmod 0600 "$WORK_DIR/fetch-sp-base.json"
+
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-sp-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-sp-base.json" \
+AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA=true \
+AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" \
+        --install-dir "$WORK_DIR/fetch-sp-bin" \
+        --config-path "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
+
+jq -e '
+  .azure.bootstrapToken.token == "fresh1.0123456789abcdef" and
+  .azure.servicePrincipal == {
+    "tenantId":"base-tenant",
+    "clientId":"base-sp-client",
+    "clientSecret":"base-sp-secret"
+  } and
+  .components.kubernetes == "1.35.6"
+' "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
 
 echo "bootstrap script tests passed"

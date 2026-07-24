@@ -124,10 +124,10 @@ from provisioning data at instance creation time.
 
 For each pool or node enrollment operation, the publisher:
 
-1. Obtains fresh bootstrap data, preferably from the pool's
-   `listBootstrapData` operation.
-2. Adds the target cluster location, runtime machine-client policy, and any
-   other config fields not returned by that operation.
+1. Embeds the target cluster resource ID, pool name, ARM endpoint, runtime
+   machine-client policy, and authentication selection.
+2. Either embeds fresh `listBootstrapData`, or enables the runtime fetch so the
+   host obtains a fresh token and pool settings immediately before bootstrap.
 3. Leaves host-derived fields such as node name and node IP unset.
 4. Replaces the single marker in `scripts/bootstrap.sh` with that JSON.
 5. Selects an agent version or exact archive URL and records the archive
@@ -136,10 +136,11 @@ For each pool or node enrollment operation, the publisher:
 7. Returns the script URL plus non-embedded invocation metadata to the
    provisioner.
 
-The generated script should not outlive its bootstrap token. A pool-level script
-can be reused only when the token and policy intentionally permit that. A
-node-level script should be preferred when enrollment is tied to a specific
-machine resource.
+A script with an embedded bootstrap token should not outlive that token. A
+script using `--fetch-bootstrap-data` can remain reusable longer, but its
+runtime identity must be authorized for the AKS `listBootstrapData` action and
+any signed artifact URLs still bound its useful lifetime. A node-level script
+should be preferred when enrollment is tied to a specific machine resource.
 
 The publisher must never log the generated script body. Diagnostics can report
 the cluster, pool, script object path, token expiry, and artifact digest without
@@ -227,12 +228,13 @@ base config or a generic override intentionally supplies it.
 During invocation, the script:
 
 1. validates prerequisites and the embedded JSON;
-2. applies generic environment and CLI overrides;
-3. resolves node name and runtime auth;
-4. downloads, verifies, and atomically installs the agent;
-5. atomically writes the mode `0600` config;
-6. runs non-mutating preflight;
-7. invokes the existing start lifecycle only after preflight succeeds.
+2. optionally acquires an ARM token and merges fresh `listBootstrapData`;
+3. applies generic environment and CLI overrides;
+4. resolves node name and runtime auth;
+5. downloads, verifies, and atomically installs the agent;
+6. atomically writes the mode `0600` config;
+7. runs non-mutating preflight;
+8. invokes the existing start lifecycle only after preflight succeeds.
 
 ### 6. Record completion and remove the downloaded script
 
@@ -391,6 +393,9 @@ AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE
 AKS_FLEX_NODE_AGENT_URL
 AKS_FLEX_NODE_AGENT_VERSION
 AKS_FLEX_NODE_AGENT_SHA256
+AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
+AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
+AKS_FLEX_NODE_AUTHORITY_HOST
 AKS_FLEX_NODE_CONFIG_OVERRIDES
 AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
@@ -414,22 +419,49 @@ The script processes JSON in this order:
 
 1. Write the embedded base config into a mode `0700` temporary workspace.
 2. Validate that it is a JSON object.
-3. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
-4. Deep-merge each CLI `--config-overrides` object in invocation order.
-5. Set `agent.nodeName` from the lowercase host name only when absent.
-6. Apply the dedicated auth selection.
-7. Validate the final JSON with jq.
-8. Keep the rendered result in the protected workspace while the agent archive
+3. When enabled, acquire an ARM token with MSI or SP, call
+   `listBootstrapData`, and deep-merge the response.
+4. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
+5. Deep-merge each CLI `--config-overrides` object in invocation order.
+6. Set `agent.nodeName` from the lowercase host name only when absent.
+7. Apply the dedicated auth selection.
+8. Validate the final JSON with jq.
+9. Keep the rendered result in the protected workspace while the agent archive
    is downloaded and installed.
-9. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
-   `0600`.
-10. Clear bootstrap environment variables, including signed artifact URLs and any
-   direct SP secret, before launching the agent commands.
+10. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
+    `0600`.
+11. Clear bootstrap environment variables, including signed artifact URLs and
+    any direct SP secret, before launching the agent commands.
+
+The ARM token, request body, authorization header, and bootstrap-data response
+are stored only in mode `0600` files inside the temporary workspace. The script
+never prints the response or token and does not require Azure CLI.
 
 Dedicated auth selection runs last so generic overrides cannot accidentally
 leave multiple incompatible Azure runtime authentication methods configured.
 Generic override arguments must not contain secrets because they are visible in
 the process list.
+
+### Runtime bootstrap-data refresh
+
+`--fetch-bootstrap-data` calls the pool action with the embedded cluster and pool
+coordinates:
+
+```text
+POST <resource-manager-endpoint><cluster-resource-id>/agentPools/<pool>/listBootstrapData
+     ?api-version=2026-05-02-preview
+```
+
+For MSI, the script requests an ARM token from IMDS and honors the optional
+user-assigned client ID. For SP, it reads the protected secret file, requests a
+client-credentials token from Microsoft Entra, and uses the configured ARM
+endpoint as the token scope. When `--auth` is omitted, the fetch mode is inferred
+from `azure.managedIdentity` or `azure.servicePrincipal` in the base config.
+
+The response replaces stale cluster-issued values such as the bootstrap token,
+API endpoint/CA, component version, DNS, and CNI settings while preserving
+publisher-owned settings absent from the response. Caller overrides and the
+final auth selection are then applied normally.
 
 ### Managed identity
 
