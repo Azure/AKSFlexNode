@@ -25,6 +25,8 @@ For the architecture and security rationale, see
 The operator workstation needs:
 
 - Azure CLI authenticated to the target subscription;
+- the subscription-level `Microsoft.ContainerService/PutMachinePreview` feature
+  registered, followed by Microsoft.ContainerService provider re-registration;
 - `kubectl`;
 - permission to create AKS and networking resources and to grant the selected
   pre-provisioned identity access to the AKS cluster;
@@ -90,6 +92,40 @@ Select the subscription:
 ```bash
 az account set --subscription "$SUBSCRIPTION_ID"
 ```
+
+Register the preview feature that permits AKS Flex Node to create or update ARM
+Machine resources. Registration is subscription-scoped and only needs to be
+completed once:
+
+```bash
+az feature register \
+  --namespace Microsoft.ContainerService \
+  --name PutMachinePreview
+```
+
+Wait until registration reports `Registered`:
+
+```bash
+az feature show \
+  --namespace Microsoft.ContainerService \
+  --name PutMachinePreview \
+  --query properties.state \
+  --output tsv
+```
+
+After the state becomes `Registered`, re-register the resource provider so the
+feature takes effect:
+
+```bash
+az provider register \
+  --namespace Microsoft.ContainerService \
+  --wait
+```
+
+Do not continue to host bootstrap while the feature is still `Registering`.
+Without `PutMachinePreview`, the agent cannot complete its ARM Machine
+create/update step even when its managed identity or service principal has the
+correct AKS role assignment.
 
 Create or select the resource group and networking before this step. The AKS
 subnet ID must refer to the subnet where the managed system pool will run.
