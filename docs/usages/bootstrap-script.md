@@ -160,17 +160,24 @@ retrieving a fresh bootstrap token and current pool settings at first boot:
 ```bash
 sudo bash bootstrap.sh \
   --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_CLUSTER_RESOURCE_ID" \
+  --agent-pool-name aksflexnodes \
   --auth msi \
   --agent-version v0.1.5.alpha-9
 ```
 
-The script derives these values from the embedded base config:
+The script accepts cluster coordinates through dedicated flags/environment
+variables and falls back to the embedded base config:
 
 ```text
-azure.resourceManagerEndpoint
-azure.targetCluster.resourceId
-azure.targetAgentPoolName
+--cluster-resource-id / AKS_FLEX_NODE_CLUSTER_RESOURCE_ID
+--agent-pool-name / AKS_FLEX_NODE_AGENT_POOL_NAME
+--resource-manager-endpoint / AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
 ```
+
+The ARM endpoint defaults to public Azure when omitted. Dedicated target values
+are applied before `listBootstrapData`, then reapplied after generic JSON merges
+so an explicit cluster/pool selection remains authoritative.
 
 It acquires an ARM token directly with the selected managed identity or service
 principal and sends:
@@ -199,12 +206,30 @@ embedded base
 → dedicated MSI/SP auth override
 ```
 
-The embedded config must still identify the cluster and pool and contain enough
-runtime policy to complete the final config. The selected identity must have
-permission to invoke the AKS `listBootstrapData` action.
+With dedicated cluster/pool flags and auth inputs, the embedded base can be a
+minimal JSON object such as `{}`. Publisher-owned runtime policy can still be
+embedded when required. The selected identity must have permission to invoke
+the AKS `listBootstrapData` action.
 
 This behavior is opt-in. Omit `--fetch-bootstrap-data` in disconnected
 environments or when the embedded bootstrap data is already authoritative.
+
+A generic service-principal invocation can therefore provide all node-specific
+inputs at runtime:
+
+```bash
+sudo bash bootstrap.sh \
+  --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_CLUSTER_RESOURCE_ID" \
+  --agent-pool-name aksflexnodes \
+  --auth service-principal \
+  --sp-tenant-id "$TENANT_ID" \
+  --sp-client-id "$CLIENT_ID" \
+  --sp-client-secret-file /run/credentials/aks-flex-node-sp \
+  --bootstrap-oci-image "$ROOTFS_SOURCE" \
+  --bootstrap-offline-artifacts-source "$OFFLINE_ARTIFACT_TEMPLATE" \
+  --agent-version v0.1.5.alpha-9
+```
 
 ## Command reference
 
@@ -274,9 +299,15 @@ recommended.
 ```text
 --fetch-bootstrap-data
 --bootstrap-data-api-version VERSION
+--cluster-resource-id ID
+--agent-pool-name NAME
+--resource-manager-endpoint URL
 ```
 
-Fetch and merge fresh pool bootstrap data from AKS RP. The API version defaults
+Fetch and merge fresh pool bootstrap data from AKS RP. Cluster resource ID and
+pool name can be supplied at runtime instead of embedded in the generated
+script. Resource Manager endpoint defaults to `https://management.azure.com`.
+The API version defaults
 to `2026-05-02-preview` and normally should not be overridden.
 
 ```text
@@ -336,6 +367,9 @@ normal production paths.
 | `AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA` | Set to `true` to call `listBootstrapData` |
 | `AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION` | Optional API version override |
 | `AKS_FLEX_NODE_AUTHORITY_HOST` | Microsoft Entra authority for SP token acquisition |
+| `AKS_FLEX_NODE_CLUSTER_RESOURCE_ID` | Target AKS managed-cluster resource ID |
+| `AKS_FLEX_NODE_AGENT_POOL_NAME` | Target FlexNodes agent pool name |
+| `AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT` | ARM endpoint; defaults to public Azure |
 | `AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE` | Override `bootstrap.ociImage` |
 | `AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE` | Override `bootstrap.offlineArtifacts.source` |
 | `AKS_FLEX_NODE_CONFIG_OVERRIDES` | One JSON object merged before CLI overrides |

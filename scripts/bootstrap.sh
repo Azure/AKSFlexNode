@@ -40,6 +40,9 @@ CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
 BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE:-}"
+CLUSTER_RESOURCE_ID="${AKS_FLEX_NODE_CLUSTER_RESOURCE_ID:-}"
+AGENT_POOL_NAME="${AKS_FLEX_NODE_AGENT_POOL_NAME:-}"
+RESOURCE_MANAGER_ENDPOINT="${AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT:-}"
 BASE_CONFIG_FILE="${AKS_FLEX_NODE_BASE_CONFIG_FILE:-}"
 FETCH_BOOTSTRAP_DATA="${AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA:-false}"
 BOOTSTRAP_DATA_API_VERSION="${AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION:-$DEFAULT_BOOTSTRAP_DATA_API_VERSION}"
@@ -86,6 +89,10 @@ Options:
   --agent-sha256 SHA256          Expected SHA-256 of the downloaded tar.gz
   --fetch-bootstrap-data         Fetch and merge fresh AKS RP bootstrap data
   --bootstrap-data-api-version V API version for listBootstrapData
+  --cluster-resource-id ID       Target AKS managed-cluster resource ID
+  --agent-pool-name NAME         Target FlexNodes agent pool name
+  --resource-manager-endpoint URL
+                                 ARM endpoint; defaults to public Azure
   --bootstrap-oci-image SOURCE   Override bootstrap.ociImage
   --bootstrap-offline-artifacts-source SOURCE
                                  Override bootstrap.offlineArtifacts.source
@@ -108,6 +115,9 @@ Environment overrides:
   AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
   AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
   AKS_FLEX_NODE_AUTHORITY_HOST
+  AKS_FLEX_NODE_CLUSTER_RESOURCE_ID
+  AKS_FLEX_NODE_AGENT_POOL_NAME
+  AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
   AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
   AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
   AKS_FLEX_NODE_CONFIG_OVERRIDES
@@ -129,7 +139,7 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -141,6 +151,9 @@ parse_args() {
                     --agent-version) AGENT_VERSION="$2" ;;
                     --agent-sha256) AGENT_SHA256="$2" ;;
                     --bootstrap-data-api-version) BOOTSTRAP_DATA_API_VERSION="$2" ;;
+                    --cluster-resource-id) CLUSTER_RESOURCE_ID="$2" ;;
+                    --agent-pool-name) AGENT_POOL_NAME="$2" ;;
+                    --resource-manager-endpoint) RESOURCE_MANAGER_ENDPOINT="$2" ;;
                     --bootstrap-oci-image) BOOTSTRAP_OCI_IMAGE="$2" ;;
                     --bootstrap-offline-artifacts-source) BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
@@ -338,6 +351,23 @@ acquire_arm_token() {
     chmod 0600 "$output"
 }
 
+apply_target_overrides() {
+    local current="$1"
+    local rendered="$TEMP_DIR/config-target.json"
+    if [[ -z "$CLUSTER_RESOURCE_ID" && -z "$AGENT_POOL_NAME" && -z "$RESOURCE_MANAGER_ENDPOINT" ]]; then
+        return 0
+    fi
+    jq --arg resourceID "$CLUSTER_RESOURCE_ID" --arg poolName "$AGENT_POOL_NAME" --arg armEndpoint "$RESOURCE_MANAGER_ENDPOINT" '
+        .azure = (.azure // {}) |
+        if $resourceID != "" then
+            .azure.targetCluster = ((.azure.targetCluster // {}) * {"resourceId": $resourceID})
+        else . end |
+        if $poolName != "" then .azure.targetAgentPoolName = $poolName else . end |
+        if $armEndpoint != "" then .azure.resourceManagerEndpoint = $armEndpoint else . end
+    ' "$current" > "$rendered"
+    mv -f "$rendered" "$current"
+}
+
 fetch_latest_bootstrap_data() {
     local current="$1"
     local arm_endpoint resource_id pool_name token_file header_file response merged url
@@ -471,6 +501,7 @@ render_config() {
 
     write_base_config "$current"
     jq -e 'type == "object"' "$current" >/dev/null || fatal "embedded base config must be a JSON object"
+    apply_target_overrides "$current"
 
     if is_true "$FETCH_BOOTSTRAP_DATA"; then
         fetch_latest_bootstrap_data "$current"
@@ -483,6 +514,7 @@ render_config() {
     for override in "${CONFIG_OVERRIDES[@]}"; do
         merge_config_override "$current" "$override" "--config-overrides"
     done
+    apply_target_overrides "$current"
     apply_bootstrap_source_overrides "$current"
     normalize_offline_artifact_versions "$current"
 
@@ -580,6 +612,9 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_AUTHORITY_HOST \
         AKS_FLEX_NODE_IMDS_ENDPOINT \
         AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS \
+        AKS_FLEX_NODE_CLUSTER_RESOURCE_ID \
+        AKS_FLEX_NODE_AGENT_POOL_NAME \
+        AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT \
         AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
         AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
         AKS_FLEX_NODE_CONFIG_OVERRIDES \

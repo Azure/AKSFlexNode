@@ -37,7 +37,7 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
@@ -184,7 +184,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.write_json({"access_token": "test-arm-token", "expires_in": 3600})
             return
-        if not self.path.endswith("listBootstrapData?api-version=2026-05-02-preview"):
+        expected = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster/agentPools/aksflexnodes/listBootstrapData?api-version=2026-05-02-preview"
+        if self.path != expected:
             self.send_error(404)
             return
         if self.headers.get("Authorization") != "Bearer test-arm-token":
@@ -211,17 +212,6 @@ done
 port=$(<"$WORK_DIR/bootstrap-data-port")
 cat > "$WORK_DIR/fetch-base.json" <<JSON
 {
-  "azure": {
-    "tenantId": "base-tenant",
-    "resourceManagerEndpoint": "http://127.0.0.1:${port}",
-    "targetAgentPoolName": "aksflexnodes",
-    "managedIdentity": {"clientId": "base-msi-client"},
-    "arc": {"enabled": false},
-    "targetCluster": {
-      "resourceId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
-      "location": "region"
-    }
-  },
   "components": {"kubernetes": "stale", "containerd": "stale-containerd", "runc": "stale-runc"},
   "bootstrap": {"offlineArtifacts": {"source": "https://offline.example/bundle.tar.gz"}},
   "agent": {}
@@ -233,16 +223,23 @@ BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
 AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
+AKS_FLEX_NODE_CLUSTER_RESOURCE_ID='/subscriptions/wrong/resourceGroups/wrong/providers/Microsoft.ContainerService/managedClusters/wrong' \
+AKS_FLEX_NODE_AGENT_POOL_NAME=wrongpool \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
         --fetch-bootstrap-data \
         --auth msi \
-        --config-overrides '{"node":{"labels":{"fresh":"true"}}}' \
+        --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
+        --agent-pool-name aksflexnodes \
+        --resource-manager-endpoint "http://127.0.0.1:${port}" \
+        --config-overrides '{"azure":{"targetCluster":{"resourceId":"/subscriptions/wrong/resourceGroups/wrong/providers/Microsoft.ContainerService/managedClusters/wrong"},"targetAgentPoolName":"wrongpool"},"node":{"labels":{"fresh":"true"}}}' \
         --install-dir "$WORK_DIR/fetch-bin" \
         --config-path "$WORK_DIR/fetch-etc/config.json" >/dev/null
 
-jq -e '
-  .azure.tenantId == "base-tenant" and
+jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
+  .azure.targetCluster.resourceId == "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster" and
+  .azure.targetAgentPoolName == "aksflexnodes" and
+  .azure.resourceManagerEndpoint == $armEndpoint and
   .azure.bootstrapToken.token == "fresh1.0123456789abcdef" and
   .azure.managedIdentity == {} and
   .components.kubernetes == "1.35.6" and
@@ -257,7 +254,10 @@ if BOOTSTRAP_TEST_CALLS="$WORK_DIR/insecure-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
     AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --fetch-bootstrap-data \
+        bash "$SCRIPT" --fetch-bootstrap-data --auth msi \
+            --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
+            --agent-pool-name aksflexnodes \
+            --resource-manager-endpoint "http://127.0.0.1:${port}" \
             --install-dir "$WORK_DIR/insecure-bin" \
             --config-path "$WORK_DIR/insecure-etc/config.json" \
             >"$WORK_DIR/insecure.log" 2>&1; then
@@ -281,7 +281,7 @@ cat > "$WORK_DIR/fetch-sp-base.json" <<JSON
     },
     "arc": {"enabled": false},
     "targetCluster": {
-      "resourceId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
       "location": "region"
     }
   },

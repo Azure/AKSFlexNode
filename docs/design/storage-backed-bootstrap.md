@@ -124,8 +124,8 @@ from provisioning data at instance creation time.
 
 For each pool or node enrollment operation, the publisher:
 
-1. Embeds the target cluster resource ID, pool name, ARM endpoint, runtime
-   machine-client policy, and authentication selection.
+1. Either embeds the target cluster resource ID, pool name, and ARM endpoint,
+   or arranges for the provisioner to pass them through dedicated runtime flags.
 2. Either embeds fresh `listBootstrapData`, or enables the runtime fetch so the
    host obtains a fresh token and pool settings immediately before bootstrap.
 3. Leaves host-derived fields such as node name and node IP unset.
@@ -398,6 +398,9 @@ AKS_FLEX_NODE_AGENT_SHA256
 AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
 AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
 AKS_FLEX_NODE_AUTHORITY_HOST
+AKS_FLEX_NODE_CLUSTER_RESOURCE_ID
+AKS_FLEX_NODE_AGENT_POOL_NAME
+AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
 AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
 AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
 AKS_FLEX_NODE_CONFIG_OVERRIDES
@@ -423,19 +426,23 @@ The script processes JSON in this order:
 
 1. Write the embedded base config into a mode `0700` temporary workspace.
 2. Validate that it is a JSON object.
-3. When enabled, acquire an ARM token with MSI or SP, call
+3. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
+   they are available to the bootstrap-data request.
+4. When enabled, acquire an ARM token with MSI or SP, call
    `listBootstrapData`, and deep-merge the response.
-4. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
-5. Deep-merge each CLI `--config-overrides` object in invocation order.
-6. Apply dedicated rootfs and offline-artifact source overrides.
-7. Set `agent.nodeName` from the lowercase host name only when absent.
-8. Apply the dedicated auth selection.
-9. Validate the final JSON with jq.
-10. Keep the rendered result in the protected workspace while the agent archive
+5. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
+6. Deep-merge each CLI `--config-overrides` object in invocation order.
+7. Reapply dedicated cluster/pool/endpoint overrides so they remain
+   authoritative.
+8. Apply dedicated rootfs and offline-artifact source overrides.
+9. Set `agent.nodeName` from the lowercase host name only when absent.
+10. Apply the dedicated auth selection.
+11. Validate the final JSON with jq.
+12. Keep the rendered result in the protected workspace while the agent archive
     is downloaded and installed.
-11. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
+13. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
     `0600`.
-12. Clear bootstrap environment variables, including signed artifact URLs and
+14. Clear bootstrap environment variables, including signed artifact URLs and
     any direct SP secret, before launching the agent commands.
 
 The ARM token, request body, authorization header, and bootstrap-data response
@@ -467,8 +474,8 @@ offline source preserves `{{ .KubernetesVersion }}` for goal-state rendering.
 
 ### Runtime bootstrap-data refresh
 
-`--fetch-bootstrap-data` calls the pool action with the embedded cluster and pool
-coordinates:
+`--fetch-bootstrap-data` calls the pool action with cluster and pool coordinates
+provided by dedicated flags/environment variables or the embedded config:
 
 ```text
 POST <resource-manager-endpoint><cluster-resource-id>/agentPools/<pool>/listBootstrapData
@@ -485,6 +492,11 @@ The response replaces stale cluster-issued values such as the bootstrap token,
 API endpoint/CA, component version, DNS, and CNI settings while preserving
 publisher-owned settings absent from the response. Caller overrides and the
 final auth selection are then applied normally.
+
+With `--cluster-resource-id`, `--agent-pool-name`, explicit auth inputs, and
+artifact source overrides, a reusable script can embed only `{}`. This separates
+the generic first-boot executable from cluster coordinates and credentials while
+retaining the generated-script option for environments that prefer it.
 
 ### Managed identity
 
