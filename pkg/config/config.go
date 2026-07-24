@@ -75,9 +75,10 @@ type AzureConfig struct {
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
 // When provided, service principal authentication will be used instead of Azure CLI.
 type ServicePrincipalConfig struct {
-	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
-	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
-	ClientSecret string `json:"clientSecret"` // Azure AD application client secret
+	TenantID         string `json:"tenantId"`                   // Azure AD tenant ID
+	ClientID         string `json:"clientId"`                   // Azure AD application (client) ID
+	ClientSecret     string `json:"clientSecret,omitempty"`     // Azure AD application client secret
+	ClientSecretFile string `json:"clientSecretFile,omitempty"` // File containing the Azure AD application client secret
 }
 
 // ManagedIdentityConfig holds managed identity authentication configuration.
@@ -578,10 +579,50 @@ func (c *ServicePrincipalConfig) validate() error {
 	if c.ClientID == "" {
 		return fmt.Errorf("azure.servicePrincipal.clientId is required when service principal is configured")
 	}
-	if c.ClientSecret == "" {
-		return fmt.Errorf("azure.servicePrincipal.clientSecret is required when service principal is configured")
+	if c.ClientSecret != "" && c.ClientSecretFile != "" {
+		return fmt.Errorf("only one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile can be configured")
+	}
+	if c.ClientSecret == "" && c.ClientSecretFile == "" {
+		return fmt.Errorf("azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured")
+	}
+	if c.ClientSecretFile != "" {
+		clientSecret, err := loadServicePrincipalClientSecret(c.ClientSecretFile)
+		if err != nil {
+			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
+		}
+		c.ClientSecret = clientSecret
+		c.ClientSecretFile = ""
 	}
 	return nil
+}
+
+// loadServicePrincipalClientSecret reads a service principal secret from a
+// protected file. A trailing line ending is ignored to support standard secret
+// file creation tools.
+func loadServicePrincipalClientSecret(path string) (string, error) {
+	cleanPath := filepath.Clean(path)
+	info, err := os.Lstat(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("stat service principal client secret file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("service principal client secret file must not be a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("service principal client secret file must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("service principal client secret file must not be accessible by group or other users")
+	}
+	data, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("read service principal client secret file: %w", err)
+	}
+	secret := strings.TrimRight(string(data), "\r\n")
+	if secret == "" {
+		return "", fmt.Errorf("service principal client secret file is empty")
+	}
+	return secret, nil
 }
 
 func (c *ManagedIdentityConfig) validate() error {
