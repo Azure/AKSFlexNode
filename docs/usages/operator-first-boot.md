@@ -26,14 +26,14 @@ The operator workstation needs:
 
 - Azure CLI authenticated to the target subscription;
 - `kubectl`;
-- permission to create AKS, networking, managed identity, role assignment, and
-  virtual machine resources;
+- permission to create AKS and networking resources and to grant the selected
+  pre-provisioned identity access to the AKS cluster;
 - access to the AKS admin kubeconfig;
 - the `kubectl-unbounded` release matching the Unbounded artifacts.
 
 The target host needs:
 
-- Ubuntu 22.04/24.04 or Azure Linux 3;
+- Ubuntu 24.04;
 - at least 4 vCPU for the validated example;
 - a root filesystem with at least 8 GiB free under `/var/lib`;
 - Bash, curl, tar, jq, nftables, systemd-container, and util-linux;
@@ -49,7 +49,6 @@ export RESOURCE_GROUP="<resource-group>"
 export AKS_NAME="<cluster-name>"
 export AKS_LOCATION="<aks-region>"
 export AKS_SUBNET_ID="<aks-subnet-resource-id>"
-export FLEX_SUBNET_ID="<flex-host-subnet-resource-id>"
 
 export AKS_VERSION="1.36.2"
 export FLEX_VERSION="1.35.6"
@@ -332,94 +331,38 @@ az resource show \
 Do not include normal VMSS properties such as `osType`, `count`, `vmSize`, or
 subnet settings. The RP rejects unsupported FlexNodes pool properties.
 
-## 5. Prepare the Flex host and managed identity
+## 5. Prepare the Flex host and Azure identity
 
-The host can be an existing VM or bare-metal machine. This example uses a
-user-assigned managed identity on an Azure VM.
+Each Flex Node needs an Azure identity so the agent can create and continuously
+read its ARM Machine resource. The supported identity modes are:
 
-Create the identity:
+- **Managed identity** for an Azure VM. Use the system-assigned identity, or
+  provide the client ID of a user-assigned identity.
+- **Service principal** for an Azure VM or a host outside Azure. Provide its
+  tenant ID, client ID, and client credential through a protected file.
 
-```bash
-export FLEX_LOCATION="<host-region>"
-export FLEX_IDENTITY_NAME="${AKS_NAME}-flex-identity"
+The selected managed identity or service principal must have **Azure Kubernetes
+Service Contributor Role** at the target AKS cluster resource scope. The
+operator is responsible for provisioning the identity, assigning it to the host
+when applicable, granting the role, and allowing role-assignment propagation to
+complete before bootstrap starts.
 
-az identity create \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$FLEX_IDENTITY_NAME" \
-  --location "$FLEX_LOCATION"
+Host and identity provisioning are intentionally outside this guide. Start with
+a prepared Ubuntu host that can reach the AKS API server and artifact endpoints.
+Use a 32 GiB or larger OS disk; the agent preflight requires at least 8 GiB free
+under `/var/lib`.
 
-FLEX_IDENTITY_ID=$(az identity show \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$FLEX_IDENTITY_NAME" \
-  --query id --output tsv)
-
-FLEX_IDENTITY_CLIENT_ID=$(az identity show \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$FLEX_IDENTITY_NAME" \
-  --query clientId --output tsv)
-
-FLEX_IDENTITY_PRINCIPAL_ID=$(az identity show \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$FLEX_IDENTITY_NAME" \
-  --query principalId --output tsv)
-```
-
-Grant the identity AKS Contributor at the cluster scope:
-
-```bash
-az role assignment create \
-  --assignee-object-id "$FLEX_IDENTITY_PRINCIPAL_ID" \
-  --assignee-principal-type ServicePrincipal \
-  --role "Azure Kubernetes Service Contributor Role" \
-  --scope "$AKS_RESOURCE_ID"
-```
-
-Assign this identity to the target VM when creating it or with
-`az vm identity assign`. Allow time for role assignment propagation before
-running bootstrap.
-
-For example, create an Ubuntu 24.04 VM without cloud-init bootstrap automation:
-
-```bash
-export FLEX_VM_NAME="<unique-flex-host-name>"
-export FLEX_ADMIN_USER="azureuser"
-
-az vm create \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$FLEX_VM_NAME" \
-  --location "$FLEX_LOCATION" \
-  --size Standard_D4s_v5 \
-  --image Canonical:ubuntu-24_04-lts:server:latest \
-  --os-disk-size-gb 32 \
-  --admin-username "$FLEX_ADMIN_USER" \
-  --ssh-key-values "$HOME/.ssh/id_rsa.pub" \
-  --subnet "$FLEX_SUBNET_ID" \
-  --public-ip-sku Standard \
-  --nsg-rule SSH \
-  --assign-identity "$FLEX_IDENTITY_ID" \
-  --os-disk-delete-option Delete \
-  --nic-delete-option Delete
-```
-
-Use a 32 GiB or larger OS disk. The validated Azure Linux marketplace image had
-a 5 GiB default disk, which failed the agent's 8 GiB free-space preflight until
-it was expanded.
-
-Install host prerequisites before running the script.
-
-Ubuntu:
+Install the host prerequisites:
 
 ```bash
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  curl jq nftables systemd-container tar util-linux
-```
-
-Azure Linux 3:
-
-```bash
-sudo dnf install -y \
-  curl jq nftables systemd-container tar util-linux
+  curl \
+  jq \
+  nftables \
+  systemd-container \
+  tar \
+  util-linux
 ```
 
 Do not install Azure CLI on the host.
@@ -438,23 +381,18 @@ Set the operator-provided values:
 ```bash
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
-export FLEX_IDENTITY_CLIENT_ID="<user-assigned-managed-identity-client-id>"
 export AKS_LOCATION="<aks-region>"
 export AKS_FLEX_NODE_VERSION="v0.1.5.alpha-9"
+
+export FLEX_SP_TENANT_ID="<service-principal-tenant-id>"
+export FLEX_SP_CLIENT_ID="<service-principal-client-id>"
+export FLEX_SP_CLIENT_SECRET_FILE="/etc/aks-flex-node/credentials/sp-client-secret"
 ```
 
-Select a rootfs matching the host OS.
-
-Ubuntu 24.04:
+Select the Ubuntu 24.04 rootfs:
 
 ```bash
 export ROOTFS_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
-```
-
-Azure Linux 3:
-
-```bash
-export ROOTFS_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-azlinux3-v20260619.oci.tar.gz"
 ```
 
 Use the Kubernetes-version template for bootstrap artifacts:
@@ -481,13 +419,26 @@ The empty base config is intentional. The command supplies the cluster and pool,
 and `--fetch-bootstrap-data` obtains fresh cluster-issued join settings from
 AKS RP.
 
-Run bootstrap:
+Install the service-principal credential from the operator's protected secret
+delivery path. Keep this file available after bootstrap because the running
+agent uses it for ARM Machine reconciliation:
+
+```bash
+install -d -o root -g root -m 0700 /etc/aks-flex-node/credentials
+install -o root -g root -m 0600 \
+  "<path-to-provisioned-client-secret>" \
+  "$FLEX_SP_CLIENT_SECRET_FILE"
+```
+
+Run bootstrap with the service principal:
 
 ```bash
 AKS_FLEX_NODE_BASE_CONFIG_FILE=/run/aks-flex-node-bootstrap/base-config.json \
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
-  --auth msi \
-  --msi-client-id "$FLEX_IDENTITY_CLIENT_ID" \
+  --auth service-principal \
+  --sp-tenant-id "$FLEX_SP_TENANT_ID" \
+  --sp-client-id "$FLEX_SP_CLIENT_ID" \
+  --sp-client-secret-file "$FLEX_SP_CLIENT_SECRET_FILE" \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$FLEX_POOL_NAME" \
@@ -519,11 +470,29 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   }"
 ```
 
+For an Azure VM with a system-assigned managed identity, use the same command
+but replace the service-principal flags with:
+
+```bash
+  --auth msi \
+```
+
+For a user-assigned managed identity, use:
+
+```bash
+  --auth msi \
+  --msi-client-id "<user-assigned-managed-identity-client-id>" \
+```
+
+The selected managed identity must be assigned to the VM and have the same AKS
+Contributor role at the cluster scope.
+
 The script performs these operations:
 
 1. Loads the empty JSON base.
 2. Applies the cluster and pool overrides.
-3. Uses MSI to request an ARM token from IMDS.
+3. Uses the selected service principal or managed identity to request an ARM
+   token.
 4. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
    component version.
 5. Applies rootfs, offline artifact, and runtime config overrides.
@@ -655,23 +624,17 @@ Use 32 GiB or more for the validated examples.
 
 Confirm:
 
-- the managed identity is assigned to the host;
-- AKS Contributor is scoped to the target cluster;
+- the selected managed identity is assigned to the host, or the service
+  principal credential file is present and mode `0600`;
+- AKS Contributor is scoped to the target cluster for that identity;
 - role assignment propagation has completed;
 - `--cluster-resource-id` and `--agent-pool-name` are correct;
 - `agent.requireMachineRegistration` is true so failure remains fatal.
 
 ### MachineOperation cache synchronization times out
 
-Confirm the temporary RBAC from step 3 exists and that the daemon group can
-list/watch MachineOperations:
-
-```bash
-kubectl auth can-i list machineoperations.unbounded-cloud.io \
-  --as="system:node:<node-name>" \
-  --as-group=system:nodes \
-  --as-group=aks-flex-node-daemons
-```
+Confirm the temporary ClusterRole and ClusterRoleBinding from step 3 exist. A
+future AKS RP release will install these resources automatically.
 
 ### Node joins but the host agent restarts
 
