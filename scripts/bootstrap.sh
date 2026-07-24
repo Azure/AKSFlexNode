@@ -38,12 +38,24 @@ AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
 INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
+BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
+BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE:-}"
 BASE_CONFIG_FILE="${AKS_FLEX_NODE_BASE_CONFIG_FILE:-}"
 FETCH_BOOTSTRAP_DATA="${AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA:-false}"
 BOOTSTRAP_DATA_API_VERSION="${AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION:-$DEFAULT_BOOTSTRAP_DATA_API_VERSION}"
 AUTHORITY_HOST="${AKS_FLEX_NODE_AUTHORITY_HOST:-$DEFAULT_AUTHORITY_HOST}"
 IMDS_ENDPOINT="${AKS_FLEX_NODE_IMDS_ENDPOINT:-$DEFAULT_IMDS_ENDPOINT}"
+ALLOW_INSECURE_TEST_ENDPOINTS="${AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS:-false}"
 CONFIG_OVERRIDES=()
+
+# Keep sensitive caller values in shell memory instead of exporting them to
+# every jq, curl, tar, and agent child process.
+unset \
+    AKS_FLEX_NODE_SP_CLIENT_SECRET \
+    AKS_FLEX_NODE_AGENT_URL \
+    AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
+    AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
+    AKS_FLEX_NODE_CONFIG_OVERRIDES || true
 TEMP_DIR=""
 
 log() {
@@ -74,6 +86,9 @@ Options:
   --agent-sha256 SHA256          Expected SHA-256 of the downloaded tar.gz
   --fetch-bootstrap-data         Fetch and merge fresh AKS RP bootstrap data
   --bootstrap-data-api-version V API version for listBootstrapData
+  --bootstrap-oci-image SOURCE   Override bootstrap.ociImage
+  --bootstrap-offline-artifacts-source SOURCE
+                                 Override bootstrap.offlineArtifacts.source
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
   --install-dir PATH             Binary destination directory
@@ -93,6 +108,8 @@ Environment overrides:
   AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
   AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
   AKS_FLEX_NODE_AUTHORITY_HOST
+  AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
+  AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
   AKS_FLEX_NODE_CONFIG_OVERRIDES
   AKS_FLEX_NODE_INSTALL_DIR
   AKS_FLEX_NODE_CONFIG_PATH
@@ -112,7 +129,7 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -124,6 +141,8 @@ parse_args() {
                     --agent-version) AGENT_VERSION="$2" ;;
                     --agent-sha256) AGENT_SHA256="$2" ;;
                     --bootstrap-data-api-version) BOOTSTRAP_DATA_API_VERSION="$2" ;;
+                    --bootstrap-oci-image) BOOTSTRAP_OCI_IMAGE="$2" ;;
+                    --bootstrap-offline-artifacts-source) BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
                     --install-dir) INSTALL_DIR="$2" ;;
                     --config-path) CONFIG_PATH="$2" ;;
@@ -227,6 +246,18 @@ resolve_fetch_auth_mode() {
     esac
 }
 
+require_https_endpoint() {
+    local endpoint="$1"
+    local label="$2"
+    case "$endpoint" in
+        https://*) return 0 ;;
+        http://127.0.0.1:*|http://localhost:*)
+            is_true "$ALLOW_INSECURE_TEST_ENDPOINTS" && return 0
+            ;;
+    esac
+    fatal "$label must use HTTPS"
+}
+
 resolve_sp_secret_file() {
     local current="$1"
     local secret_file="$SP_CLIENT_SECRET_FILE"
@@ -261,6 +292,8 @@ acquire_arm_token() {
             fi
             local curl_args=(
                 -fsS --get
+                --connect-timeout 10 --max-time 60
+                --retry 3 --retry-delay 2 --retry-all-errors
                 -H 'Metadata: true'
                 --data-urlencode 'api-version=2018-02-01'
                 --data-urlencode "resource=${arm_endpoint%/}/"
@@ -284,8 +317,11 @@ acquire_arm_token() {
                 "client_id=\($clientID | @uri)&client_secret=\($secret | @uri)&scope=\($scope | @uri)&grant_type=client_credentials"
             ' > "$request_body"
             chmod 0600 "$request_body"
+            require_https_endpoint "$AUTHORITY_HOST" "service-principal authority host"
             token_url="${AUTHORITY_HOST%/}/${tenant_id}/oauth2/v2.0/token"
-            curl -fsS -H 'Content-Type: application/x-www-form-urlencoded' \
+            curl -fsS --connect-timeout 10 --max-time 60 \
+                --retry 3 --retry-delay 2 --retry-all-errors \
+                -H 'Content-Type: application/x-www-form-urlencoded' \
                 --data-binary "@$request_body" -o "$token_response" "$token_url" || \
                 fatal "failed to acquire service-principal ARM token"
             ;;
@@ -301,9 +337,16 @@ fetch_latest_bootstrap_data() {
     arm_endpoint=$(jq -r '.azure.resourceManagerEndpoint // "https://management.azure.com"' "$current")
     resource_id=$(jq -er '.azure.targetCluster.resourceId' "$current")
     pool_name=$(jq -er '.azure.targetAgentPoolName' "$current")
-    [[ "$resource_id" == /subscriptions/*/providers/Microsoft.ContainerService/managedClusters/* ]] || \
+    require_https_endpoint "$arm_endpoint" "resource manager endpoint"
+    shopt -s nocasematch
+    if [[ ! "$resource_id" =~ ^/subscriptions/[^/?#[:space:]]+/resourceGroups/[^/?#[:space:]]+/providers/Microsoft\.ContainerService/managedClusters/[^/?#[:space:]]+$ ]]; then
+        shopt -u nocasematch
         fatal "embedded config contains an invalid target cluster resource ID"
+    fi
+    shopt -u nocasematch
     [[ "$pool_name" =~ ^[A-Za-z0-9-]+$ ]] || fatal "embedded config contains an invalid target agent pool name"
+    [[ "$BOOTSTRAP_DATA_API_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?$ ]] || \
+        fatal "bootstrap-data API version has an invalid format"
 
     token_file="$TEMP_DIR/arm-access-token"
     header_file="$TEMP_DIR/arm-headers"
@@ -319,13 +362,45 @@ fetch_latest_bootstrap_data() {
 
     url="${arm_endpoint%/}${resource_id}/agentPools/${pool_name}/listBootstrapData?api-version=${BOOTSTRAP_DATA_API_VERSION}"
     log "fetching fresh bootstrap data from AKS RP"
-    curl -fsS -X POST -H "@$header_file" --data '' -o "$response" "$url" || \
+    curl -fsS --connect-timeout 10 --max-time 120 \
+        -X POST -H "@$header_file" --data '' -o "$response" "$url" || \
         fatal "failed to fetch AKS bootstrap data"
     chmod 0600 "$response"
     jq -e 'type == "object" and (.azure.bootstrapToken.token | type == "string" and length > 0)' "$response" >/dev/null || \
         fatal "AKS bootstrap-data response did not contain a bootstrap token"
     jq -s '.[0] * .[1]' "$current" "$response" > "$merged"
     mv -f "$merged" "$current"
+}
+
+apply_bootstrap_source_overrides() {
+    local current="$1"
+    local rendered="$TEMP_DIR/config-bootstrap-sources.json"
+    if [[ -z "$BOOTSTRAP_OCI_IMAGE" && -z "$BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE" ]]; then
+        return 0
+    fi
+    jq --arg ociImage "$BOOTSTRAP_OCI_IMAGE" --arg offlineSource "$BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE" '
+        .bootstrap = (.bootstrap // {}) |
+        if $ociImage != "" then .bootstrap.ociImage = $ociImage else . end |
+        if $offlineSource != "" then
+            .bootstrap.offlineArtifacts = ((.bootstrap.offlineArtifacts // {}) * {"source": $offlineSource})
+        else . end
+    ' "$current" > "$rendered"
+    mv -f "$rendered" "$current"
+}
+
+normalize_offline_artifact_versions() {
+    local current="$1"
+    local rendered="$TEMP_DIR/config-offline-versions.json"
+    jq '
+        if (.bootstrap.offlineArtifacts.source // "") != "" then
+            .components = (.components // {}) |
+            .networking = (.networking // {}) |
+            del(.components.containerd) |
+            del(.components.runc) |
+            del(.networking.cniVersion)
+        else . end
+    ' "$current" > "$rendered"
+    mv -f "$rendered" "$current"
 }
 
 apply_auth_override() {
@@ -392,6 +467,8 @@ render_config() {
     for override in "${CONFIG_OVERRIDES[@]}"; do
         merge_config_override "$current" "$override" "--config-overrides"
     done
+    apply_bootstrap_source_overrides "$current"
+    normalize_offline_artifact_versions "$current"
 
     node_name=$(hostname | tr '[:upper:]' '[:lower:]')
     jq --arg nodeName "$node_name" '
@@ -486,6 +563,9 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION \
         AKS_FLEX_NODE_AUTHORITY_HOST \
         AKS_FLEX_NODE_IMDS_ENDPOINT \
+        AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS \
+        AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
+        AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
         AKS_FLEX_NODE_CONFIG_OVERRIDES \
         AKS_FLEX_NODE_INSTALL_DIR \
         AKS_FLEX_NODE_CONFIG_PATH || true

@@ -181,8 +181,15 @@ POST <cluster-resource-id>/agentPools/<pool>/listBootstrapData
 ```
 
 No Azure CLI is required. The response is kept in the protected temporary
-workspace and deep-merged into the base config. It is never printed. The
-resulting precedence is:
+workspace and deep-merged into the base config. It is never printed. Resource
+Manager and Microsoft Entra authority endpoints must use HTTPS.
+
+When offline artifacts are configured, their manifest is authoritative for
+containerd, runc, and CNI versions. The renderer therefore removes those
+explicit version pins after merging fresh RP data, while retaining the
+Kubernetes version used to select the bundle.
+
+The resulting precedence is:
 
 ```text
 embedded base
@@ -271,6 +278,30 @@ Fetch and merge fresh pool bootstrap data from AKS RP. The API version defaults
 to `2026-05-02-preview` and normally should not be overridden.
 
 ```text
+--bootstrap-oci-image SOURCE
+--bootstrap-offline-artifacts-source SOURCE
+```
+
+Override the two bootstrap artifact sources without constructing a generic JSON
+patch. The offline source preserves Go template expressions such as
+`{{ .KubernetesVersion }}` literally. These dedicated values are applied after
+embedded/fetched config and generic JSON overrides.
+
+Example using an Azure Front Door mirror:
+
+```bash
+sudo bash bootstrap.sh \
+  --bootstrap-oci-image \
+    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-azlinux3-v20260619.oci.tar.gz' \
+  --bootstrap-offline-artifacts-source \
+    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz' \
+  --agent-version v0.1.5.alpha-9
+```
+
+For signed URLs, prefer the environment variables so credentials do not appear
+in process arguments.
+
+```text
 --config-overrides JSON
 ```
 
@@ -303,6 +334,8 @@ normal production paths.
 | `AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA` | Set to `true` to call `listBootstrapData` |
 | `AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION` | Optional API version override |
 | `AKS_FLEX_NODE_AUTHORITY_HOST` | Microsoft Entra authority for SP token acquisition |
+| `AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE` | Override `bootstrap.ociImage` |
+| `AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE` | Override `bootstrap.offlineArtifacts.source` |
 | `AKS_FLEX_NODE_CONFIG_OVERRIDES` | One JSON object merged before CLI overrides |
 | `AKS_FLEX_NODE_INSTALL_DIR` | Binary directory override |
 | `AKS_FLEX_NODE_CONFIG_PATH` | Config path override |

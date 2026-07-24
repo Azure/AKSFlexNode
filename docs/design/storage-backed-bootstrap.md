@@ -396,6 +396,8 @@ AKS_FLEX_NODE_AGENT_SHA256
 AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
 AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
 AKS_FLEX_NODE_AUTHORITY_HOST
+AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
+AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
 AKS_FLEX_NODE_CONFIG_OVERRIDES
 AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
@@ -423,24 +425,43 @@ The script processes JSON in this order:
    `listBootstrapData`, and deep-merge the response.
 4. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
 5. Deep-merge each CLI `--config-overrides` object in invocation order.
-6. Set `agent.nodeName` from the lowercase host name only when absent.
-7. Apply the dedicated auth selection.
-8. Validate the final JSON with jq.
-9. Keep the rendered result in the protected workspace while the agent archive
-   is downloaded and installed.
-10. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
+6. Apply dedicated rootfs and offline-artifact source overrides.
+7. Set `agent.nodeName` from the lowercase host name only when absent.
+8. Apply the dedicated auth selection.
+9. Validate the final JSON with jq.
+10. Keep the rendered result in the protected workspace while the agent archive
+    is downloaded and installed.
+11. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
     `0600`.
-11. Clear bootstrap environment variables, including signed artifact URLs and
+12. Clear bootstrap environment variables, including signed artifact URLs and
     any direct SP secret, before launching the agent commands.
 
 The ARM token, request body, authorization header, and bootstrap-data response
 are stored only in mode `0600` files inside the temporary workspace. The script
-never prints the response or token and does not require Azure CLI.
+never prints the response or token and does not require Azure CLI. Resource
+Manager and Microsoft Entra authority endpoints are required to use HTTPS.
 
-Dedicated auth selection runs last so generic overrides cannot accidentally
-leave multiple incompatible Azure runtime authentication methods configured.
-Generic override arguments must not contain secrets because they are visible in
-the process list.
+When an offline artifact source is present, its manifest remains authoritative
+for containerd, runc, and CNI versions. Explicit values for those fields are
+removed after the RP and caller merges so stale pool metadata cannot conflict
+with the selected bundle. Kubernetes version remains explicit because it
+selects the versioned archive.
+
+Dedicated source and auth selections run after generic merges so callers can
+replace publisher/RP artifact URLs without constructing JSON and cannot
+accidentally leave multiple incompatible Azure runtime authentication methods
+configured. Generic override arguments must not contain secrets because they are
+visible in the process list.
+
+The source overrides map directly to:
+
+```text
+bootstrap.ociImage
+bootstrap.offlineArtifacts.source
+```
+
+They accept HTTPS, local, or OCI source forms supported by the agent. The
+offline source preserves `{{ .KubernetesVersion }}` for goal-state rendering.
 
 ### Runtime bootstrap-data refresh
 

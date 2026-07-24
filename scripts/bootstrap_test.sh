@@ -37,7 +37,7 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
@@ -74,11 +74,14 @@ AKS_FLEX_NODE_SP_CLIENT_ID=environment-client \
 AKS_FLEX_NODE_SP_CLIENT_SECRET=environment-secret \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
 AKS_FLEX_NODE_AGENT_SHA256="$AGENT_SHA256" \
+AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE='https://environment.example/rootfs.tar.gz' \
+AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE='https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz' \
 AKS_FLEX_NODE_CONFIG_OVERRIDES='{"node":{"labels":{"environment":"true"}}}' \
     bash "$SCRIPT" \
         --auth msi \
         --msi-client-id cli-msi \
-        --config-overrides '{"node":{"labels":{"cli":"true"}}}' \
+        --bootstrap-oci-image 'https://cli.example/rootfs.tar.gz' \
+        --config-overrides '{"node":{"labels":{"cli":"true"}},"bootstrap":{"offlineArtifacts":{"source":"https://generic-cli.example/ignored.tar.gz"}}}' \
         --install-dir "$WORK_DIR/msi-bin" \
         --config-path "$WORK_DIR/msi-etc/config.json" >/dev/null
 
@@ -86,6 +89,8 @@ jq -e '
   .azure.managedIdentity.clientId == "cli-msi" and
   (.azure | has("servicePrincipal") | not) and
   .azure.arc.enabled == false and
+  .bootstrap.ociImage == "https://cli.example/rootfs.tar.gz" and
+  .bootstrap.offlineArtifacts.source == "https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz" and
   .node.labels == {"base":"true", "environment":"true", "cli":"true"} and
   (.agent.nodeName | length > 0)
 ' "$WORK_DIR/msi-etc/config.json" >/dev/null
@@ -158,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
         self.write_json({
             "azure": {"bootstrapToken": {"token": "fresh1.0123456789abcdef"}},
             "components": {"kubernetes": "1.35.6"},
-            "networking": {"dnsServiceIP": "10.0.0.10"},
+            "networking": {"dnsServiceIP": "10.0.0.10", "cniVersion": "stale-cni"},
         })
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -187,7 +192,8 @@ cat > "$WORK_DIR/fetch-base.json" <<JSON
       "location": "region"
     }
   },
-  "components": {"kubernetes": "stale"},
+  "components": {"kubernetes": "stale", "containerd": "stale-containerd", "runc": "stale-runc"},
+  "bootstrap": {"offlineArtifacts": {"source": "https://offline.example/bundle.tar.gz"}},
   "agent": {}
 }
 JSON
@@ -196,6 +202,7 @@ chmod 0600 "$WORK_DIR/fetch-base.json"
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
 AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
+AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
         --fetch-bootstrap-data \
@@ -210,8 +217,24 @@ jq -e '
   .azure.managedIdentity == {} and
   .components.kubernetes == "1.35.6" and
   .networking.dnsServiceIP == "10.0.0.10" and
+  (.networking | has("cniVersion") | not) and
+  (.components | has("containerd") | not) and
+  (.components | has("runc") | not) and
   .node.labels.fresh == "true"
 ' "$WORK_DIR/fetch-etc/config.json" >/dev/null
+
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/insecure-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
+    AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" --fetch-bootstrap-data \
+            --install-dir "$WORK_DIR/insecure-bin" \
+            --config-path "$WORK_DIR/insecure-etc/config.json" \
+            >"$WORK_DIR/insecure.log" 2>&1; then
+    fail "HTTP resource manager endpoint was accepted"
+fi
+grep -q 'resource manager endpoint must use HTTPS' "$WORK_DIR/insecure.log" || \
+    fail "HTTP endpoint rejection was not reported"
 
 cat > "$WORK_DIR/fetch-sp-base.json" <<JSON
 {
@@ -240,6 +263,7 @@ BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-sp-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-sp-base.json" \
 AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA=true \
 AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
+AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
         --install-dir "$WORK_DIR/fetch-sp-bin" \
