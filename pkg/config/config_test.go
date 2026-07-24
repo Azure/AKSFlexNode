@@ -808,14 +808,18 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			"kubernetes": "1.29.0",
 			"containerd": "2.0.5",
 			"runc": "1.2.3",
-			"sandboxImage": "registry.example.test/pause:3.9"
+			"sandboxImage": "registry.example.test/pause:3.9",
+			"gantry": {
+				"disabled": true
+			}
 		},
 		"bootstrap": {
 			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04",
-			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
-		},
-		"bootstrap": {
-			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
+			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"],
+			"additionalHostMounts": [
+				{"source": "/opt/config", "target": "/etc/config", "readOnly": true},
+				{"source": "/var/lib/example"}
+			]
 		},
 		"networking": {
 			"dnsServiceIP": "10.42.0.10",
@@ -867,6 +871,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if len(cfg.Node.Taints) != 1 || cfg.Node.Taints[0] != "dedicated=flexnode:NoSchedule" {
 		t.Fatalf("Node.Taints = %#v, want dedicated=flexnode:NoSchedule", cfg.Node.Taints)
 	}
+	if cfg.Components.Gantry == nil || !cfg.Components.Gantry.Disabled {
+		t.Fatalf("Components.Gantry = %#v, want disabled", cfg.Components.Gantry)
+	}
 
 	agentCfg := ToAgentConfig(cfg, "flex-node-1")
 	if agentCfg.Cluster.Version != "1.29.0" {
@@ -881,6 +888,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if agentCfg.CRI.Containerd.SandboxImage != "registry.example.test/pause:3.9" {
 		t.Fatalf("Agent CRI.Containerd.SandboxImage = %q, want registry.example.test/pause:3.9", agentCfg.CRI.Containerd.SandboxImage)
 	}
+	if agentCfg.Gantry == nil || !agentCfg.Gantry.Disabled {
+		t.Fatalf("Agent Gantry = %#v, want disabled", agentCfg.Gantry)
+	}
 	if agentCfg.OCIImage != "registry.example.test/flex/rootfs:ubuntu-24.04" {
 		t.Fatalf("Agent OCIImage = %q, want registry.example.test/flex/rootfs:ubuntu-24.04", agentCfg.OCIImage)
 	}
@@ -890,8 +900,14 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if agentCfg.CRI.Runc.Version != "1.2.3" {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
 	}
-	if len(agentCfg.AdditionalHostDevices) != 2 || agentCfg.AdditionalHostDevices[0] != "/dev/uinput" || agentCfg.AdditionalHostDevices[1] != "/dev/input/event0" {
-		t.Fatalf("Agent AdditionalHostDevices = %#v", agentCfg.AdditionalHostDevices)
+	if len(agentCfg.AdditionalHostMounts) != 2 {
+		t.Fatalf("Agent AdditionalHostMounts = %#v, want 2 entries", agentCfg.AdditionalHostMounts)
+	}
+	if got := agentCfg.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
+		t.Fatalf("Agent AdditionalHostMounts[0] = %#v", got)
+	}
+	if got := agentCfg.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
+		t.Fatalf("Agent AdditionalHostMounts[1] = %#v", got)
 	}
 	if agentCfg.CNI.PluginVersion != "1.5.1" {
 		t.Fatalf("Agent CNI.PluginVersion = %q, want 1.5.1", agentCfg.CNI.PluginVersion)
@@ -943,6 +959,55 @@ func TestLoadConfigRejectsInvalidAdditionalHostDevice(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bootstrap.additionalHostDevices") {
 		t.Fatalf("LoadConfig() error = %v, want bootstrap.additionalHostDevices", err)
+	}
+}
+
+func TestBootstrapConfigValidatesAdditionalHostMounts(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		mounts  []AdditionalHostMount
+		wantErr string
+	}{
+		"valid read-only mount": {
+			mounts: []AdditionalHostMount{{Source: "/opt/config", Target: "/etc/config", ReadOnly: true}},
+		},
+		"valid nonexistent source with omitted target": {
+			mounts: []AdditionalHostMount{{Source: "/path/does/not/need/to/exist"}},
+		},
+		"relative source": {
+			mounts:  []AdditionalHostMount{{Source: "opt/config"}},
+			wantErr: "bootstrap.additionalHostMounts",
+		},
+		"unclean source": {
+			mounts:  []AdditionalHostMount{{Source: "/opt/../config"}},
+			wantErr: "clean absolute path",
+		},
+		"target with whitespace": {
+			mounts:  []AdditionalHostMount{{Source: "/opt/config", Target: "/etc/my config"}},
+			wantErr: "must not contain whitespace",
+		},
+		"target with colon": {
+			mounts:  []AdditionalHostMount{{Source: "/opt/config", Target: "/etc/config:bad"}},
+			wantErr: "must not contain whitespace, control characters, or ':'",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := (&BootstrapConfig{AdditionalHostMounts: tt.mounts}).validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("BootstrapConfig.validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("BootstrapConfig.validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

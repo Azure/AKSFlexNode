@@ -175,10 +175,18 @@ type MachineClientConfig struct {
 // ComponentsConfig is the AKS RP component version contract used by the agent
 // at runtime.
 type ComponentsConfig struct {
-	Kubernetes   string `json:"kubernetes,omitempty"`
-	Containerd   string `json:"containerd,omitempty"`
-	Runc         string `json:"runc,omitempty"`
-	SandboxImage string `json:"sandboxImage,omitempty"`
+	Kubernetes   string        `json:"kubernetes,omitempty"`
+	Containerd   string        `json:"containerd,omitempty"`
+	Runc         string        `json:"runc,omitempty"`
+	SandboxImage string        `json:"sandboxImage,omitempty"`
+	Gantry       *GantryConfig `json:"gantry,omitempty"`
+}
+
+// GantryConfig holds optional Gantry integration settings.
+type GantryConfig struct {
+	// Disabled opts out of the Gantry containerd registry routing that the
+	// shared agent enables by default.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component
@@ -196,7 +204,15 @@ type BootstrapConfig struct {
 	// AdditionalHostDevices lists extra host device nodes under /dev to expose to
 	// the nspawn machine in addition to devices discovered by the shared agent.
 	AdditionalHostDevices []string `json:"additionalHostDevices,omitempty"`
+
+	// AdditionalHostMounts lists non-device host paths to bind mount into the
+	// nspawn machine. Read-only mounts should be preferred unless write access is
+	// required.
+	AdditionalHostMounts []AdditionalHostMount `json:"additionalHostMounts,omitempty"`
 }
+
+// AdditionalHostMount re-exports the shared agent's host bind-mount config.
+type AdditionalHostMount = agentconfig.AdditionalHostMount
 
 // OfflineArtifactsConfig mirrors Unbounded's OfflineArtifacts bootstrap
 // setting in the AKS Flex public config shape.
@@ -672,6 +688,9 @@ func (c *BootstrapTokenConfig) validate() error {
 func (c *BootstrapConfig) validate() error {
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
+	}
+	if err := agentconfig.ValidateAdditionalHostMounts(c.AdditionalHostMounts); err != nil {
+		return fmt.Errorf("invalid bootstrap.additionalHostMounts: %w", err)
 	}
 
 	return nil
