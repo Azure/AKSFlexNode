@@ -2066,6 +2066,10 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 	if err := os.WriteFile(emptyFile, nil, 0o600); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
+	insecureFile := filepath.Join(dir, "insecure")
+	if err := os.WriteFile(insecureFile, []byte("file-secret"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -2086,12 +2090,17 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 		{
 			name:    "rejects missing file",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: filepath.Join(dir, "missing")},
-			wantErr: "read service principal client secret file",
+			wantErr: "stat service principal client secret file",
 		},
 		{
 			name:    "rejects empty file",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: emptyFile},
 			wantErr: "service principal client secret file is empty",
+		},
+		{
+			name:    "rejects insecure permissions",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: insecureFile},
+			wantErr: "must not be accessible by group or other users",
 		},
 	}
 

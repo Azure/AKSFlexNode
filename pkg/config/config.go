@@ -600,7 +600,18 @@ func (c *ServicePrincipalConfig) validate() error {
 // protected file. A trailing line ending is ignored to support standard secret
 // file creation tools.
 func loadServicePrincipalClientSecret(path string) (string, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
+	cleanPath := filepath.Clean(path)
+	info, err := os.Stat(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("stat service principal client secret file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("service principal client secret file must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("service principal client secret file must not be accessible by group or other users")
+	}
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return "", fmt.Errorf("read service principal client secret file: %w", err)
 	}
