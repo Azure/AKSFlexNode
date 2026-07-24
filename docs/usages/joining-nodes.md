@@ -107,9 +107,7 @@ Minimal config shape:
 }
 ```
 
-The credential file contains only the client secret. Protect it from group and
-world access. Inline `clientSecret` remains supported, but cannot be configured
-together with `clientSecretFile`.
+The credential file contains only the client secret. The agent requires this to be a non-empty regular file with no group/world access (for example, mode 0600). Inline `clientSecret` remains supported, but cannot be configured together with `clientSecretFile`.
 
 ## Authentication Mode Selection
 
