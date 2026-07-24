@@ -306,20 +306,27 @@ az rest \
   --body "$(cat /tmp/flex-pool.json)"
 ```
 
-Poll until provisioning succeeds:
+Wait until provisioning succeeds:
 
 ```bash
-while true; do
-  STATE=$(az rest \
-    --method get \
-    --uri "https://management.azure.com${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}?api-version=2026-05-02-preview" \
-    --query properties.provisioningState \
-    --output tsv)
-  echo "Flex pool state: $STATE"
-  [[ "$STATE" == Succeeded ]] && break
-  [[ "$STATE" == Failed ]] && exit 1
-  sleep 10
-done
+FLEX_POOL_RESOURCE_ID="${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}"
+
+az resource wait \
+  --ids "$FLEX_POOL_RESOURCE_ID" \
+  --api-version 2026-05-02-preview \
+  --custom "properties.provisioningState=='Succeeded'" \
+  --interval 10 \
+  --timeout 900
+```
+
+Inspect the completed pool:
+
+```bash
+az resource show \
+  --ids "$FLEX_POOL_RESOURCE_ID" \
+  --api-version 2026-05-02-preview \
+  --query '{name:name,state:properties.provisioningState,type:properties.type,version:properties.orchestratorVersion}' \
+  --output yaml
 ```
 
 Do not include normal VMSS properties such as `osType`, `count`, `vmSize`, or
