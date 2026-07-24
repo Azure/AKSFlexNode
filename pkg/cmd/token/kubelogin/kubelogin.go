@@ -2,12 +2,13 @@ package kubelogin
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/kubelogin/pkg/token"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,11 +22,11 @@ import (
 )
 
 const aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
-const clientCertificateDataEnv = "AKS_FLEX_NODE_CLIENT_CERTIFICATE_DATA"
 
 var flagServerID string
 var flagPopEnabled bool
 var flagPopClaims string
+var flagClientCertificateFile string
 
 var Command = &cobra.Command{
 	Use:          "kubelogin",
@@ -49,6 +50,10 @@ func init() {
 		&flagPopClaims, "pop-claims", "",
 		"Comma-separated list of key=value claims to include in the PoP token (e.g., 'u=cluster-resource-id').",
 	)
+	Command.Flags().StringVar(
+		&flagClientCertificateFile, "client-certificate-file", "",
+		"Path to the service principal client certificate file.",
+	)
 }
 
 func run(ctx context.Context, out io.Writer) error {
@@ -65,8 +70,8 @@ func run(ctx context.Context, out io.Writer) error {
 	tokOpts.ServerID = flagServerID
 	tokOpts.IsPoPTokenEnabled = flagPopEnabled
 	tokOpts.PoPTokenClaims = flagPopClaims
-	if certificateData := os.Getenv(clientCertificateDataEnv); certificateData != "" {
-		certificatePath, cleanup, err := prepareClientCertificate(certificateData)
+	if flagClientCertificateFile != "" {
+		certificatePath, cleanup, err := prepareClientCertificate(flagClientCertificateFile)
 		if err != nil {
 			return err
 		}
@@ -86,17 +91,25 @@ func run(ctx context.Context, out io.Writer) error {
 	return outputToken(out, ec, accessToken)
 }
 
-func prepareClientCertificate(encodedData string) (string, func(), error) {
-	data, err := base64.StdEncoding.DecodeString(encodedData)
+func prepareClientCertificate(certificateFile string) (string, func(), error) {
+	data, err := config.LoadServicePrincipalCredentialFile(certificateFile)
 	if err != nil {
-		return "", nil, fmt.Errorf("decode client certificate data: %w", err)
+		return "", nil, fmt.Errorf("load client certificate file: %w", err)
+	}
+	certificates, privateKey, err := azidentity.ParseCertificates(data, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("parse client certificate file: %w", err)
+	}
+	normalizedPEM, err := config.MarshalClientCertificatePEM(certificates, privateKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("normalize client certificate file: %w", err)
 	}
 	file, err := os.CreateTemp("", "aks-flex-node-client-certificate-*.pem")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temporary client certificate: %w", err)
 	}
 	cleanup := func() { _ = os.Remove(file.Name()) }
-	if _, err := file.Write(data); err != nil {
+	if _, err := file.WriteString(normalizedPEM); err != nil {
 		_ = file.Close()
 		cleanup()
 		return "", nil, fmt.Errorf("write temporary client certificate: %w", err)

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -194,8 +195,8 @@ func TestToAgentConfig_ServicePrincipalCertificateFile(t *testing.T) {
 	for _, e := range exec.Env {
 		envMap[e.Name] = e.Value
 	}
-	if envMap[clientCertificateDataEnv] == "" {
-		t.Fatalf("%s should contain the certificate data", clientCertificateDataEnv)
+	if !slices.Equal(exec.Args, []string{"token", "kubelogin", "--server-id", aksAADServerID, "--client-certificate-file", certificateFile}) {
+		t.Fatalf("Args=%v, want kubelogin client-certificate-file args", exec.Args)
 	}
 	if _, ok := envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"]; ok {
 		t.Fatal("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET should not be set for certificate auth")

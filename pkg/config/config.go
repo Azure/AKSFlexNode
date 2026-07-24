@@ -619,13 +619,13 @@ func (c *ServicePrincipalConfig) validate() error {
 			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: resolve absolute path: %w", err)
 		}
 		c.ClientSecretFile = absolutePath
-		data, err := loadServicePrincipalCredentialFile(c.ClientSecretFile)
+		data, err := LoadServicePrincipalCredentialFile(c.ClientSecretFile)
 		if err != nil {
 			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
 		}
 		certificates, privateKey, certificateErr := azidentity.ParseCertificates(data, nil)
 		if certificateErr == nil {
-			clientCertificatePEM, err := marshalClientCertificatePEM(certificates, privateKey)
+			clientCertificatePEM, err := MarshalClientCertificatePEM(certificates, privateKey)
 			if err != nil {
 				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
 			}
@@ -644,7 +644,9 @@ func (c *ServicePrincipalConfig) validate() error {
 	return nil
 }
 
-func loadServicePrincipalCredentialFile(path string) ([]byte, error) {
+// LoadServicePrincipalCredentialFile reads a service principal credential file
+// after verifying it is a protected regular file.
+func LoadServicePrincipalCredentialFile(path string) ([]byte, error) {
 	cleanPath := filepath.Clean(path)
 	info, err := os.Lstat(cleanPath)
 	if err != nil {
@@ -679,7 +681,7 @@ func (c *ServicePrincipalConfig) LoadClientCertificate() ([]*x509.Certificate, c
 	data := []byte(c.clientCertificatePEM)
 	if len(data) == 0 {
 		var err error
-		data, err = loadServicePrincipalCredentialFile(c.ClientSecretFile)
+		data, err = LoadServicePrincipalCredentialFile(c.ClientSecretFile)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -691,7 +693,9 @@ func (c *ServicePrincipalConfig) LoadClientCertificate() ([]*x509.Certificate, c
 	return certificates, privateKey, nil
 }
 
-func marshalClientCertificatePEM(certificates []*x509.Certificate, privateKey crypto.PrivateKey) (string, error) {
+// MarshalClientCertificatePEM converts a client certificate chain and private
+// key into PKCS#8 PEM form for consumers that require PEM files.
+func MarshalClientCertificatePEM(certificates []*x509.Certificate, privateKey crypto.PrivateKey) (string, error) {
 	if _, ok := privateKey.(*rsa.PrivateKey); !ok {
 		return "", fmt.Errorf("service principal client certificate private key must be RSA")
 	}
