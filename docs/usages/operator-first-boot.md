@@ -392,15 +392,12 @@ export FLEX_SP_CLIENT_ID="<service-principal-client-id>"
 export FLEX_SP_CLIENT_SECRET_FILE="/etc/aks-flex-node/credentials/sp-client-secret"
 ```
 
-Select the Ubuntu 24.04 rootfs:
+AKS RP bootstrap data does not currently include the mirrored rootfs and
+offline-artifact locations. Configure the Ubuntu 24.04 rootfs and the
+Kubernetes-version artifact template used by this guide:
 
 ```bash
 export ROOTFS_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
-```
-
-Use the Kubernetes-version template for bootstrap artifacts:
-
-```bash
 export OFFLINE_ARTIFACTS_URL='https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz'
 ```
 
