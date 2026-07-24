@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/kubelogin/pkg/token"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,12 +70,10 @@ func run(ctx context.Context, out io.Writer) error {
 	tokOpts.IsPoPTokenEnabled = flagPopEnabled
 	tokOpts.PoPTokenClaims = flagPopClaims
 	if flagClientCertificateFile != "" {
-		certificatePath, cleanup, err := prepareClientCertificate(flagClientCertificateFile)
-		if err != nil {
+		if err := validateClientCertificateFile(flagClientCertificateFile); err != nil {
 			return err
 		}
-		defer cleanup()
-		tokOpts.ClientCert = certificatePath
+		tokOpts.ClientCert = flagClientCertificateFile
 	}
 	// TODO: logging to show login details
 	provider, err := token.GetTokenProvider(tokOpts)
@@ -91,34 +88,11 @@ func run(ctx context.Context, out io.Writer) error {
 	return outputToken(out, ec, accessToken)
 }
 
-func prepareClientCertificate(certificateFile string) (string, func(), error) {
-	data, err := config.LoadServicePrincipalCredentialFile(certificateFile)
-	if err != nil {
-		return "", nil, fmt.Errorf("load client certificate file: %w", err)
+func validateClientCertificateFile(certificateFile string) error {
+	if _, err := config.LoadServicePrincipalCredentialFile(certificateFile); err != nil {
+		return fmt.Errorf("load client certificate file: %w", err)
 	}
-	certificates, privateKey, err := azidentity.ParseCertificates(data, nil)
-	if err != nil {
-		return "", nil, fmt.Errorf("parse client certificate file: %w", err)
-	}
-	normalizedPEM, err := config.MarshalClientCertificatePEM(certificates, privateKey)
-	if err != nil {
-		return "", nil, fmt.Errorf("normalize client certificate file: %w", err)
-	}
-	file, err := os.CreateTemp("", "aks-flex-node-client-certificate-*.pem")
-	if err != nil {
-		return "", nil, fmt.Errorf("create temporary client certificate: %w", err)
-	}
-	cleanup := func() { _ = os.Remove(file.Name()) }
-	if _, err := file.WriteString(normalizedPEM); err != nil {
-		_ = file.Close()
-		cleanup()
-		return "", nil, fmt.Errorf("write temporary client certificate: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("close temporary client certificate: %w", err)
-	}
-	return file.Name(), cleanup, nil
+	return nil
 }
 
 const execInfoEnv = "KUBERNETES_EXEC_INFO"

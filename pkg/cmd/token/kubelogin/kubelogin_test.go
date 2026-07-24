@@ -9,70 +9,52 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestPrepareClientCertificate(t *testing.T) {
+func TestValidateClientCertificateFile(t *testing.T) {
 	t.Parallel()
 
-	certificateFile := filepath.Join(t.TempDir(), "client-certificate.pem")
-	writeTestClientCertificate(t, certificateFile)
-	path, cleanup, err := prepareClientCertificate(certificateFile)
-	if err != nil {
-		t.Fatalf("prepareClientCertificate() error = %v", err)
+	dir := t.TempDir()
+	validFile := filepath.Join(dir, "client-certificate.pem")
+	writeTestClientCertificate(t, validFile)
+	insecureFile := filepath.Join(dir, "client-certificate-insecure.pem")
+	writeTestClientCertificate(t, insecureFile)
+	if err := os.Chmod(insecureFile, 0o644); err != nil {
+		t.Fatalf("os.Chmod: %v", err)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("os.ReadFile: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("temporary certificate should not be empty")
-	}
-	if string(data) == "" || !containsPEMCertificate(data) || !containsPEMPrivateKey(data) {
-		t.Fatalf("temporary certificate should contain normalized PEM certificate and private key, got %q", data)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("os.Stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("temporary certificate permissions = %o, want 600", info.Mode().Perm())
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "valid protected certificate file", path: validFile},
+		{
+			name:    "rejects insecure permissions",
+			path:    insecureFile,
+			wantErr: "must not be accessible by group or other users",
+		},
 	}
 
-	cleanup()
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("temporary certificate still exists after cleanup: %v", err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func containsPEMCertificate(data []byte) bool {
-	for len(data) > 0 {
-		var block *pem.Block
-		block, data = pem.Decode(data)
-		if block == nil {
-			return false
-		}
-		if block.Type == "CERTIFICATE" {
-			return true
-		}
+			err := validateClientCertificateFile(tt.path)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("validateClientCertificateFile() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateClientCertificateFile() error = %v", err)
+			}
+		})
 	}
-	return false
-}
-
-func containsPEMPrivateKey(data []byte) bool {
-	for len(data) > 0 {
-		var block *pem.Block
-		block, data = pem.Decode(data)
-		if block == nil {
-			return false
-		}
-		if block.Type == "PRIVATE KEY" {
-			return true
-		}
-	}
-	return false
 }
 
 func writeTestClientCertificate(t *testing.T, path string) {
