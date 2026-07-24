@@ -65,6 +65,8 @@ export UNBOUNDED_VERSION="v0.2.0"
 export AKS_FLEX_NODE_VERSION="v0.1.5"
 export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
 
+# bootstrap.sh downloads the agent, rootfs, and Kubernetes bootstrap bundle
+# from this central artifact endpoint.
 export AKS_FLEX_NODE_AGENT_URL="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
 export BOOTSTRAP_OCI_IMAGE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
 export BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
@@ -393,6 +395,8 @@ export AKS_FLEX_NODE_VERSION="v0.1.5"
 export UNBOUNDED_VERSION="v0.2.0"
 export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
 
+# bootstrap.sh downloads the agent, rootfs, and Kubernetes bootstrap bundle
+# from this central artifact endpoint.
 export AKS_FLEX_NODE_AGENT_URL="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
 export BOOTSTRAP_OCI_IMAGE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
 export BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
@@ -409,10 +413,8 @@ The shell expands `${AKS_FLEX_NODE_VERSION}`, and the bootstrap script expands
 https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.1.5/aks-flex-node-linux-amd64.tar.gz
 ```
 
-The three artifact URLs above use a centrally managed artifact-storage endpoint
-for the AKS Flex Node binary, rootfs OCI archive, and versioned Kubernetes
-bootstrap bundle. Operators can replace `CENTRAL_ARTIFACTS_ENDPOINT` with their
-approved central mirror without editing the generated agent config.
+These URLs download the agent, rootfs, and bootstrap bundle from the central
+artifact endpoint. Change `CENTRAL_ARTIFACTS_ENDPOINT` to use another mirror.
 
 AKS RP bootstrap data does not currently include the mirrored rootfs and
 offline-artifact locations, so the command supplies them through dedicated CLI
