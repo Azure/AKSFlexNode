@@ -63,7 +63,11 @@ export FLEX_POD_CIDR="10.95.0.0/16"
 
 export UNBOUNDED_VERSION="v0.2.0"
 export AKS_FLEX_NODE_VERSION="v0.1.5"
-export AKS_FLEX_NODE_AGENT_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
+export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
+
+export AKS_FLEX_NODE_AGENT_URL="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
+export BOOTSTRAP_OCI_IMAGE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
+export BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
 ```
 
 The cluster and Flex host networks must have private L3 connectivity. Use one
@@ -386,7 +390,12 @@ Set the operator-provided values:
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
 export AKS_FLEX_NODE_VERSION="v0.1.5"
-export AKS_FLEX_NODE_AGENT_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
+export UNBOUNDED_VERSION="v0.2.0"
+export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
+
+export AKS_FLEX_NODE_AGENT_URL="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
+export BOOTSTRAP_OCI_IMAGE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
+export BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${CENTRAL_ARTIFACTS_ENDPOINT}/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
 
 export FLEX_SP_TENANT_ID="<service-principal-tenant-id>"
 export FLEX_SP_CLIENT_ID="<service-principal-client-id>"
@@ -400,10 +409,14 @@ The shell expands `${AKS_FLEX_NODE_VERSION}`, and the bootstrap script expands
 https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.1.5/aks-flex-node-linux-amd64.tar.gz
 ```
 
+The three artifact URLs above use a centrally managed artifact-storage endpoint
+for the AKS Flex Node binary, rootfs OCI archive, and versioned Kubernetes
+bootstrap bundle. Operators can replace `CENTRAL_ARTIFACTS_ENDPOINT` with their
+approved central mirror without editing the generated agent config.
+
 AKS RP bootstrap data does not currently include the mirrored rootfs and
-offline-artifact locations. The bootstrap command below supplies both through
-dedicated CLI overrides; no config-file editing or separate shell variables are
-required.
+offline-artifact locations, so the command supplies them through dedicated CLI
+overrides.
 
 Download the raw script instead of piping it directly to Bash:
 
@@ -446,10 +459,8 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$FLEX_POOL_NAME" \
   --agent-url "$AKS_FLEX_NODE_AGENT_URL" \
-  --bootstrap-oci-image \
-    "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz" \
-  --bootstrap-offline-artifacts-source \
-    "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/${UNBOUNDED_VERSION}/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz"
+  --bootstrap-oci-image "$BOOTSTRAP_OCI_IMAGE" \
+  --bootstrap-offline-artifacts-source "$BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE"
 ```
 
 For an Azure VM with a system-assigned managed identity, use the same command
