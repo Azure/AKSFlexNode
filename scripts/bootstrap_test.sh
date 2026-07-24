@@ -250,6 +250,42 @@ jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
   .node.labels.fresh == "true"
 ' "$WORK_DIR/fetch-etc/config.json" >/dev/null
 
+# The raw repository script can start from an implicit empty object when fresh
+# bootstrap data and the target cluster/pool are supplied.
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-empty-base-calls" \
+AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
+AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" \
+        --fetch-bootstrap-data \
+        --auth msi \
+        --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
+        --agent-pool-name aksflexnodes \
+        --resource-manager-endpoint "http://127.0.0.1:${port}" \
+        --install-dir "$WORK_DIR/fetch-empty-base-bin" \
+        --config-path "$WORK_DIR/fetch-empty-base-etc/config.json" >/dev/null
+
+jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
+  .azure.targetCluster.resourceId == "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster" and
+  .azure.targetAgentPoolName == "aksflexnodes" and
+  .azure.resourceManagerEndpoint == $armEndpoint and
+  .azure.bootstrapToken.token == "fresh1.0123456789abcdef" and
+  .azure.managedIdentity == {} and
+  .components.kubernetes == "1.35.6" and
+  (.agent.nodeName | length > 0)
+' "$WORK_DIR/fetch-empty-base-etc/config.json" >/dev/null
+
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-base-calls" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" --auth msi \
+            --install-dir "$WORK_DIR/no-base-bin" \
+            --config-path "$WORK_DIR/no-base-etc/config.json" \
+            >"$WORK_DIR/no-base.log" 2>&1; then
+    fail "unpopulated embedded config was accepted without bootstrap-data fetch"
+fi
+grep -q 'embedded base config is not populated' "$WORK_DIR/no-base.log" || \
+    fail "missing base config rejection was not reported"
+
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/insecure-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
     AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \

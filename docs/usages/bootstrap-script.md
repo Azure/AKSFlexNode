@@ -108,9 +108,11 @@ bash -n generated-bootstrap.sh
 The generated script contains bootstrap credentials. Do not commit it, print
 it, attach it to tickets, or retain it beyond the credential lifetime.
 
-For development tests only, `AKS_FLEX_NODE_BASE_CONFIG_FILE` can supply the base
-config without replacing the marker. Production callers should use an embedded
-config.
+`AKS_FLEX_NODE_BASE_CONFIG_FILE` can supply a base config without replacing the
+marker. When the raw repository script is invoked with `--fetch-bootstrap-data`
+and explicit cluster/pool coordinates, the unpopulated marker is automatically
+treated as `{}` and no base config file is required. Without runtime bootstrap
+data, callers must use an embedded or file-based base config.
 
 ## Download the generated script
 
@@ -206,8 +208,9 @@ embedded base
 → dedicated MSI/SP auth override
 ```
 
-With dedicated cluster/pool flags and auth inputs, the embedded base can be a
-minimal JSON object such as `{}`. Publisher-owned runtime policy can still be
+With dedicated cluster/pool flags and auth inputs, the raw repository script can
+be used without replacing its marker: the script starts from `{}` before merging
+the `listBootstrapData` response. Publisher-owned runtime policy can still be
 embedded when required. The selected identity must have permission to invoke
 the AKS `listBootstrapData` action.
 

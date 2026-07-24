@@ -384,7 +384,6 @@ Set the operator-provided values:
 ```bash
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
-export AKS_LOCATION="<aks-region>"
 export AKS_FLEX_NODE_VERSION="v0.1.5.alpha-9"
 
 export FLEX_SP_TENANT_ID="<service-principal-tenant-id>"
@@ -401,8 +400,6 @@ Download the raw script instead of piping it directly to Bash:
 
 ```bash
 install -d -m 0700 /run/aks-flex-node-bootstrap
-printf '{}\n' > /run/aks-flex-node-bootstrap/base-config.json
-chmod 0600 /run/aks-flex-node-bootstrap/base-config.json
 
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
   https://raw.githubusercontent.com/Azure/AKSFlexNode/refs/heads/hbc/install-script/scripts/bootstrap.sh
@@ -411,9 +408,11 @@ chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
 ```
 
-The empty base config is intentional. The command supplies the cluster and pool,
-and `--fetch-bootstrap-data` obtains fresh cluster-issued join settings from
-AKS RP.
+The raw repository script contains an unpopulated embedded-config marker. When
+`--fetch-bootstrap-data`, `--cluster-resource-id`, and `--agent-pool-name` are
+provided together, the script automatically starts from an empty config and
+obtains fresh cluster-issued join settings from AKS RP. No base config file is
+required.
 
 Install the service-principal credential from the operator's protected secret
 delivery path. Keep this file available after bootstrap because the running
@@ -429,7 +428,6 @@ install -o root -g root -m 0600 \
 Run bootstrap with the service principal:
 
 ```bash
-AKS_FLEX_NODE_BASE_CONFIG_FILE=/run/aks-flex-node-bootstrap/base-config.json \
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --auth service-principal \
   --sp-tenant-id "$FLEX_SP_TENANT_ID" \
@@ -438,34 +436,11 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$FLEX_POOL_NAME" \
-  --resource-manager-endpoint https://management.azure.com \
   --agent-version "$AKS_FLEX_NODE_VERSION" \
-  --agent-sha256 042a2a12384637eb13721be04ac5ffa4c884abab50b4baa2fb5cbeba6785ee05 \
   --bootstrap-oci-image \
     "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz" \
   --bootstrap-offline-artifacts-source \
-    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz' \
-  --config-overrides "{
-    \"azure\": {
-      \"targetCluster\": {
-        \"location\": \"${AKS_LOCATION}\"
-      }
-    },
-    \"agent\": {
-      \"logLevel\": \"info\",
-      \"logDir\": \"/var/log/aks-flex-node\",
-      \"machineClient\": {
-        \"mode\": \"arm\"
-      },
-      \"requireMachineRegistration\": true,
-      \"machineOperationMode\": \"auto\"
-    },
-    \"node\": {
-      \"labels\": {
-        \"aks-flex-node.azure.com/bootstrap-scenario\": \"operator-first-boot\"
-      }
-    }
-  }"
+    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz'
 ```
 
 For an Azure VM with a system-assigned managed identity, use the same command
@@ -503,9 +478,7 @@ The script performs these operations:
 On success, remove the transient files and record completion:
 
 ```bash
-rm -f \
-  /run/aks-flex-node-bootstrap/bootstrap.sh \
-  /run/aks-flex-node-bootstrap/base-config.json
+rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
 
 install -d -m 0755 /var/lib/aks-flex-node
 install -m 0600 /dev/null /var/lib/aks-flex-node/first-boot-complete
@@ -626,8 +599,7 @@ Confirm:
   principal credential file is present and mode `0600`;
 - AKS Contributor is scoped to the target cluster for that identity;
 - role assignment propagation has completed;
-- `--cluster-resource-id` and `--agent-pool-name` are correct;
-- `agent.requireMachineRegistration` is true so failure remains fatal.
+- `--cluster-resource-id` and `--agent-pool-name` are correct.
 
 ### MachineOperation cache synchronization times out
 

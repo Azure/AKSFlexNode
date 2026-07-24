@@ -4,8 +4,9 @@
 # Requirements: bash, curl, tar, and jq. sha256sum is required only when an
 # artifact checksum is configured. This script does not install dependencies.
 #
-# The publisher must replace the marker in write_embedded_base_config with a
-# cluster/pool-specific partial config before distributing this script.
+# A publisher can replace the marker in write_embedded_base_config with a
+# cluster/pool-specific partial config. When --fetch-bootstrap-data is used with
+# explicit cluster and pool coordinates, the raw script starts from {} instead.
 # Usage guide: docs/usages/bootstrap-script.md
 
 set -euo pipefail
@@ -208,6 +209,16 @@ write_base_config() {
         return
     fi
     write_embedded_base_config > "$output"
+    local embedded
+    embedded=$(<"$output")
+    if [[ "$embedded" == __AKS_FLEX_NODE_*__ ]]; then
+        if is_true "$FETCH_BOOTSTRAP_DATA"; then
+            log "embedded base config is not populated; starting from an empty config"
+            printf '{}\n' > "$output"
+        else
+            fatal "embedded base config is not populated; use a generated script, a base config file, or --fetch-bootstrap-data"
+        fi
+    fi
 }
 
 merge_config_override() {

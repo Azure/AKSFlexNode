@@ -129,7 +129,9 @@ For each pool or node enrollment operation, the publisher:
 2. Either embeds fresh `listBootstrapData`, or enables the runtime fetch so the
    host obtains a fresh token and pool settings immediately before bootstrap.
 3. Leaves host-derived fields such as node name and node IP unset.
-4. Replaces the single marker in `scripts/bootstrap.sh` with that JSON.
+4. Replaces the single marker in `scripts/bootstrap.sh` when embedding policy or
+   bootstrap data. A runtime-fetch flow can leave the marker unpopulated; the
+   script starts from `{}` when `--fetch-bootstrap-data` is enabled.
 5. Selects an agent version or exact archive URL and records the archive
    SHA-256.
 6. Uploads the generated script to a protected location.
