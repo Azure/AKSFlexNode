@@ -198,11 +198,13 @@ label.
 
 ## 3. Install temporary AKS Flex daemon RBAC
 
-When the Machina MachineOperation CRD is installed, AKS Flex Node discovers it
-and enables its MachineOperation reconciler. A future AKS RP release will
-install and manage the required ClusterRole and ClusterRoleBinding automatically
-as part of the FlexNodes pool setup. Until that RP release is deployed in the
-target region, operators must apply the temporary RBAC below manually.
+> [!IMPORTANT]
+> **Temporary preview requirement:** When the Machina MachineOperation CRD is
+> installed, AKS Flex Node discovers it and enables its MachineOperation
+> reconciler. A future AKS RP release will install and manage the required
+> ClusterRole and ClusterRoleBinding automatically as part of FlexNodes pool
+> setup. Until that release is deployed in the target region, operators must
+> apply the temporary RBAC below manually.
 
 The Flex daemon certificate belongs to:
 
