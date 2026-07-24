@@ -96,7 +96,7 @@ Minimal config shape:
     "servicePrincipal": {
       "tenantId": "<tenant-id>",
       "clientId": "<client-id>",
-      "clientSecret": "<client-secret>"
+      "clientSecretFile": "/run/credentials/aks-flex-node-sp"
     },
     "arc": { "enabled": false },
     "targetCluster": {
@@ -107,7 +107,7 @@ Minimal config shape:
 }
 ```
 
-Store service principal credentials carefully and rotate them regularly.
+The credential file contains only the client secret. The agent requires this to be a non-empty regular file with no group/world access (for example, mode 0600). Inline `clientSecret` remains supported, but cannot be configured together with `clientSecretFile`.
 
 ## Authentication Mode Selection
 
