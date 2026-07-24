@@ -200,8 +200,12 @@ label.
 ## 3. Install temporary AKS Flex daemon RBAC
 
 When the Machina MachineOperation CRD is installed, AKS Flex Node discovers it
-and enables its MachineOperation reconciler. The Flex daemon certificate belongs
-to:
+and enables its MachineOperation reconciler. A future AKS RP release will
+install and manage the required ClusterRole and ClusterRoleBinding automatically
+as part of the FlexNodes pool setup. Until that RP release is deployed in the
+target region, operators must apply the temporary RBAC below manually.
+
+The Flex daemon certificate belongs to:
 
 ```text
 aks-flex-node-daemons
@@ -251,26 +255,6 @@ subjects:
 EOF
 ```
 
-Verify the critical permissions with the future Node name:
-
-```bash
-export FLEX_NODE_NAME="<target-hostname>"
-
-kubectl auth can-i list machineoperations.unbounded-cloud.io \
-  --as="system:node:${FLEX_NODE_NAME}" \
-  --as-group=system:nodes \
-  --as-group=aks-flex-node-daemons
-
-kubectl auth can-i update machineoperations.unbounded-cloud.io \
-  --subresource=status \
-  --as="system:node:${FLEX_NODE_NAME}" \
-  --as-group=system:nodes \
-  --as-group=aks-flex-node-daemons
-```
-
-Both commands must return `yes`. Node `get/list/watch` permission comes from the
-certificate's standard `system:nodes` identity and is not duplicated here.
-
 Without this binding, the host agent can authenticate but exits after its
 controller-runtime cache fails to synchronize:
 
@@ -279,8 +263,9 @@ failed to wait for aks-flex-node-daemon caches to sync
 kind source: *v1alpha3.MachineOperation
 ```
 
-This RBAC is a temporary integration requirement until the AKS and Unbounded
-daemon groups are aligned by the platform components.
+This manual RBAC step is a temporary preview requirement. Remove it from the
+operator workflow after the AKS RP release that installs the Flex daemon RBAC
+automatically is deployed in the target region.
 
 ## 4. Create the FlexNodes pool
 
