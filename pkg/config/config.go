@@ -81,12 +81,11 @@ type AzureConfig struct {
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
 // When provided, service principal authentication will be used instead of Azure CLI.
 type ServicePrincipalConfig struct {
-	TenantID              string `json:"tenantId"`                        // Azure AD tenant ID
-	ClientID              string `json:"clientId"`                        // Azure AD application (client) ID
-	ClientSecret          string `json:"clientSecret,omitempty"`          // Azure AD application client secret
-	ClientSecretFile      string `json:"clientSecretFile,omitempty"`      // File containing the Azure AD application client secret
-	ClientCertificateFile string `json:"clientCertificateFile,omitempty"` // File containing an Azure AD application certificate and private key
-	clientCertificatePEM  string
+	TenantID             string `json:"tenantId"`                   // Azure AD tenant ID
+	ClientID             string `json:"clientId"`                   // Azure AD application (client) ID
+	ClientSecret         string `json:"clientSecret,omitempty"`     // Azure AD application client secret
+	ClientSecretFile     string `json:"clientSecretFile,omitempty"` // File containing an Azure AD application client secret or certificate
+	clientCertificatePEM string
 }
 
 // ManagedIdentityConfig holds managed identity authentication configuration.
@@ -590,94 +589,72 @@ func (c *ServicePrincipalConfig) validate() error {
 	if c.ClientID == "" {
 		return fmt.Errorf("azure.servicePrincipal.clientId is required when service principal is configured")
 	}
-	configuredCredentials := 0
-	for _, credential := range []string{c.ClientSecret, c.ClientSecretFile, c.ClientCertificateFile} {
-		if credential != "" {
-			configuredCredentials++
-		}
+	if c.ClientSecret != "" && c.ClientSecretFile != "" {
+		return fmt.Errorf("only one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile can be configured")
 	}
-	if configuredCredentials > 1 {
-		return fmt.Errorf("only one of azure.servicePrincipal.clientSecret, azure.servicePrincipal.clientSecretFile, or azure.servicePrincipal.clientCertificateFile can be configured")
-	}
-	if configuredCredentials == 0 {
-		return fmt.Errorf("one of azure.servicePrincipal.clientSecret, azure.servicePrincipal.clientSecretFile, or azure.servicePrincipal.clientCertificateFile is required when service principal is configured")
+	if c.ClientSecret == "" && c.ClientSecretFile == "" {
+		return fmt.Errorf("one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured")
 	}
 	if c.ClientSecretFile != "" {
-		clientSecret, err := loadServicePrincipalClientSecret(c.ClientSecretFile)
+		absolutePath, err := filepath.Abs(c.ClientSecretFile)
+		if err != nil {
+			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: resolve absolute path: %w", err)
+		}
+		c.ClientSecretFile = absolutePath
+		data, err := loadServicePrincipalCredentialFile(c.ClientSecretFile)
 		if err != nil {
 			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
 		}
-		c.ClientSecret = clientSecret
-		c.ClientSecretFile = ""
-	}
-	if c.ClientCertificateFile != "" {
-		absolutePath, err := filepath.Abs(c.ClientCertificateFile)
-		if err != nil {
-			return fmt.Errorf("invalid azure.servicePrincipal.clientCertificateFile: resolve absolute path: %w", err)
+		certificates, privateKey, certificateErr := azidentity.ParseCertificates(data, nil)
+		if certificateErr == nil {
+			clientCertificatePEM, err := marshalClientCertificatePEM(certificates, privateKey)
+			if err != nil {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
+			}
+			c.clientCertificatePEM = clientCertificatePEM
+		} else {
+			c.ClientSecret = strings.TrimRight(string(data), "\r\n")
+			if c.ClientSecret == "" {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: service principal credential file is empty")
+			}
+			c.ClientSecretFile = ""
 		}
-		c.ClientCertificateFile = absolutePath
-		certificates, privateKey, err := c.LoadClientCertificate()
-		if err != nil {
-			return fmt.Errorf("invalid azure.servicePrincipal.clientCertificateFile: %w", err)
-		}
-		clientCertificatePEM, err := marshalClientCertificatePEM(certificates, privateKey)
-		if err != nil {
-			return fmt.Errorf("invalid azure.servicePrincipal.clientCertificateFile: %w", err)
-		}
-		c.clientCertificatePEM = clientCertificatePEM
 	}
 	return nil
 }
 
-// loadServicePrincipalClientSecret reads a service principal secret from a
-// protected file. A trailing line ending is ignored to support standard secret
-// file creation tools.
-func loadServicePrincipalClientSecret(path string) (string, error) {
+func loadServicePrincipalCredentialFile(path string) ([]byte, error) {
 	cleanPath := filepath.Clean(path)
 	info, err := os.Lstat(cleanPath)
 	if err != nil {
-		return "", fmt.Errorf("stat service principal client secret file: %w", err)
+		return nil, fmt.Errorf("stat service principal credential file: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("service principal client secret file must not be a symlink")
+		return nil, fmt.Errorf("service principal credential file must not be a symlink")
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("service principal client secret file must be a regular file")
+		return nil, fmt.Errorf("service principal credential file must be a regular file")
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("service principal client secret file must not be accessible by group or other users")
+		return nil, fmt.Errorf("service principal credential file must not be accessible by group or other users")
 	}
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return "", fmt.Errorf("read service principal client secret file: %w", err)
+		return nil, fmt.Errorf("read service principal credential file: %w", err)
 	}
-	secret := strings.TrimRight(string(data), "\r\n")
-	if secret == "" {
-		return "", fmt.Errorf("service principal client secret file is empty")
-	}
-	return secret, nil
+	return data, nil
 }
 
 // LoadClientCertificate loads the service principal certificate and private key
-// from ClientCertificateFile.
+// from ClientSecretFile.
 func (c *ServicePrincipalConfig) LoadClientCertificate() ([]*x509.Certificate, crypto.PrivateKey, error) {
-	cleanPath := filepath.Clean(c.ClientCertificateFile)
-	info, err := os.Lstat(cleanPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("stat service principal client certificate file: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, nil, fmt.Errorf("service principal client certificate file must not be a symlink")
-	}
-	if !info.Mode().IsRegular() {
-		return nil, nil, fmt.Errorf("service principal client certificate file must be a regular file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, nil, fmt.Errorf("service principal client certificate file must not be accessible by group or other users")
-	}
-	data, err := os.ReadFile(cleanPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read service principal client certificate file: %w", err)
+	data := []byte(c.clientCertificatePEM)
+	if len(data) == 0 {
+		var err error
+		data, err = loadServicePrincipalCredentialFile(c.ClientSecretFile)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	certificates, privateKey, err := azidentity.ParseCertificates(data, nil)
 	if err != nil {

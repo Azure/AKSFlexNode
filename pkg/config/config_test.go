@@ -1753,7 +1753,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "one of azure.servicePrincipal.clientSecret, azure.servicePrincipal.clientSecretFile, or azure.servicePrincipal.clientCertificateFile is required when service principal is configured",
+			errMsg:  "one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured",
 		},
 		{
 			name: "managed identity authentication enabled",
@@ -2097,12 +2097,12 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 		{
 			name:    "rejects missing file",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: filepath.Join(dir, "missing")},
-			wantErr: "stat service principal client secret file",
+			wantErr: "stat service principal credential file",
 		},
 		{
 			name:    "rejects empty file",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: emptyFile},
-			wantErr: "service principal client secret file is empty",
+			wantErr: "service principal credential file is empty",
 		},
 		{
 			name:    "rejects insecure permissions",
@@ -2135,16 +2135,12 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 	}
 }
 
-func TestServicePrincipalClientCertificateFile(t *testing.T) {
+func TestServicePrincipalCertificateFile(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	validFile := filepath.Join(dir, "client-certificate.pem")
 	writeTestClientCertificate(t, validFile)
-	invalidFile := filepath.Join(dir, "invalid")
-	if err := os.WriteFile(invalidFile, []byte("not a certificate"), 0o600); err != nil {
-		t.Fatalf("os.WriteFile: %v", err)
-	}
 	insecureFile := filepath.Join(dir, "insecure")
 	writeTestClientCertificate(t, insecureFile)
 	if err := os.Chmod(insecureFile, 0o644); err != nil {
@@ -2158,21 +2154,16 @@ func TestServicePrincipalClientCertificateFile(t *testing.T) {
 	}{
 		{
 			name:   "loads certificate",
-			config: &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientCertificateFile: validFile},
+			config: &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: validFile},
 		},
 		{
 			name:    "rejects secret and certificate",
-			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret", ClientCertificateFile: validFile},
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret", ClientSecretFile: validFile},
 			wantErr: "only one of",
 		},
 		{
-			name:    "rejects invalid certificate",
-			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientCertificateFile: invalidFile},
-			wantErr: "parse service principal client certificate file",
-		},
-		{
 			name:    "rejects insecure permissions",
-			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientCertificateFile: insecureFile},
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: insecureFile},
 			wantErr: "must not be accessible by group or other users",
 		},
 	}

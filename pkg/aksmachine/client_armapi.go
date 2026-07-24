@@ -165,7 +165,7 @@ func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.Cl
 			"tenantID", cfg.Azure.ServicePrincipal.TenantID,
 			"clientID", cfg.Azure.ServicePrincipal.ClientID,
 		)
-		if cfg.Azure.ServicePrincipal.ClientCertificateFile != "" {
+		if cfg.Azure.ServicePrincipal.ClientSecretFile != "" {
 			certificates, privateKey, err := cfg.Azure.ServicePrincipal.LoadClientCertificate()
 			if err != nil {
 				return nil, fmt.Errorf("load service principal client certificate: %w", err)

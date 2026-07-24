@@ -170,9 +170,9 @@ func TestGetCredentialClientCertificateLoadError(t *testing.T) {
 
 	cfg := testARMConfig(testClusterResourceID, "flex-node-1", "1.34.0")
 	cfg.Azure.ServicePrincipal = &config.ServicePrincipalConfig{
-		TenantID:              "tenant",
-		ClientID:              "client",
-		ClientCertificateFile: filepath.Join(t.TempDir(), "missing"),
+		TenantID:         "tenant",
+		ClientID:         "client",
+		ClientSecretFile: filepath.Join(t.TempDir(), "missing"),
 	}
 	credential, err := getCredential(
 		cfg,

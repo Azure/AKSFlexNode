@@ -74,7 +74,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			"AAD_SERVICE_PRINCIPAL_CLIENT_ID": cfg.Azure.ServicePrincipal.ClientID,
 			"AZURE_TENANT_ID":                 cfg.Azure.ServicePrincipal.TenantID,
 		}
-		if cfg.Azure.ServicePrincipal.ClientCertificateFile != "" {
+		if cfg.Azure.ServicePrincipal.clientCertificateData() != "" {
 			env[clientCertificateDataEnv] = base64.StdEncoding.EncodeToString([]byte(cfg.Azure.ServicePrincipal.clientCertificateData()))
 		} else {
 			env["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] = cfg.Azure.ServicePrincipal.ClientSecret

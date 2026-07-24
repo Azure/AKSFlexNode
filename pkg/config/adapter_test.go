@@ -166,7 +166,7 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 	}
 }
 
-func TestToAgentConfig_ServicePrincipalClientCertificateFile(t *testing.T) {
+func TestToAgentConfig_ServicePrincipalCertificateFile(t *testing.T) {
 	t.Parallel()
 
 	certificateFile := filepath.Join(t.TempDir(), "client-certificate.pem")
@@ -174,9 +174,9 @@ func TestToAgentConfig_ServicePrincipalClientCertificateFile(t *testing.T) {
 	cfg := &Config{
 		Azure: AzureConfig{
 			ServicePrincipal: &ServicePrincipalConfig{
-				TenantID:              "tenant-123",
-				ClientID:              "client-456",
-				ClientCertificateFile: certificateFile,
+				TenantID:         "tenant-123",
+				ClientID:         "client-456",
+				ClientSecretFile: certificateFile,
 			},
 		},
 	}
