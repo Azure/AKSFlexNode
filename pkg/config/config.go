@@ -601,9 +601,12 @@ func (c *ServicePrincipalConfig) validate() error {
 // file creation tools.
 func loadServicePrincipalClientSecret(path string) (string, error) {
 	cleanPath := filepath.Clean(path)
-	info, err := os.Stat(cleanPath)
+	info, err := os.Lstat(cleanPath)
 	if err != nil {
 		return "", fmt.Errorf("stat service principal client secret file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("service principal client secret file must not be a symlink")
 	}
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("service principal client secret file must be a regular file")
