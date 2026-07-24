@@ -213,11 +213,13 @@ merge_config_override() {
 check_secret_file_permissions() {
     local path="$1"
     local permissions
-    [[ -f "$path" ]] || fatal "service-principal client-secret file not found: $path"
+    [[ ! -L "$path" ]] || fatal "service-principal client-secret file must not be a symlink"
+    [[ -f "$path" ]] || fatal "service-principal client-secret file must be a regular file"
     permissions=$(stat -c '%a' "$path")
     if (((8#$permissions & 077) != 0)); then
         fatal "service-principal client-secret file must not be accessible by group or other users"
     fi
+    [[ -s "$path" ]] || fatal "service-principal client-secret file is empty"
 }
 
 is_true() {
@@ -268,10 +270,15 @@ resolve_sp_secret_file() {
         printf '%s' "$SP_CLIENT_SECRET" > "$secret_file"
         chmod 0600 "$secret_file"
     else
-        secret_file="$TEMP_DIR/fetch-sp-client-secret"
-        jq -er '.azure.servicePrincipal.clientSecret' "$current" > "$secret_file" || \
-            fatal "service-principal bootstrap-data fetch requires a client secret"
-        chmod 0600 "$secret_file"
+        secret_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
+        if [[ -n "$secret_file" ]]; then
+            check_secret_file_permissions "$secret_file"
+        else
+            secret_file="$TEMP_DIR/fetch-sp-client-secret"
+            jq -er '.azure.servicePrincipal.clientSecret' "$current" > "$secret_file" || \
+                fatal "service-principal bootstrap-data fetch requires a client secret or clientSecretFile"
+            chmod 0600 "$secret_file"
+        fi
     fi
     printf '%s' "$secret_file"
 }
@@ -420,27 +427,36 @@ apply_auth_override() {
             ;;
         sp|service-principal)
             [[ -n "$SP_CLIENT_ID" ]] || fatal "service-principal auth requires --sp-client-id or AKS_FLEX_NODE_SP_CLIENT_ID"
-            local secret_file="$SP_CLIENT_SECRET_FILE"
-            if [[ -n "$secret_file" ]]; then
-                check_secret_file_permissions "$secret_file"
+            if [[ -n "$SP_CLIENT_SECRET_FILE" ]]; then
+                check_secret_file_permissions "$SP_CLIENT_SECRET_FILE"
+                jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --arg clientSecretFile "$SP_CLIENT_SECRET_FILE" '
+                    .azure = (.azure // {}) |
+                    del(.azure.managedIdentity) |
+                    .azure.arc = ((.azure.arc // {}) * {"enabled": false}) |
+                    .azure.servicePrincipal = {
+                        "tenantId": (if $tenantID == "" then .azure.tenantId else $tenantID end),
+                        "clientId": $clientID,
+                        "clientSecretFile": $clientSecretFile
+                    }
+                ' "$current" > "$rendered"
             elif [[ -n "$SP_CLIENT_SECRET" ]]; then
-                secret_file="$TEMP_DIR/sp-client-secret"
+                local secret_file="$TEMP_DIR/sp-client-secret"
                 printf '%s' "$SP_CLIENT_SECRET" > "$secret_file"
                 chmod 0600 "$secret_file"
+                jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --rawfile clientSecret "$secret_file" '
+                    ($clientSecret | rtrimstr("\n") | rtrimstr("\r")) as $secret |
+                    .azure = (.azure // {}) |
+                    del(.azure.managedIdentity) |
+                    .azure.arc = ((.azure.arc // {}) * {"enabled": false}) |
+                    .azure.servicePrincipal = {
+                        "tenantId": (if $tenantID == "" then .azure.tenantId else $tenantID end),
+                        "clientId": $clientID,
+                        "clientSecret": $secret
+                    }
+                ' "$current" > "$rendered"
             else
                 fatal "service-principal auth requires a protected secret file or AKS_FLEX_NODE_SP_CLIENT_SECRET"
             fi
-            jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --rawfile clientSecret "$secret_file" '
-                ($clientSecret | rtrimstr("\n") | rtrimstr("\r")) as $secret |
-                .azure = (.azure // {}) |
-                del(.azure.managedIdentity) |
-                .azure.arc = ((.azure.arc // {}) * {"enabled": false}) |
-                .azure.servicePrincipal = {
-                    "tenantId": (if $tenantID == "" then .azure.tenantId else $tenantID end),
-                    "clientId": $clientID,
-                    "clientSecret": $secret
-                }
-            ' "$current" > "$rendered"
             ;;
         *) fatal "unsupported auth mode: $AUTH_MODE (expected msi or service-principal)" ;;
     esac

@@ -242,9 +242,11 @@ A successful invocation ends only after `aks-flex-node start` installs and
 starts the long-running service. The first-boot wrapper should then:
 
 1. remove the downloaded generated script;
-2. remove transient SP secret files when their lifecycle permits;
-3. create a root-owned completion marker outside the reusable image;
-4. stop retrying the full bootstrap workflow.
+2. preserve or arrange recreation of any configured SP `clientSecretFile` for
+   future agent service restarts;
+3. remove only credentials that are not referenced by the durable config;
+4. create a root-owned completion marker outside the reusable image;
+5. stop retrying the full bootstrap workflow.
 
 For example:
 
@@ -517,11 +519,13 @@ bash bootstrap.sh \
   --agent-url "$AGENT_URL"
 ```
 
-The secret file must not be group/world accessible. The tenant defaults to
-`azure.tenantId` in the base config and can be overridden separately. jq reads
-the secret from the file, preserving JSON correctness for quotes, slashes, and
-other special characters. The renderer removes managed identity and disables
-Arc authentication.
+The secret file must be non-empty, regular, not a symlink, and inaccessible by
+group/other users. The tenant defaults to `azure.tenantId` in the base config
+and can be overridden separately. The renderer writes the path to
+`azure.servicePrincipal.clientSecretFile` rather than embedding the secret,
+removes managed identity, and disables Arc authentication. The credential file
+must remain available for config loads on preflight, start, and future service
+restarts, or be recreated by the credential manager before service startup.
 
 ## Agent download and installation
 

@@ -229,8 +229,10 @@ host where the default managed identity is unambiguous.
 ```
 
 Configure service-principal runtime authentication. Tenant defaults to
-`azure.tenantId` in the base config. The secret file must not be accessible by
-group or other users.
+`azure.tenantId` in the base config. The script writes the path to
+`azure.servicePrincipal.clientSecretFile`; it does not copy the secret into the
+rendered JSON. The file must be non-empty, regular, not a symlink, and inaccessible
+by group or other users.
 
 There is intentionally no client-secret CLI flag.
 
@@ -401,12 +403,24 @@ sudo bash bootstrap.sh \
   --agent-sha256 "$AGENT_SHA256"
 ```
 
-The script uses jq to safely encode quotes, backslashes, and other special
-characters from the secret file. It removes managed identity and disables Arc
-authentication.
+The rendered config contains:
 
-Remove the transient secret file according to the credential-delivery system's
-lifecycle after bootstrap succeeds.
+```json
+{
+  "azure": {
+    "servicePrincipal": {
+      "tenantId": "<tenant-id>",
+      "clientId": "<client-id>",
+      "clientSecretFile": "/run/credentials/aks-flex-node-sp"
+    }
+  }
+}
+```
+
+The agent reads the protected file when loading config. The file must therefore
+remain available for preflight, start, and later service restarts, or be
+re-provisioned by the credential manager before the service starts. The script
+removes managed identity and disables Arc authentication.
 
 ## Config override examples
 
@@ -583,5 +597,7 @@ Flex Node CSR controller.
 - Never put SP secrets in CLI arguments or generic JSON overrides.
 - Keep SP secret files mode `0600` or stricter.
 - Do not print the generated script, config, signed URLs, or secrets.
-- Remove the downloaded script and transient secret files after success.
+- Remove the downloaded generated script after success.
+- Keep an SP `clientSecretFile` available for agent service restarts, or arrange
+  for the credential manager to recreate it before service startup.
 - Grant MSI/SP identities only the roles required by the selected runtime mode.

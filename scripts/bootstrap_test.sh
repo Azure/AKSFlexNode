@@ -111,15 +111,45 @@ AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
         --install-dir "$WORK_DIR/sp-bin" \
         --config-path "$WORK_DIR/sp-etc/config.json" >/dev/null
 
-jq -e '
+jq -e --arg secretFile "$WORK_DIR/client-secret" '
   .azure.servicePrincipal == {
     "tenantId":"base-tenant",
     "clientId":"cli-client",
-    "clientSecret":"s\"e\\cret"
+    "clientSecretFile":$secretFile
   } and
   (.azure | has("managedIdentity") | not) and
   .azure.arc.enabled == false
 ' "$WORK_DIR/sp-etc/config.json" >/dev/null
+
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-inline-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_SP_CLIENT_SECRET='inline-secret' \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" \
+        --auth service-principal \
+        --sp-client-id inline-client \
+        --install-dir "$WORK_DIR/sp-inline-bin" \
+        --config-path "$WORK_DIR/sp-inline-etc/config.json" >/dev/null
+jq -e '
+  .azure.servicePrincipal.clientId == "inline-client" and
+  .azure.servicePrincipal.clientSecret == "inline-secret" and
+  (.azure.servicePrincipal | has("clientSecretFile") | not)
+' "$WORK_DIR/sp-inline-etc/config.json" >/dev/null
+
+ln -s "$WORK_DIR/client-secret" "$WORK_DIR/client-secret-link"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-link-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" --auth service-principal \
+            --sp-client-id link-client \
+            --sp-client-secret-file "$WORK_DIR/client-secret-link" \
+            --install-dir "$WORK_DIR/sp-link-bin" \
+            --config-path "$WORK_DIR/sp-link-etc/config.json" \
+            >"$WORK_DIR/sp-link.log" 2>&1; then
+    fail "symlink client-secret file was accepted"
+fi
+grep -q 'client-secret file must not be a symlink' "$WORK_DIR/sp-link.log" || \
+    fail "symlink client-secret rejection was not reported"
 
 command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
 cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'
@@ -236,6 +266,8 @@ fi
 grep -q 'resource manager endpoint must use HTTPS' "$WORK_DIR/insecure.log" || \
     fail "HTTP endpoint rejection was not reported"
 
+printf '%s' 'base-sp-secret' > "$WORK_DIR/fetch-sp-secret"
+chmod 0600 "$WORK_DIR/fetch-sp-secret"
 cat > "$WORK_DIR/fetch-sp-base.json" <<JSON
 {
   "azure": {
@@ -245,7 +277,7 @@ cat > "$WORK_DIR/fetch-sp-base.json" <<JSON
     "servicePrincipal": {
       "tenantId": "base-tenant",
       "clientId": "base-sp-client",
-      "clientSecret": "base-sp-secret"
+      "clientSecretFile": "$WORK_DIR/fetch-sp-secret"
     },
     "arc": {"enabled": false},
     "targetCluster": {
@@ -269,12 +301,12 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --install-dir "$WORK_DIR/fetch-sp-bin" \
         --config-path "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
 
-jq -e '
+jq -e --arg secretFile "$WORK_DIR/fetch-sp-secret" '
   .azure.bootstrapToken.token == "fresh1.0123456789abcdef" and
   .azure.servicePrincipal == {
     "tenantId":"base-tenant",
     "clientId":"base-sp-client",
-    "clientSecret":"base-sp-secret"
+    "clientSecretFile":$secretFile
   } and
   .components.kubernetes == "1.35.6"
 ' "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
