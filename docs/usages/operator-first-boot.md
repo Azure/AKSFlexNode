@@ -486,6 +486,12 @@ install -m 0600 /dev/null /var/lib/aks-flex-node/first-boot-complete
 
 ## 7. Approve the daemon CSR when required
 
+> [!IMPORTANT]
+> **TODO:** A future AKS RP release will automate the Flex daemon CSR approval
+> flow. Until that release is deployed in the target region, operators must
+> inspect and approve the daemon CSR manually when the AKS Flex CSR approver is
+> not present.
+
 The kubelet node-client CSR is normally approved by the cluster bootstrap RBAC.
 The long-running Flex daemon CSR requires the AKS Flex CSR approver.
 
