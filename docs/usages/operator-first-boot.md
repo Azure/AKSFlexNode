@@ -393,13 +393,9 @@ export FLEX_SP_CLIENT_SECRET_FILE="/etc/aks-flex-node/credentials/sp-client-secr
 ```
 
 AKS RP bootstrap data does not currently include the mirrored rootfs and
-offline-artifact locations. Configure the Ubuntu 24.04 rootfs and the
-Kubernetes-version artifact template used by this guide:
-
-```bash
-export ROOTFS_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz"
-export OFFLINE_ARTIFACTS_URL='https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz'
-```
+offline-artifact locations. The bootstrap command below supplies both through
+dedicated CLI overrides; no config-file editing or separate shell variables are
+required.
 
 Download the raw script instead of piping it directly to Bash:
 
@@ -445,8 +441,10 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --resource-manager-endpoint https://management.azure.com \
   --agent-version "$AKS_FLEX_NODE_VERSION" \
   --agent-sha256 042a2a12384637eb13721be04ac5ffa4c884abab50b4baa2fb5cbeba6785ee05 \
-  --bootstrap-oci-image "$ROOTFS_URL" \
-  --bootstrap-offline-artifacts-source "$OFFLINE_ARTIFACTS_URL" \
+  --bootstrap-oci-image \
+    "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz" \
+  --bootstrap-offline-artifacts-source \
+    'https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/v0.1.24-rc.18/bootstrap-artifacts/bootstrap-artifacts-k8s-{{ .KubernetesVersion }}.tar.gz' \
   --config-overrides "{
     \"azure\": {
       \"targetCluster\": {
