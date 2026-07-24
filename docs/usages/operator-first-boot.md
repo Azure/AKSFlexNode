@@ -63,7 +63,7 @@ export FLEX_POD_CIDR="10.95.0.0/16"
 
 export UNBOUNDED_VERSION="v0.2.0"
 export AKS_FLEX_NODE_VERSION="v0.1.5"
-export AKS_FLEX_NODE_AGENT_URL='https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/{{VERSION}}/{{ARCHIVE_NAME}}'
+export AKS_FLEX_NODE_AGENT_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
 ```
 
 The cluster and Flex host networks must have private L3 connectivity. Use one
@@ -386,15 +386,15 @@ Set the operator-provided values:
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
 export AKS_FLEX_NODE_VERSION="v0.1.5"
-export AKS_FLEX_NODE_AGENT_URL='https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/{{VERSION}}/{{ARCHIVE_NAME}}'
+export AKS_FLEX_NODE_AGENT_URL="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/${AKS_FLEX_NODE_VERSION}/{{ARCHIVE_NAME}}"
 
 export FLEX_SP_TENANT_ID="<service-principal-tenant-id>"
 export FLEX_SP_CLIENT_ID="<service-principal-client-id>"
 export FLEX_SP_CLIENT_SECRET_FILE="/etc/aks-flex-node/credentials/sp-client-secret"
 ```
 
-The bootstrap script expands `{{VERSION}}` and `{{ARCHIVE_NAME}}`; on an AMD64
-host this resolves to:
+The shell expands `${AKS_FLEX_NODE_VERSION}`, and the bootstrap script expands
+`{{ARCHIVE_NAME}}` for the host architecture. On an AMD64 host this resolves to:
 
 ```text
 https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.1.5/aks-flex-node-linux-amd64.tar.gz
@@ -446,7 +446,6 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$FLEX_POOL_NAME" \
   --agent-url "$AKS_FLEX_NODE_AGENT_URL" \
-  --agent-version "$AKS_FLEX_NODE_VERSION" \
   --bootstrap-oci-image \
     "https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/${UNBOUNDED_VERSION}/rootfs/rootfs-agent-ubuntu2404-v20260619.oci.tar.gz" \
   --bootstrap-offline-artifacts-source \
