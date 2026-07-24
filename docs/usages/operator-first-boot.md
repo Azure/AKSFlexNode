@@ -7,8 +7,8 @@ and joining a prepared Linux host with [`scripts/bootstrap.sh`](../../scripts/bo
 The bootstrap script is downloaded and run interactively on the host. This guide
 does not use cloud-init.
 
-For the script's complete option reference and security model, see
-[Generated Bootstrap Script](bootstrap-script.md).
+For the architecture and security rationale, see
+[Generated Bootstrap Script Design](../design/storage-backed-bootstrap.md).
 
 ## Flow
 
@@ -16,7 +16,7 @@ For the script's complete option reference and security model, see
 2. Install the Unbounded operator and initialize the cluster and Flex sites.
 3. Install the temporary AKS Flex daemon MachineOperation RBAC.
 4. Create a FlexNodes agent pool.
-5. Prepare a host, download `bootstrap.sh`, and run it with MSI authentication.
+5. Prepare a host, download `bootstrap.sh`, and run it with SP or MSI authentication.
 6. Approve the daemon CSR when no AKS Flex CSR controller is deployed.
 7. Verify the ARM Machine, Kubernetes Node, networking, and agent service.
 
