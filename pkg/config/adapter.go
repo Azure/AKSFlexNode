@@ -74,12 +74,21 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
 
 	case cfg.IsSPConfigured():
-		ac.Kubelet.Auth.ExecCredential = buildExecCredential(map[string]string{
-			"AAD_LOGIN_METHOD":                    "spn",
-			"AAD_SERVICE_PRINCIPAL_CLIENT_ID":     cfg.Azure.ServicePrincipal.ClientID,
-			"AAD_SERVICE_PRINCIPAL_CLIENT_SECRET": cfg.Azure.ServicePrincipal.ClientSecret,
-			"AZURE_TENANT_ID":                     cfg.Azure.ServicePrincipal.TenantID,
-		})
+		env := map[string]string{
+			"AAD_LOGIN_METHOD":                "spn",
+			"AAD_SERVICE_PRINCIPAL_CLIENT_ID": cfg.Azure.ServicePrincipal.ClientID,
+			"AZURE_TENANT_ID":                 cfg.Azure.ServicePrincipal.TenantID,
+		}
+		if cfg.Azure.ServicePrincipal.clientCertificateData() != "" {
+			ac.Kubelet.Auth.ExecCredential = buildExecCredential(
+				env,
+				"--client-certificate-file",
+				cfg.Azure.ServicePrincipal.ClientSecretFile,
+			)
+		} else {
+			env["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] = cfg.Azure.ServicePrincipal.ClientSecret
+			ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
+		}
 
 	case cfg.IsMIConfigured():
 		env := map[string]string{
@@ -114,16 +123,17 @@ func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config,
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node
 // binary as a credential plugin. The binary's `token kubelogin` subcommand
 // uses kubelogin to obtain an Azure AD token for the AKS API server.
-func buildExecCredential(env map[string]string) *clientcmdapi.ExecConfig {
+func buildExecCredential(env map[string]string, args ...string) *clientcmdapi.ExecConfig {
 	execEnv := make([]clientcmdapi.ExecEnvVar, 0, len(env))
 	for k, v := range env {
 		execEnv = append(execEnv, clientcmdapi.ExecEnvVar{Name: k, Value: v})
 	}
+	execArgs := append([]string{"token", "kubelogin", "--server-id", aksAADServerID}, args...)
 
 	return &clientcmdapi.ExecConfig{
 		APIVersion:         "client.authentication.k8s.io/v1",
 		Command:            flexNodeBinaryPath,
-		Args:               []string{"token", "kubelogin", "--server-id", aksAADServerID},
+		Args:               execArgs,
 		Env:                execEnv,
 		InteractiveMode:    clientcmdapi.NeverExecInteractiveMode,
 		ProvideClusterInfo: false,

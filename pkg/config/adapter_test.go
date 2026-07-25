@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -141,6 +142,7 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 	if err := os.WriteFile(clientSecretFile, []byte("file-secret\n"), 0o600); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
+
 	cfg := &Config{
 		Azure: AzureConfig{
 			ServicePrincipal: &ServicePrincipalConfig{
@@ -164,6 +166,40 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 	}
 	if envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] != "file-secret" {
 		t.Fatalf("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET=%q, want file secret", envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"])
+	}
+}
+
+func TestToAgentConfig_ServicePrincipalCertificateFile(t *testing.T) {
+	t.Parallel()
+
+	certificateFile := filepath.Join(t.TempDir(), "client-certificate.pem")
+	writeTestClientCertificate(t, certificateFile)
+	cfg := &Config{
+		Azure: AzureConfig{
+			ServicePrincipal: &ServicePrincipalConfig{
+				TenantID:         "tenant-123",
+				ClientID:         "client-456",
+				ClientSecretFile: certificateFile,
+			},
+		},
+	}
+	if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
+		t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
+	}
+
+	exec := ToAgentConfig(cfg, "kube1").Kubelet.Auth.ExecCredential
+	if exec == nil {
+		t.Fatal("ExecCredential should be set for SP auth")
+	}
+	envMap := make(map[string]string)
+	for _, e := range exec.Env {
+		envMap[e.Name] = e.Value
+	}
+	if !slices.Equal(exec.Args, []string{"token", "kubelogin", "--server-id", aksAADServerID, "--client-certificate-file", certificateFile}) {
+		t.Fatalf("Args=%v, want kubelogin client-certificate-file args", exec.Args)
+	}
+	if _, ok := envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"]; ok {
+		t.Fatal("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET should not be set for certificate auth")
 	}
 }
 

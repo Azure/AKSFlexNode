@@ -107,7 +107,7 @@ Minimal config shape:
 }
 ```
 
-The credential file contains only the client secret. The agent requires this to be a non-empty regular file with no group/world access (for example, mode 0600). Inline `clientSecret` remains supported, but cannot be configured together with `clientSecretFile`.
+The credential file contains either the client secret or a PEM/unencrypted PFX application certificate and private key; the agent detects the credential type from its contents. PFX certificate files must use a `.pfx` suffix. The file must be a non-empty regular file with no group/world access (for example, mode 0600). Only one of `clientSecret` or `clientSecretFile` can be configured.
 
 ## Authentication Mode Selection
 

@@ -82,7 +82,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `azure.servicePrincipal.tenantId` | string | Microsoft Entra tenant ID for the service principal. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
 | `azure.servicePrincipal.clientId` | string | Application client ID. | `00000000-0000-0000-0000-000000000000` |
 | `azure.servicePrincipal.clientSecret` | string | Application client secret. Mutually exclusive with `clientSecretFile`. | `<client-secret>` |
-| `azure.servicePrincipal.clientSecretFile` | string | Path to a protected regular file (no group/other access; e.g., 0600) containing the application client secret. Mutually exclusive with `clientSecret`. | `/run/credentials/aks-flex-node-sp` |
+| `azure.servicePrincipal.clientSecretFile` | string | Path to a protected regular file (no group/other access; e.g., 0600) containing either the application client secret or a PEM/unencrypted PFX certificate and private key. PFX certificate files must use a `.pfx` suffix. | `/run/credentials/aks-flex-node-sp` |
 
 ## Agent
 
