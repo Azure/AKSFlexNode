@@ -102,7 +102,7 @@ func (t *configureTask) Do(ctx context.Context) error {
 		}
 	}
 
-	hosts, err := os.OpenFile(t.hostsPath, os.O_WRONLY|os.O_CREATE, 0o644)
+	hosts, err := os.OpenFile(t.hostsPath, os.O_WRONLY|os.O_CREATE, 0o644) //nolint:gosec // AgentBaker CoreDNS reads this hosts file.
 	if err != nil {
 		return fmt.Errorf("create local DNS hosts file: %w", err)
 	}
