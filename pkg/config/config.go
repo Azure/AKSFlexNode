@@ -423,10 +423,6 @@ func (c *Config) setNodeDefaults() {
 	if c.Node.Labels == nil {
 		c.Node.Labels = make(map[string]string)
 	}
-	// Mark node as unmanaged by cloud controller manager by default, otherwise ccm will delete this node if node is not ready
-	// doc: https://cloud-provider-azure.sigs.k8s.io/topics/cross-resource-group-nodes/#unmanaged-nodes
-	c.Node.Labels["kubernetes.azure.com/managed"] = "false"
-
 	// Set default kubelet configuration if not provided
 	if c.Node.Kubelet.Verbosity == 0 {
 		c.Node.Kubelet.Verbosity = 2

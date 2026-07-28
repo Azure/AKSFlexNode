@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -8,6 +9,55 @@ import (
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
+
+func TestToAgentConfigKubeletLabels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                       string
+		requireMachineRegistration bool
+		wantLabels                 map[string]string
+	}{
+		{
+			name:                       "registration required",
+			requireMachineRegistration: true,
+			wantLabels: map[string]string{
+				"workload":            "edge",
+				managedNodeLabel:      "false",
+				agentPoolNodeLabel:    "flexnode-edge",
+				modeNodeLabel:         userNodeMode,
+				nodePoolTypeNodeLabel: flexNodePoolType,
+			},
+		},
+		{
+			name:       "registration optional",
+			wantLabels: map[string]string{"workload": "edge"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wantCustomLabels := map[string]string{"workload": "edge"}
+			cfg := &Config{
+				Azure: AzureConfig{TargetAgentPoolName: "flexnode-edge"},
+				Agent: AgentConfig{RequireMachineRegistration: tt.requireMachineRegistration},
+				Node:  NodeConfig{Labels: map[string]string{"workload": "edge"}},
+			}
+			cfg.setDefaults()
+
+			agentCfg := ToAgentConfig(cfg, "kube1")
+
+			if !maps.Equal(agentCfg.Kubelet.Labels, tt.wantLabels) {
+				t.Errorf("Kubelet.Labels = %#v, want %#v", agentCfg.Kubelet.Labels, tt.wantLabels)
+			}
+			if !maps.Equal(cfg.Node.Labels, wantCustomLabels) {
+				t.Errorf("Node.Labels mutated to %#v; ARM custom labels must remain %#v", cfg.Node.Labels, wantCustomLabels)
+			}
+		})
+	}
+}
 
 func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	t.Parallel()
