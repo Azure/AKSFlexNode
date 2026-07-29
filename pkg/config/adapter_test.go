@@ -16,22 +16,13 @@ func TestToAgentConfigKubeletLabels(t *testing.T) {
 	tests := []struct {
 		name                       string
 		requireMachineRegistration bool
-		wantLabels                 map[string]string
 	}{
 		{
 			name:                       "registration required",
 			requireMachineRegistration: true,
-			wantLabels: map[string]string{
-				"workload":            "edge",
-				managedNodeLabel:      "false",
-				agentPoolNodeLabel:    "flexnode-edge",
-				modeNodeLabel:         userNodeMode,
-				nodePoolTypeNodeLabel: flexNodePoolType,
-			},
 		},
 		{
-			name:       "registration optional",
-			wantLabels: map[string]string{"workload": "edge"},
+			name: "registration optional",
 		},
 	}
 
@@ -40,17 +31,24 @@ func TestToAgentConfigKubeletLabels(t *testing.T) {
 			t.Parallel()
 
 			wantCustomLabels := map[string]string{"workload": "edge"}
+			wantLabels := map[string]string{
+				"workload":            "edge",
+				managedNodeLabel:      "false",
+				agentPoolNodeLabel:    "flexnode-edge",
+				modeNodeLabel:         userNodeMode,
+				nodePoolTypeNodeLabel: flexNodePoolType,
+			}
 			cfg := &Config{
 				Azure: AzureConfig{TargetAgentPoolName: "flexnode-edge"},
-				Agent: AgentConfig{RequireMachineRegistration: tt.requireMachineRegistration},
+				Agent: AgentConfig{RequireMachineRegistration: &tt.requireMachineRegistration},
 				Node:  NodeConfig{Labels: map[string]string{"workload": "edge"}},
 			}
 			cfg.setDefaults()
 
 			agentCfg := ToAgentConfig(cfg, "kube1")
 
-			if !maps.Equal(agentCfg.Kubelet.Labels, tt.wantLabels) {
-				t.Errorf("Kubelet.Labels = %#v, want %#v", agentCfg.Kubelet.Labels, tt.wantLabels)
+			if !maps.Equal(agentCfg.Kubelet.Labels, wantLabels) {
+				t.Errorf("Kubelet.Labels = %#v, want %#v", agentCfg.Kubelet.Labels, wantLabels)
 			}
 			if !maps.Equal(cfg.Node.Labels, wantCustomLabels) {
 				t.Errorf("Node.Labels mutated to %#v; ARM custom labels must remain %#v", cfg.Node.Labels, wantCustomLabels)
@@ -64,7 +62,8 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 
 	cfg := &Config{
 		Azure: AzureConfig{
-			BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
+			BootstrapToken:      &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
+			TargetAgentPoolName: "flexnode-edge",
 		},
 		Components: ComponentsConfig{Kubernetes: "1.30.0"},
 		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
@@ -117,8 +116,15 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	if ac.Kubelet.Auth.ExecCredential != nil {
 		t.Fatalf("Kubelet.Auth.ExecCredential should be nil for bootstrap token auth")
 	}
-	if len(ac.Kubelet.Labels) != 1 || ac.Kubelet.Labels["env"] != "test" {
-		t.Fatalf("Kubelet.Labels=%v, want map[env:test]", ac.Kubelet.Labels)
+	wantLabels := map[string]string{
+		"env":                 "test",
+		managedNodeLabel:      "false",
+		agentPoolNodeLabel:    "flexnode-edge",
+		modeNodeLabel:         userNodeMode,
+		nodePoolTypeNodeLabel: flexNodePoolType,
+	}
+	if !maps.Equal(ac.Kubelet.Labels, wantLabels) {
+		t.Fatalf("Kubelet.Labels=%v, want %v", ac.Kubelet.Labels, wantLabels)
 	}
 	if len(ac.Kubelet.RegisterWithTaints) != 1 || ac.Kubelet.RegisterWithTaints[0] != "dedicated=infra:NoSchedule" {
 		t.Fatalf("Kubelet.RegisterWithTaints=%v, want [dedicated=infra:NoSchedule]", ac.Kubelet.RegisterWithTaints)

@@ -56,8 +56,22 @@ _remote_active_machine_snapshot() {
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set +e
 state_file="/etc/aks-flex-node/daemon-state.json"
-machine="$(sudo sed -n 's/.*"activeMachine"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${state_file}" 2>/dev/null)"
-applied_settings_version="$(sudo sed -n 's/.*"appliedSettingsVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${state_file}" 2>/dev/null)"
+state_snapshot="$(sudo python3 - "${state_file}" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as state_file:
+        state = json.load(state_file)
+    machine = state.get("activeMachine", "")
+    applied_goal = state.get("appliedGoal") or {}
+    settings_version = applied_goal.get("settingsVersion", "")
+    print(f"{machine}|{settings_version}")
+except (OSError, json.JSONDecodeError, AttributeError):
+    print("|")
+PY
+)"
+IFS='|' read -r machine applied_settings_version <<<"${state_snapshot}"
 state=""
 version=""
 if [[ -n "${machine}" ]]; then

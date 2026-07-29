@@ -134,7 +134,7 @@ func TestClusterEndpointCreateSendsMutation(t *testing.T) {
 	}
 }
 
-func TestClusterEndpointCreateVerifiesPrecreatedMachine(t *testing.T) {
+func TestClusterEndpointCreateAdoptsReturnedMachine(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -144,9 +144,12 @@ func TestClusterEndpointCreateVerifiesPrecreatedMachine(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClusterEndpointClient(t, server.URL, "node1")
-	_, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.35.0", SettingsVersion: "42"})
-	if err == nil || !strings.Contains(err.Error(), "Kubernetes version") {
-		t.Fatalf("Create() error = %v, want version mismatch", err)
+	machine, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.35.0", SettingsVersion: "local"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if machine.Goal.KubernetesVersion != "1.34.0" || machine.Goal.SettingsVersion != "42" {
+		t.Fatalf("Create() machine goal = %#v, want returned machine goal", machine.Goal)
 	}
 }
 

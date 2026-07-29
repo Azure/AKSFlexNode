@@ -23,6 +23,7 @@ type activeMachine struct {
 type nodeOperator interface {
 	LoadState(ctx context.Context) (*State, error)
 	ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error)
+	AcknowledgeGoalState(ctx context.Context, goal aksmachine.GoalState) (*State, error)
 	RestartNode(ctx context.Context, log *slog.Logger) error
 	// ResetNode removes nspawn node runtime and persisted daemon state but must
 	// not stop this daemon process. The controller publishes lifecycle completion
@@ -38,11 +39,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		return err
 	}
 
-	cfg := o.cfg.DeepCopy()
-	if active.State.AppliedKubernetesVersion != "" {
-		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
-	}
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, log, cfg, active.Name)
+	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, o.cfg, active.Name, active.State.AppliedGoal)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
@@ -52,7 +49,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
-		npd.Start(log, cfg, gs.NodeStart),
+		npd.Start(log, o.cfg, gs.NodeStart),
 	).Do(ctx)
 }
 
@@ -96,14 +93,14 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		"oldMachine", oldMachine,
 		"newMachine", newMachine,
 		"settingsVersion", goal.SettingsVersion,
-		"kubernetesVersion", cfg.Components.Kubernetes,
+		"kubernetesVersion", goal.KubernetesVersion,
 	)
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, log, cfg, newMachine)
+	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, cfg, newMachine, &goal)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
-	newState := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
+	newState := nextAppliedState(goal, &activeMachine{Name: newMachine, State: active.State})
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
@@ -156,6 +153,18 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 	return cfg, nil
 }
 
+func (o *nspawnNodeOperator) AcknowledgeGoalState(ctx context.Context, goal aksmachine.GoalState) (*State, error) {
+	active, err := o.findActiveMachine(ctx)
+	if err != nil {
+		return nil, err
+	}
+	newState := nextAppliedState(goal, active)
+	if err := o.state.Save(ctx, newState); err != nil {
+		return nil, fmt.Errorf("save acknowledged machine goal state: %w", err)
+	}
+	return newState, nil
+}
+
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {
 	return phases.ExecuteTask(ctx, log, ResetNode(log))
 }
@@ -164,19 +173,15 @@ func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) e
 	return phases.ExecuteTask(ctx, log, UninstallService(log))
 }
 
-func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
+func nextAppliedState(goal aksmachine.GoalState, active *activeMachine) *State {
 	next := &State{
-		AppliedSettingsVersion:    goal.SettingsVersion,
-		AppliedKubernetesVersion:  goal.KubernetesVersion,
-		PreviousSettingsVersion:   "",
-		PreviousKubernetesVersion: "",
-	}
-	if current != nil {
-		next.PreviousSettingsVersion = current.AppliedSettingsVersion
-		next.PreviousKubernetesVersion = current.AppliedKubernetesVersion
+		AppliedGoal: cloneGoalState(goal),
 	}
 	if active != nil {
 		next.ActiveMachine = active.Name
+		if active.State != nil && active.State.AppliedGoal != nil {
+			next.PreviousAppliedGoal = cloneGoalState(*active.State.AppliedGoal)
+		}
 	}
 	return next
 }

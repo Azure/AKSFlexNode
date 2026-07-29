@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
@@ -23,14 +25,24 @@ const (
 	stateFileName = "daemon-state.json"
 )
 
-// State records the last safely applied AKS machine goal and the previous
-// known-good goal needed for rollback-oriented reconciliation.
+// State records the current and previous safely applied AKS machine goals and
+// the active nspawn machine.
 type State struct {
-	AppliedSettingsVersion    string `json:"appliedSettingsVersion,omitempty"`
-	AppliedKubernetesVersion  string `json:"appliedKubernetesVersion,omitempty"`
-	PreviousSettingsVersion   string `json:"previousSettingsVersion,omitempty"`
-	PreviousKubernetesVersion string `json:"previousKubernetesVersion,omitempty"`
-	ActiveMachine             string `json:"activeMachine,omitempty"`
+	AppliedGoal         *aksmachine.GoalState `json:"appliedGoal,omitempty"`
+	PreviousAppliedGoal *aksmachine.GoalState `json:"previousAppliedGoal,omitempty"`
+	ActiveMachine       string                `json:"activeMachine,omitempty"`
+}
+
+func (s *State) validate() error {
+	if s == nil {
+		return fmt.Errorf("daemon state is nil")
+	}
+	// SettingsVersion can be empty when best-effort Machine registration fails,
+	// but the applied goal itself is still required to restart safely.
+	if s.AppliedGoal == nil {
+		return fmt.Errorf("daemon state applied goal is missing")
+	}
+	return nil
 }
 
 type saveStateTask struct {
@@ -59,10 +71,16 @@ func (t *saveStateTask) Do(ctx context.Context) error {
 
 func SeededState(goal aksmachine.GoalState) *State {
 	return &State{
-		AppliedSettingsVersion:   goal.SettingsVersion,
-		AppliedKubernetesVersion: goal.KubernetesVersion,
-		ActiveMachine:            goalstates.NSpawnMachineKube1,
+		AppliedGoal:   cloneGoalState(goal),
+		ActiveMachine: goalstates.NSpawnMachineKube1,
 	}
+}
+
+func cloneGoalState(goal aksmachine.GoalState) *aksmachine.GoalState {
+	cloned := goal
+	cloned.NodeLabels = maps.Clone(goal.NodeLabels)
+	cloned.NodeTaints = slices.Clone(goal.NodeTaints)
+	return &cloned
 }
 
 func validActiveMachine(machine string) bool {
@@ -76,6 +94,9 @@ func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachi
 	}
 	if state == nil {
 		return nil, fmt.Errorf("daemon state is missing active machine")
+	}
+	if err := state.validate(); err != nil {
+		return nil, err
 	}
 	if !validActiveMachine(state.ActiveMachine) {
 		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
@@ -125,12 +146,15 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
+	if err := state.validate(); err != nil {
+		return nil, fmt.Errorf("validate daemon state %s: %w", s.path, err)
+	}
 	return &state, nil
 }
 
 func (s *fileStateStore) Save(_ context.Context, state *State) error {
-	if state == nil {
-		return fmt.Errorf("daemon state is nil")
+	if err := state.validate(); err != nil {
+		return err
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
