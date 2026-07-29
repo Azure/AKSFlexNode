@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,7 +19,17 @@ func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
+	operator := &fakeNodeOperator{
+		state: &State{
+			AppliedGoal:   &aksmachine.GoalState{KubernetesVersion: "1.33.0", SettingsVersion: "41"},
+			ActiveMachine: "kube1",
+		},
+		newState: &State{
+			AppliedGoal:         &aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"},
+			PreviousAppliedGoal: &aksmachine.GoalState{KubernetesVersion: "1.33.0", SettingsVersion: "41"},
+			ActiveMachine:       "kube2",
+		},
+	}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	if err := repaves.reconcileOnce(context.Background()); err != nil {
@@ -27,8 +38,60 @@ func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	if !operator.applied {
 		t.Fatal("ApplyGoalState was not called")
 	}
-	if operator.state.AppliedSettingsVersion != "42" || operator.state.PreviousSettingsVersion != "41" || operator.state.ActiveMachine != "kube2" {
+	if stateObservedVersion(operator.state) != "42" || operator.state.ActiveMachine != "kube2" ||
+		operator.state.PreviousAppliedGoal == nil || operator.state.PreviousAppliedGoal.SettingsVersion != "41" {
 		t.Fatalf("state = %#v", operator.state)
+	}
+	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateSucceeded {
+		t.Fatalf("status = %s", got)
+	}
+}
+
+func TestRepaveReconcilerAcknowledgesInPlaceGoalState(t *testing.T) {
+	t.Parallel()
+
+	appliedGoal := aksmachine.GoalState{
+		KubernetesVersion: "1.34.0",
+		SettingsVersion:   "41",
+		NodeLabels:        map[string]string{"workload": "old"},
+		NodeTaints:        []string{"dedicated=old:NoSchedule"},
+	}
+	desiredGoal := aksmachine.GoalState{
+		KubernetesVersion: "1.34.0",
+		SettingsVersion:   "42",
+		NodeLabels:        map[string]string{"workload": "new"},
+		NodeTaints:        []string{"dedicated=new:NoSchedule"},
+	}
+	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: desiredGoal}}
+	operator := &fakeNodeOperator{state: &State{
+		AppliedGoal:   &appliedGoal,
+		ActiveMachine: "kube1",
+	}}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node1", Labels: map[string]string{"workload": "new"}},
+		Spec: corev1.NodeSpec{Taints: []corev1.Taint{
+			{Key: "dedicated", Value: "new", Effect: corev1.TaintEffectNoSchedule},
+		}},
+	}
+	repaves := newTestRepaveReconciler(t, machines, fakeClient(node), operator)
+
+	if err := repaves.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !operator.acknowledged {
+		t.Fatal("AcknowledgeGoalState was not called")
+	}
+	if operator.applied {
+		t.Fatal("ApplyGoalState was called for an in-place update")
+	}
+	if stateObservedVersion(operator.state) != "42" || operator.state.AppliedGoal == nil || operator.state.AppliedGoal.NodeLabels["workload"] != "new" {
+		t.Fatalf("state = %#v", operator.state)
+	}
+	if operator.state.PreviousAppliedGoal == nil || operator.state.PreviousAppliedGoal.SettingsVersion != "41" {
+		t.Fatalf("PreviousAppliedGoal = %#v, want settings version 41", operator.state.PreviousAppliedGoal)
+	}
+	if got := machines.status.ObservedSettingsVersion; got != "42" {
+		t.Fatalf("observed settings version = %q, want 42", got)
 	}
 	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateSucceeded {
 		t.Fatalf("status = %s", got)
@@ -70,6 +133,25 @@ func TestRepaveReconcilerStateLoadFailurePatchesFailed(t *testing.T) {
 	}
 	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateFailed {
 		t.Fatalf("status = %s", got)
+	}
+}
+
+func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
+	t.Parallel()
+
+	machines := &fakeMachineClient{machine: &aksmachine.Machine{}}
+	operator := &fakeNodeOperator{state: &State{
+		AppliedGoal:   &aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "41"},
+		ActiveMachine: "kube1",
+	}}
+	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
+
+	err := repaves.reconcileOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "validate AKS machine snapshot") {
+		t.Fatalf("Reconcile error = %v, want invalid machine snapshot", err)
+	}
+	if operator.applied {
+		t.Fatal("ApplyGoalState was called for an invalid machine goal")
 	}
 }
 
@@ -115,16 +197,17 @@ func (f *fakeMachineClient) PatchStatus(_ context.Context, status aksmachine.Sta
 }
 
 type fakeNodeOperator struct {
-	state      *State
-	newState   *State
-	err        error
-	restartErr error
-	resetErr   error
-	stopErr    error
-	applied    bool
-	restarted  bool
-	reset      bool
-	stopped    bool
+	state        *State
+	newState     *State
+	err          error
+	restartErr   error
+	resetErr     error
+	stopErr      error
+	applied      bool
+	acknowledged bool
+	restarted    bool
+	reset        bool
+	stopped      bool
 }
 
 func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
@@ -136,6 +219,23 @@ func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmach
 	if f.newState != nil {
 		f.state = f.newState
 		return f.newState, nil
+	}
+	return f.state, nil
+}
+
+func (f *fakeNodeOperator) AcknowledgeGoalState(_ context.Context, goal aksmachine.GoalState) (*State, error) {
+	f.acknowledged = true
+	if f.err != nil {
+		return nil, f.err
+	}
+	var previousGoal *aksmachine.GoalState
+	if f.state != nil && f.state.AppliedGoal != nil {
+		previousGoal = cloneGoalState(*f.state.AppliedGoal)
+	}
+	f.state = &State{
+		AppliedGoal:         cloneGoalState(goal),
+		PreviousAppliedGoal: previousGoal,
+		ActiveMachine:       f.state.ActiveMachine,
 	}
 	return f.state, nil
 }

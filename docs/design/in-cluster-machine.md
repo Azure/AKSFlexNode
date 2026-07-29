@@ -27,18 +27,18 @@ Status updates use a separate patch model because the agent operation status is 
 
 ## Bootstrap flow
 
-The local bootstrap configuration is authoritative while `aks-flex-node start` is running:
+The local bootstrap configuration seeds a Machine when one does not already exist. Once the endpoint returns a Machine, its complete goal is authoritative for bootstrap:
 
 1. `NewMachineClient` selects the in-cluster backend without a supplied Kubernetes REST config.
 2. The client builds a REST config from the bootstrap token or configured exec credential.
 3. `EnsureMachine` reads the machine through the Kubernetes service proxy.
 4. If the machine is absent, the client sends a PUT using the local bootstrap goal.
-5. If its Kubernetes version differs, the client sends a PUT that overwrites the remote goal with the local version.
-6. If its Kubernetes version already matches, local bootstrap settings remain authoritative; remote settings other than the ETag do not replace them.
-7. The returned ETag becomes the reconciliation baseline for the locally applied goal.
-8. The daemon state is seeded from that ETag before host or nspawn state is mutated. A later ETag change is treated as a new remote goal.
+5. Whether read or created, the returned Machine is validated and its complete goal replaces the local bootstrap goal. This includes the Kubernetes version, node settings, and ETag-backed settings version.
+6. The daemon state is seeded from the accepted Machine goal before host or nspawn state is mutated. A later ETag change is treated as a new remote goal.
 
-The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created machine. Its fixture must therefore already match the local bootstrap version. When machine registration is required, a mismatch fails bootstrap before host mutation.
+The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created Machine. The agent adopts that returned goal even when it differs from local bootstrap configuration. The returned Machine must contain a valid Kubernetes version and settings version.
+
+When machine registration is required, a read, create, or validation failure stops bootstrap before host mutation. When registration is optional, the same failure is logged and bootstrap continues from the local goal; its settings version remains empty until a valid Machine goal is later observed.
 
 ## Daemon flow
 

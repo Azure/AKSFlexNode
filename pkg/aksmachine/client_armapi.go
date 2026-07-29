@@ -77,7 +77,7 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 	if err := c.validateMachineIdentity(resp.Machine); err != nil {
 		return nil, err
 	}
-	result := machineFromARM(resp.Machine, desired)
+	result := machineFromARM(resp.Machine)
 	result.ID = c.machineID.String()
 	result.Name = c.machineID.Name
 	return result, nil
@@ -103,7 +103,7 @@ func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 	if err := c.validateMachineIdentity(resp.Machine); err != nil {
 		return nil, err
 	}
-	result := machineFromARM(resp.Machine, GoalState{})
+	result := machineFromARM(resp.Machine)
 	result.ID = c.machineID.String()
 	result.Name = c.machineID.Name
 	return result, nil
@@ -249,8 +249,8 @@ func (c *armMachineClient) validateMachineIdentity(machine armcontainerservice.M
 	return nil
 }
 
-func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Machine {
-	result := &Machine{Goal: fallback}
+func machineFromARM(machine armcontainerservice.Machine) *Machine {
+	result := &Machine{}
 	if machine.ID != nil {
 		result.ID = *machine.ID
 	}
@@ -290,9 +290,6 @@ func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Ma
 	}
 	if properties.ETag != nil {
 		result.Goal.SettingsVersion = *properties.ETag
-	}
-	if result.Goal.SettingsVersion == "" {
-		result.Goal.SettingsVersion = result.Goal.KubernetesVersion
 	}
 	if properties.ProvisioningState != nil {
 		result.Status.ProvisioningState = ProvisioningState(*properties.ProvisioningState)

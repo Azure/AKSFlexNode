@@ -304,7 +304,7 @@ func TestMachineFromARM(t *testing.T) {
 			},
 			ProvisioningState: ptr("Succeeded"),
 		},
-	}, GoalState{SettingsVersion: "fallback-settings"})
+	})
 
 	if machine.ID != "machine-id" || machine.Name != "node1" {
 		t.Fatalf("machine identity = %#v", machine)
@@ -395,13 +395,13 @@ func TestMachineFromARMUsesCurrentOrchestratorVersionFallback(t *testing.T) {
 				CurrentOrchestratorVersion: &currentVersion,
 			},
 		},
-	}, GoalState{})
+	})
 
 	if machine.Goal.KubernetesVersion != currentVersion {
 		t.Fatalf("KubernetesVersion = %q, want %q", machine.Goal.KubernetesVersion, currentVersion)
 	}
-	if machine.Goal.SettingsVersion != currentVersion {
-		t.Fatalf("SettingsVersion = %q, want %q", machine.Goal.SettingsVersion, currentVersion)
+	if machine.Goal.SettingsVersion != "" {
+		t.Fatalf("SettingsVersion = %q, want empty without an ETag", machine.Goal.SettingsVersion)
 	}
 }
 
