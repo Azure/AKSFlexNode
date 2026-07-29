@@ -211,12 +211,13 @@ validate_all_nodes() {
 
   local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
   local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip
-  local token_vm_private_ip offline_vm_private_ip
+  local msi_vm_private_ip token_vm_private_ip offline_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
   msi_vm_ip="$(state_get msi_vm_ip)"
+  msi_vm_private_ip="$(state_get msi_vm_private_ip)"
   token_vm_ip="$(state_get token_vm_ip)"
   offline_vm_ip="$(state_get offline_vm_ip)"
   kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
@@ -228,6 +229,7 @@ validate_all_nodes() {
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${offline_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
+  validate_node_ip "${msi_vm_name}" "${msi_vm_private_ip}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
