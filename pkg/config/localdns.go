@@ -1,10 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"text/template"
 )
 
 const (
@@ -90,6 +92,53 @@ func (p *LocalDNSProfile) Enabled() bool {
 	return p != nil && p.Mode == LocalDNSModeRequired
 }
 
+const aksLocalDNSCorefileTemplate = `health-check.localdns.local:53 {
+    bind {{.NodeListener}} {{.ClusterListener}}
+    whoami
+}
+
+{{range .Blocks}}{{.Zone}}:53 {
+    {{if .LogQueries}}log{{else}}errors{{end}}
+    bind {{.Listener}}
+    forward . {{.Upstream}} {
+        {{if .ForceTCP}}force_tcp
+        {{end}}policy {{.ForwardPolicy}}
+        max_concurrent {{.MaxConcurrent}}
+    }
+    ready {{.Listener}}:8181
+    cache {{.CacheDuration}} {
+        success 9984
+        denial 9984
+        {{if .ServeStale}}serve_stale {{.ServeStaleDuration}}s {{.ServeStalePolicy}}
+        {{end}}servfail 0
+    }
+    loop
+    prometheus {{$.MetricsAddress}}
+}
+
+{{end}}`
+
+type localDNSCorefileData struct {
+	NodeListener    string
+	ClusterListener string
+	MetricsAddress  string
+	Blocks          []localDNSCorefileBlock
+}
+
+type localDNSCorefileBlock struct {
+	Zone               string
+	Listener           string
+	Upstream           string
+	LogQueries         bool
+	ForceTCP           bool
+	ForwardPolicy      string
+	MaxConcurrent      int
+	CacheDuration      int
+	ServeStale         bool
+	ServeStaleDuration int
+	ServeStalePolicy   string
+}
+
 // CorefileTemplate renders AKS LocalDNS policy into an Unbounded Corefile template.
 func (p *LocalDNSProfile) CorefileTemplate() (string, error) {
 	if p == nil {
@@ -111,44 +160,52 @@ func (p *LocalDNSProfile) CorefileTemplate() (string, error) {
 		kube = map[string]LocalDNSOverride{".": {ForwardDestination: "ClusterCoreDNS"}}
 	}
 
-	var out strings.Builder
-	out.WriteString("health-check.localdns.local:53 {\n    bind {{ .NodeListenerIP }} {{ .ClusterListenerIP }}\n    whoami\n}\n\n")
-	renderLocalDNSBlocks(&out, vnet, "{{ .NodeListenerIP }}", "VnetDNS")
-	renderLocalDNSBlocks(&out, kube, "{{ .ClusterListenerIP }}", "ClusterCoreDNS")
+	data := localDNSCorefileData{
+		NodeListener:    "{{ .NodeListenerIP }}",
+		ClusterListener: "{{ .ClusterListenerIP }}",
+		MetricsAddress:  "{{ .MetricsAddress }}",
+		Blocks:          append(localDNSCorefileBlocks(vnet, "{{ .NodeListenerIP }}", "VnetDNS"), localDNSCorefileBlocks(kube, "{{ .ClusterListenerIP }}", "ClusterCoreDNS")...),
+	}
+	tmpl, err := template.New("aks-localdns-corefile").Parse(aksLocalDNSCorefileTemplate)
+	if err != nil {
+		return "", fmt.Errorf("parse AKS LocalDNS Corefile template: %w", err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", fmt.Errorf("render AKS LocalDNS Corefile template: %w", err)
+	}
 	return out.String(), nil
 }
 
-func renderLocalDNSBlocks(out *strings.Builder, overrides map[string]LocalDNSOverride, listener, defaultDestination string) {
+func localDNSCorefileBlocks(overrides map[string]LocalDNSOverride, listener, defaultDestination string) []localDNSCorefileBlock {
 	zones := make([]string, 0, len(overrides))
 	for zone := range overrides {
 		zones = append(zones, zone)
 	}
 	sort.Strings(zones)
+
+	blocks := make([]localDNSCorefileBlock, 0, len(zones))
 	for _, zone := range zones {
 		o := withLocalDNSDefaults(overrides[zone], defaultDestination)
-		fmt.Fprintf(out, "%s:53 {\n", zone)
-		if o.QueryLogging == "Log" {
-			out.WriteString("    log\n")
-		} else {
-			out.WriteString("    errors\n")
-		}
-		fmt.Fprintf(out, "    bind %s\n", listener)
 		upstream := "{{ .NodeUpstreamIPsJoined }}"
 		if o.ForwardDestination == "ClusterCoreDNS" {
 			upstream = "{{ .ClusterDNSServiceIP }}"
 		}
-		fmt.Fprintf(out, "    forward . %s {\n", upstream)
-		if o.Protocol == "ForceTCP" {
-			out.WriteString("        force_tcp\n")
-		}
-		fmt.Fprintf(out, "        policy %s\n        max_concurrent %d\n    }\n", localDNSForwardPolicy(o.ForwardPolicy), o.MaxConcurrent)
-		fmt.Fprintf(out, "    ready %s:8181\n", listener)
-		fmt.Fprintf(out, "    cache %d {\n        success 9984\n        denial 9984\n", o.CacheDurationInSeconds)
-		if o.ServeStale != "Disable" {
-			fmt.Fprintf(out, "        serve_stale %ds %s\n", o.ServeStaleDurationInSeconds, strings.ToLower(o.ServeStale))
-		}
-		out.WriteString("        servfail 0\n    }\n    loop\n    prometheus {{ .MetricsAddress }}\n}\n\n")
+		blocks = append(blocks, localDNSCorefileBlock{
+			Zone:               zone,
+			Listener:           listener,
+			Upstream:           upstream,
+			LogQueries:         o.QueryLogging == "Log",
+			ForceTCP:           o.Protocol == "ForceTCP",
+			ForwardPolicy:      localDNSForwardPolicy(o.ForwardPolicy),
+			MaxConcurrent:      o.MaxConcurrent,
+			CacheDuration:      o.CacheDurationInSeconds,
+			ServeStale:         o.ServeStale != "Disable",
+			ServeStaleDuration: o.ServeStaleDurationInSeconds,
+			ServeStalePolicy:   strings.ToLower(o.ServeStale),
+		})
 	}
+	return blocks
 }
 
 func withLocalDNSDefaults(o LocalDNSOverride, destination string) LocalDNSOverride {
