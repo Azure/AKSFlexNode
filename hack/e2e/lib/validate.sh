@@ -168,6 +168,31 @@ REMOTE
 }
 
 # ---------------------------------------------------------------------------
+# validate_localdns_status - Verify nspawn LocalDNS on the selected VM.
+validate_localdns_status() {
+  local vm_ip="$1"
+  log_info "Validating LocalDNS on ${vm_ip}..."
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+set -euo pipefail
+machine=$(sudo machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" systemctl is-active --quiet localdns.service
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" grep -qx 'nameserver 169.254.10.10' /etc/resolv.conf
+sudo ip address show dev localdns | grep -q '169.254.10.10/32'
+sudo ip address show dev localdns | grep -q '169.254.10.11/32'
+for chain in OUTPUT PREROUTING; do
+  for address in 169.254.10.10 169.254.10.11; do
+    for protocol in tcp udp; do
+      sudo iptables -w -t raw -C "${chain}" -m comment \
+        --comment 'unbounded-localdns: skip conntrack' \
+        -p "${protocol}" -d "${address}" --dport 53 -j NOTRACK
+    done
+  done
+done
+REMOTE
+  log_success "LocalDNS validation passed on ${vm_ip}"
+}
+
 # validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
@@ -206,6 +231,7 @@ validate_all_nodes() {
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  validate_localdns_status "${msi_vm_ip}" || failed=1
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
   # TODO: re-enable once NPD is included in the upstream Unbounded bootstrap
   # artifact bundle and resolver used by offline artifact mode.

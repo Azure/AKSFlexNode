@@ -255,8 +255,9 @@ type KubeletConfig struct {
 
 // NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
 type NetworkingConfig struct {
-	DNSServiceIP string `json:"dnsServiceIP,omitempty"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
-	CNIVersion   string `json:"cniVersion,omitempty"`
+	DNSServiceIP string           `json:"dnsServiceIP,omitempty"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	CNIVersion   string           `json:"cniVersion,omitempty"`
+	LocalDNS     *LocalDNSProfile `json:"localDNS,omitempty"`
 }
 
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
@@ -881,6 +882,9 @@ func (c *Config) validate() error {
 	}
 	if err := c.Bootstrap.validate(); err != nil {
 		return err
+	}
+	if err := c.Networking.LocalDNS.validate(); err != nil {
+		return fmt.Errorf("invalid networking.localDNS: %w", err)
 	}
 
 	if err := c.validateAuthSettings(); err != nil {

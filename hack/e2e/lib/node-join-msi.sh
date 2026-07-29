@@ -55,7 +55,8 @@ node_join_msi() {
   "node": {
     "kubelet": {
       "clusterFQDN": "${server_url}",
-      "caCertData": "${ca_cert_data}"
+      "caCertData": "${ca_cert_data}",
+      "nodeIP": "${vm_ip}"
     }
   },
   "agent": {
@@ -66,6 +67,35 @@ node_join_msi() {
       "endpointUrl": "${E2E_CONTROLLER_SERVICE_PROXY_PATH}"
     },
     "requireMachineRegistration": true
+  },
+  "networking": {
+    "localDNS": {
+      "mode": "Required",
+      "vnetDNSOverrides": {
+        ".": {
+          "queryLogging": "Error",
+          "protocol": "PreferUDP",
+          "forwardDestination": "VnetDNS",
+          "forwardPolicy": "Sequential",
+          "maxConcurrent": 1000,
+          "cacheDurationInSeconds": 3600,
+          "serveStaleDurationInSeconds": 3600,
+          "serveStale": "Immediate"
+        }
+      },
+      "kubeDNSOverrides": {
+        ".": {
+          "queryLogging": "Error",
+          "protocol": "ForceTCP",
+          "forwardDestination": "ClusterCoreDNS",
+          "forwardPolicy": "Sequential",
+          "maxConcurrent": 1000,
+          "cacheDurationInSeconds": 3600,
+          "serveStaleDurationInSeconds": 3600,
+          "serveStale": "Immediate"
+        }
+      }
+    }
   },
   "components": {
     "kubernetes": "${E2E_KUBERNETES_VERSION}",

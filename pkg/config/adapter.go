@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -26,6 +27,11 @@ const (
 //
 // cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
+	labels := maps.Clone(cfg.Node.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
@@ -40,7 +46,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		Kubelet: agentconfig.AgentKubeletConfig{
 			ApiServer:          cfg.APIServerURL(),
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
-			Labels:             cfg.Node.Labels,
+			Labels:             labels,
 			RegisterWithTaints: cfg.Node.Taints,
 		},
 		CRI: agentconfig.CRIConfig{
@@ -55,6 +61,17 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		CNI: agentconfig.CNIConfig{
 			PluginVersion: cfg.Networking.CNIVersion,
 		},
+	}
+
+	if profile := cfg.Networking.LocalDNS; profile != nil {
+		corefile, _ := profile.CorefileTemplate() // Config validation runs before adaptation.
+		ac.LocalDNS = &agentconfig.AgentLocalDNSConfig{
+			Enabled:          profile.Enabled(),
+			CorefileTemplate: corefile,
+		}
+		if profile.Enabled() {
+			labels["kubernetes.azure.com/localdns"] = "enabled"
+		}
 	}
 
 	if cfg.Bootstrap.OfflineArtifacts.Source != "" {
