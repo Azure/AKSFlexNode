@@ -30,7 +30,15 @@ const (
 type State struct {
 	AppliedGoal         *aksmachine.GoalState `json:"appliedGoal,omitempty"`
 	PreviousAppliedGoal *aksmachine.GoalState `json:"previousAppliedGoal,omitempty"`
-	ActiveMachine       string                `json:"activeMachine,omitempty"`
+
+	// Deprecated: these projections keep state readable by older agent binaries.
+	// AppliedGoal and PreviousAppliedGoal remain authoritative.
+	AppliedSettingsVersion    string `json:"appliedSettingsVersion,omitempty"`
+	AppliedKubernetesVersion  string `json:"appliedKubernetesVersion,omitempty"`
+	PreviousSettingsVersion   string `json:"previousSettingsVersion,omitempty"`
+	PreviousKubernetesVersion string `json:"previousKubernetesVersion,omitempty"`
+
+	ActiveMachine string `json:"activeMachine,omitempty"`
 }
 
 func (s *State) validate() error {
@@ -81,6 +89,37 @@ func cloneGoalState(goal aksmachine.GoalState) *aksmachine.GoalState {
 	cloned.NodeLabels = maps.Clone(goal.NodeLabels)
 	cloned.NodeTaints = slices.Clone(goal.NodeTaints)
 	return &cloned
+}
+
+func (s *State) migrateLegacyGoals() {
+	if s.AppliedGoal == nil && (s.AppliedSettingsVersion != "" || s.AppliedKubernetesVersion != "") {
+		s.AppliedGoal = &aksmachine.GoalState{
+			SettingsVersion:   s.AppliedSettingsVersion,
+			KubernetesVersion: s.AppliedKubernetesVersion,
+		}
+	}
+	if s.PreviousAppliedGoal == nil && (s.PreviousSettingsVersion != "" || s.PreviousKubernetesVersion != "") {
+		s.PreviousAppliedGoal = &aksmachine.GoalState{
+			SettingsVersion:   s.PreviousSettingsVersion,
+			KubernetesVersion: s.PreviousKubernetesVersion,
+		}
+	}
+}
+
+func (s *State) populateLegacyFields() {
+	s.AppliedSettingsVersion = ""
+	s.AppliedKubernetesVersion = ""
+	if s.AppliedGoal != nil {
+		s.AppliedSettingsVersion = s.AppliedGoal.SettingsVersion
+		s.AppliedKubernetesVersion = s.AppliedGoal.KubernetesVersion
+	}
+
+	s.PreviousSettingsVersion = ""
+	s.PreviousKubernetesVersion = ""
+	if s.PreviousAppliedGoal != nil {
+		s.PreviousSettingsVersion = s.PreviousAppliedGoal.SettingsVersion
+		s.PreviousKubernetesVersion = s.PreviousAppliedGoal.KubernetesVersion
+	}
 }
 
 func validActiveMachine(machine string) bool {
@@ -146,9 +185,11 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
+	state.migrateLegacyGoals()
 	if err := state.validate(); err != nil {
 		return nil, fmt.Errorf("validate daemon state %s: %w", s.path, err)
 	}
+	state.populateLegacyFields()
 	return &state, nil
 }
 
@@ -156,7 +197,9 @@ func (s *fileStateStore) Save(_ context.Context, state *State) error {
 	if err := state.validate(); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	stateForPersistence := *state
+	stateForPersistence.populateLegacyFields()
+	data, err := json.MarshalIndent(&stateForPersistence, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal daemon state: %w", err)
 	}
