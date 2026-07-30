@@ -69,9 +69,11 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			Enabled:          profile.Enabled(),
 			CorefileTemplate: corefile,
 		}
+		state := "disabled"
 		if profile.Enabled() {
-			labels["kubernetes.azure.com/localdns"] = "enabled"
+			state = "enabled"
 		}
+		labels["kubernetes.azure.com/localdns-state"] = state
 	}
 
 	if cfg.Bootstrap.OfflineArtifacts.Source != "" {

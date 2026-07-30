@@ -170,7 +170,8 @@ REMOTE
 # ---------------------------------------------------------------------------
 # validate_localdns_status - Verify nspawn LocalDNS on the selected VM.
 validate_localdns_status() {
-  local vm_ip="$1"
+  local vm_name="$1"
+  local vm_ip="$2"
   log_info "Validating LocalDNS on ${vm_ip}..."
   remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
 set -euo pipefail
@@ -190,6 +191,50 @@ for chain in OUTPUT PREROUTING; do
   done
 done
 REMOTE
+
+  local state_label
+  state_label="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.labels.kubernetes\.azure\.com/localdns-state}')"
+  if [[ "${state_label}" != "enabled" ]]; then
+    log_error "Node ${vm_name} localdns-state=${state_label}, expected enabled"
+    return 1
+  fi
+
+  local cluster_pod="localdns-clusterfirst-${vm_name}"
+  local default_pod="localdns-default-${vm_name}"
+  kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=false >/dev/null
+  kubectl run "${cluster_pod}" --image=busybox:1.36 --restart=Never \
+    --overrides="{\"spec\":{\"nodeName\":\"${vm_name}\",\"dnsPolicy\":\"ClusterFirst\"}}" \
+    --command -- nslookup kubernetes.default.svc.cluster.local >/dev/null
+  kubectl run "${default_pod}" --image=busybox:1.36 --restart=Never \
+    --overrides="{\"spec\":{\"nodeName\":\"${vm_name}\",\"dnsPolicy\":\"Default\"}}" \
+    --command -- nslookup mcr.microsoft.com >/dev/null
+
+  local pod
+  for pod in "${cluster_pod}" "${default_pod}"; do
+    local phase=""
+    for _ in $(seq 1 60); do
+      phase="$(kubectl get pod "${pod}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      [[ "${phase}" == "Succeeded" || "${phase}" == "Failed" ]] && break
+      sleep 2
+    done
+    if [[ "${phase}" != "Succeeded" ]]; then
+      kubectl describe pod "${pod}" >&2 || true
+      kubectl logs "${pod}" >&2 || true
+      log_error "LocalDNS query pod ${pod} ended in phase ${phase}"
+      return 1
+    fi
+  done
+
+  if ! kubectl logs "${cluster_pod}" | grep -Eq 'Server:[[:space:]]*169\.254\.10\.11'; then
+    log_error "ClusterFirst pod did not query LocalDNS cluster listener"
+    return 1
+  fi
+  if ! kubectl logs "${default_pod}" | grep -Eq 'Server:[[:space:]]*169\.254\.10\.10'; then
+    log_error "Default-policy pod did not query LocalDNS node listener"
+    return 1
+  fi
+  kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=false >/dev/null
+
   log_success "LocalDNS validation passed on ${vm_ip}"
 }
 
@@ -233,7 +278,7 @@ validate_all_nodes() {
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
-  validate_localdns_status "${msi_vm_ip}" || failed=1
+  validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
   # TODO: re-enable once NPD is included in the upstream Unbounded bootstrap
   # artifact bundle and resolver used by offline artifact mode.
