@@ -209,11 +209,60 @@ upgrade_drift_mode() {
   log_success "${mode} controller machine repave passed in $(timer_elapsed "${start}")s"
 }
 
+localdns_disable_repave_msi() {
+  log_section "LocalDNS Disable Repave (MSI node)"
+  local desired_version settings_version vm_name vm_ip snapshot old_active_machine old_state old_version old_settings_version old_node_uid
+  desired_version="$(_cluster_current_kubernetes_version)"
+  settings_version="localdns-disabled-$(date +%s)"
+  vm_name="$(_mode_vm_name msi)"
+  vm_ip="$(_mode_vm_ip msi)"
+
+  snapshot="$(_remote_active_machine_snapshot "${vm_ip}")"
+  IFS='|' read -r old_active_machine old_state old_version old_settings_version <<<"${snapshot}"
+  old_node_uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}')"
+
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+set -euo pipefail
+config=/etc/aks-flex-node/config.json
+tmp=$(mktemp /etc/aks-flex-node/config.json.XXXXXX)
+jq '.networking.localDNS.mode = "Disabled"' "${config}" > "${tmp}"
+chmod 0600 "${tmp}"
+mv "${tmp}" "${config}"
+systemctl restart aks-flex-node-agent.service
+systemctl is-active --quiet aks-flex-node-agent.service
+REMOTE
+
+  _trigger_mode_repave msi "${desired_version}" "${settings_version}"
+  _wait_for_mode_repave msi "${desired_version}" "${settings_version}" "${old_active_machine}" "${old_node_uid}"
+
+  local state_label cluster_dns
+  state_label="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.labels.kubernetes\.azure\.com/localdns-state}')"
+  cluster_dns="$(kubectl -n kube-system get service kube-dns -o jsonpath='{.spec.clusterIP}')"
+  if [[ "${state_label}" != "disabled" ]]; then
+    log_error "Node ${vm_name} localdns-state=${state_label}, expected disabled"
+    return 1
+  fi
+
+  remote_exec "${vm_ip}" "CLUSTER_DNS=${cluster_dns} sudo -E bash -s" <<'REMOTE'
+set -euo pipefail
+machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+! systemd-run --quiet --pipe --wait --machine="${machine}" systemctl cat localdns.service >/dev/null 2>&1
+! ip link show localdns >/dev/null 2>&1
+! iptables -w -t raw -S | grep -q 'unbounded-localdns: skip conntrack'
+systemd-run --quiet --pipe --wait --machine="${machine}" \
+  grep -q -- "--cluster-dns=${CLUSTER_DNS}" /etc/systemd/system/kubelet.service.d/20-node-config.conf
+REMOTE
+
+  log_success "MSI LocalDNS disable-through-repave validation passed"
+}
+
 upgrade_drift_all() {
   log_section "Controller Machine Repave (all modes)"
   upgrade_drift_mode msi
   upgrade_drift_mode token
   upgrade_drift_mode kubeadm
+  localdns_disable_repave_msi
 }
 
 upgrade_drift_msi() { upgrade_drift_mode msi; }
