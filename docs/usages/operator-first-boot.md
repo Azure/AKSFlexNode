@@ -391,7 +391,8 @@ read its ARM Machine resource. The supported identity modes are:
 - **Managed identity** for an Azure VM. Use the system-assigned identity, or
   provide the client ID of a user-assigned identity.
 - **Service principal** for an Azure VM or a host outside Azure. Provide its
-  tenant ID, client ID, and client credential through a protected file.
+  tenant ID, client ID, and either a client secret or certificate/private-key
+  credential through a protected file.
 
 The selected managed identity or service principal must have **Azure Kubernetes
 Service Contributor Role** at the target AKS cluster resource scope. The
@@ -412,6 +413,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   curl \
   jq \
   nftables \
+  openssl \
   systemd-container \
   tar \
   util-linux
@@ -448,6 +450,9 @@ export BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${CENTRAL_ARTIFACTS_ENDPOINT}/release
 export FLEX_SP_TENANT_ID="<service-principal-tenant-id>"
 export FLEX_SP_CLIENT_ID="<service-principal-client-id>"
 export FLEX_SP_CLIENT_SECRET_FILE="/etc/aks-flex-node/credentials/sp-client-secret"
+# Certificate alternative; the PEM filename does not require an extension.
+# An unencrypted binary PKCS#12 file must use a .pfx suffix.
+export FLEX_SP_CLIENT_CERTIFICATE_FILE="/etc/aks-flex-node/credentials/sp-client-certificate"
 ```
 
 The shell expands `${AKS_FLEX_NODE_VERSION}`, and the bootstrap script expands
@@ -501,6 +506,31 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --sp-tenant-id "$FLEX_SP_TENANT_ID" \
   --sp-client-id "$FLEX_SP_CLIENT_ID" \
   --sp-client-secret-file "$FLEX_SP_CLIENT_SECRET_FILE" \
+  --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" \
+  --agent-pool-name "$FLEX_POOL_NAME" \
+  --agent-url "$AKS_FLEX_NODE_AGENT_URL" \
+  --bootstrap-oci-image "$BOOTSTRAP_OCI_IMAGE" \
+  --bootstrap-offline-artifacts-source "$BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE"
+```
+
+For certificate-based service-principal authentication, install a protected PEM
+file containing the certificate chain and RSA private key, or an unencrypted
+PKCS#12 file with a `.pfx` suffix. PEM detection is content-based, so its
+filename does not require a `.pem` suffix. Keep the file available for agent
+service restarts. Certificate-based `--fetch-bootstrap-data` also requires the
+`openssl` command on the host.
+
+```bash
+install -o root -g root -m 0600 \
+  "<path-to-provisioned-client-certificate-and-key>" \
+  "$FLEX_SP_CLIENT_CERTIFICATE_FILE"
+
+bash /run/aks-flex-node-bootstrap/bootstrap.sh \
+  --auth service-principal \
+  --sp-tenant-id "$FLEX_SP_TENANT_ID" \
+  --sp-client-id "$FLEX_SP_CLIENT_ID" \
+  --sp-client-certificate-file "$FLEX_SP_CLIENT_CERTIFICATE_FILE" \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$FLEX_POOL_NAME" \

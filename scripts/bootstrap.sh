@@ -2,7 +2,8 @@
 # AKS Flex Node first-boot script.
 #
 # Requirements: bash, curl, tar, and jq. sha256sum is required only when an
-# artifact checksum is configured. This script does not install dependencies.
+# artifact checksum is configured. openssl is required when a service-principal
+# certificate is used to fetch bootstrap data. This script does not install dependencies.
 #
 # A publisher can replace the marker in write_embedded_base_config with a
 # cluster/pool-specific partial config. When --fetch-bootstrap-data is used with
@@ -33,6 +34,7 @@ SP_TENANT_ID="${AKS_FLEX_NODE_SP_TENANT_ID:-}"
 SP_CLIENT_ID="${AKS_FLEX_NODE_SP_CLIENT_ID:-}"
 SP_CLIENT_SECRET="${AKS_FLEX_NODE_SP_CLIENT_SECRET:-}"
 SP_CLIENT_SECRET_FILE="${AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE:-}"
+SP_CLIENT_CERTIFICATE_FILE="${AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE:-}"
 AGENT_URL="${AKS_FLEX_NODE_AGENT_URL:-}"
 AGENT_VERSION="${AKS_FLEX_NODE_AGENT_VERSION:-}"
 AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
@@ -84,7 +86,9 @@ Options:
   --msi-client-id ID             Optional user-assigned managed identity client ID
   --sp-tenant-id ID              Optional SP tenant; defaults to azure.tenantId
   --sp-client-id ID              Service-principal client ID
-  --sp-client-secret-file PATH   Protected file containing the SP credential
+  --sp-client-secret-file PATH   Protected file containing the SP client secret
+  --sp-client-certificate-file PATH
+                                 Protected PEM or unencrypted .pfx certificate
   --agent-url URL                Exact agent tar.gz URL; may contain a SAS
   --agent-version VERSION        Version used with the default GitHub release URL
   --agent-sha256 SHA256          Expected SHA-256 of the downloaded tar.gz
@@ -110,6 +114,7 @@ Environment overrides:
   AKS_FLEX_NODE_SP_CLIENT_ID
   AKS_FLEX_NODE_SP_CLIENT_SECRET
   AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE
+  AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE
   AKS_FLEX_NODE_AGENT_URL
   AKS_FLEX_NODE_AGENT_VERSION
   AKS_FLEX_NODE_AGENT_SHA256
@@ -125,9 +130,10 @@ Environment overrides:
   AKS_FLEX_NODE_INSTALL_DIR
   AKS_FLEX_NODE_CONFIG_PATH
 
-The client-secret file takes precedence over AKS_FLEX_NODE_SP_CLIENT_SECRET.
-When invoking through sudo, explicitly preserve the required environment
-variables. The script requires preinstalled bash, curl, tar, and jq.
+A CLI credential-file flag overrides credential values inherited from the
+environment. When invoking through sudo, explicitly preserve the required
+environment variables. The script requires preinstalled bash, curl, tar, and
+jq; certificate-based bootstrap-data fetch also requires openssl.
 EOF
 }
 
@@ -140,14 +146,23 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
                     --msi-client-id) MSI_CLIENT_ID="$2" ;;
                     --sp-tenant-id) SP_TENANT_ID="$2" ;;
                     --sp-client-id) SP_CLIENT_ID="$2" ;;
-                    --sp-client-secret-file) SP_CLIENT_SECRET_FILE="$2" ;;
+                    --sp-client-secret-file)
+                        SP_CLIENT_SECRET_FILE="$2"
+                        SP_CLIENT_CERTIFICATE_FILE=""
+                        SP_CLIENT_SECRET=""
+                        ;;
+                    --sp-client-certificate-file)
+                        SP_CLIENT_CERTIFICATE_FILE="$2"
+                        SP_CLIENT_SECRET_FILE=""
+                        SP_CLIENT_SECRET=""
+                        ;;
                     --agent-url) AGENT_URL="$2" ;;
                     --agent-version) AGENT_VERSION="$2" ;;
                     --agent-sha256) AGENT_SHA256="$2" ;;
@@ -234,16 +249,37 @@ merge_config_override() {
     mv -f "$merged" "$current"
 }
 
-check_secret_file_permissions() {
+check_credential_file_permissions() {
     local path="$1"
+    local label="${2:-credential}"
     local permissions
-    [[ ! -L "$path" ]] || fatal "service-principal client-secret file must not be a symlink"
-    [[ -f "$path" ]] || fatal "service-principal client-secret file must be a regular file"
+    [[ "$path" == /* ]] || fatal "service-principal $label file path must be absolute"
+    [[ ! -L "$path" ]] || fatal "service-principal $label file must not be a symlink"
+    [[ -f "$path" ]] || fatal "service-principal $label file must be a regular file"
     permissions=$(stat -c '%a' "$path")
     if (((8#$permissions & 077) != 0)); then
-        fatal "service-principal client-secret file must not be accessible by group or other users"
+        fatal "service-principal $label file must not be accessible by group or other users"
     fi
-    [[ -s "$path" ]] || fatal "service-principal client-secret file is empty"
+    [[ -s "$path" ]] || fatal "service-principal $label file is empty"
+}
+
+check_secret_file_permissions() {
+    check_credential_file_permissions "$1" "client-secret"
+}
+
+check_certificate_file_permissions() {
+    check_credential_file_permissions "$1" "client-certificate"
+}
+
+validate_sp_credential_selection() {
+    case "${AUTH_MODE,,}" in
+        msi|managed-identity) return 0 ;;
+    esac
+    local count=0
+    [[ -n "$SP_CLIENT_SECRET" ]] && ((count += 1))
+    [[ -n "$SP_CLIENT_SECRET_FILE" ]] && ((count += 1))
+    [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]] && ((count += 1))
+    ((count <= 1)) || fatal "configure only one service-principal secret, secret file, or certificate file"
 }
 
 is_true() {
@@ -284,6 +320,36 @@ require_https_endpoint() {
     fatal "$label must use HTTPS"
 }
 
+credential_file_looks_like_certificate() {
+    local path="$1"
+    case "$path" in
+        *.pfx|*.PFX) return 0 ;;
+    esac
+    grep -aq -- '-----BEGIN CERTIFICATE-----' "$path" ||
+        grep -aq -- '-----BEGIN PRIVATE KEY-----' "$path" ||
+        grep -aq -- '-----BEGIN RSA PRIVATE KEY-----' "$path"
+}
+
+resolve_sp_credential_kind() {
+    local current="$1"
+    if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
+        printf 'certificate'
+    elif [[ -n "$SP_CLIENT_SECRET_FILE" || -n "$SP_CLIENT_SECRET" ]]; then
+        printf 'secret'
+    else
+        local credential_file
+        credential_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
+        if [[ -n "$credential_file" ]]; then
+            check_credential_file_permissions "$credential_file"
+        fi
+        if [[ -n "$credential_file" ]] && credential_file_looks_like_certificate "$credential_file"; then
+            printf 'certificate'
+        else
+            printf 'secret'
+        fi
+    fi
+}
+
 resolve_sp_secret_file() {
     local current="$1"
     local secret_file="$SP_CLIENT_SECRET_FILE"
@@ -297,6 +363,8 @@ resolve_sp_secret_file() {
         secret_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
         if [[ -n "$secret_file" ]]; then
             check_secret_file_permissions "$secret_file"
+            credential_file_looks_like_certificate "$secret_file" && \
+                fatal "service-principal bootstrap-data fetch requires a secret file, not a certificate file"
         else
             secret_file="$TEMP_DIR/fetch-sp-client-secret"
             jq -er '.azure.servicePrincipal.clientSecret' "$current" > "$secret_file" || \
@@ -305,6 +373,66 @@ resolve_sp_secret_file() {
         fi
     fi
     printf '%s' "$secret_file"
+}
+
+resolve_sp_certificate_file() {
+    local current="$1"
+    local certificate_file="$SP_CLIENT_CERTIFICATE_FILE"
+    if [[ -z "$certificate_file" ]]; then
+        certificate_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
+    fi
+    [[ -n "$certificate_file" ]] || fatal "service-principal certificate authentication requires a certificate file"
+    check_certificate_file_permissions "$certificate_file"
+    printf '%s' "$certificate_file"
+}
+
+base64url() {
+    openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+create_client_certificate_assertion() {
+    local certificate_file="$1"
+    local client_id="$2"
+    local audience="$3"
+    local output="$4"
+    local certificate_pem="$TEMP_DIR/sp-client-certificate.pem"
+    local private_key_pem="$TEMP_DIR/sp-client-private-key.pem"
+    local now expires jwt_id thumbprint header payload signing_input signature
+
+    require_command openssl
+    if grep -aq -- '-----BEGIN CERTIFICATE-----' "$certificate_file"; then
+        openssl x509 -in "$certificate_file" -out "$certificate_pem" >/dev/null 2>&1 || \
+            fatal "failed to parse PEM client certificate"
+        openssl pkey -in "$certificate_file" -out "$private_key_pem" >/dev/null 2>&1 || \
+            fatal "failed to parse PEM client certificate private key"
+    else
+        [[ "$certificate_file" == *.pfx || "$certificate_file" == *.PFX ]] || \
+            fatal "binary PFX client-certificate file must use a .pfx suffix"
+        openssl pkcs12 -in "$certificate_file" -clcerts -nokeys -passin pass: -out "$certificate_pem" >/dev/null 2>&1 || \
+            fatal "failed to extract certificate from unencrypted PFX file"
+        openssl pkcs12 -in "$certificate_file" -nocerts -nodes -passin pass: -out "$private_key_pem" >/dev/null 2>&1 || \
+            fatal "failed to extract private key from unencrypted PFX file"
+    fi
+    chmod 0600 "$certificate_pem" "$private_key_pem"
+    openssl rsa -in "$private_key_pem" -check -noout >/dev/null 2>&1 || \
+        fatal "service-principal client certificate private key must be RSA"
+
+    thumbprint=$(openssl x509 -in "$certificate_pem" -outform DER | openssl dgst -sha1 -binary | base64url)
+    now=$(date +%s)
+    expires=$((now + 600))
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        jwt_id=$(</proc/sys/kernel/random/uuid)
+    else
+        jwt_id=$(openssl rand -hex 16)
+    fi
+    header=$(jq -cn --arg x5t "$thumbprint" '{alg:"RS256",typ:"JWT",x5t:$x5t}' | base64url)
+    payload=$(jq -cn --arg aud "$audience" --arg iss "$client_id" --arg sub "$client_id" --arg jti "$jwt_id" \
+        --argjson nbf "$((now - 60))" --argjson exp "$expires" \
+        '{aud:$aud,iss:$iss,sub:$sub,jti:$jti,nbf:$nbf,exp:$exp}' | base64url)
+    signing_input="${header}.${payload}"
+    signature=$(printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$private_key_pem" -binary | base64url)
+    printf '%s.%s' "$signing_input" "$signature" > "$output"
+    chmod 0600 "$output"
 }
 
 acquire_arm_token() {
@@ -338,18 +466,33 @@ acquire_arm_token() {
         service-principal)
             local tenant_id="$SP_TENANT_ID"
             local client_id="$SP_CLIENT_ID"
-            local secret_file request_body token_url
+            local credential_kind request_body token_url
             [[ -n "$tenant_id" ]] || tenant_id=$(jq -er '.azure.servicePrincipal.tenantId // .azure.tenantId' "$current")
             [[ -n "$client_id" ]] || client_id=$(jq -er '.azure.servicePrincipal.clientId' "$current")
-            secret_file=$(resolve_sp_secret_file "$current")
-            request_body="$TEMP_DIR/sp-token-request"
-            jq -nr --arg clientID "$client_id" --arg scope "${arm_endpoint%/}/.default" --rawfile clientSecret "$secret_file" '
-                ($clientSecret | rtrimstr("\n") | rtrimstr("\r")) as $secret |
-                "client_id=\($clientID | @uri)&client_secret=\($secret | @uri)&scope=\($scope | @uri)&grant_type=client_credentials"
-            ' > "$request_body"
-            chmod 0600 "$request_body"
             require_https_endpoint "$AUTHORITY_HOST" "service-principal authority host"
             token_url="${AUTHORITY_HOST%/}/${tenant_id}/oauth2/v2.0/token"
+            credential_kind=$(resolve_sp_credential_kind "$current")
+            request_body="$TEMP_DIR/sp-token-request"
+            case "$credential_kind" in
+                secret)
+                    local secret_file
+                    secret_file=$(resolve_sp_secret_file "$current")
+                    jq -nr --arg clientID "$client_id" --arg scope "${arm_endpoint%/}/.default" --rawfile clientSecret "$secret_file" '
+                        ($clientSecret | rtrimstr("\n") | rtrimstr("\r")) as $secret |
+                        "client_id=\($clientID | @uri)&client_secret=\($secret | @uri)&scope=\($scope | @uri)&grant_type=client_credentials"
+                    ' > "$request_body"
+                    ;;
+                certificate)
+                    local certificate_file assertion_file
+                    certificate_file=$(resolve_sp_certificate_file "$current")
+                    assertion_file="$TEMP_DIR/sp-client-assertion"
+                    create_client_certificate_assertion "$certificate_file" "$client_id" "$token_url" "$assertion_file"
+                    jq -nr --arg clientID "$client_id" --arg scope "${arm_endpoint%/}/.default" --rawfile assertion "$assertion_file" '
+                        "client_id=\($clientID | @uri)&client_assertion=\($assertion | @uri)&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&scope=\($scope | @uri)&grant_type=client_credentials"
+                    ' > "$request_body"
+                    ;;
+            esac
+            chmod 0600 "$request_body"
             curl -fsS --connect-timeout 10 --max-time 60 \
                 --retry 3 --retry-delay 2 --retry-all-errors \
                 -H 'Content-Type: application/x-www-form-urlencoded' \
@@ -468,7 +611,19 @@ apply_auth_override() {
             ;;
         sp|service-principal)
             [[ -n "$SP_CLIENT_ID" ]] || fatal "service-principal auth requires --sp-client-id or AKS_FLEX_NODE_SP_CLIENT_ID"
-            if [[ -n "$SP_CLIENT_SECRET_FILE" ]]; then
+            if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
+                check_certificate_file_permissions "$SP_CLIENT_CERTIFICATE_FILE"
+                jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --arg clientSecretFile "$SP_CLIENT_CERTIFICATE_FILE" '
+                    .azure = (.azure // {}) |
+                    del(.azure.managedIdentity) |
+                    .azure.arc = ((.azure.arc // {}) * {"enabled": false}) |
+                    .azure.servicePrincipal = {
+                        "tenantId": (if $tenantID == "" then .azure.tenantId else $tenantID end),
+                        "clientId": $clientID,
+                        "clientSecretFile": $clientSecretFile
+                    }
+                ' "$current" > "$rendered"
+            elif [[ -n "$SP_CLIENT_SECRET_FILE" ]]; then
                 check_secret_file_permissions "$SP_CLIENT_SECRET_FILE"
                 jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --arg clientSecretFile "$SP_CLIENT_SECRET_FILE" '
                     .azure = (.azure // {}) |
@@ -496,7 +651,7 @@ apply_auth_override() {
                     }
                 ' "$current" > "$rendered"
             else
-                fatal "service-principal auth requires a protected secret file or AKS_FLEX_NODE_SP_CLIENT_SECRET"
+                fatal "service-principal auth requires a protected secret file, certificate file, or AKS_FLEX_NODE_SP_CLIENT_SECRET"
             fi
             ;;
         *) fatal "unsupported auth mode: $AUTH_MODE (expected msi or service-principal)" ;;
@@ -606,6 +761,8 @@ download_and_install_agent() {
 
 clear_bootstrap_environment() {
     SP_CLIENT_SECRET=""
+    SP_CLIENT_SECRET_FILE=""
+    SP_CLIENT_CERTIFICATE_FILE=""
     AGENT_URL=""
     ENV_CONFIG_OVERRIDES=""
     unset \
@@ -615,6 +772,7 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_SP_CLIENT_ID \
         AKS_FLEX_NODE_SP_CLIENT_SECRET \
         AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE \
+        AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE \
         AKS_FLEX_NODE_AGENT_URL \
         AKS_FLEX_NODE_AGENT_VERSION \
         AKS_FLEX_NODE_AGENT_SHA256 \
@@ -646,6 +804,7 @@ install_config() {
 
 main() {
     parse_args "$@"
+    validate_sp_credential_selection
     [[ $EUID -eq 0 ]] || fatal "run this script as root"
     check_prerequisites
 

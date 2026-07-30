@@ -533,13 +533,31 @@ bash bootstrap.sh \
   --agent-url "$AGENT_URL"
 ```
 
-The secret file must be non-empty, regular, not a symlink, and inaccessible by
-group/other users. The tenant defaults to `azure.tenantId` in the base config
-and can be overridden separately. The renderer writes the path to
-`azure.servicePrincipal.clientSecretFile` rather than embedding the secret,
-removes managed identity, and disables Arc authentication. The credential file
-must remain available for config loads on preflight, start, and future service
-restarts, or be recreated by the credential manager before service startup.
+Certificate authentication uses the same durable config field:
+
+```console
+bash bootstrap.sh \
+  --auth service-principal \
+  --sp-client-id "$CLIENT_ID" \
+  --sp-client-certificate-file /run/credentials/aks-flex-node-certificate \
+  --agent-url "$AGENT_URL"
+```
+
+Credential files must be non-empty, regular, not symlinks, and inaccessible by
+group/other users. PEM certificate detection is content-based and does not
+require a filename suffix; unencrypted binary PKCS#12 credentials require a
+`.pfx` suffix. The tenant defaults to `azure.tenantId` in the base config and
+can be overridden separately. The renderer writes either credential path to
+`azure.servicePrincipal.clientSecretFile`, removes managed identity, and
+disables Arc authentication. The credential file must remain available for
+config loads on preflight, start, and future service restarts, or be recreated
+by the credential manager before service startup.
+
+When certificate auth is also used to call `listBootstrapData`, the script uses
+OpenSSL to construct a short-lived RS256 client assertion with the certificate
+SHA-1 thumbprint (`x5t`) and exchanges it at the configured Microsoft Entra
+token endpoint. Assertion material and any PFX-extracted key are confined to the
+mode `0700` temporary workspace and removed on exit.
 
 ## Agent download and installation
 

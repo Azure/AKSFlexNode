@@ -37,7 +37,7 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
@@ -153,8 +153,10 @@ grep -q 'client-secret file must not be a symlink' "$WORK_DIR/sp-link.log" || \
 
 command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
 cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'
+import base64
 import json
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class Handler(BaseHTTPRequestHandler):
@@ -179,7 +181,24 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/base-tenant/oauth2/v2.0/token":
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode()
-            if "client_id=base-sp-client" not in body or "client_secret=base-sp-secret" not in body:
+            parameters = urllib.parse.parse_qs(body)
+            secret_auth = parameters.get("client_id") == ["base-sp-client"] and parameters.get("client_secret") == ["base-sp-secret"]
+            certificate_auth = False
+            if parameters.get("client_id") == ["cert-client"] and "client_assertion" in parameters:
+                assertion = parameters["client_assertion"][0]
+                parts = assertion.split(".")
+                if len(parts) == 3:
+                    decode = lambda value: json.loads(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)))
+                    header, payload = decode(parts[0]), decode(parts[1])
+                    certificate_auth = (
+                        header.get("alg") == "RS256" and
+                        bool(header.get("x5t")) and
+                        payload.get("iss") == "cert-client" and
+                        payload.get("sub") == "cert-client" and
+                        payload.get("aud", "").endswith("/base-tenant/oauth2/v2.0/token") and
+                        parameters.get("client_assertion_type") == ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"]
+                    )
+            if not secret_auth and not certificate_auth:
                 self.send_error(401)
                 return
             self.write_json({"access_token": "test-arm-token", "expires_in": 3600})
@@ -346,5 +365,70 @@ jq -e --arg secretFile "$WORK_DIR/fetch-sp-secret" '
   } and
   .components.kubernetes == "1.35.6"
 ' "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
+
+require_openssl=true
+if ! command -v openssl >/dev/null; then
+    require_openssl=false
+fi
+if [[ "$require_openssl" == true ]]; then
+    # Deliberately omit a filename extension: PEM credentials are detected by
+    # content, while only binary PKCS#12 credentials require a .pfx suffix.
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=bootstrap-test' \
+        -keyout "$WORK_DIR/cert-key.pem" -out "$WORK_DIR/cert-public.pem" >/dev/null 2>&1
+    cat "$WORK_DIR/cert-public.pem" "$WORK_DIR/cert-key.pem" > "$WORK_DIR/client-certificate"
+    chmod 0600 "$WORK_DIR/client-certificate"
+
+    BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-cert-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
+    AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
+    AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
+    AKS_FLEX_NODE_SP_CLIENT_SECRET='environment-should-be-ignored' \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" \
+            --fetch-bootstrap-data \
+            --auth service-principal \
+            --sp-tenant-id base-tenant \
+            --sp-client-id cert-client \
+            --sp-client-certificate-file "$WORK_DIR/client-certificate" \
+            --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
+            --agent-pool-name aksflexnodes \
+            --resource-manager-endpoint "http://127.0.0.1:${port}" \
+            --install-dir "$WORK_DIR/fetch-cert-bin" \
+            --config-path "$WORK_DIR/fetch-cert-etc/config.json" >/dev/null
+
+    jq -e --arg certificateFile "$WORK_DIR/client-certificate" '
+      .azure.bootstrapToken.token == "fresh1.0123456789abcdef" and
+      .azure.servicePrincipal == {
+        "tenantId":"base-tenant",
+        "clientId":"cert-client",
+        "clientSecretFile":$certificateFile
+      } and
+      .components.kubernetes == "1.35.6"
+    ' "$WORK_DIR/fetch-cert-etc/config.json" >/dev/null
+
+    openssl pkcs12 -export -passout pass: -in "$WORK_DIR/cert-public.pem" \
+        -inkey "$WORK_DIR/cert-key.pem" -out "$WORK_DIR/client-certificate.pfx" >/dev/null 2>&1
+    chmod 0600 "$WORK_DIR/client-certificate.pfx"
+    BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-pfx-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
+    AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
+    AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" \
+            --fetch-bootstrap-data \
+            --auth service-principal \
+            --sp-tenant-id base-tenant \
+            --sp-client-id cert-client \
+            --sp-client-certificate-file "$WORK_DIR/client-certificate.pfx" \
+            --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
+            --agent-pool-name aksflexnodes \
+            --resource-manager-endpoint "http://127.0.0.1:${port}" \
+            --install-dir "$WORK_DIR/fetch-pfx-bin" \
+            --config-path "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
+    jq -e --arg certificateFile "$WORK_DIR/client-certificate.pfx" '
+      .azure.servicePrincipal.clientSecretFile == $certificateFile and
+      .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
+    ' "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
+fi
 
 echo "bootstrap script tests passed"
