@@ -165,6 +165,19 @@ func TestAzureClientOptionsFromConfig(t *testing.T) {
 	}
 }
 
+func TestClientCertificateCredentialOptionsSendCertificateChain(t *testing.T) {
+	t.Parallel()
+
+	clientOptions := azureClientOptionsFromConfig(testARMConfig(testClusterResourceID, "flex-node-1", "1.34.0"))
+	options := clientCertificateCredentialOptions(clientOptions)
+	if !options.SendCertificateChain {
+		t.Fatal("SendCertificateChain = false, want true for Subject Name/Issuer authentication")
+	}
+	if options.Cloud.ActiveDirectoryAuthorityHost != clientOptions.Cloud.ActiveDirectoryAuthorityHost {
+		t.Fatal("ClientOptions were not preserved")
+	}
+}
+
 func TestGetCredentialClientCertificateLoadError(t *testing.T) {
 	t.Parallel()
 
