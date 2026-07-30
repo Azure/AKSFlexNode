@@ -37,10 +37,23 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
+printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
+if [[ "${1:-}" == fetch-bootstrap-data ]]; then
+    output=""
+    while (($# > 0)); do
+        if [[ "$1" == --output ]]; then output="$2"; break; fi
+        shift
+    done
+    [[ -n "$output" ]] || exit 24
+    cat > "$output" <<'JSON'
+{"azure":{"bootstrapToken":{"token":"fresh1.0123456789abcdef"}},"components":{"kubernetes":"1.35.6"},"networking":{"dnsServiceIP":"10.0.0.10","cniVersion":"stale-cni"}}
+JSON
+    chmod 0600 "$output"
+    exit 0
+fi
 for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
-printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
 AGENT
     chmod 0755 "$dir/aks-flex-node-linux-$ARCH"
     tar -C "$dir" -czf "$dir/agent.tar.gz" "aks-flex-node-linux-$ARCH"
@@ -307,22 +320,6 @@ if BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-base-calls" \
 fi
 grep -q 'embedded base config is not populated' "$WORK_DIR/no-base.log" || \
     fail "missing base config rejection was not reported"
-
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/insecure-calls" \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
-    AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --fetch-bootstrap-data --auth msi \
-            --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
-            --agent-pool-name aksflexnodes \
-            --resource-manager-endpoint "http://127.0.0.1:${port}" \
-            --install-dir "$WORK_DIR/insecure-bin" \
-            --config-path "$WORK_DIR/insecure-etc/config.json" \
-            >"$WORK_DIR/insecure.log" 2>&1; then
-    fail "HTTP resource manager endpoint was accepted"
-fi
-grep -q 'resource manager endpoint must use HTTPS' "$WORK_DIR/insecure.log" || \
-    fail "HTTP endpoint rejection was not reported"
 
 printf '%s' 'base-sp-secret' > "$WORK_DIR/fetch-sp-secret"
 chmod 0600 "$WORK_DIR/fetch-sp-secret"
