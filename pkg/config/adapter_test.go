@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 func TestToAgentConfig_BootstrapToken(t *testing.T) {
@@ -139,6 +142,7 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 	if err := os.WriteFile(clientSecretFile, []byte("file-secret\n"), 0o600); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
+
 	cfg := &Config{
 		Azure: AzureConfig{
 			ServicePrincipal: &ServicePrincipalConfig{
@@ -162,6 +166,40 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 	}
 	if envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] != "file-secret" {
 		t.Fatalf("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET=%q, want file secret", envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"])
+	}
+}
+
+func TestToAgentConfig_ServicePrincipalCertificateFile(t *testing.T) {
+	t.Parallel()
+
+	certificateFile := filepath.Join(t.TempDir(), "client-certificate.pem")
+	writeTestClientCertificate(t, certificateFile)
+	cfg := &Config{
+		Azure: AzureConfig{
+			ServicePrincipal: &ServicePrincipalConfig{
+				TenantID:         "tenant-123",
+				ClientID:         "client-456",
+				ClientSecretFile: certificateFile,
+			},
+		},
+	}
+	if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
+		t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
+	}
+
+	exec := ToAgentConfig(cfg, "kube1").Kubelet.Auth.ExecCredential
+	if exec == nil {
+		t.Fatal("ExecCredential should be set for SP auth")
+	}
+	envMap := make(map[string]string)
+	for _, e := range exec.Env {
+		envMap[e.Name] = e.Value
+	}
+	if !slices.Equal(exec.Args, []string{"token", "kubelogin", "--server-id", aksAADServerID, "--client-certificate-file", certificateFile}) {
+		t.Fatalf("Args=%v, want kubelogin client-certificate-file args", exec.Args)
+	}
+	if _, ok := envMap["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"]; ok {
+		t.Fatal("AAD_SERVICE_PRINCIPAL_CLIENT_SECRET should not be set for certificate auth")
 	}
 }
 
@@ -295,6 +333,48 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 	}
 }
 
+func TestToAgentConfig_Gantry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		gantry       *GantryConfig
+		wantConfig   bool
+		wantDisabled bool
+	}{
+		{
+			name: "omitted is enabled by default",
+		},
+		{
+			name:       "explicitly enabled",
+			gantry:     &GantryConfig{},
+			wantConfig: true,
+		},
+		{
+			name:         "disabled",
+			gantry:       &GantryConfig{Disabled: true},
+			wantConfig:   true,
+			wantDisabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{Components: ComponentsConfig{Gantry: tt.gantry}}
+			ac := ToAgentConfig(cfg, "kube1")
+
+			if got := ac.Gantry != nil; got != tt.wantConfig {
+				t.Fatalf("Gantry config present=%t, want %t", got, tt.wantConfig)
+			}
+			if got := goalstates.ResolveGantry(ac.Gantry).Disabled; got != tt.wantDisabled {
+				t.Fatalf("Gantry.Disabled=%t, want %t", got, tt.wantDisabled)
+			}
+		})
+	}
+}
+
 func TestToAgentConfig_OfflineArtifacts(t *testing.T) {
 	t.Parallel()
 
@@ -328,6 +408,30 @@ func TestToAgentConfig_AdditionalHostDevices(t *testing.T) {
 	}
 	if ac.AdditionalHostDevices[0] != "/dev/uinput" || ac.AdditionalHostDevices[1] != "/dev/input/event0" {
 		t.Fatalf("AdditionalHostDevices=%#v", ac.AdditionalHostDevices)
+	}
+}
+
+func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Bootstrap: BootstrapConfig{
+			AdditionalHostMounts: []AdditionalHostMount{
+				{Source: "/opt/config", Target: "/etc/config", ReadOnly: true},
+				{Source: "/var/lib/example"},
+			},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+	if len(ac.AdditionalHostMounts) != 2 {
+		t.Fatalf("AdditionalHostMounts=%#v, want 2 entries", ac.AdditionalHostMounts)
+	}
+	if got := ac.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
+		t.Fatalf("AdditionalHostMounts[0]=%#v", got)
+	}
+	if got := ac.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
+		t.Fatalf("AdditionalHostMounts[1]=%#v", got)
 	}
 }
 

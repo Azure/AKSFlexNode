@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/kubelogin/pkg/token"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,6 +25,7 @@ const aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
 var flagServerID string
 var flagPopEnabled bool
 var flagPopClaims string
+var flagClientCertificateFile string
 
 var Command = &cobra.Command{
 	Use:          "kubelogin",
@@ -47,6 +49,10 @@ func init() {
 		&flagPopClaims, "pop-claims", "",
 		"Comma-separated list of key=value claims to include in the PoP token (e.g., 'u=cluster-resource-id').",
 	)
+	Command.Flags().StringVar(
+		&flagClientCertificateFile, "client-certificate-file", "",
+		"Path to the service principal client certificate file.",
+	)
 }
 
 func run(ctx context.Context, out io.Writer) error {
@@ -63,6 +69,12 @@ func run(ctx context.Context, out io.Writer) error {
 	tokOpts.ServerID = flagServerID
 	tokOpts.IsPoPTokenEnabled = flagPopEnabled
 	tokOpts.PoPTokenClaims = flagPopClaims
+	if flagClientCertificateFile != "" {
+		if err := validateClientCertificateFile(flagClientCertificateFile); err != nil {
+			return err
+		}
+		tokOpts.ClientCert = flagClientCertificateFile
+	}
 	// TODO: logging to show login details
 	provider, err := token.GetTokenProvider(tokOpts)
 	if err != nil {
@@ -74,6 +86,13 @@ func run(ctx context.Context, out io.Writer) error {
 	}
 
 	return outputToken(out, ec, accessToken)
+}
+
+func validateClientCertificateFile(certificateFile string) error {
+	if err := config.ValidateServicePrincipalCertificateFile(certificateFile); err != nil {
+		return fmt.Errorf("validate client certificate file: %w", err)
+	}
+	return nil
 }
 
 const execInfoEnv = "KUBERNETES_EXEC_INFO"

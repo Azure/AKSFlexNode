@@ -1,8 +1,14 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -808,14 +814,18 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			"kubernetes": "1.29.0",
 			"containerd": "2.0.5",
 			"runc": "1.2.3",
-			"sandboxImage": "registry.example.test/pause:3.9"
+			"sandboxImage": "registry.example.test/pause:3.9",
+			"gantry": {
+				"disabled": true
+			}
 		},
 		"bootstrap": {
 			"ociImage": "registry.example.test/flex/rootfs:ubuntu-24.04",
-			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
-		},
-		"bootstrap": {
-			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"]
+			"additionalHostDevices": ["/dev/uinput", "/dev/input/event0"],
+			"additionalHostMounts": [
+				{"source": "/opt/config", "target": "/etc/config", "readOnly": true},
+				{"source": "/var/lib/example"}
+			]
 		},
 		"networking": {
 			"dnsServiceIP": "10.42.0.10",
@@ -867,6 +877,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if len(cfg.Node.Taints) != 1 || cfg.Node.Taints[0] != "dedicated=flexnode:NoSchedule" {
 		t.Fatalf("Node.Taints = %#v, want dedicated=flexnode:NoSchedule", cfg.Node.Taints)
 	}
+	if cfg.Components.Gantry == nil || !cfg.Components.Gantry.Disabled {
+		t.Fatalf("Components.Gantry = %#v, want disabled", cfg.Components.Gantry)
+	}
 
 	agentCfg := ToAgentConfig(cfg, "flex-node-1")
 	if agentCfg.Cluster.Version != "1.29.0" {
@@ -881,6 +894,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if agentCfg.CRI.Containerd.SandboxImage != "registry.example.test/pause:3.9" {
 		t.Fatalf("Agent CRI.Containerd.SandboxImage = %q, want registry.example.test/pause:3.9", agentCfg.CRI.Containerd.SandboxImage)
 	}
+	if agentCfg.Gantry == nil || !agentCfg.Gantry.Disabled {
+		t.Fatalf("Agent Gantry = %#v, want disabled", agentCfg.Gantry)
+	}
 	if agentCfg.OCIImage != "registry.example.test/flex/rootfs:ubuntu-24.04" {
 		t.Fatalf("Agent OCIImage = %q, want registry.example.test/flex/rootfs:ubuntu-24.04", agentCfg.OCIImage)
 	}
@@ -890,8 +906,14 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if agentCfg.CRI.Runc.Version != "1.2.3" {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
 	}
-	if len(agentCfg.AdditionalHostDevices) != 2 || agentCfg.AdditionalHostDevices[0] != "/dev/uinput" || agentCfg.AdditionalHostDevices[1] != "/dev/input/event0" {
-		t.Fatalf("Agent AdditionalHostDevices = %#v", agentCfg.AdditionalHostDevices)
+	if len(agentCfg.AdditionalHostMounts) != 2 {
+		t.Fatalf("Agent AdditionalHostMounts = %#v, want 2 entries", agentCfg.AdditionalHostMounts)
+	}
+	if got := agentCfg.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
+		t.Fatalf("Agent AdditionalHostMounts[0] = %#v", got)
+	}
+	if got := agentCfg.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
+		t.Fatalf("Agent AdditionalHostMounts[1] = %#v", got)
 	}
 	if agentCfg.CNI.PluginVersion != "1.5.1" {
 		t.Fatalf("Agent CNI.PluginVersion = %q, want 1.5.1", agentCfg.CNI.PluginVersion)
@@ -943,6 +965,55 @@ func TestLoadConfigRejectsInvalidAdditionalHostDevice(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bootstrap.additionalHostDevices") {
 		t.Fatalf("LoadConfig() error = %v, want bootstrap.additionalHostDevices", err)
+	}
+}
+
+func TestBootstrapConfigValidatesAdditionalHostMounts(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		mounts  []AdditionalHostMount
+		wantErr string
+	}{
+		"valid read-only mount": {
+			mounts: []AdditionalHostMount{{Source: "/opt/config", Target: "/etc/config", ReadOnly: true}},
+		},
+		"valid nonexistent source with omitted target": {
+			mounts: []AdditionalHostMount{{Source: "/path/does/not/need/to/exist"}},
+		},
+		"relative source": {
+			mounts:  []AdditionalHostMount{{Source: "opt/config"}},
+			wantErr: "bootstrap.additionalHostMounts",
+		},
+		"unclean source": {
+			mounts:  []AdditionalHostMount{{Source: "/opt/../config"}},
+			wantErr: "clean absolute path",
+		},
+		"target with whitespace": {
+			mounts:  []AdditionalHostMount{{Source: "/opt/config", Target: "/etc/my config"}},
+			wantErr: "must not contain whitespace",
+		},
+		"target with colon": {
+			mounts:  []AdditionalHostMount{{Source: "/opt/config", Target: "/etc/config:bad"}},
+			wantErr: "must not contain whitespace, control characters, or ':'",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := (&BootstrapConfig{AdditionalHostMounts: tt.mounts}).validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("BootstrapConfig.validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("BootstrapConfig.validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -1747,7 +1818,7 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured",
+			errMsg:  "one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured",
 		},
 		{
 			name: "managed identity authentication enabled",
@@ -2062,6 +2133,7 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 	if err := os.WriteFile(validFile, []byte("file-secret\r\n"), 0o600); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
+
 	emptyFile := filepath.Join(dir, "empty")
 	if err := os.WriteFile(emptyFile, nil, 0o600); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
@@ -2090,12 +2162,12 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 		{
 			name:    "rejects missing file",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: filepath.Join(dir, "missing")},
-			wantErr: "stat service principal client secret file",
+			wantErr: "stat service principal credential file",
 		},
 		{
 			name:    "rejects empty file",
 			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: emptyFile},
-			wantErr: "service principal client secret file is empty",
+			wantErr: "service principal credential file is empty",
 		},
 		{
 			name:    "rejects insecure permissions",
@@ -2125,6 +2197,153 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 				t.Fatalf("ServicePrincipalConfig.ClientSecretFile = %q, want empty after loading", tt.config.ClientSecretFile)
 			}
 		})
+	}
+}
+
+func TestServicePrincipalCertificateFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validFile := filepath.Join(dir, "client-certificate.pem")
+	writeTestClientCertificate(t, validFile)
+	invalidFile := filepath.Join(dir, "invalid-certificate.pem")
+	if err := os.WriteFile(invalidFile, []byte("-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	insecureFile := filepath.Join(dir, "insecure")
+	writeTestClientCertificate(t, insecureFile)
+	if err := os.Chmod(insecureFile, 0o644); err != nil {
+		t.Fatalf("os.Chmod: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		config  *ServicePrincipalConfig
+		wantErr string
+	}{
+		{
+			name:   "loads certificate",
+			config: &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: validFile},
+		},
+		{
+			name:    "rejects secret and certificate",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret", ClientSecretFile: validFile},
+			wantErr: "only one of",
+		},
+		{
+			name:    "rejects malformed certificate",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: invalidFile},
+			wantErr: "parse service principal client certificate file",
+		},
+		{
+			name:    "rejects insecure permissions",
+			config:  &ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecretFile: insecureFile},
+			wantErr: "must not be accessible by group or other users",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.config.validate()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ServicePrincipalConfig.validate() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
+			}
+			certificates, privateKey, err := tt.config.LoadClientCertificate()
+			if err != nil {
+				t.Fatalf("ServicePrincipalConfig.LoadClientCertificate() error = %v", err)
+			}
+			if len(certificates) != 1 || privateKey == nil {
+				t.Fatalf("LoadClientCertificate() returned %d certificates and key %T", len(certificates), privateKey)
+			}
+			copied := (&Config{Azure: AzureConfig{ServicePrincipal: tt.config}}).DeepCopy()
+			if copied == nil || copied.Azure.ServicePrincipal.clientCertificateData() == "" {
+				t.Fatal("DeepCopy() did not preserve normalized client certificate data")
+			}
+		})
+	}
+}
+
+func TestValidatePKCS12FileSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		path    string
+		data    []byte
+		wantErr string
+	}{
+		{
+			name: "allows utf8 data with non-pfx suffix",
+			path: "client-secret",
+			data: []byte("client-secret"),
+		},
+		{
+			name: "allows binary data with pfx suffix",
+			path: "client-certificate.pfx",
+			data: []byte{0xff, 0x00, 0x01},
+		},
+		{
+			name:    "rejects binary data without pfx suffix",
+			path:    "client-certificate",
+			data:    []byte{0xff, 0x00, 0x01},
+			wantErr: "must use a .pfx suffix",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validatePKCS12FileSuffix(tt.path, tt.data)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("validatePKCS12FileSuffix() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validatePKCS12FileSuffix() error = %v", err)
+			}
+		})
+	}
+}
+
+func writeTestClientCertificate(t *testing.T, path string) {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-client"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	certificate, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate: %v", err)
+	}
+	privateKeyData, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("x509.MarshalPKCS8PrivateKey: %v", err)
+	}
+	data := append(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyData})...,
+	)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
 	}
 }
 
