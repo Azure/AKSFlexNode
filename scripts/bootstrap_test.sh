@@ -193,6 +193,9 @@ class Handler(BaseHTTPRequestHandler):
                     certificate_auth = (
                         header.get("alg") == "RS256" and
                         bool(header.get("x5t")) and
+                        isinstance(header.get("x5c"), list) and
+                        len(header["x5c"]) == 2 and
+                        all(base64.b64decode(certificate) for certificate in header["x5c"]) and
                         payload.get("iss") == "cert-client" and
                         payload.get("sub") == "cert-client" and
                         payload.get("aud", "").endswith("/base-tenant/oauth2/v2.0/token") and
@@ -366,16 +369,17 @@ jq -e --arg secretFile "$WORK_DIR/fetch-sp-secret" '
   .components.kubernetes == "1.35.6"
 ' "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
 
-require_openssl=true
-if ! command -v openssl >/dev/null; then
-    require_openssl=false
-fi
-if [[ "$require_openssl" == true ]]; then
-    # Deliberately omit a filename extension: PEM credentials are detected by
+command -v openssl >/dev/null || fail "openssl is required by the certificate bootstrap tests"
+# Deliberately omit a filename extension: PEM credentials are detected by
     # content, while only binary PKCS#12 credentials require a .pfx suffix.
-    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=bootstrap-test' \
-        -keyout "$WORK_DIR/cert-key.pem" -out "$WORK_DIR/cert-public.pem" >/dev/null 2>&1
-    cat "$WORK_DIR/cert-public.pem" "$WORK_DIR/cert-key.pem" > "$WORK_DIR/client-certificate"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=bootstrap-test-ca' \
+        -keyout "$WORK_DIR/ca-key.pem" -out "$WORK_DIR/ca-public.pem" >/dev/null 2>&1
+    openssl req -newkey rsa:2048 -nodes -subj '/CN=bootstrap-test-leaf' \
+        -keyout "$WORK_DIR/cert-key.pem" -out "$WORK_DIR/cert.csr" >/dev/null 2>&1
+    openssl x509 -req -days 1 -in "$WORK_DIR/cert.csr" \
+        -CA "$WORK_DIR/ca-public.pem" -CAkey "$WORK_DIR/ca-key.pem" -CAcreateserial \
+        -out "$WORK_DIR/cert-public.pem" >/dev/null 2>&1
+    cat "$WORK_DIR/cert-public.pem" "$WORK_DIR/ca-public.pem" "$WORK_DIR/cert-key.pem" > "$WORK_DIR/client-certificate"
     chmod 0600 "$WORK_DIR/client-certificate"
 
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-cert-calls" \
@@ -407,7 +411,8 @@ if [[ "$require_openssl" == true ]]; then
     ' "$WORK_DIR/fetch-cert-etc/config.json" >/dev/null
 
     openssl pkcs12 -export -passout pass: -in "$WORK_DIR/cert-public.pem" \
-        -inkey "$WORK_DIR/cert-key.pem" -out "$WORK_DIR/client-certificate.pfx" >/dev/null 2>&1
+        -inkey "$WORK_DIR/cert-key.pem" -certfile "$WORK_DIR/ca-public.pem" \
+        -out "$WORK_DIR/client-certificate.pfx" >/dev/null 2>&1
     chmod 0600 "$WORK_DIR/client-certificate.pfx"
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-pfx-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
@@ -429,6 +434,5 @@ if [[ "$require_openssl" == true ]]; then
       .azure.servicePrincipal.clientSecretFile == $certificateFile and
       .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
     ' "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
-fi
 
 echo "bootstrap script tests passed"

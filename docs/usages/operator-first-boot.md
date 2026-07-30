@@ -515,11 +515,13 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
 ```
 
 For certificate-based service-principal authentication, install a protected PEM
-file containing the certificate chain and RSA private key, or an unencrypted
-PKCS#12 file with a `.pfx` suffix. PEM detection is content-based, so its
-filename does not require a `.pem` suffix. Keep the file available for agent
+file containing the leaf-first certificate chain and RSA private key, or an
+unencrypted PKCS#12 file with a `.pfx` suffix. PEM detection is content-based, so
+its filename does not require a `.pem` suffix. Keep the file available for agent
 service restarts. Certificate-based `--fetch-bootstrap-data` also requires the
-`openssl` command on the host.
+`openssl` command on the host. Client assertions include the leaf thumbprint in
+`x5t` and the public chain in `x5c`, supporting both directly registered
+certificates and Microsoft Entra Subject Name/Issuer trust policies.
 
 ```bash
 install -o root -g root -m 0600 \

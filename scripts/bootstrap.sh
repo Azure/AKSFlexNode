@@ -214,6 +214,9 @@ check_prerequisites() {
     if [[ -n "$AGENT_SHA256" ]]; then
         require_command sha256sum
     fi
+    if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
+        require_command openssl
+    fi
 }
 
 write_base_config() {
@@ -390,34 +393,69 @@ base64url() {
     openssl base64 -A | tr '+/' '-_' | tr -d '='
 }
 
+split_pem_certificate_chain() {
+    local input="$1"
+    local output_dir="$2"
+    local start_index="${3:-0}"
+    awk -v outputDir="$output_dir" -v startIndex="$start_index" '
+        /-----BEGIN CERTIFICATE-----/ {
+            inCertificate = 1
+            certificateIndex++
+            output = sprintf("%s/%06d.pem", outputDir, startIndex + certificateIndex)
+        }
+        inCertificate { print > output }
+        /-----END CERTIFICATE-----/ {
+            close(output)
+            inCertificate = 0
+        }
+    ' "$input"
+}
+
 create_client_certificate_assertion() {
     local certificate_file="$1"
     local client_id="$2"
     local audience="$3"
     local output="$4"
-    local certificate_pem="$TEMP_DIR/sp-client-certificate.pem"
-    local private_key_pem="$TEMP_DIR/sp-client-private-key.pem"
-    local now expires jwt_id thumbprint header payload signing_input signature
+    local certificate_chain_dir="$TEMP_DIR/sp-client-certificate-chain"
+    local certificate_pem private_key_pem="$TEMP_DIR/sp-client-private-key.pem"
+    local now expires jwt_id thumbprint x5c header payload signing_input signature
 
     require_command openssl
+    mkdir -p "$certificate_chain_dir"
+    chmod 0700 "$certificate_chain_dir"
     if grep -aq -- '-----BEGIN CERTIFICATE-----' "$certificate_file"; then
-        openssl x509 -in "$certificate_file" -out "$certificate_pem" >/dev/null 2>&1 || \
-            fatal "failed to parse PEM client certificate"
+        split_pem_certificate_chain "$certificate_file" "$certificate_chain_dir"
         openssl pkey -in "$certificate_file" -out "$private_key_pem" >/dev/null 2>&1 || \
             fatal "failed to parse PEM client certificate private key"
     else
+        local leaf_bundle="$TEMP_DIR/sp-client-leaf-bundle.pem"
+        local ca_bundle="$TEMP_DIR/sp-client-ca-bundle.pem"
         [[ "$certificate_file" == *.pfx || "$certificate_file" == *.PFX ]] || \
             fatal "binary PFX client-certificate file must use a .pfx suffix"
-        openssl pkcs12 -in "$certificate_file" -clcerts -nokeys -passin pass: -out "$certificate_pem" >/dev/null 2>&1 || \
+        openssl pkcs12 -in "$certificate_file" -clcerts -nokeys -passin pass: -out "$leaf_bundle" >/dev/null 2>&1 || \
             fatal "failed to extract certificate from unencrypted PFX file"
+        split_pem_certificate_chain "$leaf_bundle" "$certificate_chain_dir"
+        local leaf_count
+        leaf_count=$(find "$certificate_chain_dir" -type f -name '*.pem' | wc -l)
+        if openssl pkcs12 -in "$certificate_file" -cacerts -nokeys -passin pass: -out "$ca_bundle" >/dev/null 2>&1; then
+            split_pem_certificate_chain "$ca_bundle" "$certificate_chain_dir" "$leaf_count"
+        fi
         openssl pkcs12 -in "$certificate_file" -nocerts -nodes -passin pass: -out "$private_key_pem" >/dev/null 2>&1 || \
             fatal "failed to extract private key from unencrypted PFX file"
     fi
-    chmod 0600 "$certificate_pem" "$private_key_pem"
+    certificate_pem=$(find "$certificate_chain_dir" -type f -name '*.pem' | sort | head -1)
+    [[ -n "$certificate_pem" ]] || fatal "client-certificate file does not contain a certificate"
+    chmod 0600 "$certificate_chain_dir"/*.pem "$private_key_pem"
     openssl rsa -in "$private_key_pem" -check -noout >/dev/null 2>&1 || \
         fatal "service-principal client certificate private key must be RSA"
 
     thumbprint=$(openssl x509 -in "$certificate_pem" -outform DER | openssl dgst -sha1 -binary | base64url)
+    x5c='[]'
+    local chain_certificate encoded_certificate
+    while IFS= read -r chain_certificate; do
+        encoded_certificate=$(openssl x509 -in "$chain_certificate" -outform DER | openssl base64 -A)
+        x5c=$(jq -cn --argjson chain "$x5c" --arg certificate "$encoded_certificate" '$chain + [$certificate]')
+    done < <(find "$certificate_chain_dir" -type f -name '*.pem' | sort)
     now=$(date +%s)
     expires=$((now + 600))
     if [[ -r /proc/sys/kernel/random/uuid ]]; then
@@ -425,7 +463,7 @@ create_client_certificate_assertion() {
     else
         jwt_id=$(openssl rand -hex 16)
     fi
-    header=$(jq -cn --arg x5t "$thumbprint" '{alg:"RS256",typ:"JWT",x5t:$x5t}' | base64url)
+    header=$(jq -cn --arg x5t "$thumbprint" --argjson x5c "$x5c" '{alg:"RS256",typ:"JWT",x5t:$x5t,x5c:$x5c}' | base64url)
     payload=$(jq -cn --arg aud "$audience" --arg iss "$client_id" --arg sub "$client_id" --arg jti "$jwt_id" \
         --argjson nbf "$((now - 60))" --argjson exp "$expires" \
         '{aud:$aud,iss:$iss,sub:$sub,jti:$jti,nbf:$nbf,exp:$exp}' | base64url)

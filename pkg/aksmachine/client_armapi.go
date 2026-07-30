@@ -175,7 +175,7 @@ func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.Cl
 				cfg.Azure.ServicePrincipal.ClientID,
 				certificates,
 				privateKey,
-				&azidentity.ClientCertificateCredentialOptions{ClientOptions: clientOpts},
+				clientCertificateCredentialOptions(clientOpts),
 			)
 		}
 		return azidentity.NewClientSecretCredential(
@@ -199,6 +199,13 @@ func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.Cl
 	default:
 		logger.Debug("falling back to default credential for ARM")
 		return azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{ClientOptions: clientOpts})
+	}
+}
+
+func clientCertificateCredentialOptions(clientOpts azcore.ClientOptions) *azidentity.ClientCertificateCredentialOptions {
+	return &azidentity.ClientCertificateCredentialOptions{
+		ClientOptions:        clientOpts,
+		SendCertificateChain: true,
 	}
 }
 

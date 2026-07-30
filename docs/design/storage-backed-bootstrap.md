@@ -554,10 +554,14 @@ config loads on preflight, start, and future service restarts, or be recreated
 by the credential manager before service startup.
 
 When certificate auth is also used to call `listBootstrapData`, the script uses
-OpenSSL to construct a short-lived RS256 client assertion with the certificate
-SHA-1 thumbprint (`x5t`) and exchanges it at the configured Microsoft Entra
-token endpoint. Assertion material and any PFX-extracted key are confined to the
-mode `0700` temporary workspace and removed on exit.
+OpenSSL to construct a short-lived RS256 client assertion with the leaf
+certificate SHA-1 thumbprint (`x5t`) and the leaf-first public certificate chain
+(`x5c`), then exchanges it at the configured Microsoft Entra token endpoint.
+`x5t` uses unpadded base64url while each `x5c` element uses standard base64 DER.
+Assertion material and any PFX-extracted key are confined to the mode `0700`
+temporary workspace and removed on exit. Long-running ARM auth enables Azure
+Identity's certificate-chain sending, and kubelogin already does the same for
+Kubernetes exec authentication.
 
 ## Agent download and installation
 
