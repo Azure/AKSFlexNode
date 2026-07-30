@@ -413,7 +413,6 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   curl \
   jq \
   nftables \
-  openssl \
   systemd-container \
   tar \
   util-linux
@@ -518,10 +517,11 @@ For certificate-based service-principal authentication, install a protected PEM
 file containing the leaf-first certificate chain and RSA private key, or an
 unencrypted PKCS#12 file with a `.pfx` suffix. PEM detection is content-based, so
 its filename does not require a `.pem` suffix. Keep the file available for agent
-service restarts. Certificate-based `--fetch-bootstrap-data` also requires the
-`openssl` command on the host. Client assertions include the leaf thumbprint in
-`x5t` and the public chain in `x5c`, supporting both directly registered
-certificates and Microsoft Entra Subject Name/Issuer trust policies.
+service restarts. The script delegates certificate authentication to the
+installed `aks-flex-node fetch-bootstrap-data` command; OpenSSL is not required
+on the host for assertion construction. Azure Identity sends the leaf
+thumbprint in `x5t` and the public chain in `x5c`, supporting both directly
+registered certificates and Microsoft Entra Subject Name/Issuer trust policies.
 
 ```bash
 install -o root -g root -m 0600 \

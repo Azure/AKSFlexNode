@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/AKSFlexNode/pkg/cmd/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/preflight"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/reset"
@@ -26,6 +27,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(start.NewCommand())
+	rootCmd.AddCommand(bootstrapdata.NewCommand())
 	rootCmd.AddCommand(preflight.NewCommand())
 	rootCmd.AddCommand(daemon.NewCommand())
 	rootCmd.AddCommand(reset.NewCommand())

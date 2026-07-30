@@ -2,8 +2,9 @@
 # AKS Flex Node first-boot script.
 #
 # Requirements: bash, curl, tar, and jq. sha256sum is required only when an
-# artifact checksum is configured. openssl is required when a service-principal
-# certificate is used to fetch bootstrap data. This script does not install dependencies.
+# artifact checksum is configured. Authentication and bootstrap-data retrieval
+# are delegated to the downloaded aks-flex-node binary. This script does not
+# install dependencies.
 #
 # A publisher can replace the marker in write_embedded_base_config with a
 # cluster/pool-specific partial config. When --fetch-bootstrap-data is used with
@@ -132,8 +133,8 @@ Environment overrides:
 
 A CLI credential-file flag overrides credential values inherited from the
 environment. When invoking through sudo, explicitly preserve the required
-environment variables. The script requires preinstalled bash, curl, tar, and
-jq; certificate-based bootstrap-data fetch also requires openssl.
+environment variables. The script requires preinstalled bash, curl, tar, and jq. The
+aks-flex-node binary owns MSI, secret, and certificate authentication.
 EOF
 }
 
@@ -214,9 +215,6 @@ check_prerequisites() {
     if [[ -n "$AGENT_SHA256" ]]; then
         require_command sha256sum
     fi
-    if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
-        require_command openssl
-    fi
 }
 
 write_base_config() {
@@ -292,257 +290,6 @@ is_true() {
     esac
 }
 
-resolve_fetch_auth_mode() {
-    local current="$1"
-    local mode="${AUTH_MODE,,}"
-    if [[ -z "$mode" ]]; then
-        if jq -e '.azure.managedIdentity != null' "$current" >/dev/null; then
-            mode=msi
-        elif jq -e '.azure.servicePrincipal != null' "$current" >/dev/null; then
-            mode=service-principal
-        else
-            fatal "fetching bootstrap data requires MSI or service-principal authentication"
-        fi
-    fi
-    case "$mode" in
-        msi|managed-identity) printf 'msi' ;;
-        sp|service-principal) printf 'service-principal' ;;
-        *) fatal "fetching bootstrap data does not support auth mode: $mode" ;;
-    esac
-}
-
-require_https_endpoint() {
-    local endpoint="$1"
-    local label="$2"
-    case "$endpoint" in
-        https://*) return 0 ;;
-        http://127.0.0.1:*|http://localhost:*)
-            is_true "$ALLOW_INSECURE_TEST_ENDPOINTS" && return 0
-            ;;
-    esac
-    fatal "$label must use HTTPS"
-}
-
-credential_file_looks_like_certificate() {
-    local path="$1"
-    case "$path" in
-        *.pfx|*.PFX) return 0 ;;
-    esac
-    grep -aq -- '-----BEGIN CERTIFICATE-----' "$path" ||
-        grep -aq -- '-----BEGIN PRIVATE KEY-----' "$path" ||
-        grep -aq -- '-----BEGIN RSA PRIVATE KEY-----' "$path"
-}
-
-resolve_sp_credential_kind() {
-    local current="$1"
-    if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
-        printf 'certificate'
-    elif [[ -n "$SP_CLIENT_SECRET_FILE" || -n "$SP_CLIENT_SECRET" ]]; then
-        printf 'secret'
-    else
-        local credential_file
-        credential_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
-        if [[ -n "$credential_file" ]]; then
-            check_credential_file_permissions "$credential_file"
-        fi
-        if [[ -n "$credential_file" ]] && credential_file_looks_like_certificate "$credential_file"; then
-            printf 'certificate'
-        else
-            printf 'secret'
-        fi
-    fi
-}
-
-resolve_sp_secret_file() {
-    local current="$1"
-    local secret_file="$SP_CLIENT_SECRET_FILE"
-    if [[ -n "$secret_file" ]]; then
-        check_secret_file_permissions "$secret_file"
-    elif [[ -n "$SP_CLIENT_SECRET" ]]; then
-        secret_file="$TEMP_DIR/fetch-sp-client-secret"
-        printf '%s' "$SP_CLIENT_SECRET" > "$secret_file"
-        chmod 0600 "$secret_file"
-    else
-        secret_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
-        if [[ -n "$secret_file" ]]; then
-            check_secret_file_permissions "$secret_file"
-            credential_file_looks_like_certificate "$secret_file" && \
-                fatal "service-principal bootstrap-data fetch requires a secret file, not a certificate file"
-        else
-            secret_file="$TEMP_DIR/fetch-sp-client-secret"
-            jq -er '.azure.servicePrincipal.clientSecret' "$current" > "$secret_file" || \
-                fatal "service-principal bootstrap-data fetch requires a client secret or clientSecretFile"
-            chmod 0600 "$secret_file"
-        fi
-    fi
-    printf '%s' "$secret_file"
-}
-
-resolve_sp_certificate_file() {
-    local current="$1"
-    local certificate_file="$SP_CLIENT_CERTIFICATE_FILE"
-    if [[ -z "$certificate_file" ]]; then
-        certificate_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
-    fi
-    [[ -n "$certificate_file" ]] || fatal "service-principal certificate authentication requires a certificate file"
-    check_certificate_file_permissions "$certificate_file"
-    printf '%s' "$certificate_file"
-}
-
-base64url() {
-    openssl base64 -A | tr '+/' '-_' | tr -d '='
-}
-
-split_pem_certificate_chain() {
-    local input="$1"
-    local output_dir="$2"
-    local start_index="${3:-0}"
-    awk -v outputDir="$output_dir" -v startIndex="$start_index" '
-        /-----BEGIN CERTIFICATE-----/ {
-            inCertificate = 1
-            certificateIndex++
-            output = sprintf("%s/%06d.pem", outputDir, startIndex + certificateIndex)
-        }
-        inCertificate { print > output }
-        /-----END CERTIFICATE-----/ {
-            close(output)
-            inCertificate = 0
-        }
-    ' "$input"
-}
-
-create_client_certificate_assertion() {
-    local certificate_file="$1"
-    local client_id="$2"
-    local audience="$3"
-    local output="$4"
-    local certificate_chain_dir="$TEMP_DIR/sp-client-certificate-chain"
-    local certificate_pem private_key_pem="$TEMP_DIR/sp-client-private-key.pem"
-    local now expires jwt_id thumbprint x5c header payload signing_input signature
-
-    require_command openssl
-    mkdir -p "$certificate_chain_dir"
-    chmod 0700 "$certificate_chain_dir"
-    if grep -aq -- '-----BEGIN CERTIFICATE-----' "$certificate_file"; then
-        split_pem_certificate_chain "$certificate_file" "$certificate_chain_dir"
-        openssl pkey -in "$certificate_file" -out "$private_key_pem" >/dev/null 2>&1 || \
-            fatal "failed to parse PEM client certificate private key"
-    else
-        local leaf_bundle="$TEMP_DIR/sp-client-leaf-bundle.pem"
-        local ca_bundle="$TEMP_DIR/sp-client-ca-bundle.pem"
-        [[ "$certificate_file" == *.pfx || "$certificate_file" == *.PFX ]] || \
-            fatal "binary PFX client-certificate file must use a .pfx suffix"
-        openssl pkcs12 -in "$certificate_file" -clcerts -nokeys -passin pass: -out "$leaf_bundle" >/dev/null 2>&1 || \
-            fatal "failed to extract certificate from unencrypted PFX file"
-        split_pem_certificate_chain "$leaf_bundle" "$certificate_chain_dir"
-        local leaf_count
-        leaf_count=$(find "$certificate_chain_dir" -type f -name '*.pem' | wc -l)
-        if openssl pkcs12 -in "$certificate_file" -cacerts -nokeys -passin pass: -out "$ca_bundle" >/dev/null 2>&1; then
-            split_pem_certificate_chain "$ca_bundle" "$certificate_chain_dir" "$leaf_count"
-        fi
-        openssl pkcs12 -in "$certificate_file" -nocerts -nodes -passin pass: -out "$private_key_pem" >/dev/null 2>&1 || \
-            fatal "failed to extract private key from unencrypted PFX file"
-    fi
-    certificate_pem=$(find "$certificate_chain_dir" -type f -name '*.pem' | sort | head -1)
-    [[ -n "$certificate_pem" ]] || fatal "client-certificate file does not contain a certificate"
-    chmod 0600 "$certificate_chain_dir"/*.pem "$private_key_pem"
-    openssl rsa -in "$private_key_pem" -check -noout >/dev/null 2>&1 || \
-        fatal "service-principal client certificate private key must be RSA"
-
-    thumbprint=$(openssl x509 -in "$certificate_pem" -outform DER | openssl dgst -sha1 -binary | base64url)
-    x5c='[]'
-    local chain_certificate encoded_certificate
-    while IFS= read -r chain_certificate; do
-        encoded_certificate=$(openssl x509 -in "$chain_certificate" -outform DER | openssl base64 -A)
-        x5c=$(jq -cn --argjson chain "$x5c" --arg certificate "$encoded_certificate" '$chain + [$certificate]')
-    done < <(find "$certificate_chain_dir" -type f -name '*.pem' | sort)
-    now=$(date +%s)
-    expires=$((now + 600))
-    if [[ -r /proc/sys/kernel/random/uuid ]]; then
-        jwt_id=$(</proc/sys/kernel/random/uuid)
-    else
-        jwt_id=$(openssl rand -hex 16)
-    fi
-    header=$(jq -cn --arg x5t "$thumbprint" --argjson x5c "$x5c" '{alg:"RS256",typ:"JWT",x5t:$x5t,x5c:$x5c}' | base64url)
-    payload=$(jq -cn --arg aud "$audience" --arg iss "$client_id" --arg sub "$client_id" --arg jti "$jwt_id" \
-        --argjson nbf "$((now - 60))" --argjson exp "$expires" \
-        '{aud:$aud,iss:$iss,sub:$sub,jti:$jti,nbf:$nbf,exp:$exp}' | base64url)
-    signing_input="${header}.${payload}"
-    signature=$(printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$private_key_pem" -binary | base64url)
-    printf '%s.%s' "$signing_input" "$signature" > "$output"
-    chmod 0600 "$output"
-}
-
-acquire_arm_token() {
-    local current="$1"
-    local arm_endpoint="$2"
-    local output="$3"
-    local mode token_response
-    mode=$(resolve_fetch_auth_mode "$current")
-    token_response="$TEMP_DIR/arm-token-response.json"
-
-    case "$mode" in
-        msi)
-            local client_id="$MSI_CLIENT_ID"
-            if [[ -z "$client_id" ]]; then
-                client_id=$(jq -r '.azure.managedIdentity.clientId // ""' "$current")
-            fi
-            local curl_args=(
-                -fsS --get
-                --connect-timeout 10 --max-time 60
-                --retry 3 --retry-delay 2 --retry-all-errors
-                -H 'Metadata: true'
-                --data-urlencode 'api-version=2018-02-01'
-                --data-urlencode "resource=${arm_endpoint%/}/"
-                -o "$token_response"
-            )
-            if [[ -n "$client_id" ]]; then
-                curl_args+=(--data-urlencode "client_id=$client_id")
-            fi
-            curl "${curl_args[@]}" "$IMDS_ENDPOINT" || fatal "failed to acquire managed identity ARM token"
-            ;;
-        service-principal)
-            local tenant_id="$SP_TENANT_ID"
-            local client_id="$SP_CLIENT_ID"
-            local credential_kind request_body token_url
-            [[ -n "$tenant_id" ]] || tenant_id=$(jq -er '.azure.servicePrincipal.tenantId // .azure.tenantId' "$current")
-            [[ -n "$client_id" ]] || client_id=$(jq -er '.azure.servicePrincipal.clientId' "$current")
-            require_https_endpoint "$AUTHORITY_HOST" "service-principal authority host"
-            token_url="${AUTHORITY_HOST%/}/${tenant_id}/oauth2/v2.0/token"
-            credential_kind=$(resolve_sp_credential_kind "$current")
-            request_body="$TEMP_DIR/sp-token-request"
-            case "$credential_kind" in
-                secret)
-                    local secret_file
-                    secret_file=$(resolve_sp_secret_file "$current")
-                    jq -nr --arg clientID "$client_id" --arg scope "${arm_endpoint%/}/.default" --rawfile clientSecret "$secret_file" '
-                        ($clientSecret | rtrimstr("\n") | rtrimstr("\r")) as $secret |
-                        "client_id=\($clientID | @uri)&client_secret=\($secret | @uri)&scope=\($scope | @uri)&grant_type=client_credentials"
-                    ' > "$request_body"
-                    ;;
-                certificate)
-                    local certificate_file assertion_file
-                    certificate_file=$(resolve_sp_certificate_file "$current")
-                    assertion_file="$TEMP_DIR/sp-client-assertion"
-                    create_client_certificate_assertion "$certificate_file" "$client_id" "$token_url" "$assertion_file"
-                    jq -nr --arg clientID "$client_id" --arg scope "${arm_endpoint%/}/.default" --rawfile assertion "$assertion_file" '
-                        "client_id=\($clientID | @uri)&client_assertion=\($assertion | @uri)&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&scope=\($scope | @uri)&grant_type=client_credentials"
-                    ' > "$request_body"
-                    ;;
-            esac
-            chmod 0600 "$request_body"
-            curl -fsS --connect-timeout 10 --max-time 60 \
-                --retry 3 --retry-delay 2 --retry-all-errors \
-                -H 'Content-Type: application/x-www-form-urlencoded' \
-                --data-binary "@$request_body" -o "$token_response" "$token_url" || \
-                fatal "failed to acquire service-principal ARM token"
-            ;;
-    esac
-
-    jq -erj '.access_token' "$token_response" > "$output" || fatal "ARM token response did not contain an access token"
-    chmod 0600 "$output"
-}
-
 apply_target_overrides() {
     local current="$1"
     local rendered="$TEMP_DIR/config-target.json"
@@ -562,41 +309,71 @@ apply_target_overrides() {
 
 fetch_latest_bootstrap_data() {
     local current="$1"
-    local arm_endpoint resource_id pool_name token_file header_file response merged url
+    local response="$TEMP_DIR/bootstrap-data.json"
+    local merged="$TEMP_DIR/config-with-bootstrap-data.json"
+    local mode="${AUTH_MODE,,}"
+    local arm_endpoint resource_id pool_name tenant_id client_id
+    local args
+
     arm_endpoint=$(jq -r '.azure.resourceManagerEndpoint // "https://management.azure.com"' "$current")
     resource_id=$(jq -er '.azure.targetCluster.resourceId' "$current")
     pool_name=$(jq -er '.azure.targetAgentPoolName' "$current")
-    require_https_endpoint "$arm_endpoint" "resource manager endpoint"
-    shopt -s nocasematch
-    if [[ ! "$resource_id" =~ ^/subscriptions/[^/?#[:space:]]+/resourceGroups/[^/?#[:space:]]+/providers/Microsoft\.ContainerService/managedClusters/[^/?#[:space:]]+$ ]]; then
-        shopt -u nocasematch
-        fatal "embedded config contains an invalid target cluster resource ID"
-    fi
-    shopt -u nocasematch
-    [[ "$pool_name" =~ ^[A-Za-z0-9-]+$ ]] || fatal "embedded config contains an invalid target agent pool name"
-    [[ "$BOOTSTRAP_DATA_API_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?$ ]] || \
-        fatal "bootstrap-data API version has an invalid format"
+    [[ -n "$mode" ]] || {
+        if jq -e '.azure.managedIdentity != null' "$current" >/dev/null; then
+            mode=msi
+        elif jq -e '.azure.servicePrincipal != null' "$current" >/dev/null; then
+            mode=service-principal
+        else
+            fatal "fetching bootstrap data requires MSI or service-principal authentication"
+        fi
+    }
 
-    token_file="$TEMP_DIR/arm-access-token"
-    header_file="$TEMP_DIR/arm-headers"
-    response="$TEMP_DIR/bootstrap-data.json"
-    merged="$TEMP_DIR/config-with-bootstrap-data.json"
-    acquire_arm_token "$current" "$arm_endpoint" "$token_file"
-    {
-        printf 'Authorization: Bearer '
-        cat "$token_file"
-        printf '\nContent-Type: application/json\n'
-    } > "$header_file"
-    chmod 0600 "$header_file"
+    args=(
+        fetch-bootstrap-data
+        --cluster-resource-id "$resource_id"
+        --agent-pool-name "$pool_name"
+        --auth "$mode"
+        --resource-manager-endpoint "$arm_endpoint"
+        --authority-host "$AUTHORITY_HOST"
+        --api-version "$BOOTSTRAP_DATA_API_VERSION"
+        --output "$response"
+    )
+    case "$mode" in
+        msi|managed-identity)
+            client_id="$MSI_CLIENT_ID"
+            [[ -n "$client_id" ]] || client_id=$(jq -r '.azure.managedIdentity.clientId // ""' "$current")
+            [[ -z "$client_id" ]] || args+=(--msi-client-id "$client_id")
+            ;;
+        sp|service-principal)
+            tenant_id="$SP_TENANT_ID"
+            client_id="$SP_CLIENT_ID"
+            [[ -n "$tenant_id" ]] || tenant_id=$(jq -er '.azure.servicePrincipal.tenantId // .azure.tenantId' "$current")
+            [[ -n "$client_id" ]] || client_id=$(jq -er '.azure.servicePrincipal.clientId' "$current")
+            args+=(--sp-tenant-id "$tenant_id" --sp-client-id "$client_id")
+            if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
+                args+=(--sp-client-certificate-file "$SP_CLIENT_CERTIFICATE_FILE")
+            elif [[ -n "$SP_CLIENT_SECRET_FILE" ]]; then
+                args+=(--sp-client-secret-file "$SP_CLIENT_SECRET_FILE")
+            elif [[ -n "$SP_CLIENT_SECRET" ]]; then
+                local secret_file="$TEMP_DIR/fetch-sp-client-secret"
+                printf '%s' "$SP_CLIENT_SECRET" > "$secret_file"
+                chmod 0600 "$secret_file"
+                args+=(--sp-client-secret-file "$secret_file")
+            else
+                local credential_file
+                credential_file=$(jq -r '.azure.servicePrincipal.clientSecretFile // ""' "$current")
+                if [[ -n "$credential_file" ]]; then
+                    args+=(--sp-client-credential-file "$credential_file")
+                else
+                    fatal "service-principal bootstrap-data fetch requires a credential file"
+                fi
+            fi
+            ;;
+        *) fatal "fetching bootstrap data does not support auth mode: $mode" ;;
+    esac
 
-    url="${arm_endpoint%/}${resource_id}/agentPools/${pool_name}/listBootstrapData?api-version=${BOOTSTRAP_DATA_API_VERSION}"
     log "fetching fresh bootstrap data from AKS RP"
-    curl -fsS --connect-timeout 10 --max-time 120 \
-        -X POST -H "@$header_file" --data '' -o "$response" "$url" || \
-        fatal "failed to fetch AKS bootstrap data"
-    chmod 0600 "$response"
-    jq -e 'type == "object" and (.azure.bootstrapToken.token | type == "string" and length > 0)' "$response" >/dev/null || \
-        fatal "AKS bootstrap-data response did not contain a bootstrap token"
+    "$INSTALL_DIR/aks-flex-node" "${args[@]}" || fatal "failed to fetch AKS bootstrap data"
     jq -s '.[0] * .[1]' "$current" "$response" > "$merged"
     mv -f "$merged" "$current"
 }
@@ -853,8 +630,8 @@ main() {
     local arch rendered_config
     arch=$(detect_architecture)
     rendered_config="$TEMP_DIR/config.json"
-    render_config "$rendered_config"
     download_and_install_agent "$arch"
+    render_config "$rendered_config"
     install_config "$rendered_config"
     clear_bootstrap_environment
 
