@@ -4,7 +4,7 @@ This guide summarizes common host and cluster operations for AKS Flex Node.
 
 ## Preflight
 
-Run preflight before mutating the host. The command validates the config, resolves the nspawn goal state, and checks host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources.
+Run preflight before mutating the host. The command validates the config, reads any existing AKS Machine, resolves the effective nspawn goal state, and checks host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources. An existing Machine is authoritative. When its goal differs from local configuration, preflight reports an error and validates bootstrap inputs derived from the Machine goal. If the Machine does not exist, preflight keeps the original config-only behavior.
 
 ```bash
 aks-flex-node preflight --config /etc/aks-flex-node/config.json
