@@ -1,0 +1,25 @@
+health-check.localdns.local:53 {
+    bind {{.NodeListener}} {{.ClusterListener}}
+    whoami
+}
+
+{{range .Blocks}}{{.Zone}}:53 {
+    {{if .LogQueries}}log{{else}}errors{{end}}
+    bind {{.Listener}}
+    forward . {{.Upstream}} {
+        {{if .ForceTCP}}force_tcp
+        {{end}}policy {{.ForwardPolicy}}
+        max_concurrent {{.MaxConcurrent}}
+    }
+    ready {{.Listener}}:8181
+    cache {{.CacheDuration}} {
+        success 9984
+        denial 9984
+        {{if .ServeStale}}serve_stale {{.ServeStaleDuration}}s {{.ServeStalePolicy}}
+        {{end}}servfail 0
+    }
+    loop
+    prometheus {{$.MetricsAddress}}
+}
+
+{{end}}

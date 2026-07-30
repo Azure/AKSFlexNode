@@ -131,7 +131,7 @@ func TestLocalDNSProfileValidation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			err := test.profile.validate()
+			err := test.profile.Validate()
 			if test.wantErr == "" && err != nil {
 				t.Fatalf("validate() error = %v", err)
 			}

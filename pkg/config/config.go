@@ -883,7 +883,7 @@ func (c *Config) validate() error {
 	if err := c.Bootstrap.validate(); err != nil {
 		return err
 	}
-	if err := c.Networking.LocalDNS.validate(); err != nil {
+	if err := c.Networking.LocalDNS.Validate(); err != nil {
 		return fmt.Errorf("invalid networking.localDNS: %w", err)
 	}
 
