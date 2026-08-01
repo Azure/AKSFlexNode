@@ -411,6 +411,9 @@ func (c *Config) setAgentDefaults() {
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode
 	}
+	if c.IsARCEnabled() || c.IsSPConfigured() || c.IsMIConfigured() {
+		c.Agent.RequireMachineRegistration = true
+	}
 }
 
 func (c *Config) setNodeDefaults() {

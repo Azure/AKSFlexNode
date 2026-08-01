@@ -181,6 +181,51 @@ func TestSetDefaults(t *testing.T) {
 				return c.Agent.RequireMachineRegistration
 			},
 		},
+		{
+			name: "managed identity requires machine registration",
+			config: &Config{Azure: AzureConfig{
+				ManagedIdentity: &ManagedIdentityConfig{},
+			}},
+			want: func(c *Config) bool {
+				return c.Agent.RequireMachineRegistration
+			},
+		},
+		{
+			name: "service principal requires machine registration",
+			config: &Config{Azure: AzureConfig{
+				ServicePrincipal: &ServicePrincipalConfig{
+					TenantID:     "tenant-id",
+					ClientID:     "client-id",
+					ClientSecret: "client-secret",
+				},
+			}},
+			want: func(c *Config) bool {
+				return c.Agent.RequireMachineRegistration
+			},
+		},
+		{
+			name: "Arc identity requires machine registration",
+			config: &Config{Azure: AzureConfig{
+				Arc: &ArcConfig{
+					Enabled:       true,
+					MachineName:   "machine-name",
+					ResourceGroup: "resource-group",
+					Location:      "eastus",
+				},
+			}},
+			want: func(c *Config) bool {
+				return c.Agent.RequireMachineRegistration
+			},
+		},
+		{
+			name: "bootstrap token does not require machine registration",
+			config: &Config{Azure: AzureConfig{
+				BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
+			}},
+			want: func(c *Config) bool {
+				return !c.Agent.RequireMachineRegistration
+			},
+		},
 	}
 
 	for _, tt := range tests {
