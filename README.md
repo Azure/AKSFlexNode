@@ -52,23 +52,10 @@ Your Flex Node machine and the AKS cluster must be able to reach each other. Con
 
 ### Prepare the cluster
 
-Before you join any nodes, the target AKS cluster must be set up with the Flex Node cluster-side components. A plain AKS cluster does **not** have them, and `aks-flex-node start` (Step 6) will hang, then fail with `wait for daemon controller certificate: context deadline exceeded` (see [Troubleshooting](#troubleshooting)).
+Before joining a node, prepare the target AKS cluster by following the [operator guide](docs/usages/operator-first-boot.md). It covers the FlexNodes pool, Unbounded networking, identity, RBAC, and node registration requirements that are not present on a standard AKS cluster.
 
 > **Note**
-> AKS Flex Node is alpha. Automatic cluster preparation through the AKS resource provider is not yet available, so today you prepare the cluster yourself. The [lab guides](docs/labs/README.md) provide a fully validated end-to-end setup and are the recommended path.
-
-The cluster needs three things:
-
-1. **A Flex-compatible CNI.** A default AKS CNI does not route pod traffic to Flex nodes. The validated CNI is [Unbounded-Net](https://github.com/Azure/unbounded); the [lab guides](docs/labs/README.md) create the cluster with `--network-plugin none` and install it.
-2. **The AKS Flex Controller** in `kube-system`, with the CSR approver enabled. It approves each node's daemon certificate and serves machine goal state. Deploy it from [`hack/controller-deployment/`](hack/controller-deployment/), ensuring the deployment runs with `--enable-csr-approver=true` (the checked-in manifest defaults to `false`):
-
-   ```bash
-   kubectl apply -k hack/controller-deployment/
-   kubectl -n kube-system rollout status deployment/aks-flex-controller
-   ```
-3. **A registered machine for each node.** The controller only approves a node whose machine is pre-registered in the `kube-system/aks-flex-machines` ConfigMap, keyed by node name. See [`docs/design/in-cluster-machine.md`](docs/design/in-cluster-machine.md) for the machine JSON shape and `hack/e2e/` for a working reference.
-
-For the fully scripted version of all of the above, run `hack/e2e/run.sh infra`.
+> The controller under `hack/controller-deployment/` is for E2E and development environments. Do not deploy it as part of the user quickstart.
 
 ### Step 1: Set your variables and connect to the cluster
 
@@ -340,22 +327,26 @@ kubectl delete node <node-name>
 
 ### Troubleshooting
 
-**`aks-flex-node start` hangs, then fails with `wait for daemon controller certificate: context deadline exceeded`.**
+**The node joins, but `aks-flex-node-agent` is restarting.**
 
-The node's daemon requested a certificate that nothing approved. This almost always means the cluster side is not fully prepared (see [Prepare the cluster](#prepare-the-cluster)). Check, from your workstation:
+Kubelet bootstrap and daemon authentication are separate. The Kubernetes node can become `Ready` while the long-running agent waits for approval of its daemon CSR.
+
+On the Flex Node machine:
 
 ```bash
-# Is the controller running?
-kubectl -n kube-system get deployment aks-flex-controller
-
-# Are daemon CSRs stuck Pending? (signer: kubernetes.io/kube-apiserver-client)
-kubectl get csr
-
-# Is this node registered as a machine?
-kubectl -n kube-system get configmap aks-flex-machines -o json | jq -r '.data | keys[]?'
+systemctl status aks-flex-node-agent
+journalctl -u aks-flex-node-agent --no-pager -n 200
 ```
 
-If the controller is missing, the CSR approver is disabled (`--enable-csr-approver=false`), or the node has no machine entry, the daemon certificate is never issued and the agent times out.
+From your workstation:
+
+```bash
+kubectl get csr
+```
+
+When the AKS Flex CSR approver is not available, inspect and manually approve the daemon CSR using the procedure in [Approve the daemon CSR when required](docs/usages/operator-first-boot.md#7-approve-the-daemon-csr-when-required).
+
+Manual approval is a temporary preview fallback. Verify that the CSR belongs to the expected node before approving it.
 
 ### Next steps
 
