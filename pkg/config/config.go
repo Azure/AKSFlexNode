@@ -1,7 +1,12 @@
 package config
 
 import (
+	"bytes"
+	"crypto"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/url"
 	"os"
@@ -9,6 +14,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
@@ -75,9 +83,11 @@ type AzureConfig struct {
 // ServicePrincipalConfig holds Azure service principal authentication configuration.
 // When provided, service principal authentication will be used instead of Azure CLI.
 type ServicePrincipalConfig struct {
-	TenantID     string `json:"tenantId"`     // Azure AD tenant ID
-	ClientID     string `json:"clientId"`     // Azure AD application (client) ID
-	ClientSecret string `json:"clientSecret"` // Azure AD application client secret
+	TenantID             string `json:"tenantId"`                   // Azure AD tenant ID
+	ClientID             string `json:"clientId"`                   // Azure AD application (client) ID
+	ClientSecret         string `json:"clientSecret,omitempty"`     // Azure AD application client secret
+	ClientSecretFile     string `json:"clientSecretFile,omitempty"` // File containing an Azure AD application client secret or certificate
+	clientCertificatePEM string
 }
 
 // ManagedIdentityConfig holds managed identity authentication configuration.
@@ -153,7 +163,7 @@ type AgentConfig struct {
 
 	// RequireMachineRegistration fails bootstrap if the AKS machine resource
 	// cannot be read or created. When false, registration is best-effort.
-	RequireMachineRegistration bool `json:"requireMachineRegistration,omitempty"`
+	RequireMachineRegistration *bool `json:"requireMachineRegistration,omitempty"`
 
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
@@ -174,10 +184,18 @@ type MachineClientConfig struct {
 // ComponentsConfig is the AKS RP component version contract used by the agent
 // at runtime.
 type ComponentsConfig struct {
-	Kubernetes   string `json:"kubernetes,omitempty"`
-	Containerd   string `json:"containerd,omitempty"`
-	Runc         string `json:"runc,omitempty"`
-	SandboxImage string `json:"sandboxImage,omitempty"`
+	Kubernetes   string        `json:"kubernetes,omitempty"`
+	Containerd   string        `json:"containerd,omitempty"`
+	Runc         string        `json:"runc,omitempty"`
+	SandboxImage string        `json:"sandboxImage,omitempty"`
+	Gantry       *GantryConfig `json:"gantry,omitempty"`
+}
+
+// GantryConfig holds optional Gantry integration settings.
+type GantryConfig struct {
+	// Disabled opts out of the Gantry containerd registry routing that the
+	// shared agent enables by default.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component
@@ -195,7 +213,15 @@ type BootstrapConfig struct {
 	// AdditionalHostDevices lists extra host device nodes under /dev to expose to
 	// the nspawn machine in addition to devices discovered by the shared agent.
 	AdditionalHostDevices []string `json:"additionalHostDevices,omitempty"`
+
+	// AdditionalHostMounts lists non-device host paths to bind mount into the
+	// nspawn machine. Read-only mounts should be preferred unless write access is
+	// required.
+	AdditionalHostMounts []AdditionalHostMount `json:"additionalHostMounts,omitempty"`
 }
+
+// AdditionalHostMount re-exports the shared agent's host bind-mount config.
+type AdditionalHostMount = agentconfig.AdditionalHostMount
 
 // OfflineArtifactsConfig mirrors Unbounded's OfflineArtifacts bootstrap
 // setting in the AKS Flex public config shape.
@@ -329,6 +355,9 @@ func (cfg *Config) DeepCopy() *Config {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil
 	}
+	if cfg.Azure.ServicePrincipal != nil && out.Azure.ServicePrincipal != nil {
+		out.Azure.ServicePrincipal.clientCertificatePEM = cfg.Azure.ServicePrincipal.clientCertificatePEM
+	}
 	return &out
 }
 
@@ -381,6 +410,10 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode
+	}
+	if c.Agent.RequireMachineRegistration == nil {
+		requireMachineRegistration := c.IsARCEnabled() || c.IsSPConfigured() || c.IsMIConfigured()
+		c.Agent.RequireMachineRegistration = &requireMachineRegistration
 	}
 }
 
@@ -578,10 +611,145 @@ func (c *ServicePrincipalConfig) validate() error {
 	if c.ClientID == "" {
 		return fmt.Errorf("azure.servicePrincipal.clientId is required when service principal is configured")
 	}
-	if c.ClientSecret == "" {
-		return fmt.Errorf("azure.servicePrincipal.clientSecret is required when service principal is configured")
+	if c.ClientSecret != "" && c.ClientSecretFile != "" {
+		return fmt.Errorf("only one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile can be configured")
+	}
+	if c.ClientSecret == "" && c.ClientSecretFile == "" {
+		return fmt.Errorf("one of azure.servicePrincipal.clientSecret or azure.servicePrincipal.clientSecretFile is required when service principal is configured")
+	}
+	if c.ClientSecretFile != "" {
+		absolutePath, err := filepath.Abs(c.ClientSecretFile)
+		if err != nil {
+			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: resolve absolute path: %w", err)
+		}
+		c.ClientSecretFile = absolutePath
+		data, err := LoadServicePrincipalCredentialFile(c.ClientSecretFile)
+		if err != nil {
+			return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
+		}
+		certificates, privateKey, certificateErr := azidentity.ParseCertificates(data, nil)
+		if certificateErr == nil {
+			if err := validatePKCS12FileSuffix(c.ClientSecretFile, data); err != nil {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
+			}
+			clientCertificatePEM, err := MarshalClientCertificatePEM(certificates, privateKey)
+			if err != nil {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: %w", err)
+			}
+			c.clientCertificatePEM = clientCertificatePEM
+		} else {
+			if credentialLooksLikeCertificate(data) {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: parse service principal client certificate file: %w", certificateErr)
+			}
+			c.ClientSecret = strings.TrimRight(string(data), "\r\n")
+			if c.ClientSecret == "" {
+				return fmt.Errorf("invalid azure.servicePrincipal.clientSecretFile: service principal credential file is empty")
+			}
+			c.ClientSecretFile = ""
+		}
 	}
 	return nil
+}
+
+// ValidateServicePrincipalCertificateFile verifies that a certificate credential
+// file is protected, well-formed, and compatible with service principal auth.
+func ValidateServicePrincipalCertificateFile(path string) error {
+	data, err := LoadServicePrincipalCredentialFile(path)
+	if err != nil {
+		return err
+	}
+	if err := validatePKCS12FileSuffix(path, data); err != nil {
+		return err
+	}
+	certificates, privateKey, err := azidentity.ParseCertificates(data, nil)
+	if err != nil {
+		return fmt.Errorf("parse service principal client certificate file: %w", err)
+	}
+	if _, err := MarshalClientCertificatePEM(certificates, privateKey); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LoadServicePrincipalCredentialFile reads a service principal credential file
+// after verifying it is a protected regular file.
+func LoadServicePrincipalCredentialFile(path string) ([]byte, error) {
+	cleanPath := filepath.Clean(path)
+	info, err := os.Lstat(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat service principal credential file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("service principal credential file must not be a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("service principal credential file must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("service principal credential file must not be accessible by group or other users")
+	}
+	data, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("read service principal credential file: %w", err)
+	}
+	return data, nil
+}
+
+func validatePKCS12FileSuffix(path string, data []byte) error {
+	if utf8.Valid(data) {
+		return nil
+	}
+	if !strings.EqualFold(filepath.Ext(path), ".pfx") {
+		return fmt.Errorf("PFX service principal credential files must use a .pfx suffix")
+	}
+	return nil
+}
+
+func credentialLooksLikeCertificate(data []byte) bool {
+	return bytes.Contains(data, []byte("-----BEGIN CERTIFICATE-----")) ||
+		bytes.Contains(data, []byte("-----BEGIN PRIVATE KEY-----")) ||
+		bytes.Contains(data, []byte("-----BEGIN RSA PRIVATE KEY-----")) ||
+		!utf8.Valid(data)
+}
+
+// LoadClientCertificate loads the service principal certificate and private key
+// from ClientSecretFile.
+func (c *ServicePrincipalConfig) LoadClientCertificate() ([]*x509.Certificate, crypto.PrivateKey, error) {
+	data := []byte(c.clientCertificatePEM)
+	if len(data) == 0 {
+		var err error
+		data, err = LoadServicePrincipalCredentialFile(c.ClientSecretFile)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	certificates, privateKey, err := azidentity.ParseCertificates(data, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse service principal client certificate file: %w", err)
+	}
+	return certificates, privateKey, nil
+}
+
+// MarshalClientCertificatePEM converts a client certificate chain and private
+// key into PKCS#8 PEM form for consumers that require PEM files.
+func MarshalClientCertificatePEM(certificates []*x509.Certificate, privateKey crypto.PrivateKey) (string, error) {
+	if _, ok := privateKey.(*rsa.PrivateKey); !ok {
+		return "", fmt.Errorf("service principal client certificate private key must be RSA")
+	}
+	privateKeyData, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal service principal client certificate private key: %w", err)
+	}
+	var data []byte
+	for _, certificate := range certificates {
+		data = append(data, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})...)
+	}
+	data = append(data, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyData})...)
+	return string(data), nil
+}
+
+func (c *ServicePrincipalConfig) clientCertificateData() string {
+	return c.clientCertificatePEM
 }
 
 func (c *ManagedIdentityConfig) validate() error {
@@ -631,6 +799,9 @@ func (c *BootstrapTokenConfig) validate() error {
 func (c *BootstrapConfig) validate() error {
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
+	}
+	if err := agentconfig.ValidateAdditionalHostMounts(c.AdditionalHostMounts); err != nil {
+		return fmt.Errorf("invalid bootstrap.additionalHostMounts: %w", err)
 	}
 
 	return nil

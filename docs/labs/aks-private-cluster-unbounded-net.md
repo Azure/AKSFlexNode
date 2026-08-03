@@ -2,7 +2,7 @@
 
 This guide shows how to create a private AKS cluster with no built-in CNI, install `unbounded-net`, connect a VM in another Azure region through VNet peering, and join that VM as an AKS Flex Node.
 
-The validated setup uses AKS private cluster mode with `--network-plugin none` and `unbounded-net` as the CNI. Because the AKS VNet and Flex VNet are privately reachable through VNet peering, the Unbounded configuration uses `SitePeering` with `meshNodes: false` and `tunnelProtocol: None`. Do not assign the Flex site to a gateway pool for this private-L3 topology.
+The validated setup uses AKS private cluster mode with `--network-plugin none` and `unbounded-net` as the CNI. Because the AKS VNet and Flex VNet are privately reachable through VNet peering, the Unbounded configuration uses `SitePeering` with `meshNodes: true` and `tunnelProtocol: Auto`. This lets `unbounded-net` own pod-to-pod connectivity through its mesh/tunnel datapath while Azure VNet peering provides node-to-node underlay reachability. Do not assign either site to a gateway pool for this topology.
 
 For unbounded-net concepts, custom resources, and operations, see the [Unbounded networking documentation](https://unbounded-cloud.io/concepts/networking/) and [unbounded-net operations guide](https://unbounded-cloud.io/reference/networking/operations/).
 
@@ -23,9 +23,9 @@ In this setup, `unbounded-net` does three important things:
 
 - Runs `unbounded-net-node` as a DaemonSet on AKS and Flex nodes. The node agent writes the host CNI config, watches `Site` and `SiteNodeSlice` resources, configures bridge/tunnel interfaces, and installs the routes needed for pod traffic.
 - Allocates per-node pod CIDRs from each site's `Site` resource.
-- Programs pod routes between the AKS site and Flex site using the existing VNet peering path.
+- Programs pod routes between the AKS site and Flex site using the existing VNet peering path as the node-to-node underlay.
 
-The private-L3 mode here is intentionally different from Unbounded's public gateway mode. Since the AKS VNet and Flex VNet are already peered, the sites use `SitePeering` with `meshNodes: false` and `tunnelProtocol: None` so node and pod traffic can use the private Azure network instead of a public gateway or WireGuard overlay.
+This VNet-peered mode is intentionally different from Unbounded's public gateway mode. Since the AKS VNet and Flex VNet are already peered, the sites use `SitePeering` with `meshNodes: true` and `tunnelProtocol: Auto` so `unbounded-net` can provide the CNI mesh for pod traffic without a public `GatewayPool` or WireGuard gateway.
 
 ## Topology
 
@@ -71,8 +71,8 @@ flowchart LR
     kubeProxyFlex -->|DNAT kubernetes service IP| privateEndpoint
     aksPods -->|ClusterIP service traffic| kubeProxyAks
     kubeProxyAks -->|DNAT kubernetes service IP| privateEndpoint
-    unboundedAks <-->|SitePeering<br/>meshNodes=false<br/>tunnelProtocol=None| unboundedFlex
-    workload <-->|Pod traffic over existing private L3| aksPods
+    unboundedAks <-->|SitePeering<br/>meshNodes=true<br/>tunnelProtocol=Auto| unboundedFlex
+    workload <-->|Pod traffic over unbounded-net mesh<br/>using VNet peering underlay| aksPods
 
     aksVnet ~~~ aksManaged
 
@@ -284,7 +284,7 @@ kubectl -n unbounded-net rollout status deploy/unbounded-net-controller --timeou
 kubectl -n unbounded-net rollout status ds/unbounded-net-node --timeout=5m
 ```
 
-## Create Sites And Private L3 Peering
+## Create Sites And Mesh Peering
 
 Create the AKS cluster site, the Flex site, and a `SitePeering` that tells `unbounded-net` the two sites are already privately reachable through VNet peering.
 
@@ -324,12 +324,12 @@ spec:
   sites:
   - cluster
   - flex-southcentralus
-  meshNodes: false
-  tunnelProtocol: None
+  meshNodes: true
+  tunnelProtocol: Auto
 EOF
 ```
 
-This topology does not need a public `GatewayPool`, and the Flex site does not need a gateway pool assignment. AKS control-plane-to-Flex-kubelet traffic should use the VNet peering path instead of unbounded-net's `unbounded0` interface.
+This topology does not need a public `GatewayPool`, and neither site needs a gateway pool assignment. AKS control-plane-to-Flex-kubelet traffic should use the VNet peering path, while pod-to-pod traffic is handled by the `unbounded-net` mesh selected by `tunnelProtocol: Auto`.
 
 Verify site assignment:
 
@@ -512,7 +512,7 @@ Expected result:
 ```text
 site.net.unbounded-cloud.io/cluster               ...   NODES   1   SLICES   1
 site.net.unbounded-cloud.io/flex-southcentralus   ...   NODES   1   SLICES   1
-sitepeering.net.unbounded-cloud.io/cluster-flex-private-l3   SITES   2   MESH NODES   false
+sitepeering.net.unbounded-cloud.io/cluster-flex-private-l3   SITES   2   MESH NODES   true
 ```
 
 Check pods on the Flex Node:
@@ -586,4 +586,6 @@ If `kubectl exec` or `kubectl logs` to a Flex pod fails with a `502` while the F
 ip route get <flex-vm-private-ip>
 ```
 
-For a VNet-peered/private-L3 setup, the route should use the Azure VNet path, not `unbounded0`. Do not assign the Flex site to a `GatewayPool`; that can advertise the Flex VNet CIDR as a gateway `NodeCidr` and hijack kubelet traffic.
+For this VNet-peered setup, the route to the Flex node IP should use the Azure VNet path, not `unbounded0`. Do not assign either site to a `GatewayPool`; that can advertise node CIDRs as gateway `NodeCidr` values and hijack kubelet traffic.
+
+If pod traffic between AKS and Flex pods fails, verify the `SitePeering` has `meshNodes: true` and `tunnelProtocol: Auto`, both VNet peering objects allow VNet access and forwarded traffic, and NSGs allow node-to-node traffic between the AKS VNet and Flex VNet.

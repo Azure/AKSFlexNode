@@ -96,7 +96,7 @@ Minimal config shape:
     "servicePrincipal": {
       "tenantId": "<tenant-id>",
       "clientId": "<client-id>",
-      "clientSecret": "<client-secret>"
+      "clientSecretFile": "/run/credentials/aks-flex-node-sp"
     },
     "arc": { "enabled": false },
     "targetCluster": {
@@ -107,7 +107,7 @@ Minimal config shape:
 }
 ```
 
-Store service principal credentials carefully and rotate them regularly.
+The credential file contains either the client secret or a PEM/unencrypted PFX application certificate and private key; the agent detects the credential type from its contents. PFX certificate files must use a `.pfx` suffix. The file must be a non-empty regular file with no group/world access (for example, mode 0600). Only one of `clientSecret` or `clientSecretFile` can be configured. Certificate authentication sends the leaf thumbprint (`x5t`) and public chain (`x5c`), supporting directly registered certificates and Subject Name/Issuer trust policies.
 
 ## Authentication Mode Selection
 

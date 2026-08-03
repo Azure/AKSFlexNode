@@ -1,7 +1,10 @@
 package aksmachine
 
 import (
+	"io"
+	"log/slog"
 	"math"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -150,6 +153,7 @@ func TestAzureClientOptionsFromConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("ResourceManager cloud service is missing")
 	}
+
 	if service.Endpoint != "https://management.example.test" {
 		t.Fatalf("ResourceManager endpoint = %q, want https://management.example.test", service.Endpoint)
 	}
@@ -158,6 +162,41 @@ func TestAzureClientOptionsFromConfig(t *testing.T) {
 	}
 	if opts.Cloud.ActiveDirectoryAuthorityHost != cloud.AzurePublic.ActiveDirectoryAuthorityHost {
 		t.Fatalf("authority host = %q, want public cloud", opts.Cloud.ActiveDirectoryAuthorityHost)
+	}
+}
+
+func TestClientCertificateCredentialOptionsSendCertificateChain(t *testing.T) {
+	t.Parallel()
+
+	clientOptions := azureClientOptionsFromConfig(testARMConfig(testClusterResourceID, "flex-node-1", "1.34.0"))
+	options := clientCertificateCredentialOptions(clientOptions)
+	if !options.SendCertificateChain {
+		t.Fatal("SendCertificateChain = false, want true for Subject Name/Issuer authentication")
+	}
+	if options.Cloud.ActiveDirectoryAuthorityHost != clientOptions.Cloud.ActiveDirectoryAuthorityHost {
+		t.Fatal("ClientOptions were not preserved")
+	}
+}
+
+func TestGetCredentialClientCertificateLoadError(t *testing.T) {
+	t.Parallel()
+
+	cfg := testARMConfig(testClusterResourceID, "flex-node-1", "1.34.0")
+	cfg.Azure.ServicePrincipal = &config.ServicePrincipalConfig{
+		TenantID:         "tenant",
+		ClientID:         "client",
+		ClientSecretFile: filepath.Join(t.TempDir(), "missing"),
+	}
+	credential, err := getCredential(
+		cfg,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		azureClientOptionsFromConfig(cfg),
+	)
+	if err == nil || !strings.Contains(err.Error(), "load service principal client certificate") {
+		t.Fatalf("getCredential() error = %v, want client certificate load error", err)
+	}
+	if credential != nil {
+		t.Fatalf("getCredential() = %T, want nil", credential)
 	}
 }
 

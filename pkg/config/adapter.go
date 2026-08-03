@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -30,6 +31,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
+		AdditionalHostMounts:  cfg.Bootstrap.AdditionalHostMounts,
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,
@@ -61,17 +63,32 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
+	if cfg.Components.Gantry != nil {
+		ac.Gantry = &agentconfig.GantryConfig{
+			Disabled: cfg.Components.Gantry.Disabled,
+		}
+	}
+
 	switch {
 	case cfg.IsBootstrapTokenConfigured():
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
 
 	case cfg.IsSPConfigured():
-		ac.Kubelet.Auth.ExecCredential = buildExecCredential(map[string]string{
-			"AAD_LOGIN_METHOD":                    "spn",
-			"AAD_SERVICE_PRINCIPAL_CLIENT_ID":     cfg.Azure.ServicePrincipal.ClientID,
-			"AAD_SERVICE_PRINCIPAL_CLIENT_SECRET": cfg.Azure.ServicePrincipal.ClientSecret,
-			"AZURE_TENANT_ID":                     cfg.Azure.ServicePrincipal.TenantID,
-		})
+		env := map[string]string{
+			"AAD_LOGIN_METHOD":                "spn",
+			"AAD_SERVICE_PRINCIPAL_CLIENT_ID": cfg.Azure.ServicePrincipal.ClientID,
+			"AZURE_TENANT_ID":                 cfg.Azure.ServicePrincipal.TenantID,
+		}
+		if cfg.Azure.ServicePrincipal.clientCertificateData() != "" {
+			ac.Kubelet.Auth.ExecCredential = buildExecCredential(
+				env,
+				"--client-certificate-file",
+				cfg.Azure.ServicePrincipal.ClientSecretFile,
+			)
+		} else {
+			env["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] = cfg.Azure.ServicePrincipal.ClientSecret
+			ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
+		}
 
 	case cfg.IsMIConfigured():
 		env := map[string]string{
@@ -89,9 +106,9 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 // ResolveMachineGoalState converts FlexNode config to the shared agent config
 // and resolves the nspawn machine goal state. Bootstrap and preflight both use
 // this helper so preflight validates the same sources that bootstrap consumes.
-func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	agentCfg := ToAgentConfig(cfg, machineName)
-	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(agentCfg, nil)
+	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(ctx, agentCfg, nil)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve download overrides: %w", err)
 	}
@@ -106,16 +123,17 @@ func ResolveMachineGoalState(log *slog.Logger, cfg *Config, machineName string) 
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node
 // binary as a credential plugin. The binary's `token kubelogin` subcommand
 // uses kubelogin to obtain an Azure AD token for the AKS API server.
-func buildExecCredential(env map[string]string) *clientcmdapi.ExecConfig {
+func buildExecCredential(env map[string]string, args ...string) *clientcmdapi.ExecConfig {
 	execEnv := make([]clientcmdapi.ExecEnvVar, 0, len(env))
 	for k, v := range env {
 		execEnv = append(execEnv, clientcmdapi.ExecEnvVar{Name: k, Value: v})
 	}
+	execArgs := append([]string{"token", "kubelogin", "--server-id", aksAADServerID}, args...)
 
 	return &clientcmdapi.ExecConfig{
 		APIVersion:         "client.authentication.k8s.io/v1",
 		Command:            flexNodeBinaryPath,
-		Args:               []string{"token", "kubelogin", "--server-id", aksAADServerID},
+		Args:               execArgs,
 		Env:                execEnv,
 		InteractiveMode:    clientcmdapi.NeverExecInteractiveMode,
 		ProvideClusterInfo: false,
