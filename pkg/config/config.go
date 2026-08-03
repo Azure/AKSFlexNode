@@ -163,7 +163,7 @@ type AgentConfig struct {
 
 	// RequireMachineRegistration fails bootstrap if the AKS machine resource
 	// cannot be read or created. When false, registration is best-effort.
-	RequireMachineRegistration bool `json:"requireMachineRegistration,omitempty"`
+	RequireMachineRegistration *bool `json:"requireMachineRegistration,omitempty"`
 
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
@@ -411,8 +411,9 @@ func (c *Config) setAgentDefaults() {
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode
 	}
-	if c.IsARCEnabled() || c.IsSPConfigured() || c.IsMIConfigured() {
-		c.Agent.RequireMachineRegistration = true
+	if c.Agent.RequireMachineRegistration == nil {
+		requireMachineRegistration := c.IsARCEnabled() || c.IsSPConfigured() || c.IsMIConfigured()
+		c.Agent.RequireMachineRegistration = &requireMachineRegistration
 	}
 }
 

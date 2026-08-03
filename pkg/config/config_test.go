@@ -82,6 +82,9 @@ func TestMachineClientConfigInClusterEndpointURL(t *testing.T) {
 }
 
 func TestSetDefaults(t *testing.T) {
+	boolPtr := func(value bool) *bool {
+		return &value
+	}
 	tests := []struct {
 		name   string
 		config *Config
@@ -176,9 +179,19 @@ func TestSetDefaults(t *testing.T) {
 		},
 		{
 			name:   "require machine registration is preserved",
-			config: &Config{Agent: AgentConfig{RequireMachineRegistration: true}},
+			config: &Config{Agent: AgentConfig{RequireMachineRegistration: boolPtr(true)}},
 			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration
+				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
+			},
+		},
+		{
+			name: "explicit best-effort machine registration is preserved for managed identity",
+			config: &Config{
+				Agent: AgentConfig{RequireMachineRegistration: boolPtr(false)},
+				Azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}},
+			},
+			want: func(c *Config) bool {
+				return c.Agent.RequireMachineRegistration != nil && !*c.Agent.RequireMachineRegistration
 			},
 		},
 		{
@@ -187,7 +200,7 @@ func TestSetDefaults(t *testing.T) {
 				ManagedIdentity: &ManagedIdentityConfig{},
 			}},
 			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration
+				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
 			},
 		},
 		{
@@ -200,7 +213,7 @@ func TestSetDefaults(t *testing.T) {
 				},
 			}},
 			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration
+				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
 			},
 		},
 		{
@@ -214,7 +227,7 @@ func TestSetDefaults(t *testing.T) {
 				},
 			}},
 			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration
+				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
 			},
 		},
 		{
@@ -223,7 +236,7 @@ func TestSetDefaults(t *testing.T) {
 				BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 			}},
 			want: func(c *Config) bool {
-				return !c.Agent.RequireMachineRegistration
+				return c.Agent.RequireMachineRegistration != nil && !*c.Agent.RequireMachineRegistration
 			},
 		},
 	}
