@@ -59,10 +59,11 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return fmt.Errorf("create AKS machine client: %w", err)
 	}
 	start := time.Now()
+	requireMachineRegistration := cfg.Agent.RequireMachineRegistration != nil && *cfg.Agent.RequireMachineRegistration
 	if err := phases.ExecuteTask(ctx, logger, aksmachine.EnsureMachine(
 		machines,
 		&goal,
-		cfg.Agent.RequireMachineRegistration,
+		requireMachineRegistration,
 		logger,
 	)); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
