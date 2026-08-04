@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -84,9 +86,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	// TODO: This per-goal config copy/mutation is not ideal. Refactor goal-state
 	// resolution to avoid rewriting shared config-shaped data here.
 	cfg := o.cfg.DeepCopy()
-	if goal.KubernetesVersion != "" {
-		cfg.Components.Kubernetes = goal.KubernetesVersion
-	}
+	applyMachineGoalToConfig(cfg, goal)
 	oldMachine := active.Name
 	newMachine := goalstates.AlternateMachine(oldMachine)
 	log.Info("starting nspawn machine goal-state apply",
@@ -112,6 +112,30 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		return nil, fmt.Errorf("apply machine goal state: %w", err)
 	}
 	return newState, nil
+}
+
+func applyMachineGoalToConfig(cfg *config.Config, goal aksmachine.GoalState) {
+	if goal.KubernetesVersion != "" {
+		cfg.Components.Kubernetes = goal.KubernetesVersion
+	}
+	// Zero values represent fields omitted by the Machine API. Preserve local
+	// defaults in that case; non-nil empty labels or taints still explicitly
+	// clear those collections.
+	if goal.MaxPods != 0 {
+		cfg.Node.MaxPods = goal.MaxPods
+	}
+	if goal.NodeLabels != nil {
+		cfg.Node.Labels = maps.Clone(goal.NodeLabels)
+	}
+	if goal.NodeTaints != nil {
+		cfg.Node.Taints = slices.Clone(goal.NodeTaints)
+	}
+	if goal.KubeletConfig.ImageGCHighThreshold != 0 {
+		cfg.Node.Kubelet.ImageGCHighThreshold = goal.KubeletConfig.ImageGCHighThreshold
+	}
+	if goal.KubeletConfig.ImageGCLowThreshold != 0 {
+		cfg.Node.Kubelet.ImageGCLowThreshold = goal.KubeletConfig.ImageGCLowThreshold
+	}
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {
