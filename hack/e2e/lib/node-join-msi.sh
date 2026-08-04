@@ -15,6 +15,63 @@ readonly _E2E_NODE_JOIN_MSI_LOADED=1
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ---------------------------------------------------------------------------
+# prepare_localdns_host_resolver - Remove DHCP search/routing domains.
+#
+# Unbounded intentionally rejects systemd-resolved split-DNS layouts because
+# flattening per-domain routing into one LocalDNS upstream list changes DNS
+# semantics. Azure's Ubuntu image supplies a DHCP search domain by default, so
+# put the disposable E2E host into the supported single-upstream layout before
+# LocalDNS preflight runs.
+# ---------------------------------------------------------------------------
+prepare_localdns_host_resolver() {
+  local vm_ip="$1"
+
+  log_info "Configuring the MSI host resolver for LocalDNS..."
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+set -euo pipefail
+
+interface="$(ip -4 route show default | awk 'NR == 1 { print $5 }')"
+if [[ ! "${interface}" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then
+  echo "could not determine a safe primary interface name: ${interface}" >&2
+  exit 1
+fi
+
+cat > /etc/netplan/99-aks-flex-localdns.yaml <<EOF
+network:
+  version: 2
+  ethernets:
+    ${interface}:
+      dhcp4-overrides:
+        use-domains: false
+EOF
+chmod 0600 /etc/netplan/99-aks-flex-localdns.yaml
+netplan generate
+netplan apply
+
+# Match Unbounded's supported-domain rule: no domain is allowed except the
+# catch-all routing domain (~.).
+if resolvectl domain | awk -F: '
+  {
+    for (i = 2; i <= NF; i++) {
+      count = split($i, domains, /[[:space:]]+/)
+      for (j = 1; j <= count; j++)
+        if (domains[j] != "" && domains[j] != "~.")
+          found = 1
+    }
+  }
+  END { exit !found }
+'; then
+  echo "unsupported systemd-resolved domain remains after netplan apply:" >&2
+  resolvectl domain >&2
+  exit 1
+fi
+
+resolvectl domain
+resolvectl dns "${interface}"
+REMOTE
+}
+
+# ---------------------------------------------------------------------------
 # node_join_msi - Join the MSI VM
 # ---------------------------------------------------------------------------
 node_join_msi() {
@@ -107,7 +164,10 @@ node_join_msi() {
 }
 EOF
 
-  # Step 2: Publish the AKS Machine goal and deploy the agent.
+  # Step 2: Put systemd-resolved into the layout supported by LocalDNS.
+  prepare_localdns_host_resolver "${vm_ip}"
+
+  # Step 3: Publish the AKS Machine goal and deploy the agent.
   ensure_flex_controller
   machine_configmap_upsert "$(state_get msi_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-msi"

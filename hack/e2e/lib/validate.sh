@@ -178,15 +178,19 @@ set -euo pipefail
 machine=$(sudo machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
 test -n "${machine}"
 sudo systemd-run --quiet --pipe --wait --machine="${machine}" systemctl is-active --quiet localdns.service
-sudo systemd-run --quiet --pipe --wait --machine="${machine}" grep -qx 'nameserver 169.254.10.10' /etc/resolv.conf
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" \
+  grep -qx 'nameserver 169.254.10.10' /etc/unbounded/localdns/resolv.conf
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" \
+  systemctl cat kubelet.service | grep -q -- '--resolv-conf=/etc/unbounded/localdns/resolv.conf'
 sudo ip address show dev localdns | grep -q '169.254.10.10/32'
 sudo ip address show dev localdns | grep -q '169.254.10.11/32'
-for chain in OUTPUT PREROUTING; do
+for chain in output prerouting; do
+  rules="$(sudo nft list chain ip unbounded_localdns "${chain}")"
   for address in 169.254.10.10 169.254.10.11; do
     for protocol in tcp udp; do
-      sudo iptables -w -t raw -C "${chain}" -m comment \
-        --comment 'unbounded-localdns: skip conntrack' \
-        -p "${protocol}" -d "${address}" --dport 53 -j NOTRACK
+      grep -Fq \
+        "ip daddr ${address} ${protocol} dport 53 notrack comment \"unbounded-localdns: skip conntrack\"" \
+        <<<"${rules}"
     done
   done
 done
