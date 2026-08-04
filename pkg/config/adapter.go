@@ -48,6 +48,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
 			Labels:             labels,
 			RegisterWithTaints: cfg.Node.Taints,
+			Configuration:      kubeletConfiguration(cfg),
 		},
 		CRI: agentconfig.CRIConfig{
 			Containerd: agentconfig.ContainerdConfig{
@@ -74,6 +75,13 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			state = "enabled"
 		}
 		labels["kubernetes.azure.com/localdns-state"] = state
+	}
+
+	if provider := cfg.Node.Kubelet.ImageCredentialProvider; provider != nil {
+		ac.Kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
+			ConfigPath: provider.ConfigPath,
+			BinDir:     provider.BinDir,
+		}
 	}
 
 	if cfg.Bootstrap.OfflineArtifacts.Source != "" {
@@ -120,6 +128,17 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	}
 
 	return ac
+}
+
+func kubeletConfiguration(cfg *Config) map[string]any {
+	return map[string]any{
+		"maxPods":                     cfg.Node.MaxPods,
+		"imageGCHighThresholdPercent": cfg.Node.Kubelet.ImageGCHighThreshold,
+		"imageGCLowThresholdPercent":  cfg.Node.Kubelet.ImageGCLowThreshold,
+		"logging": map[string]any{
+			"verbosity": cfg.Node.Kubelet.Verbosity,
+		},
+	}
 }
 
 // ResolveMachineGoalState converts FlexNode config to the shared agent config

@@ -251,6 +251,17 @@ type KubeletConfig struct {
 	ClusterFQDN          string `json:"clusterFQDN,omitempty"` // Kubernetes API server FQDN from AKS RP bootstrap data
 	CACertData           string `json:"caCertData"`            // Base64-encoded CA certificate data
 	NodeIP               string `json:"nodeIP"`                // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+
+	// ImageCredentialProvider configures kubelet's exec image credential
+	// provider. The referenced paths are inside the nspawn machine.
+	ImageCredentialProvider *ImageCredentialProviderConfig `json:"imageCredentialProvider,omitempty"`
+}
+
+// ImageCredentialProviderConfig identifies the exec image credential provider
+// configuration and binary directory inside the nspawn machine.
+type ImageCredentialProviderConfig struct {
+	ConfigPath string `json:"configPath"`
+	BinDir     string `json:"binDir"`
 }
 
 // NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
@@ -886,6 +897,9 @@ func (c *Config) validate() error {
 	if err := c.Networking.LocalDNS.Validate(); err != nil {
 		return fmt.Errorf("invalid networking.localDNS: %w", err)
 	}
+	if err := c.Node.Kubelet.validate(); err != nil {
+		return err
+	}
 
 	if err := c.validateAuthSettings(); err != nil {
 		return err
@@ -894,6 +908,20 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid bootstrap token configuration: %w", err)
 	}
 
+	return nil
+}
+
+func (c *KubeletConfig) validate() error {
+	kubelet := agentconfig.AgentKubeletConfig{}
+	if c.ImageCredentialProvider != nil {
+		kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
+			ConfigPath: c.ImageCredentialProvider.ConfigPath,
+			BinDir:     c.ImageCredentialProvider.BinDir,
+		}
+	}
+	if err := kubelet.Validate(); err != nil {
+		return fmt.Errorf("invalid node.kubelet configuration: %w", err)
+	}
 	return nil
 }
 
