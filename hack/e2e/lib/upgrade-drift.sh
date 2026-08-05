@@ -251,7 +251,8 @@ test -n "${machine}"
 ! ip link show localdns >/dev/null 2>&1
 ! iptables -w -t raw -S | grep -q 'unbounded-localdns: skip conntrack'
 systemd-run --quiet --pipe --wait --machine="${machine}" \
-  grep -q -- "--cluster-dns=${CLUSTER_DNS}" /etc/systemd/system/kubelet.service.d/20-node-config.conf
+  grep -A1 -F 'clusterDNS:' /var/lib/kubelet/config.yaml \
+  | grep -q -F -- "- ${CLUSTER_DNS}"
 REMOTE
 
   log_success "MSI LocalDNS disable-through-repave validation passed"
