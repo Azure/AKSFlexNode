@@ -69,6 +69,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	upgrades, err := newHostAgentUpgradeExecutor(log, operator)
+	if err != nil {
+		return err
+	}
+	directClient, err := client.New(restCfg, client.Options{Scheme: newScheme()})
+	if err != nil {
+		return fmt.Errorf("create direct Kubernetes client: %w", err)
+	}
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,
@@ -87,6 +95,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		AKSMachineName:       aksMachineName,
 		MachineOperationMode: cfg.Agent.MachineOperationMode,
 		Operator:             repaves.operator,
+		AgentUpgrade:         upgrades,
 	})
 	if err != nil {
 		return err
@@ -95,7 +104,22 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return fmt.Errorf("setup daemon controller: %w", err)
 	}
 
+	publishCtx, stopPublisher := context.WithCancel(ctx)
+	defer stopPublisher()
+	go func() {
+		// Success is only safe to publish after manager startup has reached cache
+		// readiness. If startup fails, systemd retains the signal and recovers.
+		if !mgr.GetCache().WaitForCacheSync(publishCtx) {
+			return
+		}
+		if err := publishAndClearAgentUpgradeSignal(publishCtx, log, directClient, upgrades); err != nil {
+			log.Warn("failed to publish AgentUpgrade startup result", "error", err)
+		}
+		retryAgentUpgradeSignal(publishCtx, log, directClient, upgrades)
+	}()
+
 	err = mgr.Start(ctx)
+	stopPublisher()
 	repaves.log.Info("daemon shutting down")
 	return err
 }

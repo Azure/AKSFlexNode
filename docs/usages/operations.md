@@ -47,6 +47,33 @@ systemctl is-active aks-flex-node-agent
 journalctl -u aks-flex-node-agent -f
 ```
 
+## Managed Agent Upgrade
+
+When the Machina `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTPS release archive and the SHA-256 of the compressed archive:
+
+```yaml
+apiVersion: unbounded-cloud.io/v1alpha3
+kind: MachineOperation
+metadata:
+  name: upgrade-agent-worker-01
+spec:
+  machineRef: worker-01
+  operationKind: AgentUpgrade
+  parameters:
+    downloadURL: https://example.com/aks-flex-node-linux-amd64.tar.gz
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+The archive must contain exactly the architecture-specific release member used by AKS Flex Node (`aks-flex-node-linux-amd64` or `aks-flex-node-linux-arm64`). The daemon verifies the archive digest and candidate `version` command before switching its blue/green binary links. It also atomically updates the binary in the active nspawn rootfs so kubelet exec authentication uses the same version.
+
+The restarted daemon marks the operation `Complete`. If the candidate cannot remain running, systemd restores the last-known-good host and nspawn binaries and marks the operation `Failed`. URL query strings, which may contain SAS credentials, are omitted from logs and operation status.
+
+MachineOperations are cluster-scoped. The daemon group requires cluster-wide read access to MachineOperations and Nodes, plus MachineOperation status update access, so restrict who can create operations and treat parameter values as sensitive API data. Prefer short-lived, read-only download credentials.
+
+```bash
+kubectl get machineoperation upgrade-agent-worker-01 -w
+```
+
 ## Nspawn Worker
 
 Inspect the local nspawn-backed worker:

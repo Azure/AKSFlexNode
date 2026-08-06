@@ -2,7 +2,8 @@
 Description=AKS Flex Node Agent
 After=network-online.target
 Wants=network-online.target
-# Restart on failure to enable auto-recovery
+OnFailure=aks-flex-node-agent-recovery.service
+# Trigger last-good recovery after the upgraded daemon repeatedly fails.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

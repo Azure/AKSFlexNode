@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -25,11 +26,13 @@ type machineOperationReconcilerOptions struct {
 	AKSMachineName       string
 	MachineOperationMode string
 	Operator             nodeOperator
+	AgentUpgrade         agentUpgradeExecutor
 }
 
 type machineOperationHandlers struct {
-	log      *slog.Logger
-	operator nodeOperator
+	log          *slog.Logger
+	operator     nodeOperator
+	agentUpgrade agentUpgradeExecutor
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
@@ -45,6 +48,9 @@ func machineOperationReconciler(
 	}
 	if opts.Operator == nil {
 		return nil, fmt.Errorf("node operator is nil")
+	}
+	if opts.AgentUpgrade == nil {
+		return nil, fmt.Errorf("agent upgrade executor is nil")
 	}
 	if opts.MachineOperationMode == "" {
 		opts.MachineOperationMode = machineOperationModeAuto
@@ -73,14 +79,14 @@ func machineOperationReconciler(
 		return nil, fmt.Errorf("AKS machine name is empty")
 	}
 
-	handlers := &machineOperationHandlers{log: opts.Log, operator: opts.Operator}
+	handlers := &machineOperationHandlers{log: opts.Log, operator: opts.Operator, agentUpgrade: opts.AgentUpgrade}
 	reconciler, err := daemon.NewMachinaMachineOperationReconciler(
 		opts.Client,
 		opts.NodeName,
 		opts.AKSMachineName,
 		daemon.MachineOperationHandlers{
 			machinav1alpha3.OperationNodeReboot:   handlers.reconcileNodeReboot,
-			machinav1alpha3.OperationAgentUpgrade: handlers.unsupportedOperation,
+			machinav1alpha3.OperationAgentUpgrade: handlers.reconcileAgentUpgrade,
 			machinav1alpha3.OperationAgentReset:   handlers.reconcileAgentReset,
 		},
 	)
@@ -132,6 +138,72 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 		Message: "NodeReboot completed",
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("finish NodeReboot MachineOperation: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+func (h *machineOperationHandlers) reconcileAgentUpgrade(
+	ctx context.Context,
+	store daemon.MachineOperationStore[int64],
+	op daemon.MachineOperation,
+) (ctrl.Result, error) {
+	request, err := parseAgentUpgradeRequest(op.Parameters)
+	if err != nil {
+		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
+	}
+	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
+		return ctrl.Result{}, fmt.Errorf("mark AgentUpgrade MachineOperation in progress: %w", err)
+	}
+	if err := h.agentUpgrade.RecordPending(ctx, op.Name); err != nil {
+		if errors.Is(err, errAgentUpgradeAlreadyPending) {
+			// An InProgress status event can already be queued before the delayed
+			// daemon restart. The durable signal proves this operation was staged
+			// by an earlier reconciliation.
+			return ctrl.Result{}, nil
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+	}
+	if err := h.agentUpgrade.Stage(ctx, request); err != nil {
+		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
+			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+	}
+	if err := h.agentUpgrade.Restart(ctx); err != nil {
+		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
+			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon")
+	}
+	// The restarted daemon publishes success after proving the candidate can
+	// initialize its Kubernetes client and controller.
+	return ctrl.Result{}, nil
+}
+
+func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
+	ctx context.Context,
+	op daemon.MachineOperation,
+	executionErr, rollbackErr error,
+) (ctrl.Result, error) {
+	message := fmt.Sprintf("AgentUpgrade execution failed and requires recovery: %v", executionErr)
+	recordErr := h.agentUpgrade.RecordFailure(message)
+	if recordErr != nil {
+		h.log.Error("failed to annotate durable AgentUpgrade recovery signal", "operation", op.Name, "error", recordErr)
+	}
+	h.log.Error("AgentUpgrade rollback failed; restarting daemon for durable recovery",
+		"operation", op.Name,
+		"error", rollbackErr,
+	)
+	cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+	defer cancel()
+	restartErr := h.agentUpgrade.Restart(cleanupCtx)
+	if restartErr != nil {
+		// If the failure annotation succeeded, the initiating daemon's signal
+		// loop can retry recovery without waiting for another reconciliation.
+		h.log.Error("failed to restart daemon for AgentUpgrade recovery", "operation", op.Name, "error", restartErr)
+	}
+	if recordErr != nil && restartErr != nil {
+		return ctrl.Result{}, errors.Join(recordErr, restartErr)
 	}
 	return ctrl.Result{}, nil
 }

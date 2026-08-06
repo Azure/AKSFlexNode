@@ -14,12 +14,20 @@ import (
 )
 
 const (
-	ServiceUnitName  = "aks-flex-node-agent.service"
-	systemdSystemDir = "/etc/systemd/system"
+	ServiceUnitName         = "aks-flex-node-agent.service"
+	recoveryServiceUnitName = "aks-flex-node-agent-recovery.service"
+	recoveryScriptPath      = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
+	systemdSystemDir        = "/etc/systemd/system"
 )
 
 //go:embed assets/aks-flex-node-agent.service
 var serviceUnitContent []byte
+
+//go:embed assets/aks-flex-node-agent-recovery.service
+var recoveryServiceUnitContent []byte
+
+//go:embed assets/aks-flex-node-recovery.sh
+var recoveryScriptContent []byte
 
 type installServiceTask struct {
 	log *slog.Logger
@@ -33,9 +41,22 @@ func InstallService(log *slog.Logger) phases.Task {
 func (t *installServiceTask) Name() string { return "install-service" }
 
 func (t *installServiceTask) Do(ctx context.Context) error {
-	unitPath := filepath.Join(systemdSystemDir, ServiceUnitName)
-	if err := utilio.WriteFile(unitPath, serviceUnitContent, 0o644); err != nil { //nolint:gosec // service files must be world-readable
-		return fmt.Errorf("write %s: %w", unitPath, err)
+	if err := ensureAgentUpgradeLayout(ctx, t.log, defaultAgentUpgradePaths()); err != nil {
+		return fmt.Errorf("initialize agent binary layout: %w", err)
+	}
+	assets := []struct {
+		path    string
+		content []byte
+		mode    os.FileMode
+	}{
+		{path: filepath.Join(systemdSystemDir, ServiceUnitName), content: serviceUnitContent, mode: 0o644},
+		{path: filepath.Join(systemdSystemDir, recoveryServiceUnitName), content: recoveryServiceUnitContent, mode: 0o644},
+		{path: recoveryScriptPath, content: recoveryScriptContent, mode: 0o750},
+	}
+	for _, asset := range assets {
+		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
+			return fmt.Errorf("write %s: %w", asset.path, err)
+		}
 	}
 
 	if err := utilexec.ReloadSystemd(ctx, t.log); err != nil {
@@ -71,9 +92,15 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
 
-	unitPath := filepath.Join(systemdSystemDir, ServiceUnitName)
-	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove %s: %w", unitPath, err)
+	for _, path := range []string{
+		filepath.Join(systemdSystemDir, ServiceUnitName),
+		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+		recoveryScriptPath,
+		defaultAgentUpgradePaths().SignalPath,
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
 	}
 
 	if err := utilexec.ReloadSystemd(ctx, t.log); err != nil {

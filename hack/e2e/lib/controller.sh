@@ -285,7 +285,14 @@ _wait_for_controller_ready() {
 }
 
 _ensure_flex_controller_unlocked() {
-  local image
+  local image unbounded_dir
+  # Install the optional API before any Flex daemon starts so its startup-time
+  # discovery enables MachineOperation watches without requiring a restart.
+  unbounded_dir="$(cd "${REPO_ROOT}" && go list -m -f '{{.Dir}}' github.com/Azure/unbounded)"
+  kubectl apply -f "${unbounded_dir}/deploy/machina/crd/unbounded-cloud.io_machineoperations.yaml" || return 1
+  kubectl wait --for=condition=Established \
+    customresourcedefinition/machineoperations.unbounded-cloud.io --timeout=60s || return 1
+
   image="$(_controller_image_from_state_or_env)"
 
   if [[ -n "${E2E_CONTROLLER_IMAGE:-}" ]]; then

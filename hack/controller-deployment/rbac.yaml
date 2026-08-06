@@ -103,3 +103,33 @@ subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
     name: aks-flex-node-daemons
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aks-flex-node-daemon-machineoperations
+rules:
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["machineoperations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["machineoperations/status"]
+    verbs: ["get", "patch", "update"]
+  # The shared MachineOperation selector implementation evaluates labels on the
+  # local Node when an operation uses machineSelector.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-daemon-machineoperations
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aks-flex-node-daemon-machineoperations
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: aks-flex-node-daemons

@@ -53,8 +53,9 @@ The default `all` command runs:
 6. Validate node readiness, node-problem-detector status, and run smoke workloads.
 7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 8. Rejoin all Flex Nodes and validate again.
-9. Run controller-machine-driven repave validation.
-10. Collect logs and clean up Azure resources.
+9. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
+10. Run controller-machine-driven repave validation after the agent upgrade.
+11. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -77,6 +78,7 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
+| `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, and nspawn synchronization. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -121,6 +123,7 @@ Additional environment variables:
 | `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
 | `E2E_NODE_JOIN_TIMEOUT` | `300` | Timeout in seconds while waiting for node bootstrap. |
 | `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |
+| `E2E_AGENT_UPGRADE_TIMEOUT` | `300` | Timeout in seconds while waiting for an AgentUpgrade result. |
 | `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for repave. |
 | `AZURE_SUBSCRIPTION_ID` | auto-detected | Azure subscription. |
 | `AZURE_TENANT_ID` | auto-detected | Azure tenant. |
@@ -142,6 +145,24 @@ its Azure resource name remains lowercase. This verifies that an omitted
 cluster under the lowercase VM name.
 
 Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+
+## Agent Upgrade Validation
+
+The `agent-upgrade` command uses the bootstrap-token VM to exercise the complete managed binary lifecycle:
+
+1. Serve architecture-specific release archives over trusted loopback HTTPS.
+2. Submit an `AgentUpgrade` with an archive SHA-256 and a query credential.
+3. Verify successful daemon restart, operation completion, binary replacement, and host/nspawn binary equality.
+4. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.
+5. Upgrade to a candidate that passes `version` but fails daemon startup, then verify automatic rollback and a failed operation.
+6. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot.
+7. Run a workload before the subsequent repave test.
+
+Run it against an already joined environment:
+
+```bash
+./hack/e2e/run.sh agent-upgrade
+```
 
 ## Repave Validation
 
@@ -215,6 +236,7 @@ hack/e2e/
     node-join-token.sh    Bootstrap token join/unjoin.
     node-join-offline.sh  Offline artifacts join/unjoin.
     node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.
+    agent-upgrade.sh      Managed agent upgrade and rollback validation.
     upgrade-drift.sh      Controller machine goal repave validation.
     validate.sh           Node readiness and smoke tests.
     cleanup.sh            Log collection and Azure resource cleanup.

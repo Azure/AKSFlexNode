@@ -67,6 +67,7 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 		Log:                  slog.Default(),
 		MachineOperationMode: machineOperationModeDisable,
 		Operator:             &fakeNodeOperator{},
+		AgentUpgrade:         &fakeAgentUpgradeExecutor{},
 	})
 	if err != nil {
 		t.Fatalf("machineOperationReconciler: %v", err)
@@ -99,10 +100,19 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 		},
 		"missing operator": {
 			opts: machineOperationReconcilerOptions{
-				Client: fake.NewClientBuilder().Build(),
-				Log:    slog.Default(),
+				Client:       fake.NewClientBuilder().Build(),
+				Log:          slog.Default(),
+				AgentUpgrade: &fakeAgentUpgradeExecutor{},
 			},
 			wantErr: "node operator is nil",
+		},
+		"missing agent upgrade executor": {
+			opts: machineOperationReconcilerOptions{
+				Client:   fake.NewClientBuilder().Build(),
+				Log:      slog.Default(),
+				Operator: &fakeNodeOperator{},
+			},
+			wantErr: "agent upgrade executor is nil",
 		},
 	}
 
@@ -151,6 +161,7 @@ func TestMachineOperationReconcilerEnabledRequiresNames(t *testing.T) {
 				NodeName:       tt.nodeName,
 				AKSMachineName: tt.aksMachineName,
 				Operator:       &fakeNodeOperator{},
+				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
 			})
 			if err == nil {
 				t.Fatal("machineOperationReconciler error = nil, want error")
@@ -278,6 +289,120 @@ func TestMachineOperationHandlersUnsupportedOperation(t *testing.T) {
 	}
 }
 
+func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	digest := strings.Repeat("a", 64)
+	op := daemon.MachineOperation{
+		Name: "upgrade-1",
+		Kind: machinav1alpha3.OperationAgentUpgrade,
+		Parameters: map[string]string{
+			agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+			agentUpgradeSHA256Parameter:      digest,
+		},
+	}
+
+	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
+		t.Fatalf("reconcileAgentUpgrade: %v", err)
+	}
+	if !store.inProgress || !upgrader.pending || !upgrader.staged || !upgrader.restarted {
+		t.Fatalf("upgrade calls = inProgress:%v pending:%v staged:%v restarted:%v", store.inProgress, upgrader.pending, upgrader.staged, upgrader.restarted)
+	}
+	if store.result.Phase != "" {
+		t.Fatalf("phase = %s, want non-terminal until daemon restart", store.result.Phase)
+	}
+}
+
+func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+
+	if _, err := target.reconcileAgentUpgrade(t.Context(), store, daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade}); err != nil {
+		t.Fatalf("reconcileAgentUpgrade: %v", err)
+	}
+	if store.result.Phase != machinav1alpha3.OperationPhaseFailed || store.result.Reason != "InvalidParameters" {
+		t.Fatalf("result = %#v, want InvalidParameters failure", store.result)
+	}
+	if upgrader.pending || upgrader.staged || upgrader.restarted {
+		t.Fatal("executor called for invalid parameters")
+	}
+}
+
+func TestMachineOperationHandlersAgentUpgradeDuplicateReconcileIsNoop(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{pendingErr: errAgentUpgradeAlreadyPending}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
+		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+	}}
+
+	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
+		t.Fatalf("reconcileAgentUpgrade: %v", err)
+	}
+	if upgrader.staged || upgrader.restarted || upgrader.aborted {
+		t.Fatal("duplicate reconciliation executed upgrade actions")
+	}
+	if store.result.Phase != "" {
+		t.Fatalf("duplicate reconciliation produced terminal phase %s", store.result.Phase)
+	}
+}
+
+func TestMachineOperationHandlersAgentUpgradeStageFailureRollsBack(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{stageErr: errors.New("bad archive")}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
+		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+	}}
+
+	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
+		t.Fatalf("reconcileAgentUpgrade: %v", err)
+	}
+	if !upgrader.aborted {
+		t.Fatal("Abort was not called")
+	}
+	if store.result.Phase != machinav1alpha3.OperationPhaseFailed || store.result.Message != "bad archive" {
+		t.Fatalf("result = %#v", store.result)
+	}
+}
+
+func TestMachineOperationHandlersAgentUpgradeAbortFailureStartsRecovery(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{
+		stageErr: errors.New("stage failed"),
+		abortErr: errors.New("rollback failed"),
+	}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
+		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+	}}
+
+	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
+		t.Fatalf("reconcileAgentUpgrade: %v", err)
+	}
+	if upgrader.failure == "" || !upgrader.restarted {
+		t.Fatalf("recovery failure = %q, restarted = %v", upgrader.failure, upgrader.restarted)
+	}
+	if store.result.Phase != "" {
+		t.Fatalf("phase = %s, want recovery to publish terminal status", store.result.Phase)
+	}
+}
+
 func TestMachineOperationHandlersAgentReset(t *testing.T) {
 	t.Parallel()
 
@@ -341,6 +466,45 @@ func TestMachineOperationHandlersAgentResetStopFailure(t *testing.T) {
 		t.Fatalf("phase = %s, want %s", store.result.Phase, machinav1alpha3.OperationPhaseComplete)
 	}
 }
+
+type fakeAgentUpgradeExecutor struct {
+	pending    bool
+	staged     bool
+	aborted    bool
+	restarted  bool
+	failure    string
+	pendingErr error
+	stageErr   error
+	abortErr   error
+	restartErr error
+}
+
+func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error {
+	f.pending = true
+	return f.pendingErr
+}
+
+func (f *fakeAgentUpgradeExecutor) RecordFailure(message string) error {
+	f.failure = message
+	return nil
+}
+
+func (f *fakeAgentUpgradeExecutor) Stage(context.Context, agentUpgradeRequest) error {
+	f.staged = true
+	return f.stageErr
+}
+
+func (f *fakeAgentUpgradeExecutor) Abort(context.Context) error {
+	f.aborted = true
+	return f.abortErr
+}
+
+func (f *fakeAgentUpgradeExecutor) Restart(context.Context) error {
+	f.restarted = true
+	return f.restartErr
+}
+
+var _ agentUpgradeExecutor = (*fakeAgentUpgradeExecutor)(nil)
 
 type fakeMachineOperationStore struct {
 	inProgress bool
