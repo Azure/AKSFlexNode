@@ -12,7 +12,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 const (
@@ -21,7 +20,14 @@ const (
 	agentUpgradeMaxBinaryBytes  = 256 << 20
 )
 
-type agentUpgradePaths = goalstates.AgentUpgradePaths
+type agentUpgradePaths struct {
+	BinaryPath   string
+	BluePath     string
+	GreenPath    string
+	CurrentPath  string
+	LastGoodPath string
+	SignalPath   string
+}
 
 // ensureAgentUpgradeLayout migrates a legacy direct binary into the blue slot.
 // It is intentionally idempotent because bootstrap and daemon startup may both
@@ -226,6 +232,13 @@ func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, 
 	if err != nil {
 		return err
 	}
-	_, err = agentbinary.SecureInstallAndSwitch(ctx, log, paths, opts)
+	layout := agentbinary.Layout{
+		BinaryPath:   paths.BinaryPath,
+		BluePath:     paths.BluePath,
+		GreenPath:    paths.GreenPath,
+		CurrentPath:  paths.CurrentPath,
+		LastGoodPath: paths.LastGoodPath,
+	}
+	_, err = agentbinary.SecureInstallAndSwitch(ctx, log, layout, opts)
 	return err
 }

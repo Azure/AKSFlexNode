@@ -31,6 +31,11 @@ const (
 
 // Run starts the machine-driven daemon loop.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	// Existing direct-file installations may predate the recovery units. Keep
+	// the binary layout and systemd rollback assets converged on every startup.
+	if err := ensureAgentUpgradeServiceAssets(ctx, log); err != nil {
+		return err
+	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err

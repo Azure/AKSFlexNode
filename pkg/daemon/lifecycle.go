@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -41,26 +42,8 @@ func InstallService(log *slog.Logger) phases.Task {
 func (t *installServiceTask) Name() string { return "install-service" }
 
 func (t *installServiceTask) Do(ctx context.Context) error {
-	if err := ensureAgentUpgradeLayout(ctx, t.log, defaultAgentUpgradePaths()); err != nil {
-		return fmt.Errorf("initialize agent binary layout: %w", err)
-	}
-	assets := []struct {
-		path    string
-		content []byte
-		mode    os.FileMode
-	}{
-		{path: filepath.Join(systemdSystemDir, ServiceUnitName), content: serviceUnitContent, mode: 0o644},
-		{path: filepath.Join(systemdSystemDir, recoveryServiceUnitName), content: recoveryServiceUnitContent, mode: 0o644},
-		{path: recoveryScriptPath, content: recoveryScriptContent, mode: 0o750},
-	}
-	for _, asset := range assets {
-		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
-			return fmt.Errorf("write %s: %w", asset.path, err)
-		}
-	}
-
-	if err := utilexec.ReloadSystemd(ctx, t.log); err != nil {
-		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	if err := ensureAgentUpgradeServiceAssets(ctx, t.log); err != nil {
+		return err
 	}
 	if err := utilexec.RunCmd(ctx, t.log, utilexec.Systemctl(), "enable", ServiceUnitName); err != nil {
 		return fmt.Errorf("systemctl enable %s: %w", ServiceUnitName, err)
@@ -70,6 +53,53 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 	}
 
 	t.log.Info("systemd service installed and started", "unit", ServiceUnitName)
+	return nil
+}
+
+func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger) error {
+	return ensureAgentUpgradeServiceAssetsAt(
+		ctx,
+		log,
+		defaultAgentUpgradePaths(),
+		systemdSystemDir,
+		recoveryScriptPath,
+		utilexec.ReloadSystemd,
+	)
+}
+
+func ensureAgentUpgradeServiceAssetsAt(
+	ctx context.Context,
+	log *slog.Logger,
+	binaryPaths agentUpgradePaths,
+	systemdDir, recoveryScript string,
+	reload func(context.Context, *slog.Logger) error,
+) error {
+	if err := ensureAgentUpgradeLayout(ctx, log, binaryPaths); err != nil {
+		return fmt.Errorf("initialize agent binary layout: %w", err)
+	}
+	recoveryServiceContent := bytes.ReplaceAll(
+		recoveryServiceUnitContent,
+		[]byte(recoveryScriptPath),
+		[]byte(recoveryScript),
+	)
+	assets := []struct {
+		path    string
+		content []byte
+		mode    os.FileMode
+	}{
+		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceUnitContent, mode: 0o644},
+		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
+		{path: recoveryScript, content: recoveryScriptContent, mode: 0o750},
+	}
+	for _, asset := range assets {
+		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
+			return fmt.Errorf("write %s: %w", asset.path, err)
+		}
+	}
+
+	if err := reload(ctx, log); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
 	return nil
 }
 
