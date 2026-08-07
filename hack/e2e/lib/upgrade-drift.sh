@@ -242,11 +242,25 @@ REMOTE
 set -euo pipefail
 machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
 test -n "${machine}"
-! systemd-run --quiet --pipe --wait --machine="${machine}" systemctl cat localdns.service >/dev/null 2>&1
-! ip link show localdns >/dev/null 2>&1
-! nft list table ip unbounded_localdns >/dev/null 2>&1
+if systemd-run --quiet --pipe --wait --machine="${machine}" systemctl cat localdns.service >/dev/null 2>&1; then
+  echo "localdns.service still exists after disabling LocalDNS" >&2
+  exit 1
+fi
+if ip link show localdns >/dev/null 2>&1; then
+  echo "localdns interface still exists after disabling LocalDNS" >&2
+  exit 1
+fi
+if nft list table ip unbounded_localdns >/dev/null 2>&1; then
+  echo "unbounded_localdns nftables table still exists after disabling LocalDNS" >&2
+  exit 1
+fi
 systemd-run --quiet --pipe --wait --machine="${machine}" \
-  grep -q -- "--cluster-dns=${CLUSTER_DNS}" /etc/systemd/system/kubelet.service.d/20-node-config.conf
+  awk -v expected="${CLUSTER_DNS}" '
+    $1 == "clusterDNS:" { in_cluster_dns = 1; next }
+    in_cluster_dns && $1 == "-" && $2 == expected { found = 1 }
+    in_cluster_dns && $1 != "-" { in_cluster_dns = 0 }
+    END { exit !found }
+  ' /var/lib/kubelet/config.yaml
 REMOTE
 
   log_success "MSI LocalDNS disable-through-repave validation passed"
