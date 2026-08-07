@@ -257,10 +257,10 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # Install binary
-    cp "$binary_path" "$INSTALL_DIR/aks-flex-node"
-    chmod 0755 "$INSTALL_DIR/aks-flex-node"
-    chown root:root "$INSTALL_DIR/aks-flex-node"
+    # Install with explicit ownership and modes so restrictive remote umasks do
+    # not leave the command inaccessible to non-root operators.
+    install -d -o root -g root -m 0755 "$INSTALL_DIR"
+    install -o root -g root -m 0755 "$binary_path" "$INSTALL_DIR/aks-flex-node"
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
