@@ -179,7 +179,7 @@ REMOTE
 
 agent_upgrade_e2e() {
   log_section "Managed AgentUpgrade E2E"
-  local vm_name vm_ip suffix success_digest failure_digest before before_binary_digest success_snapshot success_binary_digest rollback_snapshot rollback_binary_digest retry_snapshot retry_binary_digest
+  local vm_name vm_ip suffix success_digest failure_digest before before_slot success_snapshot success_slot success_binary_digest rollback_snapshot rollback_binary_digest retry_snapshot retry_binary_digest
   vm_name="$(state_get token_vm_name)"
   vm_ip="$(state_get token_vm_ip)"
   suffix="$(date +%s)"
@@ -190,7 +190,7 @@ agent_upgrade_e2e() {
   success_digest="$(_agent_upgrade_digest "${vm_ip}" success.tar.gz)"
   failure_digest="$(_agent_upgrade_digest "${vm_ip}" failure.tar.gz)"
   before="$(_agent_upgrade_snapshot "${vm_ip}")"
-  before_binary_digest="$(cut -d'|' -f3 <<<"${before}")"
+  before_slot="$(cut -d'|' -f1 <<<"${before}")"
   log_info "Pre-upgrade agent snapshot: ${before}"
 
   local success_op="agent-upgrade-success-${suffix}"
@@ -199,9 +199,9 @@ agent_upgrade_e2e() {
   validate_node_joined "${vm_name}"
   _agent_upgrade_assert_synchronized "${vm_ip}"
   success_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
-  IFS='|' read -r _ _ success_binary_digest _ <<<"${success_snapshot}"
-  if [[ -z "${success_binary_digest}" || "${success_binary_digest}" == "${before_binary_digest}" ]]; then
-    log_error "Successful AgentUpgrade did not replace the running binary: before=${before} after=${success_snapshot}"
+  IFS='|' read -r success_slot _ success_binary_digest _ <<<"${success_snapshot}"
+  if [[ -z "${success_slot}" || "${success_slot}" == "${before_slot}" ]]; then
+    log_error "Successful AgentUpgrade did not switch the active binary slot: before=${before} after=${success_snapshot}"
     return 1
   fi
 
