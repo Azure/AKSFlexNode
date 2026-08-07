@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,6 +52,16 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	}
 	if opts.MaxArchiveBytes != agentUpgradeMaxArchiveBytes || opts.MaxExtractedBytes != agentUpgradeMaxBinaryBytes {
 		t.Fatalf("size limits = %d, %d", opts.MaxArchiveBytes, opts.MaxExtractedBytes)
+	}
+	if !opts.ExactMember {
+		t.Fatal("ExactMember = false")
+	}
+	redirect, err := http.NewRequest(http.MethodGet, "http://example.com/agent.tar.gz", http.NoBody)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if err := opts.HTTPClient.CheckRedirect(redirect, nil); err == nil {
+		t.Fatal("HTTP redirect was accepted")
 	}
 }
 

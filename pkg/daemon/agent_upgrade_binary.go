@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -208,21 +212,38 @@ func expectedAgentArchiveMember() (string, error) {
 	}
 }
 
-func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.SecureInstallOptions, error) {
+func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
+	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
+		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTPS, include a host, omit user information, and omit fragments")
+	}
 	member, err := expectedAgentArchiveMember()
 	if err != nil {
-		return agentbinary.SecureInstallOptions{}, err
+		return agentbinary.InstallOptions{}, err
 	}
-	opts := agentbinary.SecureInstallOptions{
+	opts := agentbinary.InstallOptions{
 		DownloadURL:       rawURL,
 		ExpectedSHA256:    expectedDigest,
 		ExpectedMember:    member,
 		Mode:              agentUpgradeBinaryMode,
 		MaxArchiveBytes:   agentUpgradeMaxArchiveBytes,
 		MaxExtractedBytes: agentUpgradeMaxBinaryBytes,
+		ExactMember:       true,
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Minute,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Scheme != "https" {
+					return fmt.Errorf("redirect to non-HTTPS URL is not allowed")
+				}
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
+		},
 	}
-	if err := agentbinary.ValidateSecureInstallOptions(opts); err != nil {
-		return agentbinary.SecureInstallOptions{}, err
+	if err := agentbinary.ValidateInstallOptions(opts); err != nil {
+		return agentbinary.InstallOptions{}, err
 	}
 	return opts, nil
 }
@@ -239,6 +260,6 @@ func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, 
 		CurrentPath:  paths.CurrentPath,
 		LastGoodPath: paths.LastGoodPath,
 	}
-	_, err = agentbinary.SecureInstallAndSwitch(ctx, log, layout, opts)
+	_, err = agentbinary.InstallAndSwitchFromTarGzWithOptions(ctx, log, layout, opts)
 	return err
 }
