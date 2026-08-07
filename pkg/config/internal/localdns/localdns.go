@@ -57,6 +57,12 @@ func (p *LocalDNSProfile) Validate() error {
 			if err := override.validate(); err != nil {
 				errs = append(errs, fmt.Errorf("%s[%q]: %w", class, zone, err))
 			}
+			if class == "vnetDNSOverrides" && zone == "." && override.ForwardDestination == "ClusterCoreDNS" {
+				errs = append(errs, fmt.Errorf("%s[%q]: forwardDestination must not be ClusterCoreDNS", class, zone))
+			}
+			if strings.HasSuffix(zone, "cluster.local") && override.ForwardDestination == "VnetDNS" {
+				errs = append(errs, fmt.Errorf("%s[%q]: forwardDestination must not be VnetDNS", class, zone))
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -78,6 +84,9 @@ func (o LocalDNSOverride) validate() error {
 	}
 	if o.ServeStale != "" && o.ServeStale != "Disable" && o.ServeStale != "Verify" && o.ServeStale != "Immediate" {
 		errs = append(errs, fmt.Errorf("serveStale must be Disable, Verify, or Immediate"))
+	}
+	if (o.Protocol == "" || o.Protocol == "ForceTCP") && o.ServeStale == "Verify" {
+		errs = append(errs, fmt.Errorf("serveStale Verify requires protocol PreferUDP"))
 	}
 	for name, value := range map[string]int{
 		"maxConcurrent":               o.MaxConcurrent,
@@ -108,7 +117,6 @@ type localDNSCorefileData struct {
 
 type localDNSCorefileBlock struct {
 	Zone               string
-	IsRootDomain       bool
 	Listener           string
 	Upstream           string
 	NSID               string
@@ -190,7 +198,6 @@ func localDNSCorefileBlocks(overrides map[string]LocalDNSOverride, listener, def
 		}
 		blocks = append(blocks, localDNSCorefileBlock{
 			Zone:               zone,
-			IsRootDomain:       isRootDomain,
 			Listener:           listener,
 			Upstream:           upstream,
 			NSID:               nsid,

@@ -235,13 +235,8 @@ REMOTE
   _trigger_mode_repave msi "${desired_version}" "${settings_version}"
   _wait_for_mode_repave msi "${desired_version}" "${settings_version}" "${old_active_machine}" "${old_node_uid}"
 
-  local state_label cluster_dns
-  state_label="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.labels.kubernetes\.azure\.com/localdns-state}')"
+  local cluster_dns
   cluster_dns="$(kubectl -n kube-system get service kube-dns -o jsonpath='{.spec.clusterIP}')"
-  if [[ "${state_label}" != "disabled" ]]; then
-    log_error "Node ${vm_name} localdns-state=${state_label}, expected disabled"
-    return 1
-  fi
 
   remote_exec "${vm_ip}" "CLUSTER_DNS=${cluster_dns} sudo -E bash -s" <<'REMOTE'
 set -euo pipefail

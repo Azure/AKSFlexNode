@@ -51,9 +51,9 @@ func TestLocalDNSProfileCorefileOptions(t *testing.T) {
 			wantAbsent: []string{"force_tcp"},
 		},
 		{
-			name:     "ClusterCoreDNS ForceTCP round robin verify",
-			override: LocalDNSOverride{QueryLogging: "Error", Protocol: "ForceTCP", ForwardDestination: "ClusterCoreDNS", ForwardPolicy: "RoundRobin", ServeStale: "Verify"},
-			want:     []string{"errors", "forward . {{ .ClusterDNSServiceIP }}", "force_tcp", "policy round_robin", "serve_stale 3600s verify"},
+			name:     "ClusterCoreDNS ForceTCP round robin immediate",
+			override: LocalDNSOverride{QueryLogging: "Error", Protocol: "ForceTCP", ForwardDestination: "ClusterCoreDNS", ForwardPolicy: "RoundRobin", ServeStale: "Immediate"},
+			want:     []string{"errors", "forward . {{ .ClusterDNSServiceIP }}", "force_tcp", "policy round_robin", "serve_stale 3600s immediate"},
 		},
 		{
 			name:       "random without stale",
@@ -66,10 +66,14 @@ func TestLocalDNSProfileCorefileOptions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			vnetOverride := test.override
+			vnetOverride.ForwardDestination = "VnetDNS"
+			kubeOverride := test.override
+			kubeOverride.ForwardDestination = "ClusterCoreDNS"
 			profile := &LocalDNSProfile{
 				Mode:             LocalDNSModeRequired,
-				VnetDNSOverrides: map[string]LocalDNSOverride{".": test.override},
-				KubeDNSOverrides: map[string]LocalDNSOverride{".": test.override},
+				VnetDNSOverrides: map[string]LocalDNSOverride{".": vnetOverride},
+				KubeDNSOverrides: map[string]LocalDNSOverride{".": kubeOverride},
 			}
 			got, err := profile.CorefileTemplate()
 			if err != nil {
@@ -127,6 +131,9 @@ func TestLocalDNSProfileValidation(t *testing.T) {
 		{name: "invalid policy", profile: &LocalDNSProfile{Mode: LocalDNSModeRequired, VnetDNSOverrides: map[string]LocalDNSOverride{".": {ForwardPolicy: "First"}}}, wantErr: "forwardPolicy"},
 		{name: "invalid stale", profile: &LocalDNSProfile{Mode: LocalDNSModeRequired, VnetDNSOverrides: map[string]LocalDNSOverride{".": {ServeStale: "Always"}}}, wantErr: "serveStale"},
 		{name: "negative cache", profile: &LocalDNSProfile{Mode: LocalDNSModeRequired, VnetDNSOverrides: map[string]LocalDNSOverride{".": {CacheDurationInSeconds: -1}}}, wantErr: "cacheDurationInSeconds"},
+		{name: "VnetDNS root to cluster DNS", profile: &LocalDNSProfile{Mode: LocalDNSModeRequired, VnetDNSOverrides: map[string]LocalDNSOverride{".": {ForwardDestination: "ClusterCoreDNS"}}}, wantErr: "must not be ClusterCoreDNS"},
+		{name: "cluster zone to VnetDNS", profile: &LocalDNSProfile{Mode: LocalDNSModeRequired, KubeDNSOverrides: map[string]LocalDNSOverride{"cluster.local": {ForwardDestination: "VnetDNS"}}}, wantErr: "must not be VnetDNS"},
+		{name: "ForceTCP with stale verification", profile: &LocalDNSProfile{Mode: LocalDNSModeRequired, KubeDNSOverrides: map[string]LocalDNSOverride{".": {Protocol: "ForceTCP", ServeStale: "Verify"}}}, wantErr: "requires protocol PreferUDP"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

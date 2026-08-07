@@ -196,13 +196,6 @@ for chain in output prerouting; do
 done
 REMOTE
 
-  local state_label
-  state_label="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.labels.kubernetes\.azure\.com/localdns-state}')"
-  if [[ "${state_label}" != "enabled" ]]; then
-    log_error "Node ${vm_name} localdns-state=${state_label}, expected enabled"
-    return 1
-  fi
-
   local cluster_pod="localdns-clusterfirst-${vm_name}"
   local default_pod="localdns-default-${vm_name}"
   kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=false >/dev/null

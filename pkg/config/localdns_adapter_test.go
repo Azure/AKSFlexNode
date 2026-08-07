@@ -28,13 +28,10 @@ func TestToAgentConfigLocalDNS(t *testing.T) {
 	if !strings.Contains(got.LocalDNS.CorefileTemplate, "{{ .ClusterDNSServiceIP }}") {
 		t.Fatalf("CorefileTemplate missing cluster DNS placeholder:\n%s", got.LocalDNS.CorefileTemplate)
 	}
-	for _, plugin := range []string{"nsid", "template"} {
+	for _, plugin := range []string{"log", "nsid"} {
 		if !strings.Contains(strings.Join(got.LocalDNS.RequiredPlugins, ","), plugin) {
 			t.Errorf("RequiredPlugins = %v, want %q", got.LocalDNS.RequiredPlugins, plugin)
 		}
-	}
-	if got.Kubelet.Labels["kubernetes.azure.com/localdns-state"] != "enabled" {
-		t.Fatalf("LocalDNS node label missing: %#v", got.Kubelet.Labels)
 	}
 	if got.Cluster.ClusterDNS != "10.0.0.10" {
 		t.Fatalf("ClusterDNS = %q, want original service IP", got.Cluster.ClusterDNS)
@@ -51,8 +48,5 @@ func TestToAgentConfigDisabledLocalDNS(t *testing.T) {
 	got := ToAgentConfig(cfg, "kube1")
 	if got.LocalDNS == nil || got.LocalDNS.Enabled {
 		t.Fatalf("LocalDNS = %#v, want explicitly disabled", got.LocalDNS)
-	}
-	if got.Kubelet.Labels["kubernetes.azure.com/localdns-state"] != "disabled" {
-		t.Fatalf("LocalDNS disabled node label missing: %#v", got.Kubelet.Labels)
 	}
 }

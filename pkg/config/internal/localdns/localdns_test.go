@@ -25,7 +25,7 @@ func TestCorefileTemplateGolden(t *testing.T) {
 		},
 		KubeDNSOverrides: map[string]LocalDNSOverride{
 			".": {
-				QueryLogging: "Error", Protocol: "ForceTCP", ForwardDestination: "ClusterCoreDNS",
+				QueryLogging: "Error", Protocol: "PreferUDP", ForwardDestination: "ClusterCoreDNS",
 				ForwardPolicy: "Random", MaxConcurrent: 1500, CacheDurationInSeconds: 90,
 				ServeStaleDurationInSeconds: 120, ServeStale: "Verify",
 			},

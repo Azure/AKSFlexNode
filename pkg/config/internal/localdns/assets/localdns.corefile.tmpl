@@ -5,6 +5,9 @@
 # - The metrics endpoint binds a runtime-resolved node address instead of :9253.
 # - The AgentBaker critical-FQDN hosts file is omitted because Unbounded does not
 #   run the AKS hosts-file refresher.
+# - Azure VM suffix guards for internal.cloudapp.net and reddog.microsoft.com
+#   are omitted because Flex Nodes may use non-Azure DNS where those names must
+#   be resolved according to the host's upstream policy.
 # Listener, upstream, cluster DNS, and metrics placeholders are resolved by
 # Unbounded after AKS Flex Node renders the profile-specific server blocks.
 health-check.localdns.local:53 {
@@ -30,14 +33,6 @@ health-check.localdns.local:53 {
     loop
     nsid {{.NSID}}
     prometheus {{$.MetricsAddress}}
-{{if .IsRootDomain}}    template ANY ANY internal.cloudapp.net {
-        match "^(?:[^.]+\.){4,}internal\.cloudapp\.net\.$"
-        rcode NXDOMAIN
-        fallthrough
-    }
-    template ANY ANY reddog.microsoft.com {
-        rcode NXDOMAIN
-    }
-{{end}}}
+}
 
 {{end}}
