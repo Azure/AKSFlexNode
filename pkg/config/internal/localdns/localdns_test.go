@@ -51,6 +51,29 @@ func TestCorefileTemplateGolden(t *testing.T) {
 	}
 }
 
+func TestLocalDNSDefaultBlocks(t *testing.T) {
+	t.Parallel()
+
+	vnet := localDNSCorefileBlocks(defaultLocalDNSOverrides(), "node-listener", "VnetDNS")
+	kube := localDNSCorefileBlocks(defaultLocalDNSOverrides(), "cluster-listener", "ClusterCoreDNS")
+	if len(vnet) != 2 || len(kube) != 2 {
+		t.Fatalf("default blocks: VnetDNS=%d KubeDNS=%d, want 2 each", len(vnet), len(kube))
+	}
+
+	if vnet[0].Zone != "." || vnet[0].Upstream != "{{ .NodeUpstreamIPsJoined }}" || vnet[0].ForceTCP {
+		t.Errorf("VnetDNS root block = %#v, want node upstream over PreferUDP", vnet[0])
+	}
+	if vnet[1].Zone != "cluster.local" || vnet[1].Upstream != "{{ .ClusterDNSServiceIP }}" || !vnet[1].ForceTCP {
+		t.Errorf("VnetDNS cluster block = %#v, want cluster upstream over ForceTCP", vnet[1])
+	}
+	if kube[0].Zone != "." || kube[0].Upstream != "{{ .ClusterDNSServiceIP }}" || kube[0].ForceTCP {
+		t.Errorf("KubeDNS root block = %#v, want cluster upstream over PreferUDP", kube[0])
+	}
+	if kube[1].Zone != "cluster.local" || kube[1].Upstream != "{{ .ClusterDNSServiceIP }}" || !kube[1].ForceTCP {
+		t.Errorf("KubeDNS cluster block = %#v, want cluster upstream over ForceTCP", kube[1])
+	}
+}
+
 func TestLocalDNSCorefileBlocksAgentBakerRouting(t *testing.T) {
 	t.Parallel()
 

@@ -244,7 +244,7 @@ machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}'
 test -n "${machine}"
 ! systemd-run --quiet --pipe --wait --machine="${machine}" systemctl cat localdns.service >/dev/null 2>&1
 ! ip link show localdns >/dev/null 2>&1
-! iptables -w -t raw -S | grep -q 'unbounded-localdns: skip conntrack'
+! nft list table ip unbounded_localdns >/dev/null 2>&1
 systemd-run --quiet --pipe --wait --machine="${machine}" \
   grep -q -- "--cluster-dns=${CLUSTER_DNS}" /etc/systemd/system/kubelet.service.d/20-node-config.conf
 REMOTE

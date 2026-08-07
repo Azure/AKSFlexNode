@@ -6,6 +6,8 @@
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
 #   validate_all_nodes                - Verify MSI, token, offline, and kubeadm nodes joined
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
+#   validate_localdns_status <vm_name> <vm_ip> - Verify LocalDNS behavior
+#   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after reboot
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
 #   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
@@ -15,6 +17,7 @@ set -euo pipefail
 
 [[ -n "${_E2E_VALIDATE_LOADED:-}" ]] && return 0
 readonly _E2E_VALIDATE_LOADED=1
+_E2E_LOCALDNS_REBOOT_VALIDATED=0
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
@@ -198,7 +201,7 @@ REMOTE
 
   local cluster_pod="localdns-clusterfirst-${vm_name}"
   local default_pod="localdns-default-${vm_name}"
-  kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=true >/dev/null
   kubectl run "${cluster_pod}" --image=busybox:1.36 --restart=Never \
     --overrides="{\"spec\":{\"nodeName\":\"${vm_name}\",\"dnsPolicy\":\"ClusterFirst\"}}" \
     --command -- nslookup kubernetes.default.svc.cluster.local >/dev/null
@@ -235,7 +238,22 @@ REMOTE
   log_success "LocalDNS validation passed on ${vm_ip}"
 }
 
-# validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
+# validate_localdns_after_reboot - Verify LocalDNS survives a host reboot.
++# ---------------------------------------------------------------------------
+validate_localdns_after_reboot() {
+  local vm_name="$1"
+  local vm_ip="$2"
+
+  log_section "Validating LocalDNS After Host Reboot"
+  log_info "Rebooting ${vm_name} (${vm_ip})..."
+  az vm restart --resource-group "$(state_get resource_group)" --name "${vm_name}"
+  wait_for_ssh "${vm_ip}"
+  validate_node_joined "${vm_name}"
+  validate_localdns_status "${vm_name}" "${vm_ip}"
+  log_success "LocalDNS recovered after reboot on ${vm_name}"
+}
+
++# validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
   log_section "Validating Node Join"
@@ -276,6 +294,13 @@ validate_all_nodes() {
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  if [[ "${_E2E_LOCALDNS_REBOOT_VALIDATED}" != "1" ]]; then
+    if validate_localdns_after_reboot "${msi_vm_name}" "${msi_vm_ip}"; then
+      _E2E_LOCALDNS_REBOOT_VALIDATED=1
+    else
+      failed=1
+    fi
+  fi
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
   # TODO: re-enable once NPD is included in the upstream Unbounded bootstrap
   # artifact bundle and resolver used by offline artifact mode.

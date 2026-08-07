@@ -50,18 +50,27 @@ func (p *LocalDNSProfile) Validate() error {
 		"vnetDNSOverrides": p.VnetDNSOverrides,
 		"kubeDNSOverrides": p.KubeDNSOverrides,
 	} {
+		defaultDestination := "VnetDNS"
+		if class == "kubeDNSOverrides" {
+			defaultDestination = "ClusterCoreDNS"
+		}
 		for zone, override := range overrides {
-			if strings.TrimSpace(zone) == "" || strings.ContainsAny(zone, "{} \t\r\n") {
+			if !isValidLocalDNSZone(zone) {
 				errs = append(errs, fmt.Errorf("%s zone %q is invalid", class, zone))
 			}
 			if err := override.validate(); err != nil {
 				errs = append(errs, fmt.Errorf("%s[%q]: %w", class, zone, err))
 			}
-			if class == "vnetDNSOverrides" && zone == "." && override.ForwardDestination == "ClusterCoreDNS" {
+
+			resolved := withLocalDNSDefaults(override, zone, defaultDestination)
+			if class == "vnetDNSOverrides" && zone == "." && resolved.ForwardDestination == "ClusterCoreDNS" {
 				errs = append(errs, fmt.Errorf("%s[%q]: forwardDestination must not be ClusterCoreDNS", class, zone))
 			}
-			if strings.HasSuffix(zone, "cluster.local") && override.ForwardDestination == "VnetDNS" {
+			if isClusterLocalZone(zone) && resolved.ForwardDestination == "VnetDNS" {
 				errs = append(errs, fmt.Errorf("%s[%q]: forwardDestination must not be VnetDNS", class, zone))
+			}
+			if resolved.Protocol == "ForceTCP" && resolved.ServeStale == "Verify" {
+				errs = append(errs, fmt.Errorf("%s[%q]: serveStale Verify requires protocol PreferUDP", class, zone))
 			}
 		}
 	}
@@ -84,9 +93,6 @@ func (o LocalDNSOverride) validate() error {
 	}
 	if o.ServeStale != "" && o.ServeStale != "Disable" && o.ServeStale != "Verify" && o.ServeStale != "Immediate" {
 		errs = append(errs, fmt.Errorf("serveStale must be Disable, Verify, or Immediate"))
-	}
-	if (o.Protocol == "" || o.Protocol == "ForceTCP") && o.ServeStale == "Verify" {
-		errs = append(errs, fmt.Errorf("serveStale Verify requires protocol PreferUDP"))
 	}
 	for name, value := range map[string]int{
 		"maxConcurrent":               o.MaxConcurrent,
@@ -144,11 +150,11 @@ func (p *LocalDNSProfile) CorefileTemplate() (string, error) {
 
 	vnet := p.VnetDNSOverrides
 	if len(vnet) == 0 {
-		vnet = map[string]LocalDNSOverride{".": {ForwardDestination: "VnetDNS"}}
+		vnet = defaultLocalDNSOverrides()
 	}
 	kube := p.KubeDNSOverrides
 	if len(kube) == 0 {
-		kube = map[string]LocalDNSOverride{".": {ForwardDestination: "ClusterCoreDNS"}}
+		kube = defaultLocalDNSOverrides()
 	}
 
 	// Rendering happens in two stages. This pass translates the AKS profile into
@@ -180,9 +186,9 @@ func localDNSCorefileBlocks(overrides map[string]LocalDNSOverride, listener, def
 
 	blocks := make([]localDNSCorefileBlock, 0, len(zones))
 	for _, zone := range zones {
-		o := withLocalDNSDefaults(overrides[zone], defaultDestination)
+		o := withLocalDNSDefaults(overrides[zone], zone, defaultDestination)
 		isRootDomain := zone == "."
-		forwardToClusterDNS := o.ForwardDestination == "ClusterCoreDNS" || strings.HasSuffix(zone, "cluster.local")
+		forwardToClusterDNS := o.ForwardDestination == "ClusterCoreDNS" || isClusterLocalZone(zone)
 		// AgentBaker always sends the VnetDNS root zone to the node's DNS path.
 		if defaultDestination == "VnetDNS" && isRootDomain {
 			forwardToClusterDNS = false
@@ -214,15 +220,58 @@ func localDNSCorefileBlocks(overrides map[string]LocalDNSOverride, listener, def
 	return blocks
 }
 
-func withLocalDNSDefaults(o LocalDNSOverride, destination string) LocalDNSOverride {
+func isClusterLocalZone(zone string) bool {
+	return strings.HasSuffix(strings.TrimSuffix(zone, "."), "cluster.local")
+}
+
+func isValidLocalDNSZone(zone string) bool {
+	if zone == "." {
+		return true
+	}
+
+	name := strings.TrimSuffix(zone, ".")
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || !isASCIIAlphaNumeric(label[0]) || !isASCIIAlphaNumeric(label[len(label)-1]) {
+			return false
+		}
+		for i := 1; i < len(label)-1; i++ {
+			if !isASCIIAlphaNumeric(label[i]) && label[i] != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isASCIIAlphaNumeric(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
+}
+
+func defaultLocalDNSOverrides() map[string]LocalDNSOverride {
+	return map[string]LocalDNSOverride{
+		".":             {},
+		"cluster.local": {},
+	}
+}
+
+func withLocalDNSDefaults(o LocalDNSOverride, zone, destination string) LocalDNSOverride {
 	if o.QueryLogging == "" {
 		o.QueryLogging = "Error"
 	}
 	if o.Protocol == "" {
-		o.Protocol = "ForceTCP"
+		o.Protocol = "PreferUDP"
+		if isClusterLocalZone(zone) {
+			o.Protocol = "ForceTCP"
+		}
 	}
 	if o.ForwardDestination == "" {
 		o.ForwardDestination = destination
+		if isClusterLocalZone(zone) {
+			o.ForwardDestination = "ClusterCoreDNS"
+		}
 	}
 	if o.ForwardPolicy == "" {
 		o.ForwardPolicy = "Sequential"
