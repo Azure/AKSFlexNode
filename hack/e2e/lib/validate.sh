@@ -239,7 +239,7 @@ REMOTE
 }
 
 # validate_localdns_after_reboot - Verify LocalDNS survives a host reboot.
-+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 validate_localdns_after_reboot() {
   local vm_name="$1"
   local vm_ip="$2"
@@ -253,7 +253,7 @@ validate_localdns_after_reboot() {
   log_success "LocalDNS recovered after reboot on ${vm_name}"
 }
 
-+# validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
+# validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
   log_section "Validating Node Join"
