@@ -67,6 +67,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		corefile, _ := profile.CorefileTemplate() // Config validation runs before adaptation.
 		ac.LocalDNS = &agentconfig.AgentLocalDNSConfig{
 			Enabled:          profile.Enabled(),
+			RequiredPlugins:  []string{"nsid", "template"},
 			CorefileTemplate: corefile,
 		}
 		state := "disabled"

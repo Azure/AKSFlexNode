@@ -108,8 +108,10 @@ type localDNSCorefileData struct {
 
 type localDNSCorefileBlock struct {
 	Zone               string
+	IsRootDomain       bool
 	Listener           string
 	Upstream           string
+	NSID               string
 	LogQueries         bool
 	ForceTCP           bool
 	ForwardPolicy      string
@@ -141,6 +143,9 @@ func (p *LocalDNSProfile) CorefileTemplate() (string, error) {
 		kube = map[string]LocalDNSOverride{".": {ForwardDestination: "ClusterCoreDNS"}}
 	}
 
+	// Rendering happens in two stages. This pass translates the AKS profile into
+	// a Corefile template; Unbounded later resolves these literal placeholders
+	// from machine-specific listener, upstream, cluster DNS, and metrics values.
 	data := localDNSCorefileData{
 		NodeListener:    "{{ .NodeListenerIP }}",
 		ClusterListener: "{{ .ClusterListenerIP }}",
@@ -168,14 +173,27 @@ func localDNSCorefileBlocks(overrides map[string]LocalDNSOverride, listener, def
 	blocks := make([]localDNSCorefileBlock, 0, len(zones))
 	for _, zone := range zones {
 		o := withLocalDNSDefaults(overrides[zone], defaultDestination)
+		isRootDomain := zone == "."
+		forwardToClusterDNS := o.ForwardDestination == "ClusterCoreDNS" || strings.HasSuffix(zone, "cluster.local")
+		// AgentBaker always sends the VnetDNS root zone to the node's DNS path.
+		if defaultDestination == "VnetDNS" && isRootDomain {
+			forwardToClusterDNS = false
+		}
+
 		upstream := "{{ .NodeUpstreamIPsJoined }}"
-		if o.ForwardDestination == "ClusterCoreDNS" {
+		if forwardToClusterDNS {
 			upstream = "{{ .ClusterDNSServiceIP }}"
+		}
+		nsid := "localdns"
+		if defaultDestination == "ClusterCoreDNS" {
+			nsid = "localdns-pod"
 		}
 		blocks = append(blocks, localDNSCorefileBlock{
 			Zone:               zone,
+			IsRootDomain:       isRootDomain,
 			Listener:           listener,
 			Upstream:           upstream,
+			NSID:               nsid,
 			LogQueries:         o.QueryLogging == "Log",
 			ForceTCP:           o.Protocol == "ForceTCP",
 			ForwardPolicy:      localDNSForwardPolicy(o.ForwardPolicy),

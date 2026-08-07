@@ -28,6 +28,11 @@ func TestToAgentConfigLocalDNS(t *testing.T) {
 	if !strings.Contains(got.LocalDNS.CorefileTemplate, "{{ .ClusterDNSServiceIP }}") {
 		t.Fatalf("CorefileTemplate missing cluster DNS placeholder:\n%s", got.LocalDNS.CorefileTemplate)
 	}
+	for _, plugin := range []string{"nsid", "template"} {
+		if !strings.Contains(strings.Join(got.LocalDNS.RequiredPlugins, ","), plugin) {
+			t.Errorf("RequiredPlugins = %v, want %q", got.LocalDNS.RequiredPlugins, plugin)
+		}
+	}
 	if got.Kubelet.Labels["kubernetes.azure.com/localdns-state"] != "enabled" {
 		t.Fatalf("LocalDNS node label missing: %#v", got.Kubelet.Labels)
 	}

@@ -1,3 +1,12 @@
+# This Corefile follows the AKS AgentBaker LocalDNS policy with adaptations for
+# the Unbounded nspawn runtime:
+# - Node DNS forwards to resolver addresses discovered from the physical host
+#   instead of assuming the Azure platform DNS address.
+# - The metrics endpoint binds a runtime-resolved node address instead of :9253.
+# - The AgentBaker critical-FQDN hosts file is omitted because Unbounded does not
+#   run the AKS hosts-file refresher.
+# Listener, upstream, cluster DNS, and metrics placeholders are resolved by
+# Unbounded after AKS Flex Node renders the profile-specific server blocks.
 health-check.localdns.local:53 {
     bind {{ .NodeListenerIP }} {{ .ClusterListenerIP }}
     whoami
@@ -18,7 +27,16 @@ health-check.localdns.local:53 {
         servfail 0
     }
     loop
+    nsid localdns
     prometheus {{ .MetricsAddress }}
+    template ANY ANY internal.cloudapp.net {
+        match "^(?:[^.]+\.){4,}internal\.cloudapp\.net\.$"
+        rcode NXDOMAIN
+        fallthrough
+    }
+    template ANY ANY reddog.microsoft.com {
+        rcode NXDOMAIN
+    }
 }
 
 cluster.local:53 {
@@ -36,6 +54,7 @@ cluster.local:53 {
         servfail 0
     }
     loop
+    nsid localdns
     prometheus {{ .MetricsAddress }}
 }
 
@@ -55,6 +74,15 @@ cluster.local:53 {
         servfail 0
     }
     loop
+    nsid localdns-pod
     prometheus {{ .MetricsAddress }}
+    template ANY ANY internal.cloudapp.net {
+        match "^(?:[^.]+\.){4,}internal\.cloudapp\.net\.$"
+        rcode NXDOMAIN
+        fallthrough
+    }
+    template ANY ANY reddog.microsoft.com {
+        rcode NXDOMAIN
+    }
 }
 
