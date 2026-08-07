@@ -259,7 +259,7 @@ install_binary() {
 
     # Install binary
     cp "$binary_path" "$INSTALL_DIR/aks-flex-node"
-    chmod +x "$INSTALL_DIR/aks-flex-node"
+    chmod 0755 "$INSTALL_DIR/aks-flex-node"
     chown root:root "$INSTALL_DIR/aks-flex-node"
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
