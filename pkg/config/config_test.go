@@ -899,7 +899,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			],
 			"kubelet": {
 				"clusterFQDN": "test-cluster-dns-12345678.hcp.eastus.azmk8s.io",
-				"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t"
+				"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t",
+				"systemReserved": {"cpu": "50m", "memory": "100Mi"},
+				"kubeReserved": {"cpu": "200m", "memory": "650Mi"}
 			}
 		}
 	}`
@@ -925,6 +927,12 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	}
 	if cfg.Node.Kubelet.CACertData != "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t" {
 		t.Fatalf("Node.Kubelet.CACertData = %q", cfg.Node.Kubelet.CACertData)
+	}
+	if cfg.Node.Kubelet.SystemReserved["cpu"] != "50m" || cfg.Node.Kubelet.SystemReserved["memory"] != "100Mi" {
+		t.Fatalf("Node.Kubelet.SystemReserved = %#v", cfg.Node.Kubelet.SystemReserved)
+	}
+	if cfg.Node.Kubelet.KubeReserved["cpu"] != "200m" || cfg.Node.Kubelet.KubeReserved["memory"] != "650Mi" {
+		t.Fatalf("Node.Kubelet.KubeReserved = %#v", cfg.Node.Kubelet.KubeReserved)
 	}
 	if cfg.Node.MaxPods != 30 {
 		t.Fatalf("Node.MaxPods = %d, want 30", cfg.Node.MaxPods)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -76,6 +77,71 @@ func TestToAgentConfig_NodeName(t *testing.T) {
 
 	if ac.NodeName != "worker-1" {
 		t.Fatalf("NodeName=%q, want worker-1", ac.NodeName)
+	}
+}
+
+func TestToAgentConfig_ResourceReservations(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Node: NodeConfig{
+			MaxPods: 30,
+			Kubelet: KubeletConfig{
+				SystemReserved: map[string]string{"cpu": "50m", "memory": "100Mi"},
+				KubeReserved:   map[string]string{"cpu": "200m", "memory": "650Mi"},
+			},
+		},
+	}
+
+	ac := ToAgentConfig(cfg, "kube1")
+
+	configuration := ac.Kubelet.Configuration
+	gotSystemReserved, ok := configuration["systemReserved"].(map[string]string)
+	if !ok || !maps.Equal(gotSystemReserved, cfg.Node.Kubelet.SystemReserved) {
+		got := configuration["systemReserved"]
+		t.Fatalf("systemReserved=%v, want %v", got, cfg.Node.Kubelet.SystemReserved)
+	}
+	gotKubeReserved, ok := configuration["kubeReserved"].(map[string]string)
+	if !ok || !maps.Equal(gotKubeReserved, cfg.Node.Kubelet.KubeReserved) {
+		got := configuration["kubeReserved"]
+		t.Fatalf("kubeReserved=%v, want %v", got, cfg.Node.Kubelet.KubeReserved)
+	}
+	if got := configuration["maxPods"]; got != 30 {
+		t.Fatalf("maxPods=%v, want 30", got)
+	}
+}
+
+func TestDefaultKubeReserved(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		cpuCount      int
+		totalMemoryMi int
+		maxPods       int
+		wantCPU       string
+		wantMemory    string
+	}{
+		{name: "one CPU", cpuCount: 1, totalMemoryMi: 8192, maxPods: 30, wantCPU: "60m", wantMemory: "650Mi"},
+		{name: "two CPUs", cpuCount: 2, totalMemoryMi: 8192, maxPods: 30, wantCPU: "100m", wantMemory: "650Mi"},
+		{name: "four CPUs", cpuCount: 4, totalMemoryMi: 8192, maxPods: 30, wantCPU: "140m", wantMemory: "650Mi"},
+		{name: "eight CPUs", cpuCount: 8, totalMemoryMi: 8192, maxPods: 30, wantCPU: "180m", wantMemory: "650Mi"},
+		{name: "sixteen CPUs", cpuCount: 16, totalMemoryMi: 8192, maxPods: 30, wantCPU: "260m", wantMemory: "650Mi"},
+		{name: "memory capped at 25 percent", cpuCount: 2, totalMemoryMi: 2048, maxPods: 110, wantCPU: "100m", wantMemory: "512Mi"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := defaultKubeReserved(tt.cpuCount, tt.totalMemoryMi, tt.maxPods)
+			if got["cpu"] != tt.wantCPU {
+				t.Errorf("cpu=%q, want %q", got["cpu"], tt.wantCPU)
+			}
+			if got["memory"] != tt.wantMemory {
+				t.Errorf("memory=%q, want %q", got["memory"], tt.wantMemory)
+			}
+		})
 	}
 }
 

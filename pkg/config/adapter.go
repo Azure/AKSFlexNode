@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"runtime"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -26,6 +28,19 @@ const (
 //
 // cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
+	maxPods := cfg.Node.MaxPods
+	if maxPods == 0 {
+		maxPods = defaultMaxPods
+	}
+	systemReserved := maps.Clone(cfg.Node.Kubelet.SystemReserved)
+	if systemReserved == nil {
+		systemReserved = map[string]string{"cpu": "0", "memory": "0"}
+	}
+	kubeReserved := maps.Clone(cfg.Node.Kubelet.KubeReserved)
+	if kubeReserved == nil {
+		kubeReserved = defaultKubeReserved(runtime.NumCPU(), hostTotalMemoryMi(), maxPods)
+	}
+
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
@@ -42,6 +57,11 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
 			Labels:             cfg.Node.Labels,
 			RegisterWithTaints: cfg.Node.Taints,
+			Configuration: map[string]any{
+				"systemReserved": systemReserved,
+				"kubeReserved":   kubeReserved,
+				"maxPods":        maxPods,
+			},
 		},
 		CRI: agentconfig.CRIConfig{
 			Containerd: agentconfig.ContainerdConfig{

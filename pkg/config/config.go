@@ -34,6 +34,7 @@ const (
 	defaultMachineClientMode        = MachineClientModeARM
 	defaultMachineOperationMode     = "auto"
 	defaultMachineReconcileInterval = 10 * time.Minute
+	defaultMaxPods                  = 110
 	defaultTargetAgentPoolName      = "aksflexnodes"
 
 	// Machine client modes.
@@ -245,12 +246,14 @@ type NodeConfig struct {
 
 // KubeletConfig holds kubelet-specific configuration settings.
 type KubeletConfig struct {
-	Verbosity            int    `json:"verbosity"`
-	ImageGCHighThreshold int    `json:"imageGCHighThreshold"`
-	ImageGCLowThreshold  int    `json:"imageGCLowThreshold"`
-	ClusterFQDN          string `json:"clusterFQDN,omitempty"` // Kubernetes API server FQDN from AKS RP bootstrap data
-	CACertData           string `json:"caCertData"`            // Base64-encoded CA certificate data
-	NodeIP               string `json:"nodeIP"`                // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+	Verbosity            int               `json:"verbosity"`
+	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
+	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
+	ClusterFQDN          string            `json:"clusterFQDN,omitempty"`    // Kubernetes API server FQDN from AKS RP bootstrap data
+	CACertData           string            `json:"caCertData"`               // Base64-encoded CA certificate data
+	NodeIP               string            `json:"nodeIP"`                   // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+	SystemReserved       map[string]string `json:"systemReserved,omitempty"` // Resources reserved for OS system daemons; defaults to AKS values
+	KubeReserved         map[string]string `json:"kubeReserved,omitempty"`   // Resources reserved for Kubernetes daemons; defaults to AKS values
 }
 
 // NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
@@ -420,7 +423,7 @@ func (c *Config) setAgentDefaults() {
 func (c *Config) setNodeDefaults() {
 	// Set default node configuration if not provided
 	if c.Node.MaxPods == 0 {
-		c.Node.MaxPods = 110 // Default Kubernetes node pod limit
+		c.Node.MaxPods = defaultMaxPods
 	}
 
 	// set default node labels if not provided

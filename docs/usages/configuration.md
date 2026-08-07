@@ -142,6 +142,8 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `node.kubelet.clusterFQDN` | string | Kubernetes API server FQDN. Required for bootstrap token mode. | `example.hcp.canadacentral.azmk8s.io` |
 | `node.kubelet.caCertData` | string | Base64-encoded cluster CA data. Required for bootstrap token mode. | `<base64-ca-data>` |
 | `node.kubelet.nodeIP` | string | Optional node IP override for kubelet `--node-ip`. | `10.0.0.4` |
+| `node.kubelet.systemReserved` | object | Optional system daemon resource reservation. Defaults to the AKS values of zero CPU and memory. | `{ "cpu": "50m", "memory": "100Mi" }` |
+| `node.kubelet.kubeReserved` | object | Optional Kubernetes daemon resource reservation. By default, CPU follows the AKS core-based reservation tiers and memory is the lesser of `20 Mi` per maximum pod plus `50 Mi`, or 25% of host memory. | `{ "cpu": "200m", "memory": "650Mi" }` |
 
 ## Component Versions
 
