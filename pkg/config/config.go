@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -893,7 +894,7 @@ func (c *Config) validate() error {
 	if err := c.Bootstrap.validate(); err != nil {
 		return err
 	}
-	if err := c.Node.Kubelet.validate(); err != nil {
+	if err := c.Node.validate(); err != nil {
 		return err
 	}
 
@@ -907,7 +908,27 @@ func (c *Config) validate() error {
 	return nil
 }
 
+func (c *NodeConfig) validate() error {
+	if c.MaxPods < 0 || int64(c.MaxPods) > math.MaxInt32 {
+		return fmt.Errorf("node.maxPods must be between 0 and %d, inclusive", math.MaxInt32)
+	}
+	return c.Kubelet.validate()
+}
+
 func (c *KubeletConfig) validate() error {
+	if c.Verbosity < 0 || int64(c.Verbosity) > math.MaxInt32 {
+		return fmt.Errorf("node.kubelet.verbosity must be between 0 and %d, inclusive", math.MaxInt32)
+	}
+	if c.ImageGCHighThreshold < 0 || c.ImageGCHighThreshold > 100 {
+		return fmt.Errorf("node.kubelet.imageGCHighThreshold must be between 0 and 100, inclusive")
+	}
+	if c.ImageGCLowThreshold < 0 || c.ImageGCLowThreshold > 100 {
+		return fmt.Errorf("node.kubelet.imageGCLowThreshold must be between 0 and 100, inclusive")
+	}
+	if c.ImageGCLowThreshold >= c.ImageGCHighThreshold {
+		return fmt.Errorf("node.kubelet.imageGCLowThreshold must be less than node.kubelet.imageGCHighThreshold")
+	}
+
 	kubelet := agentconfig.AgentKubeletConfig{}
 	if c.ImageCredentialProvider != nil {
 		kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
