@@ -50,6 +50,13 @@ Your Flex Node machine and the AKS cluster must be able to reach each other. Con
 > **Note**
 > On-premises machines usually reach the cluster's private node network through a site-to-site VPN, ExpressRoute, or equivalent routed connectivity. Establishing that link is a prerequisite for this quickstart. For advanced network scenarios such as cross-region, gateway, or custom CNI topologies, follow the [lab guides](docs/labs/README.md).
 
+### Prepare the cluster
+
+Before joining a node, prepare the target AKS cluster by following the [operator guide](docs/usages/operator-first-boot.md). It covers the FlexNodes pool, Unbounded networking, identity, RBAC, and node registration requirements that are not present on a standard AKS cluster.
+
+> **Note**
+> The controller under `hack/controller-deployment/` is for E2E and development environments. Do not deploy it as part of the user quickstart.
+
 ### Step 1: Set your variables and connect to the cluster
 
 **Run on: your workstation**
@@ -317,6 +324,29 @@ kubectl delete node <node-name>
 ```
 
 </details>
+
+### Troubleshooting
+
+**The node joins, but `aks-flex-node-agent` is restarting.**
+
+Kubelet bootstrap and daemon authentication are separate. The Kubernetes node can become `Ready` while the long-running agent waits for approval of its daemon CSR.
+
+On the Flex Node machine:
+
+```bash
+systemctl status aks-flex-node-agent
+journalctl -u aks-flex-node-agent --no-pager -n 200
+```
+
+From your workstation:
+
+```bash
+kubectl get csr
+```
+
+When the AKS Flex CSR approver is not available, inspect and manually approve the daemon CSR using the procedure in [Approve the daemon CSR when required](docs/usages/operator-first-boot.md#7-approve-the-daemon-csr-when-required).
+
+Manual approval is a temporary preview fallback. Verify that the CSR belongs to the expected node before approving it.
 
 ### Next steps
 

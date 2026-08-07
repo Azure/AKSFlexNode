@@ -19,12 +19,20 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 		Components: ComponentsConfig{Kubernetes: "1.30.0"},
 		Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10"},
 		Node: NodeConfig{
-			Labels: map[string]string{"env": "test"},
-			Taints: []string{"dedicated=infra:NoSchedule"},
+			MaxPods: 42,
+			Labels:  map[string]string{"env": "test"},
+			Taints:  []string{"dedicated=infra:NoSchedule"},
 			Kubelet: KubeletConfig{
-				ClusterFQDN: "api.example.com:6443",
-				CACertData:  "dGVzdC1jYS1kYXRh",
-				NodeIP:      "10.225.0.4",
+				Verbosity:            4,
+				ImageGCHighThreshold: 90,
+				ImageGCLowThreshold:  75,
+				ClusterFQDN:          "api.example.com:6443",
+				CACertData:           "dGVzdC1jYS1kYXRh",
+				NodeIP:               "10.225.0.4",
+				ImageCredentialProvider: &ImageCredentialProviderConfig{
+					ConfigPath: "/etc/kubernetes/credential-provider.yaml",
+					BinDir:     "/usr/local/lib/kubelet-credential-providers",
+				},
 			},
 		},
 	}
@@ -64,6 +72,31 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	}
 	if len(ac.Kubelet.RegisterWithTaints) != 1 || ac.Kubelet.RegisterWithTaints[0] != "dedicated=infra:NoSchedule" {
 		t.Fatalf("Kubelet.RegisterWithTaints=%v, want [dedicated=infra:NoSchedule]", ac.Kubelet.RegisterWithTaints)
+	}
+	if got := ac.Kubelet.Configuration["maxPods"]; got != 42 {
+		t.Fatalf("Kubelet.Configuration.maxPods=%v, want 42", got)
+	}
+	if got := ac.Kubelet.Configuration["imageGCHighThresholdPercent"]; got != 90 {
+		t.Fatalf("Kubelet.Configuration.imageGCHighThresholdPercent=%v, want 90", got)
+	}
+	if got := ac.Kubelet.Configuration["imageGCLowThresholdPercent"]; got != 75 {
+		t.Fatalf("Kubelet.Configuration.imageGCLowThresholdPercent=%v, want 75", got)
+	}
+	logging, ok := ac.Kubelet.Configuration["logging"].(map[string]any)
+	if !ok {
+		t.Fatalf("Kubelet.Configuration.logging=%T, want map[string]any", ac.Kubelet.Configuration["logging"])
+	}
+	if logging["verbosity"] != 4 {
+		t.Fatalf("Kubelet.Configuration.logging=%v, want verbosity=4", logging)
+	}
+	if ac.Kubelet.ImageCredentialProvider == nil {
+		t.Fatal("Kubelet.ImageCredentialProvider=nil, want provider")
+	}
+	if ac.Kubelet.ImageCredentialProvider.ConfigPath != "/etc/kubernetes/credential-provider.yaml" {
+		t.Fatalf("Kubelet.ImageCredentialProvider.ConfigPath=%q", ac.Kubelet.ImageCredentialProvider.ConfigPath)
+	}
+	if ac.Kubelet.ImageCredentialProvider.BinDir != "/usr/local/lib/kubelet-credential-providers" {
+		t.Fatalf("Kubelet.ImageCredentialProvider.BinDir=%q", ac.Kubelet.ImageCredentialProvider.BinDir)
 	}
 }
 
