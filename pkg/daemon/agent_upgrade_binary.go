@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -217,6 +219,11 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTPS, include a host, omit user information, and omit fragments")
 	}
+	digest := strings.TrimPrefix(strings.TrimSpace(expectedDigest), "sha256:")
+	decodedDigest, err := hex.DecodeString(digest)
+	if err != nil || len(decodedDigest) != sha256.Size {
+		return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
+	}
 	member, err := expectedAgentArchiveMember()
 	if err != nil {
 		return agentbinary.InstallOptions{}, err
@@ -242,9 +249,6 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 			},
 		},
 	}
-	if err := agentbinary.ValidateInstallOptions(opts); err != nil {
-		return agentbinary.InstallOptions{}, err
-	}
 	return opts, nil
 }
 
@@ -260,6 +264,6 @@ func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, 
 		CurrentPath:  paths.CurrentPath,
 		LastGoodPath: paths.LastGoodPath,
 	}
-	_, err = agentbinary.InstallAndSwitchFromTarGzWithOptions(ctx, log, layout, opts)
+	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, layout, opts)
 	return err
 }
