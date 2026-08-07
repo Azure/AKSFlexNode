@@ -252,8 +252,8 @@ type KubeletConfig struct {
 	ClusterFQDN          string            `json:"clusterFQDN,omitempty"`    // Kubernetes API server FQDN from AKS RP bootstrap data
 	CACertData           string            `json:"caCertData"`               // Base64-encoded CA certificate data
 	NodeIP               string            `json:"nodeIP"`                   // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
-	SystemReserved       map[string]string `json:"systemReserved,omitempty"` // Resources reserved for OS system daemons; defaults to AKS values
-	KubeReserved         map[string]string `json:"kubeReserved,omitempty"`   // Resources reserved for Kubernetes daemons; defaults to AKS values
+	SystemReserved       map[string]string `json:"systemReserved,omitempty"` // Resources reserved for OS system daemons; defaults to zero
+	KubeReserved         map[string]string `json:"kubeReserved,omitempty"`   // Resources reserved for Kubernetes daemons; defaults follow AKS guidance
 }
 
 // NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
