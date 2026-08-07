@@ -44,7 +44,7 @@ sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
   SKIP_AZCLI=true \
   bash /tmp/aks-flex-node-install.sh --yes
 
-/usr/local/bin/aks-flex-node version
+sudo /usr/local/bin/aks-flex-node version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
