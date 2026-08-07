@@ -7,7 +7,7 @@
 #   validate_all_nodes                - Verify MSI, token, offline, and kubeadm nodes joined
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
 #   validate_localdns_status <vm_name> <vm_ip> - Verify LocalDNS behavior
-#   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after reboot
+#   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after nspawn reboot
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
 #   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
@@ -238,19 +238,52 @@ REMOTE
   log_success "LocalDNS validation passed on ${vm_ip}"
 }
 
-# validate_localdns_after_reboot - Verify LocalDNS survives a host reboot.
+# validate_localdns_after_reboot - Verify LocalDNS survives an nspawn reboot.
 # ---------------------------------------------------------------------------
 validate_localdns_after_reboot() {
   local vm_name="$1"
   local vm_ip="$2"
+  local old_renew_time
+  old_renew_time="$(kubectl -n kube-node-lease get lease "${vm_name}" -o jsonpath='{.spec.renewTime}')"
 
-  log_section "Validating LocalDNS After Host Reboot"
-  log_info "Rebooting ${vm_name} (${vm_ip})..."
-  az vm restart --resource-group "$(state_get resource_group)" --name "${vm_name}"
-  wait_for_ssh "${vm_ip}"
-  validate_node_joined "${vm_name}"
-  validate_localdns_status "${vm_name}" "${vm_ip}"
-  log_success "LocalDNS recovered after reboot on ${vm_name}"
+  log_section "Validating LocalDNS After Nspawn Reboot"
+  log_info "Rebooting the nspawn machine on ${vm_name} (${vm_ip})..."
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
+set -euo pipefail
+machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+machinectl reboot "${machine}"
+for _ in $(seq 1 60); do
+  if systemd-run --quiet --pipe --wait --machine="${machine}" \
+      systemctl is-active --quiet localdns.service kubelet.service containerd.service >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 5
+done
+machinectl status "${machine}" >&2 || true
+systemd-run --quiet --pipe --wait --machine="${machine}" \
+  systemctl --no-pager --full status localdns.service kubelet.service containerd.service >&2 || true
+exit 1
+REMOTE
+
+  local timeout="${E2E_NODE_JOIN_TIMEOUT}"
+  local elapsed=0
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    local ready renew_time
+    ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    renew_time="$(kubectl -n kube-node-lease get lease "${vm_name}" -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
+    if [[ "${ready}" == "True" && -n "${renew_time}" && "${renew_time}" != "${old_renew_time}" ]]; then
+      validate_localdns_status "${vm_name}" "${vm_ip}" || return 1
+      log_success "LocalDNS recovered after nspawn reboot on ${vm_name}"
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  log_error "Node ${vm_name} did not renew its lease and become Ready after nspawn reboot"
+  kubectl describe node "${vm_name}" >&2 || true
+  return 1
 }
 
 # validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
