@@ -159,9 +159,6 @@ _build_controller_image() {
 
   log_section "Building AKS Flex Controller Image"
   log_info "Building controller image ${local_image} and pushing to in-cluster local registry"
-  pf_pid=""
-  _start_registry_port_forward pf_pid "${local_port}" || return 1
-
   if ! (
     cd "${REPO_ROOT}"
     DOCKER_BUILDKIT=1 docker build \
@@ -172,13 +169,26 @@ _build_controller_image() {
       --build-arg "BUILD_TIME=${build_time}" \
       --tag "${local_image}" \
       .
-    docker push "${local_image}"
   ); then
-    _stop_registry_port_forward "${pf_pid}"
     return 1
   fi
 
-  _stop_registry_port_forward "${pf_pid}"
+  local pushed=0 attempt
+  for attempt in 1 2 3; do
+    pf_pid=""
+    if _start_registry_port_forward pf_pid "${local_port}" && docker push "${local_image}"; then
+      pushed=1
+      _stop_registry_port_forward "${pf_pid}"
+      break
+    fi
+    _stop_registry_port_forward "${pf_pid}"
+    log_warn "Controller image push attempt ${attempt} failed; reopening registry tunnel"
+    sleep 2
+  done
+  if [[ "${pushed}" != "1" ]]; then
+    return 1
+  fi
+
   docker image rm "${local_image}" >/dev/null 2>&1 || true
   out_image="${cluster_image}"
 }
