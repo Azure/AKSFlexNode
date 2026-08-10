@@ -78,7 +78,7 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
-| `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, and nspawn synchronization. |
+| `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -156,7 +156,8 @@ The `agent-upgrade` command uses the bootstrap-token VM to exercise the complete
 4. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.
 5. Upgrade to a candidate that passes `version` but fails daemon startup, then verify automatic rollback and a failed operation.
 6. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot.
-7. Run a workload before the subsequent repave test.
+7. Stage a distinct candidate and validate direct host activation preflight, inactive-slot switch, service health, shared layout, and active-nspawn synchronization without creating a `MachineOperation` signal.
+8. Restart kubelet through the directly activated nspawn credential binary, require Lease renewal and Node readiness, then run a workload before the subsequent repave test.
 
 Run it against an already joined environment:
 

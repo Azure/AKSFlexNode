@@ -177,8 +177,57 @@ REMOTE
   return 1
 }
 
+_agent_upgrade_direct_activation() {
+  local vm_name="$1" vm_ip="$2" before_snapshot before_slot before_digest after_snapshot after_slot after_digest
+  before_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
+  IFS='|' read -r before_slot _ before_digest _ <<<"${before_snapshot}"
+
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+work=/opt/aks-flex-node-e2e-upgrade
+candidate="${work}/aks-flex-node-direct-candidate"
+current_link=/usr/local/lib/aks-flex-node/aks-flex-node-current
+last_good_link=/usr/local/lib/aks-flex-node/aks-flex-node-last-good
+service=/etc/systemd/system/aks-flex-node-agent.service
+
+sudo cp "${work}/aks-flex-node-linux-amd64" "${candidate}"
+printf '\nAKS-FLEX-DIRECT-ACTIVATION-E2E\n' | sudo tee -a "${candidate}" >/dev/null
+sudo chmod 0755 "${candidate}"
+current_before="$(sudo readlink -f "${current_link}")"
+last_good_before="$(sudo readlink -f "${last_good_link}")"
+unit_before="$(sudo sha256sum "${service}" | awk '{print $1}')"
+
+sudo "${candidate}" agent-upgrade --preflight | tee /tmp/direct-agent-upgrade-preflight.log
+[[ "$(sudo readlink -f "${current_link}")" == "${current_before}" ]]
+[[ "$(sudo readlink -f "${last_good_link}")" == "${last_good_before}" ]]
+[[ "$(sudo sha256sum "${service}" | awk '{print $1}')" == "${unit_before}" ]]
+sudo "${candidate}" agent-upgrade | tee /tmp/direct-agent-upgrade.log
+current_after="$(sudo readlink -f "${current_link}")"
+[[ "${current_after}" != "${current_before}" ]]
+[[ "$(sudo readlink -f "${last_good_link}")" == "${current_before}" ]]
+[[ "$(sudo readlink -f /usr/local/bin/aks-flex-node)" == "${current_after}" ]]
+[[ "$(sudo sha256sum "${candidate}" | awk '{print $1}')" == "$(sudo sha256sum "${current_after}" | awk '{print $1}')" ]]
+sudo grep -Fq "ExecStart=${current_link} agent" "${service}"
+sudo systemctl is-active --quiet aks-flex-node-agent.service
+pid="$(sudo systemctl show --property MainPID --value aks-flex-node-agent.service)"
+[[ "$(sudo readlink -f "/proc/${pid}/exe")" == "${current_after}" ]]
+[[ ! -e /etc/aks-flex-node/agent-upgrade-signal.json ]]
+REMOTE
+
+  after_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
+  IFS='|' read -r after_slot _ after_digest _ <<<"${after_snapshot}"
+  if [[ -z "${after_slot}" || "${after_slot}" == "${before_slot}" || "${after_digest}" == "${before_digest}" ]]; then
+    log_error "Direct activation did not install a distinct inactive-slot candidate: before=${before_snapshot} after=${after_snapshot}"
+    return 1
+  fi
+  _agent_upgrade_assert_synchronized "${vm_ip}"
+  _agent_upgrade_validate_kubelet_auth "${vm_name}" "${vm_ip}"
+  validate_node_joined "${vm_name}"
+  log_success "Direct host activation preflight, switch, service health, and nspawn synchronization passed"
+}
+
 agent_upgrade_e2e() {
-  log_section "Managed AgentUpgrade E2E"
+  log_section "Managed and Direct AgentUpgrade E2E"
   local vm_name vm_ip suffix success_digest failure_digest before before_slot success_snapshot success_slot success_binary_digest rollback_snapshot rollback_binary_digest retry_snapshot retry_binary_digest
   vm_name="$(state_get token_vm_name)"
   vm_ip="$(state_get token_vm_ip)"
@@ -237,7 +286,9 @@ agent_upgrade_e2e() {
   fi
   _agent_upgrade_assert_synchronized "${vm_ip}"
   validate_node_joined "${vm_name}"
+
+  _agent_upgrade_direct_activation "${vm_name}" "${vm_ip}"
   smoke_test "${vm_name}" "agent-upgrade"
 
-  log_success "Managed AgentUpgrade success, rollback, and retry E2E passed"
+  log_success "Managed AgentUpgrade success/rollback/retry and direct host activation E2E passed"
 }
