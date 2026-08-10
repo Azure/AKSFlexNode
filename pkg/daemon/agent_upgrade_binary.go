@@ -186,9 +186,11 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTPS, include a host, omit user information, and omit fragments")
 	}
 	digest := strings.TrimPrefix(strings.TrimSpace(expectedDigest), "sha256:")
-	decodedDigest, err := hex.DecodeString(digest)
-	if err != nil || len(decodedDigest) != sha256.Size {
-		return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
+	if digest != "" {
+		decodedDigest, decodeErr := hex.DecodeString(digest)
+		if decodeErr != nil || len(decodedDigest) != sha256.Size {
+			return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
+		}
 	}
 	member, err := expectedAgentArchiveMember()
 	if err != nil {

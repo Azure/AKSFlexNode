@@ -49,7 +49,7 @@ journalctl -u aks-flex-node-agent -f
 
 ## Managed Agent Upgrade
 
-When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTPS release archive and the SHA-256 of the compressed archive:
+When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTPS release archive and, when available, the SHA-256 of the compressed archive:
 
 ```yaml
 apiVersion: unbounded-cloud.io/v1alpha3
@@ -64,7 +64,7 @@ spec:
     sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-The archive must contain exactly the architecture-specific release member used by AKS Flex Node (`aks-flex-node-linux-amd64` or `aks-flex-node-linux-arm64`). The daemon verifies the archive digest and candidate `version` command before switching its blue/green binary links. It also atomically updates the binary in the active nspawn rootfs so kubelet exec authentication uses the same version.
+The archive must contain exactly the architecture-specific release member used by AKS Flex Node (`aks-flex-node-linux-amd64` or `aks-flex-node-linux-arm64`). The `sha256` parameter is optional; when supplied, the daemon verifies the compressed archive digest. Omit it only when the archive source and HTTPS transport are trusted. The daemon always verifies the candidate `version` command before switching its blue/green binary links. It also atomically updates the binary in the active nspawn rootfs so kubelet exec authentication uses the same version.
 
 The restarted daemon marks the operation `Complete`. If the candidate cannot remain running, systemd restores the last-known-good host and nspawn binaries and marks the operation `Failed`. URL query strings, which may contain SAS credentials, are omitted from logs and operation status.
 

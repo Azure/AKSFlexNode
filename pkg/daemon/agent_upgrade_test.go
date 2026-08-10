@@ -55,9 +55,8 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 			},
 			wantErr: "HTTPS",
 		},
-		"missing digest": {
+		"optional digest omitted": {
 			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz"},
-			wantErr:    agentUpgradeSHA256Parameter,
 		},
 		"invalid digest": {
 			parameters: map[string]string{

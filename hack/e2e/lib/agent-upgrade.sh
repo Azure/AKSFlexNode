@@ -92,7 +92,10 @@ _agent_upgrade_digest() {
 }
 
 _agent_upgrade_apply() {
-  local operation="$1" vm_name="$2" archive="$3" digest="$4" token="$5"
+  local operation="$1" vm_name="$2" archive="$3" digest="$4" token="$5" digest_parameter=""
+  if [[ -n "${digest}" ]]; then
+    digest_parameter="    sha256: ${digest}"
+  fi
   cat <<EOF | kubectl apply -f -
 apiVersion: unbounded-cloud.io/v1alpha3
 kind: MachineOperation
@@ -103,7 +106,7 @@ spec:
   operationKind: AgentUpgrade
   parameters:
     downloadURL: https://127.0.0.1:18443/${archive}?sig=${token}
-    sha256: ${digest}
+${digest_parameter}
   ttlSecondsAfterFinished: 3600
 EOF
 }
@@ -276,7 +279,9 @@ agent_upgrade_e2e() {
   validate_node_joined "${vm_name}"
 
   local retry_op="agent-upgrade-retry-${suffix}"
-  _agent_upgrade_apply "${retry_op}" "${vm_name}" success.tar.gz "${success_digest}" "retry-${suffix}"
+  # The digest is optional when the trusted archive source and HTTPS transport
+  # provide the integrity boundary.
+  _agent_upgrade_apply "${retry_op}" "${vm_name}" success.tar.gz "" "retry-${suffix}"
   _agent_upgrade_wait_phase "${retry_op}" Complete
   retry_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
   IFS='|' read -r _ _ retry_binary_digest _ <<<"${retry_snapshot}"

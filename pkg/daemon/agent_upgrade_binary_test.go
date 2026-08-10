@@ -56,6 +56,13 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if !opts.ExactMember {
 		t.Fatal("ExactMember = false")
 	}
+	withoutDigest, err := secureAgentInstallOptions("https://example.com/agent.tar.gz", "")
+	if err != nil {
+		t.Fatalf("secureAgentInstallOptions without digest: %v", err)
+	}
+	if withoutDigest.ExpectedSHA256 != "" {
+		t.Fatalf("ExpectedSHA256 = %q, want empty", withoutDigest.ExpectedSHA256)
+	}
 	redirect, err := http.NewRequest(http.MethodGet, "http://example.com/agent.tar.gz", http.NoBody)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)

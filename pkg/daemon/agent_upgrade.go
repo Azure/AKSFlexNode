@@ -57,9 +57,6 @@ func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest
 	if request.downloadURL == "" {
 		return agentUpgradeRequest{}, fmt.Errorf("missing required parameter %q", agentUpgradeDownloadURLParameter)
 	}
-	if request.sha256 == "" {
-		return agentUpgradeRequest{}, fmt.Errorf("missing required parameter %q", agentUpgradeSHA256Parameter)
-	}
 	if _, err := secureAgentInstallOptions(request.downloadURL, request.sha256); err != nil {
 		return agentUpgradeRequest{}, err
 	}

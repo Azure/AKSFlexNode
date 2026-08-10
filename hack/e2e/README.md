@@ -155,7 +155,7 @@ The `agent-upgrade` command uses the bootstrap-token VM to exercise the complete
 3. Verify successful daemon restart, operation completion, binary replacement, and host/nspawn binary equality.
 4. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.
 5. Upgrade to a candidate that passes `version` but fails daemon startup, then verify automatic rollback and a failed operation.
-6. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot.
+6. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot without the optional archive digest.
 7. Stage a distinct candidate and validate direct host activation preflight, inactive-slot switch, service health, shared layout, and active-nspawn synchronization without creating a `MachineOperation` signal.
 8. Restart kubelet through the directly activated nspawn credential binary, require Lease renewal and Node readiness, then run a workload before the subsequent repave test.
 
