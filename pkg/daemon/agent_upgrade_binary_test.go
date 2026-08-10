@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,12 +62,8 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if withoutDigest.ExpectedSHA256 != "" {
 		t.Fatalf("ExpectedSHA256 = %q, want empty", withoutDigest.ExpectedSHA256)
 	}
-	redirect, err := http.NewRequest(http.MethodGet, "http://example.com/agent.tar.gz", http.NoBody)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	if err := opts.HTTPClient.CheckRedirect(redirect, nil); err == nil {
-		t.Fatal("HTTP redirect was accepted")
+	if _, err := secureAgentInstallOptions("http://127.0.0.1/agent.tar.gz", digest); err != nil {
+		t.Fatalf("secureAgentInstallOptions with HTTP: %v", err)
 	}
 }
 
@@ -79,8 +74,8 @@ func TestSecureAgentInstallOptionsRejectsInvalidInputs(t *testing.T) {
 		url    string
 		digest string
 	}{
-		"HTTP": {
-			url:    "http://example.com/agent.tar.gz",
+		"unsupported scheme": {
+			url:    "ftp://example.com/agent.tar.gz",
 			digest: strings.Repeat("a", 64),
 		},
 		"invalid digest": {
@@ -115,7 +110,7 @@ func TestInstallAndSwitchAgentBinaryRejectsInvalidInputsWithoutSwitching(t *test
 	err := installAndSwitchAgentBinary(
 		t.Context(),
 		slog.Default(),
-		"http://example.com/agent.tar.gz",
+		"ftp://example.com/agent.tar.gz",
 		strings.Repeat("0", 64),
 		paths,
 	)

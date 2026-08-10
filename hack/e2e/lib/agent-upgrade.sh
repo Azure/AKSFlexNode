@@ -51,32 +51,12 @@ fi
 rm -rf "${check_dir}"
 sudo install -m 0755 /tmp/aks-flex-node-e2e-upgrade-binary "${work}/aks-flex-node-linux-amd64"
 
-sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-  -subj '/CN=127.0.0.1' \
-  -addext 'subjectAltName=IP:127.0.0.1' \
-  -keyout "${work}/server.key" -out "${work}/server.crt" >/dev/null 2>&1
-sudo cp "${work}/server.crt" /usr/local/share/ca-certificates/aks-flex-node-e2e-upgrade.crt
-sudo update-ca-certificates >/dev/null
-# Reload Go's system root pool in the long-running daemon after adding the
-# short-lived test CA.
-sudo systemctl restart aks-flex-node-agent.service
-cat >/tmp/aks-flex-node-e2e-upgrade-server.py <<'PY'
-import http.server
-import ssl
-
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 18443), http.server.SimpleHTTPRequestHandler)
-context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain("/opt/aks-flex-node-e2e-upgrade/server.crt", "/opt/aks-flex-node-e2e-upgrade/server.key")
-server.socket = context.wrap_socket(server.socket, server_side=True)
-server.serve_forever()
-PY
-sudo install -m 0755 /tmp/aks-flex-node-e2e-upgrade-server.py "${work}/server.py"
 sudo systemctl stop aks-flex-node-e2e-upgrade-server.service 2>/dev/null || true
 sudo systemd-run --unit=aks-flex-node-e2e-upgrade-server.service \
   --property=WorkingDirectory="${work}" \
-  /usr/bin/python3 "${work}/server.py" >/dev/null
+  /usr/bin/python3 -m http.server 18080 --bind 127.0.0.1 >/dev/null
 for _ in $(seq 1 30); do
-  if curl --silent --fail https://127.0.0.1:18443/success.tar.gz >/dev/null; then
+  if curl --silent --fail http://127.0.0.1:18080/success.tar.gz >/dev/null; then
     exit 0
   fi
   sleep 1
@@ -105,7 +85,7 @@ spec:
   machineRef: ${vm_name}
   operationKind: AgentUpgrade
   parameters:
-    downloadURL: https://127.0.0.1:18443/${archive}?sig=${token}
+    downloadURL: http://127.0.0.1:18080/${archive}?sig=${token}
 ${digest_parameter}
   ttlSecondsAfterFinished: 3600
 EOF
@@ -279,8 +259,8 @@ agent_upgrade_e2e() {
   validate_node_joined "${vm_name}"
 
   local retry_op="agent-upgrade-retry-${suffix}"
-  # The digest is optional when the trusted archive source and HTTPS transport
-  # provide the integrity boundary.
+  # The digest is optional when the VM-local source and loopback transport
+  # provide the trust boundary.
   _agent_upgrade_apply "${retry_op}" "${vm_name}" success.tar.gz "" "retry-${suffix}"
   _agent_upgrade_wait_phase "${retry_op}" Complete
   retry_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"

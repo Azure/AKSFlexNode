@@ -53,7 +53,6 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 				agentUpgradeDownloadURLParameter: "http://example.com/agent.tar.gz",
 				agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 			},
-			wantErr: "HTTPS",
 		},
 		"optional digest omitted": {
 			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz"},

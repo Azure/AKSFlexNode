@@ -150,7 +150,7 @@ Each join path uploads the locally built binary, renders a config file, installs
 
 The `agent-upgrade` command uses the bootstrap-token VM to exercise the complete managed binary lifecycle:
 
-1. Serve architecture-specific release archives over trusted loopback HTTPS.
+1. Serve architecture-specific release archives over VM-local loopback HTTP to validate HTTP transport support.
 2. Submit an `AgentUpgrade` with an archive SHA-256 and a query credential.
 3. Verify successful daemon restart, operation completion, binary replacement, and host/nspawn binary equality.
 4. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.

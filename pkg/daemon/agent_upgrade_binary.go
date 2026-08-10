@@ -182,8 +182,8 @@ func expectedAgentArchiveMember() (string, error) {
 
 func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
-	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
-		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTPS, include a host, omit user information, and omit fragments")
+	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
+		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTP or HTTPS, include a host, omit user information, and omit fragments")
 	}
 	digest := strings.TrimPrefix(strings.TrimSpace(expectedDigest), "sha256:")
 	if digest != "" {
@@ -204,18 +204,7 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 		MaxArchiveBytes:   agentUpgradeMaxArchiveBytes,
 		MaxExtractedBytes: agentUpgradeMaxBinaryBytes,
 		ExactMember:       true,
-		HTTPClient: &http.Client{
-			Timeout: 10 * time.Minute,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if req.URL.Scheme != "https" {
-					return fmt.Errorf("redirect to non-HTTPS URL is not allowed")
-				}
-				if len(via) >= 10 {
-					return fmt.Errorf("stopped after 10 redirects")
-				}
-				return nil
-			},
-		},
+		HTTPClient:        &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 
