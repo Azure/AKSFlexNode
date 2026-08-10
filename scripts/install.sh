@@ -254,15 +254,56 @@ download_binary() {
 
 install_binary() {
     local binary_path="$1"
+    local managed_dir="/usr/local/lib/aks-flex-node"
+    local current_path="${managed_dir}/aks-flex-node-current"
+    local blue_path="${managed_dir}/aks-flex-node-blue"
+    local green_path="${managed_dir}/aks-flex-node-green"
+    local last_good_path="${managed_dir}/aks-flex-node-last-good"
+    local compatibility_path="${INSTALL_DIR}/aks-flex-node"
+    local candidate
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # Install with explicit ownership and modes so restrictive remote umasks do
-    # not leave the command inaccessible to non-root operators.
-    install -d -o root -g root -m 0755 "$INSTALL_DIR"
-    install -o root -g root -m 0755 "$binary_path" "$INSTALL_DIR/aks-flex-node"
+    # Always stage separately. Installing directly through BinaryPath after
+    # migration would dereference its symlink and overwrite an active or
+    # last-good slot in place.
+    candidate=$(mktemp /var/tmp/aks-flex-node-install-candidate.XXXXXX)
+    install -o root -g root -m 0755 "$binary_path" "$candidate"
 
-    log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
+    if [[ -e "$current_path" || -L "$current_path" ]]; then
+        if systemctl is-active --quiet aks-flex-node-agent.service 2>/dev/null; then
+            log_info "Activating candidate through the managed blue-green layout..."
+            if ! "$candidate" agent-upgrade; then
+                rm -f "$candidate"
+                log_error "Failed to activate the installed AKS Flex Node candidate"
+                return 1
+            fi
+            rm -f "$candidate"
+            log_success "Binary activated through $current_path"
+            return 0
+        fi
+
+        # Reset/unjoin removes daemon state and service assets but may leave the
+        # binary slots. With no running daemon to preserve, safely reseed the
+        # managed layout instead of writing through compatibility symlinks.
+        log_info "Reseeding inactive managed binary layout..."
+        install -d -o root -g root -m 0750 "$managed_dir"
+        rm -f "$compatibility_path" "$current_path" "$last_good_path" "$blue_path" "$green_path"
+        install -o root -g root -m 0755 "$candidate" "$blue_path"
+        ln -s "$blue_path" "$current_path"
+        ln -s "$blue_path" "$last_good_path"
+        install -d -o root -g root -m 0755 "$INSTALL_DIR"
+        ln -s "$current_path" "$compatibility_path"
+        rm -f "$candidate"
+        log_success "Binary layout reseeded at $current_path"
+        return 0
+    fi
+
+    install -d -o root -g root -m 0755 "$INSTALL_DIR"
+    install -o root -g root -m 0755 "$candidate" "$compatibility_path"
+    rm -f "$candidate"
+
+    log_success "Binary installed to $compatibility_path"
 }
 
 warn_install_dir_not_in_path() {

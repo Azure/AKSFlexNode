@@ -47,8 +47,8 @@ func (p agentUpgradePaths) layout() agentbinary.Layout {
 	}
 }
 
-func (p agentUpgradePaths) sharedPaths() goalstates.AgentUpgradePaths {
-	return goalstates.AgentUpgradePaths{
+func (p agentUpgradePaths) sharedPaths() (goalstates.AgentUpgradePaths, error) {
+	paths := goalstates.AgentUpgradePaths{
 		BinaryPath:   p.BinaryPath,
 		BluePath:     p.BluePath,
 		GreenPath:    p.GreenPath,
@@ -56,6 +56,16 @@ func (p agentUpgradePaths) sharedPaths() goalstates.AgentUpgradePaths {
 		LastGoodPath: p.LastGoodPath,
 		SignalPath:   p.SignalPath,
 	}
+	target, err := filepath.EvalSymlinks(p.CurrentPath)
+	if err == nil {
+		paths.CurrentTargetPath = target
+		return paths, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		paths.CurrentTargetPath = p.BinaryPath
+		return paths, nil
+	}
+	return goalstates.AgentUpgradePaths{}, fmt.Errorf("resolve current agent binary: %w", err)
 }
 
 // ensureAgentUpgradeLayout adds Flex-specific ownership validation around the
@@ -71,7 +81,11 @@ func ensureAgentUpgradeLayout(ctx context.Context, log *slog.Logger, paths agent
 	if productionPaths && os.Geteuid() != 0 {
 		return fmt.Errorf("agent binary layout must be initialized as root")
 	}
-	if err := agentbinary.EnsureDaemonBinaryLinks(ctx, log, paths.sharedPaths()); err != nil {
+	sharedPaths, err := paths.sharedPaths()
+	if err != nil {
+		return err
+	}
+	if err := agentbinary.EnsureDaemonBinaryLinks(ctx, log, sharedPaths); err != nil {
 		return err
 	}
 	if productionPaths {

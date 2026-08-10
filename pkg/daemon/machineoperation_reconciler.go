@@ -165,9 +165,9 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 			h.log.Warn("failed to release agent activation lock", "error", closeErr)
 		}
 	}()
-	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
-		return ctrl.Result{}, fmt.Errorf("mark AgentUpgrade MachineOperation in progress: %w", err)
-	}
+	// Persist the recovery signal before InProgress. The shared reconciler does
+	// not enqueue InProgress operations after a process crash, so the signal
+	// must exist before the status can become non-reconcilable.
 	if err := h.agentUpgrade.RecordPending(ctx, op.Name); err != nil {
 		if errors.Is(err, errAgentUpgradeAlreadyPending) {
 			// An InProgress status event can already be queued before the delayed
@@ -176,6 +176,15 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 			return ctrl.Result{}, nil
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+	}
+	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
+		cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+		abortErr := h.agentUpgrade.Abort(cleanupCtx)
+		cancel()
+		return ctrl.Result{}, errors.Join(
+			fmt.Errorf("mark AgentUpgrade MachineOperation in progress: %w", err),
+			wrapOptionalError("clear pending AgentUpgrade signal", abortErr),
+		)
 	}
 	if err := h.agentUpgrade.Stage(ctx, request); err != nil {
 		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {

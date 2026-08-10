@@ -380,6 +380,28 @@ func TestMachineOperationHandlersAgentUpgradeRequeuesWhenDirectActivationHoldsLo
 	}
 }
 
+func TestMachineOperationHandlersAgentUpgradeMarkFailureClearsPendingSignal(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{}
+	store := &fakeMachineOperationStore{markErr: errors.New("status update failed")}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
+		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+	}}
+
+	_, err := target.reconcileAgentUpgrade(t.Context(), store, op)
+	if err == nil || !strings.Contains(err.Error(), "mark AgentUpgrade MachineOperation in progress") {
+		t.Fatalf("reconcileAgentUpgrade error = %v", err)
+	}
+	if !upgrader.pending || !upgrader.aborted {
+		t.Fatalf("pending = %v, aborted = %v; want durable signal followed by cleanup", upgrader.pending, upgrader.aborted)
+	}
+	if upgrader.staged || upgrader.restarted {
+		t.Fatal("status failure staged or restarted the agent")
+	}
+}
+
 func TestMachineOperationHandlersAgentUpgradeStageFailureRollsBack(t *testing.T) {
 	t.Parallel()
 

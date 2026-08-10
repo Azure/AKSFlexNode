@@ -38,6 +38,29 @@ func TestEnsureAgentUpgradeLayoutMigratesLegacyBinaryIdempotently(t *testing.T) 
 	}
 }
 
+func TestEnsureAgentUpgradeLayoutRecoversInterruptedLastGoodInitialization(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.BluePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(paths.BluePath, []byte("active"), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Symlink(paths.BluePath, paths.CurrentPath); err != nil {
+		t.Fatalf("Symlink current: %v", err)
+	}
+
+	if err := ensureAgentUpgradeLayout(t.Context(), slog.Default(), paths); err != nil {
+		t.Fatalf("ensureAgentUpgradeLayout: %v", err)
+	}
+
+	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
+	assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
+	assertResolvedPath(t, paths.BinaryPath, paths.BluePath)
+}
+
 func TestSecureAgentInstallOptions(t *testing.T) {
 	t.Parallel()
 
