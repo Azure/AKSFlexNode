@@ -28,12 +28,31 @@ func isArcServicesRunning(ctx context.Context, logger *slog.Logger) bool {
 	if !isArcAgentInstalled() {
 		return false
 	}
-	for _, service := range arcServices {
-		if !utilexec.IsServiceActive(ctx, logger, service) {
+	if !areArcServiceGroupsActive(ctx, logger, arcRequiredServiceGroups, utilexec.IsServiceActive) {
+		return false
+	}
+	return utilexec.RunCmdAt(ctx, logger, slog.LevelDebug, utilexec.Pgrep(), "-f", "azcmagent") == nil
+}
+
+func areArcServiceGroupsActive(
+	ctx context.Context,
+	logger *slog.Logger,
+	serviceGroups [][]string,
+	isServiceActive func(context.Context, *slog.Logger, string) bool,
+) bool {
+	for _, serviceGroup := range serviceGroups {
+		serviceGroupActive := false
+		for _, service := range serviceGroup {
+			if isServiceActive(ctx, logger, service) {
+				serviceGroupActive = true
+				break
+			}
+		}
+		if !serviceGroupActive {
 			return false
 		}
 	}
-	return utilexec.RunCmdAt(ctx, logger, slog.LevelDebug, utilexec.Pgrep(), "-f", "azcmagent") == nil
+	return true
 }
 
 func ptrDeref[T any](p *T) T {
