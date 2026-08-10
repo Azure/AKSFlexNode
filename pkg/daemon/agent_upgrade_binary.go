@@ -18,12 +18,14 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 const (
 	agentUpgradeBinaryMode      = 0o755
 	agentUpgradeMaxArchiveBytes = 256 << 20
 	agentUpgradeMaxBinaryBytes  = 256 << 20
+	agentUpgradeLockPath        = "/run/aks-flex-node-agent-upgrade.lock"
 )
 
 type agentUpgradePaths struct {
@@ -35,13 +37,30 @@ type agentUpgradePaths struct {
 	SignalPath   string
 }
 
-// ensureAgentUpgradeLayout migrates a legacy direct binary into the blue slot.
-// It is intentionally idempotent because bootstrap and daemon startup may both
-// call it while converging an older installation.
-func ensureAgentUpgradeLayout(ctx context.Context, log *slog.Logger, paths agentUpgradePaths) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (p agentUpgradePaths) layout() agentbinary.Layout {
+	return agentbinary.Layout{
+		BinaryPath:   p.BinaryPath,
+		BluePath:     p.BluePath,
+		GreenPath:    p.GreenPath,
+		CurrentPath:  p.CurrentPath,
+		LastGoodPath: p.LastGoodPath,
 	}
+}
+
+func (p agentUpgradePaths) sharedPaths() goalstates.AgentUpgradePaths {
+	return goalstates.AgentUpgradePaths{
+		BinaryPath:   p.BinaryPath,
+		BluePath:     p.BluePath,
+		GreenPath:    p.GreenPath,
+		CurrentPath:  p.CurrentPath,
+		LastGoodPath: p.LastGoodPath,
+		SignalPath:   p.SignalPath,
+	}
+}
+
+// ensureAgentUpgradeLayout adds Flex-specific ownership validation around the
+// shared idempotent migration and link initialization implementation.
+func ensureAgentUpgradeLayout(ctx context.Context, log *slog.Logger, paths agentUpgradePaths) error {
 	if log == nil {
 		return fmt.Errorf("logger is nil")
 	}
@@ -52,56 +71,12 @@ func ensureAgentUpgradeLayout(ctx context.Context, log *slog.Logger, paths agent
 	if productionPaths && os.Geteuid() != 0 {
 		return fmt.Errorf("agent binary layout must be initialized as root")
 	}
-	if err := os.MkdirAll(filepath.Dir(paths.BluePath), 0o750); err != nil {
-		return fmt.Errorf("create agent binary slot directory: %w", err)
+	if err := agentbinary.EnsureDaemonBinaryLinks(ctx, log, paths.sharedPaths()); err != nil {
+		return err
 	}
-
-	currentTarget, err := resolvedExecutable(paths.CurrentPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("resolve current agent binary: %w", err)
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		seed, seedErr := initialAgentBinary(paths)
-		if seedErr != nil {
-			return fmt.Errorf("find initial agent binary: %w", seedErr)
-		}
-		if seed == paths.BinaryPath {
-			if err := copyExecutable(paths.BinaryPath, paths.BluePath); err != nil {
-				return fmt.Errorf("migrate legacy agent binary: %w", err)
-			}
-			seed = paths.BluePath
-		}
-		if err := replaceSymlink(paths.CurrentPath, seed); err != nil {
-			return fmt.Errorf("initialize current agent symlink: %w", err)
-		}
-		currentTarget = seed
-	}
-
-	if _, err := resolvedExecutable(paths.LastGoodPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("resolve last-good agent binary: %w", err)
-		}
-		if err := replaceSymlink(paths.LastGoodPath, currentTarget); err != nil {
-			return fmt.Errorf("initialize last-good agent symlink: %w", err)
-		}
-	}
-
-	binaryTarget, err := filepath.EvalSymlinks(paths.BinaryPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("resolve compatibility agent binary: %w", err)
-	}
-	if errors.Is(err, os.ErrNotExist) || binaryTarget != currentTarget {
-		if err := replaceSymlink(paths.BinaryPath, paths.CurrentPath); err != nil {
-			return fmt.Errorf("initialize compatibility agent symlink: %w", err)
-		}
-	}
-
 	if productionPaths {
-		if err := validateRootOwnedAgentUpgradePaths(paths); err != nil {
-			return err
-		}
+		return validateRootOwnedAgentUpgradePaths(paths)
 	}
-	log.Info("agent binary blue-green layout initialized", "current", paths.CurrentPath, "last_good", paths.LastGoodPath)
 	return nil
 }
 
@@ -143,15 +118,6 @@ func validateAgentUpgradePaths(paths agentUpgradePaths) error {
 		seen[value] = struct{}{}
 	}
 	return nil
-}
-
-func initialAgentBinary(paths agentUpgradePaths) (string, error) {
-	for _, path := range []string{paths.BluePath, paths.GreenPath, paths.BinaryPath} {
-		if _, err := resolvedExecutable(path); err == nil {
-			return path, nil
-		}
-	}
-	return "", os.ErrNotExist
 }
 
 func resolvedExecutable(path string) (string, error) {
@@ -228,7 +194,7 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 	if err != nil {
 		return agentbinary.InstallOptions{}, err
 	}
-	opts := agentbinary.InstallOptions{
+	return agentbinary.InstallOptions{
 		DownloadURL:       rawURL,
 		ExpectedSHA256:    expectedDigest,
 		ExpectedMember:    member,
@@ -248,8 +214,7 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 				return nil
 			},
 		},
-	}
-	return opts, nil
+	}, nil
 }
 
 func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths) error {
@@ -257,13 +222,6 @@ func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, 
 	if err != nil {
 		return err
 	}
-	layout := agentbinary.Layout{
-		BinaryPath:   paths.BinaryPath,
-		BluePath:     paths.BluePath,
-		GreenPath:    paths.GreenPath,
-		CurrentPath:  paths.CurrentPath,
-		LastGoodPath: paths.LastGoodPath,
-	}
-	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, layout, opts)
+	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, paths.layout(), opts)
 	return err
 }

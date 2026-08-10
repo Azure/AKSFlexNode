@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -13,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
@@ -151,6 +153,18 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 	if err != nil {
 		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
 	}
+	activationLock, err := h.agentUpgrade.Acquire()
+	if errors.Is(err, agentbinary.ErrActivationInProgress) {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("acquire agent activation lock: %w", err)
+	}
+	defer func() {
+		if closeErr := activationLock.Close(); closeErr != nil {
+			h.log.Warn("failed to release agent activation lock", "error", closeErr)
+		}
+	}()
 	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentUpgrade MachineOperation in progress: %w", err)
 	}

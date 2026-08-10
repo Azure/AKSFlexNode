@@ -30,6 +30,7 @@ func main() {
 	rootCmd.AddCommand(bootstrapdata.NewCommand())
 	rootCmd.AddCommand(preflight.NewCommand())
 	rootCmd.AddCommand(daemon.NewCommand())
+	rootCmd.AddCommand(daemon.NewHostAgentUpgradeCommand())
 	rootCmd.AddCommand(daemon.NewAgentUpgradeRecoveryCommand())
 	rootCmd.AddCommand(reset.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())

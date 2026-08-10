@@ -20,6 +20,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
@@ -159,6 +160,7 @@ func (s agentUpgradeSignalStore) clear() error {
 }
 
 type agentUpgradeExecutor interface {
+	Acquire() (io.Closer, error)
 	RecordPending(context.Context, string) error
 	RecordFailure(string) error
 	Stage(context.Context, agentUpgradeRequest) error
@@ -207,6 +209,10 @@ func newDaemonInstanceID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value[:]), nil
+}
+
+func (e *hostAgentUpgradeExecutor) Acquire() (io.Closer, error) {
+	return agentbinary.AcquireHostActivationLock(agentUpgradeLockPath)
 }
 
 func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {

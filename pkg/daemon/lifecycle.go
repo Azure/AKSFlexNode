@@ -77,28 +77,43 @@ func ensureAgentUpgradeServiceAssetsAt(
 	if err := ensureAgentUpgradeLayout(ctx, log, binaryPaths); err != nil {
 		return fmt.Errorf("initialize agent binary layout: %w", err)
 	}
-	recoveryServiceContent := bytes.ReplaceAll(
-		recoveryServiceUnitContent,
-		[]byte(recoveryScriptPath),
-		[]byte(recoveryScript),
-	)
-	assets := []struct {
-		path    string
-		content []byte
-		mode    os.FileMode
-	}{
-		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceUnitContent, mode: 0o644},
-		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
-		{path: recoveryScript, content: recoveryScriptContent, mode: 0o750},
+	if err := writeAgentServiceAssets(binaryPaths, systemdDir, recoveryScript, binaryPaths.CurrentPath); err != nil {
+		return err
 	}
-	for _, asset := range assets {
+	if err := reload(ctx, log); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
+	return nil
+}
+
+type agentServiceAsset struct {
+	path    string
+	content []byte
+	mode    os.FileMode
+}
+
+func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, systemdDir, recoveryScript, currentBinaryPath string) []agentServiceAsset {
+	serviceContent := bytes.ReplaceAll(serviceUnitContent, []byte(defaultAgentUpgradePaths().BinaryPath), []byte(currentBinaryPath))
+	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(recoveryScriptPath), []byte(recoveryScript))
+	recoveryContent := recoveryScriptContent
+	for oldPath, newPath := range map[string]string{
+		defaultAgentUpgradePaths().LastGoodPath: binaryPaths.LastGoodPath,
+		defaultAgentUpgradePaths().SignalPath:   binaryPaths.SignalPath,
+	} {
+		recoveryContent = bytes.ReplaceAll(recoveryContent, []byte(oldPath), []byte(newPath))
+	}
+	return []agentServiceAsset{
+		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
+		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
+		{path: recoveryScript, content: recoveryContent, mode: 0o750},
+	}
+}
+
+func writeAgentServiceAssets(binaryPaths agentUpgradePaths, systemdDir, recoveryScript, currentBinaryPath string) error {
+	for _, asset := range desiredAgentServiceAssets(binaryPaths, systemdDir, recoveryScript, currentBinaryPath) {
 		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
 			return fmt.Errorf("write %s: %w", asset.path, err)
 		}
-	}
-
-	if err := reload(ctx, log); err != nil {
-		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 	return nil
 }

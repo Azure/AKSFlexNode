@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
@@ -356,6 +358,28 @@ func TestMachineOperationHandlersAgentUpgradeDuplicateReconcileIsNoop(t *testing
 	}
 }
 
+func TestMachineOperationHandlersAgentUpgradeRequeuesWhenDirectActivationHoldsLock(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{acquireErr: agentbinary.ErrActivationInProgress}
+	store := &fakeMachineOperationStore{}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
+		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+	}}
+	result, err := target.reconcileAgentUpgrade(t.Context(), store, op)
+	if err != nil {
+		t.Fatalf("reconcileAgentUpgrade: %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("RequeueAfter = %v, want positive duration", result.RequeueAfter)
+	}
+	if store.inProgress || upgrader.pending || upgrader.staged || upgrader.restarted {
+		t.Fatal("lock contention mutated the operation or staged an upgrade")
+	}
+}
+
 func TestMachineOperationHandlersAgentUpgradeStageFailureRollsBack(t *testing.T) {
 	t.Parallel()
 
@@ -473,10 +497,18 @@ type fakeAgentUpgradeExecutor struct {
 	aborted    bool
 	restarted  bool
 	failure    string
+	acquireErr error
 	pendingErr error
 	stageErr   error
 	abortErr   error
 	restartErr error
+}
+
+func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
+	if f.acquireErr != nil {
+		return nil, f.acquireErr
+	}
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error {

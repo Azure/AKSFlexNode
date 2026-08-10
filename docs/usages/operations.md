@@ -49,7 +49,7 @@ journalctl -u aks-flex-node-agent -f
 
 ## Managed Agent Upgrade
 
-When the Machina `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTPS release archive and the SHA-256 of the compressed archive:
+When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTPS release archive and the SHA-256 of the compressed archive:
 
 ```yaml
 apiVersion: unbounded-cloud.io/v1alpha3
@@ -73,6 +73,15 @@ MachineOperations are cluster-scoped. The daemon group requires cluster-wide rea
 ```bash
 kubectl get machineoperation upgrade-agent-worker-01 -w
 ```
+
+A host provisioning system that has already authenticated and staged a candidate can activate it directly without creating an Unbounded `MachineOperation`:
+
+```bash
+/var/tmp/aks-flex-node-candidate agent-upgrade --preflight
+sudo /var/tmp/aks-flex-node-candidate agent-upgrade
+```
+
+The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, restart `aks-flex-node-agent.service`, verify the running executable, synchronize the active nspawn exec-credential binary, and restore last-good on activation failure.
 
 ## Nspawn Worker
 

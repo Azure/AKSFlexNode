@@ -55,6 +55,9 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 	if !strings.Contains(string(unit), "OnFailure="+recoveryServiceUnitName) {
 		t.Fatalf("updated unit does not include recovery: %s", unit)
 	}
+	if !strings.Contains(string(unit), "ExecStart="+paths.CurrentPath+" agent") {
+		t.Fatalf("updated unit does not execute the managed current link: %s", unit)
+	}
 	recoveryService, err := os.ReadFile(filepath.Join(systemdDir, recoveryServiceUnitName))
 	if err != nil {
 		t.Fatalf("recovery service was not installed: %v", err)
