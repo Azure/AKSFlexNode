@@ -142,6 +142,12 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `node.kubelet.clusterFQDN` | string | Kubernetes API server FQDN. Required for bootstrap token mode. | `example.hcp.canadacentral.azmk8s.io` |
 | `node.kubelet.caCertData` | string | Base64-encoded cluster CA data. Required for bootstrap token mode. | `<base64-ca-data>` |
 | `node.kubelet.nodeIP` | string | Optional node IP override for kubelet `--node-ip`. | `10.0.0.4` |
+| `node.kubelet.imageCredentialProvider.configPath` | string | Optional absolute path inside the nspawn machine to a kubelet exec image credential provider configuration file or supported configuration directory. Must be set with `binDir`. | `/etc/kubernetes/credential-provider.yaml` |
+| `node.kubelet.imageCredentialProvider.binDir` | string | Optional absolute path inside the nspawn machine containing exec image credential provider binaries. Must be set with `configPath`. | `/usr/local/lib/kubelet-credential-providers` |
+
+Provider paths must be clean absolute machine paths without whitespace or systemd argument characters. Include the provider files in the OCI rootfs or expose them with read-only `bootstrap.additionalHostMounts`.
+
+The image credential provider executes a plugin to obtain short-lived pull credentials; it does not place registry passwords or tokens in the FlexNode configuration. Do not store static registry credentials in this file or provider configuration.
 
 ## Component Versions
 
@@ -348,3 +354,36 @@ Use `bootstrap.additionalHostMounts` to expose host files or directories inside 
 ```
 
 Read-only entries render as systemd-nspawn `BindReadOnly=` directives; writable entries render as `Bind=` directives.
+
+### Image Pull Credential Provider
+
+Kubelet exec image credential providers can obtain short-lived registry credentials without storing tokens in the FlexNode config. The provider configuration and executable must exist inside the nspawn machine, either in the OCI rootfs or through host mounts:
+
+```json
+{
+  "bootstrap": {
+    "additionalHostMounts": [
+      {
+        "source": "/opt/aks-flex-node/credential-provider/config.yaml",
+        "target": "/etc/kubernetes/credential-provider.yaml",
+        "readOnly": true
+      },
+      {
+        "source": "/opt/aks-flex-node/credential-provider/bin",
+        "target": "/usr/local/lib/kubelet-credential-providers",
+        "readOnly": true
+      }
+    ]
+  },
+  "node": {
+    "kubelet": {
+      "imageCredentialProvider": {
+        "configPath": "/etc/kubernetes/credential-provider.yaml",
+        "binDir": "/usr/local/lib/kubelet-credential-providers"
+      }
+    }
+  }
+}
+```
+
+Provider binaries must be executable before the machine starts. Mount provider assets read-only unless the provider explicitly requires writable state.
