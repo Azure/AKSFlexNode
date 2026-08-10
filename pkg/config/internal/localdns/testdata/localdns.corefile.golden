@@ -1,0 +1,74 @@
+# This Corefile follows the AKS AgentBaker LocalDNS policy with adaptations for
+# the Unbounded nspawn runtime:
+# - Node DNS forwards to resolver addresses discovered from the physical host
+#   instead of assuming the Azure platform DNS address.
+# - The metrics endpoint binds a runtime-resolved node address instead of :9253.
+# - The AgentBaker critical-FQDN hosts file is omitted because Unbounded does not
+#   run the AKS hosts-file refresher.
+# - Azure VM suffix guards for internal.cloudapp.net and reddog.microsoft.com
+#   are omitted because Flex Nodes may use non-Azure DNS where those names must
+#   be resolved according to the host's upstream policy.
+# Listener, upstream, cluster DNS, and metrics placeholders are resolved by
+# Unbounded after AKS Flex Node renders the profile-specific server blocks.
+health-check.localdns.local:53 {
+    bind {{ .NodeListenerIP }} {{ .ClusterListenerIP }}
+    whoami
+}
+
+.:53 {
+    log
+    bind {{ .NodeListenerIP }}
+    forward . {{ .NodeUpstreamIPsJoined }} {
+        policy sequential
+        max_concurrent 1000
+    }
+    ready {{ .NodeListenerIP }}:8181
+    cache 30 {
+        success 9984
+        denial 9984
+        serve_stale 60s immediate
+        servfail 0
+    }
+    loop
+    nsid localdns
+    prometheus {{ .MetricsAddress }}
+}
+
+cluster.local:53 {
+    errors
+    bind {{ .NodeListenerIP }}
+    forward . {{ .ClusterDNSServiceIP }} {
+        force_tcp
+        policy round_robin
+        max_concurrent 2000
+    }
+    ready {{ .NodeListenerIP }}:8181
+    cache 45 {
+        success 9984
+        denial 9984
+        servfail 0
+    }
+    loop
+    nsid localdns
+    prometheus {{ .MetricsAddress }}
+}
+
+.:53 {
+    errors
+    bind {{ .ClusterListenerIP }}
+    forward . {{ .ClusterDNSServiceIP }} {
+        policy random
+        max_concurrent 1500
+    }
+    ready {{ .ClusterListenerIP }}:8181
+    cache 90 {
+        success 9984
+        denial 9984
+        serve_stale 120s verify
+        servfail 0
+    }
+    loop
+    nsid localdns-pod
+    prometheus {{ .MetricsAddress }}
+}
+

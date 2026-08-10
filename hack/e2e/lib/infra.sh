@@ -107,7 +107,7 @@ infra_deploy() {
     --query properties.outputs \
     -o json)
 
-  local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_principal_id
+  local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_private_ip msi_vm_principal_id
   local token_vm_name token_vm_ip token_vm_private_ip offline_vm_name offline_vm_ip offline_vm_private_ip
   local kubeadm_vm_name kubeadm_vm_ip admin_username
 
@@ -115,6 +115,7 @@ infra_deploy() {
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
   msi_vm_name=$(echo "${outputs}"     | jq -r '.msiVmName.value')
   msi_vm_ip=$(echo "${outputs}"       | jq -r '.msiVmIp.value')
+  msi_vm_private_ip=$(echo "${outputs}" | jq -r '.msiVmPrivateIp.value // ""')
   msi_vm_principal_id=$(echo "${outputs}" | jq -r '.msiVmPrincipalId.value')
   token_vm_name=$(echo "${outputs}"   | jq -r '.tokenVmName.value')
   token_vm_ip=$(echo "${outputs}"     | jq -r '.tokenVmIp.value')
@@ -126,6 +127,10 @@ infra_deploy() {
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
 
+  if [[ -z "${msi_vm_private_ip}" ]] || ! is_valid_ipv4 "${msi_vm_private_ip}"; then
+    log_error "Missing or invalid MSI VM private IP from deployment outputs: '${msi_vm_private_ip}'"
+    return 1
+  fi
   if [[ -z "${token_vm_private_ip}" ]] || ! is_valid_ipv4 "${token_vm_private_ip}"; then
     log_error "Missing or invalid token VM private IP from deployment outputs: '${token_vm_private_ip}'"
     return 1
@@ -140,6 +145,7 @@ infra_deploy() {
   state_set "cluster_id"           "${cluster_id}"
   state_set "msi_vm_name"          "${msi_vm_name}"
   state_set "msi_vm_ip"            "${msi_vm_ip}"
+  state_set "msi_vm_private_ip"    "${msi_vm_private_ip}"
   state_set "msi_vm_principal_id"  "${msi_vm_principal_id}"
   state_set "token_vm_name"        "${token_vm_name}"
   state_set "token_vm_ip"          "${token_vm_ip}"
