@@ -58,6 +58,15 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		},
 	}
 
+	if profile := cfg.Networking.LocalDNS; profile != nil {
+		corefile, _ := profile.CorefileTemplate() // Config validation runs before adaptation.
+		ac.LocalDNS = &agentconfig.AgentLocalDNSConfig{
+			Enabled:          profile.Enabled(),
+			RequiredPlugins:  []string{"log", "nsid"},
+			CorefileTemplate: corefile,
+		}
+	}
+
 	if provider := cfg.Node.Kubelet.ImageCredentialProvider; provider != nil {
 		ac.Kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
 			ConfigPath: provider.ConfigPath,

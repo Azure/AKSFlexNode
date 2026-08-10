@@ -122,6 +122,50 @@ At least one join or Azure authentication method must be configured. `azure.boot
 |------|------|-------------|--------------|
 | `networking.dnsServiceIP` | string | Cluster DNS service IP. | `10.0.0.10` |
 | `networking.cniVersion` | string | Optional CNI plugin version override. | `v1.6.2` |
+| `networking.localDNS` | object | Optional AKS LocalDNS profile using the same `mode`, `vnetDNSOverrides`, and `kubeDNSOverrides` shape accepted by `az aks nodepool --localdns-config`. | `{ "mode": "Required" }` |
+
+### AKS LocalDNS
+
+AKS Flex Node accepts the official AKS LocalDNS JSON profile under
+`networking.localDNS`. See [Configure LocalDNS in
+AKS](https://learn.microsoft.com/azure/aks/localdns-custom) for the supported
+fields and values. `Required` enables LocalDNS, `Disabled` disables it through
+repave, and `Preferred` validates the profile without enabling the service.
+
+```json
+{
+  "networking": {
+    "dnsServiceIP": "10.0.0.10",
+    "localDNS": {
+      "mode": "Required",
+      "vnetDNSOverrides": {
+        ".": {
+          "queryLogging": "Error",
+          "protocol": "PreferUDP",
+          "forwardDestination": "VnetDNS",
+          "forwardPolicy": "Sequential",
+          "maxConcurrent": 1000,
+          "cacheDurationInSeconds": 3600,
+          "serveStaleDurationInSeconds": 3600,
+          "serveStale": "Immediate"
+        }
+      },
+      "kubeDNSOverrides": {
+        ".": {
+          "queryLogging": "Error",
+          "protocol": "ForceTCP",
+          "forwardDestination": "ClusterCoreDNS",
+          "forwardPolicy": "Sequential",
+          "maxConcurrent": 1000,
+          "cacheDurationInSeconds": 3600,
+          "serveStaleDurationInSeconds": 3600,
+          "serveStale": "Immediate"
+        }
+      }
+    }
+  }
+}
+```
 
 ## Node
 
