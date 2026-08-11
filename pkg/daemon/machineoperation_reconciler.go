@@ -170,10 +170,9 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 	// must exist before the status can become non-reconcilable.
 	if err := h.agentUpgrade.RecordPending(ctx, op.Name); err != nil {
 		if errors.Is(err, errAgentUpgradeAlreadyPending) {
-			// An InProgress status event can already be queued before the delayed
-			// daemon restart. The durable signal proves this operation was staged
-			// by an earlier reconciliation.
-			return ctrl.Result{}, nil
+			// Retry a previously failed recovery handoff. An ordinary duplicate
+			// remains a no-op while the delayed daemon restart is pending.
+			return ctrl.Result{}, h.agentUpgrade.RetryRecovery(ctx)
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
 	}

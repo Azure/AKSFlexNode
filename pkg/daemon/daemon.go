@@ -26,6 +26,7 @@ import (
 
 const (
 	agentUpgradeStartupStability = 3 * time.Second
+	agentUpgradePublishRetry     = 10 * time.Second
 	daemonCredentialDir          = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
 	daemonCredentialGroup        = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
 )
@@ -127,16 +128,29 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			return
 		case <-time.After(agentUpgradeStartupStability):
 		}
-		publishErr := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
-		if publishErr != nil {
-			// Retain the signal so a later daemon start can retry publication.
-			log.Warn("failed to publish AgentUpgrade startup result", "error", publishErr)
-		} else if pending, readErr := upgrades.signals.read(); readErr == nil && pending != nil {
-			// Recovery scheduled a restart. Keep reconciliation gated until the
-			// last-good process starts and consumes the retained signal.
-			return
+		for {
+			publishErr := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
+			pending, readErr := upgrades.signals.read()
+			switch {
+			case publishErr != nil:
+				log.Warn("failed to publish AgentUpgrade startup result; will retry", "error", publishErr)
+			case readErr != nil:
+				log.Warn("failed to confirm AgentUpgrade startup signal; will retry", "error", readErr)
+			case pending != nil:
+				// Recovery scheduled a restart. Keep reconciliation gated until the
+				// last-good process starts and consumes the retained signal.
+				return
+			default:
+				gate.open()
+				return
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(agentUpgradePublishRetry):
+			}
 		}
-		gate.open()
 	}()
 
 	err = mgr.Start(ctx)

@@ -172,6 +172,7 @@ func (s agentUpgradeSignalStore) clear() error {
 type agentUpgradeExecutor interface {
 	Acquire() (io.Closer, error)
 	RecordPending(context.Context, string) error
+	RetryRecovery(context.Context) error
 	RecordFailure(string) error
 	Stage(context.Context, agentUpgradeRequest) error
 	Abort(context.Context) error
@@ -245,6 +246,22 @@ func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationN
 	}
 	if err := e.signals.recordPending(operationName, state.ActiveMachine, e.instanceID); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (e *hostAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error {
+	signal, err := e.signals.read()
+	if err != nil {
+		return err
+	}
+	if signal == nil || !signal.RecoveryRequired {
+		return nil
+	}
+	cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+	defer cancel()
+	if err := e.Restart(cleanupCtx); err != nil {
+		return fmt.Errorf("retry AgentUpgrade recovery restart: %w", err)
 	}
 	return nil
 }

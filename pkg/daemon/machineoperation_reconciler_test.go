@@ -466,6 +466,16 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 	if err == nil || !strings.Contains(err.Error(), "restart daemon for AgentUpgrade recovery") {
 		t.Fatalf("reconcileAgentUpgrade error = %v, want recovery restart error", err)
 	}
+
+	upgrader.pendingErr = errAgentUpgradeAlreadyPending
+	upgrader.restartErr = nil
+	upgrader.restarted = false
+	if _, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op); err != nil {
+		t.Fatalf("reconcileAgentUpgrade retry: %v", err)
+	}
+	if !upgrader.restarted {
+		t.Fatal("requeued recovery did not retry the daemon restart")
+	}
 }
 
 func TestMachineOperationHandlersAgentReset(t *testing.T) {
@@ -538,6 +548,7 @@ type fakeAgentUpgradeExecutor struct {
 	aborted    bool
 	restarted  bool
 	failure    string
+	recovering bool
 	acquireErr error
 	pendingErr error
 	stageErr   error
@@ -557,8 +568,17 @@ func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error 
 	return f.pendingErr
 }
 
+func (f *fakeAgentUpgradeExecutor) RetryRecovery(context.Context) error {
+	if !f.recovering {
+		return nil
+	}
+	f.restarted = true
+	return f.restartErr
+}
+
 func (f *fakeAgentUpgradeExecutor) RecordFailure(message string) error {
 	f.failure = message
+	f.recovering = true
 	return nil
 }
 

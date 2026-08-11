@@ -60,7 +60,7 @@ type flexDaemonActivationService struct {
 	state            stateStore
 	systemdDir       string
 	recoveryScript   string
-	isServiceActive  func(context.Context, *slog.Logger, string) bool
+	inspectService   func(context.Context, *slog.Logger, string) (bool, error)
 	serviceWasActive bool
 }
 
@@ -74,21 +74,25 @@ func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationServ
 	}
 	paths := defaultAgentUpgradePaths()
 	return &flexDaemonActivationService{
-		log:             log,
-		paths:           paths,
-		state:           state,
-		systemdDir:      systemdSystemDir,
-		recoveryScript:  recoveryScriptPath,
-		isServiceActive: utilexec.IsServiceActive,
+		log:            log,
+		paths:          paths,
+		state:          state,
+		systemdDir:     systemdSystemDir,
+		recoveryScript: recoveryScriptPath,
+		inspectService: inspectAgentServiceActive,
 	}, paths, nil
 }
 
 func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
-	isActive := s.isServiceActive
-	if isActive == nil {
-		isActive = utilexec.IsServiceActive
+	inspectService := s.inspectService
+	if inspectService == nil {
+		inspectService = inspectAgentServiceActive
 	}
-	s.serviceWasActive = isActive(ctx, s.log, ServiceUnitName)
+	serviceWasActive, err := inspectService(ctx, s.log, ServiceUnitName)
+	if err != nil {
+		return agentbinary.ServicePlan{}, fmt.Errorf("inspect agent service state: %w", err)
+	}
+	s.serviceWasActive = serviceWasActive
 	if _, err := os.Stat(s.paths.SignalPath); err == nil {
 		return agentbinary.ServicePlan{}, fmt.Errorf("AgentUpgrade MachineOperation signal exists at %s", s.paths.SignalPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -107,6 +111,21 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 		}
 	}
 	return agentbinary.ServicePlan{Description: "AKS Flex Node agent systemd assets are current"}, nil
+}
+
+func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service string) (bool, error) {
+	state, err := utilexec.OutputCmdAt(ctx, log, slog.LevelDebug, "systemctl", "show", "--property=ActiveState", "--value", service)
+	if err != nil {
+		return false, err
+	}
+	switch strings.TrimSpace(state) {
+	case "inactive":
+		return false, nil
+	case "active", "activating", "reloading", "deactivating", "failed":
+		return true, nil
+	default:
+		return false, fmt.Errorf("unexpected ActiveState %q for %s", state, service)
+	}
 }
 
 func (s *flexDaemonActivationService) Prepare(_ context.Context, currentBinaryPath string) error {

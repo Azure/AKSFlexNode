@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -19,6 +20,9 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 		paths:          paths,
 		systemdDir:     systemdDir,
 		recoveryScript: recoveryScript,
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+			return false, nil
+		},
 	}
 	plan, err := service.Preflight(t.Context(), paths.CurrentPath)
 	if err != nil {
@@ -53,6 +57,20 @@ func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
 	}
 }
 
+func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
+	t.Parallel()
+
+	service := &flexDaemonActivationService{
+		log: slog.Default(),
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+			return false, errors.New("systemd unavailable")
+		},
+	}
+	if _, err := service.Preflight(t.Context(), "/unused/current"); err == nil {
+		t.Fatal("Preflight accepted an unknown service state")
+	}
+}
+
 func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T) {
 	t.Parallel()
 
@@ -68,6 +86,9 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 		paths:          paths,
 		systemdDir:     t.TempDir(),
 		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+			return false, nil
+		},
 	}
 	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err == nil {
 		t.Fatal("Preflight accepted a pending MachineOperation signal")
