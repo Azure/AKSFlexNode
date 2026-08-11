@@ -1,4 +1,4 @@
-package release
+package config
 
 import "testing"
 

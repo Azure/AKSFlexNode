@@ -1,9 +1,8 @@
-// Package release defines the artifact naming contract shared by Flex Node
-// release producers and consumers.
-package release
+package config
 
 import "fmt"
 
+// AgentBinaryBaseName is the installed command and release artifact base name.
 const AgentBinaryBaseName = "aks-flex-node"
 
 // AgentBinaryArchiveMember returns the binary member name used by a release

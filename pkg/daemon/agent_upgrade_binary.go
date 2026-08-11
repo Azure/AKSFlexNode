@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Azure/AKSFlexNode/pkg/release"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -203,7 +203,7 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 			return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
 		}
 	}
-	member, err := release.AgentBinaryArchiveMember(runtime.GOOS, runtime.GOARCH)
+	member, err := config.AgentBinaryArchiveMember(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return agentbinary.InstallOptions{}, err
 	}
