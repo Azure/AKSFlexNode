@@ -109,22 +109,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return fmt.Errorf("setup daemon controller: %w", err)
 	}
 
-	publishCtx, stopPublisher := context.WithCancel(ctx)
-	defer stopPublisher()
-	go func() {
-		// Success is only safe to publish after manager startup has reached cache
-		// readiness. If startup fails, systemd retains the signal and recovers.
-		if !mgr.GetCache().WaitForCacheSync(publishCtx) {
-			return
-		}
-		if err := publishAndClearAgentUpgradeSignal(publishCtx, log, directClient, upgrades); err != nil {
-			log.Warn("failed to publish AgentUpgrade startup result", "error", err)
-		}
-		retryAgentUpgradeSignal(publishCtx, log, directClient, upgrades)
-	}()
+	// Publish durable upgrade recovery before starting the serialized controller,
+	// matching Unbounded's startup ordering. This prevents recovery-time host and
+	// nspawn mutation from racing repave or reset reconciliation.
+	if err := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades); err != nil {
+		// Retain the signal so a later daemon start can retry publication.
+		log.Warn("failed to publish AgentUpgrade startup result", "error", err)
+	}
 
 	err = mgr.Start(ctx)
-	stopPublisher()
 	repaves.log.Info("daemon shutting down")
 	return err
 }

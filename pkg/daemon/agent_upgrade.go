@@ -387,21 +387,6 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	return ctx.Err()
 }
 
-func retryAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c client.Client, executor *hostAgentUpgradeExecutor) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := publishAndClearAgentUpgradeSignal(ctx, log, c, executor); err != nil && ctx.Err() == nil {
-				log.Warn("failed to publish durable AgentUpgrade result; will retry", "error", err)
-			}
-		}
-	}
-}
-
 func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c client.Client, executor *hostAgentUpgradeExecutor) error {
 	paths := executor.paths
 	signals := executor.signals
