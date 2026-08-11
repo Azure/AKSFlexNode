@@ -198,6 +198,14 @@ load_config() {
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
   E2E_TARGET_AGENT_POOL_NAME="${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}"
 
+  # Kubelet resource reservation overrides applied to the token node config.
+  # The remaining nodes keep the AKS-compatible defaults computed by the agent.
+  E2E_KUBELET_MAX_PODS="${E2E_KUBELET_MAX_PODS:-58}"
+  E2E_KUBELET_SYSTEM_RESERVED_CPU="${E2E_KUBELET_SYSTEM_RESERVED_CPU:-50m}"
+  E2E_KUBELET_SYSTEM_RESERVED_MEMORY="${E2E_KUBELET_SYSTEM_RESERVED_MEMORY:-100Mi}"
+  E2E_KUBELET_KUBE_RESERVED_CPU="${E2E_KUBELET_KUBE_RESERVED_CPU:-200m}"
+  E2E_KUBELET_KUBE_RESERVED_MEMORY="${E2E_KUBELET_KUBE_RESERVED_MEMORY:-650Mi}"
+
   # Azure infrastructure sizing. Defaults match the Bicep template defaults.
   E2E_AKS_NODE_VM_SIZE="${E2E_AKS_NODE_VM_SIZE:-Standard_B2s}"
   E2E_VM_SIZE="${E2E_VM_SIZE:-Standard_B2as_v2}"

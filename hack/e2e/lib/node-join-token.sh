@@ -39,6 +39,11 @@ node_join_token() {
     return 1
   fi
 
+  if [[ ! "${E2E_KUBELET_MAX_PODS}" =~ ^[0-9]+$ ]]; then
+    log_error "E2E_KUBELET_MAX_PODS must be numeric, got '${E2E_KUBELET_MAX_PODS}'"
+    return 1
+  fi
+
   log_info "Setting up bootstrap token RBAC resources..."
   with_cluster_lock "${REPO_ROOT}/scripts/aks-flex-config" setup-node-rbac \
     --resource-group "${resource_group}" \
@@ -63,11 +68,19 @@ node_join_token() {
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
     --arg runcVersion "${E2E_RUNC_VERSION}" \
+    --argjson maxPods "${E2E_KUBELET_MAX_PODS}" \
+    --arg systemReservedCPU "${E2E_KUBELET_SYSTEM_RESERVED_CPU}" \
+    --arg systemReservedMemory "${E2E_KUBELET_SYSTEM_RESERVED_MEMORY}" \
+    --arg kubeReservedCPU "${E2E_KUBELET_KUBE_RESERVED_CPU}" \
+    --arg kubeReservedMemory "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" \
     '.agent.logLevel = "debug"
       | .agent.machineClient.mode = "in-cluster"
       | .agent.machineClient.endpointUrl = $machineEndpointURL
       | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
+      | .node.maxPods = $maxPods
+      | .node.kubelet.systemReserved = {"cpu": $systemReservedCPU, "memory": $systemReservedMemory}
+      | .node.kubelet.kubeReserved = {"cpu": $kubeReservedCPU, "memory": $kubeReservedMemory}
       | .components = (.components // {})
       | .components.kubernetes = $kubernetesVersion
       | .components.containerd = $containerdVersion

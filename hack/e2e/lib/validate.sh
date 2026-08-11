@@ -5,6 +5,8 @@
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
 #   validate_all_nodes                - Verify MSI, token, offline, and kubeadm nodes joined
+#   validate_kubelet_reservations <vm_name> <vm_ip> [max_pods] [system_cpu] [system_memory] [kube_cpu] [kube_memory]
+#                                     - Verify the applied kubelet reservation config
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
 #   validate_localdns_status <vm_name> <vm_ip> - Verify LocalDNS behavior
 #   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after nspawn reboot
@@ -81,6 +83,199 @@ validate_node_ip() {
   log_error "Observed InternalIP values:"
   echo "${internal_ips}"
   return 1
+}
+
+# ---------------------------------------------------------------------------
+# quantity_to_milli_cpu - Convert a Kubernetes CPU quantity to millicores
+# ---------------------------------------------------------------------------
+quantity_to_milli_cpu() {
+  local value="$1"
+
+  if [[ "${value}" =~ ^([0-9]+)m$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "${value}" =~ ^([0-9]+)$ ]]; then
+    echo $(( BASH_REMATCH[1] * 1000 ))
+    return 0
+  fi
+
+  log_error "Unsupported CPU quantity: '${value}'"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# quantity_to_bytes - Convert a Kubernetes memory quantity to bytes
+# ---------------------------------------------------------------------------
+quantity_to_bytes() {
+  local value="$1"
+
+  if [[ ! "${value}" =~ ^([0-9]+)(Ki|Mi|Gi|Ti|k|M|G|T)?$ ]]; then
+    log_error "Unsupported memory quantity: '${value}'"
+    return 1
+  fi
+
+  local number="${BASH_REMATCH[1]}"
+  case "${BASH_REMATCH[2]:-}" in
+    "")  echo "${number}" ;;
+    Ki)  echo $(( number * 1024 )) ;;
+    Mi)  echo $(( number * 1024 * 1024 )) ;;
+    Gi)  echo $(( number * 1024 * 1024 * 1024 )) ;;
+    Ti)  echo $(( number * 1024 * 1024 * 1024 * 1024 )) ;;
+    k)   echo $(( number * 1000 )) ;;
+    M)   echo $(( number * 1000000 )) ;;
+    G)   echo $(( number * 1000000000 )) ;;
+    T)   echo $(( number * 1000000000000 )) ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# _read_applied_kubelet_config - Print the kubelet configuration applied inside
+# the nspawn machine as flattened `key=value` / `section.key=value` lines.
+# ---------------------------------------------------------------------------
+_read_applied_kubelet_config() {
+  local vm_ip="$1"
+
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+set -euo pipefail
+machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+systemd-run --quiet --pipe --wait --machine="${machine}" cat /var/lib/kubelet/config.yaml | awk '
+function trim(value) { gsub(/^[ \t"]+|[ \t"]+$/, "", value); return value }
+/^[^[:space:]#-]/ {
+  key = $0; sub(/:.*$/, "", key)
+  value = $0; sub(/^[^:]*:[ \t]*/, "", value)
+  section = key
+  if (value != "") { print key "=" trim(value); section = "" }
+  next
+}
+/^  [^ \t#-]/ {
+  if (section == "") next
+  line = $0; sub(/^  /, "", line)
+  key = line; sub(/:.*$/, "", key)
+  value = line; sub(/^[^:]*:[ \t]*/, "", value)
+  if (value != "") print section "." key "=" trim(value)
+}
+'
+REMOTE
+}
+
+_applied_kubelet_value() {
+  local applied="$1" key="$2"
+  awk -v key="${key}" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' <<<"${applied}"
+}
+
+# ---------------------------------------------------------------------------
+# validate_kubelet_reservations - Verify the reservation configuration the agent
+# generated is applied by kubelet and reflected in node allocatable capacity.
+#
+# Expected values are optional. When provided (the overridden-config scenario)
+# the applied configuration must match them exactly; otherwise only the
+# AKS-compatible defaults are sanity checked.
+# ---------------------------------------------------------------------------
+validate_kubelet_reservations() {
+  local vm_name="$1" vm_ip="$2"
+  local expected_max_pods="${3:-}"
+  local expected_system_cpu="${4:-}" expected_system_memory="${5:-}"
+  local expected_kube_cpu="${6:-}" expected_kube_memory="${7:-}"
+
+  log_info "Validating applied kubelet resource reservations on '${vm_name}'..."
+
+  local applied
+  if ! applied="$(_read_applied_kubelet_config "${vm_ip}")"; then
+    log_error "Could not read the applied kubelet configuration from '${vm_name}'"
+    return 1
+  fi
+
+  local max_pods system_cpu system_memory kube_cpu kube_memory
+  max_pods="$(_applied_kubelet_value "${applied}" maxPods)"
+  system_cpu="$(_applied_kubelet_value "${applied}" systemReserved.cpu)"
+  system_memory="$(_applied_kubelet_value "${applied}" systemReserved.memory)"
+  kube_cpu="$(_applied_kubelet_value "${applied}" kubeReserved.cpu)"
+  kube_memory="$(_applied_kubelet_value "${applied}" kubeReserved.memory)"
+
+  local field
+  for field in max_pods system_cpu system_memory kube_cpu kube_memory; do
+    if [[ -z "${!field}" ]]; then
+      log_error "Applied kubelet configuration on '${vm_name}' is missing ${field}"
+      echo "${applied}" >&2
+      return 1
+    fi
+  done
+
+  log_info "Applied kubelet reservations on '${vm_name}': maxPods=${max_pods}" \
+    "systemReserved={cpu=${system_cpu}, memory=${system_memory}}" \
+    "kubeReserved={cpu=${kube_cpu}, memory=${kube_memory}}"
+
+  local -a expectations=(
+    "maxPods:${expected_max_pods}:${max_pods}"
+    "systemReserved.cpu:${expected_system_cpu}:${system_cpu}"
+    "systemReserved.memory:${expected_system_memory}:${system_memory}"
+    "kubeReserved.cpu:${expected_kube_cpu}:${kube_cpu}"
+    "kubeReserved.memory:${expected_kube_memory}:${kube_memory}"
+  )
+  local expectation name expected got failed=0
+  for expectation in "${expectations[@]}"; do
+    IFS=':' read -r name expected got <<<"${expectation}"
+    if [[ -n "${expected}" && "${expected}" != "${got}" ]]; then
+      log_error "Applied kubelet ${name} on '${vm_name}' is '${got}', want '${expected}'"
+      failed=1
+    fi
+  done
+  if [[ "${failed}" -eq 1 ]]; then
+    return 1
+  fi
+
+  local system_cpu_milli kube_cpu_milli system_memory_bytes kube_memory_bytes
+  system_cpu_milli="$(quantity_to_milli_cpu "${system_cpu}")" || return 1
+  kube_cpu_milli="$(quantity_to_milli_cpu "${kube_cpu}")" || return 1
+  system_memory_bytes="$(quantity_to_bytes "${system_memory}")" || return 1
+  kube_memory_bytes="$(quantity_to_bytes "${kube_memory}")" || return 1
+
+  # The AKS-compatible defaults always reserve resources for Kubernetes daemons.
+  if (( kube_cpu_milli <= 0 || kube_memory_bytes <= 0 )); then
+    log_error "Applied kubeReserved on '${vm_name}' does not reserve resources: cpu=${kube_cpu}, memory=${kube_memory}"
+    return 1
+  fi
+
+  local capacity_cpu allocatable_cpu capacity_memory allocatable_memory allocatable_pods
+  capacity_cpu="$(kubectl get node "${vm_name}" -o jsonpath='{.status.capacity.cpu}')"
+  allocatable_cpu="$(kubectl get node "${vm_name}" -o jsonpath='{.status.allocatable.cpu}')"
+  capacity_memory="$(kubectl get node "${vm_name}" -o jsonpath='{.status.capacity.memory}')"
+  allocatable_memory="$(kubectl get node "${vm_name}" -o jsonpath='{.status.allocatable.memory}')"
+  allocatable_pods="$(kubectl get node "${vm_name}" -o jsonpath='{.status.allocatable.pods}')"
+
+  local capacity_cpu_milli allocatable_cpu_milli capacity_memory_bytes allocatable_memory_bytes
+  capacity_cpu_milli="$(quantity_to_milli_cpu "${capacity_cpu}")" || return 1
+  allocatable_cpu_milli="$(quantity_to_milli_cpu "${allocatable_cpu}")" || return 1
+  capacity_memory_bytes="$(quantity_to_bytes "${capacity_memory}")" || return 1
+  allocatable_memory_bytes="$(quantity_to_bytes "${allocatable_memory}")" || return 1
+
+  if [[ "${allocatable_pods}" != "${max_pods}" ]]; then
+    log_error "Node '${vm_name}' allocatable pods is '${allocatable_pods}', want '${max_pods}'"
+    return 1
+  fi
+
+  local expected_allocatable_cpu_milli=$(( capacity_cpu_milli - system_cpu_milli - kube_cpu_milli ))
+  if (( allocatable_cpu_milli != expected_allocatable_cpu_milli )); then
+    log_error "Node '${vm_name}' allocatable CPU is ${allocatable_cpu_milli}m, want ${expected_allocatable_cpu_milli}m" \
+      "(capacity ${capacity_cpu_milli}m minus reservations)"
+    return 1
+  fi
+
+  # Kubelet also subtracts the hard eviction threshold (100Mi by default) from
+  # allocatable memory, so allow a small allowance below the reserved amount.
+  local reserved_memory_bytes=$(( system_memory_bytes + kube_memory_bytes ))
+  local upper_memory_bytes=$(( capacity_memory_bytes - reserved_memory_bytes ))
+  local eviction_allowance_bytes=$(( 256 * 1024 * 1024 ))
+  if (( allocatable_memory_bytes > upper_memory_bytes ||
+        allocatable_memory_bytes < upper_memory_bytes - eviction_allowance_bytes )); then
+    log_error "Node '${vm_name}' allocatable memory is ${allocatable_memory_bytes} bytes," \
+      "want at most ${upper_memory_bytes} bytes (capacity ${capacity_memory_bytes} minus reservations)"
+    return 1
+  fi
+
+  log_success "Applied kubelet resource reservations verified on '${vm_name}'"
 }
 
 # ---------------------------------------------------------------------------
@@ -325,6 +520,13 @@ validate_all_nodes() {
   validate_node_ip "${msi_vm_name}" "${msi_vm_private_ip}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
+  # The MSI node keeps the AKS-compatible reservation defaults; the token node
+  # overrides them through node.maxPods/systemReserved/kubeReserved.
+  validate_kubelet_reservations "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  validate_kubelet_reservations "${token_vm_name}" "${token_vm_ip}" \
+    "${E2E_KUBELET_MAX_PODS}" \
+    "${E2E_KUBELET_SYSTEM_RESERVED_CPU}" "${E2E_KUBELET_SYSTEM_RESERVED_MEMORY}" \
+    "${E2E_KUBELET_KUBE_RESERVED_CPU}" "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   if [[ "${_E2E_LOCALDNS_REBOOT_VALIDATED}" != "1" ]]; then
