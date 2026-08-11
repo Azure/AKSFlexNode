@@ -34,6 +34,18 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	}
 }
 
+func TestFlexDaemonActivationWithoutAppliedStateSkipsNspawnSynchronization(t *testing.T) {
+	t.Parallel()
+
+	service := &flexDaemonActivationService{
+		log:   slog.Default(),
+		state: &testStateStore{},
+	}
+	if err := service.synchronizeActiveNspawn(t.Context(), "/unused/host/binary"); err != nil {
+		t.Fatalf("synchronizeActiveNspawn: %v", err)
+	}
+}
+
 func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T) {
 	t.Parallel()
 

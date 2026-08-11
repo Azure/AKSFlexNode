@@ -119,9 +119,10 @@ func (s *flexDaemonActivationService) Restart(ctx context.Context) error {
 	return nil
 }
 
-// WaitHealthy uses Flex's service and persisted active nspawn side. The nspawn
-// exec-credential binary is synchronized only after systemd is stably running
-// the expected host binary; shared rollback calls this again with last-good.
+// WaitHealthy uses Flex's service and persisted active nspawn side. When a
+// side exists, its exec-credential binary is synchronized only after systemd
+// is stably running the expected host binary; reset hosts have no side to sync.
+// Shared rollback calls this again with last-good.
 func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedBinaryPath string) error {
 	healthCtx, cancel := context.WithTimeout(ctx, hostAgentHealthTimeout)
 	defer cancel()
@@ -138,17 +139,7 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 			if healthySince.IsZero() {
 				healthySince = time.Now()
 			} else if time.Since(healthySince) >= hostAgentStableDuration {
-				state, stateErr := s.state.Load(healthCtx)
-				if stateErr != nil {
-					return fmt.Errorf("load active nspawn state: %w", stateErr)
-				}
-				if state == nil || !validNspawnMachine(state.ActiveMachine) {
-					return fmt.Errorf("no valid active nspawn machine for agent activation")
-				}
-				if syncErr := synchronizeNspawnAgentBinary(expected, state.ActiveMachine); syncErr != nil {
-					return fmt.Errorf("synchronize active nspawn agent binary: %w", syncErr)
-				}
-				return nil
+				return s.synchronizeActiveNspawn(healthCtx, expected)
 			}
 		} else {
 			healthySince = time.Time{}
@@ -162,6 +153,24 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Context, expected string) error {
+	state, err := s.state.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("load active nspawn state: %w", err)
+	}
+	if state == nil {
+		s.log.Info("activated host agent without active nspawn synchronization")
+		return nil
+	}
+	if !validNspawnMachine(state.ActiveMachine) {
+		return fmt.Errorf("no valid active nspawn machine for agent activation")
+	}
+	if err := synchronizeNspawnAgentBinary(expected, state.ActiveMachine); err != nil {
+		return fmt.Errorf("synchronize active nspawn agent binary: %w", err)
+	}
+	return nil
 }
 
 func (s *flexDaemonActivationService) isExpectedDaemonActive(ctx context.Context, expected string) (bool, error) {
