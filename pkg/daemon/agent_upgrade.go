@@ -306,23 +306,11 @@ func (e *hostAgentUpgradeExecutor) rollback(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	lastGood, err := resolvedExecutable(e.paths.LastGoodPath)
-	if err != nil {
-		return fmt.Errorf("resolve last-good agent binary: %w", err)
-	}
-	if err := replaceSymlink(e.paths.CurrentPath, lastGood); err != nil {
-		return fmt.Errorf("restore last-good agent binary: %w", err)
-	}
 	signal, err := e.signals.read()
 	if err != nil {
 		return err
 	}
-	if signal != nil && signal.ActiveMachine != "" {
-		if err := synchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
-			return fmt.Errorf("restore active nspawn agent binary: %w", err)
-		}
-	}
-	return nil
+	return rollbackAgentUpgradeFiles(e.paths, signal)
 }
 
 func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
@@ -368,21 +356,12 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	if err := signals.recordFailure(message); err != nil {
 		return err
 	}
-	lastGood, err := resolvedExecutable(paths.LastGoodPath)
-	if err != nil {
-		return fmt.Errorf("resolve last-good agent binary: %w", err)
-	}
-	if err := replaceSymlink(paths.CurrentPath, lastGood); err != nil {
-		return fmt.Errorf("restore last-good agent binary: %w", err)
-	}
 	signal, err := signals.read()
 	if err != nil {
 		return err
 	}
-	if signal != nil && signal.ActiveMachine != "" {
-		if err := synchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
-			return err
-		}
+	if err := rollbackAgentUpgradeFiles(paths, signal); err != nil {
+		return err
 	}
 	return ctx.Err()
 }
@@ -405,7 +384,13 @@ func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c 
 	if signal.Failure == "" {
 		if validationErr := validateStartedAgentUpgrade(paths, signal); validationErr != nil {
 			signal.Failure = validationErr.Error()
-			signal.RecoveryRequired = true
+			candidateActive, activeErr := agentUpgradeCandidateIsActive(paths, signal)
+			if activeErr != nil {
+				signal.Failure = errors.Join(validationErr, activeErr).Error()
+				signal.RecoveryRequired = true
+			} else {
+				signal.RecoveryRequired = candidateActive
+			}
 			if err := signals.write(*signal); err != nil {
 				return err
 			}
@@ -513,7 +498,25 @@ func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSi
 	return nil
 }
 
+func agentUpgradeCandidateIsActive(paths agentUpgradePaths, signal *agentUpgradeSignal) (bool, error) {
+	if signal == nil || signal.CandidatePath != paths.BluePath && signal.CandidatePath != paths.GreenPath {
+		return false, nil
+	}
+	current, err := resolvedExecutable(paths.CurrentPath)
+	if err != nil {
+		return false, fmt.Errorf("resolve current agent binary for rollback: %w", err)
+	}
+	return current == signal.CandidatePath, nil
+}
+
 func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal) error {
+	candidateActive, err := agentUpgradeCandidateIsActive(paths, signal)
+	if err != nil {
+		return err
+	}
+	if !candidateActive {
+		return nil
+	}
 	lastGood, err := resolvedExecutable(paths.LastGoodPath)
 	if err != nil {
 		return fmt.Errorf("resolve last-good agent binary: %w", err)

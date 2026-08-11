@@ -214,6 +214,9 @@ func TestHostAgentUpgradeExecutorAbortUsesCleanupContext(t *testing.T) {
 	if err := signals.recordPending("operation-1", "", "instance-1"); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
+	if err := signals.recordCandidate(paths.GreenPath); err != nil {
+		t.Fatalf("recordCandidate: %v", err)
+	}
 	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "instance-1"}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -233,6 +236,9 @@ func TestHostAgentUpgradeExecutorAbortPreservesSignalOnRollbackFailure(t *testin
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
 	if err := signals.recordPending("operation-1", "", "instance-1"); err != nil {
 		t.Fatalf("recordPending: %v", err)
+	}
+	if err := signals.recordCandidate(paths.BluePath); err != nil {
+		t.Fatalf("recordCandidate: %v", err)
 	}
 	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "instance-1"}
 	if err := executor.Abort(t.Context()); err == nil {
@@ -360,6 +366,31 @@ func TestPublishAgentUpgradeSignalIgnoresInitiatingProcess(t *testing.T) {
 	if signal, err := signals.read(); err != nil || signal == nil {
 		t.Fatalf("initiating process consumed signal: %#v, %v", signal, err)
 	}
+}
+
+func TestRollbackAgentUpgradeFilesDoesNotDowngradeBeforeSwitch(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.BluePath), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for path, content := range map[string]string{paths.BluePath: "last-good", paths.GreenPath: "active"} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatalf("WriteFile(%s): %v", path, err)
+		}
+	}
+	if err := os.Symlink(paths.GreenPath, paths.CurrentPath); err != nil {
+		t.Fatalf("Symlink current: %v", err)
+	}
+	if err := os.Symlink(paths.BluePath, paths.LastGoodPath); err != nil {
+		t.Fatalf("Symlink last-good: %v", err)
+	}
+
+	if err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{CandidatePath: paths.BluePath}); err != nil {
+		t.Fatalf("rollbackAgentUpgradeFiles: %v", err)
+	}
+	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 }
 
 func TestFilesHaveEqualSHA256(t *testing.T) {

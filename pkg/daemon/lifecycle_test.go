@@ -91,6 +91,8 @@ func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 		"aks-flex-node-last-good",
 		"agent-upgrade-signal.json",
 		"systemctl --no-block restart",
+		"|| status=$?",
+		"exit \"${status}\"",
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("recovery script does not contain %q", expected)

@@ -13,7 +13,9 @@ if [[ -z "${last_good}" || ! -x "${last_good}" ]]; then
     exit 1
 fi
 
+status=0
 "${last_good}" recover-agent-upgrade \
-    --message "upgraded daemon failed repeatedly; restored last-good binary"
-systemctl reset-failed aks-flex-node-agent.service
-systemctl --no-block restart aks-flex-node-agent.service
+    --message "upgraded daemon failed repeatedly; restored last-good binary" || status=$?
+systemctl reset-failed aks-flex-node-agent.service || status=$?
+systemctl --no-block restart aks-flex-node-agent.service || status=$?
+exit "${status}"
