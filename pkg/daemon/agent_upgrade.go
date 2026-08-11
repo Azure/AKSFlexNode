@@ -264,7 +264,7 @@ func (e *hostAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error {
 	if err := e.Restart(cleanupCtx); err != nil {
 		return fmt.Errorf("retry AgentUpgrade recovery restart: %w", err)
 	}
-	return nil
+	return e.WaitForRestart(ctx)
 }
 
 func (e *hostAgentUpgradeExecutor) RecordFailure(message string) error {
@@ -560,7 +560,7 @@ func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSign
 	if err != nil {
 		return err
 	}
-	if !signal.SwitchCommitted && !candidateActive {
+	if !signal.SwitchCommitted && !signal.RecoveryRequired && !candidateActive {
 		return nil
 	}
 	lastGood, err := resolvedExecutable(paths.LastGoodPath)

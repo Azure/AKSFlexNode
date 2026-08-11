@@ -232,8 +232,6 @@ func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
 	defer cancel()
 	restartErr := h.agentUpgrade.Restart(cleanupCtx)
 	if restartErr != nil {
-		// If the failure annotation succeeded, the initiating daemon's signal
-		// loop can retry recovery without waiting for another reconciliation.
 		h.log.Error("failed to restart daemon for AgentUpgrade recovery", "operation", op.Name, "error", restartErr)
 	}
 	if recordErr != nil || restartErr != nil {
@@ -242,7 +240,7 @@ func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
 			wrapOptionalError("restart daemon for AgentUpgrade recovery", restartErr),
 		)
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, h.agentUpgrade.WaitForRestart(ctx)
 }
 
 func (h *machineOperationHandlers) reconcileAgentReset(

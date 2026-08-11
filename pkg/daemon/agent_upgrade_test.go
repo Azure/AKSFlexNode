@@ -413,8 +413,8 @@ func TestRollbackAgentUpgradeFilesRetriesAfterHostLinkWasRestored(t *testing.T) 
 	}
 
 	err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{
-		CandidatePath:   paths.BluePath,
-		SwitchCommitted: true,
+		CandidatePath:    paths.BluePath,
+		RecoveryRequired: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "resolve last-good") {
 		t.Fatalf("rollbackAgentUpgradeFiles error = %v, want retry to resolve last-good", err)
