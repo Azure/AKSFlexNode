@@ -102,10 +102,12 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, systemdDir, recove
 	} {
 		recoveryContent = bytes.ReplaceAll(recoveryContent, []byte(oldPath), []byte(newPath))
 	}
+	// Publish dependencies before the main unit that references OnFailure, so an
+	// interrupted update never leaves systemd pointing at missing recovery assets.
 	return []agentServiceAsset{
-		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
-		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
 		{path: recoveryScript, content: recoveryContent, mode: 0o750},
+		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
+		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
 	}
 }
 

@@ -68,6 +68,7 @@ type agentUpgradeSignal struct {
 	ActiveMachine            string `json:"activeMachine,omitempty"`
 	CandidatePath            string `json:"candidatePath,omitempty"`
 	InitiatingDaemonInstance string `json:"initiatingDaemonInstance,omitempty"`
+	SwitchCommitted          bool   `json:"switchCommitted,omitempty"`
 	RecoveryRequired         bool   `json:"recoveryRequired,omitempty"`
 	Failure                  string `json:"failure,omitempty"`
 }
@@ -93,6 +94,18 @@ func (s agentUpgradeSignalStore) recordCandidate(candidatePath string) error {
 		return fmt.Errorf("no pending AgentUpgrade signal")
 	}
 	signal.CandidatePath = candidatePath
+	return s.write(*signal)
+}
+
+func (s agentUpgradeSignalStore) recordSwitchCommitted() error {
+	signal, err := s.read()
+	if err != nil {
+		return err
+	}
+	if signal == nil {
+		return fmt.Errorf("no pending AgentUpgrade signal")
+	}
+	signal.SwitchCommitted = true
 	return s.write(*signal)
 }
 
@@ -258,6 +271,9 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if err := installAndSwitchAgentBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths); err != nil {
 		return err
 	}
+	if err := e.signals.recordSwitchCommitted(); err != nil {
+		return e.rollbackAfterStage(ctx, fmt.Errorf("record committed AgentUpgrade switch: %w", err))
+	}
 
 	signal, err := e.signals.read()
 	if err != nil {
@@ -412,11 +428,6 @@ func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c 
 		}
 	}
 
-	finishOperation := executor.finishMachineOperation
-	if finishOperation == nil {
-		finishOperation = agentdaemon.FinishMachineOperation
-	}
-	finishErr := finishOperation(ctx, c, agentdaemon.MachineOperation{Name: signal.OperationName}, result)
 	if signal.RecoveryRequired {
 		lastGood, err := resolvedExecutable(paths.LastGoodPath)
 		if err != nil {
@@ -434,16 +445,19 @@ func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c 
 			cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
 			restartErr := executor.Restart(cleanupCtx)
 			cancel()
-			if finishErr != nil || restartErr != nil {
-				return errors.Join(
-					wrapOptionalError("publish AgentUpgrade result", finishErr),
-					wrapOptionalError("restart last-good agent", restartErr),
-				)
+			if restartErr != nil {
+				return fmt.Errorf("restart last-good agent: %w", restartErr)
 			}
-			// Keep the signal until the last-good process confirms it is running.
+			// Keep the signal and terminal status unpublished until the last-good
+			// process confirms that it is running.
 			return nil
 		}
 	}
+	finishOperation := executor.finishMachineOperation
+	if finishOperation == nil {
+		finishOperation = agentdaemon.FinishMachineOperation
+	}
+	finishErr := finishOperation(ctx, c, agentdaemon.MachineOperation{Name: signal.OperationName}, result)
 	if finishErr != nil {
 		return fmt.Errorf("publish AgentUpgrade result: %w", finishErr)
 	}
@@ -510,11 +524,14 @@ func agentUpgradeCandidateIsActive(paths agentUpgradePaths, signal *agentUpgrade
 }
 
 func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal) error {
+	if signal == nil {
+		return nil
+	}
 	candidateActive, err := agentUpgradeCandidateIsActive(paths, signal)
 	if err != nil {
 		return err
 	}
-	if !candidateActive {
+	if !signal.SwitchCommitted && !candidateActive {
 		return nil
 	}
 	lastGood, err := resolvedExecutable(paths.LastGoodPath)

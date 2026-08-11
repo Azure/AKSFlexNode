@@ -218,6 +218,11 @@ agent_upgrade_e2e() {
 
   validate_node_joined "${vm_name}"
   _agent_upgrade_ensure_api
+  # MachineOperation discovery occurs during daemon startup. Restart after the
+  # CRD is established so this focused command also works on previously joined
+  # environments where the API was absent.
+  remote_exec "${vm_ip}" 'sudo systemctl restart aks-flex-node-agent.service'
+  validate_node_joined "${vm_name}"
   _agent_upgrade_prepare_server "${vm_ip}"
   success_digest="$(_agent_upgrade_digest "${vm_ip}" success.tar.gz)"
   failure_digest="$(_agent_upgrade_digest "${vm_ip}" failure.tar.gz)"

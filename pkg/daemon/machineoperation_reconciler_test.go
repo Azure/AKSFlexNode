@@ -449,6 +449,25 @@ func TestMachineOperationHandlersAgentUpgradeAbortFailureStartsRecovery(t *testi
 	}
 }
 
+func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{
+		stageErr:   errors.New("stage failed"),
+		abortErr:   errors.New("rollback failed"),
+		restartErr: errors.New("restart failed"),
+	}
+	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
+		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+	}}
+
+	_, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op)
+	if err == nil || !strings.Contains(err.Error(), "restart daemon for AgentUpgrade recovery") {
+		t.Fatalf("reconcileAgentUpgrade error = %v, want recovery restart error", err)
+	}
+}
+
 func TestMachineOperationHandlersAgentReset(t *testing.T) {
 	t.Parallel()
 

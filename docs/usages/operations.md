@@ -81,7 +81,7 @@ A host provisioning system that has already authenticated and staged a candidate
 sudo /var/tmp/aks-flex-node-candidate agent-upgrade
 ```
 
-The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, restart `aks-flex-node-agent.service`, verify the running executable, synchronize the active nspawn exec-credential binary, and restore last-good on activation failure.
+The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, and restore last-good on activation failure. If `aks-flex-node-agent.service` is active, direct activation restarts it, verifies the running executable, and synchronizes the active nspawn exec-credential binary. If the service is already inactive during reset/rejoin provisioning, activation preserves that stopped state; the subsequent bootstrap starts the service and worker.
 
 ## Nspawn Worker
 

@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	daemonCredentialDir   = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
-	daemonCredentialGroup = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
+	agentUpgradeStartupStability = 3 * time.Second
+	daemonCredentialDir          = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
+	daemonCredentialGroup        = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
 )
 
 // Run starts the machine-driven daemon loop.
@@ -105,17 +106,38 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := daemon.SetupController("aks-flex-node-daemon", mgr, machineOperations, repaves); err != nil {
+	gate := newStartupGate()
+	if err := daemon.SetupController(
+		"aks-flex-node-daemon",
+		mgr,
+		gatedMachineOperationReconciler{delegate: machineOperations, gate: gate},
+		gatedRepaveReconciler{delegate: repaves, gate: gate},
+	); err != nil {
 		return fmt.Errorf("setup daemon controller: %w", err)
 	}
 
-	// Publish durable upgrade recovery before starting the serialized controller,
-	// matching Unbounded's startup ordering. This prevents recovery-time host and
-	// nspawn mutation from racing repave or reset reconciliation.
-	if err := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades); err != nil {
-		// Retain the signal so a later daemon start can retry publication.
-		log.Warn("failed to publish AgentUpgrade startup result", "error", err)
-	}
+	go func() {
+		// Keep host-mutating reconciliation gated until the candidate has reached
+		// cache readiness and remained alive for a bounded stability interval.
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(agentUpgradeStartupStability):
+		}
+		publishErr := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
+		if publishErr != nil {
+			// Retain the signal so a later daemon start can retry publication.
+			log.Warn("failed to publish AgentUpgrade startup result", "error", publishErr)
+		} else if pending, readErr := upgrades.signals.read(); readErr == nil && pending != nil {
+			// Recovery scheduled a restart. Keep reconciliation gated until the
+			// last-good process starts and consumes the retained signal.
+			return
+		}
+		gate.open()
+	}()
 
 	err = mgr.Start(ctx)
 	repaves.log.Info("daemon shutting down")

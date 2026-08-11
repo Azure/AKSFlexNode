@@ -225,8 +225,11 @@ func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
 		// loop can retry recovery without waiting for another reconciliation.
 		h.log.Error("failed to restart daemon for AgentUpgrade recovery", "operation", op.Name, "error", restartErr)
 	}
-	if recordErr != nil && restartErr != nil {
-		return ctrl.Result{}, errors.Join(recordErr, restartErr)
+	if recordErr != nil || restartErr != nil {
+		return ctrl.Result{}, errors.Join(
+			wrapOptionalError("record AgentUpgrade recovery failure", recordErr),
+			wrapOptionalError("restart daemon for AgentUpgrade recovery", restartErr),
+		)
 	}
 	return ctrl.Result{}, nil
 }

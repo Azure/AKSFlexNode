@@ -112,6 +112,9 @@ func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
 	if err := store.recordCandidate("/slots/green"); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
+	if err := store.recordSwitchCommitted(); err != nil {
+		t.Fatalf("recordSwitchCommitted: %v", err)
+	}
 	if err := store.recordFailure("rolled back"); err != nil {
 		t.Fatalf("recordFailure: %v", err)
 	}
@@ -119,7 +122,7 @@ func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if signal == nil || signal.OperationName != "operation-1" || signal.ActiveMachine != "kube1" || signal.CandidatePath != "/slots/green" || signal.InitiatingDaemonInstance != "instance-1" || signal.Failure != "rolled back" || !signal.RecoveryRequired {
+	if signal == nil || signal.OperationName != "operation-1" || signal.ActiveMachine != "kube1" || signal.CandidatePath != "/slots/green" || signal.InitiatingDaemonInstance != "instance-1" || !signal.SwitchCommitted || signal.Failure != "rolled back" || !signal.RecoveryRequired {
 		t.Fatalf("signal = %#v", signal)
 	}
 	info, err := os.Stat(path)
@@ -334,8 +337,8 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 	if signal, err := signals.read(); err != nil || signal == nil {
 		t.Fatalf("signal cleared before last-good startup: %#v, %v", signal, err)
 	}
-	if restarts != 1 || finished != 1 {
-		t.Fatalf("restarts = %d, finished = %d", restarts, finished)
+	if restarts != 1 || finished != 0 {
+		t.Fatalf("restarts = %d, finished = %d; terminal status must wait for last-good", restarts, finished)
 	}
 
 	executor.instanceID = "last-good-instance"
@@ -346,7 +349,7 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 	if signal, err := signals.read(); err != nil || signal != nil {
 		t.Fatalf("signal after last-good startup = %#v, %v", signal, err)
 	}
-	if restarts != 1 || finished != 2 {
+	if restarts != 1 || finished != 1 {
 		t.Fatalf("restarts = %d, finished = %d", restarts, finished)
 	}
 }
@@ -391,6 +394,31 @@ func TestRollbackAgentUpgradeFilesDoesNotDowngradeBeforeSwitch(t *testing.T) {
 		t.Fatalf("rollbackAgentUpgradeFiles: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
+}
+
+func TestRollbackAgentUpgradeFilesRetriesAfterHostLinkWasRestored(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.BluePath), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for _, path := range []string{paths.BluePath, paths.GreenPath} {
+		if err := os.WriteFile(path, []byte(path), 0o755); err != nil {
+			t.Fatalf("WriteFile(%s): %v", path, err)
+		}
+	}
+	if err := os.Symlink(paths.GreenPath, paths.CurrentPath); err != nil {
+		t.Fatalf("Symlink current: %v", err)
+	}
+
+	err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{
+		CandidatePath:   paths.BluePath,
+		SwitchCommitted: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolve last-good") {
+		t.Fatalf("rollbackAgentUpgradeFiles error = %v, want retry to resolve last-good", err)
+	}
 }
 
 func TestFilesHaveEqualSHA256(t *testing.T) {
