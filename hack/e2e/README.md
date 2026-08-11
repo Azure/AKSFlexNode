@@ -144,7 +144,7 @@ its Azure resource name remains lowercase. This verifies that an omitted
 `agent.nodeName` is derived from the normalized hostname and still joins the
 cluster under the lowercase VM name.
 
-Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+Each join path uploads the locally built binary and renders a config file. Fresh hosts install it through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`; rejoin hosts with an existing managed layout invoke the uploaded candidate's `agent-upgrade` command before bootstrap. The node starts through a transient systemd unit, and the installed agent service is then validated with systemd checks.
 
 ## Agent Upgrade Validation
 

@@ -256,32 +256,16 @@ install_binary() {
     local binary_path="$1"
     local current_path="/usr/local/lib/aks-flex-node/aks-flex-node-current"
     local compatibility_path="${INSTALL_DIR}/aks-flex-node"
-    local candidate_path active_path
 
     log_info "Installing binary to $INSTALL_DIR..."
 
+    # This script owns only fresh installation. Managed updates must execute a
+    # separately delivered candidate so the Go activation flow preserves the
+    # active and last-good binaries.
     if [[ -e "$current_path" || -L "$current_path" ]]; then
-        candidate_path=$(readlink -f "$binary_path")
-        active_path=$(readlink -f "$current_path")
-        if [[ ! -f "$candidate_path" || ! -x "$candidate_path" ]]; then
-            log_error "Managed installation requires a separately staged executable candidate"
-            return 1
-        fi
-        if [[ "$candidate_path" == "$active_path" ]]; then
-            log_error "Candidate must be staged separately from the active AKS Flex Node binary"
-            return 1
-        fi
-
-        # Candidate delivery is the installer's only responsibility here. The
-        # Go activation command owns verification, switching, service handling,
-        # health checks, and rollback for an existing managed installation.
-        log_info "Delegating managed binary activation to the candidate..."
-        if ! "$candidate_path" agent-upgrade; then
-            log_error "Failed to activate the installed AKS Flex Node candidate"
-            return 1
-        fi
-        log_success "Binary activated through the managed agent layout"
-        return 0
+        log_error "A managed AKS Flex Node installation already exists"
+        log_error "Run the separately staged candidate with: <candidate-path> agent-upgrade"
+        return 1
     fi
 
     install -d -o root -g root -m 0755 "$INSTALL_DIR"
