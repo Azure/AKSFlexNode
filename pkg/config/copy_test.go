@@ -17,6 +17,12 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 		Node: NodeConfig{
 			Labels: map[string]string{"l": "1"},
 			Taints: []string{"dedicated=infra:NoSchedule"},
+			Kubelet: KubeletConfig{
+				ImageCredentialProvider: &ImageCredentialProviderConfig{
+					ConfigPath: "/etc/kubernetes/credential-provider.yaml",
+					BinDir:     "/usr/local/lib/kubelet-credential-providers",
+				},
+			},
 		},
 	}
 
@@ -47,6 +53,9 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	if cfg.Components.Gantry == nil || copy.Components.Gantry == nil || cfg.Components.Gantry == copy.Components.Gantry {
 		t.Fatalf("Gantry pointer shared or nil")
 	}
+	if cfg.Node.Kubelet.ImageCredentialProvider == nil || copy.Node.Kubelet.ImageCredentialProvider == nil || cfg.Node.Kubelet.ImageCredentialProvider == copy.Node.Kubelet.ImageCredentialProvider {
+		t.Fatalf("ImageCredentialProvider pointer shared or nil")
+	}
 
 	// Maps should not be shared (validate via independent mutation behavior).
 	cfg.Azure.Arc.Tags["k"] = "orig"
@@ -65,6 +74,11 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	copy.Node.Labels["l"] = "copy"
 	if cfg.Node.Labels["l"] != "orig" {
 		t.Fatalf("Node.Labels shared; orig=%q, want %q", cfg.Node.Labels["l"], "orig")
+	}
+
+	copy.Node.Kubelet.ImageCredentialProvider.ConfigPath = "/etc/kubernetes/other.yaml"
+	if cfg.Node.Kubelet.ImageCredentialProvider.ConfigPath != "/etc/kubernetes/credential-provider.yaml" {
+		t.Fatal("ImageCredentialProvider shared between config copies")
 	}
 
 	// Taints slice should not be shared.

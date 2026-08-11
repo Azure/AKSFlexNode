@@ -236,6 +236,7 @@ output clusterFqdn string = aksCluster.properties.fqdn
 
 output msiVmName string = vmMsi.outputs.vmName
 output msiVmIp string = vmMsi.outputs.publicIpAddress
+output msiVmPrivateIp string = vmMsi.outputs.privateIpAddress
 output msiVmPrincipalId string = vmMsi.outputs.principalId
 
 output tokenVmName string = vmToken.outputs.vmName

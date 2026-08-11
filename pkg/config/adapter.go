@@ -40,6 +40,10 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	if kubeReserved == nil {
 		kubeReserved = defaultKubeReserved(runtime.NumCPU(), hostTotalMemoryMi(), maxPods)
 	}
+	kubeletConfig := kubeletConfiguration(cfg)
+	kubeletConfig["systemReserved"] = systemReserved
+	kubeletConfig["kubeReserved"] = kubeReserved
+	kubeletConfig["maxPods"] = maxPods
 
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
@@ -57,11 +61,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
 			Labels:             cfg.Node.Labels,
 			RegisterWithTaints: cfg.Node.Taints,
-			Configuration: map[string]any{
-				"systemReserved": systemReserved,
-				"kubeReserved":   kubeReserved,
-				"maxPods":        maxPods,
-			},
+			Configuration:      kubeletConfig,
 		},
 		CRI: agentconfig.CRIConfig{
 			Containerd: agentconfig.ContainerdConfig{
@@ -75,6 +75,22 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		CNI: agentconfig.CNIConfig{
 			PluginVersion: cfg.Networking.CNIVersion,
 		},
+	}
+
+	if profile := cfg.Networking.LocalDNS; profile != nil {
+		corefile, _ := profile.CorefileTemplate() // Config validation runs before adaptation.
+		ac.LocalDNS = &agentconfig.AgentLocalDNSConfig{
+			Enabled:          profile.Enabled(),
+			RequiredPlugins:  []string{"log", "nsid"},
+			CorefileTemplate: corefile,
+		}
+	}
+
+	if provider := cfg.Node.Kubelet.ImageCredentialProvider; provider != nil {
+		ac.Kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
+			ConfigPath: provider.ConfigPath,
+			BinDir:     provider.BinDir,
+		}
 	}
 
 	if cfg.Bootstrap.OfflineArtifacts.Source != "" {
@@ -121,6 +137,17 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	}
 
 	return ac
+}
+
+func kubeletConfiguration(cfg *Config) map[string]any {
+	return map[string]any{
+		"maxPods":                     cfg.Node.MaxPods,
+		"imageGCHighThresholdPercent": cfg.Node.Kubelet.ImageGCHighThreshold,
+		"imageGCLowThresholdPercent":  cfg.Node.Kubelet.ImageGCLowThreshold,
+		"logging": map[string]any{
+			"verbosity": cfg.Node.Kubelet.Verbosity,
+		},
+	}
 }
 
 // ResolveMachineGoalState converts FlexNode config to the shared agent config

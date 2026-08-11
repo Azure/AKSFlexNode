@@ -1,0 +1,38 @@
+# This Corefile follows the AKS AgentBaker LocalDNS policy with adaptations for
+# the Unbounded nspawn runtime:
+# - Node DNS forwards to resolver addresses discovered from the physical host
+#   instead of assuming the Azure platform DNS address.
+# - The metrics endpoint binds a runtime-resolved node address instead of :9253.
+# - The AgentBaker critical-FQDN hosts file is omitted because Unbounded does not
+#   run the AKS hosts-file refresher.
+# - Azure VM suffix guards for internal.cloudapp.net and reddog.microsoft.com
+#   are omitted because Flex Nodes may use non-Azure DNS where those names must
+#   be resolved according to the host's upstream policy.
+# Listener, upstream, cluster DNS, and metrics placeholders are resolved by
+# Unbounded after AKS Flex Node renders the profile-specific server blocks.
+health-check.localdns.local:53 {
+    bind {{.NodeListener}} {{.ClusterListener}}
+    whoami
+}
+
+{{range .Blocks}}{{.Zone}}:53 {
+    {{if .LogQueries}}log{{else}}errors{{end}}
+    bind {{.Listener}}
+    forward . {{.Upstream}} {
+        {{if .ForceTCP}}force_tcp
+        {{end}}policy {{.ForwardPolicy}}
+        max_concurrent {{.MaxConcurrent}}
+    }
+    ready {{.Listener}}:8181
+    cache {{.CacheDuration}} {
+        success 9984
+        denial 9984
+        {{if .ServeStale}}serve_stale {{.ServeStaleDuration}}s {{.ServeStalePolicy}}
+        {{end}}servfail 0
+    }
+    loop
+    nsid {{.NSID}}
+    prometheus {{$.MetricsAddress}}
+}
+
+{{end}}

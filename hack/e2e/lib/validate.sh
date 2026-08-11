@@ -6,6 +6,8 @@
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
 #   validate_all_nodes                - Verify MSI, token, offline, and kubeadm nodes joined
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
+#   validate_localdns_status <vm_name> <vm_ip> - Verify LocalDNS behavior
+#   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after nspawn reboot
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
 #   validate_all_nodes_absent         - Verify all flex nodes are gone after unjoin
 #   smoke_test            <vm_name> <label>  - Schedule an nginx pod on a node
@@ -15,6 +17,7 @@ set -euo pipefail
 
 [[ -n "${_E2E_VALIDATE_LOADED:-}" ]] && return 0
 readonly _E2E_VALIDATE_LOADED=1
+_E2E_LOCALDNS_REBOOT_VALIDATED=0
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
@@ -168,6 +171,121 @@ REMOTE
 }
 
 # ---------------------------------------------------------------------------
+# validate_localdns_status - Verify nspawn LocalDNS on the selected VM.
+validate_localdns_status() {
+  local vm_name="$1"
+  local vm_ip="$2"
+  log_info "Validating LocalDNS on ${vm_ip}..."
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+set -euo pipefail
+machine=$(sudo machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" systemctl is-active --quiet localdns.service
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" \
+  grep -qx 'nameserver 169.254.10.10' /etc/unbounded/localdns/resolv.conf
+sudo systemd-run --quiet --pipe --wait --machine="${machine}" \
+  systemctl cat kubelet.service | grep -q -- '--resolv-conf=/etc/unbounded/localdns/resolv.conf'
+sudo ip address show dev localdns | grep -q '169.254.10.10/32'
+sudo ip address show dev localdns | grep -q '169.254.10.11/32'
+for chain in output prerouting; do
+  rules="$(sudo nft list chain ip unbounded_localdns "${chain}")"
+  for address in 169.254.10.10 169.254.10.11; do
+    for protocol in tcp udp; do
+      grep -Fq \
+        "ip daddr ${address} ${protocol} dport 53 notrack comment \"unbounded-localdns: skip conntrack\"" \
+        <<<"${rules}"
+    done
+  done
+done
+REMOTE
+
+  local cluster_pod="localdns-clusterfirst-${vm_name}"
+  local default_pod="localdns-default-${vm_name}"
+  kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=true >/dev/null
+  kubectl run "${cluster_pod}" --image=busybox:1.36 --restart=Never \
+    --overrides="{\"spec\":{\"nodeName\":\"${vm_name}\",\"dnsPolicy\":\"ClusterFirst\"}}" \
+    --command -- nslookup kubernetes.default.svc.cluster.local >/dev/null
+  kubectl run "${default_pod}" --image=busybox:1.36 --restart=Never \
+    --overrides="{\"spec\":{\"nodeName\":\"${vm_name}\",\"dnsPolicy\":\"Default\"}}" \
+    --command -- nslookup mcr.microsoft.com >/dev/null
+
+  local pod
+  for pod in "${cluster_pod}" "${default_pod}"; do
+    local phase=""
+    for _ in $(seq 1 60); do
+      phase="$(kubectl get pod "${pod}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      [[ "${phase}" == "Succeeded" || "${phase}" == "Failed" ]] && break
+      sleep 2
+    done
+    if [[ "${phase}" != "Succeeded" ]]; then
+      kubectl describe pod "${pod}" >&2 || true
+      kubectl logs "${pod}" >&2 || true
+      log_error "LocalDNS query pod ${pod} ended in phase ${phase}"
+      return 1
+    fi
+  done
+
+  if ! kubectl logs "${cluster_pod}" | grep -Eq 'Server:[[:space:]]*169\.254\.10\.11'; then
+    log_error "ClusterFirst pod did not query LocalDNS cluster listener"
+    return 1
+  fi
+  if ! kubectl logs "${default_pod}" | grep -Eq 'Server:[[:space:]]*169\.254\.10\.10'; then
+    log_error "Default-policy pod did not query LocalDNS node listener"
+    return 1
+  fi
+  kubectl delete pod "${cluster_pod}" "${default_pod}" --ignore-not-found --wait=false >/dev/null
+
+  log_success "LocalDNS validation passed on ${vm_ip}"
+}
+
+# validate_localdns_after_reboot - Verify LocalDNS survives an nspawn reboot.
+# ---------------------------------------------------------------------------
+validate_localdns_after_reboot() {
+  local vm_name="$1"
+  local vm_ip="$2"
+  local old_renew_time
+  old_renew_time="$(kubectl -n kube-node-lease get lease "${vm_name}" -o jsonpath='{.spec.renewTime}')"
+
+  log_section "Validating LocalDNS After Nspawn Reboot"
+  log_info "Rebooting the nspawn machine on ${vm_name} (${vm_ip})..."
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
+set -euo pipefail
+machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+machinectl reboot "${machine}"
+for _ in $(seq 1 60); do
+  if systemd-run --quiet --pipe --wait --machine="${machine}" \
+      systemctl is-active --quiet localdns.service kubelet.service containerd.service >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 5
+done
+machinectl status "${machine}" >&2 || true
+systemd-run --quiet --pipe --wait --machine="${machine}" \
+  systemctl --no-pager --full status localdns.service kubelet.service containerd.service >&2 || true
+exit 1
+REMOTE
+
+  local timeout="${E2E_NODE_JOIN_TIMEOUT}"
+  local elapsed=0
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    local ready renew_time
+    ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    renew_time="$(kubectl -n kube-node-lease get lease "${vm_name}" -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
+    if [[ "${ready}" == "True" && -n "${renew_time}" && "${renew_time}" != "${old_renew_time}" ]]; then
+      validate_localdns_status "${vm_name}" "${vm_ip}" || return 1
+      log_success "LocalDNS recovered after nspawn reboot on ${vm_name}"
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  log_error "Node ${vm_name} did not renew its lease and become Ready after nspawn reboot"
+  kubectl describe node "${vm_name}" >&2 || true
+  return 1
+}
+
 # validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
@@ -186,12 +304,13 @@ validate_all_nodes() {
 
   local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
   local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip
-  local token_vm_private_ip offline_vm_private_ip
+  local msi_vm_private_ip token_vm_private_ip offline_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
   msi_vm_ip="$(state_get msi_vm_ip)"
+  msi_vm_private_ip="$(state_get msi_vm_private_ip)"
   token_vm_ip="$(state_get token_vm_ip)"
   offline_vm_ip="$(state_get offline_vm_ip)"
   kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
@@ -203,9 +322,18 @@ validate_all_nodes() {
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${offline_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
+  validate_node_ip "${msi_vm_name}" "${msi_vm_private_ip}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  if [[ "${_E2E_LOCALDNS_REBOOT_VALIDATED}" != "1" ]]; then
+    if validate_localdns_after_reboot "${msi_vm_name}" "${msi_vm_ip}"; then
+      _E2E_LOCALDNS_REBOOT_VALIDATED=1
+    else
+      failed=1
+    fi
+  fi
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
   # TODO: re-enable once NPD is included in the upstream Unbounded bootstrap
   # artifact bundle and resolver used by offline artifact mode.
