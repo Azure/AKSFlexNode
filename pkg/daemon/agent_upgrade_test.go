@@ -354,6 +354,60 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 	}
 }
 
+func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.BluePath), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(paths.BluePath, []byte("candidate"), 0o755); err != nil {
+		t.Fatalf("WriteFile candidate: %v", err)
+	}
+	if err := os.Symlink(paths.BluePath, paths.CurrentPath); err != nil {
+		t.Fatalf("Symlink current: %v", err)
+	}
+	nspawnBinary := filepath.Join(t.TempDir(), "nspawn-agent")
+	if err := os.WriteFile(nspawnBinary, []byte("candidate"), 0o755); err != nil {
+		t.Fatalf("WriteFile nspawn: %v", err)
+	}
+	signals := agentUpgradeSignalStore{path: paths.SignalPath}
+	if err := signals.write(agentUpgradeSignal{
+		OperationName:            "operation-1",
+		ActiveMachine:            "kube1",
+		CandidatePath:            paths.BluePath,
+		InitiatingDaemonInstance: "previous-instance",
+		SwitchCommitted:          true,
+	}); err != nil {
+		t.Fatalf("write signal: %v", err)
+	}
+	finished := 0
+	executor := &hostAgentUpgradeExecutor{
+		paths:      paths,
+		signals:    signals,
+		instanceID: "restarted-instance",
+		nspawnBinaryPath: func(string) string {
+			return nspawnBinary
+		},
+		finishMachineOperation: func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
+			finished++
+			if result.Phase != machinav1alpha3.OperationPhaseComplete {
+				t.Fatalf("phase = %s, want Complete", result.Phase)
+			}
+			return nil
+		},
+	}
+	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err != nil {
+		t.Fatalf("publishAndClearAgentUpgradeSignal: %v", err)
+	}
+	if finished != 1 {
+		t.Fatalf("finish calls = %d, want 1", finished)
+	}
+	if signal, err := signals.read(); err != nil || signal != nil {
+		t.Fatalf("signal after success = %#v, %v", signal, err)
+	}
+}
+
 func TestPublishAgentUpgradeSignalIgnoresInitiatingProcess(t *testing.T) {
 	t.Parallel()
 

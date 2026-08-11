@@ -114,6 +114,15 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 }
 
 func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service string) (bool, error) {
+	loadState, err := utilexec.OutputCmdAt(ctx, log, slog.LevelDebug, "systemctl", "show", "--property=LoadState", "--value", service)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(loadState) == "not-found" {
+		// Reset removes the unit while intentionally retaining the managed binary
+		// layout for a later rejoin.
+		return false, nil
+	}
 	state, err := utilexec.OutputCmdAt(ctx, log, slog.LevelDebug, "systemctl", "show", "--property=ActiveState", "--value", service)
 	if err != nil {
 		return false, err
