@@ -194,6 +194,11 @@ func expectedAgentArchiveMember() (string, error) {
 	}
 }
 
+// secureAgentInstallOptions intentionally follows the merged Unbounded
+// MachineOperation contract: HTTP transport and an omitted digest are allowed
+// when the control plane trusts the archive source and transport path. Flex
+// still bounds the archive, requires one exact member, and verifies the
+// candidate executable. Production callers should supply HTTPS and SHA-256.
 func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
