@@ -13,13 +13,13 @@ import (
 // NewCommands returns all daemon runtime and internal lifecycle commands.
 func NewCommands() []*cobra.Command {
 	return []*cobra.Command{
-		NewCommand(),
-		NewHostAgentUpgradeCommand(),
-		NewAgentUpgradeRecoveryCommand(),
+		newCommand(),
+		newHostAgentUpgradeCommand(),
+		newAgentUpgradeRecoveryCommand(),
 	}
 }
 
-func NewCommand() *cobra.Command {
+func newCommand() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:     "daemon",

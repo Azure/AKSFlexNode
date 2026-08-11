@@ -8,9 +8,9 @@ import (
 	hostdaemon "github.com/Azure/AKSFlexNode/pkg/daemon"
 )
 
-// NewAgentUpgradeRecoveryCommand returns the internal command used by the
-// systemd recovery unit. It remains callable only as a local root operation.
-func NewAgentUpgradeRecoveryCommand() *cobra.Command {
+// newAgentUpgradeRecoveryCommand remains callable only as a local root
+// operation by the systemd recovery unit.
+func newAgentUpgradeRecoveryCommand() *cobra.Command {
 	var message string
 	cmd := &cobra.Command{
 		Use:    "recover-agent-upgrade",

@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -11,8 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
-// NewHostAgentUpgradeCommand returns the hidden host-driven activation command.
-func NewHostAgentUpgradeCommand() *cobra.Command {
+func newHostAgentUpgradeCommand() *cobra.Command {
 	var preflight bool
 	cmd := &cobra.Command{
 		Use:    "agent-upgrade",
@@ -29,23 +31,11 @@ func NewHostAgentUpgradeCommand() *cobra.Command {
 				return fmt.Errorf("resolve absolute candidate executable path: %w", err)
 			}
 			log := logger.CreateLogger("info", "")
+			candidate = filepath.Clean(candidate)
 			if preflight {
-				plan, err := hostdaemon.PreflightHostAgentActivation(cmd.Context(), log, filepath.Clean(candidate))
-				if err != nil {
-					return err
-				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Candidate: %s\nActive binary: %s\nInstall target: %s\n", plan.CandidatePath, plan.ActivePath, plan.TargetPath); err != nil {
-					return err
-				}
-				for _, action := range plan.Actions {
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", action); err != nil {
-						return err
-					}
-				}
-				_, err = fmt.Fprintln(cmd.OutOrStdout(), "Preflight: no changes applied")
-				return err
+				return runHostAgentUpgradePreflight(cmd.Context(), cmd.OutOrStdout(), log, candidate)
 			}
-			result, err := hostdaemon.ActivateHostAgent(cmd.Context(), log, filepath.Clean(candidate))
+			result, err := hostdaemon.ActivateHostAgent(cmd.Context(), log, candidate)
 			if err != nil {
 				return err
 			}
@@ -55,4 +45,21 @@ func NewHostAgentUpgradeCommand() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&preflight, "preflight", false, "Show and validate the host activation plan without applying it")
 	return cmd
+}
+
+func runHostAgentUpgradePreflight(ctx context.Context, output io.Writer, log *slog.Logger, candidate string) error {
+	plan, err := hostdaemon.PreflightHostAgentActivation(ctx, log, candidate)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(output, "Candidate: %s\nActive binary: %s\nInstall target: %s\n", plan.CandidatePath, plan.ActivePath, plan.TargetPath); err != nil {
+		return err
+	}
+	for _, action := range plan.Actions {
+		if _, err := fmt.Fprintf(output, "- %s\n", action); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(output, "Preflight: no changes applied")
+	return err
 }
