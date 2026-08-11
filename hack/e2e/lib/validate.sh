@@ -264,7 +264,8 @@ validate_kubelet_reservations() {
   fi
 
   # Kubelet also subtracts the hard eviction threshold (100Mi by default) from
-  # allocatable memory, so allow a small allowance below the reserved amount.
+  # allocatable memory. Allow a margin above that default so the assertion keeps
+  # holding if the threshold changes, while still catching missing reservations.
   local reserved_memory_bytes=$(( system_memory_bytes + kube_memory_bytes ))
   local upper_memory_bytes=$(( capacity_memory_bytes - reserved_memory_bytes ))
   local eviction_allowance_bytes=$(( 256 * 1024 * 1024 ))
