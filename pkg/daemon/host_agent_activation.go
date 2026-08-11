@@ -55,11 +55,13 @@ func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) a
 }
 
 type flexDaemonActivationService struct {
-	log            *slog.Logger
-	paths          agentUpgradePaths
-	state          stateStore
-	systemdDir     string
-	recoveryScript string
+	log              *slog.Logger
+	paths            agentUpgradePaths
+	state            stateStore
+	systemdDir       string
+	recoveryScript   string
+	isServiceActive  func(context.Context, *slog.Logger, string) bool
+	serviceWasActive bool
 }
 
 func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationService, agentUpgradePaths, error) {
@@ -72,15 +74,21 @@ func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationServ
 	}
 	paths := defaultAgentUpgradePaths()
 	return &flexDaemonActivationService{
-		log:            log,
-		paths:          paths,
-		state:          state,
-		systemdDir:     systemdSystemDir,
-		recoveryScript: recoveryScriptPath,
+		log:             log,
+		paths:           paths,
+		state:           state,
+		systemdDir:      systemdSystemDir,
+		recoveryScript:  recoveryScriptPath,
+		isServiceActive: utilexec.IsServiceActive,
 	}, paths, nil
 }
 
-func (s *flexDaemonActivationService) Preflight(_ context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
+func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
+	isActive := s.isServiceActive
+	if isActive == nil {
+		isActive = utilexec.IsServiceActive
+	}
+	s.serviceWasActive = isActive(ctx, s.log, ServiceUnitName)
 	if _, err := os.Stat(s.paths.SignalPath); err == nil {
 		return agentbinary.ServicePlan{}, fmt.Errorf("AgentUpgrade MachineOperation signal exists at %s", s.paths.SignalPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -113,22 +121,29 @@ func (s *flexDaemonActivationService) Reload(ctx context.Context) error {
 }
 
 func (s *flexDaemonActivationService) Restart(ctx context.Context) error {
+	if !s.serviceWasActive {
+		s.log.Info("leaving inactive host agent service stopped after activation")
+		return nil
+	}
 	if err := utilexec.RunCmd(ctx, s.log, utilexec.Systemctl(), "restart", ServiceUnitName); err != nil {
 		return fmt.Errorf("systemctl restart %s: %w", ServiceUnitName, err)
 	}
 	return nil
 }
 
-// WaitHealthy uses Flex's service and persisted active nspawn side. When a
-// side exists, its exec-credential binary is synchronized only after systemd
-// is stably running the expected host binary; reset hosts have no side to sync.
-// Shared rollback calls this again with last-good.
+// WaitHealthy preserves an inactive service during reset/reinstall. Otherwise,
+// it synchronizes the active nspawn exec credential only after systemd is
+// stably running the expected host binary. Shared rollback calls this again
+// with last-good.
 func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedBinaryPath string) error {
 	healthCtx, cancel := context.WithTimeout(ctx, hostAgentHealthTimeout)
 	defer cancel()
 	expected, err := filepath.EvalSymlinks(expectedBinaryPath)
 	if err != nil {
 		return fmt.Errorf("resolve expected daemon binary: %w", err)
+	}
+	if !s.serviceWasActive {
+		return s.synchronizeActiveNspawn(healthCtx, expected)
 	}
 	var healthySince time.Time
 	ticker := time.NewTicker(hostAgentHealthPoll)

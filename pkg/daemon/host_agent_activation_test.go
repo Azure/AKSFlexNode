@@ -34,15 +34,22 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	}
 }
 
-func TestFlexDaemonActivationWithoutAppliedStateSkipsNspawnSynchronization(t *testing.T) {
+func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
 	t.Parallel()
 
+	binary := filepath.Join(t.TempDir(), "candidate")
+	if err := os.WriteFile(binary, []byte("candidate"), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 	service := &flexDaemonActivationService{
 		log:   slog.Default(),
 		state: &testStateStore{},
 	}
-	if err := service.synchronizeActiveNspawn(t.Context(), "/unused/host/binary"); err != nil {
-		t.Fatalf("synchronizeActiveNspawn: %v", err)
+	if err := service.Restart(t.Context()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if err := service.WaitHealthy(t.Context(), binary); err != nil {
+		t.Fatalf("WaitHealthy: %v", err)
 	}
 }
 
