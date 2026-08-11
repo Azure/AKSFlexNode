@@ -254,24 +254,15 @@ download_binary() {
 
 install_binary() {
     local binary_path="$1"
-    local current_path="/usr/local/lib/aks-flex-node/aks-flex-node-current"
-    local compatibility_path="${INSTALL_DIR}/aks-flex-node"
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # This script owns only fresh installation. Managed updates must execute a
-    # separately delivered candidate so the Go activation flow preserves the
-    # active and last-good binaries.
-    if [[ -e "$current_path" || -L "$current_path" ]]; then
-        log_error "A managed AKS Flex Node installation already exists"
-        log_error "Run the separately staged candidate with: <candidate-path> agent-upgrade"
-        return 1
-    fi
+    # Install binary
+    cp "$binary_path" "$INSTALL_DIR/aks-flex-node"
+    chmod +x "$INSTALL_DIR/aks-flex-node"
+    chown root:root "$INSTALL_DIR/aks-flex-node"
 
-    install -d -o root -g root -m 0755 "$INSTALL_DIR"
-    install -o root -g root -m 0755 "$binary_path" "$compatibility_path"
-
-    log_success "Binary installed to $compatibility_path"
+    log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
 
 warn_install_dir_not_in_path() {
