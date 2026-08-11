@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/release"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -185,15 +186,6 @@ func replaceSymlink(linkPath, targetPath string) error {
 	return os.Rename(tempPath, linkPath)
 }
 
-func expectedAgentArchiveMember() (string, error) {
-	switch runtime.GOARCH {
-	case "amd64", "arm64":
-		return "aks-flex-node-linux-" + runtime.GOARCH, nil
-	default:
-		return "", fmt.Errorf("unsupported agent upgrade architecture %q", runtime.GOARCH)
-	}
-}
-
 // secureAgentInstallOptions intentionally follows the merged Unbounded
 // MachineOperation contract: HTTP transport and an omitted digest are allowed
 // when the control plane trusts the archive source and transport path. Flex
@@ -211,7 +203,7 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 			return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
 		}
 	}
-	member, err := expectedAgentArchiveMember()
+	member, err := release.AgentBinaryArchiveMember(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return agentbinary.InstallOptions{}, err
 	}

@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Azure/AKSFlexNode/pkg/release"
 )
 
 func TestEnsureAgentUpgradeLayoutMigratesLegacyBinaryIdempotently(t *testing.T) {
@@ -69,8 +71,12 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secureAgentInstallOptions: %v", err)
 	}
-	if opts.ExpectedMember != "aks-flex-node-linux-"+runtime.GOARCH {
-		t.Fatalf("ExpectedMember = %q", opts.ExpectedMember)
+	wantMember, err := release.AgentBinaryArchiveMember(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatalf("AgentBinaryArchiveMember: %v", err)
+	}
+	if opts.ExpectedMember != wantMember {
+		t.Fatalf("ExpectedMember = %q, want %q", opts.ExpectedMember, wantMember)
 	}
 	if opts.MaxArchiveBytes != agentUpgradeMaxArchiveBytes || opts.MaxExtractedBytes != agentUpgradeMaxBinaryBytes {
 		t.Fatalf("size limits = %d, %d", opts.MaxArchiveBytes, opts.MaxExtractedBytes)
