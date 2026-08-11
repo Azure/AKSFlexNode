@@ -177,6 +177,7 @@ type agentUpgradeExecutor interface {
 	Stage(context.Context, agentUpgradeRequest) error
 	Abort(context.Context) error
 	Restart(context.Context) error
+	WaitForRestart(context.Context) error
 }
 
 type agentUpgradeStateLoader interface {
@@ -344,6 +345,17 @@ func (e *hostAgentUpgradeExecutor) rollback(ctx context.Context) error {
 		return err
 	}
 	return rollbackAgentUpgradeFiles(e.paths, signal)
+}
+
+func (e *hostAgentUpgradeExecutor) WaitForRestart(ctx context.Context) error {
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("timed out waiting for scheduled daemon restart")
+	}
 }
 
 func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {

@@ -77,7 +77,7 @@ kubectl get machineoperation upgrade-agent-worker-01 -w
 A host provisioning system that has already authenticated and staged a candidate can activate it directly without creating an Unbounded `MachineOperation`:
 
 ```bash
-/var/tmp/aks-flex-node-candidate agent-upgrade --preflight
+sudo /var/tmp/aks-flex-node-candidate agent-upgrade --preflight
 sudo /var/tmp/aks-flex-node-candidate agent-upgrade
 ```
 

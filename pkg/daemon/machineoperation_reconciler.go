@@ -81,7 +81,11 @@ func machineOperationReconciler(
 		return nil, fmt.Errorf("AKS machine name is empty")
 	}
 
-	handlers := &machineOperationHandlers{log: opts.Log, operator: opts.Operator, agentUpgrade: opts.AgentUpgrade}
+	handlers := &machineOperationHandlers{
+		log:          opts.Log,
+		operator:     opts.Operator,
+		agentUpgrade: opts.AgentUpgrade,
+	}
 	reconciler, err := daemon.NewMachinaMachineOperationReconciler(
 		opts.Client,
 		opts.NodeName,
@@ -196,6 +200,14 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon")
+	}
+	// Keep the single-worker controller occupied until systemd stops this
+	// process. That closes the delayed-restart window to queued host mutations.
+	if err := h.agentUpgrade.WaitForRestart(ctx); err != nil {
+		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
+			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
 	}
 	// The restarted daemon publishes success after proving the candidate can
 	// initialize its Kubernetes client and controller.
