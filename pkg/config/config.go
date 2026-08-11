@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -251,12 +252,24 @@ type KubeletConfig struct {
 	ClusterFQDN          string `json:"clusterFQDN,omitempty"` // Kubernetes API server FQDN from AKS RP bootstrap data
 	CACertData           string `json:"caCertData"`            // Base64-encoded CA certificate data
 	NodeIP               string `json:"nodeIP"`                // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+
+	// ImageCredentialProvider configures kubelet's exec image credential
+	// provider. The referenced paths are inside the nspawn machine.
+	ImageCredentialProvider *ImageCredentialProviderConfig `json:"imageCredentialProvider,omitempty"`
+}
+
+// ImageCredentialProviderConfig identifies the exec image credential provider
+// configuration and binary directory inside the nspawn machine.
+type ImageCredentialProviderConfig struct {
+	ConfigPath string `json:"configPath"`
+	BinDir     string `json:"binDir"`
 }
 
 // NetworkingConfig is the AKS RP networking contract used by the agent at runtime.
 type NetworkingConfig struct {
-	DNSServiceIP string `json:"dnsServiceIP,omitempty"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
-	CNIVersion   string `json:"cniVersion,omitempty"`
+	DNSServiceIP string           `json:"dnsServiceIP,omitempty"` // Cluster DNS service IP (default: 10.0.0.10 for AKS)
+	CNIVersion   string           `json:"cniVersion,omitempty"`
+	LocalDNS     *LocalDNSProfile `json:"localDNS,omitempty"`
 }
 
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
@@ -882,6 +895,12 @@ func (c *Config) validate() error {
 	if err := c.Bootstrap.validate(); err != nil {
 		return err
 	}
+	if err := c.Node.validate(); err != nil {
+		return err
+	}
+	if err := c.Networking.LocalDNS.Validate(); err != nil {
+		return fmt.Errorf("invalid networking.localDNS: %w", err)
+	}
 
 	if err := c.validateAuthSettings(); err != nil {
 		return err
@@ -890,6 +909,40 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid bootstrap token configuration: %w", err)
 	}
 
+	return nil
+}
+
+func (c *NodeConfig) validate() error {
+	if c.MaxPods < 0 || int64(c.MaxPods) > math.MaxInt32 {
+		return fmt.Errorf("node.maxPods must be between 0 and %d, inclusive", math.MaxInt32)
+	}
+	return c.Kubelet.validate()
+}
+
+func (c *KubeletConfig) validate() error {
+	if c.Verbosity < 0 || int64(c.Verbosity) > math.MaxInt32 {
+		return fmt.Errorf("node.kubelet.verbosity must be between 0 and %d, inclusive", math.MaxInt32)
+	}
+	if c.ImageGCHighThreshold < 0 || c.ImageGCHighThreshold > 100 {
+		return fmt.Errorf("node.kubelet.imageGCHighThreshold must be between 0 and 100, inclusive")
+	}
+	if c.ImageGCLowThreshold < 0 || c.ImageGCLowThreshold > 100 {
+		return fmt.Errorf("node.kubelet.imageGCLowThreshold must be between 0 and 100, inclusive")
+	}
+	if c.ImageGCLowThreshold >= c.ImageGCHighThreshold {
+		return fmt.Errorf("node.kubelet.imageGCLowThreshold must be less than node.kubelet.imageGCHighThreshold")
+	}
+
+	kubelet := agentconfig.AgentKubeletConfig{}
+	if c.ImageCredentialProvider != nil {
+		kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
+			ConfigPath: c.ImageCredentialProvider.ConfigPath,
+			BinDir:     c.ImageCredentialProvider.BinDir,
+		}
+	}
+	if err := kubelet.Validate(); err != nil {
+		return fmt.Errorf("invalid node.kubelet configuration: %w", err)
+	}
 	return nil
 }
 

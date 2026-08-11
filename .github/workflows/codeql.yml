@@ -1,0 +1,52 @@
+name: "CodeQL"
+
+# S360 standard Microsoft.Security.CodeQL.10000 requires every active,
+# production repo to publish a non-expired CodeQL snapshot per language.
+# AKSFlexNode (module github.com/Azure/AKSFlexNode, Go) had no CodeQL workflow,
+# so it showed up non-compliant. This scans the Go code on every push to main
+# plus a weekly schedule so a fresh snapshot is always uploaded.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 7 * * 1" # Mondays at 7:00 AM UTC
+  workflow_dispatch: # allow manual runs (e.g. to refresh an expired snapshot)
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["go"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c793b717bc78562f491db7b0e93a3a178b099162
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@c793b717bc78562f491db7b0e93a3a178b099162
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@c793b717bc78562f491db7b0e93a3a178b099162
+        with:
+          category: "/language:${{ matrix.language }}"
