@@ -57,15 +57,20 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 }
 
 type nspawnNodeOperator struct {
-	cfg   *config.Config
-	state stateStore
+	cfg                    *config.Config
+	state                  stateStore
+	bootstrapDataRefresher bootstrapDataRefresher
 }
 
 func newNSpawnNodeOperator(cfg *config.Config, state stateStore) (*nspawnNodeOperator, error) {
 	if state == nil {
 		return nil, fmt.Errorf("state store is nil")
 	}
-	return &nspawnNodeOperator{cfg: cfg, state: state}, nil
+	return &nspawnNodeOperator{
+		cfg:                    cfg,
+		state:                  state,
+		bootstrapDataRefresher: aksBootstrapDataRefresher{},
+	}, nil
 }
 
 func (o *nspawnNodeOperator) LoadState(ctx context.Context) (*State, error) {
@@ -81,13 +86,9 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, err
 	}
-	// TODO: This per-goal config copy/mutation is not ideal. Refactor goal-state
-	// resolution to avoid rewriting shared config-shaped data here.
-	cfg := o.cfg.DeepCopy()
-	// MaxPods is immutable in AKS, so the startup configuration remains its
-	// authoritative source rather than reapplying the value from each goal.
-	if goal.KubernetesVersion != "" {
-		cfg.Components.Kubernetes = goal.KubernetesVersion
+	cfg, err := o.configForGoalState(ctx, log, goal)
+	if err != nil {
+		return nil, err
 	}
 	oldMachine := active.Name
 	newMachine := goalstates.AlternateMachine(oldMachine)
@@ -114,6 +115,39 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		return nil, fmt.Errorf("apply machine goal state: %w", err)
 	}
 	return newState, nil
+}
+
+func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*config.Config, error) {
+	// Keep short-lived bootstrap credentials scoped to this repave. Persisting
+	// them would make a later repave depend on this token's lifetime again.
+	cfg := o.cfg.DeepCopy()
+	if cfg == nil {
+		return nil, fmt.Errorf("copy config for repave")
+	}
+	if shouldRefreshBootstrapData(cfg) {
+		if o.bootstrapDataRefresher == nil {
+			return nil, fmt.Errorf("bootstrap-data refresher is not configured")
+		}
+		log.Info("refreshing AKS bootstrap data for repave")
+		data, err := o.bootstrapDataRefresher.Fetch(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("refresh bootstrap data for repave: %w", err)
+		}
+		if data == nil || data.BootstrapToken == "" {
+			return nil, fmt.Errorf("refresh bootstrap data for repave: response did not contain a bootstrap token")
+		}
+		cfg.Azure.BootstrapToken.Token = data.BootstrapToken
+		if data.ClusterFQDN != "" {
+			cfg.Node.Kubelet.ClusterFQDN = data.ClusterFQDN
+		}
+		if data.CACertData != "" {
+			cfg.Node.Kubelet.CACertData = data.CACertData
+		}
+	}
+	if goal.KubernetesVersion != "" {
+		cfg.Components.Kubernetes = goal.KubernetesVersion
+	}
+	return cfg, nil
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {

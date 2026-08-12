@@ -178,10 +178,53 @@ REMOTE
   return 1
 }
 
+_msi_bootstrap_token_id() {
+  local vm_ip="$1"
+  remote_exec "${vm_ip}" 'sudo jq -er '\''.azure.bootstrapToken.token | split(".")[0]'\'' /etc/aks-flex-node/config.json'
+}
+
+_invalidate_msi_bootstrap_token() {
+  local vm_ip="$1"
+  local token_id
+  token_id="$(_msi_bootstrap_token_id "${vm_ip}")"
+  if [[ ! "${token_id}" =~ ^[a-z0-9]{6}$ ]]; then
+    log_error "MSI config did not contain a valid bootstrap token ID"
+    return 1
+  fi
+
+  kubectl -n kube-system delete secret "bootstrap-token-${token_id}" --ignore-not-found --wait=true >&2
+  if kubectl -n kube-system get secret "bootstrap-token-${token_id}" >/dev/null 2>&1; then
+    log_error "Original MSI bootstrap-token Secret still exists after deletion"
+    return 1
+  fi
+  printf '%s\n' "${token_id}"
+}
+
+_verify_msi_bootstrap_refresh() {
+  local vm_ip="$1" old_token_id="$2"
+
+  if [[ "$(_msi_bootstrap_token_id "${vm_ip}")" != "${old_token_id}" ]]; then
+    log_error "Repave unexpectedly persisted refreshed bootstrap data"
+    return 1
+  fi
+  if kubectl -n kube-system get secret "bootstrap-token-${old_token_id}" >/dev/null 2>&1; then
+    log_error "Repave reused or recreated the deleted bootstrap-token Secret"
+    return 1
+  fi
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+if sudo journalctl -u aks-flex-node-agent.service --no-pager 2>/dev/null | grep -Fq 'refreshing AKS bootstrap data for repave'; then
+  exit 0
+fi
+sudo grep -Fq 'refreshing AKS bootstrap data for repave' /var/log/aks-flex-node/aks-flex-node.log
+REMOTE
+  log_success "MSI repave fetched fresh bootstrap data without persisting it"
+}
+
 upgrade_drift_mode() {
   local mode="$1"
   log_section "Controller Machine Repave (${mode} node)"
-  local start desired_version settings_version vm_name vm_ip old_machine_snapshot old_active_machine old_state old_version old_settings_version old_node_uid
+  local start desired_version settings_version vm_name vm_ip old_machine_snapshot old_active_machine old_state old_version old_settings_version old_node_uid old_bootstrap_token_id
   start="$(timer_start)"
 
   desired_version="$(_cluster_current_kubernetes_version)"
@@ -202,8 +245,17 @@ upgrade_drift_mode() {
   fi
   log_debug "${mode} pre-repave state: active_machine=${old_active_machine} state=${old_state:-unknown} kubelet=${old_version:-unknown} applied_settings=${old_settings_version:-unknown} node_uid=${old_node_uid}"
 
+  old_bootstrap_token_id=""
+  if [[ "${mode}" == "msi" ]]; then
+    log_info "Deleting the MSI node's original bootstrap-token Secret before repave"
+    old_bootstrap_token_id="$(_invalidate_msi_bootstrap_token "${vm_ip}")"
+  fi
+
   _trigger_mode_repave "${mode}" "${desired_version}" "${settings_version}"
   _wait_for_mode_repave "${mode}" "${desired_version}" "${settings_version}" "${old_active_machine}" "${old_node_uid}"
+  if [[ "${mode}" == "msi" ]]; then
+    _verify_msi_bootstrap_refresh "${vm_ip}" "${old_bootstrap_token_id}"
+  fi
   smoke_test "${vm_name}" "${mode}-repave"
 
   log_success "${mode} controller machine repave passed in $(timer_elapsed "${start}")s"

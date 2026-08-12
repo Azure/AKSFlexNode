@@ -60,6 +60,55 @@ func TestFetchAndWrite(t *testing.T) {
 	}
 }
 
+func TestFetchInMemory(t *testing.T) {
+	t.Parallel()
+
+	const response = `{
+		"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}},
+		"node":{"kubelet":{"clusterFQDN":"api.example.test","caCertData":"Y2E="}}
+	}`
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(response)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	options := Options{
+		ClusterResourceID:       "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+		AgentPoolName:           "aksflexnodes",
+		AuthMode:                "msi",
+		ResourceManagerEndpoint: DefaultResourceManagerEndpoint,
+		AuthorityHost:           DefaultAuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+	got, err := fetch(t.Context(), options, dependencies{
+		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
+		httpClient: client,
+	})
+	if err != nil {
+		t.Fatalf("fetch() error = %v", err)
+	}
+	if got.BootstrapToken != "abcdef.0123456789abcdef" {
+		t.Fatalf("BootstrapToken = %q", got.BootstrapToken)
+	}
+	if got.ClusterFQDN != "api.example.test" {
+		t.Fatalf("ClusterFQDN = %q", got.ClusterFQDN)
+	}
+	if got.CACertData != "Y2E=" {
+		t.Fatalf("CACertData = %q", got.CACertData)
+	}
+}
+
+func TestFetchAndWriteRequiresOutput(t *testing.T) {
+	t.Parallel()
+
+	err := fetchAndWrite(t.Context(), Options{}, dependencies{})
+	if err == nil || err.Error() != "output path is required" {
+		t.Fatalf("fetchAndWrite() error = %v, want output path error", err)
+	}
+}
+
 func TestClientCertificateCredentialOptions(t *testing.T) {
 	t.Parallel()
 	options := clientCertificateCredentialOptions(azcore.ClientOptions{})

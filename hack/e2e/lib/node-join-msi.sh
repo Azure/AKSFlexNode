@@ -96,15 +96,18 @@ node_join_msi() {
   local ca_cert_data
   ca_cert_data="$(state_get ca_cert_data)"
 
-  # Step 1: Generate MSI config
+  # Step 1: Generate a dual-auth operator-first config. The initial token comes
+  # from the same RP action that repave must refresh, while MSI remains available
+  # to the host daemon for subsequent listBootstrapData calls.
   local config_file="${E2E_WORK_DIR}/config-msi.json"
+  local bootstrap_data_file="${E2E_WORK_DIR}/bootstrap-data-msi.json"
   cat > "${config_file}" <<EOF
 {
   "azure": {
     "subscriptionId": "${subscription_id}",
     "tenantId": "${tenant_id}",
     "resourceManagerEndpoint": "https://management.azure.com",
-    "targetAgentPoolName": "${E2E_TARGET_AGENT_POOL_NAME}",
+    "targetAgentPoolName": "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}",
     "managedIdentity": {},
     "targetCluster": {
       "resourceId": "${cluster_id}",
@@ -163,6 +166,23 @@ node_join_msi() {
   }
 }
 EOF
+
+  log_info "Fetching initial AKS RP bootstrap data for the MSI repave scenario..."
+  with_cluster_lock az rest \
+    --only-show-errors \
+    --method post \
+    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}/listBootstrapData?api-version=${E2E_BOOTSTRAP_DATA_API_VERSION}" \
+    --output json > "${bootstrap_data_file}"
+  chmod 0600 "${bootstrap_data_file}"
+  jq -e '.azure.bootstrapToken.token | type == "string" and length > 0' "${bootstrap_data_file}" >/dev/null
+  jq --slurpfile bootstrapData "${bootstrap_data_file}" '
+    .azure.bootstrapToken = $bootstrapData[0].azure.bootstrapToken
+    | .node.kubelet.clusterFQDN = ($bootstrapData[0].node.kubelet.clusterFQDN // .node.kubelet.clusterFQDN)
+    | .node.kubelet.caCertData = ($bootstrapData[0].node.kubelet.caCertData // .node.kubelet.caCertData)
+  ' "${config_file}" > "${config_file}.tmp"
+  mv "${config_file}.tmp" "${config_file}"
+  chmod 0600 "${config_file}"
+  rm -f "${bootstrap_data_file}"
 
   # Step 2: Put systemd-resolved into the layout supported by LocalDNS.
   prepare_localdns_host_resolver "${vm_ip}"

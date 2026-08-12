@@ -197,6 +197,11 @@ load_config() {
   E2E_CONTAINERD_VERSION="${E2E_CONTAINERD_VERSION:-2.0.4}"
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
   E2E_TARGET_AGENT_POOL_NAME="${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}"
+  # listBootstrapData requires an existing ARM agent pool. The in-cluster
+  # controller still uses E2E_TARGET_AGENT_POOL_NAME for its synthetic machine
+  # contract, while the MSI repave scenario uses this real pool for join data.
+  E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME="${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-system}"
+  E2E_BOOTSTRAP_DATA_API_VERSION="${E2E_BOOTSTRAP_DATA_API_VERSION:-2026-05-02-preview}"
 
   # Kubelet resource reservation overrides applied to the token node config.
   # The remaining nodes keep the AKS-compatible defaults computed by the agent.
@@ -222,6 +227,7 @@ load_config() {
   log_info "  Subscription:     ${AZURE_SUBSCRIPTION_ID}"
   log_info "  Name Suffix:      ${E2E_NAME_SUFFIX}"
   log_info "  Agent Pool:       ${E2E_TARGET_AGENT_POOL_NAME}"
+  log_info "  Bootstrap Pool:   ${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}"
   log_info "  AKS Node VM Size: ${E2E_AKS_NODE_VM_SIZE}"
   log_info "  Flex VM Size:     ${E2E_VM_SIZE}"
   log_info "  Kubeconfig:       ${KUBECONFIG}"
