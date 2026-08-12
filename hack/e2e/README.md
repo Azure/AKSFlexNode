@@ -206,7 +206,7 @@ The `upgrade-drift` command validates the controller-machine-driven repave path:
 4. Delete the Kubernetes `Node` object to trigger repave.
 5. Wait for the active nspawn side to report the desired kubelet version.
 6. Wait for the Kubernetes `Node` to return with a new UID, become `Ready`, and report the desired kubelet version.
-7. For MSI, verify the daemon logged a bootstrap-data refresh, did not persist the fresh response, and did not recreate the deleted token.
+7. For MSI, verify the daemon logged a bootstrap-data refresh and did not persist the fresh response. AKS RP may recreate the deleted Secret with the same token ID while renewing its validity.
 8. Run a smoke workload on the repaved node.
 
 Run it after infrastructure is deployed:

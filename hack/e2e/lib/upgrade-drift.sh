@@ -207,10 +207,9 @@ _verify_msi_bootstrap_refresh() {
     log_error "Repave unexpectedly persisted refreshed bootstrap data"
     return 1
   fi
-  if kubectl -n kube-system get secret "bootstrap-token-${old_token_id}" >/dev/null 2>&1; then
-    log_error "Repave reused or recreated the deleted bootstrap-token Secret"
-    return 1
-  fi
+  # AKS RP may recreate the Secret with the same token ID while renewing its
+  # validity. Successful registration after deletion plus the daemon refresh log
+  # proves the alternate kubelet received usable data from listBootstrapData.
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 if sudo journalctl -u aks-flex-node-agent.service --no-pager 2>/dev/null | grep -Fq 'refreshed AKS bootstrap data for repave'; then
