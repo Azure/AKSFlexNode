@@ -201,16 +201,9 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon")
 	}
-	// Keep the single-worker controller occupied until systemd stops this
-	// process. That closes the delayed-restart window to queued host mutations.
-	if err := h.agentUpgrade.WaitForRestart(ctx); err != nil {
-		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
-			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
-		}
-		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
-	}
-	// The restarted daemon publishes success after proving the candidate can
-	// initialize its Kubernetes client and controller.
+	// Restart scheduling is the old daemon's final responsibility. Keep the
+	// operation InProgress and let the restarted or recovery daemon publish the
+	// only terminal result.
 	return ctrl.Result{}, nil
 }
 
@@ -240,7 +233,7 @@ func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
 			wrapOptionalError("restart daemon for AgentUpgrade recovery", restartErr),
 		)
 	}
-	return ctrl.Result{}, h.agentUpgrade.WaitForRestart(ctx)
+	return ctrl.Result{}, nil
 }
 
 func (h *machineOperationHandlers) reconcileAgentReset(

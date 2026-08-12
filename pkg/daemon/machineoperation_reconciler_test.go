@@ -310,8 +310,8 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
 		t.Fatalf("reconcileAgentUpgrade: %v", err)
 	}
-	if !store.inProgress || !upgrader.pending || !upgrader.staged || !upgrader.restarted || !upgrader.waited {
-		t.Fatalf("upgrade calls = inProgress:%v pending:%v staged:%v restarted:%v waited:%v", store.inProgress, upgrader.pending, upgrader.staged, upgrader.restarted, upgrader.waited)
+	if !store.inProgress || !upgrader.pending || !upgrader.staged || !upgrader.restarted {
+		t.Fatalf("upgrade calls = inProgress:%v pending:%v staged:%v restarted:%v", store.inProgress, upgrader.pending, upgrader.staged, upgrader.restarted)
 	}
 	if store.result.Phase != "" {
 		t.Fatalf("phase = %s, want non-terminal until daemon restart", store.result.Phase)
@@ -554,8 +554,6 @@ type fakeAgentUpgradeExecutor struct {
 	stageErr   error
 	abortErr   error
 	restartErr error
-	waitErr    error
-	waited     bool
 }
 
 func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
@@ -597,11 +595,6 @@ func (f *fakeAgentUpgradeExecutor) Abort(context.Context) error {
 func (f *fakeAgentUpgradeExecutor) Restart(context.Context) error {
 	f.restarted = true
 	return f.restartErr
-}
-
-func (f *fakeAgentUpgradeExecutor) WaitForRestart(context.Context) error {
-	f.waited = true
-	return f.waitErr
 }
 
 var _ agentUpgradeExecutor = (*fakeAgentUpgradeExecutor)(nil)
