@@ -22,6 +22,7 @@
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
+#   nspawn-lifecycle Validate generated lifecycle hooks and restart reconciliation
 #   agent-upgrade Validate managed binary upgrade, rollback, and retry
 #   upgrade-drift Run controller-machine Kubernetes version drift repave test
 #   logs          Collect logs from VMs
@@ -103,6 +104,8 @@ source "${SCRIPT_DIR}/lib/node-join.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/validate.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/nspawn-lifecycle.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/agent-upgrade.sh"
@@ -131,7 +134,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|validate|validate-absent|smoke|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -199,6 +202,9 @@ cmd_all() {
   # Validate + smoke tests (second pass)
   validate_all_nodes
   smoke_test_all || exit_code=1
+
+  # ── Host nspawn lifecycle restart ──────────────────────────────────────
+  nspawn_lifecycle_all
 
   # ── Managed host agent binary upgrade ─────────────────────────────────
   agent_upgrade_e2e
@@ -315,6 +321,9 @@ main() {
       ;;
     smoke)
       smoke_test_all
+      ;;
+    nspawn-lifecycle)
+      nspawn_lifecycle_all
       ;;
     agent-upgrade)
       ensure_binary

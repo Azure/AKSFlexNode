@@ -53,9 +53,10 @@ The default `all` command runs:
 6. Validate node readiness, node-problem-detector status, and run smoke workloads.
 7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 8. Rejoin all Flex Nodes and validate again.
-9. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
-10. Run controller-machine-driven repave validation after the agent upgrade.
-11. Collect logs and clean up Azure resources.
+9. Validate the installed nspawn lifecycle helper and generated systemd hooks, then reconcile a running node through the helper.
+10. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
+11. Run controller-machine-driven repave validation after the agent upgrade.
+12. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -63,7 +64,7 @@ The default `all` command runs:
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
+| `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, lifecycle, agent upgrade, repave, logs, cleanup. |
 | `infra` | Deploy AKS cluster, four VMs, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
@@ -78,6 +79,7 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
+| `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
 | `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
@@ -165,6 +167,22 @@ Run it against an already joined environment:
 ./hack/e2e/run.sh agent-upgrade
 ```
 
+## Nspawn Lifecycle Validation
+
+The `nspawn-lifecycle` command validates the host integration exported by the shared Unbounded lifecycle library:
+
+1. Read each node's persisted active machine and require it to be `kube1` or `kube2`.
+2. Verify `/usr/local/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
+3. Verify the generated pre-start and post-start systemd hooks invoke that helper with the active machine.
+4. Add a marker to the token node's generated `.nspawn` config and invoke `pre-start`, proving the AKS Flex persisted-config loader regenerates the file.
+5. Invoke `reconcile`, verify the active machine receives a new leader PID, wait for the Kubernetes node to return Ready, and run a smoke workload.
+
+Run it against joined infrastructure:
+
+```bash
+./hack/e2e/run.sh nspawn-lifecycle
+```
+
 ## Repave Validation
 
 The `upgrade-drift` command validates the controller-machine-driven repave path:
@@ -237,6 +255,7 @@ hack/e2e/
     node-join-token.sh    Bootstrap token join/unjoin.
     node-join-offline.sh  Offline artifacts join/unjoin.
     node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.
+    nspawn-lifecycle.sh   Lifecycle helper and managed restart validation.
     agent-upgrade.sh      Managed agent upgrade and rollback validation.
     upgrade-drift.sh      Controller machine goal repave validation.
     validate.sh           Node readiness and smoke tests.
