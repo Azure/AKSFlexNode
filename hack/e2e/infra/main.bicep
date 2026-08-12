@@ -24,6 +24,12 @@ param aksNodeVmSize string = 'Standard_B2s'
 @description('Flex node VM size.')
 param vmSize string = 'Standard_B2as_v2'
 
+@description('Kubernetes version used by the AKS cluster and FlexNodes pool.')
+param kubernetesVersion string = '1.35.0'
+
+@description('Name of the ARM FlexNodes agent pool.')
+param flexAgentPoolName string = 'aksflexnodes'
+
 @description('Admin username for VMs.')
 param adminUsername string = 'azureuser'
 
@@ -117,6 +123,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
   }
   properties: {
     dnsPrefix: clusterName
+    kubernetesVersion: kubernetesVersion
     enableRBAC: true
     aadProfile: {
       managed: true
@@ -138,6 +145,19 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
         vnetSubnetID: vnet.properties.subnets[0].id
       }
     ]
+  }
+}
+
+// listBootstrapData is available only on an ARM FlexNodes pool. This pool has
+// no Azure-managed VMSS capacity; the external E2E VM joins it during bootstrap.
+resource flexAgentPool 'Microsoft.ContainerService/managedClusters/agentPools@2026-05-02-preview' = {
+  parent: aksCluster
+  name: flexAgentPoolName
+  properties: {
+    type: 'FlexNodes'
+    mode: 'User'
+    orchestratorVersion: kubernetesVersion
+    maxPods: 250
   }
 }
 
@@ -213,6 +233,18 @@ resource roleClusterAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' =
     principalId: vmMsi.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8')
+  }
+}
+
+// Azure Kubernetes Service Contributor Role permits runtime Machine API and
+// listBootstrapData calls from the MSI Flex Node.
+resource roleAKSContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aksCluster.id, msiVmName, 'aks-contributor')
+  scope: aksCluster
+  properties: {
+    principalId: vmMsi.outputs.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8')
   }
 }
 

@@ -94,6 +94,8 @@ infra_deploy() {
       nameSuffix="${E2E_NAME_SUFFIX}" \
       aksNodeVmSize="${E2E_AKS_NODE_VM_SIZE}" \
       vmSize="${E2E_VM_SIZE}" \
+      kubernetesVersion="${E2E_KUBERNETES_VERSION}" \
+      flexAgentPoolName="${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}" \
       sshPublicKey="${ssh_key}" \
       tags="${tags_json}" \
     --output none
