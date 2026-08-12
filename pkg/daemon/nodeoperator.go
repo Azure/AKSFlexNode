@@ -81,12 +81,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, err
 	}
-	// TODO: This per-goal config copy/mutation is not ideal. Refactor goal-state
-	// resolution to avoid rewriting shared config-shaped data here.
-	cfg := o.cfg.DeepCopy()
-	if goal.KubernetesVersion != "" {
-		cfg.Components.Kubernetes = goal.KubernetesVersion
-	}
+	cfg := o.configForGoal(goal)
 	oldMachine := active.Name
 	newMachine := goalstates.AlternateMachine(oldMachine)
 	log.Info("starting nspawn machine goal-state apply",
@@ -112,6 +107,19 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		return nil, fmt.Errorf("apply machine goal state: %w", err)
 	}
 	return newState, nil
+}
+
+func (o *nspawnNodeOperator) configForGoal(goal aksmachine.GoalState) *config.Config {
+	// Keep goal-specific changes isolated from the startup configuration, which
+	// remains the fallback for fields omitted by the machine API.
+	cfg := o.cfg.DeepCopy()
+	if goal.KubernetesVersion != "" {
+		cfg.Components.Kubernetes = goal.KubernetesVersion
+	}
+	if goal.MaxPods != 0 {
+		cfg.Node.MaxPods = goal.MaxPods
+	}
+	return cfg
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {

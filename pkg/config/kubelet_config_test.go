@@ -74,6 +74,39 @@ func TestKubeletConfigValidate(t *testing.T) {
 			wantErr: "imageGCLowThreshold must be less than node.kubelet.imageGCHighThreshold",
 		},
 		{
+			name: "valid reservations",
+			config: KubeletConfig{
+				SystemReserved: map[string]string{
+					"cpu":               "500m",
+					"memory":            "1Gi",
+					"ephemeral-storage": "2Gi",
+					"pid":               "1000",
+				},
+				KubeReserved: map[string]string{"cpu": "250m", "memory": "512Mi"},
+			},
+		},
+		{
+			name: "unsupported system reservation resource",
+			config: KubeletConfig{
+				SystemReserved: map[string]string{"gpu": "1"},
+			},
+			wantErr: `systemReserved cannot reserve unsupported resource "gpu"`,
+		},
+		{
+			name: "invalid kube reservation quantity",
+			config: KubeletConfig{
+				KubeReserved: map[string]string{"memory": "not-a-quantity"},
+			},
+			wantErr: `kubeReserved has invalid quantity "not-a-quantity"`,
+		},
+		{
+			name: "negative kube reservation quantity",
+			config: KubeletConfig{
+				KubeReserved: map[string]string{"cpu": "-1"},
+			},
+			wantErr: `kubeReserved quantity for resource "cpu" cannot be negative`,
+		},
+		{
 			name: "image credential provider",
 			config: KubeletConfig{
 				ImageCredentialProvider: &ImageCredentialProviderConfig{ConfigPath: "/etc/kubernetes/credential-provider.yaml",

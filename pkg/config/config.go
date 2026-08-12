@@ -21,6 +21,8 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -935,6 +937,12 @@ func (c *KubeletConfig) validate() error {
 	if c.ImageGCLowThreshold >= c.ImageGCHighThreshold {
 		return fmt.Errorf("node.kubelet.imageGCLowThreshold must be less than node.kubelet.imageGCHighThreshold")
 	}
+	if err := validateReservedResources("systemReserved", c.SystemReserved); err != nil {
+		return err
+	}
+	if err := validateReservedResources("kubeReserved", c.KubeReserved); err != nil {
+		return err
+	}
 
 	kubelet := agentconfig.AgentKubeletConfig{}
 	if c.ImageCredentialProvider != nil {
@@ -945,6 +953,25 @@ func (c *KubeletConfig) validate() error {
 	}
 	if err := kubelet.Validate(); err != nil {
 		return fmt.Errorf("invalid node.kubelet configuration: %w", err)
+	}
+	return nil
+}
+
+func validateReservedResources(field string, reservations map[string]string) error {
+	for name, value := range reservations {
+		switch corev1.ResourceName(name) {
+		case corev1.ResourceCPU, corev1.ResourceMemory, corev1.ResourceEphemeralStorage, corev1.ResourceName("pid"):
+		default:
+			return fmt.Errorf("node.kubelet.%s cannot reserve unsupported resource %q", field, name)
+		}
+
+		quantity, err := resource.ParseQuantity(value)
+		if err != nil {
+			return fmt.Errorf("node.kubelet.%s has invalid quantity %q for resource %q: %w", field, value, name, err)
+		}
+		if quantity.Sign() < 0 {
+			return fmt.Errorf("node.kubelet.%s quantity for resource %q cannot be negative: %s", field, name, value)
+		}
 	}
 	return nil
 }
