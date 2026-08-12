@@ -140,6 +140,13 @@ func Systemctl() func(context.Context) *exec.Cmd {
 	}
 }
 
+// SystemdRun returns a command factory for systemd-run.
+func SystemdRun() func(context.Context) *exec.Cmd {
+	return func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "systemd-run") // #nosec G204 -- fixed binary
+	}
+}
+
 // Azcmagent returns a command factory for azcmagent.
 func Azcmagent() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {

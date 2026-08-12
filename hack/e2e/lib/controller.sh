@@ -159,9 +159,6 @@ _build_controller_image() {
 
   log_section "Building AKS Flex Controller Image"
   log_info "Building controller image ${local_image} and pushing to in-cluster local registry"
-  pf_pid=""
-  _start_registry_port_forward pf_pid "${local_port}" || return 1
-
   if ! (
     cd "${REPO_ROOT}"
     DOCKER_BUILDKIT=1 docker build \
@@ -172,13 +169,26 @@ _build_controller_image() {
       --build-arg "BUILD_TIME=${build_time}" \
       --tag "${local_image}" \
       .
-    docker push "${local_image}"
   ); then
-    _stop_registry_port_forward "${pf_pid}"
     return 1
   fi
 
-  _stop_registry_port_forward "${pf_pid}"
+  local pushed=0 attempt
+  for attempt in 1 2 3; do
+    pf_pid=""
+    if _start_registry_port_forward pf_pid "${local_port}" && docker push "${local_image}"; then
+      pushed=1
+      _stop_registry_port_forward "${pf_pid}"
+      break
+    fi
+    _stop_registry_port_forward "${pf_pid}"
+    log_warn "Controller image push attempt ${attempt} failed; reopening registry tunnel"
+    sleep 2
+  done
+  if [[ "${pushed}" != "1" ]]; then
+    return 1
+  fi
+
   docker image rm "${local_image}" >/dev/null 2>&1 || true
   out_image="${cluster_image}"
 }
@@ -285,7 +295,14 @@ _wait_for_controller_ready() {
 }
 
 _ensure_flex_controller_unlocked() {
-  local image
+  local image unbounded_dir
+  # Install the optional API before any Flex daemon starts so its startup-time
+  # discovery enables MachineOperation watches without requiring a restart.
+  unbounded_dir="$(cd "${REPO_ROOT}" && go list -m -f '{{.Dir}}' github.com/Azure/unbounded)"
+  kubectl apply -f "${unbounded_dir}/deploy/machina/crd/unbounded-cloud.io_machineoperations.yaml" || return 1
+  kubectl wait --for=condition=Established \
+    customresourcedefinition/machineoperations.unbounded-cloud.io --timeout=60s || return 1
+
   image="$(_controller_image_from_state_or_env)"
 
   if [[ -n "${E2E_CONTROLLER_IMAGE:-}" ]]; then

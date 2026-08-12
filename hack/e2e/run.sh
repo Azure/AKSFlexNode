@@ -23,6 +23,7 @@
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
 #   nspawn-lifecycle Validate generated lifecycle hooks and restart reconciliation
+#   agent-upgrade Validate managed binary upgrade, rollback, and retry
 #   upgrade-drift Run controller-machine Kubernetes version drift repave test
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
@@ -107,6 +108,8 @@ source "${SCRIPT_DIR}/lib/nspawn-lifecycle.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/agent-upgrade.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/cleanup.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/runner.sh"
@@ -131,7 +134,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|validate|validate-absent|smoke|nspawn-lifecycle|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -203,7 +206,10 @@ cmd_all() {
   # ── Host nspawn lifecycle restart ──────────────────────────────────────
   nspawn_lifecycle_all
 
-  # ── Controller-backed machine repave ───────────────────────────────────
+  # ── Managed host agent binary upgrade ─────────────────────────────────
+  agent_upgrade_e2e
+
+  # ── Controller-backed machine repave after agent upgrade ───────────────
   upgrade_drift_all
 
   # Collect logs (always, even if tests fail)
@@ -318,6 +324,11 @@ main() {
       ;;
     nspawn-lifecycle)
       nspawn_lifecycle_all
+      ;;
+    agent-upgrade)
+      ensure_binary
+      ensure_cluster_dependencies
+      agent_upgrade_e2e
       ;;
     upgrade-drift)
       ensure_binary

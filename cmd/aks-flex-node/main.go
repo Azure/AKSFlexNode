@@ -47,7 +47,7 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(start.NewCommand())
 	rootCmd.AddCommand(bootstrapdata.NewCommand())
 	rootCmd.AddCommand(preflight.NewCommand())
-	rootCmd.AddCommand(daemon.NewCommand())
+	rootCmd.AddCommand(daemon.NewCommands()...)
 	rootCmd.AddCommand(nspawnlifecycle.NewCommand())
 	rootCmd.AddCommand(reset.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())
