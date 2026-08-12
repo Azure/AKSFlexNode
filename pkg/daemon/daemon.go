@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
@@ -31,6 +32,10 @@ const (
 
 // Run starts the machine-driven daemon loop.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	// controller-runtime intentionally emits a warning and drops its internal
+	// logs unless the process explicitly configures its global logger.
+	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
+
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err
