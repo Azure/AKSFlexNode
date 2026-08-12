@@ -13,6 +13,12 @@ type bootstrapDataRefresher interface {
 	Fetch(context.Context, *config.Config) (*bootstrapdata.Data, error)
 }
 
+type noopBootstrapDataRefresher struct{}
+
+func (noopBootstrapDataRefresher) Fetch(context.Context, *config.Config) (*bootstrapdata.Data, error) {
+	return nil, nil
+}
+
 type aksBootstrapDataRefresher struct{}
 
 func (aksBootstrapDataRefresher) Fetch(ctx context.Context, cfg *config.Config) (*bootstrapdata.Data, error) {
@@ -58,6 +64,9 @@ func bootstrapDataOptionsFromConfig(cfg *config.Config) (bootstrapdata.Options, 
 	return options, nil
 }
 
-func shouldRefreshBootstrapData(cfg *config.Config) bool {
-	return cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.IsMIConfigured() || cfg.IsSPConfigured())
+func bootstrapDataRefresherForConfig(cfg *config.Config) bootstrapDataRefresher {
+	if cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.IsMIConfigured() || cfg.IsSPConfigured()) {
+		return aksBootstrapDataRefresher{}
+	}
+	return noopBootstrapDataRefresher{}
 }

@@ -213,10 +213,10 @@ _verify_msi_bootstrap_refresh() {
   fi
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
-if sudo journalctl -u aks-flex-node-agent.service --no-pager 2>/dev/null | grep -Fq 'refreshing AKS bootstrap data for repave'; then
+if sudo journalctl -u aks-flex-node-agent.service --no-pager 2>/dev/null | grep -Fq 'refreshed AKS bootstrap data for repave'; then
   exit 0
 fi
-sudo grep -Fq 'refreshing AKS bootstrap data for repave' /var/log/aks-flex-node/aks-flex-node.log
+sudo grep -Fq 'refreshed AKS bootstrap data for repave' /var/log/aks-flex-node/aks-flex-node.log
 REMOTE
   log_success "MSI repave fetched fresh bootstrap data without persisting it"
 }

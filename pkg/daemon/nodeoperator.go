@@ -69,7 +69,7 @@ func newNSpawnNodeOperator(cfg *config.Config, state stateStore) (*nspawnNodeOpe
 	return &nspawnNodeOperator{
 		cfg:                    cfg,
 		state:                  state,
-		bootstrapDataRefresher: aksBootstrapDataRefresher{},
+		bootstrapDataRefresher: bootstrapDataRefresherForConfig(cfg),
 	}, nil
 }
 
@@ -124,27 +124,31 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 	if cfg == nil {
 		return nil, fmt.Errorf("copy config for repave")
 	}
-	if shouldRefreshBootstrapData(cfg) {
-		if o.bootstrapDataRefresher == nil {
-			return nil, fmt.Errorf("bootstrap-data refresher is not configured")
-		}
-		log.Info("refreshing AKS bootstrap data for repave")
-		data, err := o.bootstrapDataRefresher.Fetch(ctx, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("refresh bootstrap data for repave: %w", err)
-		}
-		if data == nil || data.BootstrapToken == "" {
+	data, err := o.bootstrapDataRefresher.Fetch(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("refresh bootstrap data for repave: %w", err)
+	}
+	if data != nil {
+		log.Info("refreshed AKS bootstrap data for repave")
+		if data.BootstrapToken == "" {
 			return nil, fmt.Errorf("refresh bootstrap data for repave: response did not contain a bootstrap token")
 		}
-		cfg.Azure.BootstrapToken.Token = data.BootstrapToken
-		if data.ClusterFQDN != "" {
-			cfg.Node.Kubelet.ClusterFQDN = data.ClusterFQDN
+		if cfg.Azure.BootstrapToken.Token != data.BootstrapToken {
+			// Never log either token value; only record that the sensitive value changed.
+			log.Info("updated bootstrap token for repave")
+			cfg.Azure.BootstrapToken.Token = data.BootstrapToken
 		}
-		if data.CACertData != "" {
+		if data.CACertData != "" && cfg.Node.Kubelet.CACertData != data.CACertData {
+			// Log only the change so the complete bootstrap response stays private.
+			log.Info("updated kubelet CA data for repave")
 			cfg.Node.Kubelet.CACertData = data.CACertData
 		}
 	}
-	if goal.KubernetesVersion != "" {
+	if goal.KubernetesVersion != "" && cfg.Components.Kubernetes != goal.KubernetesVersion {
+		log.Info("updated Kubernetes version for repave",
+			"oldVersion", cfg.Components.Kubernetes,
+			"newVersion", goal.KubernetesVersion,
+		)
 		cfg.Components.Kubernetes = goal.KubernetesVersion
 	}
 	return cfg, nil

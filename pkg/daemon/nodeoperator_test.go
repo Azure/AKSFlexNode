@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
@@ -83,8 +85,10 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 		CACertData:     "bmV3",
 	}}
 	operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
 
-	got, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{KubernetesVersion: "1.36.2"})
+	got, err := operator.configForGoalState(t.Context(), log, aksmachine.GoalState{KubernetesVersion: "1.36.2"})
 	if err != nil {
 		t.Fatalf("configForGoalState() error = %v", err)
 	}
@@ -94,14 +98,34 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 	if got.Azure.BootstrapToken.Token != "newtok.0123456789abcdef" {
 		t.Fatalf("bootstrap token was not refreshed")
 	}
-	if got.Node.Kubelet.ClusterFQDN != "new.example.test" || got.Node.Kubelet.CACertData != "bmV3" {
-		t.Fatalf("kubelet bootstrap data = %#v", got.Node.Kubelet)
+	if got.Node.Kubelet.ClusterFQDN != "old.example.test" {
+		t.Fatalf("immutable cluster FQDN = %q", got.Node.Kubelet.ClusterFQDN)
+	}
+	if got.Node.Kubelet.CACertData != "bmV3" {
+		t.Fatalf("kubelet CA data = %q", got.Node.Kubelet.CACertData)
 	}
 	if got.Components.Kubernetes != "1.36.2" {
 		t.Fatalf("Kubernetes version = %q", got.Components.Kubernetes)
 	}
 	if cfg.Azure.BootstrapToken.Token != "oldtok.0123456789abcdef" {
 		t.Fatal("original config bootstrap token was mutated")
+	}
+	for _, message := range []string{
+		"refreshed AKS bootstrap data for repave",
+		"updated bootstrap token for repave",
+		"updated kubelet CA data for repave",
+		"updated Kubernetes version for repave",
+		"oldVersion=1.35.0",
+		"newVersion=1.36.2",
+	} {
+		if !strings.Contains(logs.String(), message) {
+			t.Errorf("logs did not contain %q: %s", message, logs.String())
+		}
+	}
+	for _, sensitive := range []string{"oldtok.0123456789abcdef", "newtok.0123456789abcdef", "b2xk", "bmV3"} {
+		if strings.Contains(logs.String(), sensitive) {
+			t.Errorf("logs exposed bootstrap data %q", sensitive)
+		}
 	}
 }
 
@@ -119,15 +143,28 @@ func TestConfigForGoalStateSkipsBootstrapDataRefreshWithoutBothAuthTypes(t *test
 	for name, cfg := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			refresher := &fakeBootstrapDataRefresher{}
+			refresher := bootstrapDataRefresherForConfig(cfg)
 			operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
 			if _, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{}); err != nil {
 				t.Fatalf("configForGoalState() error = %v", err)
 			}
-			if refresher.calls != 0 {
-				t.Fatalf("refresh calls = %d, want 0", refresher.calls)
+			if _, ok := refresher.(noopBootstrapDataRefresher); !ok {
+				t.Fatalf("refresher = %T, want noopBootstrapDataRefresher", refresher)
 			}
 		})
+	}
+}
+
+func TestBootstrapDataRefresherForDualAuthConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Azure: config.AzureConfig{
+		BootstrapToken:  &config.BootstrapTokenConfig{Token: "oldtok.0123456789abcdef"},
+		ManagedIdentity: &config.ManagedIdentityConfig{},
+	}}
+	refresher := bootstrapDataRefresherForConfig(cfg)
+	if _, ok := refresher.(aksBootstrapDataRefresher); !ok {
+		t.Fatalf("refresher = %T, want aksBootstrapDataRefresher", refresher)
 	}
 }
 
