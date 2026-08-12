@@ -53,8 +53,9 @@ The default `all` command runs:
 6. Validate node readiness, node-problem-detector status, and run smoke workloads.
 7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 8. Rejoin all Flex Nodes and validate again.
-9. Run controller-machine-driven repave validation.
-10. Collect logs and clean up Azure resources.
+9. Validate the installed nspawn lifecycle helper and generated systemd hooks, then reconcile a running node through the helper.
+10. Run controller-machine-driven repave validation.
+11. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -77,6 +78,7 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
+| `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -142,6 +144,22 @@ its Azure resource name remains lowercase. This verifies that an omitted
 cluster under the lowercase VM name.
 
 Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+
+## Nspawn Lifecycle Validation
+
+The `nspawn-lifecycle` command validates the host integration exported by the shared Unbounded lifecycle library:
+
+1. Read each node's persisted active machine and require it to be `kube1` or `kube2`.
+2. Verify `/usr/local/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
+3. Verify the generated pre-start and post-start systemd hooks invoke that helper with the active machine.
+4. Add a marker to the token node's generated `.nspawn` config and invoke `pre-start`, proving the AKS Flex persisted-config loader regenerates the file.
+5. Invoke `reconcile`, verify the active machine receives a new leader PID, wait for the Kubernetes node to return Ready, and run a smoke workload.
+
+Run it against joined infrastructure:
+
+```bash
+./hack/e2e/run.sh nspawn-lifecycle
+```
 
 ## Repave Validation
 
@@ -215,6 +233,7 @@ hack/e2e/
     node-join-token.sh    Bootstrap token join/unjoin.
     node-join-offline.sh  Offline artifacts join/unjoin.
     node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.
+    nspawn-lifecycle.sh   Lifecycle helper and managed restart validation.
     upgrade-drift.sh      Controller machine goal repave validation.
     validate.sh           Node readiness and smoke tests.
     cleanup.sh            Log collection and Azure resource cleanup.
