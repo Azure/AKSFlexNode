@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -376,6 +377,10 @@ func (cfg *Config) DeepCopy() *Config {
 	if cfg.Azure.ServicePrincipal != nil && out.Azure.ServicePrincipal != nil {
 		out.Azure.ServicePrincipal.clientCertificatePEM = cfg.Azure.ServicePrincipal.clientCertificatePEM
 	}
+	// JSON omitempty collapses empty maps to nil. Preserve that distinction
+	// because nil selects reservation defaults while an empty map disables them.
+	out.Node.Kubelet.SystemReserved = maps.Clone(cfg.Node.Kubelet.SystemReserved)
+	out.Node.Kubelet.KubeReserved = maps.Clone(cfg.Node.Kubelet.KubeReserved)
 	return &out
 }
 
