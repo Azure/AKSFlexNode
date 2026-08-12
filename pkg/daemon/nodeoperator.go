@@ -144,6 +144,8 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 			cfg.Node.Kubelet.CACertData = data.CACertData
 		}
 	}
+	// MaxPods is immutable in AKS, so the startup configuration remains its
+	// authoritative source rather than reapplying the value from each goal.
 	if goal.KubernetesVersion != "" && cfg.Components.Kubernetes != goal.KubernetesVersion {
 		log.Info("updated Kubernetes version for repave",
 			"oldVersion", cfg.Components.Kubernetes,
