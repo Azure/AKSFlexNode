@@ -116,6 +116,38 @@ func TestFetchInMemory(t *testing.T) {
 	}
 }
 
+func TestFetchRejectsMalformedBootstrapToken(t *testing.T) {
+	t.Parallel()
+
+	const malformedToken = "truncated.token"
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"azure":{"bootstrapToken":{"token":"` + malformedToken + `"}}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	options := Options{
+		ClusterResourceID:       "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+		AgentPoolName:           "aksflexnodes",
+		AuthMode:                "msi",
+		ResourceManagerEndpoint: DefaultResourceManagerEndpoint,
+		AuthorityHost:           DefaultAuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+	_, err := fetch(t.Context(), options, dependencies{
+		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
+		httpClient: client,
+	})
+	if err == nil || err.Error() != "bootstrap-data response contained an invalid bootstrap token" {
+		t.Fatalf("fetch() error = %v, want invalid token error", err)
+	}
+	if strings.Contains(err.Error(), malformedToken) {
+		t.Fatal("fetch() error exposed malformed bootstrap token")
+	}
+}
+
 func TestFetchAndWriteRequiresOutput(t *testing.T) {
 	t.Parallel()
 

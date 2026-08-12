@@ -225,6 +225,9 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if responseData.Azure.BootstrapToken.Token == "" {
 		return nil, fmt.Errorf("bootstrap-data response did not contain a bootstrap token")
 	}
+	if !config.BootstrapTokenPattern.MatchString(responseData.Azure.BootstrapToken.Token) {
+		return nil, fmt.Errorf("bootstrap-data response contained an invalid bootstrap token")
+	}
 	return &Data{
 		BootstrapToken: responseData.Azure.BootstrapToken.Token,
 		ClusterFQDN:    responseData.Node.Kubelet.ClusterFQDN,
