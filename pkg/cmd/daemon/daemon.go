@@ -10,7 +10,16 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
-func NewCommand() *cobra.Command {
+// NewCommands returns all daemon runtime and internal lifecycle commands.
+func NewCommands() []*cobra.Command {
+	return []*cobra.Command{
+		newCommand(),
+		newHostAgentUpgradeCommand(),
+		newAgentUpgradeRecoveryCommand(),
+	}
+}
+
+func newCommand() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:     "daemon",

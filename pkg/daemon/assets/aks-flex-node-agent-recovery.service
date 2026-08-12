@@ -1,0 +1,6 @@
+[Unit]
+Description=Recover AKS Flex Node Agent to last-known-good binary
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh

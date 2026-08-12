@@ -47,6 +47,42 @@ systemctl is-active aks-flex-node-agent
 journalctl -u aks-flex-node-agent -f
 ```
 
+## Managed Agent Upgrade
+
+When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and, when available, the SHA-256 of the compressed archive:
+
+```yaml
+apiVersion: unbounded-cloud.io/v1alpha3
+kind: MachineOperation
+metadata:
+  name: upgrade-agent-worker-01
+spec:
+  machineRef: worker-01
+  operationKind: AgentUpgrade
+  parameters:
+    downloadURL: https://example.com/aks-flex-node-linux-amd64.tar.gz
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+The archive must contain exactly the architecture-specific release member used by AKS Flex Node (`aks-flex-node-linux-amd64` or `aks-flex-node-linux-arm64`). The `sha256` parameter is optional; when supplied, the daemon verifies the compressed archive digest. Prefer HTTPS and a digest for production downloads. Plain HTTP is intended for explicitly trusted networks such as a VM-local loopback server; omit the digest only when both the archive source and transport path are trusted. The daemon always verifies the candidate `version` command before switching its blue/green binary links. It also atomically updates the binary in the active nspawn rootfs so kubelet exec authentication uses the same version.
+
+The restarted daemon marks the operation `Complete`. If the candidate cannot remain running, systemd restores the last-known-good host and nspawn binaries and marks the operation `Failed`. URL query strings, which may contain SAS credentials, are omitted from logs and operation status.
+
+MachineOperations are cluster-scoped. The daemon group requires cluster-wide read access to MachineOperations and Nodes, plus MachineOperation status update access, so restrict who can create operations and treat parameter values as sensitive API data. Prefer short-lived, read-only download credentials.
+
+```bash
+kubectl get machineoperation upgrade-agent-worker-01 -w
+```
+
+A host provisioning system that has already authenticated and staged a candidate can activate it directly without creating an Unbounded `MachineOperation`:
+
+```bash
+sudo /var/tmp/aks-flex-node-candidate agent-upgrade --preflight
+sudo /var/tmp/aks-flex-node-candidate agent-upgrade
+```
+
+The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, and restore last-good on activation failure. If `aks-flex-node-agent.service` is active, direct activation restarts it, verifies the running executable, and synchronizes the active nspawn exec-credential binary. If the service is already inactive during reset/rejoin provisioning, activation preserves that stopped state; the subsequent bootstrap starts the service and worker.
+
 ## Nspawn Worker
 
 Inspect the local nspawn-backed worker:

@@ -53,8 +53,10 @@ The default `all` command runs:
 6. Validate node readiness, node-problem-detector status, and run smoke workloads.
 7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 8. Rejoin all Flex Nodes and validate again.
-9. Run controller-machine-driven repave validation.
-10. Collect logs and clean up Azure resources.
+9. Validate the installed nspawn lifecycle helper and generated systemd hooks, then reconcile a running node through the helper.
+10. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
+11. Run controller-machine-driven repave validation after the agent upgrade.
+12. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -62,7 +64,7 @@ The default `all` command runs:
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, repave, logs, cleanup. |
+| `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, lifecycle, agent upgrade, repave, logs, cleanup. |
 | `infra` | Deploy AKS cluster, four VMs, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
@@ -77,6 +79,8 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
+| `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
+| `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -126,6 +130,7 @@ Additional environment variables:
 | `E2E_SSH_WAIT_TIMEOUT` | `300` | Timeout in seconds while waiting for SSH. |
 | `E2E_NODE_JOIN_TIMEOUT` | `300` | Timeout in seconds while waiting for node bootstrap. |
 | `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |
+| `E2E_AGENT_UPGRADE_TIMEOUT` | `300` | Timeout in seconds while waiting for an AgentUpgrade result. |
 | `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for repave. |
 | `AZURE_SUBSCRIPTION_ID` | auto-detected | Azure subscription. |
 | `AZURE_TENANT_ID` | auto-detected | Azure tenant. |
@@ -153,7 +158,42 @@ managed-identity VM, and the overridden-config scenario. Validation reads the
 kubelet configuration applied inside the nspawn machine and asserts the node's
 allocatable CPU, memory, and pod capacity reflect the applied reservations.
 
-Each join path uploads the locally built binary, renders a config file, installs the binary through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`, and starts the node through a transient systemd unit. The installed agent service is then validated with systemd checks.
+Each join path uploads the locally built binary and renders a config file. Fresh hosts install it through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`; rejoin hosts with an existing managed layout invoke the uploaded candidate's `agent-upgrade` command before bootstrap. The node starts through a transient systemd unit, and the installed agent service is then validated with systemd checks.
+
+## Agent Upgrade Validation
+
+The `agent-upgrade` command uses the bootstrap-token VM to exercise the complete managed binary lifecycle:
+
+1. Serve architecture-specific release archives over VM-local loopback HTTP to validate HTTP transport support.
+2. Submit an `AgentUpgrade` with an archive SHA-256 and a query credential.
+3. Verify successful daemon restart, operation completion, binary replacement, and host/nspawn binary equality.
+4. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.
+5. Upgrade to a candidate that passes `version` but fails daemon startup, then verify automatic rollback and a failed operation.
+6. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot without the optional archive digest.
+7. Stage a distinct candidate and validate direct host activation preflight, inactive-slot switch, service health, shared layout, and active-nspawn synchronization without creating a `MachineOperation` signal.
+8. Restart kubelet through the directly activated nspawn credential binary, require Lease renewal and Node readiness, then run a workload before the subsequent repave test.
+
+Run it against an already joined environment:
+
+```bash
+./hack/e2e/run.sh agent-upgrade
+```
+
+## Nspawn Lifecycle Validation
+
+The `nspawn-lifecycle` command validates the host integration exported by the shared Unbounded lifecycle library:
+
+1. Read each node's persisted active machine and require it to be `kube1` or `kube2`.
+2. Verify `/usr/local/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
+3. Verify the generated pre-start and post-start systemd hooks invoke that helper with the active machine.
+4. Add a marker to the token node's generated `.nspawn` config and invoke `pre-start`, proving the AKS Flex persisted-config loader regenerates the file.
+5. Invoke `reconcile`, verify the active machine receives a new leader PID, wait for the Kubernetes node to return Ready, and run a smoke workload.
+
+Run it against joined infrastructure:
+
+```bash
+./hack/e2e/run.sh nspawn-lifecycle
+```
 
 ## Repave Validation
 
@@ -227,6 +267,8 @@ hack/e2e/
     node-join-token.sh    Bootstrap token join/unjoin.
     node-join-offline.sh  Offline artifacts join/unjoin.
     node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.
+    nspawn-lifecycle.sh   Lifecycle helper and managed restart validation.
+    agent-upgrade.sh      Managed agent upgrade and rollback validation.
     upgrade-drift.sh      Controller machine goal repave validation.
     validate.sh           Node readiness and smoke tests.
     cleanup.sh            Log collection and Azure resource cleanup.

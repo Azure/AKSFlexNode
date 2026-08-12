@@ -1,0 +1,96 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	systemdDir := filepath.Join(t.TempDir(), "systemd")
+	recoveryScript := filepath.Join(t.TempDir(), "recovery.sh")
+	service := &flexDaemonActivationService{
+		log:            slog.Default(),
+		paths:          paths,
+		systemdDir:     systemdDir,
+		recoveryScript: recoveryScript,
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+			return false, nil
+		},
+	}
+	plan, err := service.Preflight(t.Context(), paths.CurrentPath)
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if !plan.UpdateRequired {
+		t.Fatal("UpdateRequired = false for missing Flex service assets")
+	}
+	for _, path := range []string{systemdDir, recoveryScript, paths.CurrentPath} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("preflight mutated %s: %v", path, err)
+		}
+	}
+}
+
+func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
+	t.Parallel()
+
+	binary := filepath.Join(t.TempDir(), "candidate")
+	if err := os.WriteFile(binary, []byte("candidate"), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	service := &flexDaemonActivationService{
+		log:   slog.Default(),
+		state: &testStateStore{},
+	}
+	if err := service.Restart(t.Context()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if err := service.WaitHealthy(t.Context(), binary); err != nil {
+		t.Fatalf("WaitHealthy: %v", err)
+	}
+}
+
+func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
+	t.Parallel()
+
+	service := &flexDaemonActivationService{
+		log: slog.Default(),
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+			return false, errors.New("systemd unavailable")
+		},
+	}
+	if _, err := service.Preflight(t.Context(), "/unused/current"); err == nil {
+		t.Fatal("Preflight accepted an unknown service state")
+	}
+}
+
+func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	if err := os.MkdirAll(filepath.Dir(paths.SignalPath), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(paths.SignalPath, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	service := &flexDaemonActivationService{
+		log:            slog.Default(),
+		paths:          paths,
+		systemdDir:     t.TempDir(),
+		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+			return false, nil
+		},
+	}
+	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err == nil {
+		t.Fatal("Preflight accepted a pending MachineOperation signal")
+	}
+}

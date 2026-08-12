@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
@@ -25,12 +26,23 @@ import (
 )
 
 const (
-	daemonCredentialDir   = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
-	daemonCredentialGroup = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
+	agentUpgradeStartupStability = 3 * time.Second
+	agentUpgradePublishRetry     = 10 * time.Second
+	daemonCredentialDir          = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
+	daemonCredentialGroup        = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
 )
 
 // Run starts the machine-driven daemon loop.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	// controller-runtime intentionally emits a warning and drops its internal
+	// logs unless the process explicitly configures its global logger.
+	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
+
+	// Existing direct-file installations may predate the recovery units. Keep
+	// the binary layout and systemd rollback assets converged on every startup.
+	if err := ensureAgentUpgradeServiceAssets(ctx, log); err != nil {
+		return err
+	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err
@@ -69,6 +81,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	upgrades, err := newHostAgentUpgradeExecutor(log, operator)
+	if err != nil {
+		return err
+	}
+	directClient, err := client.New(restCfg, client.Options{Scheme: newScheme()})
+	if err != nil {
+		return fmt.Errorf("create direct Kubernetes client: %w", err)
+	}
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,
@@ -87,13 +107,56 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		AKSMachineName:       aksMachineName,
 		MachineOperationMode: cfg.Agent.MachineOperationMode,
 		Operator:             repaves.operator,
+		AgentUpgrade:         upgrades,
 	})
 	if err != nil {
 		return err
 	}
-	if err := daemon.SetupController("aks-flex-node-daemon", mgr, machineOperations, repaves); err != nil {
+	gate := newStartupGate()
+	if err := daemon.SetupController(
+		"aks-flex-node-daemon",
+		mgr,
+		gatedMachineOperationReconciler{delegate: machineOperations, gate: gate},
+		gatedRepaveReconciler{delegate: repaves, gate: gate},
+	); err != nil {
 		return fmt.Errorf("setup daemon controller: %w", err)
 	}
+
+	go func() {
+		// Keep host-mutating reconciliation gated until the candidate has reached
+		// cache readiness and remained alive for a bounded stability interval.
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(agentUpgradeStartupStability):
+		}
+		for {
+			publishErr := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
+			pending, readErr := upgrades.signals.read()
+			switch {
+			case publishErr != nil:
+				log.Warn("failed to publish AgentUpgrade startup result; will retry", "error", publishErr)
+			case readErr != nil:
+				log.Warn("failed to confirm AgentUpgrade startup signal; will retry", "error", readErr)
+			case pending != nil:
+				// Recovery scheduled a restart. Keep reconciliation gated until the
+				// last-good process starts and consumes the retained signal.
+				return
+			default:
+				gate.open()
+				return
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(agentUpgradePublishRetry):
+			}
+		}
+	}()
 
 	err = mgr.Start(ctx)
 	repaves.log.Info("daemon shutting down")

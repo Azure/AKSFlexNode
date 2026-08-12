@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -12,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
@@ -25,11 +28,13 @@ type machineOperationReconcilerOptions struct {
 	AKSMachineName       string
 	MachineOperationMode string
 	Operator             nodeOperator
+	AgentUpgrade         agentUpgradeExecutor
 }
 
 type machineOperationHandlers struct {
-	log      *slog.Logger
-	operator nodeOperator
+	log          *slog.Logger
+	operator     nodeOperator
+	agentUpgrade agentUpgradeExecutor
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
@@ -45,6 +50,9 @@ func machineOperationReconciler(
 	}
 	if opts.Operator == nil {
 		return nil, fmt.Errorf("node operator is nil")
+	}
+	if opts.AgentUpgrade == nil {
+		return nil, fmt.Errorf("agent upgrade executor is nil")
 	}
 	if opts.MachineOperationMode == "" {
 		opts.MachineOperationMode = machineOperationModeAuto
@@ -73,14 +81,18 @@ func machineOperationReconciler(
 		return nil, fmt.Errorf("AKS machine name is empty")
 	}
 
-	handlers := &machineOperationHandlers{log: opts.Log, operator: opts.Operator}
+	handlers := &machineOperationHandlers{
+		log:          opts.Log,
+		operator:     opts.Operator,
+		agentUpgrade: opts.AgentUpgrade,
+	}
 	reconciler, err := daemon.NewMachinaMachineOperationReconciler(
 		opts.Client,
 		opts.NodeName,
 		opts.AKSMachineName,
 		daemon.MachineOperationHandlers{
 			machinav1alpha3.OperationNodeReboot:   handlers.reconcileNodeReboot,
-			machinav1alpha3.OperationAgentUpgrade: handlers.unsupportedOperation,
+			machinav1alpha3.OperationAgentUpgrade: handlers.reconcileAgentUpgrade,
 			machinav1alpha3.OperationAgentReset:   handlers.reconcileAgentReset,
 		},
 	)
@@ -132,6 +144,94 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 		Message: "NodeReboot completed",
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("finish NodeReboot MachineOperation: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+func (h *machineOperationHandlers) reconcileAgentUpgrade(
+	ctx context.Context,
+	store daemon.MachineOperationStore[int64],
+	op daemon.MachineOperation,
+) (ctrl.Result, error) {
+	request, err := parseAgentUpgradeRequest(op.Parameters)
+	if err != nil {
+		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
+	}
+	activationLock, err := h.agentUpgrade.Acquire()
+	if errors.Is(err, agentbinary.ErrActivationInProgress) {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("acquire agent activation lock: %w", err)
+	}
+	defer func() {
+		if closeErr := activationLock.Close(); closeErr != nil {
+			h.log.Warn("failed to release agent activation lock", "error", closeErr)
+		}
+	}()
+	// Persist the recovery signal before InProgress. The shared reconciler does
+	// not enqueue InProgress operations after a process crash, so the signal
+	// must exist before the status can become non-reconcilable.
+	if err := h.agentUpgrade.RecordPending(ctx, op.Name); err != nil {
+		if errors.Is(err, errAgentUpgradeAlreadyPending) {
+			// Retry a previously failed recovery handoff. An ordinary duplicate
+			// remains a no-op while the delayed daemon restart is pending.
+			return ctrl.Result{}, h.agentUpgrade.RetryRecovery(ctx)
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+	}
+	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
+		cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+		abortErr := h.agentUpgrade.Abort(cleanupCtx)
+		cancel()
+		return ctrl.Result{}, errors.Join(
+			fmt.Errorf("mark AgentUpgrade MachineOperation in progress: %w", err),
+			wrapOptionalError("clear pending AgentUpgrade signal", abortErr),
+		)
+	}
+	if err := h.agentUpgrade.Stage(ctx, request); err != nil {
+		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
+			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+	}
+	if err := h.agentUpgrade.Restart(ctx); err != nil {
+		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
+			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
+		}
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon")
+	}
+	// Restart scheduling is the old daemon's final responsibility. Keep the
+	// operation InProgress and let the restarted or recovery daemon publish the
+	// only terminal result.
+	return ctrl.Result{}, nil
+}
+
+func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
+	ctx context.Context,
+	op daemon.MachineOperation,
+	executionErr, rollbackErr error,
+) (ctrl.Result, error) {
+	message := fmt.Sprintf("AgentUpgrade execution failed and requires recovery: %v", executionErr)
+	recordErr := h.agentUpgrade.RecordFailure(message)
+	if recordErr != nil {
+		h.log.Error("failed to annotate durable AgentUpgrade recovery signal", "operation", op.Name, "error", recordErr)
+	}
+	h.log.Error("AgentUpgrade rollback failed; restarting daemon for durable recovery",
+		"operation", op.Name,
+		"error", rollbackErr,
+	)
+	cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+	defer cancel()
+	restartErr := h.agentUpgrade.Restart(cleanupCtx)
+	if restartErr != nil {
+		h.log.Error("failed to restart daemon for AgentUpgrade recovery", "operation", op.Name, "error", restartErr)
+	}
+	if recordErr != nil || restartErr != nil {
+		return ctrl.Result{}, errors.Join(
+			wrapOptionalError("record AgentUpgrade recovery failure", recordErr),
+			wrapOptionalError("restart daemon for AgentUpgrade recovery", restartErr),
+		)
 	}
 	return ctrl.Result{}, nil
 }

@@ -39,12 +39,19 @@ _deploy_and_start_agent() {
   remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
 set -euo pipefail
 
-sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
-  AKS_FLEX_NODE_VERSION=e2e-local \
-  SKIP_AZCLI=true \
-  bash /tmp/aks-flex-node-install.sh --yes
+managed_current=/usr/local/lib/aks-flex-node/aks-flex-node-current
+if [[ -e "${managed_current}" || -L "${managed_current}" ]]; then
+  echo "Existing managed layout found; activating the separately staged E2E candidate..."
+  sudo chmod 0755 /tmp/aks-flex-node-binary
+  sudo /tmp/aks-flex-node-binary agent-upgrade
+else
+  sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
+    AKS_FLEX_NODE_VERSION=e2e-local \
+    SKIP_AZCLI=true \
+    bash /tmp/aks-flex-node-install.sh --yes
+fi
 
-aks-flex-node version
+sudo /usr/local/bin/aks-flex-node version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
