@@ -14,11 +14,16 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 )
 
-type staticCredential struct{}
+type staticCredential struct {
+	scope *string
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func (staticCredential) GetToken(context.Context, policy.TokenRequestOptions) (azcore.AccessToken, error) {
+func (c staticCredential) GetToken(_ context.Context, options policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	if c.scope != nil && len(options.Scopes) == 1 {
+		*c.scope = options.Scopes[0]
+	}
 	return azcore.AccessToken{Token: "arm-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
@@ -78,12 +83,20 @@ func TestFetchInMemory(t *testing.T) {
 		ClusterResourceID:       "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
 		AgentPoolName:           "aksflexnodes",
 		AuthMode:                "msi",
-		ResourceManagerEndpoint: DefaultResourceManagerEndpoint,
-		AuthorityHost:           DefaultAuthorityHost,
+		ResourceManagerEndpoint: "https://management.usgovcloudapi.net",
+		ResourceManagerAudience: "https://management.core.usgovcloudapi.net",
+		AuthorityHost:           "https://login.microsoftonline.us/",
 		APIVersion:              DefaultAPIVersion,
 	}
+	var scope string
 	got, err := fetch(t.Context(), options, dependencies{
-		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
+		credential: func(_ Options, clientOptions azcore.ClientOptions) (azcore.TokenCredential, error) {
+			service := clientOptions.Cloud.Services["resourceManager"]
+			if service.Audience != options.ResourceManagerAudience {
+				t.Errorf("ARM audience = %q, want %q", service.Audience, options.ResourceManagerAudience)
+			}
+			return staticCredential{scope: &scope}, nil
+		},
 		httpClient: client,
 	})
 	if err != nil {
@@ -97,6 +110,9 @@ func TestFetchInMemory(t *testing.T) {
 	}
 	if got.CACertData != "Y2E=" {
 		t.Fatalf("CACertData = %q", got.CACertData)
+	}
+	if scope != "https://management.core.usgovcloudapi.net/.default" {
+		t.Fatalf("ARM token scope = %q", scope)
 	}
 }
 

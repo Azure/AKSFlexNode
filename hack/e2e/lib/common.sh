@@ -201,7 +201,6 @@ load_config() {
   # controller still uses E2E_TARGET_AGENT_POOL_NAME for its synthetic machine
   # contract, while the MSI repave scenario uses this real pool for join data.
   E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME="${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-${E2E_TARGET_AGENT_POOL_NAME}}"
-  E2E_BOOTSTRAP_DATA_API_VERSION="${E2E_BOOTSTRAP_DATA_API_VERSION:-2026-05-02-preview}"
 
   # Kubelet resource reservation overrides applied to the token node config.
   # The remaining nodes keep the AKS-compatible defaults computed by the agent.

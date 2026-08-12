@@ -110,7 +110,6 @@ Additional environment variables:
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
 | `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool provisioned for the MSI scenario and used for `listBootstrapData`. |
-| `E2E_BOOTSTRAP_DATA_API_VERSION` | `2026-05-02-preview` | AKS API version used for MSI bootstrap-data retrieval and repave refresh. |
 | `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_MEMORY` | `100Mi` | `node.kubelet.systemReserved.memory` override written to the bootstrap-token node config. |

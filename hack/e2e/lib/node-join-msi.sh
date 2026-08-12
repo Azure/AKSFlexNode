@@ -168,13 +168,14 @@ node_join_msi() {
 EOF
 
   log_info "Fetching initial AKS RP bootstrap data for the MSI repave scenario..."
+  install -m 0600 /dev/null "${bootstrap_data_file}"
   with_cluster_lock az rest \
     --only-show-errors \
     --method post \
-    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}/listBootstrapData?api-version=${E2E_BOOTSTRAP_DATA_API_VERSION}" \
+    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}/listBootstrapData?api-version=2026-05-02-preview" \
     --output json > "${bootstrap_data_file}"
-  chmod 0600 "${bootstrap_data_file}"
   jq -e '.azure.bootstrapToken.token | type == "string" and length > 0' "${bootstrap_data_file}" >/dev/null
+  install -m 0600 /dev/null "${config_file}.tmp"
   jq --slurpfile bootstrapData "${bootstrap_data_file}" '
     .azure.bootstrapToken = $bootstrapData[0].azure.bootstrapToken
     | .node.kubelet.clusterFQDN = ($bootstrapData[0].node.kubelet.clusterFQDN // .node.kubelet.clusterFQDN)

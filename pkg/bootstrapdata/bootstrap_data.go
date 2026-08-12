@@ -50,6 +50,7 @@ type Options struct {
 	SPClientCertificateFile string
 	SPClientCredentialFile  string
 	ResourceManagerEndpoint string
+	ResourceManagerAudience string
 	AuthorityHost           string
 	APIVersion              string
 	OutputPath              string
@@ -66,6 +67,7 @@ func OptionsFromConfig(cfg *config.Config) (Options, error) {
 		ClusterResourceID:       cfg.Azure.TargetCluster.ResourceID,
 		AgentPoolName:           cfg.Azure.TargetAgentPoolName,
 		ResourceManagerEndpoint: environment.Endpoint,
+		ResourceManagerAudience: environment.Audience,
 		AuthorityHost:           environment.AuthorityHost,
 		APIVersion:              DefaultAPIVersion,
 	}
@@ -155,17 +157,21 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		return nil, err
 	}
 	endpoint := strings.TrimRight(options.ResourceManagerEndpoint, "/")
+	audience := strings.TrimRight(options.ResourceManagerAudience, "/")
+	if audience == "" {
+		audience = endpoint
+	}
 	clientOptions := azcore.ClientOptions{Cloud: cloud.Configuration{
 		ActiveDirectoryAuthorityHost: options.AuthorityHost,
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			cloud.ResourceManager: {Endpoint: endpoint, Audience: endpoint},
+			cloud.ResourceManager: {Endpoint: endpoint, Audience: audience},
 		},
 	}}
 	credential, err := deps.credential(options, clientOptions)
 	if err != nil {
 		return nil, err
 	}
-	token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{endpoint + "/.default"}})
+	token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
 	if err != nil {
 		return nil, fmt.Errorf("acquire ARM token: %w", err)
 	}
@@ -231,6 +237,12 @@ func validateOptions(options Options) error {
 	endpoint, err := url.Parse(options.ResourceManagerEndpoint)
 	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
 		return fmt.Errorf("resource manager endpoint must be an absolute HTTPS URL")
+	}
+	if options.ResourceManagerAudience != "" {
+		audience, err := url.Parse(options.ResourceManagerAudience)
+		if err != nil || audience.Scheme != "https" || audience.Host == "" || audience.User != nil {
+			return fmt.Errorf("resource manager audience must be an absolute HTTPS URL")
+		}
 	}
 	authority, err := url.Parse(options.AuthorityHost)
 	if err != nil || authority.Scheme != "https" || authority.Host == "" || authority.User != nil {

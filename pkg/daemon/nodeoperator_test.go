@@ -206,7 +206,9 @@ func TestBootstrapDataOptionsFromConfig(t *testing.T) {
 	if got.AuthMode != "managed-identity" || got.MSIClientID != "identity" {
 		t.Fatalf("managed identity options = %#v", got)
 	}
-	if got.ResourceManagerEndpoint != "https://management.usgovcloudapi.net" || got.AuthorityHost != "https://login.microsoftonline.us/" {
+	if got.ResourceManagerEndpoint != "https://management.usgovcloudapi.net" ||
+		got.ResourceManagerAudience != "https://management.core.usgovcloudapi.net" ||
+		got.AuthorityHost != "https://login.microsoftonline.us/" {
 		t.Fatalf("sovereign cloud options = %#v", got)
 	}
 	if got.APIVersion != bootstrapdata.DefaultAPIVersion {
