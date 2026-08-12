@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -35,6 +38,7 @@ const (
 	defaultMachineClientMode        = MachineClientModeARM
 	defaultMachineOperationMode     = "auto"
 	defaultMachineReconcileInterval = 10 * time.Minute
+	defaultMaxPods                  = 110
 	defaultTargetAgentPoolName      = "aksflexnodes"
 
 	// Machine client modes.
@@ -246,12 +250,14 @@ type NodeConfig struct {
 
 // KubeletConfig holds kubelet-specific configuration settings.
 type KubeletConfig struct {
-	Verbosity            int    `json:"verbosity"`
-	ImageGCHighThreshold int    `json:"imageGCHighThreshold"`
-	ImageGCLowThreshold  int    `json:"imageGCLowThreshold"`
-	ClusterFQDN          string `json:"clusterFQDN,omitempty"` // Kubernetes API server FQDN from AKS RP bootstrap data
-	CACertData           string `json:"caCertData"`            // Base64-encoded CA certificate data
-	NodeIP               string `json:"nodeIP"`                // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+	Verbosity            int               `json:"verbosity"`
+	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
+	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
+	ClusterFQDN          string            `json:"clusterFQDN,omitempty"`    // Kubernetes API server FQDN from AKS RP bootstrap data
+	CACertData           string            `json:"caCertData"`               // Base64-encoded CA certificate data
+	NodeIP               string            `json:"nodeIP"`                   // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
+	SystemReserved       map[string]string `json:"systemReserved,omitempty"` // Resources reserved for OS system daemons; defaults to zero
+	KubeReserved         map[string]string `json:"kubeReserved,omitempty"`   // Resources reserved for Kubernetes daemons; defaults follow AKS guidance
 
 	// ImageCredentialProvider configures kubelet's exec image credential
 	// provider. The referenced paths are inside the nspawn machine.
@@ -371,6 +377,10 @@ func (cfg *Config) DeepCopy() *Config {
 	if cfg.Azure.ServicePrincipal != nil && out.Azure.ServicePrincipal != nil {
 		out.Azure.ServicePrincipal.clientCertificatePEM = cfg.Azure.ServicePrincipal.clientCertificatePEM
 	}
+	// JSON omitempty collapses empty maps to nil. Preserve that distinction
+	// because nil selects reservation defaults while an empty map disables them.
+	out.Node.Kubelet.SystemReserved = maps.Clone(cfg.Node.Kubelet.SystemReserved)
+	out.Node.Kubelet.KubeReserved = maps.Clone(cfg.Node.Kubelet.KubeReserved)
 	return &out
 }
 
@@ -433,7 +443,7 @@ func (c *Config) setAgentDefaults() {
 func (c *Config) setNodeDefaults() {
 	// Set default node configuration if not provided
 	if c.Node.MaxPods == 0 {
-		c.Node.MaxPods = 110 // Default Kubernetes node pod limit
+		c.Node.MaxPods = defaultMaxPods
 	}
 
 	// set default node labels if not provided
@@ -932,6 +942,12 @@ func (c *KubeletConfig) validate() error {
 	if c.ImageGCLowThreshold >= c.ImageGCHighThreshold {
 		return fmt.Errorf("node.kubelet.imageGCLowThreshold must be less than node.kubelet.imageGCHighThreshold")
 	}
+	if err := validateReservedResources("systemReserved", c.SystemReserved); err != nil {
+		return err
+	}
+	if err := validateReservedResources("kubeReserved", c.KubeReserved); err != nil {
+		return err
+	}
 
 	kubelet := agentconfig.AgentKubeletConfig{}
 	if c.ImageCredentialProvider != nil {
@@ -942,6 +958,25 @@ func (c *KubeletConfig) validate() error {
 	}
 	if err := kubelet.Validate(); err != nil {
 		return fmt.Errorf("invalid node.kubelet configuration: %w", err)
+	}
+	return nil
+}
+
+func validateReservedResources(field string, reservations map[string]string) error {
+	for name, value := range reservations {
+		switch corev1.ResourceName(name) {
+		case corev1.ResourceCPU, corev1.ResourceMemory, corev1.ResourceEphemeralStorage, corev1.ResourceName("pid"):
+		default:
+			return fmt.Errorf("node.kubelet.%s cannot reserve unsupported resource %q", field, name)
+		}
+
+		quantity, err := resource.ParseQuantity(value)
+		if err != nil {
+			return fmt.Errorf("node.kubelet.%s has invalid quantity %q for resource %q: %w", field, value, name, err)
+		}
+		if quantity.Sign() < 0 {
+			return fmt.Errorf("node.kubelet.%s quantity for resource %q cannot be negative: %s", field, name, value)
+		}
 	}
 	return nil
 }

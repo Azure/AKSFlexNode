@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"maps"
+	"testing"
+)
 
 func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 	t.Parallel()
@@ -90,4 +93,57 @@ func TestConfigDeepCopy_DoesNotSharePointersOrMaps(t *testing.T) {
 		t.Fatalf("Node.Taints shares backing array; copy=%q, want %q", copy.Node.Taints[0], "dedicated=infra:NoSchedule")
 	}
 
+}
+
+func TestConfigDeepCopyPreservesReservationMapPresence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		reservations map[string]string
+	}{
+		{name: "nil"},
+		{name: "empty", reservations: map[string]string{}},
+		{name: "populated", reservations: map[string]string{"cpu": "100m"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{Node: NodeConfig{Kubelet: KubeletConfig{
+				SystemReserved: maps.Clone(tt.reservations),
+				KubeReserved:   maps.Clone(tt.reservations),
+			}}}
+			copied := cfg.DeepCopy()
+			if copied == nil {
+				t.Fatal("DeepCopy() = nil")
+			}
+
+			for name, got := range map[string]map[string]string{
+				"SystemReserved": copied.Node.Kubelet.SystemReserved,
+				"KubeReserved":   copied.Node.Kubelet.KubeReserved,
+			} {
+				if (got == nil) != (tt.reservations == nil) {
+					t.Errorf("%s nil = %t, want %t", name, got == nil, tt.reservations == nil)
+				}
+				if !maps.Equal(got, tt.reservations) {
+					t.Errorf("%s = %v, want %v", name, got, tt.reservations)
+				}
+			}
+
+			if copied.Node.Kubelet.SystemReserved != nil {
+				copied.Node.Kubelet.SystemReserved["memory"] = "1Gi"
+				if _, ok := cfg.Node.Kubelet.SystemReserved["memory"]; ok {
+					t.Error("SystemReserved map is shared")
+				}
+			}
+			if copied.Node.Kubelet.KubeReserved != nil {
+				copied.Node.Kubelet.KubeReserved["memory"] = "1Gi"
+				if _, ok := cfg.Node.Kubelet.KubeReserved["memory"]; ok {
+					t.Error("KubeReserved map is shared")
+				}
+			}
+		})
+	}
 }

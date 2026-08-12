@@ -109,6 +109,11 @@ Additional environment variables:
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Target AKS agent pool name written to generated node configs. |
+| `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
+| `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |
+| `E2E_KUBELET_SYSTEM_RESERVED_MEMORY` | `100Mi` | `node.kubelet.systemReserved.memory` override written to the bootstrap-token node config. |
+| `E2E_KUBELET_KUBE_RESERVED_CPU` | `200m` | `node.kubelet.kubeReserved.cpu` override written to the bootstrap-token node config. |
+| `E2E_KUBELET_KUBE_RESERVED_MEMORY` | `650Mi` | `node.kubelet.kubeReserved.memory` override written to the bootstrap-token node config. |
 | `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the in-cluster local registry. |
 | `E2E_UNBOUNDED_NET_VERSION` | `v0.1.21` | Unbounded-Net release tag used for CNI manifests and default images. |
 | `E2E_UNBOUNDED_NET_CONTROLLER_IMAGE` | `ghcr.io/azure/unbounded-net-controller:$E2E_UNBOUNDED_NET_VERSION` | Optional controller image override. |
@@ -145,6 +150,13 @@ The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted
 `agent.nodeName` is derived from the normalized hostname and still joins the
 cluster under the lowercase VM name.
+
+The bootstrap-token VM also overrides the kubelet resource reservations
+(`node.maxPods`, `node.kubelet.systemReserved`, and `node.kubelet.kubeReserved`)
+so validation covers both the AKS-compatible defaults, checked on the
+managed-identity VM, and the overridden-config scenario. Validation reads the
+kubelet configuration applied inside the nspawn machine and asserts the node's
+allocatable CPU, memory, and pod capacity reflect the applied reservations.
 
 Each join path uploads the locally built binary and renders a config file. Fresh hosts install it through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`; rejoin hosts with an existing managed layout invoke the uploaded candidate's `agent-upgrade` command before bootstrap. The node starts through a transient systemd unit, and the installed agent service is then validated with systemd checks.
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"runtime"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -26,6 +28,8 @@ const (
 //
 // cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
+	kubeletConfig := kubeletConfiguration(cfg)
+
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
@@ -42,7 +46,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
 			Labels:             cfg.Node.Labels,
 			RegisterWithTaints: cfg.Node.Taints,
-			Configuration:      kubeletConfiguration(cfg),
+			Configuration:      kubeletConfig,
 		},
 		CRI: agentconfig.CRIConfig{
 			Containerd: agentconfig.ContainerdConfig{
@@ -121,14 +125,41 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 }
 
 func kubeletConfiguration(cfg *Config) map[string]any {
+	maxPods := cfg.Node.MaxPods
+	if maxPods == 0 {
+		maxPods = defaultMaxPods
+	}
+
 	return map[string]any{
-		"maxPods":                     cfg.Node.MaxPods,
+		"maxPods":                     maxPods,
+		"systemReserved":              systemReservedOrDefault(cfg),
+		"kubeReserved":                kubeReservedOrDefault(cfg, maxPods),
 		"imageGCHighThresholdPercent": cfg.Node.Kubelet.ImageGCHighThreshold,
 		"imageGCLowThresholdPercent":  cfg.Node.Kubelet.ImageGCLowThreshold,
 		"logging": map[string]any{
 			"verbosity": cfg.Node.Kubelet.Verbosity,
 		},
 	}
+}
+
+// systemReservedOrDefault returns the configured system reservation, or the
+// AKS default of zero CPU and memory when it is not overridden.
+func systemReservedOrDefault(cfg *Config) map[string]string {
+	if systemReserved := maps.Clone(cfg.Node.Kubelet.SystemReserved); systemReserved != nil {
+		return systemReserved
+	}
+
+	return map[string]string{"cpu": "0", "memory": "0"}
+}
+
+// kubeReservedOrDefault returns the configured kube reservation, or the AKS
+// defaults computed from the host resources and pod density.
+func kubeReservedOrDefault(cfg *Config, maxPods int) map[string]string {
+	if kubeReserved := maps.Clone(cfg.Node.Kubelet.KubeReserved); kubeReserved != nil {
+		return kubeReserved
+	}
+
+	return defaultKubeReserved(runtime.NumCPU(), hostTotalMemoryMi(), maxPods)
 }
 
 // ResolveMachineGoalState converts FlexNode config to the shared agent config

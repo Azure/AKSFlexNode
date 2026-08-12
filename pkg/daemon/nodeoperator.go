@@ -84,6 +84,8 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	// TODO: This per-goal config copy/mutation is not ideal. Refactor goal-state
 	// resolution to avoid rewriting shared config-shaped data here.
 	cfg := o.cfg.DeepCopy()
+	// MaxPods is immutable in AKS, so the startup configuration remains its
+	// authoritative source rather than reapplying the value from each goal.
 	if goal.KubernetesVersion != "" {
 		cfg.Components.Kubernetes = goal.KubernetesVersion
 	}
