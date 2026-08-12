@@ -125,10 +125,10 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 		return nil, fmt.Errorf("copy config for repave")
 	}
 	data, err := o.bootstrapDataRefresher.Fetch(ctx, cfg)
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, fmt.Errorf("refresh bootstrap data for repave: %w", err)
-	}
-	if data != nil {
+	case data != nil:
 		log.Info("refreshed AKS bootstrap data for repave")
 		if data.BootstrapToken == "" {
 			return nil, fmt.Errorf("refresh bootstrap data for repave: response did not contain a bootstrap token")
