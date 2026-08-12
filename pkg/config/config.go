@@ -303,6 +303,12 @@ func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil
 }
 
+// NeedsBootstrapDataRefresh reports whether repave can replace the short-lived
+// bootstrap token by authenticating to AKS RP with a durable Azure credential.
+func (cfg *Config) NeedsBootstrapDataRefresh() bool {
+	return cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.IsMIConfigured() || cfg.IsSPConfigured())
+}
+
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
 // config so bootstrap, daemon watches, and lifecycle operations use one value.
 func (cfg *Config) resolveNodeName(hostnameFunc func() (string, error)) (string, error) {

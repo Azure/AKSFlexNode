@@ -22,6 +22,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/google/renameio/v2"
 
+	"github.com/Azure/AKSFlexNode/pkg/azclient"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
@@ -52,6 +53,43 @@ type Options struct {
 	AuthorityHost           string
 	APIVersion              string
 	OutputPath              string
+}
+
+// OptionsFromConfig converts validated runtime configuration into options for
+// an in-memory listBootstrapData request.
+func OptionsFromConfig(cfg *config.Config) (Options, error) {
+	if cfg == nil || cfg.Azure.TargetCluster == nil {
+		return Options{}, fmt.Errorf("target AKS cluster is not configured")
+	}
+	environment := azclient.ResourceManagerEnvironmentFromConfig(cfg)
+	options := Options{
+		ClusterResourceID:       cfg.Azure.TargetCluster.ResourceID,
+		AgentPoolName:           cfg.Azure.TargetAgentPoolName,
+		ResourceManagerEndpoint: environment.Endpoint,
+		AuthorityHost:           environment.AuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+
+	switch {
+	case cfg.IsMIConfigured():
+		options.AuthMode = "managed-identity"
+		options.MSIClientID = cfg.Azure.ManagedIdentity.ClientID
+	case cfg.IsSPConfigured():
+		options.AuthMode = "service-principal"
+		options.SPTenantID = cfg.Azure.ServicePrincipal.TenantID
+		options.SPClientID = cfg.Azure.ServicePrincipal.ClientID
+		if cfg.Azure.ServicePrincipal.ClientSecretFile != "" {
+			// Config validation leaves ClientSecretFile populated only when it
+			// contains a certificate. Secret files are loaded into ClientSecret.
+			options.SPClientCertificateFile = cfg.Azure.ServicePrincipal.ClientSecretFile
+		} else {
+			options.SPClientSecret = cfg.Azure.ServicePrincipal.ClientSecret
+		}
+	default:
+		return Options{}, fmt.Errorf("bootstrap-data refresh requires managed identity or service-principal authentication")
+	}
+
+	return options, nil
 }
 
 // Data contains the short-lived Kubernetes join credentials returned by

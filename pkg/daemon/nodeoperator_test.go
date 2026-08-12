@@ -199,9 +199,9 @@ func TestBootstrapDataOptionsFromConfig(t *testing.T) {
 		},
 		TargetAgentPoolName: "pool",
 	}}
-	got, err := bootstrapDataOptionsFromConfig(cfg)
+	got, err := bootstrapdata.OptionsFromConfig(cfg)
 	if err != nil {
-		t.Fatalf("bootstrapDataOptionsFromConfig() error = %v", err)
+		t.Fatalf("bootstrapdata.OptionsFromConfig() error = %v", err)
 	}
 	if got.AuthMode != "managed-identity" || got.MSIClientID != "identity" {
 		t.Fatalf("managed identity options = %#v", got)
@@ -241,9 +241,9 @@ func TestBootstrapDataOptionsFromServicePrincipal(t *testing.T) {
 				},
 				TargetAgentPoolName: "pool",
 			}}
-			got, err := bootstrapDataOptionsFromConfig(cfg)
+			got, err := bootstrapdata.OptionsFromConfig(cfg)
 			if err != nil {
-				t.Fatalf("bootstrapDataOptionsFromConfig() error = %v", err)
+				t.Fatalf("bootstrapdata.OptionsFromConfig() error = %v", err)
 			}
 			if got.AuthMode != "service-principal" || got.SPTenantID != "tenant" || got.SPClientID != "client" {
 				t.Fatalf("service-principal identity options = %#v", got)

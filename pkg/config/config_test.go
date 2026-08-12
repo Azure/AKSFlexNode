@@ -2619,6 +2619,55 @@ func labelKeys(m map[string]string) []string {
 	return keys
 }
 
+func TestNeedsBootstrapDataRefresh(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cfg  *Config
+		want bool
+	}{
+		"nil config": {},
+		"bootstrap token only": {
+			cfg: &Config{Azure: AzureConfig{BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"}}},
+		},
+		"managed identity only": {
+			cfg: &Config{Azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}}},
+		},
+		"bootstrap token and managed identity": {
+			cfg: &Config{Azure: AzureConfig{
+				BootstrapToken:  &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
+				ManagedIdentity: &ManagedIdentityConfig{},
+			}},
+			want: true,
+		},
+		"bootstrap token and service principal": {
+			cfg: &Config{Azure: AzureConfig{
+				BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
+				ServicePrincipal: &ServicePrincipalConfig{
+					TenantID: "tenant",
+					ClientID: "client",
+				},
+			}},
+			want: true,
+		},
+		"bootstrap token and Arc": {
+			cfg: &Config{Azure: AzureConfig{
+				BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
+				Arc:            &ArcConfig{Enabled: true},
+			}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.cfg.NeedsBootstrapDataRefresh(); got != tt.want {
+				t.Errorf("NeedsBootstrapDataRefresh() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsBootstrapTokenConfigured(t *testing.T) {
 	tests := []struct {
 		name     string
