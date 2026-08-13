@@ -22,6 +22,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/google/renameio/v2"
 
+	"github.com/Azure/AKSFlexNode/pkg/azclient"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
@@ -49,9 +50,58 @@ type Options struct {
 	SPClientCertificateFile string
 	SPClientCredentialFile  string
 	ResourceManagerEndpoint string
+	ResourceManagerAudience string
 	AuthorityHost           string
 	APIVersion              string
 	OutputPath              string
+}
+
+// OptionsFromConfig converts validated runtime configuration into options for
+// an in-memory listBootstrapData request.
+func OptionsFromConfig(cfg *config.Config) (Options, error) {
+	if cfg == nil || cfg.Azure.TargetCluster == nil {
+		return Options{}, fmt.Errorf("target AKS cluster is not configured")
+	}
+	environment := azclient.ResourceManagerEnvironmentFromConfig(cfg)
+	options := Options{
+		ClusterResourceID:       cfg.Azure.TargetCluster.ResourceID,
+		AgentPoolName:           cfg.Azure.TargetAgentPoolName,
+		ResourceManagerEndpoint: environment.Endpoint,
+		ResourceManagerAudience: environment.Audience,
+		AuthorityHost:           environment.AuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+
+	switch {
+	case cfg.IsMIConfigured():
+		options.AuthMode = "managed-identity"
+		options.MSIClientID = cfg.Azure.ManagedIdentity.ClientID
+	case cfg.IsSPConfigured():
+		options.AuthMode = "service-principal"
+		options.SPTenantID = cfg.Azure.ServicePrincipal.TenantID
+		options.SPClientID = cfg.Azure.ServicePrincipal.ClientID
+		if cfg.Azure.ServicePrincipal.ClientSecretFile != "" {
+			// Config validation leaves ClientSecretFile populated only when it
+			// contains a certificate. Secret files are loaded into ClientSecret.
+			options.SPClientCertificateFile = cfg.Azure.ServicePrincipal.ClientSecretFile
+		} else {
+			options.SPClientSecret = cfg.Azure.ServicePrincipal.ClientSecret
+		}
+	default:
+		return Options{}, fmt.Errorf("bootstrap-data refresh requires managed identity or service-principal authentication")
+	}
+
+	return options, nil
+}
+
+// Data contains the short-lived Kubernetes join credentials returned by
+// listBootstrapData. The raw response is retained only so the bootstrap CLI can
+// write the complete RP response; runtime callers should use the typed fields.
+type Data struct {
+	BootstrapToken string
+	ClusterFQDN    string
+	CACertData     string
+	raw            map[string]any
 }
 
 type dependencies struct {
@@ -71,67 +121,24 @@ func defaultDependencies() dependencies {
 	}
 }
 
+// Fetch obtains fresh bootstrap data without persisting the sensitive response.
+func Fetch(ctx context.Context, options Options) (*Data, error) {
+	return fetch(ctx, options, defaultDependencies())
+}
+
 func FetchAndWrite(ctx context.Context, options Options) error {
 	return fetchAndWrite(ctx, options, defaultDependencies())
 }
 
 func fetchAndWrite(ctx context.Context, options Options, deps dependencies) error {
-	if err := validateOptions(options); err != nil {
-		return err
+	if strings.TrimSpace(options.OutputPath) == "" {
+		return fmt.Errorf("output path is required")
 	}
-	endpoint := strings.TrimRight(options.ResourceManagerEndpoint, "/")
-	clientOptions := azcore.ClientOptions{Cloud: cloud.Configuration{
-		ActiveDirectoryAuthorityHost: options.AuthorityHost,
-		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			cloud.ResourceManager: {Endpoint: endpoint, Audience: endpoint},
-		},
-	}}
-	credential, err := deps.credential(options, clientOptions)
+	result, err := fetch(ctx, options, deps)
 	if err != nil {
 		return err
 	}
-	token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{endpoint + "/.default"}})
-	if err != nil {
-		return fmt.Errorf("acquire ARM token: %w", err)
-	}
-	requestURL := endpoint + options.ClusterResourceID + "/agentPools/" + options.AgentPoolName +
-		"/listBootstrapData?api-version=" + options.APIVersion
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("create bootstrap-data request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token.Token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := deps.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("fetch bootstrap data: %w", err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_ = response.Body.Close()
-		return fmt.Errorf("fetch bootstrap data returned HTTP status %d", response.StatusCode)
-	}
-	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return fmt.Errorf("read bootstrap data: %w", readErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close bootstrap-data response: %w", closeErr)
-	}
-	if int64(len(data)) > maxResponseBytes {
-		return fmt.Errorf("bootstrap data exceeds %d bytes", maxResponseBytes)
-	}
-	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
-		return fmt.Errorf("parse bootstrap data: %w", err)
-	}
-	azure, _ := result["azure"].(map[string]any)
-	bootstrapToken, _ := azure["bootstrapToken"].(map[string]any)
-	value, _ := bootstrapToken["token"].(string)
-	if value == "" {
-		return fmt.Errorf("bootstrap-data response did not contain a bootstrap token")
-	}
-	formatted, err := json.MarshalIndent(result, "", "  ")
+	formatted, err := json.MarshalIndent(result.raw, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal bootstrap data: %w", err)
 	}
@@ -145,10 +152,100 @@ func fetchAndWrite(ctx context.Context, options Options, deps dependencies) erro
 	return os.Chmod(options.OutputPath, 0o600)
 }
 
+func fetch(ctx context.Context, options Options, deps dependencies) (*Data, error) {
+	if err := validateOptions(options); err != nil {
+		return nil, err
+	}
+	endpoint := strings.TrimRight(options.ResourceManagerEndpoint, "/")
+	audience := strings.TrimRight(options.ResourceManagerAudience, "/")
+	if audience == "" {
+		audience = endpoint
+	}
+	clientOptions := azcore.ClientOptions{Cloud: cloud.Configuration{
+		ActiveDirectoryAuthorityHost: options.AuthorityHost,
+		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+			cloud.ResourceManager: {Endpoint: endpoint, Audience: audience},
+		},
+	}}
+	credential, err := deps.credential(options, clientOptions)
+	if err != nil {
+		return nil, err
+	}
+	token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
+	if err != nil {
+		return nil, fmt.Errorf("acquire ARM token: %w", err)
+	}
+	requestURL := endpoint + options.ClusterResourceID + "/agentPools/" + options.AgentPoolName +
+		"/listBootstrapData?api-version=" + options.APIVersion
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("create bootstrap-data request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token.Token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := deps.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("fetch bootstrap data: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_ = response.Body.Close()
+		return nil, fmt.Errorf("fetch bootstrap data returned HTTP status %d", response.StatusCode)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	closeErr := response.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read bootstrap data: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close bootstrap-data response: %w", closeErr)
+	}
+	if int64(len(data)) > maxResponseBytes {
+		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", maxResponseBytes)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse bootstrap data: %w", err)
+	}
+	var responseData struct {
+		Azure struct {
+			BootstrapToken struct {
+				Token string `json:"token"`
+			} `json:"bootstrapToken"`
+		} `json:"azure"`
+		Node struct {
+			Kubelet struct {
+				ClusterFQDN string `json:"clusterFQDN"`
+				CACertData  string `json:"caCertData"`
+			} `json:"kubelet"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal(data, &responseData); err != nil {
+		return nil, fmt.Errorf("parse typed bootstrap data: %w", err)
+	}
+	if responseData.Azure.BootstrapToken.Token == "" {
+		return nil, fmt.Errorf("bootstrap-data response did not contain a bootstrap token")
+	}
+	if !config.BootstrapTokenPattern.MatchString(responseData.Azure.BootstrapToken.Token) {
+		return nil, fmt.Errorf("bootstrap-data response contained an invalid bootstrap token")
+	}
+	return &Data{
+		BootstrapToken: responseData.Azure.BootstrapToken.Token,
+		ClusterFQDN:    responseData.Node.Kubelet.ClusterFQDN,
+		CACertData:     responseData.Node.Kubelet.CACertData,
+		raw:            raw,
+	}, nil
+}
+
 func validateOptions(options Options) error {
 	endpoint, err := url.Parse(options.ResourceManagerEndpoint)
 	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
 		return fmt.Errorf("resource manager endpoint must be an absolute HTTPS URL")
+	}
+	if options.ResourceManagerAudience != "" {
+		audience, err := url.Parse(options.ResourceManagerAudience)
+		if err != nil || audience.Scheme != "https" || audience.Host == "" || audience.User != nil {
+			return fmt.Errorf("resource manager audience must be an absolute HTTPS URL")
+		}
 	}
 	authority, err := url.Parse(options.AuthorityHost)
 	if err != nil || authority.Scheme != "https" || authority.Host == "" || authority.User != nil {
@@ -166,9 +263,6 @@ func validateOptions(options Options) error {
 	}
 	if !apiVersionPattern.MatchString(options.APIVersion) {
 		return fmt.Errorf("invalid API version %q", options.APIVersion)
-	}
-	if strings.TrimSpace(options.OutputPath) == "" {
-		return fmt.Errorf("output path is required")
 	}
 	return nil
 }

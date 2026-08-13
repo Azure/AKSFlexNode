@@ -108,7 +108,8 @@ Additional environment variables:
 | `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
-| `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Target AKS agent pool name written to generated node configs. |
+| `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
+| `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool provisioned for the MSI scenario and used for `listBootstrapData`. |
 | `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_MEMORY` | `100Mi` | `node.kubelet.systemReserved.memory` override written to the bootstrap-token node config. |
@@ -141,7 +142,7 @@ The suite validates four join paths:
 
 | VM | Auth Mode | Join Path |
 |----|-----------|-----------|
-| `vm-e2e-msi-*` | Managed Identity | Generated managed-identity config and `aks-flex-node start` flow. |
+| `vm-e2e-msi-*` | Managed Identity + Bootstrap Token | Operator-first dual-auth config using AKS RP `listBootstrapData`; repave invalidates the original token and requires an in-memory refresh. |
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
 | `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test builds a bootstrap artifact bundle at runtime, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}`. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
@@ -200,11 +201,13 @@ Run it against joined infrastructure:
 The `upgrade-drift` command validates the controller-machine-driven repave path:
 
 1. Ensure the selected mode is joined.
-2. Update the machine goal in the controller's `kube-system/aks-flex-machines` ConfigMap.
-3. Delete the Kubernetes `Node` object to trigger repave.
-4. Wait for the active nspawn side to report the desired kubelet version.
-5. Wait for the Kubernetes `Node` to become `Ready` again with the desired kubelet version.
-6. Run a smoke workload on the repaved node.
+2. For MSI, delete the original bootstrap-token Secret so the alternate kubelet cannot reuse its persisted token.
+3. Update the machine goal in the controller's `kube-system/aks-flex-machines` ConfigMap.
+4. Delete the Kubernetes `Node` object to trigger repave.
+5. Wait for the active nspawn side to report the desired kubelet version.
+6. Wait for the Kubernetes `Node` to return with a new UID, become `Ready`, and report the desired kubelet version.
+7. For MSI, verify the daemon logged a bootstrap-data refresh and did not persist the fresh response. AKS RP may recreate the deleted Secret with the same token ID while renewing its validity.
+8. Run a smoke workload on the repaved node.
 
 Run it after infrastructure is deployed:
 
