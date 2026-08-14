@@ -21,6 +21,9 @@ const (
 	// aksAADServerID is the Azure AD server application ID for AKS.
 	aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
 
+	// Mark the node as unmanaged by cloud-controller-manager so it is not
+	// deleted when it becomes NotReady. See:
+	// https://cloud-provider-azure.sigs.k8s.io/topics/cross-resource-group-nodes/#unmanaged-nodes
 	managedNodeLabel      = "kubernetes.azure.com/managed"
 	agentPoolNodeLabel    = "kubernetes.azure.com/agentpool"
 	modeNodeLabel         = "kubernetes.azure.com/mode"
