@@ -188,3 +188,45 @@ func TestNodeConfigValidateMaxPods(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeConfigValidateAKSOwnedLabels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		labels  map[string]string
+		wantErr bool
+	}{
+		{name: "custom label", labels: map[string]string{"workload": "edge"}},
+		{name: "managed", labels: map[string]string{managedNodeLabel: "false"}, wantErr: true},
+		{name: "agent pool", labels: map[string]string{agentPoolNodeLabel: "pool"}, wantErr: true},
+		{name: "mode", labels: map[string]string{modeNodeLabel: "user"}, wantErr: true},
+		{name: "node pool type", labels: map[string]string{nodePoolTypeNodeLabel: "FlexNodes"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := NodeConfig{
+				MaxPods: 110,
+				Labels:  tt.labels,
+				Kubelet: KubeletConfig{
+					Verbosity:            2,
+					ImageGCHighThreshold: 85,
+					ImageGCLowThreshold:  80,
+				},
+			}
+			err := cfg.validate()
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "AKS-owned label") {
+					t.Fatalf("validate error = %v, want AKS-owned label error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+		})
+	}
+}
