@@ -325,9 +325,6 @@ node_join_kubeadm() {
     }
   },
   "node": {
-    "labels": {
-      "kubernetes.azure.com/managed": "false"
-    },
     "kubelet": {
       "clusterFQDN": "${server_url}",
       "caCertData": "${ca_cert_data}"

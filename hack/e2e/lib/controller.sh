@@ -352,9 +352,7 @@ _render_machine_json() {
         kubernetes: {
           orchestratorVersion: $kubernetesVersion,
           maxPods: 110,
-          nodeLabels: {
-            "kubernetes.azure.com/managed": "false"
-          },
+          nodeLabels: {},
           nodeTaints: [],
           kubeletConfig: {
             imageGcHighThreshold: 85,
