@@ -88,6 +88,19 @@ func TestMachineFromEndpointJSONUsesARMModel(t *testing.T) {
 	}
 }
 
+func TestMachineFromEndpointJSONRejectsMissingETag(t *testing.T) {
+	t.Parallel()
+
+	_, err := machineFromEndpointJSON([]byte(`{
+  "properties": {
+    "kubernetes": {"orchestratorVersion": "1.34.0"}
+  }
+}`))
+	if err == nil || !strings.Contains(err.Error(), "goal settings version is empty") {
+		t.Fatalf("machineFromEndpointJSON() error = %v, want missing settings version", err)
+	}
+}
+
 func TestClusterEndpointClientNotFound(t *testing.T) {
 	t.Parallel()
 

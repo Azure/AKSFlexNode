@@ -28,56 +28,89 @@ func EnsureMachine(machines MachineClient, goal *GoalState, require bool, logger
 func (t *ensureMachineTask) Name() string { return "ensure-machine" }
 
 func (t *ensureMachineTask) Do(ctx context.Context) error {
-	machine, err := t.machines.Get(ctx)
-	if err == nil {
-		if machine != nil && machine.Goal.KubernetesVersion == t.goal.KubernetesVersion {
-			t.logger.Info("machine already registered, skipping")
-			return t.adoptSettingsVersion(machine, "get machine")
-		}
+	remoteMachine, err := t.fetchRemoteMachine(ctx)
+	if err != nil {
+		return t.handleError("get machine", err)
+	}
 
-		remoteVersion := ""
-		if machine != nil {
-			remoteVersion = machine.Goal.KubernetesVersion
+	switch {
+	case remoteMachine == nil:
+		remoteMachine, err = t.createRemoteMachineFromGoal(ctx)
+		if err != nil {
+			return t.handleError("create machine", err)
 		}
-		t.logger.Info(
-			"updating registered machine from local bootstrap config",
-			"remoteKubernetesVersion", remoteVersion,
-			"localKubernetesVersion", t.goal.KubernetesVersion,
-		)
-		machine, err = t.machines.Create(ctx, *t.goal)
+	case machineGoalHasDrift(remoteMachine.Goal, *t.goal):
+		remoteMachine, err = t.updateRemoteMachineFromGoal(ctx, remoteMachine)
 		if err != nil {
 			return t.handleError("update machine", err)
 		}
-		return t.adoptSettingsVersion(machine, "update machine")
+	default:
+		t.logger.Info("machine already registered, skipping")
 	}
-
-	var notFound *NotFoundError
-	if !errors.As(err, &notFound) {
-		return t.handleError("get machine", err)
-	}
-	machine, err = t.machines.Create(ctx, *t.goal)
-	if err != nil {
-		return t.handleError("create machine", err)
-	}
-	return t.adoptSettingsVersion(machine, "create machine")
+	t.applyGoalStateWithRemoteMachineSettingsVersion(remoteMachine)
+	return nil
 }
 
-func (t *ensureMachineTask) adoptSettingsVersion(machine *Machine, operation string) error {
-	if machine == nil {
-		return t.handleError(operation, fmt.Errorf("AKS returned a nil machine"))
+func (t *ensureMachineTask) fetchRemoteMachine(ctx context.Context) (*Machine, error) {
+	machine, err := t.machines.Get(ctx)
+	var notFound *NotFoundError
+	if errors.As(err, &notFound) {
+		return nil, nil
 	}
-	if machine.Goal.KubernetesVersion != t.goal.KubernetesVersion {
-		return t.handleError(
-			operation,
-			fmt.Errorf(
-				"AKS machine Kubernetes version %q does not match local bootstrap version %q",
-				machine.Goal.KubernetesVersion,
-				t.goal.KubernetesVersion,
-			),
+	if err != nil {
+		return nil, err
+	}
+	if err := machine.Validate(); err != nil {
+		return nil, fmt.Errorf("AKS returned an invalid machine: %w", err)
+	}
+	return machine, nil
+}
+
+func (t *ensureMachineTask) createRemoteMachineFromGoal(ctx context.Context) (*Machine, error) {
+	machine, err := t.machines.Create(ctx, *t.goal)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMachineForGoal(machine, *t.goal); err != nil {
+		return nil, err
+	}
+	return machine, nil
+}
+
+func (t *ensureMachineTask) updateRemoteMachineFromGoal(ctx context.Context, current *Machine) (*Machine, error) {
+	t.logger.Info(
+		"updating registered machine from local bootstrap config",
+		"remoteKubernetesVersion", current.Goal.KubernetesVersion,
+		"localKubernetesVersion", t.goal.KubernetesVersion,
+	)
+	machine, err := t.machines.Create(ctx, *t.goal)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMachineForGoal(machine, *t.goal); err != nil {
+		return nil, err
+	}
+	return machine, nil
+}
+
+func (t *ensureMachineTask) applyGoalStateWithRemoteMachineSettingsVersion(machine *Machine) {
+	t.goal.SettingsVersion = machine.Goal.SettingsVersion
+}
+
+func machineGoalHasDrift(remote, desired GoalState) bool {
+	return remote.KubernetesVersion != desired.KubernetesVersion
+}
+
+func validateMachineForGoal(machine *Machine, goal GoalState) error {
+	if err := machine.Validate(); err != nil {
+		return fmt.Errorf("AKS returned an invalid machine: %w", err)
+	}
+	if machine.Goal.KubernetesVersion != goal.KubernetesVersion {
+		return fmt.Errorf(
+			"AKS machine Kubernetes version %q does not match local bootstrap version %q",
+			machine.Goal.KubernetesVersion,
+			goal.KubernetesVersion,
 		)
-	}
-	if machine.Goal.SettingsVersion != "" {
-		t.goal.SettingsVersion = machine.Goal.SettingsVersion
 	}
 	return nil
 }

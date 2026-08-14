@@ -317,7 +317,7 @@ func TestMachineFromARM(t *testing.T) {
 			},
 			ProvisioningState: ptr("Succeeded"),
 		},
-	}, GoalState{SettingsVersion: "fallback-settings"})
+	}, "default-id", "default-name")
 
 	if machine.ID != "machine-id" || machine.Name != "node1" {
 		t.Fatalf("machine identity = %#v", machine)
@@ -398,7 +398,7 @@ func TestValidateMachineIdentity(t *testing.T) {
 	}
 }
 
-func TestMachineFromARMUsesCurrentOrchestratorVersionFallback(t *testing.T) {
+func TestMachineFromARMDoesNotUseCurrentOrchestratorVersionAsGoal(t *testing.T) {
 	t.Parallel()
 
 	currentVersion := "1.35.2"
@@ -408,13 +408,36 @@ func TestMachineFromARMUsesCurrentOrchestratorVersionFallback(t *testing.T) {
 				CurrentOrchestratorVersion: &currentVersion,
 			},
 		},
-	}, GoalState{})
+	}, "", "")
 
-	if machine.Goal.KubernetesVersion != currentVersion {
-		t.Fatalf("KubernetesVersion = %q, want %q", machine.Goal.KubernetesVersion, currentVersion)
+	if machine.Goal.KubernetesVersion != "" {
+		t.Fatalf("KubernetesVersion = %q, want empty without desired orchestratorVersion", machine.Goal.KubernetesVersion)
 	}
-	if machine.Goal.SettingsVersion != currentVersion {
-		t.Fatalf("SettingsVersion = %q, want %q", machine.Goal.SettingsVersion, currentVersion)
+}
+
+func TestMachineFromARMDoesNotSynthesizeSettingsVersion(t *testing.T) {
+	t.Parallel()
+
+	machine := machineFromARM(armcontainerservice.Machine{
+		Properties: &armcontainerservice.MachineProperties{
+			Kubernetes: &armcontainerservice.MachineKubernetesProfile{
+				OrchestratorVersion: ptr("1.35.2"),
+			},
+		},
+	}, "", "")
+
+	if machine.Goal.SettingsVersion != "" {
+		t.Fatalf("SettingsVersion = %q, want empty without ETag", machine.Goal.SettingsVersion)
+	}
+}
+
+func TestMachineFromARMBackfillsIdentity(t *testing.T) {
+	t.Parallel()
+
+	machine := machineFromARM(armcontainerservice.Machine{}, "machine-id", "node1")
+
+	if machine.ID != "machine-id" || machine.Name != "node1" {
+		t.Fatalf("machine identity = %#v, want backfilled identity", machine)
 	}
 }
 

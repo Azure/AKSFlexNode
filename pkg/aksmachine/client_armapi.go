@@ -77,9 +77,10 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 	if err := c.validateMachineIdentity(resp.Machine); err != nil {
 		return nil, err
 	}
-	result := machineFromARM(resp.Machine, desired)
-	result.ID = c.machineID.String()
-	result.Name = c.machineID.Name
+	result := machineFromARM(resp.Machine, c.machineID.String(), c.machineID.Name)
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("validate create machine response: %w", err)
+	}
 	return result, nil
 }
 
@@ -103,9 +104,10 @@ func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 	if err := c.validateMachineIdentity(resp.Machine); err != nil {
 		return nil, err
 	}
-	result := machineFromARM(resp.Machine, GoalState{})
-	result.ID = c.machineID.String()
-	result.Name = c.machineID.Name
+	result := machineFromARM(resp.Machine, c.machineID.String(), c.machineID.Name)
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("validate get machine response: %w", err)
+	}
 	return result, nil
 }
 
@@ -256,8 +258,8 @@ func (c *armMachineClient) validateMachineIdentity(machine armcontainerservice.M
 	return nil
 }
 
-func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Machine {
-	result := &Machine{Goal: fallback}
+func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName string) *Machine {
+	result := &Machine{ID: defaultID, Name: defaultName}
 	if machine.ID != nil {
 		result.ID = *machine.ID
 	}
@@ -273,9 +275,6 @@ func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Ma
 		kubernetes := properties.Kubernetes
 		if kubernetes.OrchestratorVersion != nil {
 			result.Goal.KubernetesVersion = *kubernetes.OrchestratorVersion
-		}
-		if result.Goal.KubernetesVersion == "" && kubernetes.CurrentOrchestratorVersion != nil {
-			result.Goal.KubernetesVersion = *kubernetes.CurrentOrchestratorVersion
 		}
 		if kubernetes.MaxPods != nil {
 			result.Goal.MaxPods = int(*kubernetes.MaxPods)
@@ -297,9 +296,6 @@ func machineFromARM(machine armcontainerservice.Machine, fallback GoalState) *Ma
 	}
 	if properties.ETag != nil {
 		result.Goal.SettingsVersion = *properties.ETag
-	}
-	if result.Goal.SettingsVersion == "" {
-		result.Goal.SettingsVersion = result.Goal.KubernetesVersion
 	}
 	if properties.ProvisioningState != nil {
 		result.Status.ProvisioningState = ProvisioningState(*properties.ProvisioningState)

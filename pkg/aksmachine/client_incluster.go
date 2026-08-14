@@ -170,8 +170,8 @@ func (c *clusterEndpointClient) adoptExistingMachine(ctx context.Context, desire
 }
 
 func validateAdoptedMachine(machine *Machine, desired GoalState) error {
-	if machine == nil {
-		return fmt.Errorf("cluster endpoint returned nil machine")
+	if err := machine.Validate(); err != nil {
+		return fmt.Errorf("cluster endpoint returned invalid machine: %w", err)
 	}
 	if desired.KubernetesVersion != "" && machine.Goal.KubernetesVersion != "" && machine.Goal.KubernetesVersion != desired.KubernetesVersion {
 		return fmt.Errorf("pre-created machine Kubernetes version %q does not match desired %q", machine.Goal.KubernetesVersion, desired.KubernetesVersion)
@@ -279,7 +279,11 @@ func machineFromEndpointJSON(data []byte) (*Machine, error) {
 	if err := json.Unmarshal(data, &armMachine); err != nil {
 		return nil, fmt.Errorf("decode cluster endpoint machine response: %w", err)
 	}
-	return machineFromARM(armMachine, GoalState{}), nil
+	machine := machineFromARM(armMachine, "", "")
+	if err := machine.Validate(); err != nil {
+		return nil, fmt.Errorf("validate cluster endpoint machine response: %w", err)
+	}
+	return machine, nil
 }
 
 func joinEndpointURLPath(base string, elem ...string) string {

@@ -84,7 +84,7 @@ func TestEnsureMachineGetFailure(t *testing.T) {
 func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 	t.Parallel()
 
-	goal := GoalState{KubernetesVersion: "1.35.1", SettingsVersion: "1.35.1"}
+	goal := GoalState{KubernetesVersion: "1.35.1"}
 	client := &ensureMachineClient{createResult: &Machine{Goal: GoalState{
 		KubernetesVersion: "1.35.1",
 		SettingsVersion:   "etag-created",
@@ -107,7 +107,6 @@ func TestEnsureMachineAdoptsExistingSettingsVersionWithoutReplacingLocalGoal(t *
 
 	goal := GoalState{
 		KubernetesVersion: "1.35.1",
-		SettingsVersion:   "1.35.1",
 		MaxPods:           30,
 		NodeLabels:        map[string]string{"source": "local"},
 		NodeTaints:        []string{"local=true:NoSchedule"},
@@ -149,7 +148,7 @@ func TestEnsureMachineAdoptsExistingSettingsVersionWithoutReplacingLocalGoal(t *
 func TestEnsureMachineUpdatesMismatchedVersion(t *testing.T) {
 	t.Parallel()
 
-	goal := GoalState{KubernetesVersion: "1.35.1", SettingsVersion: "1.35.1"}
+	goal := GoalState{KubernetesVersion: "1.35.1"}
 	client := &ensureMachineClient{
 		machine: &Machine{Goal: GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "etag-old"}},
 		createResult: &Machine{Goal: GoalState{
@@ -176,7 +175,7 @@ func TestEnsureMachineUpdatesMismatchedVersion(t *testing.T) {
 func TestEnsureMachineRejectsUnchangedRemoteVersionAfterUpdate(t *testing.T) {
 	t.Parallel()
 
-	goal := GoalState{KubernetesVersion: "1.35.1", SettingsVersion: "1.35.1"}
+	goal := GoalState{KubernetesVersion: "1.35.1"}
 	client := &ensureMachineClient{
 		machine: &Machine{Goal: GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "etag-old"}},
 		createResult: &Machine{Goal: GoalState{
@@ -190,13 +189,63 @@ func TestEnsureMachineRejectsUnchangedRemoteVersionAfterUpdate(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `AKS machine Kubernetes version "1.34.0" does not match local bootstrap version "1.35.1"`) {
 		t.Fatalf("Do() error = %v, want version mismatch", err)
 	}
-	if goal.SettingsVersion != "1.35.1" {
-		t.Fatalf("SettingsVersion = %q, want local fallback", goal.SettingsVersion)
+	if goal.SettingsVersion != "" {
+		t.Fatalf("SettingsVersion = %q, want empty before a valid Machine response", goal.SettingsVersion)
+	}
+}
+
+func TestEnsureMachineRejectsInvalidExistingMachine(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		machine *Machine
+		require bool
+		wantErr string
+	}{
+		"best effort preserves local goal after missing settings version": {
+			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
+		},
+		"required rejects missing settings version": {
+			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
+			require: true,
+			wantErr: "goal settings version is empty",
+		},
+		"best effort preserves local goal after nil response": {},
+		"required rejects nil response": {
+			require: true,
+			wantErr: "machine is nil",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			goal := GoalState{KubernetesVersion: "1.35.1", NodeLabels: map[string]string{"source": "local"}}
+			client := &ensureMachineClient{machine: tt.machine, getResultSet: true}
+			task := EnsureMachine(client, &goal, tt.require, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			err := task.Do(t.Context())
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Do() error = %v, want containing %q", err, tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			if goal.SettingsVersion != "" || goal.NodeLabels["source"] != "local" {
+				t.Fatalf("local goal changed after invalid response: %#v", goal)
+			}
+			if client.createCalls != 0 {
+				t.Fatalf("Create() calls = %d, want 0", client.createCalls)
+			}
+		})
 	}
 }
 
 type ensureMachineClient struct {
 	machine      *Machine
+	getResultSet bool
 	createResult *Machine
 	getErr       error
 	createErr    error
@@ -208,7 +257,7 @@ func (c *ensureMachineClient) Get(context.Context) (*Machine, error) {
 	if c.getErr != nil {
 		return nil, c.getErr
 	}
-	if c.machine != nil {
+	if c.getResultSet || c.machine != nil {
 		return c.machine, nil
 	}
 	return nil, &NotFoundError{Resource: "machine"}

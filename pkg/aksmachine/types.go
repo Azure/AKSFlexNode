@@ -49,11 +49,8 @@ func (g GoalState) validate() error {
 // GoalStateFromConfig builds and validates the initial AKS machine goal state
 // from local agent configuration.
 func GoalStateFromConfig(cfg *config.Config) (GoalState, error) {
-	// Until the finalized Machine API exposes a settings version in all paths,
-	// use KubernetesVersion as the same stable fallback used by ARM reads.
 	goal := GoalState{
 		KubernetesVersion: cfg.Components.Kubernetes,
-		SettingsVersion:   cfg.Components.Kubernetes,
 		MaxPods:           cfg.Node.MaxPods,
 		NodeLabels:        maps.Clone(cfg.Node.Labels),
 		NodeTaints:        slices.Clone(cfg.Node.Taints),
@@ -91,6 +88,21 @@ type Machine struct {
 	Name   string    `json:"name,omitempty"`
 	Goal   GoalState `json:"goal"`
 	Status Status    `json:"status"`
+}
+
+// Validate verifies that a Machine returned by AKS contains a goal suitable
+// for bootstrap or reconciliation.
+func (m *Machine) Validate() error {
+	if m == nil {
+		return fmt.Errorf("machine is nil")
+	}
+	if err := m.Goal.validate(); err != nil {
+		return fmt.Errorf("goal: %w", err)
+	}
+	if m.Goal.SettingsVersion == "" {
+		return fmt.Errorf("goal settings version is empty")
+	}
+	return nil
 }
 
 // MachineClient provides access to the AKS-side machine representation.

@@ -198,6 +198,9 @@ func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot
 	if err != nil {
 		return machineSnapshot{}, err
 	}
+	if err := machine.Validate(); err != nil {
+		return machineSnapshot{}, fmt.Errorf("validate AKS machine snapshot: %w", err)
+	}
 	return machineSnapshot{machine: machine}, nil
 }
 
