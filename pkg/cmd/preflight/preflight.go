@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -68,12 +69,18 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 	log := createPreflightLogger(cfg.Agent.LogLevel)
 
-	agentCfg, gs, _, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
+	machineGoalCheck, err := newMachineGoalCheck(ctx, log, cfg)
+	if err != nil {
+		return err
+	}
+
+	agentCfg, gs, _, err := daemon.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1, machineGoalCheck.remoteGoal)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
 
 	checks := preflight.Flatten(
+		[]preflight.Checker{machineGoalCheck},
 		host.Preflight(log, *agentCfg, gs),
 		nodestart.Preflight(log, *agentCfg, gs),
 		rootfs.Preflight(log, *agentCfg, gs),

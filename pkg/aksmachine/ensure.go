@@ -17,10 +17,8 @@ type ensureMachineTask struct {
 }
 
 // EnsureMachine returns a task that ensures this machine is registered in AKS.
-// Local configuration remains authoritative during bootstrap. When the remote
-// Kubernetes version already matches, the task adopts only the remote ETag as
-// the reconciliation baseline; other remote settings do not replace the local
-// goal. Subsequent ETag changes are handled by the daemon as new remote goals.
+// Local bootstrap configuration seeds a new Machine. Once a Machine exists, its
+// complete goal is authoritative for Node creation and later reconciliation.
 func EnsureMachine(machines MachineClient, goal *GoalState, require bool, logger *slog.Logger) phases.Task {
 	return &ensureMachineTask{machines: machines, goal: goal, require: require, logger: logger}
 }
@@ -30,25 +28,8 @@ func (t *ensureMachineTask) Name() string { return "ensure-machine" }
 func (t *ensureMachineTask) Do(ctx context.Context) error {
 	machine, err := t.machines.Get(ctx)
 	if err == nil {
-		if machine != nil && machine.Goal.KubernetesVersion == t.goal.KubernetesVersion {
-			t.logger.Info("machine already registered, skipping")
-			return t.adoptSettingsVersion(machine, "get machine")
-		}
-
-		remoteVersion := ""
-		if machine != nil {
-			remoteVersion = machine.Goal.KubernetesVersion
-		}
-		t.logger.Info(
-			"updating registered machine from local bootstrap config",
-			"remoteKubernetesVersion", remoteVersion,
-			"localKubernetesVersion", t.goal.KubernetesVersion,
-		)
-		machine, err = t.machines.Create(ctx, *t.goal)
-		if err != nil {
-			return t.handleError("update machine", err)
-		}
-		return t.adoptSettingsVersion(machine, "update machine")
+		t.logger.Info("ARM machine already registered, adopting remote goal")
+		return t.adoptGoal(machine, "get machine")
 	}
 
 	var notFound *NotFoundError
@@ -59,26 +40,15 @@ func (t *ensureMachineTask) Do(ctx context.Context) error {
 	if err != nil {
 		return t.handleError("create machine", err)
 	}
-	return t.adoptSettingsVersion(machine, "create machine")
+	return t.adoptGoal(machine, "create machine")
 }
 
-func (t *ensureMachineTask) adoptSettingsVersion(machine *Machine, operation string) error {
-	if machine == nil {
-		return t.handleError(operation, fmt.Errorf("AKS returned a nil machine"))
+func (t *ensureMachineTask) adoptGoal(machine *Machine, operation string) error {
+	if err := machine.Validate(); err != nil {
+		return t.handleError(operation, fmt.Errorf("AKS returned an invalid machine: %w", err))
 	}
-	if machine.Goal.KubernetesVersion != t.goal.KubernetesVersion {
-		return t.handleError(
-			operation,
-			fmt.Errorf(
-				"AKS machine Kubernetes version %q does not match local bootstrap version %q",
-				machine.Goal.KubernetesVersion,
-				t.goal.KubernetesVersion,
-			),
-		)
-	}
-	if machine.Goal.SettingsVersion != "" {
-		t.goal.SettingsVersion = machine.Goal.SettingsVersion
-	}
+
+	*t.goal = machine.Goal
 	return nil
 }
 

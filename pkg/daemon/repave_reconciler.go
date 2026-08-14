@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ type decisionKind string
 const (
 	decisionNoop                 decisionKind = "Noop"
 	decisionApplyGoalState       decisionKind = "ApplyGoalState"
+	decisionAcknowledgeGoalState decisionKind = "AcknowledgeGoalState"
 	decisionResetDelete          decisionKind = "ResetDelete"
 	decisionWaitForMachineDelete decisionKind = "WaitForMachineDelete"
 	decisionWaitForNodeSignal    decisionKind = "WaitForNodeSignal"
@@ -182,6 +184,8 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 		return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, decision.Goal.SettingsVersion, decision.Reason)
 	case decisionApplyGoalState:
 		return r.applyGoalState(ctx, state, decision.Goal)
+	case decisionAcknowledgeGoalState:
+		return r.acknowledgeGoalState(ctx, state, decision.Goal)
 	case decisionResetDelete:
 		return r.resetDelete(ctx)
 	default:
@@ -197,6 +201,9 @@ func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot
 	}
 	if err != nil {
 		return machineSnapshot{}, err
+	}
+	if err := machine.Validate(); err != nil {
+		return machineSnapshot{}, fmt.Errorf("validate AKS machine snapshot: %w", err)
 	}
 	return machineSnapshot{machine: machine}, nil
 }
@@ -220,7 +227,16 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
 		return err
 	}
-	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, newState.AppliedSettingsVersion, "machine goal state applied")
+	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, stateObservedVersion(newState), "machine goal state applied")
+}
+
+func (r *repaveReconciler) acknowledgeGoalState(ctx context.Context, state *State, goal aksmachine.GoalState) error {
+	newState, err := r.operator.AcknowledgeGoalState(ctx, goal)
+	if err != nil {
+		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
+		return err
+	}
+	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, stateObservedVersion(newState), "in-place machine goal state observed")
 }
 
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
@@ -270,15 +286,84 @@ func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 	if goalApplied(goal, state) {
 		return decision{Kind: decisionReportSucceeded, Goal: goal, Reason: "goal state is applied"}
 	}
+	if goalReflectedOnNode(goal, state, node.node) {
+		return decision{Kind: decisionAcknowledgeGoalState, Goal: goal, Reason: "goal update is already reflected on the node"}
+	}
 
 	return decision{Kind: decisionWaitForNodeSignal, Goal: goal, Reason: "goal state differs but node deletion trigger is absent"}
 }
 
+// goalApplied reports whether local daemon state has already acknowledged the
+// exact desired settings version; no further verification or action is needed.
 func goalApplied(goal aksmachine.GoalState, state *State) bool {
-	if state == nil {
+	return goal.SettingsVersion != "" && stateObservedVersion(state) == goal.SettingsVersion
+}
+
+// goalReflectedOnNode handles an unacknowledged settings version: it recognizes
+// goal updates already applied externally by AKS RP so the agent can acknowledge
+// them without mutating or repaving the host.
+func goalReflectedOnNode(goal aksmachine.GoalState, state *State, node *corev1.Node) bool {
+	if goal.SettingsVersion == "" || state == nil || state.AppliedGoal == nil || node == nil {
 		return false
 	}
-	return goal.SettingsVersion != "" && state.AppliedSettingsVersion == goal.SettingsVersion
+
+	appliedGoal := state.AppliedGoal
+	if !goalMatchesOutsideNodeState(goal, *appliedGoal) {
+		return false
+	}
+
+	return nodeLabelsMatchGoal(node.Labels, appliedGoal.NodeLabels, goal.NodeLabels) &&
+		nodeTaintsMatchGoal(node.Spec.Taints, appliedGoal.NodeTaints, goal.NodeTaints)
+}
+
+func goalMatchesOutsideNodeState(goal, applied aksmachine.GoalState) bool {
+	// Normalize the version and Node-observable fields verified below. Comparing
+	// the remaining complete value makes future GoalState fields fail closed
+	// until their application contract is explicitly implemented here.
+	applied.SettingsVersion = goal.SettingsVersion
+	applied.NodeLabels = goal.NodeLabels
+	applied.NodeTaints = goal.NodeTaints
+	return reflect.DeepEqual(applied, goal)
+}
+
+func nodeLabelsMatchGoal(nodeLabels, appliedLabels, desiredLabels map[string]string) bool {
+	for key, desiredValue := range desiredLabels {
+		if currentValue, present := nodeLabels[key]; !present || currentValue != desiredValue {
+			return false
+		}
+	}
+	for key := range appliedLabels {
+		if _, stillDesired := desiredLabels[key]; stillDesired {
+			continue
+		}
+		if _, stillPresent := nodeLabels[key]; stillPresent {
+			return false
+		}
+	}
+	return true
+}
+
+func nodeTaintsMatchGoal(nodeTaints []corev1.Taint, appliedTaints, desiredTaints []string) bool {
+	nodeTaintSet := make(map[string]struct{}, len(nodeTaints))
+	for i := range nodeTaints {
+		nodeTaintSet[nodeTaints[i].ToString()] = struct{}{}
+	}
+	desiredTaintSet := make(map[string]struct{}, len(desiredTaints))
+	for _, taint := range desiredTaints {
+		desiredTaintSet[taint] = struct{}{}
+		if _, present := nodeTaintSet[taint]; !present {
+			return false
+		}
+	}
+	for _, taint := range appliedTaints {
+		if _, stillDesired := desiredTaintSet[taint]; stillDesired {
+			continue
+		}
+		if _, stillPresent := nodeTaintSet[taint]; stillPresent {
+			return false
+		}
+	}
+	return true
 }
 
 func hasDeletionSignal(taints []corev1.Taint) bool {
@@ -291,10 +376,10 @@ func hasDeletionSignal(taints []corev1.Taint) bool {
 }
 
 func stateObservedVersion(state *State) string {
-	if state == nil {
+	if state == nil || state.AppliedGoal == nil {
 		return ""
 	}
-	return state.AppliedSettingsVersion
+	return state.AppliedGoal.SettingsVersion
 }
 
 func machineReconcileJitter(interval time.Duration) time.Duration {
