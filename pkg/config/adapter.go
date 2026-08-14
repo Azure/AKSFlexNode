@@ -20,6 +20,13 @@ const (
 
 	// aksAADServerID is the Azure AD server application ID for AKS.
 	aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
+
+	managedNodeLabel      = "kubernetes.azure.com/managed"
+	agentPoolNodeLabel    = "kubernetes.azure.com/agentpool"
+	modeNodeLabel         = "kubernetes.azure.com/mode"
+	nodePoolTypeNodeLabel = "kubernetes.azure.com/nodepool-type"
+	flexNodePoolType      = "FlexNodes"
+	userNodeMode          = "user"
 )
 
 // ToAgentConfig converts a FlexNode Config to the shared agent library's
@@ -44,7 +51,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		Kubelet: agentconfig.AgentKubeletConfig{
 			ApiServer:          cfg.APIServerURL(),
 			NodeIP:             cfg.Node.Kubelet.NodeIP,
-			Labels:             cfg.Node.Labels,
+			Labels:             kubeletNodeLabels(cfg),
 			RegisterWithTaints: cfg.Node.Taints,
 			Configuration:      kubeletConfig,
 		},
@@ -160,6 +167,20 @@ func kubeReservedOrDefault(cfg *Config, maxPods int) map[string]string {
 	}
 
 	return defaultKubeReserved(runtime.NumCPU(), hostTotalMemoryMi(), maxPods)
+}
+
+func kubeletNodeLabels(cfg *Config) map[string]string {
+	labels := maps.Clone(cfg.Node.Labels)
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+
+	// Keep AKS-owned labels out of the custom labels sent in the Machine goal.
+	labels[managedNodeLabel] = "false"
+	labels[agentPoolNodeLabel] = cfg.Azure.TargetAgentPoolName
+	labels[modeNodeLabel] = userNodeMode
+	labels[nodePoolTypeNodeLabel] = flexNodePoolType
+	return labels
 }
 
 // ResolveMachineGoalState converts FlexNode config to the shared agent config

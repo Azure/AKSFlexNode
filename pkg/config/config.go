@@ -456,9 +456,6 @@ func (c *Config) setNodeDefaults() {
 	if c.Node.Labels == nil {
 		c.Node.Labels = make(map[string]string)
 	}
-	// Mark node as unmanaged by cloud controller manager by default, otherwise ccm will delete this node if node is not ready
-	// doc: https://cloud-provider-azure.sigs.k8s.io/topics/cross-resource-group-nodes/#unmanaged-nodes
-	c.Node.Labels["kubernetes.azure.com/managed"] = "false"
 
 	// Set default kubelet configuration if not provided
 	if c.Node.Kubelet.Verbosity == 0 {
@@ -931,6 +928,11 @@ func (c *Config) validate() error {
 func (c *NodeConfig) validate() error {
 	if c.MaxPods < 0 || int64(c.MaxPods) > math.MaxInt32 {
 		return fmt.Errorf("node.maxPods must be between 0 and %d, inclusive", math.MaxInt32)
+	}
+	for _, label := range []string{managedNodeLabel, agentPoolNodeLabel, modeNodeLabel, nodePoolTypeNodeLabel} {
+		if _, configured := c.Labels[label]; configured {
+			return fmt.Errorf("node.labels cannot configure AKS-owned label %q", label)
+		}
 	}
 	return c.Kubelet.validate()
 }
