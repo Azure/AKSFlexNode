@@ -30,18 +30,18 @@ func (t *ensureMachineTask) Name() string { return "ensure-machine" }
 func (t *ensureMachineTask) Do(ctx context.Context) error {
 	machine, err := t.machines.Get(ctx)
 	if err == nil {
-		if machine != nil && machine.Goal.KubernetesVersion == t.goal.KubernetesVersion {
+		if err := machine.Validate(); err != nil {
+			return t.handleError("get machine", fmt.Errorf("AKS returned an invalid machine: %w", err))
+		}
+		if machine.Goal.KubernetesVersion == t.goal.KubernetesVersion {
 			t.logger.Info("machine already registered, skipping")
-			return t.adoptSettingsVersion(machine, "get machine")
+			t.goal.SettingsVersion = machine.Goal.SettingsVersion
+			return nil
 		}
 
-		remoteVersion := ""
-		if machine != nil {
-			remoteVersion = machine.Goal.KubernetesVersion
-		}
 		t.logger.Info(
 			"updating registered machine from local bootstrap config",
-			"remoteKubernetesVersion", remoteVersion,
+			"remoteKubernetesVersion", machine.Goal.KubernetesVersion,
 			"localKubernetesVersion", t.goal.KubernetesVersion,
 		)
 		machine, err = t.machines.Create(ctx, *t.goal)
@@ -63,8 +63,8 @@ func (t *ensureMachineTask) Do(ctx context.Context) error {
 }
 
 func (t *ensureMachineTask) adoptSettingsVersion(machine *Machine, operation string) error {
-	if machine == nil {
-		return t.handleError(operation, fmt.Errorf("AKS returned a nil machine"))
+	if err := machine.Validate(); err != nil {
+		return t.handleError(operation, fmt.Errorf("AKS returned an invalid machine: %w", err))
 	}
 	if machine.Goal.KubernetesVersion != t.goal.KubernetesVersion {
 		return t.handleError(
@@ -76,9 +76,7 @@ func (t *ensureMachineTask) adoptSettingsVersion(machine *Machine, operation str
 			),
 		)
 	}
-	if machine.Goal.SettingsVersion != "" {
-		t.goal.SettingsVersion = machine.Goal.SettingsVersion
-	}
+	t.goal.SettingsVersion = machine.Goal.SettingsVersion
 	return nil
 }
 

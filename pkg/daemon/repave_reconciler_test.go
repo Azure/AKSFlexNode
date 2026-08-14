@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -70,6 +71,22 @@ func TestRepaveReconcilerStateLoadFailurePatchesFailed(t *testing.T) {
 	}
 	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateFailed {
 		t.Fatalf("status = %s", got)
+	}
+}
+
+func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
+	t.Parallel()
+
+	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0"}}}
+	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
+	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
+
+	err := repaves.reconcileOnce(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "validate AKS machine snapshot") {
+		t.Fatalf("Reconcile error = %v, want invalid machine snapshot", err)
+	}
+	if operator.applied {
+		t.Fatal("ApplyGoalState was called for an invalid machine goal")
 	}
 }
 

@@ -41,8 +41,8 @@ func TestGoalStateFromConfig(t *testing.T) {
 	if goal.KubernetesVersion != "1.35.1" {
 		t.Fatalf("KubernetesVersion = %q, want 1.35.1", goal.KubernetesVersion)
 	}
-	if goal.SettingsVersion != "1.35.1" {
-		t.Fatalf("SettingsVersion = %q, want 1.35.1", goal.SettingsVersion)
+	if goal.SettingsVersion != "" {
+		t.Fatalf("SettingsVersion = %q, want empty before Machine persistence", goal.SettingsVersion)
 	}
 	if goal.MaxPods != 42 {
 		t.Fatalf("MaxPods = %d, want 42", goal.MaxPods)
@@ -80,5 +80,46 @@ func TestGoalStateFromConfigValidates(t *testing.T) {
 	_, err := GoalStateFromConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "kubernetes version is empty") {
 		t.Fatalf("GoalStateFromConfig() error = %v, want Kubernetes version validation", err)
+	}
+}
+
+func TestMachineValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		machine *Machine
+		wantErr string
+	}{
+		"nil machine": {
+			wantErr: "machine is nil",
+		},
+		"missing Kubernetes version": {
+			machine: &Machine{Goal: GoalState{SettingsVersion: "42"}},
+			wantErr: "kubernetes version is empty",
+		},
+		"missing settings version": {
+			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
+			wantErr: "goal settings version is empty",
+		},
+		"complete machine": {
+			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1", SettingsVersion: "42"}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.machine.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }
