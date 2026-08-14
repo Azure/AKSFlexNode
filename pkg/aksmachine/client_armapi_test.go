@@ -317,7 +317,7 @@ func TestMachineFromARM(t *testing.T) {
 			},
 			ProvisioningState: ptr("Succeeded"),
 		},
-	})
+	}, "default-id", "default-name")
 
 	if machine.ID != "machine-id" || machine.Name != "node1" {
 		t.Fatalf("machine identity = %#v", machine)
@@ -408,7 +408,7 @@ func TestMachineFromARMDoesNotUseCurrentOrchestratorVersionAsGoal(t *testing.T) 
 				CurrentOrchestratorVersion: &currentVersion,
 			},
 		},
-	})
+	}, "", "")
 
 	if machine.Goal.KubernetesVersion != "" {
 		t.Fatalf("KubernetesVersion = %q, want empty without desired orchestratorVersion", machine.Goal.KubernetesVersion)
@@ -424,10 +424,20 @@ func TestMachineFromARMDoesNotSynthesizeSettingsVersion(t *testing.T) {
 				OrchestratorVersion: ptr("1.35.2"),
 			},
 		},
-	})
+	}, "", "")
 
 	if machine.Goal.SettingsVersion != "" {
 		t.Fatalf("SettingsVersion = %q, want empty without ETag", machine.Goal.SettingsVersion)
+	}
+}
+
+func TestMachineFromARMBackfillsIdentity(t *testing.T) {
+	t.Parallel()
+
+	machine := machineFromARM(armcontainerservice.Machine{}, "machine-id", "node1")
+
+	if machine.ID != "machine-id" || machine.Name != "node1" {
+		t.Fatalf("machine identity = %#v, want backfilled identity", machine)
 	}
 }
 

@@ -279,7 +279,7 @@ func machineFromEndpointJSON(data []byte) (*Machine, error) {
 	if err := json.Unmarshal(data, &armMachine); err != nil {
 		return nil, fmt.Errorf("decode cluster endpoint machine response: %w", err)
 	}
-	machine := machineFromARM(armMachine)
+	machine := machineFromARM(armMachine, "", "")
 	if err := machine.Validate(); err != nil {
 		return nil, fmt.Errorf("validate cluster endpoint machine response: %w", err)
 	}

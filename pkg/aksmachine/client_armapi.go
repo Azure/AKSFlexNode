@@ -77,9 +77,7 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 	if err := c.validateMachineIdentity(resp.Machine); err != nil {
 		return nil, err
 	}
-	result := machineFromARM(resp.Machine)
-	result.ID = c.machineID.String()
-	result.Name = c.machineID.Name
+	result := machineFromARM(resp.Machine, c.machineID.String(), c.machineID.Name)
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("validate create machine response: %w", err)
 	}
@@ -106,9 +104,7 @@ func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 	if err := c.validateMachineIdentity(resp.Machine); err != nil {
 		return nil, err
 	}
-	result := machineFromARM(resp.Machine)
-	result.ID = c.machineID.String()
-	result.Name = c.machineID.Name
+	result := machineFromARM(resp.Machine, c.machineID.String(), c.machineID.Name)
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("validate get machine response: %w", err)
 	}
@@ -262,8 +258,8 @@ func (c *armMachineClient) validateMachineIdentity(machine armcontainerservice.M
 	return nil
 }
 
-func machineFromARM(machine armcontainerservice.Machine) *Machine {
-	result := &Machine{}
+func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName string) *Machine {
+	result := &Machine{ID: defaultID, Name: defaultName}
 	if machine.ID != nil {
 		result.ID = *machine.ID
 	}
