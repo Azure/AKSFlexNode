@@ -261,6 +261,7 @@ func TestGoalStateValidate(t *testing.T) {
 			name: "negative image GC high threshold",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
+				MaxPods:           110,
 				KubeletConfig: KubeletConfig{
 					ImageGCHighThreshold: -1,
 				},
@@ -271,6 +272,7 @@ func TestGoalStateValidate(t *testing.T) {
 			name: "negative image GC low threshold",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
+				MaxPods:           110,
 				KubeletConfig: KubeletConfig{
 					ImageGCLowThreshold: -1,
 				},
@@ -412,6 +414,24 @@ func TestMachineFromARMDoesNotUseCurrentOrchestratorVersionAsGoal(t *testing.T) 
 
 	if machine.Goal.KubernetesVersion != "" {
 		t.Fatalf("KubernetesVersion = %q, want empty without desired orchestratorVersion", machine.Goal.KubernetesVersion)
+	}
+}
+
+func TestMachineFromARMResolvesMinorVersionAlias(t *testing.T) {
+	t.Parallel()
+
+	machine := machineFromARM(armcontainerservice.Machine{
+		Properties: &armcontainerservice.MachineProperties{
+			ETag: ptr("42"),
+			Kubernetes: &armcontainerservice.MachineKubernetesProfile{
+				OrchestratorVersion:        ptr("1.35"),
+				CurrentOrchestratorVersion: ptr("1.35.2"),
+			},
+		},
+	}, "", "")
+
+	if machine.Goal.KubernetesVersion != "1.35.2" {
+		t.Fatalf("KubernetesVersion = %q, want resolved patch 1.35.2", machine.Goal.KubernetesVersion)
 	}
 }
 

@@ -17,10 +17,8 @@ type ensureMachineTask struct {
 }
 
 // EnsureMachine returns a task that ensures this machine is registered in AKS.
-// Local configuration remains authoritative during bootstrap. When the remote
-// Kubernetes version already matches, the task adopts only the remote ETag as
-// the reconciliation baseline; other remote settings do not replace the local
-// goal. Subsequent ETag changes are handled by the daemon as new remote goals.
+// Local configuration seeds a Machine when one does not exist. A Machine
+// returned by AKS is authoritative for bootstrap and later reconciliation.
 func EnsureMachine(machines MachineClient, goal *GoalState, require bool, logger *slog.Logger) phases.Task {
 	return &ensureMachineTask{machines: machines, goal: goal, require: require, logger: logger}
 }
@@ -33,22 +31,16 @@ func (t *ensureMachineTask) Do(ctx context.Context) error {
 		return t.handleError("get machine", err)
 	}
 
-	switch {
-	case remoteMachine == nil:
+	switch remoteMachine {
+	case nil:
 		remoteMachine, err = t.createRemoteMachineFromGoal(ctx)
 		if err != nil {
 			return t.handleError("create machine", err)
 		}
-	case machineGoalHasDrift(remoteMachine.Goal, *t.goal):
-		remoteMachine, err = t.updateRemoteMachineFromGoal(ctx, remoteMachine)
-		if err != nil {
-			return t.handleError("update machine", err)
-		}
 	default:
-		t.logger.Info("machine already registered, skipping")
+		t.logger.Info("machine already registered, adopting remote goal")
 	}
-	t.applyGoalStateWithRemoteMachineSettingsVersion(remoteMachine)
-	return nil
+	return t.applyRemoteMachineGoal(remoteMachine)
 }
 
 func (t *ensureMachineTask) fetchRemoteMachine(ctx context.Context) (*Machine, error) {
@@ -71,47 +63,18 @@ func (t *ensureMachineTask) createRemoteMachineFromGoal(ctx context.Context) (*M
 	if err != nil {
 		return nil, err
 	}
-	if err := validateMachineForGoal(machine, *t.goal); err != nil {
-		return nil, err
-	}
-	return machine, nil
-}
-
-func (t *ensureMachineTask) updateRemoteMachineFromGoal(ctx context.Context, current *Machine) (*Machine, error) {
-	t.logger.Info(
-		"updating registered machine from local bootstrap config",
-		"remoteKubernetesVersion", current.Goal.KubernetesVersion,
-		"localKubernetesVersion", t.goal.KubernetesVersion,
-	)
-	machine, err := t.machines.Create(ctx, *t.goal)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMachineForGoal(machine, *t.goal); err != nil {
-		return nil, err
-	}
-	return machine, nil
-}
-
-func (t *ensureMachineTask) applyGoalStateWithRemoteMachineSettingsVersion(machine *Machine) {
-	t.goal.SettingsVersion = machine.Goal.SettingsVersion
-}
-
-func machineGoalHasDrift(remote, desired GoalState) bool {
-	return remote.KubernetesVersion != desired.KubernetesVersion
-}
-
-func validateMachineForGoal(machine *Machine, goal GoalState) error {
 	if err := machine.Validate(); err != nil {
-		return fmt.Errorf("AKS returned an invalid machine: %w", err)
+		return nil, fmt.Errorf("AKS returned an invalid machine: %w", err)
 	}
-	if machine.Goal.KubernetesVersion != goal.KubernetesVersion {
-		return fmt.Errorf(
-			"AKS machine Kubernetes version %q does not match local bootstrap version %q",
-			machine.Goal.KubernetesVersion,
-			goal.KubernetesVersion,
-		)
+	return machine, nil
+}
+
+func (t *ensureMachineTask) applyRemoteMachineGoal(machine *Machine) error {
+	effectiveGoal, err := EffectiveGoal(machine.Goal, *t.goal)
+	if err != nil {
+		return t.handleError("apply machine goal", err)
 	}
+	*t.goal = effectiveGoal
 	return nil
 }
 

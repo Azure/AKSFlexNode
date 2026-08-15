@@ -24,11 +24,11 @@ func TestFindActiveMachine(t *testing.T) {
 		wantErr bool
 	}{
 		"kube1": {
-			state: &State{ActiveMachine: goalstates.NSpawnMachineKube1},
+			state: &State{AppliedKubernetesVersion: "1.34.0", ActiveMachine: goalstates.NSpawnMachineKube1},
 			want:  goalstates.NSpawnMachineKube1,
 		},
 		"kube2": {
-			state: &State{ActiveMachine: goalstates.NSpawnMachineKube2},
+			state: &State{AppliedKubernetesVersion: "1.34.0", ActiveMachine: goalstates.NSpawnMachineKube2},
 			want:  goalstates.NSpawnMachineKube2,
 		},
 		"missing state": {
@@ -104,8 +104,8 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 	if got.Node.Kubelet.CACertData != "bmV3" {
 		t.Fatalf("kubelet CA data = %q", got.Node.Kubelet.CACertData)
 	}
-	if got.Components.Kubernetes != "1.36.2" {
-		t.Fatalf("Kubernetes version = %q", got.Components.Kubernetes)
+	if got.Components.Kubernetes != "1.35.0" {
+		t.Fatalf("base Kubernetes version = %q", got.Components.Kubernetes)
 	}
 	if cfg.Azure.BootstrapToken.Token != "oldtok.0123456789abcdef" {
 		t.Fatal("original config bootstrap token was mutated")
@@ -114,9 +114,6 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 		"refreshed AKS bootstrap data for repave",
 		"updated bootstrap token for repave",
 		"updated kubelet CA data for repave",
-		"updated Kubernetes version for repave",
-		"oldVersion=1.35.0",
-		"newVersion=1.36.2",
 	} {
 		if !strings.Contains(logs.String(), message) {
 			t.Errorf("logs did not contain %q: %s", message, logs.String())
@@ -270,6 +267,33 @@ func (f *fakeBootstrapDataRefresher) Fetch(context.Context, *config.Config) (*bo
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestNextAppliedStateRotatesCompleteGoals(t *testing.T) {
+	t.Parallel()
+
+	currentGoal := testMachineGoal("1.34.0", "41")
+	currentGoal.NodeLabels = map[string]string{"source": "old"}
+	current := &State{AppliedGoal: &currentGoal, ActiveMachine: goalstates.NSpawnMachineKube1}
+	nextGoal := testMachineGoal("1.35.0", "42")
+	nextGoal.NodeLabels = map[string]string{"source": "new"}
+
+	got := nextAppliedState(current, nextGoal, &activeMachine{Name: goalstates.NSpawnMachineKube2})
+	if got.AppliedGoal == nil || got.AppliedGoal.SettingsVersion != "42" || got.AppliedGoal.NodeLabels["source"] != "new" {
+		t.Fatalf("AppliedGoal = %#v", got.AppliedGoal)
+	}
+	if got.PreviousAppliedGoal == nil || got.PreviousAppliedGoal.SettingsVersion != "41" || got.PreviousAppliedGoal.NodeLabels["source"] != "old" {
+		t.Fatalf("PreviousAppliedGoal = %#v", got.PreviousAppliedGoal)
+	}
+	if got.AppliedSettingsVersion != "42" || got.PreviousSettingsVersion != "41" || got.ActiveMachine != goalstates.NSpawnMachineKube2 {
+		t.Fatalf("state = %#v", got)
+	}
+
+	nextGoal.NodeLabels["source"] = "mutated"
+	currentGoal.NodeLabels["source"] = "mutated"
+	if got.AppliedGoal.NodeLabels["source"] != "new" || got.PreviousAppliedGoal.NodeLabels["source"] != "old" {
+		t.Fatal("nextAppliedState retained caller-owned maps")
+	}
 }
 
 type testStateStore struct {

@@ -131,7 +131,7 @@ update_machine_goal() {
       .properties.eTag = $settings |
       .properties.kubernetes = (.properties.kubernetes // {}) |
       .properties.kubernetes.orchestratorVersion = $version |
-      .properties.kubernetes.nodeLabels = (.properties.kubernetes.nodeLabels // {"kubernetes.azure.com/managed":"false"})
+      .properties.kubernetes.nodeLabels = (.properties.kubernetes.nodeLabels // {})
     ' <<<"${current_json}" > "${tmp}"
 
   if [[ -z "${cm_json}" ]]; then

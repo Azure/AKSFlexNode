@@ -152,7 +152,7 @@ See [AKS RP And Flex Node Agent Interaction](design/agent-and-aks.md) for the de
 
 ## State And Idempotency
 
-The agent persists local daemon state so it can recover after restart, reboot, or partial failure. Persisted state includes the applied Kubernetes/settings version and active nspawn machine side.
+The agent persists local daemon state so it can recover after restart, reboot, or partial failure. Persisted state includes the current and previous applied Machine goals and the active nspawn machine side.
 
 The current state model separates desired state, applied state, and runtime discovery:
 

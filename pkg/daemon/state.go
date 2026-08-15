@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
@@ -23,14 +25,40 @@ const (
 	stateFileName = "daemon-state.json"
 )
 
-// State records the last safely applied AKS machine goal and the previous
-// known-good goal needed for rollback-oriented reconciliation.
+// State records the current and previous safely applied AKS Machine goals and
+// the active nspawn machine.
 type State struct {
+	AppliedGoal         *aksmachine.GoalState `json:"appliedGoal,omitempty"`
+	PreviousAppliedGoal *aksmachine.GoalState `json:"previousAppliedGoal,omitempty"`
+
+	// Deprecated: these projections keep state readable by older agent binaries.
+	// AppliedGoal and PreviousAppliedGoal are authoritative when present.
 	AppliedSettingsVersion    string `json:"appliedSettingsVersion,omitempty"`
 	AppliedKubernetesVersion  string `json:"appliedKubernetesVersion,omitempty"`
 	PreviousSettingsVersion   string `json:"previousSettingsVersion,omitempty"`
 	PreviousKubernetesVersion string `json:"previousKubernetesVersion,omitempty"`
-	ActiveMachine             string `json:"activeMachine,omitempty"`
+
+	ActiveMachine string `json:"activeMachine,omitempty"`
+}
+
+func (s *State) validate() error {
+	if s == nil {
+		return fmt.Errorf("daemon state is nil")
+	}
+	if s.AppliedGoal == nil && s.AppliedKubernetesVersion == "" {
+		return fmt.Errorf("daemon state applied goal is missing")
+	}
+	if s.AppliedGoal != nil {
+		if err := s.AppliedGoal.ValidateEffective(); err != nil {
+			return fmt.Errorf("daemon state applied goal: %w", err)
+		}
+	}
+	if s.PreviousAppliedGoal != nil {
+		if err := s.PreviousAppliedGoal.ValidateEffective(); err != nil {
+			return fmt.Errorf("daemon state previous applied goal: %w", err)
+		}
+	}
+	return nil
 }
 
 type saveStateTask struct {
@@ -58,10 +86,26 @@ func (t *saveStateTask) Do(ctx context.Context) error {
 }
 
 func SeededState(goal aksmachine.GoalState) *State {
-	return &State{
-		AppliedSettingsVersion:   goal.SettingsVersion,
-		AppliedKubernetesVersion: goal.KubernetesVersion,
-		ActiveMachine:            goalstates.NSpawnMachineKube1,
+	state := &State{AppliedGoal: cloneGoalState(goal), ActiveMachine: goalstates.NSpawnMachineKube1}
+	state.populateLegacyFields()
+	return state
+}
+
+func cloneGoalState(goal aksmachine.GoalState) *aksmachine.GoalState {
+	cloned := goal
+	cloned.NodeLabels = maps.Clone(goal.NodeLabels)
+	cloned.NodeTaints = slices.Clone(goal.NodeTaints)
+	return &cloned
+}
+
+func (s *State) populateLegacyFields() {
+	if s.AppliedGoal != nil {
+		s.AppliedSettingsVersion = s.AppliedGoal.SettingsVersion
+		s.AppliedKubernetesVersion = s.AppliedGoal.KubernetesVersion
+	}
+	if s.PreviousAppliedGoal != nil {
+		s.PreviousSettingsVersion = s.PreviousAppliedGoal.SettingsVersion
+		s.PreviousKubernetesVersion = s.PreviousAppliedGoal.KubernetesVersion
 	}
 }
 
@@ -76,6 +120,9 @@ func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachi
 	}
 	if state == nil {
 		return nil, fmt.Errorf("daemon state is missing active machine")
+	}
+	if err := state.validate(); err != nil {
+		return nil, err
 	}
 	if !validActiveMachine(state.ActiveMachine) {
 		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
@@ -125,14 +172,20 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
+	if err := state.validate(); err != nil {
+		return nil, fmt.Errorf("validate daemon state %s: %w", s.path, err)
+	}
+	state.populateLegacyFields()
 	return &state, nil
 }
 
 func (s *fileStateStore) Save(_ context.Context, state *State) error {
-	if state == nil {
-		return fmt.Errorf("daemon state is nil")
+	if err := state.validate(); err != nil {
+		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	stateForPersistence := *state
+	stateForPersistence.populateLegacyFields()
+	data, err := json.MarshalIndent(&stateForPersistence, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal daemon state: %w", err)
 	}

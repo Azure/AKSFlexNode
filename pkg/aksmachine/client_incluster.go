@@ -130,7 +130,7 @@ func (c *clusterEndpointClient) Create(ctx context.Context, desired GoalState) (
 
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNoContent {
 		c.logger.Debug("cluster endpoint did not apply machine create request; verifying pre-created machine", "status", resp.Status)
-		return c.adoptExistingMachine(ctx, desired)
+		return c.adoptExistingMachine(ctx)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, clusterEndpointHTTPError("create machine through cluster endpoint", requestURL, resp)
@@ -140,7 +140,7 @@ func (c *clusterEndpointClient) Create(ctx context.Context, desired GoalState) (
 		return nil, fmt.Errorf("read cluster endpoint machine create response: %w", err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return c.adoptExistingMachine(ctx, desired)
+		return c.adoptExistingMachine(ctx)
 	}
 	machine, err := machineFromEndpointJSON(data)
 	if err != nil {
@@ -152,31 +152,15 @@ func (c *clusterEndpointClient) Create(ctx context.Context, desired GoalState) (
 	if machine.Name == "" {
 		machine.Name = c.nodeName
 	}
-	if err := validateAdoptedMachine(machine, desired); err != nil {
-		return nil, err
-	}
 	return machine, nil
 }
 
-func (c *clusterEndpointClient) adoptExistingMachine(ctx context.Context, desired GoalState) (*Machine, error) {
+func (c *clusterEndpointClient) adoptExistingMachine(ctx context.Context) (*Machine, error) {
 	machine, err := c.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("verify pre-created machine from cluster endpoint: %w", err)
 	}
-	if err := validateAdoptedMachine(machine, desired); err != nil {
-		return nil, err
-	}
 	return machine, nil
-}
-
-func validateAdoptedMachine(machine *Machine, desired GoalState) error {
-	if err := machine.Validate(); err != nil {
-		return fmt.Errorf("cluster endpoint returned invalid machine: %w", err)
-	}
-	if desired.KubernetesVersion != "" && machine.Goal.KubernetesVersion != "" && machine.Goal.KubernetesVersion != desired.KubernetesVersion {
-		return fmt.Errorf("pre-created machine Kubernetes version %q does not match desired %q", machine.Goal.KubernetesVersion, desired.KubernetesVersion)
-	}
-	return nil
 }
 
 func (c *clusterEndpointClient) Get(ctx context.Context) (*Machine, error) {

@@ -11,10 +11,11 @@ import (
 func TestDecide(t *testing.T) {
 	t.Parallel()
 
-	goal := aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}
+	goal := testMachineGoal("1.34.0", "42")
 	machine := machineSnapshot{machine: &aksmachine.Machine{Goal: goal}}
-	applied := &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0"}
-	stale := &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0"}
+	applied := &State{AppliedGoal: cloneGoalState(goal)}
+	staleGoal := testMachineGoal("1.33.0", "41")
+	stale := &State{AppliedGoal: &staleGoal}
 	node := nodeSnapshot{node: &corev1.Node{}}
 	missingNode := nodeSnapshot{}
 	deleteNode := nodeSnapshot{node: &corev1.Node{Spec: corev1.NodeSpec{Taints: []corev1.Taint{deletionTaint()}}}}

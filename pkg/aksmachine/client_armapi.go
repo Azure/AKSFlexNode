@@ -275,6 +275,12 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 		kubernetes := properties.Kubernetes
 		if kubernetes.OrchestratorVersion != nil {
 			result.Goal.KubernetesVersion = *kubernetes.OrchestratorVersion
+			if kubernetes.CurrentOrchestratorVersion != nil {
+				result.Goal.KubernetesVersion = resolveKubernetesVersionAlias(
+					result.Goal.KubernetesVersion,
+					*kubernetes.CurrentOrchestratorVersion,
+				)
+			}
 		}
 		if kubernetes.MaxPods != nil {
 			result.Goal.MaxPods = int(*kubernetes.MaxPods)
@@ -301,6 +307,15 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 		result.Status.ProvisioningState = ProvisioningState(*properties.ProvisioningState)
 	}
 	return result
+}
+
+func resolveKubernetesVersionAlias(desired, current string) string {
+	desiredVersion := strings.TrimPrefix(strings.TrimSpace(desired), "v")
+	currentVersion := strings.TrimPrefix(strings.TrimSpace(current), "v")
+	if len(strings.Split(desiredVersion, ".")) == 2 && strings.HasPrefix(currentVersion, desiredVersion+".") {
+		return current
+	}
+	return desired
 }
 
 func stringMapFromPointers(values map[string]*string) map[string]string {
