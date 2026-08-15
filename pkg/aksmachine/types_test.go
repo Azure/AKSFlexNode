@@ -98,11 +98,11 @@ func TestMachineValidate(t *testing.T) {
 			wantErr: "kubernetes version is empty",
 		},
 		"missing settings version": {
-			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
+			machine: &Machine{Goal: testGoal("1.35.1", "")},
 			wantErr: "goal settings version is empty",
 		},
 		"complete machine": {
-			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1", SettingsVersion: "42"}},
+			machine: &Machine{Goal: testGoal("1.35.1", "42")},
 		},
 	}
 
@@ -121,5 +121,41 @@ func TestMachineValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestEffectiveGoal(t *testing.T) {
+	t.Parallel()
+
+	local := testGoal("1.34.0", "")
+	local.MaxPods = 30
+	local.NodeLabels = map[string]string{"source": "local"}
+	local.NodeTaints = []string{"local=true:NoSchedule"}
+	local.KubeletConfig.ImageGCHighThreshold = 90
+	local.KubeletConfig.ImageGCLowThreshold = 75
+	machine := GoalState{
+		KubernetesVersion: "1.35.0",
+		SettingsVersion:   "42",
+		NodeLabels:        map[string]string{},
+		NodeTaints:        []string{},
+	}
+
+	effective, err := EffectiveGoal(machine, local)
+	if err != nil {
+		t.Fatalf("EffectiveGoal() error = %v", err)
+	}
+	if effective.KubernetesVersion != "1.35.0" || effective.SettingsVersion != "42" || effective.MaxPods != 30 {
+		t.Fatalf("effective versions/maxPods = %#v", effective)
+	}
+	if len(effective.NodeLabels) != 0 || len(effective.NodeTaints) != 0 {
+		t.Fatalf("effective collections = %#v, want authoritative empty collections", effective)
+	}
+	if effective.KubeletConfig.ImageGCHighThreshold != 90 || effective.KubeletConfig.ImageGCLowThreshold != 75 {
+		t.Fatalf("effective kubelet config = %#v", effective.KubeletConfig)
+	}
+
+	effective.NodeLabels["source"] = "changed"
+	if _, ok := machine.NodeLabels["source"]; ok {
+		t.Fatal("EffectiveGoal returned Machine-owned label map")
 	}
 }

@@ -43,6 +43,36 @@ func (g GoalState) validate() error {
 	if g.KubeletConfig.ImageGCLowThreshold < 0 {
 		return fmt.Errorf("image GC low threshold must be non-negative")
 	}
+	if g.KubeletConfig.ImageGCHighThreshold > 100 {
+		return fmt.Errorf("image GC high threshold must be less than or equal to 100")
+	}
+	if g.KubeletConfig.ImageGCLowThreshold > 100 {
+		return fmt.Errorf("image GC low threshold must be less than or equal to 100")
+	}
+	if g.KubeletConfig.ImageGCHighThreshold != 0 && g.KubeletConfig.ImageGCLowThreshold >= g.KubeletConfig.ImageGCHighThreshold {
+		return fmt.Errorf("image GC low threshold must be less than image GC high threshold")
+	}
+	return nil
+}
+
+// Validate verifies the values present in a goal. SettingsVersion is validated
+// by Machine because local bootstrap goals do not have an ETag until persisted.
+func (g GoalState) Validate() error {
+	return g.validate()
+}
+
+// ValidateEffective verifies that omitted API defaults have been resolved and
+// the goal has every scalar setting needed to render a node.
+func (g GoalState) ValidateEffective() error {
+	if err := g.Validate(); err != nil {
+		return err
+	}
+	if g.MaxPods == 0 {
+		return fmt.Errorf("max pods is empty")
+	}
+	if g.KubeletConfig.ImageGCHighThreshold == 0 {
+		return fmt.Errorf("image GC high threshold is empty")
+	}
 	return nil
 }
 
@@ -59,10 +89,36 @@ func GoalStateFromConfig(cfg *config.Config) (GoalState, error) {
 			ImageGCLowThreshold:  cfg.Node.Kubelet.ImageGCLowThreshold,
 		},
 	}
-	if err := goal.validate(); err != nil {
+	if err := goal.ValidateEffective(); err != nil {
 		return GoalState{}, err
 	}
 	return goal, nil
+}
+
+func cloneGoalState(goal GoalState) GoalState {
+	cloned := goal
+	cloned.NodeLabels = maps.Clone(goal.NodeLabels)
+	cloned.NodeTaints = slices.Clone(goal.NodeTaints)
+	return cloned
+}
+
+// EffectiveGoal overlays a Machine goal on a complete local goal. AKS owns the
+// desired values; the local goal only fills scalar fields omitted by the API.
+func EffectiveGoal(machine, local GoalState) (GoalState, error) {
+	effective := cloneGoalState(machine)
+	if effective.MaxPods == 0 {
+		effective.MaxPods = local.MaxPods
+	}
+	if effective.KubeletConfig.ImageGCHighThreshold == 0 {
+		effective.KubeletConfig.ImageGCHighThreshold = local.KubeletConfig.ImageGCHighThreshold
+	}
+	if effective.KubeletConfig.ImageGCLowThreshold == 0 {
+		effective.KubeletConfig.ImageGCLowThreshold = local.KubeletConfig.ImageGCLowThreshold
+	}
+	if err := effective.ValidateEffective(); err != nil {
+		return GoalState{}, fmt.Errorf("validate effective goal: %w", err)
+	}
+	return effective, nil
 }
 
 type ProvisioningState string
@@ -96,7 +152,7 @@ func (m *Machine) Validate() error {
 	if m == nil {
 		return fmt.Errorf("machine is nil")
 	}
-	if err := m.Goal.validate(); err != nil {
+	if err := m.Goal.Validate(); err != nil {
 		return fmt.Errorf("goal: %w", err)
 	}
 	if m.Goal.SettingsVersion == "" {

@@ -223,7 +223,7 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
 		return err
 	}
-	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, newState.AppliedSettingsVersion, "machine goal state applied")
+	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, stateObservedVersion(newState), "machine goal state applied")
 }
 
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
@@ -278,10 +278,7 @@ func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 }
 
 func goalApplied(goal aksmachine.GoalState, state *State) bool {
-	if state == nil {
-		return false
-	}
-	return goal.SettingsVersion != "" && state.AppliedSettingsVersion == goal.SettingsVersion
+	return goal.SettingsVersion != "" && stateObservedVersion(state) == goal.SettingsVersion
 }
 
 func hasDeletionSignal(taints []corev1.Taint) bool {
@@ -296,6 +293,9 @@ func hasDeletionSignal(taints []corev1.Taint) bool {
 func stateObservedVersion(state *State) string {
 	if state == nil {
 		return ""
+	}
+	if state.AppliedGoal != nil {
+		return state.AppliedGoal.SettingsVersion
 	}
 	return state.AppliedSettingsVersion
 }

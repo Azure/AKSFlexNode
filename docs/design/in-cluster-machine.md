@@ -15,7 +15,7 @@ The controller serves the `armcontainerservice.Machine` JSON shape from the `kub
       "orchestratorVersion": "1.34.0",
       "maxPods": 110,
       "nodeLabels": {
-        "kubernetes.azure.com/managed": "false"
+        "workload": "edge"
       }
     },
     "provisioningState": "Succeeded"
@@ -27,18 +27,18 @@ Status updates use a separate patch model because the agent operation status is 
 
 ## Bootstrap flow
 
-The local bootstrap configuration is authoritative while `aks-flex-node start` is running:
+The local bootstrap configuration seeds a Machine when one does not already exist. Once the endpoint returns a Machine, its complete goal is authoritative for bootstrap:
 
 1. `NewMachineClient` selects the in-cluster backend without a supplied Kubernetes REST config.
 2. The client builds a REST config from the bootstrap token or configured exec credential.
 3. `EnsureMachine` reads the machine through the Kubernetes service proxy.
 4. If the machine is absent, the client sends a PUT using the local bootstrap goal.
-5. If its Kubernetes version differs, the client sends a PUT that overwrites the remote goal with the local version.
-6. If its Kubernetes version already matches, local bootstrap settings remain authoritative; remote settings other than the ETag do not replace them.
-7. The returned ETag becomes the reconciliation baseline for the locally applied goal.
-8. The daemon state is seeded from that ETag before host or nspawn state is mutated. A later ETag change is treated as a new remote goal.
+5. Whether read or created, the returned Machine is validated and its goal replaces the local bootstrap goal. This includes Kubernetes version, max pods, custom labels, taints, kubelet image-GC thresholds, and the ETag-backed settings version. Scalar defaults omitted by the API retain their validated local bootstrap values.
+6. The daemon resolves nspawn settings and seeds its state from that same effective goal before mutating the host. A later ETag change is treated as a new remote goal.
 
-The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created machine. Its fixture must therefore already match the local bootstrap version. When machine registration is required, a mismatch fails bootstrap before host mutation.
+When `orchestratorVersion` is a `major.minor` alias, the returned `currentOrchestratorVersion` supplies the exact patch used for artifact resolution.
+
+The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created Machine. The agent adopts that returned goal even when it differs from local bootstrap configuration. When registration is required, a read, create, or validation failure stops bootstrap before host mutation. When registration is optional, bootstrap continues with the local goal.
 
 ## Daemon flow
 

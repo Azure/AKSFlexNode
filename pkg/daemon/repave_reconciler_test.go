@@ -18,8 +18,17 @@ import (
 func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
-	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
+	goal := testMachineGoal("1.34.0", "42")
+	previousGoal := testMachineGoal("1.33.0", "41")
+	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: goal}}
+	operator := &fakeNodeOperator{
+		state: &State{AppliedGoal: &previousGoal, ActiveMachine: "kube1"},
+		newState: &State{
+			AppliedGoal:         &goal,
+			PreviousAppliedGoal: &previousGoal,
+			ActiveMachine:       "kube2",
+		},
+	}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	if err := repaves.reconcileOnce(context.Background()); err != nil {
@@ -28,7 +37,7 @@ func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	if !operator.applied {
 		t.Fatal("ApplyGoalState was not called")
 	}
-	if operator.state.AppliedSettingsVersion != "42" || operator.state.PreviousSettingsVersion != "41" || operator.state.ActiveMachine != "kube2" {
+	if stateObservedVersion(operator.state) != "42" || operator.state.PreviousAppliedGoal == nil || operator.state.PreviousAppliedGoal.SettingsVersion != "41" || operator.state.ActiveMachine != "kube2" {
 		t.Fatalf("state = %#v", operator.state)
 	}
 	if got := machines.status.ProvisioningState; got != aksmachine.ProvisioningStateSucceeded {

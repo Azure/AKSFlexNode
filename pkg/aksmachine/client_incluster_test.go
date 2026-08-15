@@ -70,7 +70,11 @@ func TestMachineFromEndpointJSONUsesARMModel(t *testing.T) {
   "name": "node1",
   "properties": {
     "eTag": "42",
-    "kubernetes": {"orchestratorVersion": "1.34.0"},
+    "kubernetes": {
+      "orchestratorVersion": "1.34.0",
+      "maxPods": 110,
+      "kubeletConfig": {"imageGcHighThreshold": 85, "imageGcLowThreshold": 80}
+    },
     "provisioningState": "Succeeded"
   }
 }`))
@@ -93,7 +97,11 @@ func TestMachineFromEndpointJSONRejectsMissingETag(t *testing.T) {
 
 	_, err := machineFromEndpointJSON([]byte(`{
   "properties": {
-    "kubernetes": {"orchestratorVersion": "1.34.0"}
+    "kubernetes": {
+      "orchestratorVersion": "1.34.0",
+      "maxPods": 110,
+      "kubeletConfig": {"imageGcHighThreshold": 85, "imageGcLowThreshold": 80}
+    }
   }
 }`))
 	if err == nil || !strings.Contains(err.Error(), "goal settings version is empty") {
@@ -137,29 +145,32 @@ func TestClusterEndpointCreateSendsMutation(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0"}}}`)
+		_, _ = fmt.Fprint(w, `{"properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0","maxPods":110,"kubeletConfig":{"imageGcHighThreshold":85,"imageGcLowThreshold":80}}}}`)
 	}))
 	defer server.Close()
 
 	client := newTestClusterEndpointClient(t, server.URL, "node1")
-	if _, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}); err != nil {
+	if _, err := client.Create(context.Background(), testGoal("1.34.0", "42")); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 }
 
-func TestClusterEndpointCreateVerifiesPrecreatedMachine(t *testing.T) {
+func TestClusterEndpointCreateAdoptsPrecreatedMachine(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0"}}}`)
+		_, _ = fmt.Fprint(w, `{"properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0","maxPods":110,"kubeletConfig":{"imageGcHighThreshold":85,"imageGcLowThreshold":80}}}}`)
 	}))
 	defer server.Close()
 
 	client := newTestClusterEndpointClient(t, server.URL, "node1")
-	_, err := client.Create(context.Background(), GoalState{KubernetesVersion: "1.35.0", SettingsVersion: "42"})
-	if err == nil || !strings.Contains(err.Error(), "Kubernetes version") {
-		t.Fatalf("Create() error = %v, want version mismatch", err)
+	machine, err := client.Create(context.Background(), testGoal("1.35.0", "local"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if machine.Goal.KubernetesVersion != "1.34.0" || machine.Goal.SettingsVersion != "42" {
+		t.Fatalf("Create() goal = %#v, want pre-created Machine goal", machine.Goal)
 	}
 }
 

@@ -38,11 +38,11 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		return err
 	}
 
-	cfg := o.cfg.DeepCopy()
-	if active.State.AppliedKubernetesVersion != "" {
-		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
+	goal, err := goalForRestart(o.cfg, active.State)
+	if err != nil {
+		return err
 	}
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, log, cfg, active.Name)
+	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, o.cfg, active.Name, goal)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
@@ -52,7 +52,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
-		npd.Start(log, cfg, gs.NodeStart),
+		npd.Start(log, o.cfg, gs.NodeStart),
 	).Do(ctx)
 }
 
@@ -90,20 +90,24 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, err
 	}
+	effectiveGoal, err := effectiveMachineGoal(cfg, &goal)
+	if err != nil {
+		return nil, err
+	}
 	oldMachine := active.Name
 	newMachine := goalstates.AlternateMachine(oldMachine)
 	log.Info("starting nspawn machine goal-state apply",
 		"oldMachine", oldMachine,
 		"newMachine", newMachine,
 		"settingsVersion", goal.SettingsVersion,
-		"kubernetesVersion", cfg.Components.Kubernetes,
+		"kubernetesVersion", effectiveGoal.KubernetesVersion,
 	)
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, log, cfg, newMachine)
+	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, cfg, newMachine, effectiveGoal)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
-	newState := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
+	newState := nextAppliedState(active.State, *effectiveGoal, &activeMachine{Name: newMachine})
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
@@ -144,15 +148,6 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 			cfg.Node.Kubelet.CACertData = data.CACertData
 		}
 	}
-	// MaxPods is immutable in AKS, so the startup configuration remains its
-	// authoritative source rather than reapplying the value from each goal.
-	if goal.KubernetesVersion != "" && cfg.Components.Kubernetes != goal.KubernetesVersion {
-		log.Info("updated Kubernetes version for repave",
-			"oldVersion", cfg.Components.Kubernetes,
-			"newVersion", goal.KubernetesVersion,
-		)
-		cfg.Components.Kubernetes = goal.KubernetesVersion
-	}
 	return cfg, nil
 }
 
@@ -166,17 +161,19 @@ func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) e
 
 func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
 	next := &State{
-		AppliedSettingsVersion:    goal.SettingsVersion,
-		AppliedKubernetesVersion:  goal.KubernetesVersion,
-		PreviousSettingsVersion:   "",
-		PreviousKubernetesVersion: "",
+		AppliedGoal: cloneGoalState(goal),
 	}
 	if current != nil {
-		next.PreviousSettingsVersion = current.AppliedSettingsVersion
-		next.PreviousKubernetesVersion = current.AppliedKubernetesVersion
+		if current.AppliedGoal != nil {
+			next.PreviousAppliedGoal = cloneGoalState(*current.AppliedGoal)
+		} else if current.AppliedKubernetesVersion != "" {
+			next.PreviousSettingsVersion = current.AppliedSettingsVersion
+			next.PreviousKubernetesVersion = current.AppliedKubernetesVersion
+		}
 	}
 	if active != nil {
 		next.ActiveMachine = active.Name
 	}
+	next.populateLegacyFields()
 	return next
 }
