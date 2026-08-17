@@ -95,7 +95,7 @@ node_join_token() {
   mv "${config_file}.tmp" "${config_file}"
 
   # Step 3: Publish the AKS Machine goal and deploy the agent.
-  machine_configmap_upsert "$(state_get token_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
+  machine_configmap_upsert "$(state_get token_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBELET_MAX_PODS}"
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-token"
 
   log_success "Token node joined in $(timer_elapsed "${start}")s"

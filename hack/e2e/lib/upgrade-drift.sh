@@ -102,12 +102,16 @@ _ensure_mode_joined() {
 
 _trigger_mode_repave() {
   local mode="$1" desired_version="$2" settings_version="$3"
-  local vm_ip vm_name
+  local vm_ip vm_name max_pods
   vm_ip="$(_mode_vm_ip "${mode}")"
   vm_name="$(_mode_vm_name "${mode}")"
+  max_pods="110"
+  if [[ "${mode}" == "token" ]]; then
+    max_pods="${E2E_KUBELET_MAX_PODS}"
+  fi
 
   log_info "Updating controller machine goal for ${mode} node to Kubernetes ${desired_version} (${settings_version})"
-  machine_configmap_upsert "${vm_name}" "${desired_version}" "${settings_version}"
+  machine_configmap_upsert "${vm_name}" "${desired_version}" "${settings_version}" "${max_pods}"
   remote_exec "${vm_ip}" 'sudo systemctl status aks-flex-node-agent.service --no-pager -l || true'
 
   log_info "Deleting Kubernetes Node ${vm_name} to trigger ${mode} repave"
