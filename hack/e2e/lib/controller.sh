@@ -332,7 +332,7 @@ ensure_flex_controller() {
 }
 
 _render_machine_json() {
-  local node_name="$1" kubernetes_version="$2" settings_version="$3"
+  local node_name="$1" kubernetes_version="$2" settings_version="$3" max_pods="$4"
   local cluster_id machine_id
   cluster_id="$(state_get cluster_id)"
   machine_id="${cluster_id}/agentPools/${E2E_TARGET_AGENT_POOL_NAME}/machines/${node_name}"
@@ -342,6 +342,7 @@ _render_machine_json() {
     --arg name "${node_name}" \
     --arg kubernetesVersion "${kubernetes_version}" \
     --arg eTag "${settings_version}" \
+    --argjson maxPods "${max_pods}" \
     '{
       id: $id,
       name: $name,
@@ -351,7 +352,7 @@ _render_machine_json() {
         provisioningState: "Succeeded",
         kubernetes: {
           orchestratorVersion: $kubernetesVersion,
-          maxPods: 110,
+          maxPods: $maxPods,
           nodeLabels: {},
           nodeTaints: [],
           kubeletConfig: {
@@ -364,11 +365,11 @@ _render_machine_json() {
 }
 
 _machine_configmap_upsert_unlocked() {
-  local node_name="$1" kubernetes_version="$2" settings_version="$3"
+  local node_name="$1" kubernetes_version="$2" settings_version="$3" max_pods="$4"
   local machine_file patch
   machine_file="${E2E_WORK_DIR}/machine-${node_name}.json"
 
-  _render_machine_json "${node_name}" "${kubernetes_version}" "${settings_version}" > "${machine_file}"
+  _render_machine_json "${node_name}" "${kubernetes_version}" "${settings_version}" "${max_pods}" > "${machine_file}"
   if ! kubectl -n "${E2E_CONTROLLER_NAMESPACE}" get configmap "${E2E_MACHINE_CONFIGMAP}" >/dev/null 2>&1; then
     kubectl -n "${E2E_CONTROLLER_NAMESPACE}" create configmap "${E2E_MACHINE_CONFIGMAP}" >/dev/null
   fi
@@ -379,8 +380,8 @@ _machine_configmap_upsert_unlocked() {
 }
 
 machine_configmap_upsert() {
-  local node_name="$1" kubernetes_version="${2:-${E2E_KUBERNETES_VERSION}}" settings_version="${3:-${kubernetes_version}}"
-  with_cluster_lock _machine_configmap_upsert_unlocked "${node_name}" "${kubernetes_version}" "${settings_version}"
+  local node_name="$1" kubernetes_version="${2:-${E2E_KUBERNETES_VERSION}}" settings_version="${3:-${kubernetes_version}}" max_pods="${4:-110}"
+  with_cluster_lock _machine_configmap_upsert_unlocked "${node_name}" "${kubernetes_version}" "${settings_version}" "${max_pods}"
 }
 
 _machine_configmap_delete_unlocked() {
