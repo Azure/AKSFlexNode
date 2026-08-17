@@ -285,7 +285,7 @@ func TestGoalStateValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.goal.validate()
+			err := tt.goal.Validate()
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("validate() error = %v, want containing %q", err, tt.wantErr)

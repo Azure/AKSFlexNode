@@ -47,7 +47,7 @@ func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error
 }
 
 func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Machine, error) {
-	if err := desired.validate(); err != nil {
+	if err := desired.Validate(); err != nil {
 		return nil, fmt.Errorf("validate goal state: %w", err)
 	}
 	params := armcontainerservice.Machine{

@@ -27,7 +27,9 @@ type KubeletConfig struct {
 	ImageGCLowThreshold  int `json:"imageGCLowThreshold,omitempty"`
 }
 
-func (g GoalState) validate() error {
+// Validate verifies the values present in a goal. SettingsVersion is validated
+// by Machine because local bootstrap goals do not have an ETag until persisted.
+func (g GoalState) Validate() error {
 	if g.KubernetesVersion == "" {
 		return fmt.Errorf("kubernetes version is empty")
 	}
@@ -53,12 +55,6 @@ func (g GoalState) validate() error {
 		return fmt.Errorf("image GC low threshold must be less than image GC high threshold")
 	}
 	return nil
-}
-
-// Validate verifies the values present in a goal. SettingsVersion is validated
-// by Machine because local bootstrap goals do not have an ETag until persisted.
-func (g GoalState) Validate() error {
-	return g.validate()
 }
 
 // ValidateEffective verifies that omitted API defaults have been resolved and
