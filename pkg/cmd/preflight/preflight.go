@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
@@ -74,6 +75,7 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 
 	checks := preflight.Flatten(
+		arc.Preflight(cfg, log),
 		host.Preflight(log, *agentCfg, gs),
 		nodestart.Preflight(log, *agentCfg, gs),
 		rootfs.Preflight(log, *agentCfg, gs),

@@ -83,7 +83,7 @@ start the node. CLI flags override environment variables, which override the
 embedded base config and script defaults.
 
 Options:
-  --auth MODE                    msi or service-principal
+  --auth MODE                    arc, msi, or service-principal
   --msi-client-id ID             Optional user-assigned managed identity client ID
   --sp-tenant-id ID              Optional SP tenant; defaults to azure.tenantId
   --sp-client-id ID              Service-principal client ID
@@ -274,7 +274,7 @@ check_certificate_file_permissions() {
 
 validate_sp_credential_selection() {
     case "${AUTH_MODE,,}" in
-        msi|managed-identity) return 0 ;;
+        arc|msi|managed-identity) return 0 ;;
     esac
     local count=0
     [[ -n "$SP_CLIENT_SECRET" ]] && ((count += 1))
@@ -319,12 +319,14 @@ fetch_latest_bootstrap_data() {
     resource_id=$(jq -er '.azure.targetCluster.resourceId' "$current")
     pool_name=$(jq -er '.azure.targetAgentPoolName' "$current")
     [[ -n "$mode" ]] || {
-        if jq -e '.azure.managedIdentity != null' "$current" >/dev/null; then
+        if jq -e '.azure.arc.enabled == true' "$current" >/dev/null; then
+            mode=arc
+        elif jq -e '.azure.managedIdentity != null' "$current" >/dev/null; then
             mode=msi
         elif jq -e '.azure.servicePrincipal != null' "$current" >/dev/null; then
             mode=service-principal
         else
-            fatal "fetching bootstrap data requires MSI or service-principal authentication"
+            fatal "fetching bootstrap data requires Arc, MSI, or service-principal authentication"
         fi
     }
 
@@ -339,6 +341,8 @@ fetch_latest_bootstrap_data() {
         --output "$response"
     )
     case "$mode" in
+        arc)
+            ;;
         msi|managed-identity)
             client_id="$MSI_CLIENT_ID"
             [[ -n "$client_id" ]] || client_id=$(jq -r '.azure.managedIdentity.clientId // ""' "$current")
@@ -416,6 +420,13 @@ apply_auth_override() {
 
     [[ -n "$mode" ]] || return 0
     case "$mode" in
+        arc)
+            jq '
+                .azure = (.azure // {}) |
+                del(.azure.managedIdentity, .azure.servicePrincipal) |
+                .azure.arc = ((.azure.arc // {}) * {"enabled": true})
+            ' "$current" > "$rendered"
+            ;;
         msi|managed-identity)
             jq --arg clientID "$MSI_CLIENT_ID" '
                 .azure = (.azure // {}) |
@@ -469,7 +480,7 @@ apply_auth_override() {
                 fatal "service-principal auth requires a protected secret file, certificate file, or AKS_FLEX_NODE_SP_CLIENT_SECRET"
             fi
             ;;
-        *) fatal "unsupported auth mode: $AUTH_MODE (expected msi or service-principal)" ;;
+        *) fatal "unsupported auth mode: $AUTH_MODE (expected arc, msi, or service-principal)" ;;
     esac
     mv -f "$rendered" "$current"
 }

@@ -52,7 +52,7 @@ Use `managedIdentity.clientId` when the VM has multiple user-assigned identities
 
 ## Azure Arc
 
-Azure Arc mode registers the host as an Arc-enabled server and uses Arc-managed identity for Azure integration.
+Azure Arc mode uses the system-assigned identity of an already-connected Arc-enabled server. Arc installation, onboarding, role assignment, and removal remain operator responsibilities.
 
 Minimal config shape:
 
@@ -60,25 +60,25 @@ Minimal config shape:
 {
   "azure": {
     "subscriptionId": "<subscription-id>",
-    "tenantId": "<tenant-id>",
     "resourceManagerEndpoint": "https://management.azure.com",
     "targetAgentPoolName": "<agent-pool-name>",
-    "arc": {
-      "enabled": true,
-      "machineName": "<arc-machine-name>",
-      "resourceGroup": "<arc-resource-group>",
-      "location": "<arc-location>",
-      "tags": {}
-    },
+    "arc": { "enabled": true },
+    "bootstrapToken": { "token": "<fetched-bootstrap-token>" },
     "targetCluster": {
       "resourceId": "<aks-resource-id>",
       "location": "<aks-location>"
+    }
+  },
+  "node": {
+    "kubelet": {
+      "clusterFQDN": "<fetched-api-server-fqdn>",
+      "caCertData": "<fetched-base64-ca>"
     }
   }
 }
 ```
 
-Arc mode requires Azure permissions for Arc onboarding and any required role assignment work.
+Use `scripts/bootstrap.sh --auth arc --fetch-bootstrap-data` to populate the token, API server FQDN, CA, and component settings. Before Flex Node bootstrap, `azcmagent show` must report `Connected`, `himdsd` must be active, and the Arc machine principal must have permission to call AKS `listBootstrapData` and operate its AKS Machine resource. For Arc configs, the installed Flex Node systemd unit orders itself after and wants `himdsd.service`.
 
 ## Service Principal
 
@@ -111,9 +111,10 @@ The credential file contains either the client secret or a PEM/unencrypted PFX a
 
 ## Authentication Mode Selection
 
-Only one authentication mode can be configured at a time:
+Only one durable Azure identity mode can be configured at a time:
 
-- `azure.bootstrapToken`
 - `azure.managedIdentity`
 - `azure.arc.enabled: true`
 - `azure.servicePrincipal`
+
+`azure.bootstrapToken` can accompany one of these identities. It is required for Arc because kubelet consumes the short-lived join credential returned by AKS RP while the host agent uses Arc identity for ARM.

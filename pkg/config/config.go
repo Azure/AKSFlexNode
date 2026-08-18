@@ -116,13 +116,15 @@ type TargetClusterConfig struct {
 	SubscriptionID string // will be populated from ResourceID
 }
 
-// ArcConfig holds Azure Arc machine configuration for registering the machine with Azure Arc.
+// ArcConfig selects the system-assigned identity of an externally managed
+// Azure Arc-enabled server. Legacy resource fields remain accepted so existing
+// configuration can migrate without breaking; Flex Node does not consume them.
 type ArcConfig struct {
-	Enabled       bool              `json:"enabled"`       // Whether to enable Azure Arc registration
-	MachineName   string            `json:"machineName"`   // Name for the Arc machine resource
-	Tags          map[string]string `json:"tags"`          // Tags to apply to the Arc machine
-	ResourceGroup string            `json:"resourceGroup"` // Azure resource group for Arc machine
-	Location      string            `json:"location"`      // Azure region for Arc machine
+	Enabled       bool              `json:"enabled"`
+	MachineName   string            `json:"machineName,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	ResourceGroup string            `json:"resourceGroup,omitempty"`
+	Location      string            `json:"location,omitempty"`
 }
 
 // JSONDuration accepts Go duration strings in config JSON while preserving
@@ -298,6 +300,13 @@ func (cfg *Config) IsMIConfigured() bool {
 	return cfg.Azure.ManagedIdentity != nil
 }
 
+// UsesManagedIdentityCredential reports whether Azure authentication is backed
+// by a managed identity endpoint. Arc exposes its system-assigned identity
+// through the same Azure Identity credential contract as Azure VM identity.
+func (cfg *Config) UsesManagedIdentityCredential() bool {
+	return cfg.IsMIConfigured() || cfg.IsARCEnabled()
+}
+
 // IsBootstrapTokenConfigured checks if bootstrap token authentication is selected.
 func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil
@@ -306,7 +315,7 @@ func (cfg *Config) IsBootstrapTokenConfigured() bool {
 // NeedsBootstrapDataRefresh reports whether repave can replace the short-lived
 // bootstrap token by authenticating to AKS RP with a durable Azure credential.
 func (cfg *Config) NeedsBootstrapDataRefresh() bool {
-	return cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.IsMIConfigured() || cfg.IsSPConfigured())
+	return cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.UsesManagedIdentityCredential() || cfg.IsSPConfigured())
 }
 
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
@@ -548,9 +557,6 @@ func (c *Config) APIServerURL() string {
 }
 
 func (c *AzureConfig) validate() error {
-	if c.requiresTenantID() && c.TenantID == "" {
-		return fmt.Errorf("azure.tenantId is required")
-	}
 	if c.TargetCluster == nil {
 		return fmt.Errorf("azure.targetCluster is required")
 	}
@@ -579,13 +585,6 @@ func (c *AzureConfig) validate() error {
 		return err
 	}
 	return nil
-}
-
-func (c *AzureConfig) requiresTenantID() bool {
-	if c == nil || c.Arc == nil {
-		return false
-	}
-	return c.Arc.Enabled
 }
 
 func (c *AzureConfig) validateResourceManagerEndpointURL() error {
@@ -793,21 +792,9 @@ func (c *TargetClusterConfig) validate() error {
 }
 
 func (c *ArcConfig) validate() error {
-	if c == nil {
-		return nil
-	}
-	if !c.Enabled {
-		return nil
-	}
-	if c.MachineName == "" {
-		return fmt.Errorf("azure.arc.machineName is required when Arc is enabled")
-	}
-	if c.ResourceGroup == "" {
-		return fmt.Errorf("azure.arc.resourceGroup is required when Arc is enabled")
-	}
-	if c.Location == "" {
-		return fmt.Errorf("azure.arc.location is required when Arc is enabled")
-	}
+	// The Connected Machine lifecycle is externally managed. Enabling Arc only
+	// selects its local system-assigned identity endpoint, so no Arc resource
+	// coordinates are required by Flex Node.
 	return nil
 }
 
@@ -917,6 +904,9 @@ func (c *Config) validate() error {
 
 	if err := c.validateAuthSettings(); err != nil {
 		return err
+	}
+	if c.IsARCEnabled() && !c.IsBootstrapTokenConfigured() {
+		return fmt.Errorf("azure.bootstrapToken is required with Arc authentication; fetch fresh bootstrap data before loading the runtime config")
 	}
 	if err := c.validateBootstrapToken(); err != nil {
 		return fmt.Errorf("invalid bootstrap token configuration: %w", err)

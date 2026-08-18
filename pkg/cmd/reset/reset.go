@@ -15,8 +15,8 @@ func NewCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:     "reset",
 		Aliases: []string{"unbootstrap"},
-		Short:   "Remove AKS node configuration and Arc connection",
-		Long:    "Clean up and remove all AKS node components and Arc registration from this machine",
+		Short:   "Remove AKS node configuration",
+		Long:    "Clean up and remove AKS Flex Node components while preserving externally managed Azure Arc state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := logger.CreateLogger("info", "")
 			return runReset(cmd.Context(), log)

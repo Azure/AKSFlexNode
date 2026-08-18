@@ -111,6 +111,25 @@ jq -e '
 grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK_DIR/msi-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
 
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" \
+        --auth arc \
+        --fetch-bootstrap-data \
+        --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
+        --agent-pool-name aksflexnodes \
+        --install-dir "$WORK_DIR/arc-bin" \
+        --config-path "$WORK_DIR/arc-etc/config.json" >/dev/null
+
+jq -e '
+  .azure.arc.enabled == true and
+  (.azure | has("managedIdentity") | not) and
+  (.azure | has("servicePrincipal") | not) and
+  .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
+' "$WORK_DIR/arc-etc/config.json" >/dev/null
+grep -E '^fetch-bootstrap-data .*--auth arc( |$)' "$WORK_DIR/arc-calls" >/dev/null
+
 printf 's"e\\cret\n' > "$WORK_DIR/client-secret"
 chmod 0600 "$WORK_DIR/client-secret"
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-calls" \

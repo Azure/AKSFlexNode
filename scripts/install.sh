@@ -487,18 +487,9 @@ show_next_steps() {
 {
   "azure": {
     "subscriptionId": "YOUR_SUBSCRIPTION_ID",
-    "tenantId": "YOUR_TENANT_ID",
     "resourceManagerEndpoint": "https://management.azure.com",
     "targetAgentPoolName": "YOUR_AGENT_POOL_NAME",
-    "arc": {
-      "enabled": true,
-      "machineName": "YOUR_MACHINE_NAME",
-      "tags": {
-        "node-type": "edge"
-      },
-      "resourceGroup": "YOUR_RESOURCE_GROUP",
-      "location": "YOUR_LOCATION"
-    },
+    "arc": { "enabled": true },
     "targetCluster": {
       "resourceId": "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RESOURCE_GROUP/providers/Microsoft.ContainerService/managedClusters/YOUR_CLUSTER_NAME",
       "location": "YOUR_LOCATION"
@@ -574,10 +565,8 @@ main() {
     install_binary "$binary_path"
     warn_install_dir_not_in_path
 
-    # Setup service components
-    install_azure_cli
-    check_azure_cli_auth
-    setup_permissions
+    # Azure authentication is provided by the selected runtime identity. The
+    # installer does not install Azure CLI or rely on a user's cached login.
     setup_directories
 
     # Cleanup only the temp download directory created by this installer.
