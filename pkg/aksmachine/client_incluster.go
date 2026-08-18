@@ -105,6 +105,9 @@ func clusterEndpointBaseURL(restCfg *rest.Config, endpointURL string) (*url.URL,
 }
 
 func (c *clusterEndpointClient) Create(ctx context.Context, desired GoalState) (*Machine, error) {
+	if err := desired.Validate(); err != nil {
+		return nil, fmt.Errorf("validate goal state: %w", err)
+	}
 	requestURL := c.machineURL(c.nodeName)
 	payload := armcontainerservice.Machine{
 		Properties: &armcontainerservice.MachineProperties{

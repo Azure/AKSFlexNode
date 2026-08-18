@@ -27,16 +27,29 @@ func ResolveMachineGoalState(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return resolveEffectiveMachineGoalState(ctx, log, cfg, machineName, *effectiveGoal)
+}
+
+func resolveEffectiveMachineGoalState(
+	ctx context.Context,
+	log *slog.Logger,
+	cfg *config.Config,
+	machineName string,
+	goal aksmachine.GoalState,
+) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+	if err := goal.Validate(); err != nil {
+		return nil, nil, nil, fmt.Errorf("validate machine goal: %w", err)
+	}
 	resolvedConfig := cfg.DeepCopy()
 	if resolvedConfig == nil {
 		return nil, nil, nil, fmt.Errorf("copy config for machine goal")
 	}
-	resolvedConfig.Components.Kubernetes = effectiveGoal.KubernetesVersion
-	resolvedConfig.Node.MaxPods = effectiveGoal.MaxPods
-	resolvedConfig.Node.Labels = maps.Clone(effectiveGoal.NodeLabels)
-	resolvedConfig.Node.Taints = slices.Clone(effectiveGoal.NodeTaints)
-	resolvedConfig.Node.Kubelet.ImageGCHighThreshold = effectiveGoal.KubeletConfig.ImageGCHighThreshold
-	resolvedConfig.Node.Kubelet.ImageGCLowThreshold = effectiveGoal.KubeletConfig.ImageGCLowThreshold
+	resolvedConfig.Components.Kubernetes = goal.KubernetesVersion
+	resolvedConfig.Node.MaxPods = *goal.MaxPods
+	resolvedConfig.Node.Labels = maps.Clone(goal.NodeLabels)
+	resolvedConfig.Node.Taints = slices.Clone(goal.NodeTaints)
+	resolvedConfig.Node.Kubelet.ImageGCHighThreshold = *goal.KubeletConfig.ImageGCHighThreshold
+	resolvedConfig.Node.Kubelet.ImageGCLowThreshold = *goal.KubeletConfig.ImageGCLowThreshold
 	return config.ResolveMachineGoalState(ctx, log, resolvedConfig, machineName)
 }
 
@@ -57,8 +70,8 @@ func effectiveMachineGoal(cfg *config.Config, goal *aksmachine.GoalState) (*aksm
 
 func goalForRestart(cfg *config.Config, state *State) (*aksmachine.GoalState, error) {
 	if state != nil && state.AppliedGoal != nil {
-		goal := cloneGoalState(*state.AppliedGoal)
-		if err := goal.ValidateEffective(); err != nil {
+		goal := state.AppliedGoal.DeepCopy()
+		if err := goal.Validate(); err != nil {
 			return nil, fmt.Errorf("validate persisted restart goal: %w", err)
 		}
 		return goal, nil
@@ -74,7 +87,7 @@ func goalForRestart(cfg *config.Config, state *State) (*aksmachine.GoalState, er
 			goal.KubernetesVersion = state.AppliedKubernetesVersion
 		}
 	}
-	if err := goal.ValidateEffective(); err != nil {
+	if err := goal.Validate(); err != nil {
 		return nil, fmt.Errorf("validate legacy restart goal: %w", err)
 	}
 	return &goal, nil

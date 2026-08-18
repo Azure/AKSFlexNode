@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -65,7 +64,7 @@ func TestFindActiveMachine(t *testing.T) {
 	}
 }
 
-func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
+func TestConfigForRepaveRefreshesBootstrapData(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
@@ -88,9 +87,9 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
-	got, err := operator.configForGoalState(t.Context(), log, aksmachine.GoalState{KubernetesVersion: "1.36.2"})
+	got, err := operator.configForRepave(t.Context(), log)
 	if err != nil {
-		t.Fatalf("configForGoalState() error = %v", err)
+		t.Fatalf("configForRepave() error = %v", err)
 	}
 	if refresher.calls != 1 {
 		t.Fatalf("refresh calls = %d, want 1", refresher.calls)
@@ -126,7 +125,7 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 	}
 }
 
-func TestConfigForGoalStateSkipsBootstrapDataRefreshWithoutBothAuthTypes(t *testing.T) {
+func TestConfigForRepaveSkipsBootstrapDataRefreshWithoutBothAuthTypes(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]*config.Config{
@@ -142,8 +141,8 @@ func TestConfigForGoalStateSkipsBootstrapDataRefreshWithoutBothAuthTypes(t *test
 			t.Parallel()
 			refresher := bootstrapDataRefresherForConfig(cfg)
 			operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
-			if _, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{}); err != nil {
-				t.Fatalf("configForGoalState() error = %v", err)
+			if _, err := operator.configForRepave(t.Context(), discardLogger()); err != nil {
+				t.Fatalf("configForRepave() error = %v", err)
 			}
 			if _, ok := refresher.(noopBootstrapDataRefresher); !ok {
 				t.Fatalf("refresher = %T, want noopBootstrapDataRefresher", refresher)
@@ -165,7 +164,7 @@ func TestBootstrapDataRefresherForDualAuthConfig(t *testing.T) {
 	}
 }
 
-func TestConfigForGoalStateBootstrapDataRefreshFailure(t *testing.T) {
+func TestConfigForRepaveBootstrapDataRefreshFailure(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Azure: config.AzureConfig{
@@ -176,9 +175,9 @@ func TestConfigForGoalStateBootstrapDataRefreshFailure(t *testing.T) {
 		cfg:                    cfg,
 		bootstrapDataRefresher: &fakeBootstrapDataRefresher{err: errors.New("ARM unavailable")},
 	}
-	_, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{})
+	_, err := operator.configForRepave(t.Context(), discardLogger())
 	if err == nil || !errors.Is(err, operator.bootstrapDataRefresher.(*fakeBootstrapDataRefresher).err) {
-		t.Fatalf("configForGoalState() error = %v", err)
+		t.Fatalf("configForRepave() error = %v", err)
 	}
 	if cfg.Azure.BootstrapToken.Token != "oldtok.0123456789abcdef" {
 		t.Fatal("original config bootstrap token was mutated")

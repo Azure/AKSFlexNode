@@ -205,12 +205,12 @@ func TestBuildK8sProfile(t *testing.T) {
 
 	profile := buildK8sProfile(GoalState{
 		KubernetesVersion: "1.35.1",
-		MaxPods:           42,
+		MaxPods:           ptr(42),
 		NodeLabels:        map[string]string{"workload": "flex"},
 		NodeTaints:        []string{"dedicated=flex:NoSchedule"},
 		KubeletConfig: KubeletConfig{
-			ImageGCHighThreshold: 85,
-			ImageGCLowThreshold:  80,
+			ImageGCHighThreshold: ptr(85),
+			ImageGCLowThreshold:  ptr(80),
 		},
 	})
 	if profile.OrchestratorVersion == nil || *profile.OrchestratorVersion != "1.35.1" {
@@ -240,7 +240,7 @@ func TestGoalStateValidate(t *testing.T) {
 	}{
 		{
 			name: "valid",
-			goal: GoalState{KubernetesVersion: "1.35.1"},
+			goal: testGoal("1.35.1", ""),
 		},
 		{
 			name:    "missing Kubernetes version",
@@ -248,22 +248,42 @@ func TestGoalStateValidate(t *testing.T) {
 			wantErr: "kubernetes version is empty",
 		},
 		{
-			name:    "negative max pods",
-			goal:    GoalState{KubernetesVersion: "1.35.1", MaxPods: -1},
+			name:    "missing max pods",
+			goal:    GoalState{KubernetesVersion: "1.35.1"},
+			wantErr: "max pods is empty",
+		},
+		{
+			name: "negative max pods",
+			goal: GoalState{
+				KubernetesVersion: "1.35.1",
+				MaxPods:           ptr(-1),
+				KubeletConfig: KubeletConfig{
+					ImageGCHighThreshold: ptr(85),
+					ImageGCLowThreshold:  ptr(80),
+				},
+			},
 			wantErr: "max pods must be non-negative",
 		},
 		{
-			name:    "max pods exceeds int32",
-			goal:    GoalState{KubernetesVersion: "1.35.1", MaxPods: math.MaxInt32 + 1},
+			name: "max pods exceeds int32",
+			goal: GoalState{
+				KubernetesVersion: "1.35.1",
+				MaxPods:           ptr(math.MaxInt32 + 1),
+				KubeletConfig: KubeletConfig{
+					ImageGCHighThreshold: ptr(85),
+					ImageGCLowThreshold:  ptr(80),
+				},
+			},
 			wantErr: "max pods must be less than or equal to",
 		},
 		{
 			name: "negative image GC high threshold",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
-				MaxPods:           110,
+				MaxPods:           ptr(110),
 				KubeletConfig: KubeletConfig{
-					ImageGCHighThreshold: -1,
+					ImageGCHighThreshold: ptr(-1),
+					ImageGCLowThreshold:  ptr(80),
 				},
 			},
 			wantErr: "image GC high threshold must be non-negative",
@@ -272,9 +292,10 @@ func TestGoalStateValidate(t *testing.T) {
 			name: "negative image GC low threshold",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
-				MaxPods:           110,
+				MaxPods:           ptr(110),
 				KubeletConfig: KubeletConfig{
-					ImageGCLowThreshold: -1,
+					ImageGCHighThreshold: ptr(85),
+					ImageGCLowThreshold:  ptr(-1),
 				},
 			},
 			wantErr: "image GC low threshold must be non-negative",
@@ -327,13 +348,14 @@ func TestMachineFromARM(t *testing.T) {
 	if machine.Goal.KubernetesVersion != "1.35.1" || machine.Goal.SettingsVersion != "settings-42" {
 		t.Fatalf("goal versions = %#v", machine.Goal)
 	}
-	if machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" {
+	if machine.Goal.MaxPods == nil || *machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" {
 		t.Fatalf("goal settings = %#v", machine.Goal)
 	}
 	if len(machine.Goal.NodeTaints) != 1 || machine.Goal.NodeTaints[0] != "dedicated=flex:NoSchedule" {
 		t.Fatalf("goal taints = %#v", machine.Goal.NodeTaints)
 	}
-	if machine.Goal.KubeletConfig.ImageGCHighThreshold != 85 || machine.Goal.KubeletConfig.ImageGCLowThreshold != 80 {
+	if machine.Goal.KubeletConfig.ImageGCHighThreshold == nil || *machine.Goal.KubeletConfig.ImageGCHighThreshold != 85 ||
+		machine.Goal.KubeletConfig.ImageGCLowThreshold == nil || *machine.Goal.KubeletConfig.ImageGCLowThreshold != 80 {
 		t.Fatalf("kubelet config = %#v", machine.Goal.KubeletConfig)
 	}
 	if machine.Status.ProvisioningState != ProvisioningStateSucceeded {
@@ -424,8 +446,8 @@ func TestMachineFromARMResolvesMinorVersionAlias(t *testing.T) {
 		Properties: &armcontainerservice.MachineProperties{
 			ETag: ptr("42"),
 			Kubernetes: &armcontainerservice.MachineKubernetesProfile{
-				OrchestratorVersion:        ptr("1.35"),
-				CurrentOrchestratorVersion: ptr("1.35.2"),
+				OrchestratorVersion:        ptr(" v1.35 "),
+				CurrentOrchestratorVersion: ptr(" v1.35.2 "),
 			},
 		},
 	}, "", "")

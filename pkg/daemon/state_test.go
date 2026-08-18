@@ -17,8 +17,8 @@ func TestFileStateStoreSaveLoad(t *testing.T) {
 		t.Fatalf("newFileStateStore: %v", err)
 	}
 	want := &State{
-		AppliedGoal:         cloneGoalState(testMachineGoal("1.34.0", "42")),
-		PreviousAppliedGoal: cloneGoalState(testMachineGoal("1.33.0", "41")),
+		AppliedGoal:         testMachineGoal("1.34.0", "42").DeepCopy(),
+		PreviousAppliedGoal: testMachineGoal("1.33.0", "41").DeepCopy(),
 		ActiveMachine:       "kube2",
 	}
 	want.AppliedGoal.NodeLabels = map[string]string{"workload": "flex"}
