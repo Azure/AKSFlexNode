@@ -4,10 +4,10 @@ func testGoal(kubernetesVersion, settingsVersion string) GoalState {
 	return GoalState{
 		KubernetesVersion: kubernetesVersion,
 		SettingsVersion:   settingsVersion,
-		MaxPods:           110,
+		MaxPods:           ptr(110),
 		KubeletConfig: KubeletConfig{
-			ImageGCHighThreshold: 85,
-			ImageGCLowThreshold:  80,
+			ImageGCHighThreshold: ptr(85),
+			ImageGCLowThreshold:  ptr(80),
 		},
 	}
 }

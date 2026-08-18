@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
@@ -49,12 +47,12 @@ func (s *State) validate() error {
 		return fmt.Errorf("daemon state applied goal is missing")
 	}
 	if s.AppliedGoal != nil {
-		if err := s.AppliedGoal.ValidateEffective(); err != nil {
+		if err := s.AppliedGoal.Validate(); err != nil {
 			return fmt.Errorf("daemon state applied goal: %w", err)
 		}
 	}
 	if s.PreviousAppliedGoal != nil {
-		if err := s.PreviousAppliedGoal.ValidateEffective(); err != nil {
+		if err := s.PreviousAppliedGoal.Validate(); err != nil {
 			return fmt.Errorf("daemon state previous applied goal: %w", err)
 		}
 	}
@@ -86,16 +84,9 @@ func (t *saveStateTask) Do(ctx context.Context) error {
 }
 
 func SeededState(goal aksmachine.GoalState) *State {
-	state := &State{AppliedGoal: cloneGoalState(goal), ActiveMachine: goalstates.NSpawnMachineKube1}
+	state := &State{AppliedGoal: goal.DeepCopy(), ActiveMachine: goalstates.NSpawnMachineKube1}
 	state.populateLegacyFields()
 	return state
-}
-
-func cloneGoalState(goal aksmachine.GoalState) *aksmachine.GoalState {
-	cloned := goal
-	cloned.NodeLabels = maps.Clone(goal.NodeLabels)
-	cloned.NodeTaints = slices.Clone(goal.NodeTaints)
-	return &cloned
 }
 
 func (s *State) populateLegacyFields() {

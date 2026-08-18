@@ -6,10 +6,14 @@ func testMachineGoal(kubernetesVersion, settingsVersion string) aksmachine.GoalS
 	return aksmachine.GoalState{
 		KubernetesVersion: kubernetesVersion,
 		SettingsVersion:   settingsVersion,
-		MaxPods:           110,
+		MaxPods:           intPointer(110),
 		KubeletConfig: aksmachine.KubeletConfig{
-			ImageGCHighThreshold: 85,
-			ImageGCLowThreshold:  80,
+			ImageGCHighThreshold: intPointer(85),
+			ImageGCLowThreshold:  intPointer(80),
 		},
 	}
+}
+
+func intPointer(value int) *int {
+	return &value
 }

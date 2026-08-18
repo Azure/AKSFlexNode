@@ -54,7 +54,7 @@ func TestClusterEndpointClientGet(t *testing.T) {
 	if machine.Goal.KubernetesVersion != "1.34.0" || machine.Goal.SettingsVersion != "42" {
 		t.Fatalf("goal = %#v", machine.Goal)
 	}
-	if machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" || len(machine.Goal.NodeTaints) != 1 {
+	if machine.Goal.MaxPods == nil || *machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" || len(machine.Goal.NodeTaints) != 1 {
 		t.Fatalf("extended goal = %#v", machine.Goal)
 	}
 	if machine.Status.ProvisioningState != ProvisioningStateSucceeded {

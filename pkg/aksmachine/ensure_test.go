@@ -86,7 +86,7 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 
 	goal := testGoal("1.35.1", "")
 	createdGoal := testGoal("1.35.1", "etag-created")
-	createdGoal.MaxPods = 42
+	createdGoal.MaxPods = ptr(42)
 	client := &ensureMachineClient{createResult: &Machine{Goal: createdGoal}}
 	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -99,8 +99,8 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 	if goal.SettingsVersion != "etag-created" {
 		t.Fatalf("SettingsVersion = %q, want etag-created", goal.SettingsVersion)
 	}
-	if goal.MaxPods != 42 {
-		t.Fatalf("MaxPods = %d, want server-normalized value 42", goal.MaxPods)
+	if goal.MaxPods == nil || *goal.MaxPods != 42 {
+		t.Fatalf("MaxPods = %v, want server-normalized value 42", goal.MaxPods)
 	}
 }
 
@@ -109,23 +109,23 @@ func TestEnsureMachineAdoptsExistingGoal(t *testing.T) {
 
 	goal := GoalState{
 		KubernetesVersion: "1.35.1",
-		MaxPods:           30,
+		MaxPods:           ptr(30),
 		NodeLabels:        map[string]string{"source": "local"},
 		NodeTaints:        []string{"local=true:NoSchedule"},
 		KubeletConfig: KubeletConfig{
-			ImageGCHighThreshold: 85,
-			ImageGCLowThreshold:  80,
+			ImageGCHighThreshold: ptr(85),
+			ImageGCLowThreshold:  ptr(80),
 		},
 	}
 	client := &ensureMachineClient{machine: &Machine{Goal: GoalState{
 		KubernetesVersion: "1.35.1",
 		SettingsVersion:   "etag-42",
-		MaxPods:           110,
+		MaxPods:           ptr(110),
 		NodeLabels:        map[string]string{"source": "remote"},
 		NodeTaints:        []string{"remote=true:NoSchedule"},
 		KubeletConfig: KubeletConfig{
-			ImageGCHighThreshold: 70,
-			ImageGCLowThreshold:  60,
+			ImageGCHighThreshold: ptr(70),
+			ImageGCLowThreshold:  ptr(60),
 		},
 	}}}
 	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -139,10 +139,11 @@ func TestEnsureMachineAdoptsExistingGoal(t *testing.T) {
 	if goal.SettingsVersion != "etag-42" {
 		t.Fatalf("SettingsVersion = %q, want etag-42", goal.SettingsVersion)
 	}
-	if goal.MaxPods != 110 || goal.NodeLabels["source"] != "remote" || goal.NodeTaints[0] != "remote=true:NoSchedule" {
+	if goal.MaxPods == nil || *goal.MaxPods != 110 || goal.NodeLabels["source"] != "remote" || goal.NodeTaints[0] != "remote=true:NoSchedule" {
 		t.Fatalf("remote goal was not adopted: %#v", goal)
 	}
-	if goal.KubeletConfig.ImageGCHighThreshold != 70 || goal.KubeletConfig.ImageGCLowThreshold != 60 {
+	if goal.KubeletConfig.ImageGCHighThreshold == nil || *goal.KubeletConfig.ImageGCHighThreshold != 70 ||
+		goal.KubeletConfig.ImageGCLowThreshold == nil || *goal.KubeletConfig.ImageGCLowThreshold != 60 {
 		t.Fatalf("remote kubelet config was not adopted: %#v", goal.KubeletConfig)
 	}
 }

@@ -42,7 +42,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	if err != nil {
 		return err
 	}
-	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, o.cfg, active.Name, goal)
+	_, gs, containerImageArchives, err := resolveEffectiveMachineGoalState(ctx, log, o.cfg, active.Name, *goal)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
@@ -86,7 +86,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := o.configForGoalState(ctx, log, goal)
+	cfg, err := o.configForRepave(ctx, log)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		"kubernetesVersion", effectiveGoal.KubernetesVersion,
 	)
 
-	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, cfg, newMachine, effectiveGoal)
+	_, gs, containerImageArchives, err := resolveEffectiveMachineGoalState(ctx, log, cfg, newMachine, *effectiveGoal)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
@@ -121,7 +121,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	return newState, nil
 }
 
-func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*config.Config, error) {
+func (o *nspawnNodeOperator) configForRepave(ctx context.Context, log *slog.Logger) (*config.Config, error) {
 	// Keep short-lived bootstrap credentials scoped to this repave. Persisting
 	// them would make a later repave depend on this token's lifetime again.
 	cfg := o.cfg.DeepCopy()
@@ -161,11 +161,11 @@ func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) e
 
 func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
 	next := &State{
-		AppliedGoal: cloneGoalState(goal),
+		AppliedGoal: goal.DeepCopy(),
 	}
 	if current != nil {
 		if current.AppliedGoal != nil {
-			next.PreviousAppliedGoal = cloneGoalState(*current.AppliedGoal)
+			next.PreviousAppliedGoal = current.AppliedGoal.DeepCopy()
 		} else if current.AppliedKubernetesVersion != "" {
 			next.PreviousSettingsVersion = current.AppliedSettingsVersion
 			next.PreviousKubernetesVersion = current.AppliedKubernetesVersion

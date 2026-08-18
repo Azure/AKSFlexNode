@@ -214,10 +214,14 @@ func clientCertificateCredentialOptions(clientOpts azcore.ClientOptions) *aziden
 func buildK8sProfile(goal GoalState) *armcontainerservice.MachineKubernetesProfile {
 	// FlexNode RP accepts the registration surface below; local kubelet defaults
 	// are consumed during node bootstrap and must not be sent as Machine fields.
-	maxPods := int32(goal.MaxPods) //nolint:gosec // validated non-negative and small
+	var maxPods *int32
+	if goal.MaxPods != nil {
+		value := int32(*goal.MaxPods) //nolint:gosec // validated non-negative and small
+		maxPods = &value
+	}
 	p := &armcontainerservice.MachineKubernetesProfile{
 		OrchestratorVersion: &goal.KubernetesVersion,
-		MaxPods:             &maxPods,
+		MaxPods:             maxPods,
 		NodeLabels:          stringPointerMap(goal.NodeLabels),
 		NodeTaints:          stringPointerSlice(goal.NodeTaints),
 	}
@@ -283,7 +287,8 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 			}
 		}
 		if kubernetes.MaxPods != nil {
-			result.Goal.MaxPods = int(*kubernetes.MaxPods)
+			value := int(*kubernetes.MaxPods)
+			result.Goal.MaxPods = &value
 		}
 		if kubernetes.NodeLabels != nil {
 			result.Goal.NodeLabels = stringMapFromPointers(kubernetes.NodeLabels)
@@ -293,10 +298,12 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 		}
 		if kubernetes.KubeletConfig != nil {
 			if kubernetes.KubeletConfig.ImageGcHighThreshold != nil {
-				result.Goal.KubeletConfig.ImageGCHighThreshold = int(*kubernetes.KubeletConfig.ImageGcHighThreshold)
+				value := int(*kubernetes.KubeletConfig.ImageGcHighThreshold)
+				result.Goal.KubeletConfig.ImageGCHighThreshold = &value
 			}
 			if kubernetes.KubeletConfig.ImageGcLowThreshold != nil {
-				result.Goal.KubeletConfig.ImageGCLowThreshold = int(*kubernetes.KubeletConfig.ImageGcLowThreshold)
+				value := int(*kubernetes.KubeletConfig.ImageGcLowThreshold)
+				result.Goal.KubeletConfig.ImageGCLowThreshold = &value
 			}
 		}
 	}
@@ -313,9 +320,9 @@ func resolveKubernetesVersionAlias(desired, current string) string {
 	desiredVersion := strings.TrimPrefix(strings.TrimSpace(desired), "v")
 	currentVersion := strings.TrimPrefix(strings.TrimSpace(current), "v")
 	if len(strings.Split(desiredVersion, ".")) == 2 && strings.HasPrefix(currentVersion, desiredVersion+".") {
-		return current
+		return currentVersion
 	}
-	return desired
+	return desiredVersion
 }
 
 func stringMapFromPointers(values map[string]*string) map[string]string {

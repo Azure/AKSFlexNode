@@ -13,7 +13,7 @@ func TestDecide(t *testing.T) {
 
 	goal := testMachineGoal("1.34.0", "42")
 	machine := machineSnapshot{machine: &aksmachine.Machine{Goal: goal}}
-	applied := &State{AppliedGoal: cloneGoalState(goal)}
+	applied := &State{AppliedGoal: goal.DeepCopy()}
 	staleGoal := testMachineGoal("1.33.0", "41")
 	stale := &State{AppliedGoal: &staleGoal}
 	node := nodeSnapshot{node: &corev1.Node{}}
