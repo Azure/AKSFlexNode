@@ -205,12 +205,12 @@ func TestBuildK8sProfile(t *testing.T) {
 
 	profile := buildK8sProfile(GoalState{
 		KubernetesVersion: "1.35.1",
-		MaxPods:           ptr(42),
+		MaxPods:           42,
 		NodeLabels:        map[string]string{"workload": "flex"},
 		NodeTaints:        []string{"dedicated=flex:NoSchedule"},
 		KubeletConfig: KubeletConfig{
-			ImageGCHighThreshold: ptr(85),
-			ImageGCLowThreshold:  ptr(80),
+			ImageGCHighThreshold: 85,
+			ImageGCLowThreshold:  80,
 		},
 	})
 	if profile.OrchestratorVersion == nil || *profile.OrchestratorVersion != "1.35.1" {
@@ -250,28 +250,28 @@ func TestGoalStateValidate(t *testing.T) {
 		{
 			name:    "missing max pods",
 			goal:    GoalState{KubernetesVersion: "1.35.1"},
-			wantErr: "max pods is empty",
+			wantErr: "max pods must be positive",
 		},
 		{
 			name: "negative max pods",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
-				MaxPods:           ptr(-1),
+				MaxPods:           -1,
 				KubeletConfig: KubeletConfig{
-					ImageGCHighThreshold: ptr(85),
-					ImageGCLowThreshold:  ptr(80),
+					ImageGCHighThreshold: 85,
+					ImageGCLowThreshold:  80,
 				},
 			},
-			wantErr: "max pods must be non-negative",
+			wantErr: "max pods must be positive",
 		},
 		{
 			name: "max pods exceeds int32",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
-				MaxPods:           ptr(math.MaxInt32 + 1),
+				MaxPods:           math.MaxInt32 + 1,
 				KubeletConfig: KubeletConfig{
-					ImageGCHighThreshold: ptr(85),
-					ImageGCLowThreshold:  ptr(80),
+					ImageGCHighThreshold: 85,
+					ImageGCLowThreshold:  80,
 				},
 			},
 			wantErr: "max pods must be less than or equal to",
@@ -280,22 +280,22 @@ func TestGoalStateValidate(t *testing.T) {
 			name: "negative image GC high threshold",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
-				MaxPods:           ptr(110),
+				MaxPods:           110,
 				KubeletConfig: KubeletConfig{
-					ImageGCHighThreshold: ptr(-1),
-					ImageGCLowThreshold:  ptr(80),
+					ImageGCHighThreshold: -1,
+					ImageGCLowThreshold:  80,
 				},
 			},
-			wantErr: "image GC high threshold must be non-negative",
+			wantErr: "image GC high threshold must be positive",
 		},
 		{
 			name: "negative image GC low threshold",
 			goal: GoalState{
 				KubernetesVersion: "1.35.1",
-				MaxPods:           ptr(110),
+				MaxPods:           110,
 				KubeletConfig: KubeletConfig{
-					ImageGCHighThreshold: ptr(85),
-					ImageGCLowThreshold:  ptr(-1),
+					ImageGCHighThreshold: 85,
+					ImageGCLowThreshold:  -1,
 				},
 			},
 			wantErr: "image GC low threshold must be non-negative",

@@ -214,14 +214,10 @@ func clientCertificateCredentialOptions(clientOpts azcore.ClientOptions) *aziden
 func buildK8sProfile(goal GoalState) *armcontainerservice.MachineKubernetesProfile {
 	// FlexNode RP accepts the registration surface below; local kubelet defaults
 	// are consumed during node bootstrap and must not be sent as Machine fields.
-	var maxPods *int32
-	if goal.MaxPods != nil {
-		value := int32(*goal.MaxPods) //nolint:gosec // validated non-negative and small
-		maxPods = &value
-	}
+	maxPods := int32(goal.MaxPods) //nolint:gosec // validated non-negative and small
 	p := &armcontainerservice.MachineKubernetesProfile{
 		OrchestratorVersion: &goal.KubernetesVersion,
-		MaxPods:             maxPods,
+		MaxPods:             &maxPods,
 		NodeLabels:          stringPointerMap(goal.NodeLabels),
 		NodeTaints:          stringPointerSlice(goal.NodeTaints),
 	}
@@ -286,10 +282,7 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 				)
 			}
 		}
-		if kubernetes.MaxPods != nil {
-			value := int(*kubernetes.MaxPods)
-			result.Goal.MaxPods = &value
-		}
+		result.Goal.MaxPods = intPointerFromInt32(kubernetes.MaxPods)
 		if kubernetes.NodeLabels != nil {
 			result.Goal.NodeLabels = stringMapFromPointers(kubernetes.NodeLabels)
 		}
@@ -297,14 +290,8 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 			result.Goal.NodeTaints = stringSliceFromPointers(kubernetes.NodeTaints)
 		}
 		if kubernetes.KubeletConfig != nil {
-			if kubernetes.KubeletConfig.ImageGcHighThreshold != nil {
-				value := int(*kubernetes.KubeletConfig.ImageGcHighThreshold)
-				result.Goal.KubeletConfig.ImageGCHighThreshold = &value
-			}
-			if kubernetes.KubeletConfig.ImageGcLowThreshold != nil {
-				value := int(*kubernetes.KubeletConfig.ImageGcLowThreshold)
-				result.Goal.KubeletConfig.ImageGCLowThreshold = &value
-			}
+			result.Goal.KubeletConfig.ImageGCHighThreshold = intPointerFromInt32(kubernetes.KubeletConfig.ImageGcHighThreshold)
+			result.Goal.KubeletConfig.ImageGCLowThreshold = intPointerFromInt32(kubernetes.KubeletConfig.ImageGcLowThreshold)
 		}
 	}
 	if properties.ETag != nil {
@@ -314,6 +301,14 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 		result.Status.ProvisioningState = ProvisioningState(*properties.ProvisioningState)
 	}
 	return result
+}
+
+func intPointerFromInt32(value *int32) *int {
+	if value == nil {
+		return nil
+	}
+	converted := int(*value)
+	return &converted
 }
 
 func resolveKubernetesVersionAlias(desired, current string) string {

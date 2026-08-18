@@ -22,7 +22,7 @@ type activeMachine struct {
 
 type nodeOperator interface {
 	LoadState(ctx context.Context) (*State, error)
-	ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error)
+	ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.MachineGoal) (*State, error)
 	RestartNode(ctx context.Context, log *slog.Logger) error
 	// ResetNode removes nspawn node runtime and persisted daemon state but must
 	// not stop this daemon process. The controller publishes lifecycle completion
@@ -42,7 +42,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	if err != nil {
 		return err
 	}
-	_, gs, containerImageArchives, err := resolveEffectiveMachineGoalState(ctx, log, o.cfg, active.Name, *goal)
+	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, o.cfg, active.Name, *goal)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
@@ -81,7 +81,7 @@ func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*activeMach
 	return activeMachineFromStore(ctx, o.state)
 }
 
-func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
+func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.MachineGoal) (*State, error) {
 	active, err := o.findActiveMachine(ctx)
 	if err != nil {
 		return nil, err
@@ -90,7 +90,11 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, err
 	}
-	effectiveGoal, err := effectiveMachineGoal(cfg, &goal)
+	localGoal, err := aksmachine.GoalStateFromConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build local machine goal: %w", err)
+	}
+	effectiveGoal, err := aksmachine.EffectiveGoal(goal, localGoal)
 	if err != nil {
 		return nil, err
 	}
@@ -103,11 +107,11 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 		"kubernetesVersion", effectiveGoal.KubernetesVersion,
 	)
 
-	_, gs, containerImageArchives, err := resolveEffectiveMachineGoalState(ctx, log, cfg, newMachine, *effectiveGoal)
+	_, gs, containerImageArchives, err := ResolveMachineGoalState(ctx, log, cfg, newMachine, effectiveGoal)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
-	newState := nextAppliedState(active.State, *effectiveGoal, &activeMachine{Name: newMachine})
+	newState := nextAppliedState(active.State, effectiveGoal, &activeMachine{Name: newMachine})
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),

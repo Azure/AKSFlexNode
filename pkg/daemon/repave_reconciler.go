@@ -59,7 +59,7 @@ type nodeSnapshot struct {
 
 type decision struct {
 	Kind   decisionKind
-	Goal   aksmachine.GoalState
+	Goal   aksmachine.MachineGoal
 	Reason string
 }
 
@@ -214,7 +214,7 @@ func (r *repaveReconciler) nodeSnapshot(ctx context.Context) (nodeSnapshot, erro
 	return nodeSnapshot{node: &node}, nil
 }
 
-func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goal aksmachine.GoalState) error {
+func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goal aksmachine.MachineGoal) error {
 	if err := r.patchStatus(ctx, aksmachine.ProvisioningStateReconciling, stateObservedVersion(state), "applying machine goal state"); err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 	return decision{Kind: decisionWaitForNodeSignal, Goal: goal, Reason: "goal state differs but node deletion trigger is absent"}
 }
 
-func goalApplied(goal aksmachine.GoalState, state *State) bool {
+func goalApplied(goal aksmachine.MachineGoal, state *State) bool {
 	return goal.SettingsVersion != "" && stateObservedVersion(state) == goal.SettingsVersion
 }
 

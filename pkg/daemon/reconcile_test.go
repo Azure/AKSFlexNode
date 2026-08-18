@@ -11,10 +11,11 @@ import (
 func TestDecide(t *testing.T) {
 	t.Parallel()
 
-	goal := testMachineGoal("1.34.0", "42")
-	machine := machineSnapshot{machine: &aksmachine.Machine{Goal: goal}}
-	applied := &State{AppliedGoal: goal.DeepCopy()}
-	staleGoal := testMachineGoal("1.33.0", "41")
+	machineGoal := testMachineGoal("1.34.0", "42")
+	machine := machineSnapshot{machine: &aksmachine.Machine{Goal: machineGoal}}
+	appliedGoal := testGoalState("1.34.0", "42")
+	applied := &State{AppliedGoal: appliedGoal.DeepCopy()}
+	staleGoal := testGoalState("1.33.0", "41")
 	stale := &State{AppliedGoal: &staleGoal}
 	node := nodeSnapshot{node: &corev1.Node{}}
 	missingNode := nodeSnapshot{}

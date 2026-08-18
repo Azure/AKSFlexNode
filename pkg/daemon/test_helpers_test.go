@@ -2,12 +2,24 @@ package daemon
 
 import "github.com/Azure/AKSFlexNode/pkg/aksmachine"
 
-func testMachineGoal(kubernetesVersion, settingsVersion string) aksmachine.GoalState {
+func testGoalState(kubernetesVersion, settingsVersion string) aksmachine.GoalState {
 	return aksmachine.GoalState{
 		KubernetesVersion: kubernetesVersion,
 		SettingsVersion:   settingsVersion,
-		MaxPods:           intPointer(110),
+		MaxPods:           110,
 		KubeletConfig: aksmachine.KubeletConfig{
+			ImageGCHighThreshold: 85,
+			ImageGCLowThreshold:  80,
+		},
+	}
+}
+
+func testMachineGoal(kubernetesVersion, settingsVersion string) aksmachine.MachineGoal {
+	return aksmachine.MachineGoal{
+		KubernetesVersion: kubernetesVersion,
+		SettingsVersion:   settingsVersion,
+		MaxPods:           intPointer(110),
+		KubeletConfig: aksmachine.MachineKubeletConfig{
 			ImageGCHighThreshold: intPointer(85),
 			ImageGCLowThreshold:  intPointer(80),
 		},

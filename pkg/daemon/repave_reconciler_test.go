@@ -18,9 +18,10 @@ import (
 func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
-	goal := testMachineGoal("1.34.0", "42")
-	previousGoal := testMachineGoal("1.33.0", "41")
-	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: goal}}
+	machineGoal := testMachineGoal("1.34.0", "42")
+	goal := testGoalState("1.34.0", "42")
+	previousGoal := testGoalState("1.33.0", "41")
+	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: machineGoal}}
 	operator := &fakeNodeOperator{
 		state: &State{AppliedGoal: &previousGoal, ActiveMachine: "kube1"},
 		newState: &State{
@@ -86,7 +87,7 @@ func TestRepaveReconcilerStateLoadFailurePatchesFailed(t *testing.T) {
 func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 	t.Parallel()
 
-	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0"}}}
+	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.MachineGoal{KubernetesVersion: "1.34.0"}}}
 	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
@@ -157,7 +158,7 @@ func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
 	return f.state, f.err
 }
 
-func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error) {
+func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.MachineGoal) (*State, error) {
 	f.applied = true
 	if f.newState != nil {
 		f.state = f.newState

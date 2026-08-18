@@ -21,14 +21,14 @@ func TestResolveMachineGoalStateUsesCompleteMachineGoal(t *testing.T) {
 			Kubelet: config.KubeletConfig{ImageGCHighThreshold: 90, ImageGCLowThreshold: 75},
 		},
 	}
-	goal := testMachineGoal("1.35.1", "42")
-	goal.MaxPods = intPointer(50)
+	goal := testGoalState("1.35.1", "42")
+	goal.MaxPods = 50
 	goal.NodeLabels = map[string]string{"source": "machine"}
 	goal.NodeTaints = []string{"machine=true:NoExecute"}
-	goal.KubeletConfig.ImageGCHighThreshold = intPointer(70)
-	goal.KubeletConfig.ImageGCLowThreshold = intPointer(60)
+	goal.KubeletConfig.ImageGCHighThreshold = 70
+	goal.KubeletConfig.ImageGCLowThreshold = 60
 
-	agentCfg, _, _, err := ResolveMachineGoalState(t.Context(), slog.Default(), cfg, "kube1", &goal)
+	agentCfg, _, _, err := ResolveMachineGoalState(t.Context(), slog.Default(), cfg, "kube1", goal)
 	if err != nil {
 		t.Fatalf("ResolveMachineGoalState: %v", err)
 	}
@@ -73,14 +73,13 @@ func TestGoalForRestartLegacyStatePreservesConfigSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goalForRestart: %v", err)
 	}
-	if goal.KubernetesVersion != "1.35.1" || goal.SettingsVersion != "42" || goal.MaxPods == nil || *goal.MaxPods != 30 {
+	if goal.KubernetesVersion != "1.35.1" || goal.SettingsVersion != "42" || goal.MaxPods != 30 {
 		t.Fatalf("goal versions/maxPods = %#v", goal)
 	}
 	if !maps.Equal(goal.NodeLabels, cfg.Node.Labels) || len(goal.NodeTaints) != 1 || goal.NodeTaints[0] != cfg.Node.Taints[0] {
 		t.Fatalf("legacy restart goal lost config settings: %#v", goal)
 	}
-	if goal.KubeletConfig.ImageGCHighThreshold == nil || *goal.KubeletConfig.ImageGCHighThreshold != 90 ||
-		goal.KubeletConfig.ImageGCLowThreshold == nil || *goal.KubeletConfig.ImageGCLowThreshold != 75 {
+	if goal.KubeletConfig.ImageGCHighThreshold != 90 || goal.KubeletConfig.ImageGCLowThreshold != 75 {
 		t.Fatalf("legacy restart kubelet config = %#v", goal.KubeletConfig)
 	}
 }
@@ -88,7 +87,7 @@ func TestGoalForRestartLegacyStatePreservesConfigSettings(t *testing.T) {
 func TestGoalForRestartClonesCompleteGoal(t *testing.T) {
 	t.Parallel()
 
-	applied := testMachineGoal("1.35.1", "42")
+	applied := testGoalState("1.35.1", "42")
 	applied.NodeLabels = map[string]string{"source": "machine"}
 	state := &State{AppliedGoal: &applied}
 

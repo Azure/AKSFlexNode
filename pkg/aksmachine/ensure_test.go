@@ -85,7 +85,7 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 	t.Parallel()
 
 	goal := testGoal("1.35.1", "")
-	createdGoal := testGoal("1.35.1", "etag-created")
+	createdGoal := testMachineGoal("1.35.1", "etag-created")
 	createdGoal.MaxPods = ptr(42)
 	client := &ensureMachineClient{createResult: &Machine{Goal: createdGoal}}
 	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -99,8 +99,8 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 	if goal.SettingsVersion != "etag-created" {
 		t.Fatalf("SettingsVersion = %q, want etag-created", goal.SettingsVersion)
 	}
-	if goal.MaxPods == nil || *goal.MaxPods != 42 {
-		t.Fatalf("MaxPods = %v, want server-normalized value 42", goal.MaxPods)
+	if goal.MaxPods != 42 {
+		t.Fatalf("MaxPods = %d, want server-normalized value 42", goal.MaxPods)
 	}
 }
 
@@ -109,21 +109,21 @@ func TestEnsureMachineAdoptsExistingGoal(t *testing.T) {
 
 	goal := GoalState{
 		KubernetesVersion: "1.35.1",
-		MaxPods:           ptr(30),
+		MaxPods:           30,
 		NodeLabels:        map[string]string{"source": "local"},
 		NodeTaints:        []string{"local=true:NoSchedule"},
 		KubeletConfig: KubeletConfig{
-			ImageGCHighThreshold: ptr(85),
-			ImageGCLowThreshold:  ptr(80),
+			ImageGCHighThreshold: 85,
+			ImageGCLowThreshold:  80,
 		},
 	}
-	client := &ensureMachineClient{machine: &Machine{Goal: GoalState{
+	client := &ensureMachineClient{machine: &Machine{Goal: MachineGoal{
 		KubernetesVersion: "1.35.1",
 		SettingsVersion:   "etag-42",
 		MaxPods:           ptr(110),
 		NodeLabels:        map[string]string{"source": "remote"},
 		NodeTaints:        []string{"remote=true:NoSchedule"},
-		KubeletConfig: KubeletConfig{
+		KubeletConfig: MachineKubeletConfig{
 			ImageGCHighThreshold: ptr(70),
 			ImageGCLowThreshold:  ptr(60),
 		},
@@ -139,11 +139,10 @@ func TestEnsureMachineAdoptsExistingGoal(t *testing.T) {
 	if goal.SettingsVersion != "etag-42" {
 		t.Fatalf("SettingsVersion = %q, want etag-42", goal.SettingsVersion)
 	}
-	if goal.MaxPods == nil || *goal.MaxPods != 110 || goal.NodeLabels["source"] != "remote" || goal.NodeTaints[0] != "remote=true:NoSchedule" {
+	if goal.MaxPods != 110 || goal.NodeLabels["source"] != "remote" || goal.NodeTaints[0] != "remote=true:NoSchedule" {
 		t.Fatalf("remote goal was not adopted: %#v", goal)
 	}
-	if goal.KubeletConfig.ImageGCHighThreshold == nil || *goal.KubeletConfig.ImageGCHighThreshold != 70 ||
-		goal.KubeletConfig.ImageGCLowThreshold == nil || *goal.KubeletConfig.ImageGCLowThreshold != 60 {
+	if goal.KubeletConfig.ImageGCHighThreshold != 70 || goal.KubeletConfig.ImageGCLowThreshold != 60 {
 		t.Fatalf("remote kubelet config was not adopted: %#v", goal.KubeletConfig)
 	}
 }
@@ -152,7 +151,7 @@ func TestEnsureMachineAdoptsExistingMismatchedVersion(t *testing.T) {
 	t.Parallel()
 
 	goal := testGoal("1.35.1", "")
-	remoteGoal := testGoal("1.34.0", "etag-remote")
+	remoteGoal := testMachineGoal("1.34.0", "etag-remote")
 	client := &ensureMachineClient{machine: &Machine{Goal: remoteGoal}}
 	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -176,10 +175,10 @@ func TestEnsureMachineRejectsInvalidExistingMachine(t *testing.T) {
 		wantErr string
 	}{
 		"best effort preserves local goal after missing settings version": {
-			machine: &Machine{Goal: testGoal("1.35.1", "")},
+			machine: &Machine{Goal: testMachineGoal("1.35.1", "")},
 		},
 		"required rejects missing settings version": {
-			machine: &Machine{Goal: testGoal("1.35.1", "")},
+			machine: &Machine{Goal: testMachineGoal("1.35.1", "")},
 			require: true,
 			wantErr: "goal settings version is empty",
 		},
@@ -246,7 +245,17 @@ func (c *ensureMachineClient) Create(_ context.Context, goal GoalState) (*Machin
 	if c.createResult != nil {
 		return c.createResult, nil
 	}
-	return &Machine{Goal: goal}, nil
+	return &Machine{Goal: MachineGoal{
+		KubernetesVersion: goal.KubernetesVersion,
+		SettingsVersion:   goal.SettingsVersion,
+		MaxPods:           ptr(goal.MaxPods),
+		NodeLabels:        goal.NodeLabels,
+		NodeTaints:        goal.NodeTaints,
+		KubeletConfig: MachineKubeletConfig{
+			ImageGCHighThreshold: ptr(goal.KubeletConfig.ImageGCHighThreshold),
+			ImageGCLowThreshold:  ptr(goal.KubeletConfig.ImageGCLowThreshold),
+		},
+	}}, nil
 }
 
 func (c *ensureMachineClient) PatchStatus(context.Context, Status) error {

@@ -271,10 +271,10 @@ func discardLogger() *slog.Logger {
 func TestNextAppliedStateRotatesCompleteGoals(t *testing.T) {
 	t.Parallel()
 
-	currentGoal := testMachineGoal("1.34.0", "41")
+	currentGoal := testGoalState("1.34.0", "41")
 	currentGoal.NodeLabels = map[string]string{"source": "old"}
 	current := &State{AppliedGoal: &currentGoal, ActiveMachine: goalstates.NSpawnMachineKube1}
-	nextGoal := testMachineGoal("1.35.0", "42")
+	nextGoal := testGoalState("1.35.0", "42")
 	nextGoal.NodeLabels = map[string]string{"source": "new"}
 
 	got := nextAppliedState(current, nextGoal, &activeMachine{Name: goalstates.NSpawnMachineKube2})
