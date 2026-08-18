@@ -115,9 +115,10 @@ def auth_mode(args: argparse.Namespace) -> str:
         raise SystemExit(
             "ERROR: service principal auth requires --username <client-id> and --password <client-secret>"
         )
-    if mode == "arc" and (not args.arc_machine_name or not args.arc_resource_group or not args.arc_location):
+    if mode == "arc":
         raise SystemExit(
-            "ERROR: --arc requires --arc-machine-name, --arc-resource-group, and --arc-location"
+            "ERROR: Arc bootstrap data must be fetched on the connected host; "
+            "use scripts/bootstrap.sh --auth arc --fetch-bootstrap-data"
         )
     return mode
 
@@ -216,14 +217,6 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
             "clientSecret": args.password,
         }
         azure["arc"] = {"enabled": False}
-    elif mode == "arc":
-        azure["arc"] = {
-            "enabled": True,
-            "machineName": args.arc_machine_name,
-            "resourceGroup": args.arc_resource_group,
-            "location": args.arc_location,
-            "tags": {"node-type": "flex"},
-        }
     else:
         raise SystemExit(f"ERROR: unsupported auth mode: {mode}")
 
@@ -283,9 +276,6 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--password")
     generate.add_argument("--tenant")
     generate.add_argument("--arc", action="store_true")
-    generate.add_argument("--arc-machine-name")
-    generate.add_argument("--arc-resource-group")
-    generate.add_argument("--arc-location")
     generate.add_argument("--output", default="-")
     generate.set_defaults(func=generate_node_config)
 

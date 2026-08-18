@@ -113,11 +113,12 @@ collect_logs() {
 
   mkdir -p "${E2E_LOG_DIR}"
 
-  local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip
+  local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip arc_vm_ip
   msi_vm_ip="$(state_get msi_vm_ip)"
   token_vm_ip="$(state_get token_vm_ip)"
   offline_vm_ip="$(state_get offline_vm_ip)"
   kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
+  arc_vm_ip="$(state_get arc_vm_ip)"
 
   if [[ -n "${msi_vm_ip}" ]]; then
     _collect_vm_logs "${msi_vm_ip}" "msi" || true
@@ -133,6 +134,10 @@ collect_logs() {
 
   if [[ -n "${kubeadm_vm_ip}" ]]; then
     _collect_vm_logs "${kubeadm_vm_ip}" "kubeadm" || true
+  fi
+
+  if [[ -n "${arc_vm_ip}" ]]; then
+    _collect_vm_logs "${arc_vm_ip}" "arc" || true
   fi
 
   # Also capture cluster-side info
@@ -183,13 +188,19 @@ cleanup() {
     return 0
   fi
 
-  local resource_group cluster_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
+  local resource_group cluster_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name arc_vm_name arc_machine_name arc_machine_id
   resource_group="$(state_get resource_group)"
   cluster_name="$(state_get cluster_name)"
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  arc_vm_name="$(state_get arc_vm_name)"
+  arc_machine_name="$(state_get arc_machine_name)"
+  arc_machine_id="$(state_get arc_machine_id)"
+  if [[ -z "${arc_machine_id}" && -n "${arc_machine_name}" ]]; then
+    arc_machine_id="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${resource_group}/providers/Microsoft.HybridCompute/machines/${arc_machine_name}"
+  fi
   local deployment_name
   deployment_name="$(state_get deployment_name)"
 
@@ -198,37 +209,51 @@ cleanup() {
     return 0
   fi
 
+  # Arc lifecycle is external to Flex Node. Remove the E2E-owned Arc resource
+  # explicitly before deleting its backing Azure evaluation VM.
+  log_info "[1/8] Deleting Arc machine resource..."
+  if [[ -n "${arc_machine_id}" ]]; then
+    az rest --method delete --url "https://management.azure.com${arc_machine_id}?api-version=2024-07-10" --output none 2>/dev/null || true
+  fi
+
   # Delete VMs first (faster than waiting for full RG delete)
-  log_info "[1/6] Deleting MSI VM: ${msi_vm_name}..."
+  log_info "[2/8] Deleting MSI VM: ${msi_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${msi_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[2/6] Deleting Token VM: ${token_vm_name}..."
+  log_info "[3/8] Deleting Token VM: ${token_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${token_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[3/6] Deleting Offline VM: ${offline_vm_name}..."
+  log_info "[4/8] Deleting Offline VM: ${offline_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${offline_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
-  log_info "[4/6] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
+  log_info "[5/8] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
   az vm delete --resource-group "${resource_group}" --name "${kubeadm_vm_name}" \
     --force-deletion yes --yes --no-wait 2>/dev/null || true
 
+  log_info "[6/8] Deleting Arc VM: ${arc_vm_name}..."
+  az vm delete --resource-group "${resource_group}" --name "${arc_vm_name}" \
+    --force-deletion yes --yes --no-wait 2>/dev/null || true
+
   # Clean up leftover networking resources tied to our deployment
-  log_info "[5/6] Cleaning up networking resources..."
+  log_info "[7/8] Cleaning up networking resources..."
   local run_id="${GITHUB_RUN_ID:-}"
   if [[ -n "${run_id}" ]]; then
+    local resource_ids
     for res_type in networkInterfaces publicIPAddresses networkSecurityGroups disks; do
-      az resource list --resource-group "${resource_group}" \
+      resource_ids="$(az resource list --resource-group "${resource_group}" \
         --query "[?tags.\"github-run\"=='${run_id}' && contains(type, '${res_type}')].id" \
-        -o tsv 2>/dev/null | while read -r id; do
-          az resource delete --ids "${id}" --no-wait 2>/dev/null || true
-        done
+        -o tsv 2>/dev/null || true)"
+      while read -r id; do
+        [[ -n "${id}" ]] || continue
+        az resource delete --ids "${id}" --no-wait 2>/dev/null || true
+      done <<<"${resource_ids}"
     done
   fi
 
-  log_info "[6/6] Deleting AKS cluster: ${cluster_name}..."
+  log_info "[8/8] Deleting AKS cluster: ${cluster_name}..."
   az aks delete --resource-group "${resource_group}" --name "${cluster_name}" \
     --yes --no-wait 2>/dev/null || true
 

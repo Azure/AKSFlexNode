@@ -29,7 +29,7 @@ aks-flex-node preflight --config /etc/aks-flex-node/config.json
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
 | `azure.subscriptionId` | string | Optional Azure subscription that owns the target AKS cluster. Defaults from `azure.targetCluster.resourceId` when omitted. | `44654aed-2753-4b88-9142-af7132933b6b` |
-| `azure.tenantId` | string | Microsoft Entra tenant ID. Required only when Azure Arc is enabled. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
+| `azure.tenantId` | string | Optional Microsoft Entra tenant ID used by authentication modes that require it. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
 | `azure.cloud` | string | Optional Azure cloud environment label used as a fallback when `azure.resourceManagerEndpoint` is omitted. | `AzurePublicCloud` |
 | `azure.resourceManagerEndpoint` | string | Optional Azure Resource Manager endpoint emitted by RP bootstrap data. When omitted, it is derived from `azure.cloud` and defaults to public Azure. | `https://management.azure.com` |
 | `azure.targetCluster` | object | Target AKS cluster metadata. | `{}` |
@@ -50,7 +50,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 |------|------|-------------|--------------|
 | `azure.bootstrapToken` | object | Kubernetes bootstrap token authentication. | `{ "token": "abcdef.0123456789abcdef" }` |
 | `azure.managedIdentity` | object | Azure managed identity authentication for Azure VMs. | `{}` |
-| `azure.arc` | object | Azure Arc machine registration and identity settings. | `{ "enabled": true }` |
+| `azure.arc` | object | Selects the system-assigned identity of an externally managed Azure Arc-enabled server. | `{ "enabled": true }` |
 | `azure.servicePrincipal` | object | Service principal authentication using static app credentials. | `{ "clientId": "<client-id>" }` |
 
 ## Bootstrap Token
@@ -69,11 +69,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `azure.arc.enabled` | boolean | Enables Azure Arc registration flow. | `true` |
-| `azure.arc.machineName` | string | Name of the Arc machine resource. | `edge-node-01` |
-| `azure.arc.resourceGroup` | string | Resource group for the Arc machine resource. | `edge-rg` |
-| `azure.arc.location` | string | Azure region for the Arc machine resource. | `westus2` |
-| `azure.arc.tags` | object | Optional tags applied to the Arc machine resource. | `{ "environment": "lab" }` |
+| `azure.arc.enabled` | boolean | Uses the connected host's Arc system-assigned identity for ARM authentication. The Arc agent lifecycle remains externally managed. | `true` |
 
 ## Service Principal
 
@@ -282,24 +278,16 @@ Use this for an Azure VM with a managed identity assigned.
 
 ### Azure Arc
 
-Use this when the host should be registered as an Arc-enabled server.
+Use this when the host is already connected as an Arc-enabled server. Flex Node verifies the connection and consumes its system-assigned identity; it does not install, connect, disconnect, or remove the Arc agent.
 
 ```json
 {
   "azure": {
     "subscriptionId": "<subscription-id>",
-    "tenantId": "<tenant-id>",
     "resourceManagerEndpoint": "https://management.azure.com",
     "targetAgentPoolName": "<agent-pool-name>",
-    "arc": {
-      "enabled": true,
-      "machineName": "<arc-machine-name>",
-      "resourceGroup": "<arc-resource-group>",
-      "location": "<arc-location>",
-      "tags": {
-        "node-type": "flex"
-      }
-    },
+    "arc": { "enabled": true },
+    "bootstrapToken": { "token": "<fetched-bootstrap-token>" },
     "targetCluster": {
       "resourceId": "<aks-resource-id>",
       "location": "<aks-location>"
@@ -309,9 +297,17 @@ Use this when the host should be registered as an Arc-enabled server.
     "logLevel": "info",
     "logDir": "/var/log/aks-flex-node"
   },
+  "node": {
+    "kubelet": {
+      "clusterFQDN": "<fetched-api-server-fqdn>",
+      "caCertData": "<fetched-base64-ca>"
+    }
+  },
   "components": { "kubernetes": "<aks-kubernetes-version>" }
 }
 ```
+
+The bootstrap token, API server FQDN, and CA are returned by `listBootstrapData`; use `scripts/bootstrap.sh --auth arc --fetch-bootstrap-data` rather than writing them manually.
 
 ### Service Principal
 

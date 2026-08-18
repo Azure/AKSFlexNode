@@ -186,6 +186,11 @@ func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.Cl
 			cfg.Azure.ServicePrincipal.ClientSecret,
 			&azidentity.ClientSecretCredentialOptions{ClientOptions: clientOpts},
 		)
+	case cfg.IsARCEnabled():
+		logger.Debug("using Azure Arc system-assigned managed identity credential for ARM")
+		return azidentity.NewManagedIdentityCredential(
+			&azidentity.ManagedIdentityCredentialOptions{ClientOptions: clientOpts},
+		)
 	case cfg.IsMIConfigured():
 		opts := &azidentity.ManagedIdentityCredentialOptions{ClientOptions: clientOpts}
 		if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {

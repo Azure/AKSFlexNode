@@ -73,6 +73,8 @@ func OptionsFromConfig(cfg *config.Config) (Options, error) {
 	}
 
 	switch {
+	case cfg.IsARCEnabled():
+		options.AuthMode = "arc"
 	case cfg.IsMIConfigured():
 		options.AuthMode = "managed-identity"
 		options.MSIClientID = cfg.Azure.ManagedIdentity.ClientID
@@ -88,7 +90,7 @@ func OptionsFromConfig(cfg *config.Config) (Options, error) {
 			options.SPClientSecret = cfg.Azure.ServicePrincipal.ClientSecret
 		}
 	default:
-		return Options{}, fmt.Errorf("bootstrap-data refresh requires managed identity or service-principal authentication")
+		return Options{}, fmt.Errorf("bootstrap-data refresh requires Arc, managed identity, or service-principal authentication")
 	}
 
 	return options, nil
@@ -269,6 +271,13 @@ func validateOptions(options Options) error {
 
 func newCredential(options Options, clientOptions azcore.ClientOptions) (azcore.TokenCredential, error) {
 	switch strings.ToLower(strings.TrimSpace(options.AuthMode)) {
+	case "arc":
+		if options.MSIClientID != "" {
+			return nil, fmt.Errorf("arc authentication does not support a managed identity client ID")
+		}
+		return azidentity.NewManagedIdentityCredential(
+			&azidentity.ManagedIdentityCredentialOptions{ClientOptions: clientOptions},
+		)
 	case "msi", "managed-identity":
 		credentialOptions := &azidentity.ManagedIdentityCredentialOptions{ClientOptions: clientOptions}
 		if options.MSIClientID != "" {

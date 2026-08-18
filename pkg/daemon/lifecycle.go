@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"text/template"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -19,10 +22,13 @@ const (
 	recoveryServiceUnitName = "aks-flex-node-agent-recovery.service"
 	recoveryScriptPath      = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
 	systemdSystemDir        = "/etc/systemd/system"
+	arcSystemdDependency    = "himdsd.service"
 )
 
 //go:embed assets/aks-flex-node-agent.service
 var serviceUnitContent []byte
+
+var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Parse(string(serviceUnitContent)))
 
 //go:embed assets/aks-flex-node-agent-recovery.service
 var recoveryServiceUnitContent []byte
@@ -31,18 +37,19 @@ var recoveryServiceUnitContent []byte
 var recoveryScriptContent []byte
 
 type installServiceTask struct {
+	cfg *config.Config
 	log *slog.Logger
 }
 
 // InstallService returns a task that installs, enables, and starts the systemd unit.
-func InstallService(log *slog.Logger) phases.Task {
-	return &installServiceTask{log: log}
+func InstallService(cfg *config.Config, log *slog.Logger) phases.Task {
+	return &installServiceTask{cfg: cfg, log: log}
 }
 
 func (t *installServiceTask) Name() string { return "install-service" }
 
 func (t *installServiceTask) Do(ctx context.Context) error {
-	if err := ensureAgentUpgradeServiceAssets(ctx, t.log); err != nil {
+	if err := ensureAgentUpgradeServiceAssets(ctx, t.log, t.cfg); err != nil {
 		return err
 	}
 	if err := utilexec.RunCmd(ctx, t.log, utilexec.Systemctl(), "enable", ServiceUnitName); err != nil {
@@ -56,11 +63,12 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 	return nil
 }
 
-func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger) error {
+func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
 	return ensureAgentUpgradeServiceAssetsAt(
 		ctx,
 		log,
 		defaultAgentUpgradePaths(),
+		agentServiceOptionsFromConfig(cfg),
 		systemdSystemDir,
 		recoveryScriptPath,
 		utilexec.ReloadSystemd,
@@ -71,13 +79,14 @@ func ensureAgentUpgradeServiceAssetsAt(
 	ctx context.Context,
 	log *slog.Logger,
 	binaryPaths agentUpgradePaths,
+	serviceOptions agentServiceOptions,
 	systemdDir, recoveryScript string,
 	reload func(context.Context, *slog.Logger) error,
 ) error {
 	if err := ensureAgentUpgradeLayout(ctx, log, binaryPaths); err != nil {
 		return fmt.Errorf("initialize agent binary layout: %w", err)
 	}
-	if err := writeAgentServiceAssets(binaryPaths, systemdDir, recoveryScript, binaryPaths.CurrentPath); err != nil {
+	if err := writeAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, binaryPaths.CurrentPath); err != nil {
 		return err
 	}
 	if err := reload(ctx, log); err != nil {
@@ -86,14 +95,25 @@ func ensureAgentUpgradeServiceAssetsAt(
 	return nil
 }
 
+type agentServiceOptions struct {
+	ARCEnabled bool
+}
+
+func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
+	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled()}
+}
+
 type agentServiceAsset struct {
 	path    string
 	content []byte
 	mode    os.FileMode
 }
 
-func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, systemdDir, recoveryScript, currentBinaryPath string) []agentServiceAsset {
-	serviceContent := bytes.ReplaceAll(serviceUnitContent, []byte(defaultAgentUpgradePaths().BinaryPath), []byte(currentBinaryPath))
+func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) ([]agentServiceAsset, error) {
+	serviceContent, err := renderAgentServiceUnit(currentBinaryPath, serviceOptions)
+	if err != nil {
+		return nil, err
+	}
 	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(recoveryScriptPath), []byte(recoveryScript))
 	recoveryContent := recoveryScriptContent
 	for oldPath, newPath := range map[string]string{
@@ -108,11 +128,48 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, systemdDir, recove
 		{path: recoveryScript, content: recoveryContent, mode: 0o750},
 		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
 		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
-	}
+	}, nil
 }
 
-func writeAgentServiceAssets(binaryPaths agentUpgradePaths, systemdDir, recoveryScript, currentBinaryPath string) error {
-	for _, asset := range desiredAgentServiceAssets(binaryPaths, systemdDir, recoveryScript, currentBinaryPath) {
+func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error) {
+	path := filepath.Join(systemdDir, ServiceUnitName)
+	content, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- path is built from the agent-owned systemd directory and fixed unit name
+	if errors.Is(err, os.ErrNotExist) {
+		return agentServiceOptions{}, nil
+	}
+	if err != nil {
+		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
+	}
+	return agentServiceOptions{ARCEnabled: bytes.Contains(content, []byte(arcSystemdDependency))}, nil
+}
+
+type agentServiceTemplateData struct {
+	CurrentBinaryPath string
+	Dependencies      []string
+}
+
+func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
+	dependencies := []string{}
+	if serviceOptions.ARCEnabled {
+		dependencies = append(dependencies, arcSystemdDependency)
+	}
+
+	var content bytes.Buffer
+	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
+		CurrentBinaryPath: currentBinaryPath,
+		Dependencies:      dependencies,
+	}); err != nil {
+		return nil, fmt.Errorf("render agent systemd service: %w", err)
+	}
+	return content.Bytes(), nil
+}
+
+func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) error {
+	assets, err := desiredAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, currentBinaryPath)
+	if err != nil {
+		return err
+	}
+	for _, asset := range assets {
 		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
 			return fmt.Errorf("write %s: %w", asset.path, err)
 		}

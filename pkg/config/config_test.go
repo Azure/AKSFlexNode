@@ -375,24 +375,23 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "missing tenant ID fails when Arc is enabled",
+			name: "missing tenant ID passes when externally managed Arc is enabled",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
-					Arc: &ArcConfig{
-						Enabled:       true,
-						ResourceGroup: "test-rg",
-						MachineName:   "test-machine",
-						Location:      "eastus",
-					},
+					Arc:            &ArcConfig{Enabled: true},
+					BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 					},
 				},
+				Node: NodeConfig{Kubelet: KubeletConfig{
+					ClusterFQDN: "api.example.test",
+					CACertData:  "Y2E=",
+				}},
 			},
-			wantErr: true,
-			errMsg:  "azure.tenantId is required",
+			wantErr: false,
 		},
 		{
 			name: "missing target cluster location passes",
@@ -679,22 +678,19 @@ func TestValidate(t *testing.T) {
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
-					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						Location:   "eastus",
 					},
-					Arc: &ArcConfig{
-						Enabled:       true,
-						ResourceGroup: "test-rg",
-						MachineName:   "test-machine",
-						Location:      "eastus",
-					},
+					Arc:            &ArcConfig{Enabled: true},
+					BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 				},
-				Agent: AgentConfig{
-					LogLevel: "info",
-				},
+				Agent: AgentConfig{LogLevel: "info"},
+				Node: NodeConfig{Kubelet: KubeletConfig{
+					ClusterFQDN: "api.example.test",
+					CACertData:  "Y2E=",
+				}},
 			},
 			wantErr: false,
 		},
@@ -1956,52 +1952,62 @@ func TestAuthenticationMethodValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "arc authentication requires fetched bootstrap data",
+			config: &Config{
+				Azure: AzureConfig{
+					SubscriptionID: "12345678-1234-1234-1234-123456789012",
+					Cloud:          "AzurePublicCloud",
+					Arc:            &ArcConfig{Enabled: true},
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					},
+				},
+				Agent: AgentConfig{LogLevel: "info"},
+			},
+			wantErr: true,
+			errMsg:  "azure.bootstrapToken is required with Arc authentication",
+		},
+		{
 			name: "arc authentication enabled",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
-					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
-					Arc: &ArcConfig{
-						Enabled:       true,
-						ResourceGroup: "test-rg",
-						MachineName:   "test-machine",
-						Location:      "eastus",
-					},
+					Arc:            &ArcConfig{Enabled: true},
+					BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						Location:   "eastus",
 					},
 				},
-				Agent: AgentConfig{
-					LogLevel: "info",
-				},
+				Agent: AgentConfig{LogLevel: "info"},
+				Node: NodeConfig{Kubelet: KubeletConfig{
+					ClusterFQDN: "api.example.test",
+					CACertData:  "Y2E=",
+				}},
 			},
 			wantErr: false,
 		},
 		{
-			name: "partial arc config fails",
+			name: "Arc resource coordinates are optional for externally managed Arc",
 			config: &Config{
 				Azure: AzureConfig{
 					SubscriptionID: "12345678-1234-1234-1234-123456789012",
-					TenantID:       "12345678-1234-1234-1234-123456789012",
 					Cloud:          "AzurePublicCloud",
-					Arc: &ArcConfig{
-						Enabled:     true,
-						MachineName: "test-machine",
-						Location:    "eastus",
-					},
+					Arc:            &ArcConfig{Enabled: true},
+					BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 					TargetCluster: &TargetClusterConfig{
 						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
 						Location:   "eastus",
 					},
 				},
-				Agent: AgentConfig{
-					LogLevel: "info",
-				},
+				Agent: AgentConfig{LogLevel: "info"},
+				Node: NodeConfig{Kubelet: KubeletConfig{
+					ClusterFQDN: "api.example.test",
+					CACertData:  "Y2E=",
+				}},
 			},
-			wantErr: true,
-			errMsg:  "azure.arc.resourceGroup is required when Arc is enabled",
+			wantErr: false,
 		},
 		{
 			name: "arc and managed identity together fails",
@@ -2703,6 +2709,7 @@ func TestNeedsBootstrapDataRefresh(t *testing.T) {
 				BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 				Arc:            &ArcConfig{Enabled: true},
 			}},
+			want: true,
 		},
 	}
 

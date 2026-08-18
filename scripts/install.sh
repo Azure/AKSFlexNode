@@ -27,7 +27,6 @@ AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}"
 # Set AKS_FLEX_NODE_VERSION with it to avoid the GitHub latest-release API lookup.
 AKS_FLEX_NODE_DOWNLOAD_URL="${AKS_FLEX_NODE_DOWNLOAD_URL:-}"
 LOCAL_BINARY_PATH="${AKS_FLEX_NODE_LOCAL_BINARY:-}"
-SKIP_AZCLI="${SKIP_AZCLI:-false}"
 
 # Functions
 log_info() {
@@ -77,21 +76,6 @@ detect_os() {
             exit 1
             ;;
     esac
-}
-
-detect_package_manager() {
-    if command -v apt-get &> /dev/null; then
-        echo "apt"
-        return 0
-    fi
-
-    if command -v dnf &> /dev/null; then
-        echo "dnf"
-        return 0
-    fi
-
-    log_error "Unsupported package manager: AKS Flex Node requires either apt-get or dnf to be installed"
-    return 1
 }
 
 load_os_release() {
@@ -272,193 +256,6 @@ warn_install_dir_not_in_path() {
     esac
 }
 
-install_azure_cli_deb() {
-    local install_script
-    install_script=$(mktemp)
-
-    if ! download_file "https://aka.ms/InstallAzureCLIDeb" "$install_script"; then
-        rm -f "$install_script"
-        return 1
-    fi
-
-    bash "$install_script" || {
-        rm -f "$install_script"
-        log_error "Failed to install Azure CLI with the Debian install script"
-        return 1
-    }
-
-    rm -f "$install_script"
-}
-
-download_file() {
-    local url="$1"
-    local output="$2"
-
-    if command -v curl &> /dev/null; then
-        curl -fsSL -o "$output" "$url"
-    elif command -v wget &> /dev/null; then
-        wget -qO "$output" "$url"
-    else
-        log_error "Neither curl nor wget is available for downloading $url. Please install curl or wget and retry."
-        return 1
-    fi
-}
-
-import_microsoft_rpm_key() {
-    local key_file
-    key_file=$(mktemp)
-
-    if ! download_file "https://packages.microsoft.com/keys/microsoft.asc" "$key_file"; then
-        rm -f "$key_file"
-        return 1
-    fi
-
-    rpm --import "$key_file" || {
-        rm -f "$key_file"
-        log_error "Failed to import Microsoft package signing key"
-        return 1
-    }
-
-    rm -f "$key_file"
-}
-
-configure_azure_cli_rpm_repo() {
-    local repo_path="/etc/yum.repos.d/azure-cli.repo"
-
-    log_info "Configuring Azure CLI dnf package source..."
-
-    import_microsoft_rpm_key || return 1
-
-    if ! tee "$repo_path" > /dev/null << 'EOF'
-[azure-cli]
-name=Azure CLI
-baseurl=https://packages.microsoft.com/yumrepos/azure-cli
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.microsoft.com/keys/microsoft.asc
-EOF
-    then
-        log_error "Failed to write Azure CLI dnf package source: $repo_path"
-        return 1
-    fi
-}
-
-install_azure_cli_rpm() {
-    configure_azure_cli_rpm_repo || return 1
-
-    dnf install -y azure-cli || {
-        log_error "Failed to install azure-cli with dnf"
-        return 1
-    }
-}
-
-install_azure_cli() {
-    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
-        log_info "Skipping Azure CLI installation (SKIP_AZCLI=$SKIP_AZCLI)"
-        return 0
-    fi
-
-    log_info "Installing Azure CLI..."
-
-    if ! command -v az &> /dev/null; then
-        log_info "Downloading and installing Azure CLI..."
-        local package_manager
-        package_manager=$(detect_package_manager) || return 1
-        case "$package_manager" in
-            apt)
-                install_azure_cli_deb || return 1
-                ;;
-            dnf)
-                install_azure_cli_rpm || return 1
-                ;;
-        esac
-
-        # Verify installation
-        if command -v az &> /dev/null; then
-            log_success "Azure CLI installed successfully"
-        else
-            log_error "Azure CLI installation failed"
-            return 1
-        fi
-    else
-        log_info "Azure CLI already installed"
-    fi
-}
-
-check_azure_cli_auth() {
-    if [[ "$SKIP_AZCLI" == "true" || "$SKIP_AZCLI" == "1" ]]; then
-        log_info "Skipping Azure CLI auth check (SKIP_AZCLI=$SKIP_AZCLI)"
-        return 0
-    fi
-
-    log_info "Checking Azure CLI authentication..."
-
-    # Check if the user who ran sudo is authenticated
-    local current_user="${SUDO_USER:-}"
-    if [[ -n "$current_user" ]]; then
-        log_info "Checking Azure CLI authentication for user: $current_user"
-
-        if sudo -u "$current_user" az account show &>/dev/null; then
-            log_success "Azure CLI is authenticated for user: $current_user"
-
-            # Check if .azure directory exists
-            local azure_dir
-            azure_dir=$(eval echo "~$current_user")/.azure
-
-            if [[ -d "$azure_dir" ]]; then
-                log_info "Azure CLI configuration found at: $azure_dir"
-                log_info "Will configure permissions for service access"
-            else
-                log_warning "Azure CLI directory not found at: $azure_dir"
-            fi
-        else
-            log_warning "Azure CLI is not authenticated for user: $current_user"
-            log_info ""
-            log_info "If you want to use Azure CLI authentication:"
-            log_info "  1. Exit this installer (Ctrl+C)"
-            log_info "  2. Run 'az login' as user $current_user"
-            log_info "  3. Then re-run this installer with sudo"
-            log_info ""
-            if [[ "$ASSUME_YES" == "true" ]]; then
-                log_info "Continuing without CLI authentication (--yes flag provided)"
-                return 0
-            fi
-            echo -n "Do you want to continue anyway? Azure Arc will not work with CLI authentication [y/N]: "
-            read -r response </dev/tty
-            case "$response" in
-                [yY]|[yY][eE][sS])
-                    log_info "Continuing without CLI authentication. Make sure to configure service principal or managed identity or bootstrap token."
-                    return 0
-                    ;;
-                *)
-                    log_info "Installation cancelled. Please run 'az login' first."
-                    exit 0
-                    ;;
-            esac
-        fi
-    else
-        log_warning "Could not detect original user (SUDO_USER not set)"
-        log_info "Make sure to run 'az login' before configuring the service"
-    fi
-}
-
-setup_permissions() {
-    log_info "Setting up permissions..."
-
-    # Configure Azure CLI access - since the service runs as root,
-    # we just need to verify the .azure directory is accessible
-    local current_user
-    current_user=$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")
-    local current_user_home
-    current_user_home=$(eval echo "~$current_user")
-
-    if [[ -d "$current_user_home/.azure" ]]; then
-        log_success "Azure CLI configuration found at: $current_user_home/.azure (user: $current_user)"
-    else
-        log_warning "Azure CLI not found at $current_user_home/.azure - skipping CLI access setup"
-    fi
-}
-
 setup_directories() {
     log_info "Creating directories..."
 
@@ -487,18 +284,9 @@ show_next_steps() {
 {
   "azure": {
     "subscriptionId": "YOUR_SUBSCRIPTION_ID",
-    "tenantId": "YOUR_TENANT_ID",
     "resourceManagerEndpoint": "https://management.azure.com",
     "targetAgentPoolName": "YOUR_AGENT_POOL_NAME",
-    "arc": {
-      "enabled": true,
-      "machineName": "YOUR_MACHINE_NAME",
-      "tags": {
-        "node-type": "edge"
-      },
-      "resourceGroup": "YOUR_RESOURCE_GROUP",
-      "location": "YOUR_LOCATION"
-    },
+    "arc": { "enabled": true },
     "targetCluster": {
       "resourceId": "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RESOURCE_GROUP/providers/Microsoft.ContainerService/managedClusters/YOUR_CLUSTER_NAME",
       "location": "YOUR_LOCATION"
@@ -574,10 +362,8 @@ main() {
     install_binary "$binary_path"
     warn_install_dir_not_in_path
 
-    # Setup service components
-    install_azure_cli
-    check_azure_cli_auth
-    setup_permissions
+    # Azure authentication is provided by the selected runtime identity. The
+    # installer does not install Azure CLI or rely on a user's cached login.
     setup_directories
 
     # Cleanup only the temp download directory created by this installer.

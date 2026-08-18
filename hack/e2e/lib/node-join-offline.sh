@@ -92,8 +92,23 @@ _prepare_remote_offline_registry() {
 set -euo pipefail
 
 if command -v apt-get >/dev/null 2>&1; then
-  sudo DEBIAN_FRONTEND=noninteractive apt-get update
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl podman
+  packages_installed=0
+  for attempt in $(seq 1 5); do
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get \
+        -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update &&
+      sudo DEBIAN_FRONTEND=noninteractive apt-get \
+        -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+        install -y --fix-missing curl podman; then
+      packages_installed=1
+      break
+    fi
+    echo "Offline registry package installation failed; retrying (${attempt}/5)..."
+    sleep 10
+  done
+  if (( packages_installed != 1 )); then
+    echo "Offline registry package installation failed after retries" >&2
+    exit 1
+  fi
 fi
 
 if ! command -v oras >/dev/null 2>&1; then

@@ -7,9 +7,10 @@
 #   node-join-token.sh   - Bootstrap token join/unjoin   (node_join_token, node_unjoin_token)
 #   node-join-offline.sh - Offline artifact join/unjoin  (node_join_offline, node_unjoin_offline)
 #   node-join-kubeadm.sh - Kubeadm apply -f join/unjoin  (node_join_kubeadm, node_unjoin_kubeadm)
+#   node-join-arc.sh     - Externally managed Arc identity (node_join_arc, node_unjoin_arc)
 #
 # Functions:
-#   node_join_all   - Join all nodes (MSI, token, offline, and kubeadm) in parallel
+#   node_join_all   - Join all nodes (MSI, token, offline, kubeadm, and Arc) in parallel
 #   node_unjoin_all - Unjoin all nodes in parallel
 # =============================================================================
 set -euo pipefail
@@ -47,7 +48,6 @@ if [[ -e "${managed_current}" || -L "${managed_current}" ]]; then
 else
   sudo AKS_FLEX_NODE_LOCAL_BINARY=/tmp/aks-flex-node-binary \
     AKS_FLEX_NODE_VERSION=e2e-local \
-    SKIP_AZCLI=true \
     bash /tmp/aks-flex-node-install.sh --yes
 fi
 
@@ -57,8 +57,23 @@ sudo cp /tmp/config.json /etc/aks-flex-node/
 
 if command -v apt-get >/dev/null 2>&1; then
   echo "Installing host packages required by preflight..."
-  sudo DEBIAN_FRONTEND=noninteractive apt-get update
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y systemd-container curl nftables util-linux
+  packages_installed=0
+  for attempt in $(seq 1 5); do
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get \
+        -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update &&
+      sudo DEBIAN_FRONTEND=noninteractive apt-get \
+        -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+        install -y --fix-missing systemd-container curl nftables util-linux; then
+      packages_installed=1
+      break
+    fi
+    echo "Host package installation failed; retrying (${attempt}/5)..."
+    sleep 10
+  done
+  if (( packages_installed != 1 )); then
+    echo "Host package installation failed after retries" >&2
+    exit 1
+  fi
 fi
 
 preflight_log="/tmp/aks-flex-node-preflight.log"
@@ -352,6 +367,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/node-join-token.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-offline.sh"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/node-join-kubeadm.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/node-join-arc.sh"
 
 # ---------------------------------------------------------------------------
 # node_join_all - Join all nodes in parallel
@@ -361,8 +378,8 @@ node_join_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid offline_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0
+  local msi_pid token_pid offline_pid kubeadm_pid arc_pid
+  local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0 arc_exit=0
 
   ensure_flex_controller
 
@@ -378,10 +395,14 @@ node_join_all() {
   node_join_kubeadm &
   kubeadm_pid=$!
 
+  node_join_arc &
+  arc_pid=$!
+
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${offline_pid}" || offline_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
+  wait "${arc_pid}" || arc_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
@@ -398,8 +419,11 @@ node_join_all() {
   if [[ "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Kubeadm node join failed (exit ${kubeadm_exit})"
   fi
+  if [[ "${arc_exit}" -ne 0 ]]; then
+    log_error "Arc node join failed (exit ${arc_exit})"
+  fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${offline_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${offline_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 || "${arc_exit}" -ne 0 ]]; then
     log_error "Node joins failed (${duration}s)"
     return 1
   fi
@@ -415,8 +439,8 @@ node_unjoin_all() {
   local start
   start=$(timer_start)
 
-  local msi_pid token_pid offline_pid kubeadm_pid
-  local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0
+  local msi_pid token_pid offline_pid kubeadm_pid arc_pid
+  local msi_exit=0 token_exit=0 offline_exit=0 kubeadm_exit=0 arc_exit=0
 
   node_unjoin_msi &
   msi_pid=$!
@@ -430,10 +454,14 @@ node_unjoin_all() {
   node_unjoin_kubeadm &
   kubeadm_pid=$!
 
+  node_unjoin_arc &
+  arc_pid=$!
+
   wait "${msi_pid}" || msi_exit=$?
   wait "${token_pid}" || token_exit=$?
   wait "${offline_pid}" || offline_exit=$?
   wait "${kubeadm_pid}" || kubeadm_exit=$?
+  wait "${arc_pid}" || arc_exit=$?
 
   local duration
   duration=$(timer_elapsed "${start}")
@@ -450,8 +478,11 @@ node_unjoin_all() {
   if [[ "${kubeadm_exit}" -ne 0 ]]; then
     log_error "Kubeadm node unjoin failed (exit ${kubeadm_exit})"
   fi
+  if [[ "${arc_exit}" -ne 0 ]]; then
+    log_error "Arc node unjoin failed (exit ${arc_exit})"
+  fi
 
-  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${offline_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 ]]; then
+  if [[ "${msi_exit}" -ne 0 || "${token_exit}" -ne 0 || "${offline_exit}" -ne 0 || "${kubeadm_exit}" -ne 0 || "${arc_exit}" -ne 0 ]]; then
     log_error "Node unjoins failed (${duration}s)"
     return 1
   fi

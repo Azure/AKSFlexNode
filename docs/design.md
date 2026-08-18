@@ -94,18 +94,13 @@ Other important commands:
 
 The agent reads a JSON config file. The config has these top-level sections:
 
-- `azure` - subscription, target AKS cluster, cloud, and authentication mode.
+- `azure` - subscription, target AKS cluster, cloud, and authentication mode, including externally managed Arc identity.
 - `agent` - logging, node name, daemon reconcile interval, and test-mode settings.
 - `kubernetes` - Kubernetes version to install.
 - `node` - kubelet, labels, taints, max pods, and node IP settings.
 - `containerd`, `runc`, `cni`, `npd` - optional component version overrides.
 
-Exactly one authentication mode must be configured:
-
-- Kubernetes bootstrap token.
-- Azure managed identity.
-- Azure Arc.
-- Service principal.
+At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap; Arc requires bootstrap data fetched from AKS RP.
 
 See [Configuration](usages/configuration.md) for the option reference and sample configs.
 
@@ -123,7 +118,7 @@ Managed identity mode is intended for Azure VMs with system-assigned or user-ass
 
 ### Azure Arc
 
-Arc mode registers the host as an Arc-enabled server and uses Arc-managed identity for Azure integration. This path adds Azure Arc dependencies and requires Arc onboarding permissions.
+Arc mode consumes the system-assigned identity of an already-connected Arc-enabled server. The operator owns Arc installation, onboarding, role assignment, and removal; Flex Node verifies the local connection and uses HIMDS for Azure authentication.
 
 ### Service Principal
 
@@ -190,10 +185,10 @@ AKS Flex Node supports one authentication mode per config. The selected mode det
 |------|--------------|------------------|---------------------|
 | Bootstrap token | `azure.bootstrapToken` | Kubernetes TLS bootstrap path. | Host receives a Kubernetes bootstrap token, then kubelet uses issued client certificates. |
 | Managed identity | `azure.managedIdentity` | Azure VM with assigned managed identity. | Host uses Azure Instance Metadata Service for identity-backed Azure access. |
-| Azure Arc | `azure.arc.enabled: true` | Host registered as an Arc-enabled server. | Host uses Arc-managed identity after Arc registration. |
+| Azure Arc | `azure.arc.enabled: true` | Host already registered as an Arc-enabled server. | Host uses the Arc system-assigned identity exposed by local HIMDS. |
 | Service principal | `azure.servicePrincipal` | Automation with static Azure application credentials. | Host stores client credentials and requires secret rotation. |
 
-Only one of these modes can be configured at a time. Bootstrap token mode requires the config to include the Kubernetes API server URL and CA data because the host does not use Azure credentials to fetch cluster connection details during join.
+Only one durable Azure identity mode can be configured at a time. Bootstrap token mode requires the config to include the Kubernetes API server URL and CA data; with Arc, these values and the token are fetched from AKS RP before the runtime config is loaded.
 
 Auth mode selection affects only how the node obtains join and API credentials. Host lifecycle mutation remains local and privileged, and AKS/RP remains responsible for workload disruption decisions such as cordon and drain.
 

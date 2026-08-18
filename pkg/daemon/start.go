@@ -3,7 +3,6 @@ package daemon
 import (
 	"log/slog"
 
-	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
@@ -23,7 +22,6 @@ func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
 			host.DisableDocker(log),
 			host.DisableSwap(log),
 			host.HardenAPT(log),
-			arc.InstallArc(cfg, log),
 			hostrouting.Configure(cfg, log),
 		),
 	)

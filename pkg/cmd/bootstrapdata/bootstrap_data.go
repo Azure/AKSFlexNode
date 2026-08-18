@@ -27,7 +27,7 @@ func NewCommand() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&options.ClusterResourceID, "cluster-resource-id", "", "Target AKS managed-cluster resource ID")
 	flags.StringVar(&options.AgentPoolName, "agent-pool-name", "", "Target FlexNodes agent pool name")
-	flags.StringVar(&options.AuthMode, "auth", "", "Authentication mode: msi or service-principal")
+	flags.StringVar(&options.AuthMode, "auth", "", "Authentication mode: arc, msi, or service-principal")
 	flags.StringVar(&options.MSIClientID, "msi-client-id", "", "Optional user-assigned managed identity client ID")
 	flags.StringVar(&options.SPTenantID, "sp-tenant-id", "", "Service-principal tenant ID")
 	flags.StringVar(&options.SPClientID, "sp-client-id", "", "Service-principal client ID")
