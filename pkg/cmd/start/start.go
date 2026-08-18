@@ -68,9 +68,6 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	)); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
-	if err := daemon.PrepareDaemonCredentials(ctx, cfg); err != nil {
-		return fmt.Errorf("bootstrap failed to prepare daemon credentials: %w", err)
-	}
 
 	state := daemon.SeededState(goal)
 	machineName := state.ActiveMachine

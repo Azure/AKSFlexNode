@@ -177,26 +177,6 @@ func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, fu
 	}
 	return credentials.RESTConfig(), stop, nil
 }
-
-// PrepareDaemonCredentials obtains the token-backed daemon certificate before
-// kubelet creates the Node. AKS rejects bootstrap tokens that later try to
-// claim an existing Node, even when the CSR is for the daemon's extra group.
-func PrepareDaemonCredentials(ctx context.Context, cfg *config.Config) error {
-	if !cfg.IsBootstrapTokenConfigured() {
-		return nil
-	}
-	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg)
-	if err != nil {
-		return err
-	}
-	_, stop, err := daemonRESTConfigProvider(ctx, cfg, bootstrapRestCfg)
-	if err != nil {
-		return err
-	}
-	stop()
-	return nil
-}
-
 func daemonRESTConfigProvider(ctx context.Context, cfg *config.Config, base *rest.Config) (*daemoncred.RESTConfigProvider, func(), error) {
 	credentialDir := filepath.Join(config.ConfigDir, daemonCredentialDir)
 	if err := os.MkdirAll(credentialDir, 0o700); err != nil {
