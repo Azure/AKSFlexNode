@@ -381,24 +381,15 @@ func (s *Server) authorizeBootstrapCSR(
 	}
 	secret, err := kubeClient.CoreV1().Secrets(metav1.NamespaceSystem).Get(ctx, "bootstrap-token-"+tokenID, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		s.log.Warn("denying daemon bootstrap CSR because the bootstrap token Secret is missing", "node", nodeName)
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("get bootstrap token secret: %w", err)
 	}
 	if !isAuthorizedBootstrapSecret(secret, tokenID, bootstrapGroup, time.Now()) {
-		s.log.Warn("denying daemon bootstrap CSR because the bootstrap token Secret is not authorized", "node", nodeName)
 		return false, nil
 	}
-	machineExists, err := s.machineExists(ctx, nodeName)
-	if err != nil {
-		return false, err
-	}
-	if !machineExists {
-		s.log.Warn("denying daemon bootstrap CSR because the Machine is missing", "node", nodeName)
-	}
-	return machineExists, nil
+	return s.machineExists(ctx, nodeName)
 }
 
 func (s *Server) machineExists(ctx context.Context, machineName string) (bool, error) {

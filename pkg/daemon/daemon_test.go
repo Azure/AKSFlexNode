@@ -77,3 +77,11 @@ func TestDaemonControllerCertificateOptions(t *testing.T) {
 		t.Fatal("WaitTimeout is empty")
 	}
 }
+
+func TestPrepareDaemonCredentialsWithoutBootstrapToken(t *testing.T) {
+	t.Parallel()
+
+	if err := PrepareDaemonCredentials(t.Context(), &config.Config{}); err != nil {
+		t.Fatalf("PrepareDaemonCredentials() error = %v", err)
+	}
+}
