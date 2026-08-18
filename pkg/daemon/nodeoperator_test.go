@@ -295,15 +295,75 @@ func TestNextAppliedStateRotatesCompleteGoals(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeGoalState(t *testing.T) {
+	t.Parallel()
+
+	appliedGoal := testMachineGoal("1.34.0", "41")
+	appliedGoal.NodeLabels = map[string]string{"source": "old"}
+	appliedGoal.NodeTaints = []string{"source=old:NoSchedule"}
+	store := &testStateStore{state: &State{AppliedGoal: &appliedGoal, ActiveMachine: goalstates.NSpawnMachineKube1}}
+	operator := &nspawnNodeOperator{state: store}
+	desiredGoal := testMachineGoal("1.34.0", "42")
+	desiredGoal.NodeLabels = map[string]string{"source": "new"}
+	desiredGoal.NodeTaints = []string{"source=new:NoExecute"}
+
+	got, err := operator.AcknowledgeGoalState(t.Context(), desiredGoal)
+	if err != nil {
+		t.Fatalf("AcknowledgeGoalState: %v", err)
+	}
+	if store.state != got {
+		t.Fatal("acknowledged state was not persisted")
+	}
+	if got.ActiveMachine != goalstates.NSpawnMachineKube1 || got.AppliedGoal == nil || got.AppliedGoal.SettingsVersion != "42" {
+		t.Fatalf("state = %#v", got)
+	}
+	if got.PreviousAppliedGoal == nil || got.PreviousAppliedGoal.SettingsVersion != "41" {
+		t.Fatalf("PreviousAppliedGoal = %#v, want settings version 41", got.PreviousAppliedGoal)
+	}
+	if got.AppliedSettingsVersion != "42" || got.PreviousSettingsVersion != "41" {
+		t.Fatalf("legacy projections = %#v", got)
+	}
+
+	desiredGoal.NodeLabels["source"] = "mutated"
+	desiredGoal.NodeTaints[0] = "mutated=true:NoSchedule"
+	appliedGoal.NodeLabels["source"] = "mutated"
+	if got.AppliedGoal.NodeLabels["source"] != "new" || got.AppliedGoal.NodeTaints[0] != "source=new:NoExecute" || got.PreviousAppliedGoal.NodeLabels["source"] != "old" {
+		t.Fatal("AcknowledgeGoalState retained caller-owned collections")
+	}
+}
+
+func TestAcknowledgeGoalStateSaveFailure(t *testing.T) {
+	t.Parallel()
+
+	saveErr := errors.New("save failed")
+	appliedGoal := testMachineGoal("1.34.0", "41")
+	oldState := &State{AppliedGoal: &appliedGoal, ActiveMachine: goalstates.NSpawnMachineKube1}
+	store := &testStateStore{state: oldState, saveErr: saveErr}
+	operator := &nspawnNodeOperator{state: store}
+
+	_, err := operator.AcknowledgeGoalState(t.Context(), testMachineGoal("1.34.0", "42"))
+	if err == nil || !errors.Is(err, saveErr) {
+		t.Fatalf("AcknowledgeGoalState error = %v, want save failure", err)
+	}
+	if store.state != oldState {
+		t.Fatal("failed acknowledgement replaced persisted state")
+	}
+}
+
 type testStateStore struct {
-	state *State
+	state   *State
+	saveErr error
 }
 
 func (s *testStateStore) Load(context.Context) (*State, error) {
 	return s.state, nil
 }
 
-func (s *testStateStore) Save(context.Context, *State) error {
+func (s *testStateStore) Save(_ context.Context, state *State) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.state = state
 	return nil
 }
 

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -42,6 +44,7 @@ type decisionKind string
 const (
 	decisionNoop                 decisionKind = "Noop"
 	decisionApplyGoalState       decisionKind = "ApplyGoalState"
+	decisionAcknowledgeGoalState decisionKind = "AcknowledgeGoalState"
 	decisionResetDelete          decisionKind = "ResetDelete"
 	decisionWaitForMachineDelete decisionKind = "WaitForMachineDelete"
 	decisionWaitForNodeSignal    decisionKind = "WaitForNodeSignal"
@@ -182,6 +185,8 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 		return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, decision.Goal.SettingsVersion, decision.Reason)
 	case decisionApplyGoalState:
 		return r.applyGoalState(ctx, state, decision.Goal)
+	case decisionAcknowledgeGoalState:
+		return r.acknowledgeGoalState(ctx, state, decision.Goal)
 	case decisionResetDelete:
 		return r.resetDelete(ctx)
 	default:
@@ -224,6 +229,15 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 		return err
 	}
 	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, stateObservedVersion(newState), "machine goal state applied")
+}
+
+func (r *repaveReconciler) acknowledgeGoalState(ctx context.Context, state *State, goal aksmachine.GoalState) error {
+	newState, err := r.operator.AcknowledgeGoalState(ctx, goal)
+	if err != nil {
+		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
+		return err
+	}
+	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, stateObservedVersion(newState), "in-place machine goal state observed")
 }
 
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
@@ -273,12 +287,149 @@ func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 	if goalApplied(goal, state) {
 		return decision{Kind: decisionReportSucceeded, Goal: goal, Reason: "goal state is applied"}
 	}
+	if acknowledgedGoal, ok := goalForInPlaceAcknowledgement(goal, state, node.node); ok {
+		return decision{Kind: decisionAcknowledgeGoalState, Goal: acknowledgedGoal, Reason: "goal update is already reflected on the node"}
+	}
 
 	return decision{Kind: decisionWaitForNodeSignal, Goal: goal, Reason: "goal state differs but node deletion trigger is absent"}
 }
 
 func goalApplied(goal aksmachine.GoalState, state *State) bool {
 	return goal.SettingsVersion != "" && stateObservedVersion(state) == goal.SettingsVersion
+}
+
+// goalForInPlaceAcknowledgement recognizes label and taint updates already
+// reconciled onto the Node by AKS RP. Non-observable goal changes fail closed
+// and continue through the existing node-deletion repave flow.
+func goalForInPlaceAcknowledgement(goal aksmachine.GoalState, state *State, node *corev1.Node) (aksmachine.GoalState, bool) {
+	if goal.SettingsVersion == "" || state == nil || state.AppliedGoal == nil || node == nil || node.DeletionTimestamp != nil {
+		return aksmachine.GoalState{}, false
+	}
+
+	appliedGoal := *state.AppliedGoal
+	if err := appliedGoal.Validate(); err != nil {
+		return aksmachine.GoalState{}, false
+	}
+
+	// ARM can omit scalar defaults that were resolved before the applied goal
+	// was persisted. Complete the new goal with those values before comparing it.
+	acknowledgedGoal, err := aksmachine.EffectiveGoal(goal, appliedGoal)
+	if err != nil {
+		return aksmachine.GoalState{}, false
+	}
+	if !goalMatchesOutsideNodeState(acknowledgedGoal, appliedGoal) {
+		return aksmachine.GoalState{}, false
+	}
+	if !nodeLabelsMatchGoal(node.Labels, appliedGoal.NodeLabels, acknowledgedGoal.NodeLabels) {
+		return aksmachine.GoalState{}, false
+	}
+	if !nodeTaintsMatchGoal(node.Spec.Taints, appliedGoal.NodeTaints, acknowledgedGoal.NodeTaints) {
+		return aksmachine.GoalState{}, false
+	}
+	return acknowledgedGoal, true
+}
+
+func goalMatchesOutsideNodeState(goal, applied aksmachine.GoalState) bool {
+	// Normalize the version and Node-observable fields verified below. Comparing
+	// the remaining complete value makes future GoalState fields fail closed.
+	applied.SettingsVersion = goal.SettingsVersion
+	applied.NodeLabels = goal.NodeLabels
+	applied.NodeTaints = goal.NodeTaints
+	return reflect.DeepEqual(applied, goal)
+}
+
+func nodeLabelsMatchGoal(nodeLabels, appliedLabels, desiredLabels map[string]string) bool {
+	for key, desiredValue := range desiredLabels {
+		if currentValue, present := nodeLabels[key]; !present || currentValue != desiredValue {
+			return false
+		}
+	}
+	for key := range appliedLabels {
+		if _, stillDesired := desiredLabels[key]; stillDesired {
+			continue
+		}
+		if _, stillPresent := nodeLabels[key]; stillPresent {
+			return false
+		}
+	}
+	return true
+}
+
+type taintIdentity struct {
+	key    string
+	effect corev1.TaintEffect
+}
+
+func nodeTaintsMatchGoal(nodeTaints []corev1.Taint, appliedTaints, desiredTaints []string) bool {
+	appliedByIdentity, ok := parseGoalTaints(appliedTaints)
+	if !ok {
+		return false
+	}
+	desiredByIdentity, ok := parseGoalTaints(desiredTaints)
+	if !ok {
+		return false
+	}
+
+	reflectedDesired := make(map[taintIdentity]struct{}, len(desiredByIdentity))
+	reconciledKeys := make(map[string]struct{}, len(appliedByIdentity))
+	for identity, applied := range appliedByIdentity {
+		desired, stillDesired := desiredByIdentity[identity]
+		if !stillDesired || desired.Value != applied.Value {
+			reconciledKeys[identity.key] = struct{}{}
+		}
+	}
+	for _, current := range nodeTaints {
+		identity := taintIdentity{key: current.Key, effect: current.Effect}
+		if desired, wanted := desiredByIdentity[identity]; wanted {
+			if _, duplicate := reflectedDesired[identity]; duplicate || current.Value != desired.Value {
+				return false
+			}
+			reflectedDesired[identity] = struct{}{}
+			continue
+		}
+		if _, reconciled := reconciledKeys[current.Key]; reconciled {
+			return false
+		}
+	}
+	return len(reflectedDesired) == len(desiredByIdentity)
+}
+
+func parseGoalTaints(taints []string) (map[taintIdentity]corev1.Taint, bool) {
+	indexed := make(map[taintIdentity]corev1.Taint, len(taints))
+	for _, value := range taints {
+		taint, ok := parseGoalTaint(value)
+		if !ok {
+			return nil, false
+		}
+		identity := taintIdentity{key: taint.Key, effect: taint.Effect}
+		if _, duplicate := indexed[identity]; duplicate {
+			return nil, false
+		}
+		indexed[identity] = taint
+	}
+	return indexed, true
+}
+
+func parseGoalTaint(value string) (corev1.Taint, bool) {
+	keyValue, effectValue, found := strings.Cut(value, ":")
+	if !found || strings.Contains(effectValue, ":") {
+		return corev1.Taint{}, false
+	}
+	effect := corev1.TaintEffect(effectValue)
+	switch effect {
+	case corev1.TaintEffectNoSchedule, corev1.TaintEffectPreferNoSchedule, corev1.TaintEffectNoExecute:
+	default:
+		return corev1.Taint{}, false
+	}
+
+	key, taintValue, hasValue := strings.Cut(keyValue, "=")
+	if strings.Contains(taintValue, "=") || len(validation.IsQualifiedName(key)) != 0 {
+		return corev1.Taint{}, false
+	}
+	if hasValue && len(validation.IsValidLabelValue(taintValue)) != 0 {
+		return corev1.Taint{}, false
+	}
+	return corev1.Taint{Key: key, Value: taintValue, Effect: effect}, true
 }
 
 func hasDeletionSignal(taints []corev1.Taint) bool {

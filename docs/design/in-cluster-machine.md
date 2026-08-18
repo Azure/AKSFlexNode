@@ -48,8 +48,11 @@ After bootstrap, the remote machine is authoritative:
 2. `NewMachineClient` receives that REST config and selects the in-cluster backend.
 3. The client periodically reads the ARM-compatible machine through the service-proxy endpoint.
 4. The daemon compares `properties.eTag` with its locally applied settings version.
-5. A changed ETag represents a new goal. The daemon waits for the Kubernetes `Node` deletion signal before applying it.
-6. Reconciliation status is sent to the endpoint's `/status` subresource without changing the ETag.
+5. A changed ETag represents a new goal. If only labels or taints changed and AKS RP already reconciled them onto the existing Kubernetes `Node`, the daemon acknowledges the observed goal without mutating or repaving the node.
+6. Other goal changes wait for the Kubernetes `Node` deletion signal before the daemon applies them through blue-green repave.
+7. Reconciliation status is sent to the endpoint's `/status` subresource without changing the ETag.
+
+Direct ARM Machine status is currently read-only. In that mode, acknowledgement still advances the local applied goal and ETag, while the status mutation is skipped by the ARM client.
 
 ## Request path
 
