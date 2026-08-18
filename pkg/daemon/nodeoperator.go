@@ -23,6 +23,7 @@ type activeMachine struct {
 type nodeOperator interface {
 	LoadState(ctx context.Context) (*State, error)
 	ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error)
+	AcknowledgeGoalState(ctx context.Context, goal aksmachine.GoalState) (*State, error)
 	RestartNode(ctx context.Context, log *slog.Logger) error
 	// ResetNode removes nspawn node runtime and persisted daemon state but must
 	// not stop this daemon process. The controller publishes lifecycle completion
@@ -149,6 +150,18 @@ func (o *nspawnNodeOperator) configForRepave(ctx context.Context, log *slog.Logg
 		}
 	}
 	return cfg, nil
+}
+
+func (o *nspawnNodeOperator) AcknowledgeGoalState(ctx context.Context, goal aksmachine.GoalState) (*State, error) {
+	active, err := o.findActiveMachine(ctx)
+	if err != nil {
+		return nil, err
+	}
+	newState := nextAppliedState(active.State, goal, &activeMachine{Name: active.Name})
+	if err := o.state.Save(ctx, newState); err != nil {
+		return nil, fmt.Errorf("save acknowledged machine goal state: %w", err)
+	}
+	return newState, nil
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {

@@ -90,7 +90,7 @@ ARM machine creation must be idempotent. If AKS RP retries creation and the ARM 
 
 The Flex Node agent reconciles two external signals.
 
-The ARM machine resource provides desired settings and a version for those settings. The current minimal settings are desired Kubernetes version and settings version. The agent compares the settings version from ARM with its locally applied settings version to detect drift. Future schema extensions can add more settings, but the agent should treat the ARM machine resource as the source of truth for host/nspawn reconciliation.
+The ARM machine resource provides desired Kubernetes version, max pods, custom labels and taints, kubelet image-GC settings, and a version for those settings. The agent compares the settings version from ARM with its locally applied settings version to detect drift. Future schema extensions can add more settings, but the agent should treat the ARM machine resource as the source of truth for host/nspawn reconciliation.
 
 The ARM machine resource does not own the nspawn side. Selecting `kube1` or `kube2` is an internal host implementation detail used by the agent to apply settings atomically.
 
@@ -130,14 +130,14 @@ flowchart TD
 
 ## Current Repave Implementation
 
-AKS Flex Node no longer runs a standalone local drift detector. Desired node settings come from an AKS machine resource. The agent compares the desired machine goal with locally persisted daemon state and repaves the nspawn-backed worker when Kubernetes `Node` deletion indicates AKS has approved replacement.
+AKS Flex Node no longer runs a standalone local drift detector. Desired node settings come from an AKS machine resource. The agent compares the desired machine goal with locally persisted daemon state. It acknowledges label- and taint-only updates that AKS RP already reconciled onto the Kubernetes `Node`; other changes repave the nspawn-backed worker after `Node` deletion indicates AKS has approved replacement.
 
 The current machine goal comes from the ARM machine model:
 
 - `properties.kubernetes` contains the desired Kubernetes version and node settings.
 - `properties.eTag` is exposed internally as the settings version.
 
-The ETag is the drift key. If it differs from the locally applied ETag, the agent waits for the Kubernetes `Node` object to disappear before mutating host state. Status-only updates must not change the ETag.
+The ETag is the drift key. If it differs from the locally applied ETag, the agent first checks whether only labels or taints changed and whether the existing Kubernetes `Node` reflects that complete delta. A matching Node lets the agent persist the new goal without host mutation. Otherwise, it waits for the `Node` object to disappear before mutating host state. Status-only updates must not change the ETag.
 
 The daemon uses two inputs:
 
@@ -170,7 +170,7 @@ This keeps scheduling and disruption decisions outside the agent. AKS RP, an ope
 9. Start node-problem-detector inside the new side.
 10. Clean up the old side's nspawn artifacts.
 
-After successful repave, the daemon patches machine status and persists the applied goal locally.
+After successful repave or in-place acknowledgement, the daemon persists the applied goal locally and reports status through the selected machine client. Direct ARM Machine status is currently read-only, so that client skips the status mutation while retaining local convergence.
 
 AKS Flex Node uses two local nspawn machine names:
 
