@@ -78,6 +78,9 @@ func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
 	service := string(serviceUnitContent)
+	if !strings.Contains(service, "After=network-online.target systemd-udev-settle.service") {
+		t.Fatal("service does not start after systemd-udev-settle.service")
+	}
 	if !strings.Contains(service, "OnFailure="+recoveryServiceUnitName) {
 		t.Fatalf("service does not activate %s on failure", recoveryServiceUnitName)
 	}

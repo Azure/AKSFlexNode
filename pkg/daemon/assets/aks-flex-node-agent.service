@@ -1,6 +1,6 @@
 [Unit]
 Description=AKS Flex Node Agent
-After=network-online.target
+After=network-online.target systemd-udev-settle.service
 Wants=network-online.target
 OnFailure=aks-flex-node-agent-recovery.service
 # Trigger last-good recovery after the upgraded daemon repeatedly fails.

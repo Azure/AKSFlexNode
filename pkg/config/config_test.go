@@ -883,7 +883,8 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 			"additionalHostMounts": [
 				{"source": "/opt/config", "target": "/etc/config", "readOnly": true},
 				{"source": "/var/lib/example"}
-			]
+			],
+			"additionalRequiredServices": ["ib_rdma_configure.service"]
 		},
 		"networking": {
 			"dnsServiceIP": "10.42.0.10",
@@ -980,6 +981,9 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	}
 	if got := agentCfg.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
 		t.Fatalf("Agent AdditionalHostMounts[1] = %#v", got)
+	}
+	if len(cfg.Bootstrap.AdditionalRequiredServices) != 1 || cfg.Bootstrap.AdditionalRequiredServices[0] != "ib_rdma_configure.service" {
+		t.Fatalf("Bootstrap.AdditionalRequiredServices = %#v", cfg.Bootstrap.AdditionalRequiredServices)
 	}
 	if agentCfg.CNI.PluginVersion != "1.5.1" {
 		t.Fatalf("Agent CNI.PluginVersion = %q, want 1.5.1", agentCfg.CNI.PluginVersion)
@@ -1078,6 +1082,50 @@ func TestBootstrapConfigValidatesAdditionalHostMounts(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("BootstrapConfig.validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBootstrapConfigValidatesAdditionalRequiredServices(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		services []string
+		wantErr  bool
+	}{
+		{
+			name:     "valid services",
+			services: []string{"ib_rdma_configure.service", "storage-ready@data.service"},
+		},
+		{
+			name:     "missing service suffix",
+			services: []string{"ib_rdma_configure"},
+			wantErr:  true,
+		},
+		{
+			name:     "contains whitespace",
+			services: []string{"ib rdma.service"},
+			wantErr:  true,
+		},
+		{
+			name:     "contains systemd directive",
+			services: []string{"valid.service\nAfter=unexpected.service"},
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := (&BootstrapConfig{AdditionalRequiredServices: tt.services}).validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("validate() error = nil, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("validate() error = %v", err)
 			}
 		})
 	}
