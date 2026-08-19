@@ -39,6 +39,7 @@ func TestConfigureNSpawnDependencies(t *testing.T) {
 	}
 	content := string(data)
 	for _, expected := range []string{
+		"Wants=systemd-udev-settle.service",
 		"After=systemd-udev-settle.service",
 		"Requires=ib_rdma_configure.service storage-ready.service",
 		"After=ib_rdma_configure.service storage-ready.service",

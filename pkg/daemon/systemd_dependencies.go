@@ -40,9 +40,9 @@ func (t *configureNSpawnDependenciesTask) Name() string {
 
 func (t *configureNSpawnDependenciesTask) Do(ctx context.Context) error {
 	var content bytes.Buffer
-content.WriteString("[Unit]\n")
-content.WriteString("Wants=systemd-udev-settle.service\n")
-content.WriteString("After=systemd-udev-settle.service\n")
+	content.WriteString("[Unit]\n")
+	content.WriteString("Wants=systemd-udev-settle.service\n")
+	content.WriteString("After=systemd-udev-settle.service\n")
 	if len(t.requiredServices) > 0 {
 		services := strings.Join(t.requiredServices, " ")
 		fmt.Fprintf(&content, "Requires=%s\n", services)
