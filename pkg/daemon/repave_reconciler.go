@@ -278,7 +278,10 @@ func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 }
 
 func goalApplied(goal aksmachine.MachineGoal, state *State) bool {
-	return goal.SettingsVersion != "" && stateObservedVersion(state) == goal.SettingsVersion
+	return goal.SettingsVersion != "" &&
+		state != nil &&
+		state.AppliedGoal != nil &&
+		state.AppliedGoal.SettingsVersion == goal.SettingsVersion
 }
 
 func hasDeletionSignal(taints []corev1.Taint) bool {
