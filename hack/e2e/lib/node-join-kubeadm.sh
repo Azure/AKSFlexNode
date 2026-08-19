@@ -271,6 +271,9 @@ stringData:
   auth-extra-groups: "system:bootstrappers:aks-flex-node,${kubeadmBootstrapGroup}"
 EOF
 
+  # This function already runs under the cluster lock in node_join_kubeadm.
+  mark_e2e_bootstrap_token_aks_managed "${bootstrap_token}"
+
   echo "${bootstrap_token}"
 }
 
