@@ -178,6 +178,11 @@ node_join_offline() {
     --bootstrap-token \
     --output "${config_file}"
 
+  # The production approver uses this label to distinguish RP-issued tokens
+  # from arbitrary bootstrap token Secrets.
+  with_cluster_lock mark_e2e_bootstrap_token_aks_managed \
+    "$(jq -er '.azure.bootstrapToken.token' "${config_file}")"
+
   jq \
     --arg nodeIP "${vm_private_ip}" \
     --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \

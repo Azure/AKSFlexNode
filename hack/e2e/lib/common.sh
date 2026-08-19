@@ -340,6 +340,25 @@ with_cluster_lock() {
   return "${rc}"
 }
 
+# The managed AKS FlexNode CSR approver accepts only RP-owned bootstrap tokens.
+# E2E creates equivalent token Secrets directly, so mark only the generated
+# Secret referenced by the test config with the ownership label it validates.
+mark_e2e_bootstrap_token_aks_managed() {
+  local bootstrap_token="$1"
+  if [[ ! "${bootstrap_token}" =~ ^([a-z0-9]{6})\.[a-z0-9]{16}$ ]]; then
+    log_error "Cannot mark E2E bootstrap token: invalid token format"
+    return 1
+  fi
+
+  local token_id="${BASH_REMATCH[1]}"
+  kubectl -n kube-system label \
+    "secret/bootstrap-token-${token_id}" \
+    kubernetes.azure.com/managedby=aks \
+    --overwrite \
+    >/dev/null
+  log_info "Marked E2E bootstrap token Secret as AKS-managed" >&2
+}
+
 # ---------------------------------------------------------------------------
 # SSH helpers
 # ---------------------------------------------------------------------------
