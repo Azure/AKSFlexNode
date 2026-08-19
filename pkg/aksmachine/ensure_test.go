@@ -86,7 +86,7 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 
 	goal := testGoal("1.35.1", "")
 	createdGoal := testMachineGoal("1.35.1", "etag-created")
-	createdGoal.MaxPods = ptr(42)
+	createdGoal.MaxPods = 42
 	client := &ensureMachineClient{createResult: &Machine{Goal: createdGoal}}
 	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -120,11 +120,11 @@ func TestEnsureMachineAdoptsExistingGoal(t *testing.T) {
 	client := &ensureMachineClient{machine: &Machine{Goal: MachineGoal{
 		KubernetesVersion: "1.35.1",
 		SettingsVersion:   "etag-42",
-		MaxPods:           ptr(110),
+		MaxPods:           110,
 		NodeLabels:        map[string]string{"source": "remote"},
 		NodeTaints:        []string{"remote=true:NoSchedule"},
 		KubeletConfig: MachineKubeletConfig{
-			ImageGCHighThreshold: ptr(70),
+			ImageGCHighThreshold: 70,
 			ImageGCLowThreshold:  ptr(60),
 		},
 	}}}
@@ -248,11 +248,11 @@ func (c *ensureMachineClient) Create(_ context.Context, goal GoalState) (*Machin
 	return &Machine{Goal: MachineGoal{
 		KubernetesVersion: goal.KubernetesVersion,
 		SettingsVersion:   goal.SettingsVersion,
-		MaxPods:           ptr(goal.MaxPods),
+		MaxPods:           goal.MaxPods,
 		NodeLabels:        goal.NodeLabels,
 		NodeTaints:        goal.NodeTaints,
 		KubeletConfig: MachineKubeletConfig{
-			ImageGCHighThreshold: ptr(goal.KubeletConfig.ImageGCHighThreshold),
+			ImageGCHighThreshold: goal.KubeletConfig.ImageGCHighThreshold,
 			ImageGCLowThreshold:  ptr(goal.KubeletConfig.ImageGCLowThreshold),
 		},
 	}}, nil

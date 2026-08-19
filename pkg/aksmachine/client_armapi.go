@@ -282,7 +282,9 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 				)
 			}
 		}
-		result.Goal.MaxPods = intPointerFromInt32(kubernetes.MaxPods)
+		if kubernetes.MaxPods != nil {
+			result.Goal.MaxPods = int(*kubernetes.MaxPods)
+		}
 		if kubernetes.NodeLabels != nil {
 			result.Goal.NodeLabels = stringMapFromPointers(kubernetes.NodeLabels)
 		}
@@ -290,8 +292,13 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 			result.Goal.NodeTaints = stringSliceFromPointers(kubernetes.NodeTaints)
 		}
 		if kubernetes.KubeletConfig != nil {
-			result.Goal.KubeletConfig.ImageGCHighThreshold = intPointerFromInt32(kubernetes.KubeletConfig.ImageGcHighThreshold)
-			result.Goal.KubeletConfig.ImageGCLowThreshold = intPointerFromInt32(kubernetes.KubeletConfig.ImageGcLowThreshold)
+			if kubernetes.KubeletConfig.ImageGcHighThreshold != nil {
+				result.Goal.KubeletConfig.ImageGCHighThreshold = int(*kubernetes.KubeletConfig.ImageGcHighThreshold)
+			}
+			if kubernetes.KubeletConfig.ImageGcLowThreshold != nil {
+				lowThreshold := int(*kubernetes.KubeletConfig.ImageGcLowThreshold)
+				result.Goal.KubeletConfig.ImageGCLowThreshold = &lowThreshold
+			}
 		}
 	}
 	if properties.ETag != nil {
@@ -301,14 +308,6 @@ func machineFromARM(machine armcontainerservice.Machine, defaultID, defaultName 
 		result.Status.ProvisioningState = ProvisioningState(*properties.ProvisioningState)
 	}
 	return result
-}
-
-func intPointerFromInt32(value *int32) *int {
-	if value == nil {
-		return nil
-	}
-	converted := int(*value)
-	return &converted
 }
 
 func resolveKubernetesVersionAlias(desired, current string) string {

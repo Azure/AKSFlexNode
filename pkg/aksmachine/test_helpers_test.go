@@ -16,9 +16,9 @@ func testMachineGoal(kubernetesVersion, settingsVersion string) MachineGoal {
 	return MachineGoal{
 		KubernetesVersion: kubernetesVersion,
 		SettingsVersion:   settingsVersion,
-		MaxPods:           ptr(110),
+		MaxPods:           110,
 		KubeletConfig: MachineKubeletConfig{
-			ImageGCHighThreshold: ptr(85),
+			ImageGCHighThreshold: 85,
 			ImageGCLowThreshold:  ptr(80),
 		},
 	}

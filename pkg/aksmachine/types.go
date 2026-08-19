@@ -11,18 +11,19 @@ import (
 )
 
 // MachineGoal preserves optional settings returned by the ARM Machine API.
-// Pointer fields distinguish an omitted value from an explicit zero.
+// ImageGCLowThreshold is a pointer because zero is both valid and distinct from
+// an omitted value.
 type MachineGoal struct {
 	KubernetesVersion string               `json:"kubernetesVersion,omitempty"`
 	SettingsVersion   string               `json:"settingsVersion,omitempty"`
-	MaxPods           *int                 `json:"maxPods,omitempty"`
+	MaxPods           int                  `json:"maxPods,omitempty"`
 	NodeLabels        map[string]string    `json:"nodeLabels,omitempty"`
 	NodeTaints        []string             `json:"nodeTaints,omitempty"`
 	KubeletConfig     MachineKubeletConfig `json:"kubeletConfig"`
 }
 
 type MachineKubeletConfig struct {
-	ImageGCHighThreshold *int `json:"imageGCHighThreshold,omitempty"`
+	ImageGCHighThreshold int  `json:"imageGCHighThreshold,omitempty"`
 	ImageGCLowThreshold  *int `json:"imageGCLowThreshold,omitempty"`
 }
 
@@ -32,21 +33,17 @@ func (g MachineGoal) Validate() error {
 	if g.KubernetesVersion == "" {
 		return fmt.Errorf("kubernetes version is empty")
 	}
-	if g.MaxPods != nil {
-		if *g.MaxPods <= 0 {
-			return fmt.Errorf("max pods must be positive")
-		}
-		if *g.MaxPods > math.MaxInt32 {
-			return fmt.Errorf("max pods must be less than or equal to %d", math.MaxInt32)
-		}
+	if g.MaxPods < 0 {
+		return fmt.Errorf("max pods must be positive")
 	}
-	if g.KubeletConfig.ImageGCHighThreshold != nil {
-		if *g.KubeletConfig.ImageGCHighThreshold <= 0 {
-			return fmt.Errorf("image GC high threshold must be positive")
-		}
-		if *g.KubeletConfig.ImageGCHighThreshold > 100 {
-			return fmt.Errorf("image GC high threshold must be less than or equal to 100")
-		}
+	if g.MaxPods > math.MaxInt32 {
+		return fmt.Errorf("max pods must be less than or equal to %d", math.MaxInt32)
+	}
+	if g.KubeletConfig.ImageGCHighThreshold < 0 {
+		return fmt.Errorf("image GC high threshold must be positive")
+	}
+	if g.KubeletConfig.ImageGCHighThreshold > 100 {
+		return fmt.Errorf("image GC high threshold must be less than or equal to 100")
 	}
 	if g.KubeletConfig.ImageGCLowThreshold != nil {
 		if *g.KubeletConfig.ImageGCLowThreshold < 0 {
@@ -56,8 +53,8 @@ func (g MachineGoal) Validate() error {
 			return fmt.Errorf("image GC low threshold must be less than or equal to 100")
 		}
 	}
-	if g.KubeletConfig.ImageGCHighThreshold != nil && g.KubeletConfig.ImageGCLowThreshold != nil &&
-		*g.KubeletConfig.ImageGCLowThreshold >= *g.KubeletConfig.ImageGCHighThreshold {
+	if g.KubeletConfig.ImageGCHighThreshold != 0 && g.KubeletConfig.ImageGCLowThreshold != nil &&
+		*g.KubeletConfig.ImageGCLowThreshold >= g.KubeletConfig.ImageGCHighThreshold {
 		return fmt.Errorf("image GC low threshold must be less than image GC high threshold")
 	}
 	return nil
@@ -82,14 +79,23 @@ type KubeletConfig struct {
 // SettingsVersion is validated by Machine because a local bootstrap goal does
 // not have an ETag until it is persisted.
 func (g GoalState) Validate() error {
-	return (MachineGoal{
+	if err := (MachineGoal{
 		KubernetesVersion: g.KubernetesVersion,
-		MaxPods:           &g.MaxPods,
+		MaxPods:           g.MaxPods,
 		KubeletConfig: MachineKubeletConfig{
-			ImageGCHighThreshold: &g.KubeletConfig.ImageGCHighThreshold,
+			ImageGCHighThreshold: g.KubeletConfig.ImageGCHighThreshold,
 			ImageGCLowThreshold:  &g.KubeletConfig.ImageGCLowThreshold,
 		},
-	}).Validate()
+	}).Validate(); err != nil {
+		return err
+	}
+	if g.MaxPods == 0 {
+		return fmt.Errorf("max pods must be positive")
+	}
+	if g.KubeletConfig.ImageGCHighThreshold == 0 {
+		return fmt.Errorf("image GC high threshold must be positive")
+	}
+	return nil
 }
 
 // GoalStateFromConfig builds and validates the initial AKS machine goal state
@@ -130,11 +136,11 @@ func EffectiveGoal(machine MachineGoal, local GoalState) (GoalState, error) {
 		NodeTaints:        slices.Clone(machine.NodeTaints),
 		KubeletConfig:     local.KubeletConfig,
 	}
-	if machine.MaxPods != nil {
-		effective.MaxPods = *machine.MaxPods
+	if machine.MaxPods != 0 {
+		effective.MaxPods = machine.MaxPods
 	}
-	if machine.KubeletConfig.ImageGCHighThreshold != nil {
-		effective.KubeletConfig.ImageGCHighThreshold = *machine.KubeletConfig.ImageGCHighThreshold
+	if machine.KubeletConfig.ImageGCHighThreshold != 0 {
+		effective.KubeletConfig.ImageGCHighThreshold = machine.KubeletConfig.ImageGCHighThreshold
 	}
 	if machine.KubeletConfig.ImageGCLowThreshold != nil {
 		effective.KubeletConfig.ImageGCLowThreshold = *machine.KubeletConfig.ImageGCLowThreshold

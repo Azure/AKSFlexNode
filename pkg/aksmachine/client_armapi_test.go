@@ -348,13 +348,13 @@ func TestMachineFromARM(t *testing.T) {
 	if machine.Goal.KubernetesVersion != "1.35.1" || machine.Goal.SettingsVersion != "settings-42" {
 		t.Fatalf("goal versions = %#v", machine.Goal)
 	}
-	if machine.Goal.MaxPods == nil || *machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" {
+	if machine.Goal.MaxPods != 42 || machine.Goal.NodeLabels["workload"] != "flex" {
 		t.Fatalf("goal settings = %#v", machine.Goal)
 	}
 	if len(machine.Goal.NodeTaints) != 1 || machine.Goal.NodeTaints[0] != "dedicated=flex:NoSchedule" {
 		t.Fatalf("goal taints = %#v", machine.Goal.NodeTaints)
 	}
-	if machine.Goal.KubeletConfig.ImageGCHighThreshold == nil || *machine.Goal.KubeletConfig.ImageGCHighThreshold != 85 ||
+	if machine.Goal.KubeletConfig.ImageGCHighThreshold != 85 ||
 		machine.Goal.KubeletConfig.ImageGCLowThreshold == nil || *machine.Goal.KubeletConfig.ImageGCLowThreshold != 80 {
 		t.Fatalf("kubelet config = %#v", machine.Goal.KubeletConfig)
 	}

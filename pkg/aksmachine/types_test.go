@@ -108,7 +108,7 @@ func TestMachineValidate(t *testing.T) {
 			machine: &Machine{Goal: MachineGoal{KubernetesVersion: "1.35.1", SettingsVersion: "42"}},
 		},
 		"invalid present max pods": {
-			machine: &Machine{Goal: MachineGoal{KubernetesVersion: "1.35.1", SettingsVersion: "42", MaxPods: ptr(-1)}},
+			machine: &Machine{Goal: MachineGoal{KubernetesVersion: "1.35.1", SettingsVersion: "42", MaxPods: -1}},
 			wantErr: "max pods must be positive",
 		},
 		"invalid present image GC thresholds": {
@@ -116,7 +116,7 @@ func TestMachineValidate(t *testing.T) {
 				KubernetesVersion: "1.35.1",
 				SettingsVersion:   "42",
 				KubeletConfig: MachineKubeletConfig{
-					ImageGCHighThreshold: ptr(70),
+					ImageGCHighThreshold: 70,
 					ImageGCLowThreshold:  ptr(80),
 				},
 			}},
