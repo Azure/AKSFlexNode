@@ -223,6 +223,10 @@ type BootstrapConfig struct {
 	// nspawn machine. Read-only mounts should be preferred unless write access is
 	// required.
 	AdditionalHostMounts []AdditionalHostMount `json:"additionalHostMounts,omitempty"`
+
+	// AdditionalRequiredServices lists host systemd services that must start
+	// successfully before the nspawn machine starts.
+	AdditionalRequiredServices []string `json:"additionalRequiredServices,omitempty"`
 }
 
 // AdditionalHostMount re-exports the shared agent's host bind-mount config.
@@ -501,6 +505,8 @@ var AKSClusterResourceIDPattern = regexp.MustCompile(`(?i)^/subscriptions/([0-9a
 // BootstrapTokenPattern is the regex pattern for Kubernetes bootstrap tokens
 // Format: <token-id>.<token-secret> where token-id is 6 chars [a-z0-9] and token-secret is 16 chars [a-z0-9]
 var BootstrapTokenPattern = regexp.MustCompile(`^[a-z0-9]{6}\.[a-z0-9]{16}$`)
+
+var systemdServiceNamePattern = regexp.MustCompile(`^[A-Za-z0-9:_.@-]+\.service$`)
 
 // validateAzureResourceID validates the format of an AKS cluster resource ID using regex pattern matching
 func validateAzureResourceID(resourceID string) error {
@@ -828,6 +834,11 @@ func (c *BootstrapConfig) validate() error {
 	}
 	if err := agentconfig.ValidateAdditionalHostMounts(c.AdditionalHostMounts); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostMounts: %w", err)
+	}
+	for _, service := range c.AdditionalRequiredServices {
+		if len(service) > 255 || !systemdServiceNamePattern.MatchString(service) {
+			return fmt.Errorf("invalid bootstrap.additionalRequiredServices entry %q: must be a valid systemd .service unit name", service)
+		}
 	}
 
 	return nil

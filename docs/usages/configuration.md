@@ -115,6 +115,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 | `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. Preflight treats missing host packages as fatal when this is set. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
 | `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |
 | `bootstrap.additionalHostMounts` | array of objects | Optional non-device host paths to bind mount into the nspawn machine. `source` is required, `target` defaults to `source`, and `readOnly` defaults to `false`. Source and target must be clean absolute paths without whitespace, control characters, or `:`. Prefer read-only mounts unless write access is required. | `[{"source":"/opt/config","target":"/etc/config","readOnly":true}]` |
+| `bootstrap.additionalRequiredServices` | array of strings | Optional host systemd service units that the nspawn machine requires and starts after. Use this when a host service must finish configuring or renaming devices before nspawn starts. | `["ib_rdma_configure.service"]` |
 
 ## Networking
 

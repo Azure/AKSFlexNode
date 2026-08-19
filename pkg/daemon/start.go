@@ -49,6 +49,7 @@ func StartNode(
 	return phases.Serial(log,
 		stageContainerImageArchiveBindSource(log, containerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
+		ConfigureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log,
 			npd.Download(log, cfg, gs.RootFS.MachineDir),
 			InstallBinary(gs.RootFS.MachineDir),
