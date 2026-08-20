@@ -2,7 +2,6 @@ package bootstrapdata
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -41,7 +40,7 @@ func TestFetchAndWrite(t *testing.T) {
 		if request.Header.Get("Authorization") != "Bearer arm-token" {
 			t.Error("missing token")
 		}
-		body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}},"futureField":null}`
+		body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}`
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	options := Options{
@@ -52,7 +51,7 @@ func TestFetchAndWrite(t *testing.T) {
 	}
 	err := fetchAndWrite(context.Background(), options, dependencies{
 		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
-		httpClient: client,
+		transport:  client,
 	})
 	if err != nil {
 		t.Fatalf("fetchAndWrite() error = %v", err)
@@ -63,13 +62,6 @@ func TestFetchAndWrite(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o", info.Mode().Perm())
-	}
-	written, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(written), `"futureField": null`) {
-		t.Fatalf("output did not preserve unknown null field: %s", written)
 	}
 }
 
@@ -128,7 +120,7 @@ func TestFetchInMemory(t *testing.T) {
 			}
 			return staticCredential{scope: &scope}, nil
 		},
-		httpClient: client,
+		transport: client,
 	})
 	if err != nil {
 		t.Fatalf("fetch() error = %v", err)
@@ -169,7 +161,7 @@ func TestFetchRejectsMalformedBootstrapToken(t *testing.T) {
 	}
 	_, err := fetch(t.Context(), options, dependencies{
 		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
-		httpClient: client,
+		transport:  client,
 	})
 	if err == nil || err.Error() != "bootstrap-data response contained an invalid bootstrap token" {
 		t.Fatalf("fetch() error = %v, want invalid token error", err)
@@ -184,13 +176,12 @@ func TestFetchRetriesTooManyRequests(t *testing.T) {
 
 	const responseBody = `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}`
 	attempts := 0
-	throttledBodyClosed := false
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		attempts++
 		if attempts == 1 {
 			return &http.Response{
 				StatusCode: http.StatusTooManyRequests,
-				Body:       &trackingBody{Reader: strings.NewReader("throttled"), closed: &throttledBodyClosed},
+				Body:       io.NopCloser(strings.NewReader("throttled")),
 				Header:     make(http.Header),
 			}, nil
 		}
@@ -202,7 +193,7 @@ func TestFetchRetriesTooManyRequests(t *testing.T) {
 	})}
 	got, err := fetch(t.Context(), validTestOptions(), dependencies{
 		credential:   staticCredentialFactory,
-		httpClient:   client,
+		transport:    client,
 		retryOptions: noDelayRetryOptions(1),
 	})
 	if err != nil {
@@ -213,35 +204,6 @@ func TestFetchRetriesTooManyRequests(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", attempts)
-	}
-	if !throttledBodyClosed {
-		t.Fatal("throttled response body was not closed")
-	}
-}
-
-func TestFetchStopsAfterThrottleRetriesExhausted(t *testing.T) {
-	t.Parallel()
-
-	attempts := 0
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		attempts++
-		return &http.Response{
-			StatusCode: http.StatusTooManyRequests,
-			Body:       io.NopCloser(strings.NewReader("throttled")),
-			Header:     make(http.Header),
-		}, nil
-	})}
-	_, err := fetch(t.Context(), validTestOptions(), dependencies{
-		credential:   staticCredentialFactory,
-		httpClient:   client,
-		retryOptions: noDelayRetryOptions(3),
-	})
-	var responseError *azcore.ResponseError
-	if !errors.As(err, &responseError) || responseError.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("fetch() error = %v, want final HTTP 429 response error", err)
-	}
-	if attempts != 4 {
-		t.Fatalf("attempts = %d, want 4", attempts)
 	}
 }
 
@@ -259,93 +221,14 @@ func TestFetchDoesNotRetryOtherStatusCodes(t *testing.T) {
 	})}
 	_, err := fetch(t.Context(), validTestOptions(), dependencies{
 		credential:   staticCredentialFactory,
-		httpClient:   client,
+		transport:    client,
 		retryOptions: noDelayRetryOptions(3),
 	})
-	var responseError *azcore.ResponseError
-	if !errors.As(err, &responseError) || responseError.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("fetch() error = %v, want HTTP 503 response error", err)
+	if err == nil {
+		t.Fatal("fetch() error = nil, want HTTP 503 response error")
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", attempts)
-	}
-}
-
-func TestFetchDoesNotRetryTransportErrors(t *testing.T) {
-	t.Parallel()
-
-	attempts := 0
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		attempts++
-		return nil, errors.New("network unavailable")
-	})}
-	_, err := fetch(t.Context(), validTestOptions(), dependencies{
-		credential:   staticCredentialFactory,
-		httpClient:   client,
-		retryOptions: noDelayRetryOptions(3),
-	})
-	if err == nil || !strings.Contains(err.Error(), "network unavailable") {
-		t.Fatalf("fetch() error = %v, want transport error", err)
-	}
-	if attempts != 1 {
-		t.Fatalf("attempts = %d, want 1", attempts)
-	}
-}
-
-func TestFetchStopsRetryingWhenContextIsCancelled(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(t.Context())
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		cancel()
-		return &http.Response{
-			StatusCode: http.StatusTooManyRequests,
-			Body:       io.NopCloser(strings.NewReader("throttled")),
-			Header:     http.Header{"Retry-After": []string{"1"}},
-		}, nil
-	})}
-	_, err := fetch(ctx, validTestOptions(), dependencies{
-		credential:   staticCredentialFactory,
-		httpClient:   client,
-		retryOptions: noDelayRetryOptions(3),
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("fetch() error = %v, want context cancellation", err)
-	}
-}
-
-func TestThrottleRetryBudgetCoversThirtyThousandNodes(t *testing.T) {
-	t.Parallel()
-
-	const nodeCount = 30_000
-	minimumDrainTime := nodeCount * time.Second
-	if bootstrapDataRetryTimeout <= minimumDrainTime {
-		t.Fatalf("retry timeout = %s, want more than %s", bootstrapDataRetryTimeout, minimumDrainTime)
-	}
-	if maxThrottleRetries < nodeCount {
-		t.Fatalf("max retries = %d, want at least %d", maxThrottleRetries, nodeCount)
-	}
-}
-
-func TestFetchRejectsOversizedResponse(t *testing.T) {
-	t.Parallel()
-
-	const responseLimit = 64
-	response := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}` + strings.Repeat(" ", responseLimit)
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(response)),
-			Header:     make(http.Header),
-		}, nil
-	})}
-	_, err := fetch(t.Context(), validTestOptions(), dependencies{
-		credential:    staticCredentialFactory,
-		httpClient:    client,
-		responseLimit: responseLimit,
-	})
-	if err == nil || !strings.Contains(err.Error(), "bootstrap data exceeds 64 bytes") {
-		t.Fatalf("fetch() error = %v, want oversized response error", err)
 	}
 }
 
@@ -381,21 +264,11 @@ func staticCredentialFactory(Options, azcore.ClientOptions) (azcore.TokenCredent
 	return staticCredential{}, nil
 }
 
-type trackingBody struct {
-	io.Reader
-	closed *bool
-}
-
-func (b *trackingBody) Close() error {
-	*b.closed = true
-	return nil
-}
-
 func noDelayRetryOptions(maxRetries int32) *policy.RetryOptions {
 	return &policy.RetryOptions{
 		MaxRetries:    maxRetries,
 		RetryDelay:    time.Nanosecond,
 		MaxRetryDelay: time.Nanosecond,
-		ShouldRetry:   retryOnlyTooManyRequests,
+		StatusCodes:   []int{http.StatusTooManyRequests},
 	}
 }

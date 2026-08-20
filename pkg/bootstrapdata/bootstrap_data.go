@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,7 +17,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/google/renameio/v2"
@@ -32,7 +29,6 @@ const (
 	DefaultAPIVersion              = "2026-05-02-preview"
 	DefaultResourceManagerEndpoint = "https://management.azure.com"
 	DefaultAuthorityHost           = "https://login.microsoftonline.com"
-	maxResponseBytes               = int64(16 << 20)
 	// The RP bucket refills at one request per second. Twelve hours lets a
 	// 30,000-node scale-out drain with headroom while keeping retries bounded.
 	maxThrottleRetries          = 30_000
@@ -105,42 +101,22 @@ func OptionsFromConfig(cfg *config.Config) (Options, error) {
 }
 
 // Data contains the short-lived Kubernetes join credentials returned by
-// listBootstrapData. The raw response is retained only so the bootstrap CLI can
-// write the complete RP response; runtime callers should use the typed fields.
+// listBootstrapData. Runtime callers should use the typed fields.
 type Data struct {
 	BootstrapToken string
 	ClusterFQDN    string
 	CACertData     string
-	raw            json.RawMessage
+	raw            armcontainerservice.PoolBootstrapData
 }
 
 type dependencies struct {
-	credential    func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
-	httpClient    *http.Client
-	retryOptions  *policy.RetryOptions
-	retryTimeout  time.Duration
-	responseLimit int64
+	credential   func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
+	transport    policy.Transporter
+	retryOptions *policy.RetryOptions
 }
 
 func defaultDependencies() dependencies {
-	return dependencies{
-		credential: newCredential,
-		httpClient: &http.Client{
-			Timeout: bootstrapDataAttemptTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return fmt.Errorf("bootstrap-data redirects are not allowed")
-			},
-		},
-		retryOptions: &policy.RetryOptions{
-			MaxRetries:    maxThrottleRetries,
-			TryTimeout:    bootstrapDataAttemptTimeout,
-			RetryDelay:    initialThrottleRetryDelay,
-			MaxRetryDelay: bootstrapDataRetryTimeout,
-			ShouldRetry:   retryOnlyTooManyRequests,
-		},
-		retryTimeout:  bootstrapDataRetryTimeout,
-		responseLimit: maxResponseBytes,
-	}
+	return dependencies{credential: newCredential}
 }
 
 // Fetch obtains fresh bootstrap data without persisting the sensitive response.
@@ -178,17 +154,17 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if err := validateOptions(options); err != nil {
 		return nil, err
 	}
-	environment := resourceManagerEnvironment(options)
-	retryTimeout := deps.retryTimeout
-	if retryTimeout <= 0 {
-		retryTimeout = bootstrapDataRetryTimeout
-	}
-	retryCtx, cancel := context.WithTimeout(ctx, retryTimeout)
+	retryCtx, cancel := context.WithTimeout(ctx, bootstrapDataRetryTimeout)
 	defer cancel()
+	endpoint := strings.TrimRight(options.ResourceManagerEndpoint, "/")
+	audience := strings.TrimRight(options.ResourceManagerAudience, "/")
+	if audience == "" {
+		audience = endpoint
+	}
 	clientOptions := azcore.ClientOptions{Cloud: cloud.Configuration{
-		ActiveDirectoryAuthorityHost: environment.AuthorityHost,
+		ActiveDirectoryAuthorityHost: options.AuthorityHost,
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			cloud.ResourceManager: {Endpoint: environment.Endpoint, Audience: environment.Audience},
+			cloud.ResourceManager: {Endpoint: endpoint, Audience: audience},
 		},
 	}}
 	credential, err := deps.credential(options, clientOptions)
@@ -199,41 +175,24 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if err != nil {
 		return nil, fmt.Errorf("parse cluster resource ID: %w", err)
 	}
-	retryOptions := policy.RetryOptions{
-		MaxRetries:    maxThrottleRetries,
-		TryTimeout:    bootstrapDataAttemptTimeout,
-		RetryDelay:    initialThrottleRetryDelay,
-		MaxRetryDelay: bootstrapDataRetryTimeout,
-		ShouldRetry:   retryOnlyTooManyRequests,
-	}
+	retryOptions := bootstrapDataRetryOptions()
 	if deps.retryOptions != nil {
 		retryOptions = *deps.retryOptions
-	}
-	var transport policy.Transporter
-	if deps.httpClient != nil {
-		transport = deps.httpClient
-	} else {
-		transport = http.DefaultClient
-	}
-	responseLimit := deps.responseLimit
-	if responseLimit <= 0 {
-		responseLimit = maxResponseBytes
 	}
 	client, err := armcontainerservice.NewAgentPoolsClient(clusterID.SubscriptionID, credential, &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
 			APIVersion: options.APIVersion,
 			Cloud:      clientOptions.Cloud,
 			Retry:      retryOptions,
-			Transport:  limitedResponseBodyTransport{inner: transport, limit: responseLimit},
+			Transport:  deps.transport,
 		},
 		DisableRPRegistration: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create AgentPools client: %w", err)
 	}
-	var rawResponse *http.Response
 	response, err := client.ListBootstrapData(
-		policy.WithCaptureResponse(retryCtx, &rawResponse),
+		retryCtx,
 		clusterID.ResourceGroupName,
 		clusterID.Name,
 		options.AgentPoolName,
@@ -242,16 +201,6 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list bootstrap data: %w", err)
-	}
-	if rawResponse == nil {
-		return nil, fmt.Errorf("list bootstrap data returned no HTTP response")
-	}
-	raw, err := runtime.Payload(rawResponse)
-	if err != nil {
-		return nil, fmt.Errorf("read bootstrap data: %w", err)
-	}
-	if int64(len(raw)) > responseLimit {
-		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", responseLimit)
 	}
 	responseData := response.PoolBootstrapData
 	bootstrapToken := ""
@@ -278,45 +227,18 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		BootstrapToken: bootstrapToken,
 		ClusterFQDN:    clusterFQDN,
 		CACertData:     caCertData,
-		raw:            append(json.RawMessage(nil), raw...),
+		raw:            responseData,
 	}, nil
 }
 
-func resourceManagerEnvironment(options Options) azclient.ResourceManagerEnvironment {
-	cfg := &config.Config{}
-	cfg.Azure.ResourceManagerEndpointURL = options.ResourceManagerEndpoint
-	environment := azclient.ResourceManagerEnvironmentFromConfig(cfg)
-	if options.ResourceManagerAudience != "" {
-		environment.Audience = strings.TrimRight(options.ResourceManagerAudience, "/")
+func bootstrapDataRetryOptions() policy.RetryOptions {
+	return policy.RetryOptions{
+		MaxRetries:    maxThrottleRetries,
+		TryTimeout:    bootstrapDataAttemptTimeout,
+		RetryDelay:    initialThrottleRetryDelay,
+		MaxRetryDelay: bootstrapDataRetryTimeout,
+		StatusCodes:   []int{429},
 	}
-	if options.AuthorityHost != "" && options.AuthorityHost != DefaultAuthorityHost {
-		environment.AuthorityHost = options.AuthorityHost
-	}
-	return environment
-}
-
-func retryOnlyTooManyRequests(response *http.Response, err error) bool {
-	return err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests
-}
-
-type limitedResponseBodyTransport struct {
-	inner policy.Transporter
-	limit int64
-}
-
-func (t limitedResponseBodyTransport) Do(request *http.Request) (*http.Response, error) {
-	response, err := t.inner.Do(request)
-	if err != nil || response == nil || response.Body == nil {
-		return response, err
-	}
-	response.Body = struct {
-		io.Reader
-		io.Closer
-	}{
-		Reader: io.LimitReader(response.Body, t.limit+1),
-		Closer: response.Body,
-	}
-	return response, nil
 }
 
 func validateOptions(options Options) error {
