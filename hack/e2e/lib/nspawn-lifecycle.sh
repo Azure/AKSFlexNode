@@ -132,7 +132,7 @@ nspawn_lifecycle_all() {
   log_section "Nspawn Lifecycle Reconciliation"
 
   local mode
-  for mode in msi token offline kubeadm; do
+  for mode in msi token offline kubeadm arc; do
     _validate_nspawn_lifecycle_contract "${mode}"
   done
 

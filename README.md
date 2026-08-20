@@ -278,7 +278,7 @@ kubectl delete pod hello --ignore-not-found
 <details>
 <summary>Reset And Uninstall</summary>
 
-To remove AKS Flex Node from the host, run the uninstall script as root:
+To remove AKS Flex Node from the host while preserving externally managed Azure Arc and Azure CLI installations, run the uninstall script as root:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | bash -s -- --force
@@ -290,7 +290,6 @@ Example summary:
 SUCCESS: Reset completed
 SUCCESS: Removed directory: /var/lib/aks-flex-node
 SUCCESS: Removed binary: /usr/local/bin/aks-flex-node
-SUCCESS: Azure CLI removed successfully
 SUCCESS: AKS Flex Node uninstallation completed!
 ```
 

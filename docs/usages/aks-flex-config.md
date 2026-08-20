@@ -119,18 +119,7 @@ Service principal flags follow the `az login --service-principal` convention:
 
 ### Azure Arc
 
-```bash
-./aks-flex-config generate-node-config \
-  --resource-group "$RESOURCE_GROUP" \
-  --cluster-name "$CLUSTER_NAME" \
-  --subscription "$SUBSCRIPTION_ID" \
-  --agent-pool-name "$AGENT_POOL_NAME" \
-  --arc \
-  --arc-machine-name "<arc-machine-name>" \
-  --arc-resource-group "<arc-resource-group>" \
-  --arc-location "<arc-location>" \
-  --output ./aks-flex-node-config.json
-```
+Arc bootstrap data must be fetched on the connected host, so this workstation-side helper does not render an Arc runtime config. Use `scripts/bootstrap.sh --auth arc --fetch-bootstrap-data` on the host so its Arc identity obtains fresh kubelet join settings from AKS RP. Passing `--arc` to this helper prints the same guidance and exits without writing a config.
 
 ## Copy To Host
 

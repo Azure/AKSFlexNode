@@ -111,7 +111,7 @@ infra_deploy() {
 
   local cluster_name cluster_id msi_vm_name msi_vm_ip msi_vm_private_ip msi_vm_principal_id
   local token_vm_name token_vm_ip token_vm_private_ip offline_vm_name offline_vm_ip offline_vm_private_ip
-  local kubeadm_vm_name kubeadm_vm_ip admin_username
+  local kubeadm_vm_name kubeadm_vm_ip arc_vm_name arc_vm_ip arc_vm_private_ip admin_username
 
   cluster_name=$(echo "${outputs}"    | jq -r '.clusterName.value')
   cluster_id=$(echo "${outputs}"      | jq -r '.clusterId.value')
@@ -127,6 +127,9 @@ infra_deploy() {
   offline_vm_private_ip=$(echo "${outputs}" | jq -r '.offlineVmPrivateIp.value // ""')
   kubeadm_vm_name=$(echo "${outputs}" | jq -r '.kubeadmVmName.value')
   kubeadm_vm_ip=$(echo "${outputs}"   | jq -r '.kubeadmVmIp.value')
+  arc_vm_name=$(echo "${outputs}"     | jq -r '.arcVmName.value')
+  arc_vm_ip=$(echo "${outputs}"       | jq -r '.arcVmIp.value')
+  arc_vm_private_ip=$(echo "${outputs}" | jq -r '.arcVmPrivateIp.value // ""')
   admin_username=$(echo "${outputs}"  | jq -r '.adminUsername.value')
 
   if [[ -z "${msi_vm_private_ip}" ]] || ! is_valid_ipv4 "${msi_vm_private_ip}"; then
@@ -141,34 +144,43 @@ infra_deploy() {
     log_error "Missing or invalid offline VM private IP from deployment outputs: '${offline_vm_private_ip}'"
     return 1
   fi
+  if [[ -z "${arc_vm_private_ip}" ]] || ! is_valid_ipv4 "${arc_vm_private_ip}"; then
+    log_error "Missing or invalid Arc VM private IP from deployment outputs: '${arc_vm_private_ip}'"
+    return 1
+  fi
 
   # Persist to state
-  state_set "cluster_name"         "${cluster_name}"
-  state_set "cluster_id"           "${cluster_id}"
-  state_set "msi_vm_name"          "${msi_vm_name}"
-  state_set "msi_vm_ip"            "${msi_vm_ip}"
-  state_set "msi_vm_private_ip"    "${msi_vm_private_ip}"
-  state_set "msi_vm_principal_id"  "${msi_vm_principal_id}"
-  state_set "token_vm_name"        "${token_vm_name}"
-  state_set "token_vm_ip"          "${token_vm_ip}"
-  state_set "token_vm_private_ip"  "${token_vm_private_ip}"
-  state_set "offline_vm_name"      "${offline_vm_name}"
-  state_set "offline_vm_ip"        "${offline_vm_ip}"
+  state_set "cluster_name"          "${cluster_name}"
+  state_set "cluster_id"            "${cluster_id}"
+  state_set "msi_vm_name"           "${msi_vm_name}"
+  state_set "msi_vm_ip"             "${msi_vm_ip}"
+  state_set "msi_vm_private_ip"     "${msi_vm_private_ip}"
+  state_set "msi_vm_principal_id"   "${msi_vm_principal_id}"
+  state_set "token_vm_name"         "${token_vm_name}"
+  state_set "token_vm_ip"           "${token_vm_ip}"
+  state_set "token_vm_private_ip"   "${token_vm_private_ip}"
+  state_set "offline_vm_name"       "${offline_vm_name}"
+  state_set "offline_vm_ip"         "${offline_vm_ip}"
   state_set "offline_vm_private_ip" "${offline_vm_private_ip}"
-  state_set "kubeadm_vm_name"      "${kubeadm_vm_name}"
-  state_set "kubeadm_vm_ip"        "${kubeadm_vm_ip}"
-  state_set "admin_username"       "${admin_username}"
-  state_set "resource_group"       "${E2E_RESOURCE_GROUP}"
-  state_set "location"             "${E2E_LOCATION}"
-  state_set "subscription_id"      "${AZURE_SUBSCRIPTION_ID}"
-  state_set "tenant_id"            "${AZURE_TENANT_ID}"
-  state_set "deployment_name"      "${deployment_name}"
+  state_set "kubeadm_vm_name"       "${kubeadm_vm_name}"
+  state_set "kubeadm_vm_ip"         "${kubeadm_vm_ip}"
+  state_set "arc_vm_name"           "${arc_vm_name}"
+  state_set "arc_vm_ip"             "${arc_vm_ip}"
+  state_set "arc_vm_private_ip"     "${arc_vm_private_ip}"
+  state_set "arc_machine_name"      "${arc_vm_name}-connected"
+  state_set "admin_username"        "${admin_username}"
+  state_set "resource_group"        "${E2E_RESOURCE_GROUP}"
+  state_set "location"              "${E2E_LOCATION}"
+  state_set "subscription_id"       "${AZURE_SUBSCRIPTION_ID}"
+  state_set "tenant_id"             "${AZURE_TENANT_ID}"
+  state_set "deployment_name"       "${deployment_name}"
 
   log_info "Cluster:     ${cluster_name} (${cluster_id})"
   log_info "MSI VM:      ${msi_vm_name} @ ${msi_vm_ip}"
   log_info "Token VM:    ${token_vm_name} @ ${token_vm_ip}"
   log_info "Offline VM:  ${offline_vm_name} @ ${offline_vm_ip}"
   log_info "Kubeadm VM:  ${kubeadm_vm_name} @ ${kubeadm_vm_ip}"
+  log_info "Arc VM:      ${arc_vm_name} @ ${arc_vm_ip}"
 
   # Get kubeconfig and extract cluster info
   infra_get_kubeconfig
@@ -183,12 +195,15 @@ infra_deploy() {
   local pid_offline=$!
   wait_for_ssh "${kubeadm_vm_ip}" &
   local pid_kubeadm=$!
+  wait_for_ssh "${arc_vm_ip}" &
+  local pid_arc=$!
 
   local ssh_failed=0
   wait "${pid_msi}" || ssh_failed=1
   wait "${pid_token}" || ssh_failed=1
   wait "${pid_offline}" || ssh_failed=1
   wait "${pid_kubeadm}" || ssh_failed=1
+  wait "${pid_arc}" || ssh_failed=1
 
   if [[ "${ssh_failed}" -eq 1 ]]; then
     log_error "One or more VMs not reachable via SSH"

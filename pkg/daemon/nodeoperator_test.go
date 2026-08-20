@@ -216,6 +216,25 @@ func TestBootstrapDataOptionsFromConfig(t *testing.T) {
 	}
 }
 
+func TestBootstrapDataOptionsFromArc(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Azure: config.AzureConfig{
+		Arc: &config.ArcConfig{Enabled: true},
+		TargetCluster: &config.TargetClusterConfig{
+			ResourceID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+		},
+		TargetAgentPoolName: "pool",
+	}}
+	got, err := bootstrapdata.OptionsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("bootstrapdata.OptionsFromConfig() error = %v", err)
+	}
+	if got.AuthMode != "arc" || got.MSIClientID != "" {
+		t.Fatalf("Arc identity options = %#v", got)
+	}
+}
+
 func TestBootstrapDataOptionsFromServicePrincipal(t *testing.T) {
 	t.Parallel()
 

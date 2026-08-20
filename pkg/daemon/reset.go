@@ -3,7 +3,6 @@ package daemon
 import (
 	"log/slog"
 
-	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -29,6 +28,5 @@ func ResetNode(log *slog.Logger) phases.Task {
 		),
 		reset.ReloadSystemd(log),
 		config.RemoveRuntimeDirs(log),
-		arc.UninstallArc(log),
 	)
 }

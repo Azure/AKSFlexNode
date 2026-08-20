@@ -7,8 +7,9 @@
 //   - VM without managed identity               (bootstrap token auth mode)
 //   - VM without managed identity               (offline bootstrap artifacts mode)
 //   - VM without managed identity               (kubeadm apply -f auth mode)
+//   - VM prepared as an Arc evaluation server   (Arc identity auth mode)
 //
-// All flex-node VMs run Ubuntu 22.04 LTS, have public IPs, and allow SSH
+// All flex-node VMs run Ubuntu 24.04 LTS, have public IPs, and allow SSH
 // ingress.  VM creation is delegated to the reusable modules/vm.bicep module.
 // =============================================================================
 
@@ -48,6 +49,7 @@ var msiVmName     = 'vm-e2e-msi-${nameSuffix}'
 var tokenVmName   = 'vm-e2e-token-${nameSuffix}'
 var offlineVmName = 'vm-e2e-offline-${nameSuffix}'
 var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
+var arcVmName     = 'vm-e2e-arc-${nameSuffix}'
 var vnetName      = 'vnet-e2e-${nameSuffix}'
 var nsgName       = 'nsg-e2e-${nameSuffix}'
 
@@ -222,6 +224,23 @@ module vmKubeadm 'modules/vm.bicep' = {
   }
 }
 
+// Azure Arc normally rejects Azure VMs. The E2E join flow converts this VM into
+// an official Arc evaluation host by disabling walinuxagent, blocking Azure
+// IMDS, and setting MSFT_ARC_TEST before installing the Connected Machine agent.
+module vmArc 'modules/vm.bicep' = {
+  name: 'deploy-vm-arc'
+  params: {
+    location: location
+    vmName: arcVmName
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: false
+    tags: tags
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Role assignments: grant MSI VM permissions on the AKS cluster
 // ---------------------------------------------------------------------------
@@ -281,5 +300,9 @@ output offlineVmPrivateIp string = vmOffline.outputs.privateIpAddress
 
 output kubeadmVmName string = vmKubeadm.outputs.vmName
 output kubeadmVmIp string = vmKubeadm.outputs.publicIpAddress
+
+output arcVmName string = vmArc.outputs.vmName
+output arcVmIp string = vmArc.outputs.publicIpAddress
+output arcVmPrivateIp string = vmArc.outputs.privateIpAddress
 
 output adminUsername string = adminUsername

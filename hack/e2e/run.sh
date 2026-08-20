@@ -8,17 +8,19 @@
 # Commands:
 #   all           Run the full E2E flow (default): build, infra, CNI, controller,
 #                 join, validate, unjoin, validate-absent, rejoin, validate, cleanup
-#   infra         Deploy infrastructure, CNI, and controller (Bicep: AKS + 4 VMs)
+#   infra         Deploy infrastructure, CNI, and controller (AKS + 5 VMs)
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
 #   join-offline  Join only the offline artifacts node
 #   join-kubeadm  Join only the kubeadm node (apply -f with KubeadmNodeJoin)
+#   join-arc      Join only the externally managed Arc identity node
 #   unjoin        Unjoin all nodes from the cluster
 #   unjoin-msi    Unjoin only the MSI node
 #   unjoin-token  Unjoin only the token node
 #   unjoin-offline Unjoin only the offline artifacts node
 #   unjoin-kubeadm Reset the kubeadm node and remove it from the cluster
+#   unjoin-arc    Unjoin only the Arc identity node while preserving Arc
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
@@ -134,7 +136,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -297,6 +299,11 @@ main() {
       ensure_cluster_dependencies
       node_join_kubeadm
       ;;
+    join-arc)
+      ensure_binary
+      ensure_cluster_dependencies
+      node_join_arc
+      ;;
     unjoin)
       node_unjoin_all
       ;;
@@ -311,6 +318,9 @@ main() {
       ;;
     unjoin-kubeadm)
       node_unjoin_kubeadm
+      ;;
+    unjoin-arc)
+      node_unjoin_arc
       ;;
     validate)
       validate_all_nodes

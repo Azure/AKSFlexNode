@@ -4,7 +4,7 @@
 #
 # Functions:
 #   validate_node_joined  <vm_name>  - Wait for a specific node to appear in kubectl
-#   validate_all_nodes                - Verify MSI, token, offline, and kubeadm nodes joined
+#   validate_all_nodes                - Verify MSI, token, offline, kubeadm, and Arc nodes joined
 #   validate_kubelet_reservations <vm_name> <vm_ip> [max_pods] [system_cpu] [system_memory] [kube_cpu] [kube_memory]
 #                                     - Verify the applied kubelet reservation config
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
@@ -482,7 +482,7 @@ REMOTE
   return 1
 }
 
-# validate_all_nodes - Check all MSI, token, offline, and kubeadm VMs joined
+# validate_all_nodes - Check all MSI, token, offline, kubeadm, and Arc VMs joined
 # ---------------------------------------------------------------------------
 validate_all_nodes() {
   log_section "Validating Node Join"
@@ -498,9 +498,9 @@ validate_all_nodes() {
     --overwrite-existing \
     --admin
 
-  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
-  local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip
-  local msi_vm_private_ip token_vm_private_ip offline_vm_private_ip
+  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name arc_vm_name
+  local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip arc_vm_ip
+  local msi_vm_private_ip token_vm_private_ip offline_vm_private_ip arc_vm_private_ip
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
@@ -510,6 +510,9 @@ validate_all_nodes() {
   token_vm_ip="$(state_get token_vm_ip)"
   offline_vm_ip="$(state_get offline_vm_ip)"
   kubeadm_vm_ip="$(state_get kubeadm_vm_ip)"
+  arc_vm_name="$(state_get arc_vm_name)"
+  arc_vm_ip="$(state_get arc_vm_ip)"
+  arc_vm_private_ip="$(state_get arc_vm_private_ip)"
   token_vm_private_ip="$(state_get token_vm_private_ip)"
   offline_vm_private_ip="$(state_get offline_vm_private_ip)"
 
@@ -518,9 +521,11 @@ validate_all_nodes() {
   validate_node_joined "${token_vm_name}" || failed=1
   validate_node_joined "${offline_vm_name}" || failed=1
   validate_node_joined "${kubeadm_vm_name}" || failed=1
+  validate_node_joined "${arc_vm_name}" || failed=1
   validate_node_ip "${msi_vm_name}" "${msi_vm_private_ip}" || failed=1
   validate_node_ip "${token_vm_name}" "${token_vm_private_ip}" || failed=1
   validate_node_ip "${offline_vm_name}" "${offline_vm_private_ip}" || failed=1
+  validate_node_ip "${arc_vm_name}" "${arc_vm_private_ip}" || failed=1
   # The MSI node keeps the AKS-compatible reservation defaults; the token node
   # overrides them through node.maxPods/systemReserved/kubeReserved.
   validate_kubelet_reservations "${msi_vm_name}" "${msi_vm_ip}" || failed=1
@@ -542,6 +547,7 @@ validate_all_nodes() {
   # artifact bundle and resolver used by offline artifact mode.
   log_info "Skipping node-problem-detector validation on offline node '${offline_vm_name}'"
   validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
+  validate_npd_status "${arc_vm_name}" "${arc_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
@@ -586,11 +592,12 @@ validate_node_absent() {
 validate_all_nodes_absent() {
   log_section "Validating Nodes Absent After Unjoin"
 
-  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
+  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name arc_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  arc_vm_name="$(state_get arc_vm_name)"
 
   local failed=0
   # TODO: MSI validation skipped until credential plugin auth is supported
@@ -598,6 +605,7 @@ validate_all_nodes_absent() {
   validate_node_absent "${token_vm_name}" || failed=1
   validate_node_absent "${offline_vm_name}" || failed=1
   validate_node_absent "${kubeadm_vm_name}" || failed=1
+  validate_node_absent "${arc_vm_name}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes still present after unjoin"
@@ -666,11 +674,12 @@ EOF
 smoke_test_all() {
   log_section "Running Smoke Tests"
 
-  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name
+  local msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name arc_vm_name
   msi_vm_name="$(state_get msi_vm_name)"
   token_vm_name="$(state_get token_vm_name)"
   offline_vm_name="$(state_get offline_vm_name)"
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
+  arc_vm_name="$(state_get arc_vm_name)"
 
   # Unbounded-Net is installed as the E2E CNI, so smoke pods exercise normal pod
   # sandbox networking instead of relying on a synthetic bridge config.
@@ -679,6 +688,7 @@ smoke_test_all() {
   smoke_test "${token_vm_name}" "token" || failed=1
   smoke_test "${offline_vm_name}" "offline" || failed=1
   smoke_test "${kubeadm_vm_name}" "kubeadm" || failed=1
+  smoke_test "${arc_vm_name}" "arc" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more smoke tests failed"

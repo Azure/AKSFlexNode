@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"os"
@@ -33,6 +34,7 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 		t.Context(),
 		slog.Default(),
 		paths,
+		agentServiceOptions{},
 		systemdDir,
 		recoveryPath,
 		func(context.Context, *slog.Logger) error {
@@ -74,10 +76,91 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 	}
 }
 
+func TestRenderAgentServiceUnitGolden(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		serviceOptions agentServiceOptions
+		golden         string
+	}{
+		"default": {golden: "aks-flex-node-agent.service.golden"},
+		"Arc": {
+			serviceOptions: agentServiceOptions{ARCEnabled: true},
+			golden:         "aks-flex-node-agent-arc.service.golden",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := renderAgentServiceUnit(defaultAgentUpgradePaths().BinaryPath, tt.serviceOptions)
+			if err != nil {
+				t.Fatalf("renderAgentServiceUnit() error = %v", err)
+			}
+			goldenPath := filepath.Join("testdata", tt.golden)
+			if os.Getenv("UPDATE_GOLDEN") == "1" {
+				if err := os.WriteFile(goldenPath, got, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(goldenPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("service unit mismatch (-want +got):\n--- want ---\n%s\n--- got ---\n%s", want, got)
+			}
+		})
+	}
+}
+
+func TestInstalledAgentServiceOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		writeUnit      bool
+		serviceOptions agentServiceOptions
+		want           agentServiceOptions
+	}{
+		"missing unit": {},
+		"default unit": {writeUnit: true},
+		"Arc unit": {
+			writeUnit:      true,
+			serviceOptions: agentServiceOptions{ARCEnabled: true},
+			want:           agentServiceOptions{ARCEnabled: true},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			systemdDir := t.TempDir()
+			if tt.writeUnit {
+				unit, err := renderAgentServiceUnit(defaultAgentUpgradePaths().BinaryPath, tt.serviceOptions)
+				if err != nil {
+					t.Fatalf("renderAgentServiceUnit() error = %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(systemdDir, ServiceUnitName), unit, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := installedAgentServiceOptions(systemdDir)
+			if err != nil {
+				t.Fatalf("installedAgentServiceOptions() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("installedAgentServiceOptions() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
-	service := string(serviceUnitContent)
+	serviceContent, err := renderAgentServiceUnit(defaultAgentUpgradePaths().BinaryPath, agentServiceOptions{})
+	if err != nil {
+		t.Fatalf("renderAgentServiceUnit() error = %v", err)
+	}
+	service := string(serviceContent)
 	if !strings.Contains(service, "After=network-online.target systemd-udev-settle.service") {
 		t.Fatal("service does not start after systemd-udev-settle.service")
 	}

@@ -84,7 +84,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	tasks := phases.Serial(logger,
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
-		daemon.InstallService(logger),
+		daemon.InstallService(cfg, logger),
 	)
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)

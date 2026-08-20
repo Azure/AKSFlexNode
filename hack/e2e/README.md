@@ -1,6 +1,6 @@
 # AKS Flex Node E2E Tests
 
-The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the cluster CNI, deploys an in-cluster local registry for the AKS Flex Controller image, and creates four Ubuntu VMs in Azure. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
+The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the cluster CNI, deploys an in-cluster local registry for the AKS Flex Controller image, and creates five Ubuntu VMs in Azure, including one Arc evaluation VM. It joins the VMs as Flex Nodes, validates workloads, exercises unjoin/rejoin behavior, verifies reset cleanup, validates repave, collects logs, and tears down the resources.
 
 ## Prerequisites
 
@@ -46,10 +46,10 @@ make e2e
 The default `all` command runs:
 
 1. Build the local `aks-flex-node` binary unless `--binary` or `--skip-build` is used.
-2. Deploy AKS and four VMs with Bicep.
+2. Deploy AKS, four standard test VMs, and one Arc evaluation VM.
 3. Install Unbounded-Net as the real cluster CNI.
 4. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
-5. Join all four VMs.
+5. Join all provisioned Flex Node VMs.
 6. Validate node readiness, node-problem-detector status, and run smoke workloads.
 7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 8. Rejoin all Flex Nodes and validate again.
@@ -65,17 +65,19 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, lifecycle, agent upgrade, repave, logs, cleanup. |
-| `infra` | Deploy AKS cluster, four VMs, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
+| `infra` | Deploy AKS, four standard VMs, the Arc VM, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
 | `join-offline` | Join only the offline-artifacts bootstrap-token node. |
 | `join-kubeadm` | Join only the kubeadm-style bootstrap-token node. |
+| `join-arc` | Prepare an Azure VM as an Arc evaluation server and join it using Arc identity. |
 | `unjoin` | Unjoin all Flex Node VMs. |
 | `unjoin-msi` | Unjoin only the managed-identity node. |
 | `unjoin-token` | Unjoin only the bootstrap-token node. |
 | `unjoin-offline` | Unjoin only the offline-artifacts node. |
 | `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
+| `unjoin-arc` | Unjoin the Arc-backed node while preserving its external Arc connection. |
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
@@ -138,7 +140,7 @@ Additional environment variables:
 
 ## Join Modes
 
-The suite validates four join paths:
+The suite validates five join paths. The E2E subscription must have `Microsoft.HybridCompute`, `Microsoft.HybridConnectivity`, and `Microsoft.GuestConfiguration` registered before the run.
 
 | VM | Auth Mode | Join Path |
 |----|-----------|-----------|
@@ -146,6 +148,7 @@ The suite validates four join paths:
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
 | `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test builds a bootstrap artifact bundle at runtime, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}`. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
+| `vm-e2e-arc-*` | Azure Arc Identity + Bootstrap Token | Converts an Azure VM into an official Arc evaluation server, fetches bootstrap data through Arc HIMDS, reconciles through the E2E in-cluster Machine endpoint, and validates the `himdsd.service` dependency. |
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted
@@ -227,6 +230,7 @@ Use subcommands to deploy infrastructure once and iterate quickly:
 ./hack/e2e/run.sh join-msi
 ./hack/e2e/run.sh join-token
 ./hack/e2e/run.sh join-kubeadm
+./hack/e2e/run.sh join-arc
 
 ./hack/e2e/run.sh validate
 ./hack/e2e/run.sh logs
@@ -267,6 +271,7 @@ hack/e2e/
     controller.sh         Controller image build/deploy and ConfigMap-backed machine goals.
     node-join.sh          Shared join/unjoin orchestration and remote install helper.
     node-join-msi.sh      Managed identity join/unjoin.
+    node-join-arc.sh      Externally managed Arc identity join/unjoin.
     node-join-token.sh    Bootstrap token join/unjoin.
     node-join-offline.sh  Offline artifacts join/unjoin.
     node-join-kubeadm.sh  Kubeadm-style bootstrap-token join/unjoin.

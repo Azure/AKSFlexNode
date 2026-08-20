@@ -60,6 +60,7 @@ type flexDaemonActivationService struct {
 	state            stateStore
 	systemdDir       string
 	recoveryScript   string
+	serviceOptions   agentServiceOptions
 	inspectService   func(context.Context, *slog.Logger, string) (bool, error)
 	serviceWasActive bool
 }
@@ -73,12 +74,17 @@ func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationServ
 		return nil, agentUpgradePaths{}, err
 	}
 	paths := defaultAgentUpgradePaths()
+	serviceOptions, err := installedAgentServiceOptions(systemdSystemDir)
+	if err != nil {
+		return nil, agentUpgradePaths{}, err
+	}
 	return &flexDaemonActivationService{
 		log:            log,
 		paths:          paths,
 		state:          state,
 		systemdDir:     systemdSystemDir,
 		recoveryScript: recoveryScriptPath,
+		serviceOptions: serviceOptions,
 		inspectService: inspectAgentServiceActive,
 	}, paths, nil
 }
@@ -98,7 +104,11 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
-	for _, asset := range desiredAgentServiceAssets(s.paths, s.systemdDir, s.recoveryScript, currentBinaryPath) {
+	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
+	if err != nil {
+		return agentbinary.ServicePlan{}, err
+	}
+	for _, asset := range assets {
 		actual, err := os.ReadFile(asset.path)
 		if errors.Is(err, os.ErrNotExist) || err == nil && !bytes.Equal(actual, asset.content) {
 			return agentbinary.ServicePlan{
@@ -138,7 +148,7 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 }
 
 func (s *flexDaemonActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
-	return writeAgentServiceAssets(s.paths, s.systemdDir, s.recoveryScript, currentBinaryPath)
+	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
 }
 
 func (s *flexDaemonActivationService) Reload(ctx context.Context) error {
