@@ -3,18 +3,14 @@ package bootstrapdata
 import (
 	"bytes"
 	"context"
-	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
-	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,7 +19,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/google/renameio/v2"
 
 	"github.com/Azure/AKSFlexNode/pkg/azclient"
@@ -37,9 +35,8 @@ const (
 	maxResponseBytes               = int64(16 << 20)
 	// The RP bucket refills at one request per second. Twelve hours lets a
 	// 30,000-node scale-out drain with headroom while keeping retries bounded.
-	maxThrottleRetries          = 1_000
+	maxThrottleRetries          = 30_000
 	initialThrottleRetryDelay   = time.Second
-	maxThrottleBackoffDelay     = time.Hour
 	bootstrapDataAttemptTimeout = 2 * time.Minute
 	bootstrapDataRetryTimeout   = 12 * time.Hour
 )
@@ -114,16 +111,15 @@ type Data struct {
 	BootstrapToken string
 	ClusterFQDN    string
 	CACertData     string
-	raw            map[string]any
+	raw            json.RawMessage
 }
 
 type dependencies struct {
-	credential         func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
-	httpClient         *http.Client
-	sleep              func(context.Context, time.Duration) error
-	jitter             func(time.Duration) time.Duration
-	maxThrottleRetries int
-	retryTimeout       time.Duration
+	credential    func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
+	httpClient    *http.Client
+	retryOptions  *policy.RetryOptions
+	retryTimeout  time.Duration
+	responseLimit int64
 }
 
 func defaultDependencies() dependencies {
@@ -135,10 +131,15 @@ func defaultDependencies() dependencies {
 				return fmt.Errorf("bootstrap-data redirects are not allowed")
 			},
 		},
-		sleep:              sleepWithContext,
-		jitter:             fullJitter,
-		maxThrottleRetries: maxThrottleRetries,
-		retryTimeout:       bootstrapDataRetryTimeout,
+		retryOptions: &policy.RetryOptions{
+			MaxRetries:    maxThrottleRetries,
+			TryTimeout:    bootstrapDataAttemptTimeout,
+			RetryDelay:    initialThrottleRetryDelay,
+			MaxRetryDelay: bootstrapDataRetryTimeout,
+			ShouldRetry:   retryOnlyTooManyRequests,
+		},
+		retryTimeout:  bootstrapDataRetryTimeout,
+		responseLimit: maxResponseBytes,
 	}
 }
 
@@ -177,11 +178,7 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if err := validateOptions(options); err != nil {
 		return nil, err
 	}
-	endpoint := strings.TrimRight(options.ResourceManagerEndpoint, "/")
-	audience := strings.TrimRight(options.ResourceManagerAudience, "/")
-	if audience == "" {
-		audience = endpoint
-	}
+	environment := resourceManagerEnvironment(options)
 	retryTimeout := deps.retryTimeout
 	if retryTimeout <= 0 {
 		retryTimeout = bootstrapDataRetryTimeout
@@ -189,181 +186,137 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	retryCtx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 	clientOptions := azcore.ClientOptions{Cloud: cloud.Configuration{
-		ActiveDirectoryAuthorityHost: options.AuthorityHost,
+		ActiveDirectoryAuthorityHost: environment.AuthorityHost,
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			cloud.ResourceManager: {Endpoint: endpoint, Audience: audience},
+			cloud.ResourceManager: {Endpoint: environment.Endpoint, Audience: environment.Audience},
 		},
 	}}
 	credential, err := deps.credential(options, clientOptions)
 	if err != nil {
 		return nil, err
 	}
-	token, err := credential.GetToken(retryCtx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
+	clusterID, err := arm.ParseResourceID(options.ClusterResourceID)
 	if err != nil {
-		return nil, fmt.Errorf("acquire ARM token: %w", err)
+		return nil, fmt.Errorf("parse cluster resource ID: %w", err)
 	}
-	requestURL := endpoint + options.ClusterResourceID + "/agentPools/" + options.AgentPoolName +
-		"/listBootstrapData?api-version=" + options.APIVersion
-	request, err := http.NewRequestWithContext(retryCtx, http.MethodPost, requestURL, http.NoBody)
+	retryOptions := policy.RetryOptions{
+		MaxRetries:    maxThrottleRetries,
+		TryTimeout:    bootstrapDataAttemptTimeout,
+		RetryDelay:    initialThrottleRetryDelay,
+		MaxRetryDelay: bootstrapDataRetryTimeout,
+		ShouldRetry:   retryOnlyTooManyRequests,
+	}
+	if deps.retryOptions != nil {
+		retryOptions = *deps.retryOptions
+	}
+	var transport policy.Transporter
+	if deps.httpClient != nil {
+		transport = deps.httpClient
+	} else {
+		transport = http.DefaultClient
+	}
+	responseLimit := deps.responseLimit
+	if responseLimit <= 0 {
+		responseLimit = maxResponseBytes
+	}
+	client, err := armcontainerservice.NewAgentPoolsClient(clusterID.SubscriptionID, credential, &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			APIVersion: options.APIVersion,
+			Cloud:      clientOptions.Cloud,
+			Retry:      retryOptions,
+			Transport:  limitedResponseBodyTransport{inner: transport, limit: responseLimit},
+		},
+		DisableRPRegistration: true,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("create bootstrap-data request: %w", err)
+		return nil, fmt.Errorf("create AgentPools client: %w", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+token.Token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := doBootstrapDataRequest(retryCtx, request, credential, audience, deps)
+	var rawResponse *http.Response
+	response, err := client.ListBootstrapData(
+		policy.WithCaptureResponse(retryCtx, &rawResponse),
+		clusterID.ResourceGroupName,
+		clusterID.Name,
+		options.AgentPoolName,
+		armcontainerservice.ListBootstrapDataRequest{},
+		nil,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("fetch bootstrap data: %w", err)
+		return nil, fmt.Errorf("list bootstrap data: %w", err)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_ = response.Body.Close()
-		return nil, fmt.Errorf("fetch bootstrap data returned HTTP status %d", response.StatusCode)
+	if rawResponse == nil {
+		return nil, fmt.Errorf("list bootstrap data returned no HTTP response")
 	}
-	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return nil, fmt.Errorf("read bootstrap data: %w", readErr)
+	raw, err := runtime.Payload(rawResponse)
+	if err != nil {
+		return nil, fmt.Errorf("read bootstrap data: %w", err)
 	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close bootstrap-data response: %w", closeErr)
+	if int64(len(raw)) > responseLimit {
+		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", responseLimit)
 	}
-	if int64(len(data)) > maxResponseBytes {
-		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", maxResponseBytes)
+	responseData := response.PoolBootstrapData
+	bootstrapToken := ""
+	if responseData.Azure != nil && responseData.Azure.BootstrapToken != nil && responseData.Azure.BootstrapToken.Token != nil {
+		bootstrapToken = *responseData.Azure.BootstrapToken.Token
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse bootstrap data: %w", err)
-	}
-	var responseData struct {
-		Azure struct {
-			BootstrapToken struct {
-				Token string `json:"token"`
-			} `json:"bootstrapToken"`
-		} `json:"azure"`
-		Node struct {
-			Kubelet struct {
-				ClusterFQDN string `json:"clusterFQDN"`
-				CACertData  string `json:"caCertData"`
-			} `json:"kubelet"`
-		} `json:"node"`
-	}
-	if err := json.Unmarshal(data, &responseData); err != nil {
-		return nil, fmt.Errorf("parse typed bootstrap data: %w", err)
-	}
-	if responseData.Azure.BootstrapToken.Token == "" {
+	if bootstrapToken == "" {
 		return nil, fmt.Errorf("bootstrap-data response did not contain a bootstrap token")
 	}
-	if !config.BootstrapTokenPattern.MatchString(responseData.Azure.BootstrapToken.Token) {
+	if !config.BootstrapTokenPattern.MatchString(bootstrapToken) {
 		return nil, fmt.Errorf("bootstrap-data response contained an invalid bootstrap token")
 	}
+	clusterFQDN := ""
+	caCertData := ""
+	if responseData.Node != nil && responseData.Node.Kubelet != nil {
+		if responseData.Node.Kubelet.ClusterFQDN != nil {
+			clusterFQDN = *responseData.Node.Kubelet.ClusterFQDN
+		}
+		if responseData.Node.Kubelet.CaCertData != nil {
+			caCertData = *responseData.Node.Kubelet.CaCertData
+		}
+	}
 	return &Data{
-		BootstrapToken: responseData.Azure.BootstrapToken.Token,
-		ClusterFQDN:    responseData.Node.Kubelet.ClusterFQDN,
-		CACertData:     responseData.Node.Kubelet.CACertData,
-		raw:            raw,
+		BootstrapToken: bootstrapToken,
+		ClusterFQDN:    clusterFQDN,
+		CACertData:     caCertData,
+		raw:            append(json.RawMessage(nil), raw...),
 	}, nil
 }
 
-func doBootstrapDataRequest(
-	ctx context.Context,
-	request *http.Request,
-	credential azcore.TokenCredential,
-	audience string,
-	deps dependencies,
-) (*http.Response, error) {
-	maxRetries := deps.maxThrottleRetries
-	if maxRetries <= 0 {
-		maxRetries = maxThrottleRetries
+func resourceManagerEnvironment(options Options) azclient.ResourceManagerEnvironment {
+	cfg := &config.Config{}
+	cfg.Azure.ResourceManagerEndpointURL = options.ResourceManagerEndpoint
+	environment := azclient.ResourceManagerEnvironmentFromConfig(cfg)
+	if options.ResourceManagerAudience != "" {
+		environment.Audience = strings.TrimRight(options.ResourceManagerAudience, "/")
 	}
-	for retry := 0; ; retry++ {
-		if retry > 0 {
-			token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
-			if err != nil {
-				return nil, fmt.Errorf("refresh ARM token: %w", err)
-			}
-			request.Header.Set("Authorization", "Bearer "+token.Token)
-		}
-		response, err := deps.httpClient.Do(request.Clone(ctx))
-		if err != nil {
-			return nil, err
-		}
-		if response.StatusCode != http.StatusTooManyRequests || retry == maxRetries {
-			return response, nil
-		}
-
-		delay := throttleRetryDelay(response.Header.Get("Retry-After"), retry, time.Now(), deps.jitter)
-		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
-			return response, nil
-		}
-		_, _ = io.Copy(io.Discard, response.Body)
-		_ = response.Body.Close()
-		sleepFn := deps.sleep
-		if sleepFn == nil {
-			sleepFn = sleepWithContext
-		}
-		if err := sleepFn(ctx, delay); err != nil {
-			return nil, fmt.Errorf("wait to retry bootstrap data after HTTP 429: %w", err)
-		}
+	if options.AuthorityHost != "" && options.AuthorityHost != DefaultAuthorityHost {
+		environment.AuthorityHost = options.AuthorityHost
 	}
+	return environment
 }
 
-func throttleRetryDelay(retryAfter string, retry int, now time.Time, jitter func(time.Duration) time.Duration) time.Duration {
-	backoff := min(initialThrottleRetryDelay*time.Duration(1<<min(retry, 12)), maxThrottleBackoffDelay)
-	if jitter == nil {
-		jitter = fullJitter
-	}
-	delay := jitter(backoff)
-	if retryAfter != "" {
-		retryAfterDelay, ok := parseRetryAfter(retryAfter, now)
-		if ok {
-			if delay <= time.Duration(math.MaxInt64)-retryAfterDelay {
-				delay += retryAfterDelay
-			} else {
-				delay = time.Duration(math.MaxInt64)
-			}
-		}
-	}
-	return delay
+func retryOnlyTooManyRequests(response *http.Response, err error) bool {
+	return err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests
 }
 
-func fullJitter(maxDelay time.Duration) time.Duration {
-	if maxDelay <= 0 {
-		return 0
-	}
-	jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(maxDelay)+1))
-	if err != nil {
-		return maxDelay
-	}
-	return time.Duration(jitter.Int64())
+type limitedResponseBodyTransport struct {
+	inner policy.Transporter
+	limit int64
 }
 
-func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		if seconds < 0 {
-			return 0, false
-		}
-		if seconds > math.MaxInt64/int64(time.Second) {
-			return time.Duration(math.MaxInt64), true
-		}
-		return time.Duration(seconds) * time.Second, true
+func (t limitedResponseBodyTransport) Do(request *http.Request) (*http.Response, error) {
+	response, err := t.inner.Do(request)
+	if err != nil || response == nil || response.Body == nil {
+		return response, err
 	}
-
-	retryAt, err := http.ParseTime(value)
-	if err != nil {
-		return 0, false
+	response.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.LimitReader(response.Body, t.limit+1),
+		Closer: response.Body,
 	}
-	return max(retryAt.Sub(now), 0), true
-}
-
-func sleepWithContext(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return response, nil
 }
 
 func validateOptions(options Options) error {
