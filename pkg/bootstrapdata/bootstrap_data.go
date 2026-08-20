@@ -3,14 +3,18 @@ package bootstrapdata
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,6 +35,13 @@ const (
 	DefaultResourceManagerEndpoint = "https://management.azure.com"
 	DefaultAuthorityHost           = "https://login.microsoftonline.com"
 	maxResponseBytes               = int64(16 << 20)
+	// The RP bucket refills at one request per second. Twelve hours lets a
+	// 30,000-node scale-out drain with headroom while keeping retries bounded.
+	maxThrottleRetries          = 1_000
+	initialThrottleRetryDelay   = time.Second
+	maxThrottleBackoffDelay     = time.Hour
+	bootstrapDataAttemptTimeout = 2 * time.Minute
+	bootstrapDataRetryTimeout   = 12 * time.Hour
 )
 
 var (
@@ -107,19 +118,27 @@ type Data struct {
 }
 
 type dependencies struct {
-	credential func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
-	httpClient *http.Client
+	credential         func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
+	httpClient         *http.Client
+	sleep              func(context.Context, time.Duration) error
+	jitter             func(time.Duration) time.Duration
+	maxThrottleRetries int
+	retryTimeout       time.Duration
 }
 
 func defaultDependencies() dependencies {
 	return dependencies{
 		credential: newCredential,
 		httpClient: &http.Client{
-			Timeout: 2 * time.Minute,
+			Timeout: bootstrapDataAttemptTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return fmt.Errorf("bootstrap-data redirects are not allowed")
 			},
 		},
+		sleep:              sleepWithContext,
+		jitter:             fullJitter,
+		maxThrottleRetries: maxThrottleRetries,
+		retryTimeout:       bootstrapDataRetryTimeout,
 	}
 }
 
@@ -163,6 +182,12 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if audience == "" {
 		audience = endpoint
 	}
+	retryTimeout := deps.retryTimeout
+	if retryTimeout <= 0 {
+		retryTimeout = bootstrapDataRetryTimeout
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, retryTimeout)
+	defer cancel()
 	clientOptions := azcore.ClientOptions{Cloud: cloud.Configuration{
 		ActiveDirectoryAuthorityHost: options.AuthorityHost,
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
@@ -173,19 +198,19 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if err != nil {
 		return nil, err
 	}
-	token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
+	token, err := credential.GetToken(retryCtx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
 	if err != nil {
 		return nil, fmt.Errorf("acquire ARM token: %w", err)
 	}
 	requestURL := endpoint + options.ClusterResourceID + "/agentPools/" + options.AgentPoolName +
 		"/listBootstrapData?api-version=" + options.APIVersion
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, http.NoBody)
+	request, err := http.NewRequestWithContext(retryCtx, http.MethodPost, requestURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create bootstrap-data request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+token.Token)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := deps.httpClient.Do(request)
+	response, err := doBootstrapDataRequest(retryCtx, request, credential, audience, deps)
 	if err != nil {
 		return nil, fmt.Errorf("fetch bootstrap data: %w", err)
 	}
@@ -236,6 +261,109 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		CACertData:     responseData.Node.Kubelet.CACertData,
 		raw:            raw,
 	}, nil
+}
+
+func doBootstrapDataRequest(
+	ctx context.Context,
+	request *http.Request,
+	credential azcore.TokenCredential,
+	audience string,
+	deps dependencies,
+) (*http.Response, error) {
+	maxRetries := deps.maxThrottleRetries
+	if maxRetries <= 0 {
+		maxRetries = maxThrottleRetries
+	}
+	for retry := 0; ; retry++ {
+		if retry > 0 {
+			token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
+			if err != nil {
+				return nil, fmt.Errorf("refresh ARM token: %w", err)
+			}
+			request.Header.Set("Authorization", "Bearer "+token.Token)
+		}
+		response, err := deps.httpClient.Do(request.Clone(ctx))
+		if err != nil {
+			return nil, err
+		}
+		if response.StatusCode != http.StatusTooManyRequests || retry == maxRetries {
+			return response, nil
+		}
+
+		delay := throttleRetryDelay(response.Header.Get("Retry-After"), retry, time.Now(), deps.jitter)
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
+			return response, nil
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		sleepFn := deps.sleep
+		if sleepFn == nil {
+			sleepFn = sleepWithContext
+		}
+		if err := sleepFn(ctx, delay); err != nil {
+			return nil, fmt.Errorf("wait to retry bootstrap data after HTTP 429: %w", err)
+		}
+	}
+}
+
+func throttleRetryDelay(retryAfter string, retry int, now time.Time, jitter func(time.Duration) time.Duration) time.Duration {
+	backoff := min(initialThrottleRetryDelay*time.Duration(1<<min(retry, 12)), maxThrottleBackoffDelay)
+	if jitter == nil {
+		jitter = fullJitter
+	}
+	delay := jitter(backoff)
+	if retryAfter != "" {
+		retryAfterDelay, ok := parseRetryAfter(retryAfter, now)
+		if ok {
+			if delay <= time.Duration(math.MaxInt64)-retryAfterDelay {
+				delay += retryAfterDelay
+			} else {
+				delay = time.Duration(math.MaxInt64)
+			}
+		}
+	}
+	return delay
+}
+
+func fullJitter(maxDelay time.Duration) time.Duration {
+	if maxDelay <= 0 {
+		return 0
+	}
+	jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(maxDelay)+1))
+	if err != nil {
+		return maxDelay
+	}
+	return time.Duration(jitter.Int64())
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds < 0 {
+			return 0, false
+		}
+		if seconds > math.MaxInt64/int64(time.Second) {
+			return time.Duration(math.MaxInt64), true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	return max(retryAt.Sub(now), 0), true
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func validateOptions(options Options) error {
