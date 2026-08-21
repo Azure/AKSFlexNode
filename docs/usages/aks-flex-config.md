@@ -9,7 +9,7 @@ The helper does not install anything on the target host. It uses Azure CLI and, 
 - Azure CLI authenticated to the subscription that contains the AKS cluster.
 - `python3` on the workstation.
 - `kubectl` on the workstation for `setup-node-rbac` and `--bootstrap-token` config generation.
-- Permission to run `az aks get-credentials --admin` and create Kubernetes `ClusterRoleBinding` and bootstrap token `Secret` objects.
+- Permission to run `az aks get-credentials --admin`, create Kubernetes `ClusterRoleBinding` and bootstrap token `Secret` objects, and remove the obsolete `aks-flex-node-role` binding when present.
 
 ## Save The Helper
 
@@ -46,7 +46,17 @@ Run this once per cluster for bootstrap-token joins:
   --subscription "$SUBSCRIPTION_ID"
 ```
 
-This applies the bootstrap-related `ClusterRoleBinding` objects for the `system:bootstrappers:aks-flex-node` group.
+This applies only the CSR creation and approval `ClusterRoleBinding` objects for the `system:bootstrappers:aks-flex-node` group. It also removes the obsolete `aks-flex-node-role` binding created by older versions of the helper; that binding granted bootstrap tokens the broad legacy `system:node` role. The command is safe to rerun, and existing clusters should run it once after updating the helper.
+
+Bootstrap-token config generation performs the same legacy-binding cleanup before creating a token. If cleanup fails, token generation stops rather than issuing a token into a cluster that may still grant it broad node permissions.
+
+To remove only the obsolete binding from an existing cluster, run:
+
+```bash
+kubectl delete clusterrolebinding aks-flex-node-role --ignore-not-found=true
+```
+
+Removing this binding does not interrupt joined nodes: they authenticate with their issued certificates rather than the bootstrap group. New and in-progress joins retain the CSR permissions installed above.
 
 ## Generate Node Config
 

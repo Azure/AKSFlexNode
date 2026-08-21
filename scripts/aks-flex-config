@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com"
 DEFAULT_AGENT_POOL_NAME = "aksflexnodes"
+LEGACY_NODE_ROLE_BINDING = "aks-flex-node-role"
 
 
 def log_info(message: str) -> None:
@@ -67,10 +68,31 @@ def setup_node_rbac(args: argparse.Namespace) -> None:
 
     log_info("applying bootstrap token RBAC bindings")
     run(["kubectl", "apply", "-f", "-"], input_text=RBAC_MANIFEST)
+    remove_legacy_node_role_binding()
+
+
+def remove_legacy_node_role_binding() -> None:
+    # Older helpers granted bootstrap credentials the broad legacy node role.
+    # Remove it after the least-privilege CSR bindings are safely in place.
+    log_info("removing legacy bootstrap node role binding")
+    run(
+        [
+            "kubectl",
+            "delete",
+            "clusterrolebinding",
+            LEGACY_NODE_ROLE_BINDING,
+            "--ignore-not-found=true",
+        ]
+    )
 
 
 def generate_bootstrap_token(args: argparse.Namespace) -> str:
     require_command("kubectl")
+
+    # Existing clusters may skip setup-node-rbac after updating this helper.
+    # Never mint another token while the legacy broad binding may still exist.
+    remove_legacy_node_role_binding()
+    log_info("creating bootstrap token")
 
     token_id = secrets.token_hex(3)
     token_secret = secrets.token_hex(8)
@@ -177,7 +199,6 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
 
     if mode == "bootstrap-token":
         load_admin_kubeconfig(args)
-        log_info("creating bootstrap token")
         token = generate_bootstrap_token(args)
         server_url = run(
             ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"],
@@ -258,7 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
         subparser.add_argument("--cluster-name", required=True)
         subparser.add_argument("--subscription")
 
-    rbac = subparsers.add_parser("setup-node-rbac", help="Apply node bootstrap RBAC bindings.")
+    rbac = subparsers.add_parser("setup-node-rbac", help="Reconcile node bootstrap RBAC bindings.")
     add_cluster_args(rbac)
     rbac.set_defaults(func=setup_node_rbac)
 
@@ -304,19 +325,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:bootstrappers:aks-flex-node
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aks-flex-node-role
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:node
 subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group

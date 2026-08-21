@@ -39,7 +39,7 @@ _kubeadm_ensure_rbac() {
   #  - ClusterRole/ClusterRoleBinding for bootstrappers to GET nodes
   #  - ConfigMaps: cluster-info (kube-public), kubeadm-config and
   #    kubelet-config (kube-system) consumed by kubeadm join
-  kubectl apply -f - <<EOF
+  if ! kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -84,22 +84,6 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:nodes
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aks-flex-node-role
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:node
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:bootstrappers:aks-flex-node
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -182,11 +166,22 @@ subjects:
   apiGroup: rbac.authorization.k8s.io
   name: ${kubeadmBootstrapGroup}
 EOF
+  then
+    log_error "Failed to apply bootstrap RBAC"
+    return 1
+  fi
+
+  # The CSR and narrowly scoped preflight bindings above replace this legacy,
+  # overly broad binding. Explicit deletion also migrates reused E2E clusters.
+  if ! kubectl delete clusterrolebinding aks-flex-node-role --ignore-not-found=true; then
+    log_error "Failed to remove legacy aks-flex-node-role binding"
+    return 1
+  fi
 
   # Publish the ConfigMaps that kubeadm join reads during its preflight phase.
   # cluster-info goes into kube-public (publicly readable).
   # kubeadm-config and kubelet-config go into kube-system (bootstrapper-readable).
-  kubectl apply -f - <<EOF
+  if ! kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -229,6 +224,10 @@ data:
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
 EOF
+  then
+    log_error "Failed to apply kubeadm bootstrap ConfigMaps"
+    return 1
+  fi
 
   log_success "Bootstrap RBAC and ConfigMaps configured"
 }
