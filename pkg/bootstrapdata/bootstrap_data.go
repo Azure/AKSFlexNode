@@ -3,12 +3,16 @@ package bootstrapdata
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,6 +21,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/google/renameio/v2"
@@ -33,6 +38,8 @@ const (
 	// 30,000-node scale-out drain with headroom while keeping retries bounded.
 	maxThrottleRetries          = 30_000
 	initialThrottleRetryDelay   = time.Second
+	initialThrottleRetryJitter  = 5 * time.Minute
+	maxThrottleRetryJitter      = time.Hour
 	bootstrapDataAttemptTimeout = 2 * time.Minute
 	bootstrapDataRetryTimeout   = 12 * time.Hour
 )
@@ -106,17 +113,25 @@ type Data struct {
 	BootstrapToken string
 	ClusterFQDN    string
 	CACertData     string
-	raw            armcontainerservice.PoolBootstrapData
+	raw            json.RawMessage
 }
 
 type dependencies struct {
 	credential   func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
 	transport    policy.Transporter
 	retryOptions *policy.RetryOptions
+	retryJitter  func(time.Duration) time.Duration
 }
 
 func defaultDependencies() dependencies {
-	return dependencies{credential: newCredential}
+	return dependencies{
+		credential: newCredential,
+		transport: &http.Client{
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}
 }
 
 // Fetch obtains fresh bootstrap data without persisting the sensitive response.
@@ -181,18 +196,20 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	}
 	client, err := armcontainerservice.NewAgentPoolsClient(clusterID.SubscriptionID, credential, &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
-			APIVersion: options.APIVersion,
-			Cloud:      clientOptions.Cloud,
-			Retry:      retryOptions,
-			Transport:  deps.transport,
+			APIVersion:       options.APIVersion,
+			Cloud:            clientOptions.Cloud,
+			Retry:            retryOptions,
+			Transport:        deps.transport,
+			PerRetryPolicies: []policy.Policy{&retryAfterJitterPolicy{jitter: deps.retryJitter}},
 		},
 		DisableRPRegistration: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create AgentPools client: %w", err)
 	}
+	var rawResponse *http.Response
 	response, err := client.ListBootstrapData(
-		retryCtx,
+		policy.WithCaptureResponse(retryCtx, &rawResponse),
 		clusterID.ResourceGroupName,
 		clusterID.Name,
 		options.AgentPoolName,
@@ -201,6 +218,13 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list bootstrap data: %w", err)
+	}
+	if rawResponse == nil {
+		return nil, fmt.Errorf("list bootstrap data returned no HTTP response")
+	}
+	raw, err := runtime.Payload(rawResponse)
+	if err != nil {
+		return nil, fmt.Errorf("read bootstrap data: %w", err)
 	}
 	responseData := response.PoolBootstrapData
 	bootstrapToken := ""
@@ -227,7 +251,7 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		BootstrapToken: bootstrapToken,
 		ClusterFQDN:    clusterFQDN,
 		CACertData:     caCertData,
-		raw:            responseData,
+		raw:            append(json.RawMessage(nil), raw...),
 	}, nil
 }
 
@@ -237,8 +261,47 @@ func bootstrapDataRetryOptions() policy.RetryOptions {
 		TryTimeout:    bootstrapDataAttemptTimeout,
 		RetryDelay:    initialThrottleRetryDelay,
 		MaxRetryDelay: bootstrapDataRetryTimeout,
-		StatusCodes:   []int{429},
+		ShouldRetry: func(response *http.Response, err error) bool {
+			return err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests
+		},
 	}
+}
+
+type retryAfterJitterPolicy struct {
+	attempt int
+	jitter  func(time.Duration) time.Duration
+}
+
+func (p *retryAfterJitterPolicy) Do(request *policy.Request) (*http.Response, error) {
+	response, err := request.Next()
+	if err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests {
+		if addRetryAfterJitter(response, p.attempt, p.jitter) {
+			p.attempt++
+		}
+	}
+	return response, err
+}
+
+func addRetryAfterJitter(response *http.Response, attempt int, jitter func(time.Duration) time.Duration) bool {
+	retryAfterSeconds, err := strconv.ParseUint(response.Header.Get("Retry-After"), 10, 31)
+	if err != nil || retryAfterSeconds == 0 {
+		return false
+	}
+	if jitter == nil {
+		jitter = randomRetryJitter
+	}
+	window := min(initialThrottleRetryJitter*time.Duration(1<<min(attempt, 4)), maxThrottleRetryJitter)
+	delay := time.Duration(retryAfterSeconds)*time.Second + jitter(window)
+	response.Header.Set("Retry-After-Ms", strconv.FormatInt(delay.Milliseconds(), 10))
+	return true
+}
+
+func randomRetryJitter(maxDelay time.Duration) time.Duration {
+	jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(maxDelay)+1))
+	if err != nil {
+		return maxDelay / 2
+	}
+	return time.Duration(jitter.Int64())
 }
 
 func validateOptions(options Options) error {

@@ -2,6 +2,7 @@ package bootstrapdata
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -40,7 +41,7 @@ func TestFetchAndWrite(t *testing.T) {
 		if request.Header.Get("Authorization") != "Bearer arm-token" {
 			t.Error("missing token")
 		}
-		body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}`
+		body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}},"futureField":null}`
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	options := Options{
@@ -62,6 +63,13 @@ func TestFetchAndWrite(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o", info.Mode().Perm())
+	}
+	written, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), `"futureField": null`) {
+		t.Fatalf("output did not preserve unknown field: %s", written)
 	}
 }
 
@@ -232,6 +240,57 @@ func TestFetchDoesNotRetryOtherStatusCodes(t *testing.T) {
 	}
 }
 
+func TestFetchDoesNotRetryTransportErrors(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, fmt.Errorf("network unavailable")
+	})}
+	_, err := fetch(t.Context(), validTestOptions(), dependencies{
+		credential: staticCredentialFactory,
+		transport:  client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "network unavailable") {
+		t.Fatalf("fetch() error = %v, want transport error", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestAddRetryAfterJitter(t *testing.T) {
+	t.Parallel()
+
+	response := &http.Response{Header: http.Header{"Retry-After": []string{"1"}}}
+	var window time.Duration
+	if !addRetryAfterJitter(response, 0, func(maxDelay time.Duration) time.Duration {
+		window = maxDelay
+		return 2 * time.Second
+	}) {
+		t.Fatal("addRetryAfterJitter() = false")
+	}
+	if window != initialThrottleRetryJitter {
+		t.Fatalf("jitter window = %s, want %s", window, initialThrottleRetryJitter)
+	}
+	if got := response.Header.Get("Retry-After-Ms"); got != "3000" {
+		t.Fatalf("Retry-After-Ms = %q, want 3000", got)
+	}
+}
+
+func TestDefaultTransportRejectsRedirects(t *testing.T) {
+	t.Parallel()
+
+	client, ok := defaultDependencies().transport.(*http.Client)
+	if !ok || client.CheckRedirect == nil {
+		t.Fatal("default transport does not reject redirects")
+	}
+	if err := client.CheckRedirect(&http.Request{}, nil); err != http.ErrUseLastResponse {
+		t.Fatalf("CheckRedirect() error = %v, want http.ErrUseLastResponse", err)
+	}
+}
+
 func TestFetchAndWriteRequiresOutput(t *testing.T) {
 	t.Parallel()
 
@@ -269,6 +328,8 @@ func noDelayRetryOptions(maxRetries int32) *policy.RetryOptions {
 		MaxRetries:    maxRetries,
 		RetryDelay:    time.Nanosecond,
 		MaxRetryDelay: time.Nanosecond,
-		StatusCodes:   []int{http.StatusTooManyRequests},
+		ShouldRetry: func(response *http.Response, err error) bool {
+			return err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests
+		},
 	}
 }
