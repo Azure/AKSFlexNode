@@ -174,7 +174,7 @@ help:
 	@echo "  build-config-windows-amd64 Build config helper for Windows AMD64"
 	@echo "  build-config-darwin-amd64 	Build config helper for macOS AMD64"
 	@echo "  build-config-darwin-arm64 	Build config helper for macOS ARM64"
-@echo "  build-all          			Build for all supported platforms"
+	@echo "  build-all          			Build for all supported platforms"
 	@echo ""
 	@echo "Package Targets:"
 	@echo "  package-linux-amd64 Package Linux AMD64 binary"
