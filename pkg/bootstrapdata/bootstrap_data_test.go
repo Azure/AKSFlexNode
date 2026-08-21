@@ -291,6 +291,50 @@ func TestDefaultTransportRejectsRedirects(t *testing.T) {
 	}
 }
 
+func TestLimitedResponseTransport(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Repeat("x", int(maxResponseBytes)+2)
+	transport := limitedResponseTransport{inner: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.test", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(got)) != maxResponseBytes+1 {
+		t.Fatalf("response size = %d, want %d", len(got), maxResponseBytes+1)
+	}
+}
+
+func TestFetchRejectsOversizedResponse(t *testing.T) {
+	t.Parallel()
+
+	body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}` + strings.Repeat(" ", int(maxResponseBytes))
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	_, err := fetch(t.Context(), validTestOptions(), dependencies{
+		credential: staticCredentialFactory,
+		transport:  client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "bootstrap data exceeds") {
+		t.Fatalf("fetch() error = %v, want oversized response error", err)
+	}
+}
+
 func TestFetchAndWriteRequiresOutput(t *testing.T) {
 	t.Parallel()
 

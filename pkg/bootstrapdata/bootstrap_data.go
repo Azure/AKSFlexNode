@@ -6,6 +6,7 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -34,6 +35,7 @@ const (
 	DefaultAPIVersion              = "2026-05-02-preview"
 	DefaultResourceManagerEndpoint = "https://management.azure.com"
 	DefaultAuthorityHost           = "https://login.microsoftonline.com"
+	maxResponseBytes               = int64(16 << 20)
 	// The RP bucket refills at one request per second. Twelve hours lets a
 	// 30,000-node scale-out drain with headroom while keeping retries bounded.
 	maxThrottleRetries          = 30_000
@@ -194,12 +196,16 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if deps.retryOptions != nil {
 		retryOptions = *deps.retryOptions
 	}
+	transport := deps.transport
+	if transport == nil {
+		transport = http.DefaultClient
+	}
 	client, err := armcontainerservice.NewAgentPoolsClient(clusterID.SubscriptionID, credential, &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
 			APIVersion:       options.APIVersion,
 			Cloud:            clientOptions.Cloud,
 			Retry:            retryOptions,
-			Transport:        deps.transport,
+			Transport:        limitedResponseTransport{inner: transport},
 			PerRetryPolicies: []policy.Policy{&retryAfterJitterPolicy{jitter: deps.retryJitter}},
 		},
 		DisableRPRegistration: true,
@@ -225,6 +231,9 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	raw, err := runtime.Payload(rawResponse)
 	if err != nil {
 		return nil, fmt.Errorf("read bootstrap data: %w", err)
+	}
+	if int64(len(raw)) > maxResponseBytes {
+		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", maxResponseBytes)
 	}
 	responseData := response.PoolBootstrapData
 	bootstrapToken := ""
@@ -302,6 +311,25 @@ func randomRetryJitter(maxDelay time.Duration) time.Duration {
 		return maxDelay / 2
 	}
 	return time.Duration(jitter.Int64())
+}
+
+type limitedResponseTransport struct {
+	inner policy.Transporter
+}
+
+func (t limitedResponseTransport) Do(request *http.Request) (*http.Response, error) {
+	response, err := t.inner.Do(request)
+	if err != nil || response == nil || response.Body == nil {
+		return response, err
+	}
+	response.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.LimitReader(response.Body, maxResponseBytes+1),
+		Closer: response.Body,
+	}
+	return response, nil
 }
 
 func validateOptions(options Options) error {
