@@ -28,9 +28,24 @@ build-linux-arm64:
 	@echo "Building for Linux ARM64..."
 	@GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o aks-flex-node-linux-arm64 ./cmd/aks-flex-node
 
+.PHONY: build-config-windows-amd64
+build-config-windows-amd64:
+	@echo "Building AKS Flex config helper for Windows AMD64..."
+	@GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o aks-flex-config-windows-amd64.exe ./cmd/aks-flex-config
+
+.PHONY: build-config-darwin-amd64
+build-config-darwin-amd64:
+	@echo "Building AKS Flex config helper for macOS AMD64..."
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o aks-flex-config-darwin-amd64 ./cmd/aks-flex-config
+
+.PHONY: build-config-darwin-arm64
+build-config-darwin-arm64:
+	@echo "Building AKS Flex config helper for macOS ARM64..."
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o aks-flex-config-darwin-arm64 ./cmd/aks-flex-config
+
 # Build all supported platforms
 .PHONY: build-all
-build-all: build-linux-amd64 build-linux-arm64
+build-all: build-linux-amd64 build-linux-arm64 build-config-windows-amd64 build-config-darwin-amd64 build-config-darwin-arm64
 	@echo "Built binaries for all supported platforms"
 
 # Create release archives
@@ -46,9 +61,9 @@ package-linux-arm64: build-linux-arm64
 
 # Package all supported platforms
 .PHONY: package-all
-package-all: package-linux-amd64 package-linux-arm64
+package-all: package-linux-amd64 package-linux-arm64 build-config-windows-amd64 build-config-darwin-amd64 build-config-darwin-arm64
 	@echo "Packaged all supported platforms"
-	@ls -la *.tar.gz
+	@ls -la *.tar.gz aks-flex-config-windows-amd64.exe aks-flex-config-darwin-*
 
 # Testing and quality checks
 .PHONY: test
@@ -133,6 +148,7 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@go clean
 	@rm -f aks-flex-node aks-flex-node-*
+	@rm -f aks-flex-config aks-flex-config-*
 	@rm -f aks-flex-controller
 	@rm -f *.tar.gz
 	@rm -f coverage.out coverage.html
@@ -151,16 +167,19 @@ help:
 	@echo "======================"
 	@echo ""
 	@echo "Build Targets:"
-	@echo "  build              Build for current platform"
-	@echo "  build-controller   Build AKS Flex controller for current platform"
-	@echo "  build-linux-amd64  Build for Linux AMD64"
-	@echo "  build-linux-arm64  Build for Linux ARM64"
-	@echo "  build-all          Build for all supported platforms"
+	@echo "  build              		Build for current platform"
+	@echo "  build-controller   		Build AKS Flex controller for current platform"
+	@echo "  build-linux-amd64  		Build for Linux AMD64"
+	@echo "  build-linux-arm64  		Build for Linux ARM64"
+	@echo "  build-config-windows-amd64 Build config helper for Windows AMD64"
+	@echo "  build-config-darwin-amd64 	Build config helper for macOS AMD64"
+	@echo "  build-config-darwin-arm64 	Build config helper for macOS ARM64"
+@echo "  build-all          			Build for all supported platforms"
 	@echo ""
 	@echo "Package Targets:"
 	@echo "  package-linux-amd64 Package Linux AMD64 binary"
 	@echo "  package-linux-arm64 Package Linux ARM64 binary"
-	@echo "  package-all        Package all supported platforms"
+	@echo "  package-all        Build all release assets"
 	@echo ""
 	@echo "Test & Quality Targets:"
 	@echo "  test               Run tests"
