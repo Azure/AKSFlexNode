@@ -507,17 +507,17 @@ func TestSetupNodeRBACMigratesLegacyBindingIdempotently(t *testing.T) {
 	if len(proxyIndexes) != 1 {
 		t.Fatalf("conditional deletion started %d kubectl proxies, want 1: %s", len(proxyIndexes), formatCalls(calls))
 	}
-	portArgs := 0
+	unixSocketArgs := 0
 	for _, arg := range calls[proxyIndexes[0]].args {
-		if strings.HasPrefix(arg, "--port=") {
-			portArgs++
-			if arg != "--port=0" {
-				t.Errorf("conditional deletion selected proxy port before launch: %q", arg)
-			}
+		if strings.HasPrefix(arg, "--unix-socket=") {
+			unixSocketArgs++
+		}
+		if strings.HasPrefix(arg, "--port=") || strings.HasPrefix(arg, "--address=") {
+			t.Errorf("conditional deletion exposed a TCP listener: %q", arg)
 		}
 	}
-	if portArgs != 1 {
-		t.Fatalf("conditional deletion must let kubectl atomically allocate its proxy port: %s", formatCalls(calls))
+	if unixSocketArgs != 1 {
+		t.Fatalf("conditional deletion must use one private Unix socket: %s", formatCalls(calls))
 	}
 	if applyIndexes[0] >= deleteIndexes[0] {
 		t.Errorf("legacy binding was deleted before safe RBAC was applied: %s", formatCalls(calls))
@@ -638,17 +638,17 @@ func TestSetupNodeRBACHandlesFragmentedKubectlProxyReadiness(t *testing.T) {
 	}
 }
 
-func TestSetupNodeRBACBypassesEnvironmentProxyForLoopbackDeletion(t *testing.T) {
+func TestSetupNodeRBACBypassesEnvironmentProxyForUnixSocketDeletion(t *testing.T) {
 	t.Parallel()
 
 	harness := newConfigScriptHarness(t, true, 0)
 	harness.poisonHTTPProxy = true
 	output, err := harness.runSetupNodeRBAC(true)
 	if err != nil {
-		t.Fatalf("setup-node-rbac sent its loopback deletion through the environment proxy: %v\n%s", err, output)
+		t.Fatalf("setup-node-rbac sent its Unix-socket deletion through the environment proxy: %v\n%s", err, output)
 	}
 	if got := strings.TrimSpace(readFile(t, harness.legacyState)); got != "absent" {
-		t.Fatalf("legacy binding state = %q after loopback deletion, want absent", got)
+		t.Fatalf("legacy binding state = %q after Unix-socket deletion, want absent", got)
 	}
 }
 
@@ -1306,29 +1306,38 @@ set -eu
 
 case "${1:-}" in
 proxy)
-    port=""
+    socket_path=""
     for arg in "$@"; do
         case "$arg" in
-        --port=*) port="${arg#--port=}" ;;
+        --unix-socket=*) socket_path="${arg#--unix-socket=}" ;;
+        --port=*|--address=*) exit 52 ;;
         esac
     done
-    if [ -z "$port" ]; then
+    if [ -z "$socket_path" ]; then
         exit 50
     fi
     if [ "${AKS_FLEX_CONFIG_TEST_PROXY_STARTUP:-}" = "exit-before-ready" ]; then
         printf '%s\n' 'injected proxy startup failure' >&2
         exit 51
     fi
-    exec python3 -u - "$port" "${AKS_FLEX_CONFIG_TEST_COMMAND_LOG:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_OPTIONS:?}" "${AKS_FLEX_CONFIG_TEST_LEGACY_STATE:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_EXIT:-0}" "${AKS_FLEX_CONFIG_TEST_DELETE_KEEPS_STATE:-false}" "${AKS_FLEX_CONFIG_TEST_CONCURRENT_REPLACE:-false}" "${AKS_FLEX_CONFIG_TEST_PROXY_STARTUP:-}" <<'PY'
+    exec python3 -u - "$socket_path" "${AKS_FLEX_CONFIG_TEST_COMMAND_LOG:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_OPTIONS:?}" "${AKS_FLEX_CONFIG_TEST_LEGACY_STATE:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_EXIT:-0}" "${AKS_FLEX_CONFIG_TEST_DELETE_KEEPS_STATE:-false}" "${AKS_FLEX_CONFIG_TEST_CONCURRENT_REPLACE:-false}" "${AKS_FLEX_CONFIG_TEST_PROXY_STARTUP:-}" <<'PY'
 import http.server
 import json
+import os
+import socketserver
+import stat
 import sys
 import time
 
-port, log_path, options_path, state_path, delete_exit, keep_state, concurrent, startup_mode = sys.argv[1:]
+socket_path, log_path, options_path, state_path, delete_exit, keep_state, concurrent, startup_mode = sys.argv[1:]
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_DELETE(self):
+        socket_mode = stat.S_IMODE(os.stat(socket_path, follow_symlinks=False).st_mode)
+        directory_mode = stat.S_IMODE(os.stat(os.path.dirname(socket_path)).st_mode)
+        if socket_mode != 0o600 or directory_mode != 0o700:
+            self.respond(500, {"message": f"insecure socket modes {socket_mode:o}/{directory_mode:o}"})
+            return
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
         with open(log_path, "a", encoding="utf-8") as stream:
@@ -1378,10 +1387,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), Handler)
+class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+os.umask(0o077)
+server = UnixHTTPServer(socket_path, Handler)
 sys.stderr.write("fake proxy diagnostic before readiness\n")
 sys.stderr.flush()
-readiness = f"Starting to serve on 127.0.0.1:{server.server_address[1]}\n"
+readiness = f"Starting to serve on {socket_path}\n"
 if startup_mode == "fragmented-ready":
     readiness_prefix = "Starting to "
     for fragment in (
