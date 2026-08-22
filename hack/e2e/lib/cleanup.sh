@@ -611,7 +611,7 @@ cleanup() {
   kubeadm_vm_name="$(state_get kubeadm_vm_name)"
   arc_vm_name="$(state_get arc_vm_name)"
   arc_machine_name="$(state_get arc_machine_name)"
-  subscription_id="$(state_get subscription_id "${AZURE_SUBSCRIPTION_ID}")"
+  subscription_id="$(state_get subscription_id "${AZURE_SUBSCRIPTION_ID:-}")"
   arc_machine_id="$(state_get arc_machine_id)"
   deployment_name="$(state_get deployment_name)"
   persisted_resource_owner="$(state_get resource_owner)"

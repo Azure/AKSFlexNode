@@ -564,6 +564,25 @@ func TestCleanupUsesExactNamesWithoutRunTag(t *testing.T) {
 	}
 }
 
+func TestCleanupUsesPersistedSubscriptionWithoutEnvironment(t *testing.T) {
+	t.Parallel()
+
+	_, _, callLog, output, err := runCleanup(t, cleanupOptions{unsetSubscriptionEnv: true})
+	if err != nil {
+		t.Fatalf("cleanup without subscription environment failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=success") {
+		t.Fatalf("cleanup did not use the persisted subscription:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	if !strings.Contains(string(calls), "--subscription test-subscription") {
+		t.Fatalf("cleanup did not pass the persisted subscription to Azure CLI:\n%s", calls)
+	}
+}
+
 func TestCleanupHandlesLegacyStateWithoutVMNames(t *testing.T) {
 	t.Parallel()
 
@@ -871,6 +890,7 @@ type cleanupOptions struct {
 	legacyDiskDeletePersists  bool
 	unexpectedArcMachineID    bool
 	transientQueryFailures    bool
+	unsetSubscriptionEnv      bool
 }
 
 func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, []byte, error) {
@@ -945,11 +965,16 @@ UNEXPECTED_LIVE_NODE_RG="${12}"
 LEGACY_DEFAULT_NODE_RG="${13}"
 LEGACY_DETACHED_DISK="${14}"
 LEGACY_DISK_DELETE_PERSISTS="${15}"
+UNSET_SUBSCRIPTION_ENV="${16}"
 LEGACY_DISK_DELETED="${E2E_WORK_DIR}/legacy-disk-deleted"
 # Keep cleanup fixtures independent from the ambient GitHub Actions run. Tests
 # that need tag-based cleanup persist an explicit run_id in their state.
 unset GITHUB_RUN_ID
-AZURE_SUBSCRIPTION_ID=test-subscription
+if [[ "${UNSET_SUBSCRIPTION_ENV}" == "1" ]]; then
+  unset AZURE_SUBSCRIPTION_ID
+else
+  AZURE_SUBSCRIPTION_ID=test-subscription
+fi
 E2E_SKIP_CLEANUP=0
 E2E_CLEANUP_TIMEOUT=5
 E2E_CLEANUP_POLL_INTERVAL=0.01
@@ -1038,7 +1063,7 @@ fi
 		boolString(options.deploymentQueryFails), boolString(options.runTwice),
 		boolString(options.transientQueryFailures), boolString(options.unexpectedLiveNodeRG),
 		boolString(options.legacyDefaultNodeResource), boolString(options.legacyDetachedDisk),
-		boolString(options.legacyDiskDeletePersists))
+		boolString(options.legacyDiskDeletePersists), boolString(options.unsetSubscriptionEnv))
 	return workDir, statePath, callLog, output, err
 }
 
