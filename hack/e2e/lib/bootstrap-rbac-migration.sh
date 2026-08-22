@@ -516,6 +516,51 @@ fi
 REMOTE
 }
 
+_reissue_daemon_certificate_after_migration() {
+  local vm_ip="$1"
+  local server_url="$2"
+
+  remote_exec "${vm_ip}" 'sudo bash -s' <<'REMOTE'
+set -euo pipefail
+readonly credential_dir="/etc/aks-flex-node/daemon-credentials"
+readonly credential_path="${credential_dir}/daemon-controller-current.pem"
+readonly service_name="aks-flex-node-agent.service"
+
+if [[ ! -s "${credential_path}" ]]; then
+  echo "daemon certificate is missing before forced reissuance" >&2
+  exit 1
+fi
+old_fingerprint="$(openssl x509 -in "${credential_path}" -outform DER | sha256sum | awk '{print $1}')"
+
+# Stop the process before deleting its test credential store so the restart
+# must authenticate with the still-valid bootstrap token and submit a new CSR.
+systemctl stop "${service_name}"
+rm -rf -- "${credential_dir}"
+systemctl start "${service_name}"
+
+for _ in $(seq 1 60); do
+  if systemctl is-active --quiet "${service_name}" && [[ -s "${credential_path}" ]]; then
+    new_fingerprint="$(openssl x509 -in "${credential_path}" -outform DER | sha256sum | awk '{print $1}')"
+    if [[ -n "${new_fingerprint}" && "${new_fingerprint}" != "${old_fingerprint}" ]]; then
+      exit 0
+    fi
+  fi
+  if systemctl is-failed --quiet "${service_name}"; then
+    break
+  fi
+  sleep 2
+done
+
+echo "daemon did not obtain a different certificate after legacy RBAC removal" >&2
+systemctl status "${service_name}" --no-pager >&2 || true
+journalctl -u "${service_name}" -n 100 --no-pager >&2 || true
+exit 1
+REMOTE
+
+  _require_daemon_certificate_access "${vm_ip}" "${server_url}"
+  log_success "Daemon obtained a new certificate through least-privilege CSR RBAC after legacy binding removal"
+}
+
 _require_old_node_survives_guard() {
   local vm_name="$1"
   local vm_ip="$2"
@@ -849,7 +894,7 @@ historical_rbac_migration_e2e() {
   fi
   _wait_for_bootstrap_token_probe http:403 "${config_file}" list-nodes
   _wait_for_bootstrap_token_probe allowed "${config_file}" create-csr
-  _require_daemon_certificate_access "${vm_ip}" "${server_url}"
+  _reissue_daemon_certificate_after_migration "${vm_ip}" "${server_url}"
 
   # Revocation proves the subsequent restarts cannot silently fall back to the
   # bootstrap credential.

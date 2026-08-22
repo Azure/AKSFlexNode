@@ -13,7 +13,7 @@ import (
 
 // Embedding the scripts makes Go's test cache invalidate on shell-only changes.
 //
-//go:embed run.sh lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh infra/main.bicep
+//go:embed run.sh lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh infra/*.bicep infra/modules/*.bicep
 var e2eScripts embed.FS
 
 func TestBicepModuleDeploymentNamesAreUniquePerRun(t *testing.T) {
@@ -620,7 +620,7 @@ func TestCleanupRejectsUnexpectedOrphanNodeResourceGroup(t *testing.T) {
 		t.Fatalf("orphan cleanup test harness failed: %v\n%s", err, output)
 	}
 	if !strings.Contains(string(output), "RESULT=error") ||
-		!strings.Contains(string(output), "Refusing to delete unexpected persisted AKS node resource group") {
+		!strings.Contains(string(output), "Refusing to delete unexpected AKS node resource group") {
 		t.Fatalf("cleanup did not reject an unexpected orphan node resource group:\n%s", output)
 	}
 	calls, readErr := os.ReadFile(callLog)
@@ -629,6 +629,35 @@ func TestCleanupRejectsUnexpectedOrphanNodeResourceGroup(t *testing.T) {
 	}
 	if strings.Contains(string(calls), "group delete --name production-node-rg") {
 		t.Fatalf("cleanup attempted to delete an unexpected resource group:\n%s", calls)
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if strings.Contains(string(state), `"cleanup_complete": "true"`) {
+		t.Fatalf("rejected cleanup was marked complete: %s", state)
+	}
+}
+
+func TestCleanupRejectsUnexpectedLiveNodeResourceGroup(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{unexpectedLiveNodeRG: true})
+	if err != nil {
+		t.Fatalf("live node resource group cleanup test harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=error") ||
+		!strings.Contains(string(output), "Refusing to delete unexpected AKS node resource group 'production-live-node-rg'") {
+		t.Fatalf("cleanup did not reject an unexpected live node resource group:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	for _, mutation := range []string{"group delete", "vm delete", "aks delete", "rest --method delete"} {
+		if strings.Contains(string(calls), mutation) {
+			t.Fatalf("cleanup attempted mutation %q for an unexpected live node resource group:\n%s", mutation, calls)
+		}
 	}
 	state, readErr := os.ReadFile(statePath)
 	if readErr != nil {
@@ -732,6 +761,33 @@ func TestHistoricalCertificateProbeUsesPrivilegedTemporaryFile(t *testing.T) {
 	}
 }
 
+func TestHistoricalMigrationReissuesDaemonCertificateBeforeTokenRevocation(t *testing.T) {
+	t.Parallel()
+
+	script, err := e2eScripts.ReadFile("lib/bootstrap-rbac-migration.sh")
+	if err != nil {
+		t.Fatalf("read embedded migration script: %v", err)
+	}
+	text := string(script)
+	for _, required := range []string{
+		`old_fingerprint="$(openssl x509 -in "${credential_path}" -outform DER`,
+		`rm -rf -- "${credential_dir}"`,
+		`new_fingerprint="$(openssl x509 -in "${credential_path}" -outform DER`,
+		`_require_daemon_certificate_access "${vm_ip}" "${server_url}"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("historical migration is missing certificate reissuance check %q", required)
+		}
+	}
+
+	migrationIndex := strings.LastIndex(text, `    --remove-legacy-node-role-binding`)
+	reissueIndex := strings.LastIndex(text, `  _reissue_daemon_certificate_after_migration "${vm_ip}" "${server_url}"`)
+	revokeIndex := strings.LastIndex(text, `  with_cluster_lock _revoke_historical_bootstrap_token "${config_file}"`)
+	if migrationIndex < 0 || reissueIndex <= migrationIndex || revokeIndex <= reissueIndex {
+		t.Fatalf("certificate reissuance must run after RBAC migration and before token revocation")
+	}
+}
+
 type cleanupOptions struct {
 	runTwice               bool
 	leaveCluster           bool
@@ -740,6 +796,7 @@ type cleanupOptions struct {
 	noRunTags              bool
 	blankVMNames           bool
 	unexpectedNodeResource bool
+	unexpectedLiveNodeRG   bool
 	unexpectedArcMachineID bool
 	transientQueryFailures bool
 }
@@ -808,6 +865,7 @@ PARENT_GROUP_ABSENT="$8"
 DEPLOYMENT_QUERY_FAILS="$9"
 RUN_TWICE="${10}"
 TRANSIENT_QUERY_FAILURES="${11}"
+UNEXPECTED_LIVE_NODE_RG="${12}"
 # Keep cleanup fixtures independent from the ambient GitHub Actions run. Tests
 # that need tag-based cleanup persist an explicit run_id in their state.
 unset GITHUB_RUN_ID
@@ -838,8 +896,14 @@ az() {
     : > "${NODE_GROUP_DELETED}"
   elif [[ "$1 $2" == "group wait" ]]; then
     return 0
-  elif [[ "$1 $2" == "vm list" || "$1 $2" == "aks list" ]]; then
+  elif [[ "$1 $2" == "vm list" ]]; then
     printf '[]\n'
+  elif [[ "$1 $2" == "aks list" ]]; then
+    if [[ "${UNEXPECTED_LIVE_NODE_RG}" == "1" ]]; then
+      printf '[{"name":"aks-e2e-test","nodeResourceGroup":"production-live-node-rg"}]\n'
+    else
+      printf '[]\n'
+    fi
   elif [[ "$1 $2" == "resource list" ]]; then
     if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && ! -f "${RESOURCE_QUERY_FAILED}" ]]; then
       : > "${RESOURCE_QUERY_FAILED}"
@@ -874,7 +938,7 @@ fi
 		groupQueryFailed, resourceQueryFailed,
 		boolString(options.leaveCluster), boolString(options.parentGroupAbsent),
 		boolString(options.deploymentQueryFails), boolString(options.runTwice),
-		boolString(options.transientQueryFailures))
+		boolString(options.transientQueryFailures), boolString(options.unexpectedLiveNodeRG))
 	return workDir, statePath, callLog, output, err
 }
 

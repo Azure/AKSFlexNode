@@ -63,6 +63,10 @@ infra_deploy() {
   # always-run cleanup stage can remove resources after a partial deployment.
   local deployment_name="e2e-${E2E_NAME_SUFFIX}"
   local run_id="${GITHUB_RUN_ID:-local-${E2E_NAME_SUFFIX}}"
+  # A workflow rerun keeps github.run_id but increments github.run_attempt.
+  # E2E_NAME_SUFFIX includes both, so use it as the ownership tag to keep
+  # cleanup for one attempt from deleting another attempt's resources.
+  local resource_owner="${E2E_NAME_SUFFIX}"
   local initial_state
   initial_state="$(jq -n \
     --arg lifecycle "provisioning" \
@@ -71,6 +75,7 @@ infra_deploy() {
     --arg subscription_id "${AZURE_SUBSCRIPTION_ID}" \
     --arg tenant_id "${AZURE_TENANT_ID}" \
     --arg run_id "${run_id}" \
+    --arg resource_owner "${resource_owner}" \
     --arg name_suffix "${E2E_NAME_SUFFIX}" \
     --arg kubernetes_version "${E2E_KUBERNETES_VERSION}" \
     --arg target_agent_pool_name "${E2E_TARGET_AGENT_POOL_NAME}" \
@@ -89,7 +94,8 @@ infra_deploy() {
     --arg arc_machine_name "vm-e2e-arc-${E2E_NAME_SUFFIX}-connected" \
     '{schema_version: 1, lifecycle: $lifecycle, resource_group: $resource_group,
       location: $location, subscription_id: $subscription_id, tenant_id: $tenant_id,
-      run_id: $run_id, name_suffix: $name_suffix, kubernetes_version: $kubernetes_version,
+      run_id: $run_id, resource_owner: $resource_owner,
+      name_suffix: $name_suffix, kubernetes_version: $kubernetes_version,
       target_agent_pool_name: $target_agent_pool_name,
       bootstrap_data_agent_pool_name: $bootstrap_data_agent_pool_name,
       system_pool_name: $system_pool_name,
@@ -121,7 +127,7 @@ infra_deploy() {
   # Build tags
   local tags_json
   tags_json=$(jq -n \
-    --arg run "${run_id}" \
+    --arg run "${resource_owner}" \
     --arg purpose "e2e-test" \
     '{"github-run": $run, "purpose": $purpose}')
 

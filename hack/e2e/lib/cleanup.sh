@@ -325,18 +325,110 @@ _resource_inventory() {
   return 1
 }
 
-_validate_persisted_node_resource_group() {
+_cleanup_resource_owner() {
+  local name_suffix="${1:-}" owner
+  if [[ -z "${name_suffix}" ]]; then
+    name_suffix="$(state_get name_suffix)"
+  fi
+  owner="$(state_get resource_owner)"
+  if [[ -n "${owner}" ]]; then
+    if [[ -z "${name_suffix}" || "${owner}" != "${name_suffix}" ]]; then
+      log_error "Refusing tagged cleanup with resource owner '${owner}' that does not match E2E name suffix '${name_suffix}'"
+      return 1
+    fi
+    printf '%s\n' "${owner}"
+    return 0
+  fi
+
+  # State written before resource_owner was introduced used run_id as the
+  # github-run tag value. Keep those deployments recoverable.
+  state_get run_id "${GITHUB_RUN_ID:-}"
+}
+
+_is_expected_legacy_tagged_resource() {
+  local resource_type="${1,,}" resource_name="$2" name_suffix="$3"
+  local role vm_prefix
+
+  [[ -n "${resource_name}" && -n "${name_suffix}" ]] || return 1
+  case "${resource_type}" in
+    microsoft.compute/disks)
+      for role in msi token offline kubeadm arc; do
+        vm_prefix="vm-e2e-${role}-${name_suffix}"
+        if [[ "${resource_name}" == "${vm_prefix}-osdisk" || \
+              "${resource_name}" == "${vm_prefix}"_OsDisk_* ]]; then
+          return 0
+        fi
+      done
+      ;;
+    microsoft.network/networkinterfaces)
+      for role in msi token offline kubeadm arc; do
+        [[ "${resource_name}" == "vm-e2e-${role}-${name_suffix}-nic" ]] && return 0
+      done
+      ;;
+    microsoft.network/publicipaddresses)
+      for role in msi token offline kubeadm arc; do
+        [[ "${resource_name}" == "vm-e2e-${role}-${name_suffix}-pip" ]] && return 0
+      done
+      ;;
+    microsoft.network/virtualnetworks)
+      [[ "${resource_name}" == "vnet-e2e-${name_suffix}" ]] && return 0
+      ;;
+    microsoft.network/networksecuritygroups)
+      [[ "${resource_name}" == "nsg-e2e-${name_suffix}" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
+_validate_expected_cleanup_name() {
+  local description="$1" actual="$2" expected="$3"
+
+  [[ -n "${actual}" ]] || return 0
+  if [[ "${actual}" != "${expected}" ]]; then
+    log_error "Refusing to delete unexpected ${description} '${actual}'"
+    log_error "Expected '${expected}' for this E2E deployment"
+    return 1
+  fi
+}
+
+_validate_cleanup_target_names() {
+  local name_suffix="$1" deployment_name="$2" cluster_name="$3" node_resource_group="$4"
+  local msi_vm_name="$5" token_vm_name="$6" offline_vm_name="$7" kubeadm_vm_name="$8"
+  local arc_vm_name="$9" arc_machine_name="${10}" vnet_name="${11}" nsg_name="${12}"
+
+  if [[ -z "${name_suffix}" ]]; then
+    if [[ -n "${deployment_name}${cluster_name}${node_resource_group}${msi_vm_name}${token_vm_name}${offline_vm_name}${kubeadm_vm_name}${arc_vm_name}${arc_machine_name}${vnet_name}${nsg_name}" ]]; then
+      log_error "Cannot validate persisted cleanup targets without an E2E name suffix"
+      return 1
+    fi
+    return 0
+  fi
+
+  _validate_expected_cleanup_name "ARM deployment" "${deployment_name}" "e2e-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "AKS cluster" "${cluster_name}" "aks-e2e-${name_suffix}" || return 1
+  _validate_expected_node_resource_group "${node_resource_group}" "${name_suffix}" || return 1
+  _validate_expected_cleanup_name "MSI VM" "${msi_vm_name}" "vm-e2e-msi-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "token VM" "${token_vm_name}" "vm-e2e-token-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "offline VM" "${offline_vm_name}" "vm-e2e-offline-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "kubeadm VM" "${kubeadm_vm_name}" "vm-e2e-kubeadm-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "Arc VM" "${arc_vm_name}" "vm-e2e-arc-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "Arc machine" "${arc_machine_name}" "vm-e2e-arc-${name_suffix}-connected" || return 1
+  _validate_expected_cleanup_name "virtual network" "${vnet_name}" "vnet-e2e-${name_suffix}" || return 1
+  _validate_expected_cleanup_name "network security group" "${nsg_name}" "nsg-e2e-${name_suffix}" || return 1
+}
+
+_validate_expected_node_resource_group() {
   local node_resource_group="$1" name_suffix="$2"
 
   [[ -n "${node_resource_group}" ]] || return 0
   if [[ -z "${name_suffix}" ]]; then
-    log_error "Cannot validate persisted AKS node resource group '${node_resource_group}' without an E2E name suffix"
+    log_error "Cannot validate AKS node resource group '${node_resource_group}' without an E2E name suffix"
     return 1
   fi
 
   local expected_node_resource_group="MC_aksflex-e2e-${name_suffix}"
   if [[ "${node_resource_group}" != "${expected_node_resource_group}" ]]; then
-    log_error "Refusing to delete unexpected persisted AKS node resource group '${node_resource_group}'"
+    log_error "Refusing to delete unexpected AKS node resource group '${node_resource_group}'"
     log_error "Expected '${expected_node_resource_group}' for this E2E deployment"
     return 1
   fi
@@ -377,8 +469,8 @@ _delete_node_resource_group() {
 }
 
 _delete_tagged_resources() {
-  local resource_group="$1" run_id="$2" subscription_id="$3"
-  local resource_json resource_type id
+  local resource_group="$1" run_id="$2" subscription_id="$3" legacy_name_suffix="${4:-}"
+  local resource_json resource_type resource_name id
   local -a resource_types=(
     "Microsoft.Compute/disks"
     "Microsoft.Network/networkInterfaces"
@@ -394,23 +486,35 @@ _delete_tagged_resources() {
   fi
 
   for resource_type in "${resource_types[@]}"; do
-    while read -r id; do
+    while IFS=$'\t' read -r resource_name id; do
       [[ -n "${id}" ]] || continue
+      if [[ -n "${legacy_name_suffix}" ]] && \
+        ! _is_expected_legacy_tagged_resource "${resource_type}" "${resource_name}" "${legacy_name_suffix}"; then
+        log_warn "Ignoring legacy-tagged ${resource_type} outside this E2E attempt: ${resource_name}"
+        continue
+      fi
       log_info "Deleting residual ${resource_type}: ${id##*/}"
       az resource delete --ids "${id}" --subscription "${subscription_id}" --output none 2>/dev/null || true
     done < <(jq -r --arg resource_type "${resource_type}" \
-      '.[] | select((.type | ascii_downcase) == ($resource_type | ascii_downcase)) | .id' \
+      '.[] | select((.type | ascii_downcase) == ($resource_type | ascii_downcase)) | [.name, .id] | @tsv' \
       <<<"${resource_json}")
   done
 }
 
 _tagged_resource_ids() {
-  local resource_group="$1" run_id="$2" subscription_id="$3"
-  local resource_json
+  local resource_group="$1" run_id="$2" subscription_id="$3" legacy_name_suffix="${4:-}"
+  local resource_json resource_type resource_name id
 
   [[ -n "${run_id}" ]] || return 0
   resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}")" || return 1
-  jq -r '.[].id' <<<"${resource_json}"
+  while IFS=$'\t' read -r resource_type resource_name id; do
+    [[ -n "${id}" ]] || continue
+    if [[ -n "${legacy_name_suffix}" ]] && \
+      ! _is_expected_legacy_tagged_resource "${resource_type}" "${resource_name}" "${legacy_name_suffix}"; then
+      continue
+    fi
+    printf '%s\n' "${id}"
+  done < <(jq -r '.[] | [.type, .name, .id] | @tsv' <<<"${resource_json}")
 }
 
 cleanup() {
@@ -424,7 +528,8 @@ cleanup() {
   fi
 
   local resource_group cluster_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name arc_vm_name arc_machine_name arc_machine_id
-  local subscription_id deployment_name run_id cleanup_failed vnet_name nsg_name name_suffix node_resource_group cleanup_deadline
+  local subscription_id deployment_name resource_owner persisted_resource_owner legacy_tag_name_suffix
+  local cleanup_failed vnet_name nsg_name name_suffix node_resource_group cleanup_deadline
   resource_group="$(state_get resource_group)"
   cluster_name="$(state_get cluster_name)"
   msi_vm_name="$(state_get msi_vm_name)"
@@ -435,21 +540,8 @@ cleanup() {
   arc_machine_name="$(state_get arc_machine_name)"
   subscription_id="$(state_get subscription_id "${AZURE_SUBSCRIPTION_ID}")"
   arc_machine_id="$(state_get arc_machine_id)"
-  if [[ -n "${arc_machine_name}" ]]; then
-    local expected_arc_machine_id="/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.HybridCompute/machines/${arc_machine_name}"
-    if [[ -n "${arc_machine_id}" && "${arc_machine_id,,}" != "${expected_arc_machine_id,,}" ]]; then
-      log_error "Refusing to delete Arc machine with an unexpected persisted resource ID: ${arc_machine_id}"
-      return 1
-    fi
-    # The ID is completely determined by other state fields. Reconstructing it
-    # avoids trusting a redundant deletion target from stale or damaged state.
-    arc_machine_id="${expected_arc_machine_id}"
-  elif [[ -n "${arc_machine_id}" ]]; then
-    log_error "Cannot validate persisted Arc machine resource ID without arc_machine_name"
-    return 1
-  fi
   deployment_name="$(state_get deployment_name)"
-  run_id="$(state_get run_id "${GITHUB_RUN_ID:-}")"
+  persisted_resource_owner="$(state_get resource_owner)"
   name_suffix="$(state_get name_suffix)"
   vnet_name="$(state_get vnet_name)"
   nsg_name="$(state_get nsg_name)"
@@ -465,6 +557,17 @@ cleanup() {
   fi
   if [[ -z "${nsg_name}" && -n "${name_suffix}" ]]; then
     nsg_name="nsg-e2e-${name_suffix}"
+  fi
+  if ! resource_owner="$(_cleanup_resource_owner "${name_suffix}")"; then
+    return 1
+  fi
+  legacy_tag_name_suffix=""
+  if [[ -z "${persisted_resource_owner}" && -n "${resource_owner}" ]]; then
+    if [[ -z "${name_suffix}" ]]; then
+      log_error "Cannot safely clean resources with a legacy run tag without an E2E name suffix"
+      return 1
+    fi
+    legacy_tag_name_suffix="${name_suffix}"
   fi
   cleanup_failed=0
   cleanup_deadline=$((SECONDS + E2E_CLEANUP_TIMEOUT))
@@ -483,9 +586,31 @@ cleanup() {
     log_error "Failed to determine whether resource group '${resource_group}' exists"
     return 1
   fi
+
+  if ! _validate_cleanup_target_names \
+    "${name_suffix}" "${deployment_name}" "${cluster_name}" "${node_resource_group}" \
+    "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" "${kubeadm_vm_name}" \
+    "${arc_vm_name}" "${arc_machine_name}" "${vnet_name}" "${nsg_name}"; then
+    return 1
+  fi
+
+  if [[ -n "${arc_machine_name}" ]]; then
+    local expected_arc_machine_id="/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.HybridCompute/machines/${arc_machine_name}"
+    if [[ -n "${arc_machine_id}" && "${arc_machine_id,,}" != "${expected_arc_machine_id,,}" ]]; then
+      log_error "Refusing to delete Arc machine with an unexpected persisted resource ID: ${arc_machine_id}"
+      return 1
+    fi
+    # The ID is completely determined by other state fields. Reconstructing it
+    # avoids trusting a redundant deletion target from stale or damaged state.
+    arc_machine_id="${expected_arc_machine_id}"
+  elif [[ -n "${arc_machine_id}" ]]; then
+    log_error "Cannot validate persisted Arc machine resource ID without arc_machine_name"
+    return 1
+  fi
+
   case "${resource_group_exists}" in
     false)
-      if ! _validate_persisted_node_resource_group "${node_resource_group}" "${name_suffix}"; then
+      if ! _validate_expected_node_resource_group "${node_resource_group}" "${name_suffix}"; then
         return 1
       fi
       if ! _delete_node_resource_group "${node_resource_group}" "${subscription_id}" "${cleanup_deadline}"; then
@@ -565,12 +690,15 @@ cleanup() {
     return 1
   fi
   if [[ -n "${live_node_resource_group}" ]]; then
+    if ! _validate_expected_node_resource_group "${live_node_resource_group}" "${name_suffix}"; then
+      return 1
+    fi
     if [[ -n "${node_resource_group}" && "${node_resource_group}" != "${live_node_resource_group}" ]]; then
       log_warn "Live AKS node resource group differs from state; using the live cluster value '${live_node_resource_group}'"
     fi
     node_resource_group="${live_node_resource_group}"
     state_set "node_resource_group" "${node_resource_group}" || return 1
-  elif ! _validate_persisted_node_resource_group "${node_resource_group}" "${name_suffix}"; then
+  elif ! _validate_expected_node_resource_group "${node_resource_group}" "${name_suffix}"; then
     return 1
   fi
   if [[ -n "${node_resource_group}" && "${node_resource_group}" == "${resource_group}" ]]; then
@@ -675,11 +803,11 @@ cleanup() {
   log_info "[8/8] Cleaning up tagged network and disk resources..."
   local remaining_ids empty_inventories=0
   for _ in 1 2 3 4; do
-    if ! _delete_tagged_resources "${resource_group}" "${run_id}" "${subscription_id}"; then
+    if ! _delete_tagged_resources "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}"; then
       cleanup_failed=1
       break
     fi
-    if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${run_id}" "${subscription_id}")"; then
+    if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}")"; then
       log_error "Failed to verify tagged-resource deletion"
       cleanup_failed=1
       break
@@ -695,12 +823,12 @@ cleanup() {
     sleep "${E2E_CLEANUP_POLL_INTERVAL:-5}"
   done
 
-  if [[ -n "${run_id}" && "${empty_inventories}" -lt 2 ]]; then
+  if [[ -n "${resource_owner}" && "${empty_inventories}" -lt 2 ]]; then
     log_error "Tagged-resource inventory did not remain empty for two consecutive checks"
     cleanup_failed=1
   fi
 
-  if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${run_id}" "${subscription_id}")"; then
+  if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}")"; then
     log_error "Failed final tagged-resource verification"
     cleanup_failed=1
   elif [[ -n "${remaining_ids}" ]]; then

@@ -167,9 +167,10 @@ daemon runs its production no-op path, not the v0.1.0 file-backed E2E machine
 client. On that same host it verifies the HEAD helper fails closed without the
 explicit migration flag, activates the HEAD binary through `agent-upgrade`,
 removes the legacy binding twice to prove idempotency, checks token access
-changes from HTTP 200 to 403 while CSR creation remains authorized, revokes the
-token and waits for HTTP 401, and restarts both kubelet and the daemon while
-checking the Node UID, Lease, readiness, and certificate-backed API access.
+changes from HTTP 200 to 403, deletes the daemon credential store and verifies
+the remaining CSR permissions issue a different certificate, revokes the token
+and waits for HTTP 401, and restarts both kubelet and the daemon while checking
+the Node UID, Lease, readiness, and certificate-backed API access.
 v0.1.0 transitively pins the non-GPU rootfs
 `ghcr.io/azure/agent-ubuntu2404:v20260427`.
 
