@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
+import selectors
+import signal
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -312,36 +314,67 @@ def delete_cluster_role_binding_with_preconditions(name: str, uid: str, resource
     # us submit the Kubernetes DeleteOptions body without reimplementing
     # kubeconfig authentication or silently deleting a concurrently replaced
     # object.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
-        reservation.bind(("127.0.0.1", 0))
-        port = reservation.getsockname()[1]
-
     proxy = subprocess.Popen(
         [
             "kubectl",
             "proxy",
-            f"--port={port}",
+            "--port=0",
             "--address=127.0.0.1",
             r"--accept-hosts=^127\.0\.0\.1$",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        start_new_session=True,
     )
     try:
+        if proxy.stdout is None or proxy.stderr is None:
+            raise SystemExit("ERROR: failed to capture kubectl proxy startup output")
+
+        startup_output = {"stdout": bytearray(), "stderr": bytearray()}
+        startup_pattern = re.compile(rb"(?:^|\n)Starting to serve on 127\.0\.0\.1:(\d+)\r?\n")
+        port = None
         deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if proxy.poll() is not None:
-                stdout, stderr = proxy.communicate()
-                detail = (stderr or stdout).strip()
-                raise SystemExit(f"ERROR: kubectl proxy failed to start: {detail or 'unknown error'}")
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+        with selectors.DefaultSelector() as selector:
+            selector.register(proxy.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(proxy.stderr, selectors.EVENT_READ, "stderr")
+            while time.monotonic() < deadline:
+                events = selector.select(max(0, deadline - time.monotonic()))
+                if not events:
                     break
-            except OSError:
-                time.sleep(0.1)
-        else:
-            raise SystemExit("ERROR: timed out starting kubectl proxy for conditional RBAC deletion")
+                for key, _ in events:
+                    chunk = os.read(key.fd, 4096)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    stream_output = startup_output[key.data]
+                    stream_output.extend(chunk)
+                    if len(stream_output) > 65536:
+                        del stream_output[:-65536]
+                    if key.data == "stdout":
+                        match = startup_pattern.search(stream_output)
+                        if match:
+                            candidate = int(match.group(1))
+                            if not 1 <= candidate <= 65535:
+                                raise SystemExit(
+                                    f"ERROR: kubectl proxy reported invalid port {candidate}"
+                                )
+                            port = candidate
+                            break
+                if port is not None:
+                    break
+                if proxy.poll() is not None and not selector.get_map():
+                    break
+
+        if port is None:
+            detail = b"\n".join(
+                output.strip() for output in startup_output.values() if output.strip()
+            ).decode(errors="replace")
+            if proxy.poll() is None:
+                raise SystemExit(
+                    "ERROR: timed out starting kubectl proxy for conditional RBAC deletion"
+                    f"{': ' + detail if detail else ''}"
+                )
+            raise SystemExit(f"ERROR: kubectl proxy failed to start: {detail or 'unknown error'}")
 
         body = json.dumps(
             {
@@ -373,12 +406,28 @@ def delete_cluster_role_binding_with_preconditions(name: str, uid: str, resource
         except urlerror.URLError as err:
             raise SystemExit(f"ERROR: conditional deletion of ClusterRoleBinding {name!r} failed: {err}") from err
     finally:
-        proxy.terminate()
         try:
-            proxy.communicate(timeout=5)
+            os.killpg(proxy.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            proxy.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proxy.kill()
-            proxy.communicate()
+            pass
+        try:
+            # The kubectl process may have exited while an exec credential
+            # plugin kept the process group and pipe descriptors alive.
+            os.killpg(proxy.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proxy.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log_error(f"kubectl proxy process {proxy.pid} did not exit after SIGKILL")
+        if proxy.stdout is not None:
+            proxy.stdout.close()
+        if proxy.stderr is not None:
+            proxy.stderr.close()
 
 
 def remove_legacy_node_role_binding(bindings: list[dict[str, object]] | None = None) -> None:

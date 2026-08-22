@@ -38,6 +38,7 @@ const (
 	fakeDeleteExitEnv           = "AKS_FLEX_CONFIG_TEST_DELETE_EXIT"
 	fakeDeleteKeepsEnv          = "AKS_FLEX_CONFIG_TEST_DELETE_KEEPS_STATE"
 	fakeConcurrentEnv           = "AKS_FLEX_CONFIG_TEST_CONCURRENT_REPLACE"
+	fakeProxyStartupEnv         = "AKS_FLEX_CONFIG_TEST_PROXY_STARTUP"
 	fakeConcurrentManagedEnv    = "AKS_FLEX_CONFIG_TEST_CONCURRENT_MANAGED_REPLACE"
 	fakeManagedPostconditionEnv = "AKS_FLEX_CONFIG_TEST_MANAGED_POSTCONDITION"
 	fakeSkipManagedMutationEnv  = "AKS_FLEX_CONFIG_TEST_SKIP_MANAGED_MUTATION"
@@ -64,6 +65,7 @@ type configScriptHarness struct {
 	deleteExitCode       int
 	deleteKeeps          bool
 	concurrentSwap       bool
+	proxyStartup         string
 	concurrentManaged    string
 	managedPostcondition string
 	skipManagedMutation  bool
@@ -500,6 +502,22 @@ func TestSetupNodeRBACMigratesLegacyBindingIdempotently(t *testing.T) {
 	if len(applyIndexes) != 2 || len(deleteIndexes) != 1 {
 		t.Fatalf("kubectl apply/delete counts = %d/%d, want 2/1; calls: %s", len(applyIndexes), len(deleteIndexes), formatCalls(calls))
 	}
+	proxyIndexes := kubectlIndexes(calls, "proxy")
+	if len(proxyIndexes) != 1 {
+		t.Fatalf("conditional deletion started %d kubectl proxies, want 1: %s", len(proxyIndexes), formatCalls(calls))
+	}
+	portArgs := 0
+	for _, arg := range calls[proxyIndexes[0]].args {
+		if strings.HasPrefix(arg, "--port=") {
+			portArgs++
+			if arg != "--port=0" {
+				t.Errorf("conditional deletion selected proxy port before launch: %q", arg)
+			}
+		}
+	}
+	if portArgs != 1 {
+		t.Fatalf("conditional deletion must let kubectl atomically allocate its proxy port: %s", formatCalls(calls))
+	}
 	if applyIndexes[0] >= deleteIndexes[0] {
 		t.Errorf("legacy binding was deleted before safe RBAC was applied: %s", formatCalls(calls))
 	}
@@ -585,6 +603,37 @@ func TestSetupNodeRBACFailsWhenLegacyBindingRemainsAfterDelete(t *testing.T) {
 	_, deleteIndexes := kubectlOperationIndexes(calls)
 	if len(deleteIndexes) != 1 || len(kubectlIndexes(calls, "get")) != 3 {
 		t.Fatalf("migration did not inventory, delete, and verify: %s", formatCalls(calls))
+	}
+}
+
+func TestSetupNodeRBACReportsKubectlProxyStartupFailure(t *testing.T) {
+	t.Parallel()
+
+	harness := newConfigScriptHarness(t, true, 0)
+	harness.proxyStartup = "exit-before-ready"
+	output, err := harness.runSetupNodeRBAC(true)
+	if err == nil {
+		t.Fatalf("setup-node-rbac succeeded when kubectl proxy exited before readiness\n%s", output)
+	}
+	if !strings.Contains(output, "injected proxy startup failure") {
+		t.Fatalf("setup-node-rbac did not surface kubectl proxy's startup error:\n%s", output)
+	}
+	if got := strings.TrimSpace(readFile(t, harness.legacyState)); got != "present" {
+		t.Fatalf("legacy binding state = %q after proxy startup failure, want present", got)
+	}
+}
+
+func TestSetupNodeRBACHandlesFragmentedKubectlProxyReadiness(t *testing.T) {
+	t.Parallel()
+
+	harness := newConfigScriptHarness(t, true, 0)
+	harness.proxyStartup = "fragmented-ready"
+	output, err := harness.runSetupNodeRBAC(true)
+	if err != nil {
+		t.Fatalf("setup-node-rbac did not handle fragmented kubectl proxy output: %v\n%s", err, output)
+	}
+	if got := strings.TrimSpace(readFile(t, harness.legacyState)); got != "absent" {
+		t.Fatalf("legacy binding state = %q after fragmented readiness output, want absent", got)
 	}
 }
 
@@ -881,6 +930,7 @@ func (h *configScriptHarness) runSetupNodeRBAC(removeLegacy bool) (string, error
 		fmt.Sprintf("%s=%d", fakeDeleteExitEnv, h.deleteExitCode),
 		fmt.Sprintf("%s=%t", fakeDeleteKeepsEnv, h.deleteKeeps),
 		fmt.Sprintf("%s=%t", fakeConcurrentEnv, h.concurrentSwap),
+		fakeProxyStartupEnv+"="+h.proxyStartup,
 		fakeConcurrentManagedEnv+"="+h.concurrentManaged,
 		fakeManagedPostconditionEnv+"="+h.managedPostcondition,
 		fmt.Sprintf("%s=%t", fakeSkipManagedMutationEnv, h.skipManagedMutation),
@@ -1238,12 +1288,17 @@ proxy)
     if [ -z "$port" ]; then
         exit 50
     fi
-    exec python3 -u - "$port" "${AKS_FLEX_CONFIG_TEST_COMMAND_LOG:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_OPTIONS:?}" "${AKS_FLEX_CONFIG_TEST_LEGACY_STATE:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_EXIT:-0}" "${AKS_FLEX_CONFIG_TEST_DELETE_KEEPS_STATE:-false}" "${AKS_FLEX_CONFIG_TEST_CONCURRENT_REPLACE:-false}" <<'PY'
+    if [ "${AKS_FLEX_CONFIG_TEST_PROXY_STARTUP:-}" = "exit-before-ready" ]; then
+        printf '%s\n' 'injected proxy startup failure' >&2
+        exit 51
+    fi
+    exec python3 -u - "$port" "${AKS_FLEX_CONFIG_TEST_COMMAND_LOG:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_OPTIONS:?}" "${AKS_FLEX_CONFIG_TEST_LEGACY_STATE:?}" "${AKS_FLEX_CONFIG_TEST_DELETE_EXIT:-0}" "${AKS_FLEX_CONFIG_TEST_DELETE_KEEPS_STATE:-false}" "${AKS_FLEX_CONFIG_TEST_CONCURRENT_REPLACE:-false}" "${AKS_FLEX_CONFIG_TEST_PROXY_STARTUP:-}" <<'PY'
 import http.server
 import json
 import sys
+import time
 
-port, log_path, options_path, state_path, delete_exit, keep_state, concurrent = sys.argv[1:]
+port, log_path, options_path, state_path, delete_exit, keep_state, concurrent, startup_mode = sys.argv[1:]
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_DELETE(self):
@@ -1296,7 +1351,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), Handler).serve_forever()
+server = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), Handler)
+sys.stderr.write("fake proxy diagnostic before readiness\n")
+sys.stderr.flush()
+readiness = f"Starting to serve on 127.0.0.1:{server.server_address[1]}\n"
+if startup_mode == "fragmented-ready":
+    readiness_prefix = "Starting to "
+    for fragment in (
+        "fake stdout warning before readiness\n" + readiness_prefix,
+        readiness[len(readiness_prefix):-1],
+        "\n",
+    ):
+        sys.stdout.write(fragment)
+        sys.stdout.flush()
+        time.sleep(0.01)
+else:
+    # Keep both lines in one write to catch implementations that mix an OS
+    # selector with a buffered text reader and strand the readiness line.
+    sys.stdout.write("fake stdout warning before readiness\n" + readiness)
+    sys.stdout.flush()
+server.serve_forever()
 PY
     ;;
 create|replace)
