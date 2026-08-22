@@ -275,6 +275,56 @@ _remaining_cleanup_timeout() {
   printf '%s\n' "${remaining}"
 }
 
+_group_exists_with_retry() {
+  local group_name="$1" subscription_id="$2"
+  local exists attempt
+
+  for attempt in 1 2 3 4 5; do
+    if exists="$(az group exists \
+      --name "${group_name}" \
+      --subscription "${subscription_id}" \
+      --output tsv 2>/dev/null)"; then
+      case "${exists}" in
+        true|false)
+          printf '%s\n' "${exists}"
+          return 0
+          ;;
+      esac
+    fi
+    if (( attempt < 5 )); then
+      sleep "${E2E_CLEANUP_POLL_INTERVAL:-5}"
+    fi
+  done
+
+  log_error "Failed to determine whether resource group '${group_name}' exists after ${attempt} attempts" >&2
+  return 1
+}
+
+_resource_inventory() {
+  local resource_group="$1" subscription_id="$2" run_id="${3:-}"
+  local resource_json attempt
+  local -a tag_args=()
+  [[ -z "${run_id}" ]] || tag_args=(--tag "github-run=${run_id}")
+
+  for attempt in 1 2 3 4 5; do
+    if resource_json="$(az resource list \
+      --resource-group "${resource_group}" \
+      --subscription "${subscription_id}" \
+      "${tag_args[@]}" \
+      --output json 2>/dev/null)" && \
+      jq -e 'type == "array"' <<<"${resource_json}" >/dev/null; then
+      printf '%s\n' "${resource_json}"
+      return 0
+    fi
+    if (( attempt < 5 )); then
+      sleep "${E2E_CLEANUP_POLL_INTERVAL:-5}"
+    fi
+  done
+
+  log_error "Failed to inventory resources in '${resource_group}' after ${attempt} attempts" >&2
+  return 1
+}
+
 _validate_persisted_node_resource_group() {
   local node_resource_group="$1" name_suffix="$2"
 
@@ -297,10 +347,7 @@ _delete_node_resource_group() {
   local exists wait_timeout
 
   [[ -n "${node_resource_group}" ]] || return 0
-  if ! exists="$(az group exists \
-    --name "${node_resource_group}" \
-    --subscription "${subscription_id}" \
-    --output tsv 2>/dev/null)"; then
+  if ! exists="$(_group_exists_with_retry "${node_resource_group}" "${subscription_id}")"; then
     log_error "Failed to determine whether AKS node resource group '${node_resource_group}' exists"
     return 1
   fi
@@ -341,16 +388,8 @@ _delete_tagged_resources() {
   )
 
   [[ -n "${run_id}" ]] || return 0
-  if ! resource_json="$(az resource list \
-    --resource-group "${resource_group}" \
-    --subscription "${subscription_id}" \
-    --tag "github-run=${run_id}" \
-    --output json 2>/dev/null)"; then
+  if ! resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}")"; then
     log_error "Failed to list E2E resources tagged github-run=${run_id}"
-    return 1
-  fi
-  if ! jq -e 'type == "array"' <<<"${resource_json}" >/dev/null; then
-    log_error "Azure returned invalid tagged-resource inventory"
     return 1
   fi
 
@@ -367,14 +406,11 @@ _delete_tagged_resources() {
 
 _tagged_resource_ids() {
   local resource_group="$1" run_id="$2" subscription_id="$3"
+  local resource_json
 
   [[ -n "${run_id}" ]] || return 0
-  az resource list \
-    --resource-group "${resource_group}" \
-    --subscription "${subscription_id}" \
-    --tag "github-run=${run_id}" \
-    --query '[].id' \
-    --output tsv 2>/dev/null
+  resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}")" || return 1
+  jq -r '.[].id' <<<"${resource_json}"
 }
 
 cleanup() {
@@ -443,10 +479,7 @@ cleanup() {
   fi
 
   local resource_group_exists
-  if ! resource_group_exists="$(az group exists \
-    --name "${resource_group}" \
-    --subscription "${subscription_id}" \
-    --output tsv 2>/dev/null)"; then
+  if ! resource_group_exists="$(_group_exists_with_retry "${resource_group}" "${subscription_id}")"; then
     log_error "Failed to determine whether resource group '${resource_group}' exists"
     return 1
   fi
@@ -678,10 +711,7 @@ cleanup() {
 
   local final_inventory expected_names known_remaining captured_id resource_name
   local -a expected_name_args=()
-  if ! final_inventory="$(az resource list \
-    --resource-group "${resource_group}" \
-    --subscription "${subscription_id}" \
-    --output json 2>/dev/null)"; then
+  if ! final_inventory="$(_resource_inventory "${resource_group}" "${subscription_id}")"; then
     log_error "Failed final exact-name resource verification"
     cleanup_failed=1
     final_inventory='[]'

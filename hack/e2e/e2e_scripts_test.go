@@ -13,8 +13,23 @@ import (
 
 // Embedding the scripts makes Go's test cache invalidate on shell-only changes.
 //
-//go:embed lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh
+//go:embed lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh infra/main.bicep
 var e2eScripts embed.FS
+
+func TestBicepModuleDeploymentNamesAreUniquePerRun(t *testing.T) {
+	t.Parallel()
+
+	mainBicep, err := e2eScripts.ReadFile("infra/main.bicep")
+	if err != nil {
+		t.Fatalf("read embedded main.bicep: %v", err)
+	}
+	for _, moduleName := range []string{"msi", "token", "offline", "kubeadm", "arc"} {
+		want := "name: 'deploy-vm-" + moduleName + "-${nameSuffix}'"
+		if !strings.Contains(string(mainBicep), want) {
+			t.Errorf("VM module %q does not use a per-run deployment name %q", moduleName, want)
+		}
+	}
+}
 
 func TestRestoreKubernetesVersionFromState(t *testing.T) {
 	t.Parallel()
@@ -607,6 +622,28 @@ func TestCleanupRejectsUnexpectedArcMachineID(t *testing.T) {
 	}
 }
 
+func TestCleanupRetriesTransientAzureQueries(t *testing.T) {
+	t.Parallel()
+
+	_, _, callLog, output, err := runCleanup(t, cleanupOptions{transientQueryFailures: true})
+	if err != nil {
+		t.Fatalf("transient-query cleanup failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=success") {
+		t.Fatalf("cleanup did not recover from transient Azure query failures:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	if strings.Count(string(calls), "group exists") < 3 {
+		t.Errorf("cleanup did not retry a failed resource-group query:\n%s", calls)
+	}
+	if strings.Count(string(calls), "resource list") < 4 {
+		t.Errorf("cleanup did not retry a failed resource inventory:\n%s", calls)
+	}
+}
+
 func TestCleanupQueryFailureDoesNotDeleteResources(t *testing.T) {
 	t.Parallel()
 
@@ -660,6 +697,7 @@ type cleanupOptions struct {
 	blankVMNames           bool
 	unexpectedNodeResource bool
 	unexpectedArcMachineID bool
+	transientQueryFailures bool
 }
 
 func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, []byte, error) {
@@ -668,6 +706,8 @@ func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, [
 	statePath := filepath.Join(workDir, "state.json")
 	callLog := filepath.Join(workDir, "az-calls.log")
 	nodeGroupDeleted := filepath.Join(workDir, "node-group-deleted")
+	groupQueryFailed := filepath.Join(workDir, "group-query-failed")
+	resourceQueryFailed := filepath.Join(workDir, "resource-query-failed")
 	state := `{
   "resource_group": "test-rg",
   "subscription_id": "test-subscription",
@@ -717,10 +757,16 @@ E2E_WORK_DIR="$1"
 source "$2"
 AZ_CALL_LOG="$3"
 NODE_GROUP_DELETED="$4"
-LEAVE_CLUSTER="$5"
-PARENT_GROUP_ABSENT="$6"
-DEPLOYMENT_QUERY_FAILS="$7"
-RUN_TWICE="$8"
+GROUP_QUERY_FAILED="$5"
+RESOURCE_QUERY_FAILED="$6"
+LEAVE_CLUSTER="$7"
+PARENT_GROUP_ABSENT="$8"
+DEPLOYMENT_QUERY_FAILS="$9"
+RUN_TWICE="${10}"
+TRANSIENT_QUERY_FAILURES="${11}"
+# Keep cleanup fixtures independent from the ambient GitHub Actions run. Tests
+# that need tag-based cleanup persist an explicit run_id in their state.
+unset GITHUB_RUN_ID
 AZURE_SUBSCRIPTION_ID=test-subscription
 E2E_SKIP_CLEANUP=0
 E2E_CLEANUP_TIMEOUT=5
@@ -733,6 +779,10 @@ az() {
   elif [[ "$1 $2 $3 $4" == "deployment operation group list" ]]; then
     printf '[{"properties":{"provisioningState":"Succeeded"}}]\n'
   elif [[ "$1 $2" == "group exists" ]]; then
+    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && ! -f "${GROUP_QUERY_FAILED}" ]]; then
+      : > "${GROUP_QUERY_FAILED}"
+      return 1
+    fi
     if [[ "$*" == *"--name test-rg"* ]]; then
       [[ "${PARENT_GROUP_ABSENT}" == "1" ]] && printf 'false\n' || printf 'true\n'
     elif [[ "$*" == *"--name MC_aksflex-e2e-test"* ]]; then
@@ -747,6 +797,10 @@ az() {
   elif [[ "$1 $2" == "vm list" || "$1 $2" == "aks list" ]]; then
     printf '[]\n'
   elif [[ "$1 $2" == "resource list" ]]; then
+    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && ! -f "${RESOURCE_QUERY_FAILED}" ]]; then
+      : > "${RESOURCE_QUERY_FAILED}"
+      return 1
+    fi
     if [[ "$*" == *"--tag "* ]]; then
       [[ "$*" == *"--output json"* ]] && printf '[]\n' || true
     elif [[ "$*" == *"--output json"* ]]; then
@@ -773,8 +827,10 @@ if [[ "${RUN_TWICE}" == "1" ]]; then
 fi
 `
 	output, err := runBash(t, script, workDir, cleanupScript, callLog, nodeGroupDeleted,
+		groupQueryFailed, resourceQueryFailed,
 		boolString(options.leaveCluster), boolString(options.parentGroupAbsent),
-		boolString(options.deploymentQueryFails), boolString(options.runTwice))
+		boolString(options.deploymentQueryFails), boolString(options.runTwice),
+		boolString(options.transientQueryFailures))
 	return workDir, statePath, callLog, output, err
 }
 
