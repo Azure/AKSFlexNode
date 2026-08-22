@@ -27,6 +27,8 @@ func TestCleanupTargetNameValidation(t *testing.T) {
 		"vm-e2e-arc-test-connected",
 		"vnet-e2e-test",
 		"nsg-e2e-test",
+		"test-rg",
+		"test-location",
 	}
 
 	tests := []struct {
@@ -37,6 +39,7 @@ func TestCleanupTargetNameValidation(t *testing.T) {
 		wantError   string
 	}{
 		{name: "matching targets", argument: -1, wantSuccess: true},
+		{name: "legacy default node resource group", argument: 3, value: "MC_test-rg_aks-e2e-test_test-location", wantSuccess: true},
 		{name: "missing optional target", argument: 4, value: "", wantSuccess: true},
 		{name: "missing suffix", argument: 0, value: "", wantError: "without an E2E name suffix"},
 		{name: "deployment", argument: 1, value: "production-deployment", wantError: "unexpected ARM deployment"},
@@ -85,6 +88,41 @@ fi
 			if !strings.Contains(string(output), "RESULT=error") ||
 				!strings.Contains(string(output), test.wantError) {
 				t.Fatalf("unsafe cleanup target was not rejected with %q:\n%s", test.wantError, output)
+			}
+		})
+	}
+}
+
+func TestCleanupHandlesLegacyDefaultNodeResourceGroup(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name              string
+		parentGroupAbsent bool
+	}{
+		{name: "live cluster"},
+		{name: "orphan after parent deletion", parentGroupAbsent: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, callLog, output, err := runCleanup(t, cleanupOptions{
+				runTwice:                  true,
+				parentGroupAbsent:         test.parentGroupAbsent,
+				legacyDefaultNodeResource: true,
+			})
+			if err != nil {
+				t.Fatalf("legacy node resource group cleanup failed: %v\n%s", err, output)
+			}
+			if strings.Count(string(output), "RESULT=success") != 2 {
+				t.Fatalf("legacy node resource group cleanup was not idempotent:\n%s", output)
+			}
+			calls, readErr := os.ReadFile(callLog)
+			if readErr != nil {
+				t.Fatalf("read az calls: %v", readErr)
+			}
+			if !strings.Contains(string(calls), "group delete --name MC_test-rg_aks-e2e-test_test-location") {
+				t.Fatalf("cleanup did not delete the derived legacy node resource group:\n%s", calls)
 			}
 		})
 	}
@@ -228,6 +266,60 @@ _delete_tagged_resources test-rg 12345 test-subscription 12345-1
 	for _, foreignID := range []string{"/other-attempt-disk", "/other-attempt-vnet", "/unrelated"} {
 		if strings.Contains(text, foreignID) {
 			t.Errorf("legacy tagged cleanup selected foreign resource %q:\n%s", foreignID, text)
+		}
+	}
+}
+
+func TestLegacyImplicitOSDiskCleanupIsScopedToValidatedVMNames(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	inventoryPath := filepath.Join(workDir, "inventory.json")
+	inventory := `[
+  {"type":"Microsoft.Compute/disks","name":"vm-e2e-token-12345-1_OsDisk_1_abcd","id":"/own-legacy-disk"},
+  {"type":"Microsoft.Compute/disks","name":"vm-e2e-token-12345-2_OsDisk_1_efgh","id":"/other-attempt-disk"},
+  {"type":"Microsoft.Compute/disks","name":"vm-e2e-token-12345-1-extra_OsDisk_1_ijkl","id":"/prefix-collision-disk"},
+  {"type":"Microsoft.Compute/disks","name":"vm-e2e-token-12345-1-osdisk","id":"/deterministic-disk"},
+  {"type":"Microsoft.Network/networkInterfaces","name":"vm-e2e-token-12345-1_OsDisk_1_abcd","id":"/wrong-resource-type"},
+  {"type":"Microsoft.Compute/disks","name":"production-disk","id":"/unrelated-disk"}
+]`
+	if err := os.WriteFile(inventoryPath, []byte(inventory), 0o600); err != nil {
+		t.Fatalf("write resource inventory: %v", err)
+	}
+
+	cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+INVENTORY_FILE="$2"
+source "$3"
+_resource_inventory() { cat "${INVENTORY_FILE}"; }
+az() { printf 'AZ=%s\n' "$*"; }
+printf '%s\n' 'IDS-BEGIN'
+_legacy_implicit_os_disk_ids test-rg test-subscription \
+  vm-e2e-msi-12345-1 vm-e2e-token-12345-1
+printf '%s\n' 'IDS-END'
+_delete_legacy_implicit_os_disks test-rg test-subscription \
+  vm-e2e-msi-12345-1 vm-e2e-token-12345-1
+`
+	output, err := runBash(t, script, workDir, inventoryPath, cleanupScript)
+	if err != nil {
+		t.Fatalf("legacy implicit OS-disk cleanup failed: %v\n%s", err, output)
+	}
+	text := string(output)
+	if !strings.Contains(text, "/own-legacy-disk") ||
+		!strings.Contains(text, "resource delete --ids /own-legacy-disk") {
+		t.Fatalf("legacy implicit OS disk was not selected and deleted:\n%s", text)
+	}
+	for _, foreignID := range []string{
+		"/other-attempt-disk",
+		"/prefix-collision-disk",
+		"/deterministic-disk",
+		"/wrong-resource-type",
+		"/unrelated-disk",
+	} {
+		if strings.Contains(text, foreignID) {
+			t.Errorf("legacy implicit OS-disk cleanup selected foreign resource %q:\n%s", foreignID, text)
 		}
 	}
 }

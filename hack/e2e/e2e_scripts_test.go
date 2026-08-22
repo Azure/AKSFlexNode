@@ -583,6 +583,75 @@ func TestCleanupHandlesLegacyStateWithoutVMNames(t *testing.T) {
 	}
 }
 
+func TestCleanupDeletesDetachedUntaggedLegacyOSDisk(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{
+		runTwice:           true,
+		noRunTags:          true,
+		legacyDetachedDisk: true,
+	})
+	if err != nil {
+		t.Fatalf("legacy detached OS-disk cleanup failed: %v\n%s", err, output)
+	}
+	if strings.Count(string(output), "RESULT=success") != 2 {
+		t.Fatalf("legacy detached OS-disk cleanup was not idempotent:\n%s", output)
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if !strings.Contains(string(state), `"cleanup_complete": "true"`) ||
+		!strings.Contains(string(state), `"lifecycle": "cleaned"`) {
+		t.Fatalf("legacy detached OS-disk cleanup did not record completion: %s", state)
+	}
+
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "resource delete --ids /own-legacy-disk") {
+		t.Fatalf("cleanup did not delete the detached untagged legacy OS disk:\n%s", calls)
+	}
+	for _, foreignID := range []string{"/other-attempt-disk", "/unrelated-disk"} {
+		if strings.Contains(callText, "resource delete --ids "+foreignID) {
+			t.Errorf("cleanup deleted foreign resource %q:\n%s", foreignID, calls)
+		}
+	}
+}
+
+func TestCleanupRetriesAndReportsResidualLegacyOSDisk(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{
+		noRunTags:                true,
+		legacyDetachedDisk:       true,
+		legacyDiskDeletePersists: true,
+	})
+	if err != nil {
+		t.Fatalf("cleanup test harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=error") {
+		t.Fatalf("cleanup accepted a residual legacy OS disk:\n%s", output)
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if strings.Contains(string(state), `"cleanup_complete": "true"`) ||
+		strings.Contains(string(state), `"lifecycle": "cleaned"`) {
+		t.Fatalf("residual legacy OS disk was marked clean: %s", state)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	if got := strings.Count(string(calls), "resource delete --ids /own-legacy-disk"); got < 4 {
+		t.Fatalf("legacy OS-disk deletion was attempted %d times, want at least 4:\n%s", got, calls)
+	}
+}
+
 func TestCleanupDeletesOrphanNodeResourceGroupWhenParentIsAbsent(t *testing.T) {
 	t.Parallel()
 
@@ -789,16 +858,19 @@ func TestHistoricalMigrationReissuesDaemonCertificateBeforeTokenRevocation(t *te
 }
 
 type cleanupOptions struct {
-	runTwice               bool
-	leaveCluster           bool
-	parentGroupAbsent      bool
-	deploymentQueryFails   bool
-	noRunTags              bool
-	blankVMNames           bool
-	unexpectedNodeResource bool
-	unexpectedLiveNodeRG   bool
-	unexpectedArcMachineID bool
-	transientQueryFailures bool
+	runTwice                  bool
+	leaveCluster              bool
+	parentGroupAbsent         bool
+	deploymentQueryFails      bool
+	noRunTags                 bool
+	blankVMNames              bool
+	unexpectedNodeResource    bool
+	unexpectedLiveNodeRG      bool
+	legacyDefaultNodeResource bool
+	legacyDetachedDisk        bool
+	legacyDiskDeletePersists  bool
+	unexpectedArcMachineID    bool
+	transientQueryFailures    bool
 }
 
 func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, []byte, error) {
@@ -811,6 +883,7 @@ func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, [
 	resourceQueryFailed := filepath.Join(workDir, "resource-query-failed")
 	state := `{
   "resource_group": "test-rg",
+  "location": "test-location",
   "subscription_id": "test-subscription",
   "deployment_name": "e2e-test",
   "run_id": "test-run",
@@ -844,6 +917,9 @@ func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, [
 	if options.unexpectedNodeResource {
 		state = strings.Replace(state, `"node_resource_group": "MC_aksflex-e2e-test"`, `"node_resource_group": "production-node-rg"`, 1)
 	}
+	if options.legacyDefaultNodeResource {
+		state = strings.Replace(state, "  \"node_resource_group\": \"MC_aksflex-e2e-test\",\n", "", 1)
+	}
 	if options.unexpectedArcMachineID {
 		state = strings.Replace(state, `"arc_machine_name": ""`, `"arc_machine_name": "vm-e2e-arc-test-connected",
   "arc_machine_id": "/subscriptions/test-subscription/resourceGroups/production-rg/providers/Microsoft.HybridCompute/machines/production-machine"`, 1)
@@ -866,6 +942,10 @@ DEPLOYMENT_QUERY_FAILS="$9"
 RUN_TWICE="${10}"
 TRANSIENT_QUERY_FAILURES="${11}"
 UNEXPECTED_LIVE_NODE_RG="${12}"
+LEGACY_DEFAULT_NODE_RG="${13}"
+LEGACY_DETACHED_DISK="${14}"
+LEGACY_DISK_DELETE_PERSISTS="${15}"
+LEGACY_DISK_DELETED="${E2E_WORK_DIR}/legacy-disk-deleted"
 # Keep cleanup fixtures independent from the ambient GitHub Actions run. Tests
 # that need tag-based cleanup persist an explicit run_id in their state.
 unset GITHUB_RUN_ID
@@ -885,10 +965,11 @@ az() {
       : > "${GROUP_QUERY_FAILED}"
       return 1
     fi
-    if [[ "$*" == *"--name test-rg"* ]]; then
-      [[ "${PARENT_GROUP_ABSENT}" == "1" ]] && printf 'false\n' || printf 'true\n'
-    elif [[ "$*" == *"--name MC_aksflex-e2e-test"* ]]; then
+    if [[ "$*" == *"--name MC_aksflex-e2e-test"* || \
+            "$*" == *"--name MC_test-rg_aks-e2e-test_test-location"* ]]; then
       [[ -f "${NODE_GROUP_DELETED}" ]] && printf 'false\n' || printf 'true\n'
+    elif [[ "$*" == *"--name test-rg"* ]]; then
+      [[ "${PARENT_GROUP_ABSENT}" == "1" ]] && printf 'false\n' || printf 'true\n'
     else
       printf 'false\n'
     fi
@@ -901,9 +982,17 @@ az() {
   elif [[ "$1 $2" == "aks list" ]]; then
     if [[ "${UNEXPECTED_LIVE_NODE_RG}" == "1" ]]; then
       printf '[{"name":"aks-e2e-test","nodeResourceGroup":"production-live-node-rg"}]\n'
+    elif [[ "${LEGACY_DEFAULT_NODE_RG}" == "1" ]]; then
+      printf '[{"name":"aks-e2e-test","location":"test-location","nodeResourceGroup":"MC_test-rg_aks-e2e-test_test-location"}]\n'
     else
       printf '[]\n'
     fi
+  elif [[ "$1 $2" == "resource delete" ]]; then
+    if [[ "$*" == *"--ids /own-legacy-disk"* && \
+          "${LEGACY_DISK_DELETE_PERSISTS}" != "1" ]]; then
+      : > "${LEGACY_DISK_DELETED}"
+    fi
+    return 0
   elif [[ "$1 $2" == "resource list" ]]; then
     if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && ! -f "${RESOURCE_QUERY_FAILED}" ]]; then
       : > "${RESOURCE_QUERY_FAILED}"
@@ -912,11 +1001,20 @@ az() {
     if [[ "$*" == *"--tag "* ]]; then
       [[ "$*" == *"--output json"* ]] && printf '[]\n' || true
     elif [[ "$*" == *"--output json"* ]]; then
+      resource_json='[]'
       if [[ "${LEAVE_CLUSTER}" == "1" ]]; then
-        printf '[{"name":"aks-e2e-test","id":"/subscriptions/test/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/aks-e2e-test"}]\n'
-      else
-        printf '[]\n'
+        resource_json="$(jq -c '. + [{"name":"aks-e2e-test","id":"/subscriptions/test/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/aks-e2e-test"}]' <<<"${resource_json}")"
       fi
+      if [[ "${LEGACY_DETACHED_DISK}" == "1" ]]; then
+        resource_json="$(jq -c '. + [
+          {"type":"Microsoft.Compute/disks","name":"vm-e2e-token-other_OsDisk_1_efgh","id":"/other-attempt-disk"},
+          {"type":"Microsoft.Compute/disks","name":"production-disk","id":"/unrelated-disk"}
+        ]' <<<"${resource_json}")"
+        if [[ ! -f "${LEGACY_DISK_DELETED}" ]]; then
+          resource_json="$(jq -c '. + [{"type":"Microsoft.Compute/disks","name":"vm-e2e-token-test_OsDisk_1_abcd","id":"/own-legacy-disk"}]' <<<"${resource_json}")"
+        fi
+      fi
+      printf '%s\n' "${resource_json}"
     fi
   else
     return 0
@@ -938,7 +1036,9 @@ fi
 		groupQueryFailed, resourceQueryFailed,
 		boolString(options.leaveCluster), boolString(options.parentGroupAbsent),
 		boolString(options.deploymentQueryFails), boolString(options.runTwice),
-		boolString(options.transientQueryFailures), boolString(options.unexpectedLiveNodeRG))
+		boolString(options.transientQueryFailures), boolString(options.unexpectedLiveNodeRG),
+		boolString(options.legacyDefaultNodeResource), boolString(options.legacyDetachedDisk),
+		boolString(options.legacyDiskDeletePersists))
 	return workDir, statePath, callLog, output, err
 }
 

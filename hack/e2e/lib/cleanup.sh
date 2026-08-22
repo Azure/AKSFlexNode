@@ -380,6 +380,60 @@ _is_expected_legacy_tagged_resource() {
   return 1
 }
 
+_legacy_implicit_os_disk_ids_from_inventory() {
+  local resource_json="$1"
+  shift
+  local resource_rows resource_type resource_name id vm_name
+
+  if ! resource_rows="$(jq -r '
+    if type != "array" then error("resource list must be an array")
+    else .[] | [(.type // ""), (.name // ""), (.id // "")] |
+      if all(.[]; type == "string") then @tsv
+      else error("resource type, name, and ID must be strings")
+      end
+    end
+  ' <<<"${resource_json}")"; then
+    log_error "Azure returned an invalid resource inventory while locating legacy OS disks"
+    return 1
+  fi
+
+  while IFS=$'\t' read -r resource_type resource_name id; do
+    [[ "${resource_type,,}" == "microsoft.compute/disks" && -n "${id}" ]] || continue
+    for vm_name in "$@"; do
+      [[ -n "${vm_name}" ]] || continue
+      if [[ "${resource_name}" == "${vm_name}"_OsDisk_* ]]; then
+        printf '%s\n' "${id}"
+        break
+      fi
+    done
+  done <<<"${resource_rows}"
+}
+
+_legacy_implicit_os_disk_ids() {
+  local resource_group="$1" subscription_id="$2" resource_json
+  shift 2
+
+  (( $# > 0 )) || return 0
+  if ! resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}")"; then
+    return 1
+  fi
+  _legacy_implicit_os_disk_ids_from_inventory "${resource_json}" "$@"
+}
+
+_delete_legacy_implicit_os_disks() {
+  local resource_group="$1" subscription_id="$2" disk_ids disk_id
+  shift 2
+
+  if ! disk_ids="$(_legacy_implicit_os_disk_ids "${resource_group}" "${subscription_id}" "$@")"; then
+    return 1
+  fi
+  while IFS= read -r disk_id; do
+    [[ -n "${disk_id}" ]] || continue
+    log_info "Deleting residual legacy OS disk: ${disk_id##*/}"
+    az resource delete --ids "${disk_id}" --subscription "${subscription_id}" --output none 2>/dev/null || true
+  done <<<"${disk_ids}"
+}
+
 _validate_expected_cleanup_name() {
   local description="$1" actual="$2" expected="$3"
 
@@ -395,6 +449,7 @@ _validate_cleanup_target_names() {
   local name_suffix="$1" deployment_name="$2" cluster_name="$3" node_resource_group="$4"
   local msi_vm_name="$5" token_vm_name="$6" offline_vm_name="$7" kubeadm_vm_name="$8"
   local arc_vm_name="$9" arc_machine_name="${10}" vnet_name="${11}" nsg_name="${12}"
+  local resource_group="${13}" location="${14}"
 
   if [[ -z "${name_suffix}" ]]; then
     if [[ -n "${deployment_name}${cluster_name}${node_resource_group}${msi_vm_name}${token_vm_name}${offline_vm_name}${kubeadm_vm_name}${arc_vm_name}${arc_machine_name}${vnet_name}${nsg_name}" ]]; then
@@ -406,7 +461,8 @@ _validate_cleanup_target_names() {
 
   _validate_expected_cleanup_name "ARM deployment" "${deployment_name}" "e2e-${name_suffix}" || return 1
   _validate_expected_cleanup_name "AKS cluster" "${cluster_name}" "aks-e2e-${name_suffix}" || return 1
-  _validate_expected_node_resource_group "${node_resource_group}" "${name_suffix}" || return 1
+  _validate_expected_node_resource_group \
+    "${node_resource_group}" "${name_suffix}" "${resource_group}" "${cluster_name}" "${location}" || return 1
   _validate_expected_cleanup_name "MSI VM" "${msi_vm_name}" "vm-e2e-msi-${name_suffix}" || return 1
   _validate_expected_cleanup_name "token VM" "${token_vm_name}" "vm-e2e-token-${name_suffix}" || return 1
   _validate_expected_cleanup_name "offline VM" "${offline_vm_name}" "vm-e2e-offline-${name_suffix}" || return 1
@@ -419,6 +475,7 @@ _validate_cleanup_target_names() {
 
 _validate_expected_node_resource_group() {
   local node_resource_group="$1" name_suffix="$2"
+  local resource_group="${3:-}" cluster_name="${4:-}" location="${5:-}"
 
   [[ -n "${node_resource_group}" ]] || return 0
   if [[ -z "${name_suffix}" ]]; then
@@ -427,11 +484,27 @@ _validate_expected_node_resource_group() {
   fi
 
   local expected_node_resource_group="MC_aksflex-e2e-${name_suffix}"
-  if [[ "${node_resource_group}" != "${expected_node_resource_group}" ]]; then
-    log_error "Refusing to delete unexpected AKS node resource group '${node_resource_group}'"
-    log_error "Expected '${expected_node_resource_group}' for this E2E deployment"
-    return 1
+  if [[ "${node_resource_group}" == "${expected_node_resource_group}" ]]; then
+    return 0
   fi
+
+  # E2E state written before the template assigned a deterministic node
+  # resource group uses AKS's documented default naming convention.
+  local legacy_node_resource_group=""
+  if [[ -n "${resource_group}" && -n "${cluster_name}" && -n "${location}" ]]; then
+    legacy_node_resource_group="MC_${resource_group}_${cluster_name}_${location}"
+    if [[ "${node_resource_group}" == "${legacy_node_resource_group}" ]]; then
+      return 0
+    fi
+  fi
+
+  log_error "Refusing to delete unexpected AKS node resource group '${node_resource_group}'"
+  if [[ -n "${legacy_node_resource_group}" ]]; then
+    log_error "Expected '${expected_node_resource_group}' or legacy '${legacy_node_resource_group}' for this E2E deployment"
+  else
+    log_error "Expected '${expected_node_resource_group}' for this E2E deployment"
+  fi
+  return 1
 }
 
 _delete_node_resource_group() {
@@ -529,7 +602,7 @@ cleanup() {
 
   local resource_group cluster_name msi_vm_name token_vm_name offline_vm_name kubeadm_vm_name arc_vm_name arc_machine_name arc_machine_id
   local subscription_id deployment_name resource_owner persisted_resource_owner legacy_tag_name_suffix
-  local cleanup_failed vnet_name nsg_name name_suffix node_resource_group cleanup_deadline
+  local cleanup_failed vnet_name nsg_name name_suffix node_resource_group location cleanup_deadline
   resource_group="$(state_get resource_group)"
   cluster_name="$(state_get cluster_name)"
   msi_vm_name="$(state_get msi_vm_name)"
@@ -546,6 +619,7 @@ cleanup() {
   vnet_name="$(state_get vnet_name)"
   nsg_name="$(state_get nsg_name)"
   node_resource_group="$(state_get node_resource_group)"
+  location="$(state_get location)"
   if [[ -z "${name_suffix}" && "${cluster_name}" == aks-e2e-* ]]; then
     name_suffix="${cluster_name#aks-e2e-}"
   fi
@@ -557,6 +631,10 @@ cleanup() {
   fi
   if [[ -z "${nsg_name}" && -n "${name_suffix}" ]]; then
     nsg_name="nsg-e2e-${name_suffix}"
+  fi
+  if [[ -z "${node_resource_group}" && -z "${persisted_resource_owner}" && \
+        -n "${resource_group}" && -n "${cluster_name}" && -n "${location}" ]]; then
+    node_resource_group="MC_${resource_group}_${cluster_name}_${location}"
   fi
   if ! resource_owner="$(_cleanup_resource_owner "${name_suffix}")"; then
     return 1
@@ -590,7 +668,8 @@ cleanup() {
   if ! _validate_cleanup_target_names \
     "${name_suffix}" "${deployment_name}" "${cluster_name}" "${node_resource_group}" \
     "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" "${kubeadm_vm_name}" \
-    "${arc_vm_name}" "${arc_machine_name}" "${vnet_name}" "${nsg_name}"; then
+    "${arc_vm_name}" "${arc_machine_name}" "${vnet_name}" "${nsg_name}" \
+    "${resource_group}" "${location}"; then
     return 1
   fi
 
@@ -610,7 +689,8 @@ cleanup() {
 
   case "${resource_group_exists}" in
     false)
-      if ! _validate_expected_node_resource_group "${node_resource_group}" "${name_suffix}"; then
+      if ! _validate_expected_node_resource_group \
+        "${node_resource_group}" "${name_suffix}" "${resource_group}" "${cluster_name}" "${location}"; then
         return 1
       fi
       if ! _delete_node_resource_group "${node_resource_group}" "${subscription_id}" "${cleanup_deadline}"; then
@@ -643,8 +723,9 @@ cleanup() {
   # Snapshot IDs that are difficult to recover after deleting their parents.
   # This supports cleanup of deployments created before deterministic OS-disk
   # names and delete options were added to the Bicep module.
-  local vm_inventory aks_inventory live_node_resource_group vm_name disk_id nic_id nic_output
-  local -a managed_disk_ids=() nic_ids=()
+  local vm_inventory aks_inventory resource_inventory live_node_resource_group live_cluster_location
+  local vm_name disk_id nic_id nic_output legacy_disk_output
+  local -a managed_disk_ids=() legacy_implicit_os_disk_ids=() nic_ids=()
   if ! vm_inventory="$(az vm list \
     --resource-group "${resource_group}" \
     --subscription "${subscription_id}" \
@@ -664,6 +745,19 @@ cleanup() {
     log_error "Azure returned an invalid VM or AKS cleanup inventory"
     return 1
   fi
+  if ! resource_inventory="$(_resource_inventory "${resource_group}" "${subscription_id}")"; then
+    log_error "Failed to inventory E2E resources before cleanup"
+    return 1
+  fi
+  if ! legacy_disk_output="$(_legacy_implicit_os_disk_ids_from_inventory \
+    "${resource_inventory}" \
+    "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
+    "${kubeadm_vm_name}" "${arc_vm_name}")"; then
+    return 1
+  fi
+  while IFS= read -r disk_id; do
+    [[ -z "${disk_id}" ]] || legacy_implicit_os_disk_ids+=("${disk_id}")
+  done <<<"${legacy_disk_output}"
   for vm_name in "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" "${kubeadm_vm_name}" "${arc_vm_name}"; do
     [[ -n "${vm_name}" ]] || continue
     if ! disk_id="$(jq -r --arg name "${vm_name}" \
@@ -689,8 +783,23 @@ cleanup() {
     log_error "Failed to inspect the AKS node resource group"
     return 1
   fi
+  if ! live_cluster_location="$(jq -r --arg name "${cluster_name}" \
+    '.[] | select(.name == $name) | .location // empty' \
+    <<<"${aks_inventory}")"; then
+    log_error "Failed to inspect the AKS cluster location"
+    return 1
+  fi
+  if [[ -n "${live_cluster_location}" ]]; then
+    if [[ -n "${location}" && "${location,,}" != "${live_cluster_location,,}" ]]; then
+      log_error "Refusing cleanup because live AKS location '${live_cluster_location}' differs from state '${location}'"
+      return 1
+    fi
+    location="${live_cluster_location}"
+    state_set "location" "${location}" || return 1
+  fi
   if [[ -n "${live_node_resource_group}" ]]; then
-    if ! _validate_expected_node_resource_group "${live_node_resource_group}" "${name_suffix}"; then
+    if ! _validate_expected_node_resource_group \
+      "${live_node_resource_group}" "${name_suffix}" "${resource_group}" "${cluster_name}" "${location}"; then
       return 1
     fi
     if [[ -n "${node_resource_group}" && "${node_resource_group}" != "${live_node_resource_group}" ]]; then
@@ -698,7 +807,8 @@ cleanup() {
     fi
     node_resource_group="${live_node_resource_group}"
     state_set "node_resource_group" "${node_resource_group}" || return 1
-  elif ! _validate_expected_node_resource_group "${node_resource_group}" "${name_suffix}"; then
+  elif ! _validate_expected_node_resource_group \
+    "${node_resource_group}" "${name_suffix}" "${resource_group}" "${cluster_name}" "${location}"; then
     return 1
   fi
   if [[ -n "${node_resource_group}" && "${node_resource_group}" == "${resource_group}" ]]; then
@@ -752,7 +862,7 @@ cleanup() {
       --subscription "${subscription_id}" --output none 2>/dev/null || true
   done
 
-  for disk_id in "${managed_disk_ids[@]}"; do
+  for disk_id in "${managed_disk_ids[@]}" "${legacy_implicit_os_disk_ids[@]}"; do
     az resource delete --ids "${disk_id}" --subscription "${subscription_id}" --output none 2>/dev/null || true
   done
   for nic_id in "${nic_ids[@]}"; do
@@ -801,9 +911,23 @@ cleanup() {
     --subscription "${subscription_id}" --output none 2>/dev/null || true
 
   log_info "[8/8] Cleaning up tagged network and disk resources..."
-  local remaining_ids empty_inventories=0
+  local remaining_ids legacy_remaining_ids empty_inventories=0
   for _ in 1 2 3 4; do
     if ! _delete_tagged_resources "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}"; then
+      cleanup_failed=1
+      break
+    fi
+    # Old VM deployments let Azure choose names such as
+    # <vm>_OsDisk_1_<hash>. Those disks can be detached, untagged, and absent
+    # from `az vm list`, so rediscover and retry them from the full RG inventory.
+    for disk_id in "${legacy_implicit_os_disk_ids[@]}"; do
+      az resource delete --ids "${disk_id}" --subscription "${subscription_id}" --output none 2>/dev/null || true
+    done
+    if ! _delete_legacy_implicit_os_disks \
+      "${resource_group}" "${subscription_id}" \
+      "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
+      "${kubeadm_vm_name}" "${arc_vm_name}"; then
+      log_error "Failed to delete legacy implicit OS disks"
       cleanup_failed=1
       break
     fi
@@ -812,7 +936,15 @@ cleanup() {
       cleanup_failed=1
       break
     fi
-    if [[ -z "${remaining_ids}" ]]; then
+    if ! legacy_remaining_ids="$(_legacy_implicit_os_disk_ids \
+      "${resource_group}" "${subscription_id}" \
+      "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
+      "${kubeadm_vm_name}" "${arc_vm_name}")"; then
+      log_error "Failed to verify legacy implicit OS-disk deletion"
+      cleanup_failed=1
+      break
+    fi
+    if [[ -z "${remaining_ids}" && -z "${legacy_remaining_ids}" ]]; then
       empty_inventories=$((empty_inventories + 1))
       if (( empty_inventories >= 2 )); then
         break
@@ -823,8 +955,8 @@ cleanup() {
     sleep "${E2E_CLEANUP_POLL_INTERVAL:-5}"
   done
 
-  if [[ -n "${resource_owner}" && "${empty_inventories}" -lt 2 ]]; then
-    log_error "Tagged-resource inventory did not remain empty for two consecutive checks"
+  if (( empty_inventories < 2 )); then
+    log_error "Residual-resource inventory did not remain empty for two consecutive checks"
     cleanup_failed=1
   fi
 
@@ -865,7 +997,16 @@ cleanup() {
     cleanup_failed=1
     known_remaining=""
   fi
-  for captured_id in "${managed_disk_ids[@]}" "${nic_ids[@]}" "${arc_machine_id}"; do
+  if ! legacy_remaining_ids="$(_legacy_implicit_os_disk_ids_from_inventory \
+    "${final_inventory}" \
+    "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
+    "${kubeadm_vm_name}" "${arc_vm_name}")"; then
+    cleanup_failed=1
+    legacy_remaining_ids=""
+  elif [[ -n "${legacy_remaining_ids}" ]]; then
+    known_remaining+=$'\n'"${legacy_remaining_ids}"
+  fi
+  for captured_id in "${managed_disk_ids[@]}" "${legacy_implicit_os_disk_ids[@]}" "${nic_ids[@]}" "${arc_machine_id}"; do
     [[ -n "${captured_id}" ]] || continue
     if jq -e --arg id "${captured_id}" '.[] | select(.id == $id)' <<<"${final_inventory}" >/dev/null; then
       known_remaining+=$'\n'"${captured_id}"
@@ -883,5 +1024,5 @@ cleanup() {
 
   state_set "lifecycle" "cleaned" || return 1
   state_set "cleanup_complete" "true" || return 1
-  log_success "Cleanup completed and no tagged resources remain"
+  log_success "Cleanup completed and no known E2E resources remain"
 }
