@@ -66,6 +66,7 @@ type configScriptHarness struct {
 	deleteKeeps          bool
 	concurrentSwap       bool
 	proxyStartup         string
+	poisonHTTPProxy      bool
 	concurrentManaged    string
 	managedPostcondition string
 	skipManagedMutation  bool
@@ -637,6 +638,20 @@ func TestSetupNodeRBACHandlesFragmentedKubectlProxyReadiness(t *testing.T) {
 	}
 }
 
+func TestSetupNodeRBACBypassesEnvironmentProxyForLoopbackDeletion(t *testing.T) {
+	t.Parallel()
+
+	harness := newConfigScriptHarness(t, true, 0)
+	harness.poisonHTTPProxy = true
+	output, err := harness.runSetupNodeRBAC(true)
+	if err != nil {
+		t.Fatalf("setup-node-rbac sent its loopback deletion through the environment proxy: %v\n%s", err, output)
+	}
+	if got := strings.TrimSpace(readFile(t, harness.legacyState)); got != "absent" {
+		t.Fatalf("legacy binding state = %q after loopback deletion, want absent", got)
+	}
+}
+
 func TestSetupNodeRBACRefusesAmbiguousUnsafeBindings(t *testing.T) {
 	t.Parallel()
 
@@ -938,6 +953,18 @@ func (h *configScriptHarness) runSetupNodeRBAC(removeLegacy bool) (string, error
 		fakeApplyCountEnv+"="+h.applyCountPath,
 		fmt.Sprintf("%s=%d", fakeApplyFailAtEnv, h.applyFailAt),
 	)
+	if h.poisonHTTPProxy {
+		cmd.Env = append(cmd.Env,
+			"HTTP_PROXY=http://127.0.0.1:1",
+			"http_proxy=http://127.0.0.1:1",
+			"HTTPS_PROXY=http://127.0.0.1:1",
+			"https_proxy=http://127.0.0.1:1",
+			"ALL_PROXY=http://127.0.0.1:1",
+			"all_proxy=http://127.0.0.1:1",
+			"NO_PROXY=",
+			"no_proxy=",
+		)
+	}
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }

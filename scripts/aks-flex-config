@@ -391,7 +391,11 @@ def delete_cluster_role_binding_with_preconditions(name: str, uid: str, resource
             method="DELETE",
         )
         try:
-            with urlrequest.urlopen(request, timeout=30) as response:
+            # This request is always to the loopback-only kubectl proxy. Ignore
+            # workstation proxy variables so an empty/misconfigured NO_PROXY
+            # cannot redirect a privileged Kubernetes API mutation elsewhere.
+            local_opener = urlrequest.build_opener(urlrequest.ProxyHandler({}))
+            with local_opener.open(request, timeout=30) as response:
                 response.read()
         except urlerror.HTTPError as err:
             detail = err.read().decode(errors="replace").strip()
