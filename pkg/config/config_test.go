@@ -1284,6 +1284,8 @@ func TestLoadConfigUsesRPConfigOverLegacyAliases(t *testing.T) {
 func TestLoadConfigAdaptsLegacyConfigAliases(t *testing.T) {
 	t.Parallel()
 
+	// e2eMode was persisted by pre-v0.2 test/dev deployments. Keep accepting
+	// the removed field so those configs can be upgraded with the current agent.
 	configJSON := `{
 		"azure": {
 			"targetAgentPoolName": "pool1",
@@ -1293,6 +1295,9 @@ func TestLoadConfigAdaptsLegacyConfigAliases(t *testing.T) {
 			"targetCluster": {
 				"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
 			}
+		},
+		"agent": {
+			"e2eMode": true
 		},
 		"kubernetes": {
 			"version": "1.30.1"

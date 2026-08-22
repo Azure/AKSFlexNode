@@ -12,6 +12,7 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | `python3` | Local registry port readiness checks and helper scripts. |
 | `ssh` / `scp` | VM access and artifact copy. |
 | `openssl` | Bootstrap token generation. |
+| `curl` / `sha256sum` / `tar` | Download and verify pinned historical release artifacts. |
 | `docker` | Build and push the controller image into the in-cluster local registry. |
 | `git` / `make` | Fetch and render Unbounded-Net manifests. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
@@ -65,6 +66,7 @@ The default `all` command runs:
 | Command | Description |
 |---------|-------------|
 | `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, lifecycle, agent upgrade, repave, logs, cleanup. |
+| `historical-rbac-migration` | On a fresh real AKS cluster and token VM, join with the official v0.1.0 helper/binary, upgrade that host to HEAD, migrate legacy bootstrap RBAC, revoke the old token, and validate restarts. It does not run the other join modes. |
 | `infra` | Deploy AKS, four standard VMs, the Arc VM, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
@@ -137,6 +139,45 @@ Additional environment variables:
 | `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for repave. |
 | `AZURE_SUBSCRIPTION_ID` | auto-detected | Azure subscription. |
 | `AZURE_TENANT_ID` | auto-detected | Azure tenant. |
+
+## Historical RBAC Migration Validation
+
+Run the focused compatibility suite with:
+
+```bash
+./hack/e2e/run.sh historical-rbac-migration
+```
+
+For a manual GitHub Actions run, select `historical-rbac-migration` in the
+`suite` workflow input. Infrastructure provisioning, the test, log upload, and
+cleanup stay in the same job; the suite deliberately does not call the
+Arc-inclusive parallel join path.
+
+The scenario downloads and verifies the official v0.1.0 release archive,
+extracted binary, helper, and installer. It then uses the pinned helper and
+binary to create the original broad bootstrap RBAC, a non-expiring token, the
+legacy config shape, and a real Ready node on the token VM. The historical
+daemon runs its production no-op path, not the v0.1.0 file-backed E2E machine
+client. On that same host it verifies the HEAD helper fails closed without the
+explicit migration flag, activates the HEAD binary through `agent-upgrade`,
+removes the legacy binding twice to prove idempotency, checks token access
+changes from HTTP 200 to 403 while CSR creation remains authorized, revokes the
+token and waits for HTTP 401, and restarts both kubelet and the daemon while
+checking the Node UID, Lease, readiness, and certificate-backed API access.
+v0.1.0 transitively pins the non-GPU rootfs
+`ghcr.io/azure/agent-ubuntu2404:v20260427`.
+
+There are two intentional compatibility boundaries:
+
+- The test creates a new AKS control plane and reproduces the v0.1.0
+  cluster-side state. It validates a historical node/config/RBAC migration, not
+  an AKS control plane that has itself been retained since v0.1.0.
+- v0.1.0 tokens lack the `kubernetes.azure.com/managedby=aks` label required by
+  the production managed CSR approver. The suite explicitly adopts its known
+  token with that label before the HEAD daemon requests a certificate. The
+  repository E2E approver does not enforce this label, so this test validates
+  the host/config/RBAC migration but is not independent proof of the production
+  approver's ownership check.
 
 ## Join Modes
 

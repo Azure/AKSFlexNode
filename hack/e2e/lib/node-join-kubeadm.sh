@@ -36,7 +36,7 @@ _kubeadm_ensure_rbac() {
   #  - ClusterRoleBindings for CSR creation and auto-approval
   #  - Roles/RoleBindings granting bootstrappers read access to kubeadm config
   #    and kubelet config (required by kubeadm join's preflight phase)
-  #  - ClusterRole/ClusterRoleBinding for bootstrappers to GET nodes
+  #  - ClusterRole/ClusterRoleBinding for kubeadm's bootstrap group to GET nodes
   #  - ConfigMaps: cluster-info (kube-public), kubeadm-config and
   #    kubelet-config (kube-system) consumed by kubeadm join
   if ! kubectl apply -f - <<EOF
@@ -161,20 +161,10 @@ roleRef:
 subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
-  name: system:bootstrappers:aks-flex-node
-- kind: Group
-  apiGroup: rbac.authorization.k8s.io
   name: ${kubeadmBootstrapGroup}
 EOF
   then
     log_error "Failed to apply bootstrap RBAC"
-    return 1
-  fi
-
-  # The CSR and narrowly scoped preflight bindings above replace this legacy,
-  # overly broad binding. Explicit deletion also migrates reused E2E clusters.
-  if ! kubectl delete clusterrolebinding aks-flex-node-role --ignore-not-found=true; then
-    log_error "Failed to remove legacy aks-flex-node-role binding"
     return 1
   fi
 
