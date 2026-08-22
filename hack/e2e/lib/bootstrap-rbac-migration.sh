@@ -485,15 +485,14 @@ _require_daemon_certificate_access() {
 set -euo pipefail
 ca_file="$(mktemp)"
 trap 'rm -f "${ca_file}"' EXIT
-sudo python3 - "${ca_file}" <<'PY'
+sudo python3 <<'PY' > "${ca_file}"
 import base64
 import json
 import sys
 
 with open('/etc/aks-flex-node/config.json', encoding='utf-8') as stream:
     ca_data = json.load(stream)['node']['kubelet']['caCertData']
-with open(sys.argv[1], 'wb') as stream:
-    stream.write(base64.b64decode(ca_data, validate=True))
+sys.stdout.buffer.write(base64.b64decode(ca_data, validate=True))
 PY
 status="$(sudo curl --silent --show-error \
   --cert "${DAEMON_CREDENTIAL_PATH}" \
@@ -743,7 +742,7 @@ historical_rbac_migration_e2e() {
   log_section "Historical ${historicalReleaseTag} Node and Bootstrap RBAC Migration"
 
   local config_file head_config vm_name vm_ip cluster_name resource_group subscription_id
-  local server_url node_uid identity guard_output token token_id
+  local server_url node_uid node_kubelet_version identity guard_output token token_id
   config_file="$(_historical_config_path)"
   head_config="$(_head_legacy_config_path)"
   vm_name="$(state_get token_vm_name)"
@@ -759,6 +758,12 @@ historical_rbac_migration_e2e() {
   _install_and_start_historical_node "${vm_ip}"
   validate_node_joined "${vm_name}"
 
+  node_kubelet_version="$(kubectl get node "${vm_name}" -o jsonpath='{.status.nodeInfo.kubeletVersion}')"
+  node_kubelet_version="${node_kubelet_version#v}"
+  if [[ "${node_kubelet_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "Historical node kubelet version is ${node_kubelet_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
   node_uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}')"
   identity="$(_kubelet_client_identity "${vm_ip}")"
   if [[ "${identity}" != *"CN=system:node:${vm_name}"* ]]; then
@@ -766,7 +771,7 @@ historical_rbac_migration_e2e() {
     return 1
   fi
   _wait_for_bootstrap_token_probe http:200 "${config_file}" list-nodes
-  log_success "Official ${historicalReleaseTag} node is Ready with legacy RBAC and an issued kubelet certificate"
+  log_success "Official ${historicalReleaseTag} node is Ready on Kubernetes ${node_kubelet_version} with legacy RBAC and an issued kubelet certificate"
 
   # HEAD must converge the safe CSR bindings but preserve the old daemon until
   # an operator explicitly confirms the migration.

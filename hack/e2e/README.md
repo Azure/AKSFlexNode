@@ -109,7 +109,7 @@ Additional environment variables:
 | `E2E_SSH_KEY_FILE` | auto-detected | SSH public key used for VM access. |
 | `E2E_WORK_DIR` | `/tmp/aks-flex-node-e2e` | Working directory for state, configs, and logs. |
 | `E2E_KUBECONFIG` | `$E2E_WORK_DIR/kubeconfig` | Per-run kubeconfig path. Defaults to an isolated file instead of the runner-global kubeconfig. |
-| `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
+| `E2E_KUBERNETES_VERSION` | `1.35.0` | Exact Kubernetes version used for the AKS control plane, agent pools, and generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
@@ -149,9 +149,12 @@ Run the focused compatibility suite with:
 ```
 
 For a manual GitHub Actions run, select `historical-rbac-migration` in the
-`suite` workflow input. Infrastructure provisioning, the test, log upload, and
-cleanup stay in the same job; the suite deliberately does not call the
-Arc-inclusive parallel join path.
+`suite` workflow input. Set `kubernetes_version` to an exact AKS version, such
+as the latest supported N-1 patch, to exercise the migration against an older
+control-plane version. Check regional availability immediately before running
+the workflow with `az aks get-versions --location <region> --output table`.
+Infrastructure provisioning, the test, log upload, and cleanup stay in the same
+job; the suite deliberately does not call the Arc-inclusive parallel join path.
 
 The scenario downloads and verifies the official v0.1.0 release archive,
 extracted binary, helper, and installer. It then uses the pinned helper and
@@ -171,7 +174,10 @@ There are two intentional compatibility boundaries:
 
 - The test creates a new AKS control plane and reproduces the v0.1.0
   cluster-side state. It validates a historical node/config/RBAC migration, not
-  an AKS control plane that has itself been retained since v0.1.0.
+  an AKS control plane that has itself been retained since v0.1.0. Selecting an
+  older `kubernetes_version` proves a newly created control plane at that
+  version; it still does not reproduce age, prior upgrades, or configuration
+  drift from a long-lived cluster.
 - v0.1.0 tokens lack the `kubernetes.azure.com/managedby=aks` label required by
   the production managed CSR approver. The suite explicitly adopts its known
   token with that label before the HEAD daemon requests a certificate. The

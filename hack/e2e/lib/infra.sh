@@ -51,6 +51,11 @@ infra_deploy() {
   local start
   start=$(timer_start)
 
+  if [[ ! "${E2E_KUBERNETES_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    log_error "E2E_KUBERNETES_VERSION must be an exact x.y.z patch version, got '${E2E_KUBERNETES_VERSION}'"
+    return 1
+  fi
+
   local bicep_file="${E2E_INFRA_DIR}/main.bicep"
   if [[ ! -f "${bicep_file}" ]]; then
     log_error "Bicep template not found: ${bicep_file}"
@@ -219,8 +224,47 @@ infra_deploy() {
 infra_get_kubeconfig() {
   local cluster_name
   cluster_name="$(state_get cluster_name)"
+  local cluster_id
+  cluster_id="$(state_get cluster_id)"
   local resource_group
   resource_group="$(state_get resource_group)"
+
+  local actual_kubernetes_version system_pool_version flex_pool_version
+  actual_kubernetes_version="$(az aks show \
+    --resource-group "${resource_group}" \
+    --name "${cluster_name}" \
+    --query 'currentKubernetesVersion || kubernetesVersion' \
+    --output tsv)"
+  if [[ "${actual_kubernetes_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "AKS control-plane version is ${actual_kubernetes_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
+  state_set "kubernetes_version" "${actual_kubernetes_version}"
+  log_info "Verified AKS control-plane version: ${actual_kubernetes_version}"
+
+  system_pool_version="$(az rest \
+    --method get \
+    --url "https://management.azure.com${cluster_id}/agentPools/system?api-version=2026-05-02-preview" \
+    --query 'properties.currentOrchestratorVersion || properties.orchestratorVersion' \
+    --output tsv)"
+  if [[ "${system_pool_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "AKS system pool version is ${system_pool_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
+  state_set "system_pool_kubernetes_version" "${system_pool_version}"
+  log_info "Verified AKS system pool version: ${system_pool_version}"
+
+  flex_pool_version="$(az rest \
+    --method get \
+    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}?api-version=2026-05-02-preview" \
+    --query 'properties.currentOrchestratorVersion || properties.orchestratorVersion' \
+    --output tsv)"
+  if [[ "${flex_pool_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "AKS FlexNodes pool version is ${flex_pool_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
+  state_set "flex_pool_kubernetes_version" "${flex_pool_version}"
+  log_info "Verified AKS FlexNodes pool version: ${flex_pool_version}"
 
   log_info "Fetching kubeconfig for ${cluster_name}..."
   az aks get-credentials \
