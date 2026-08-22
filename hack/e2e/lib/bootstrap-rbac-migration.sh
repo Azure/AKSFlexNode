@@ -273,8 +273,8 @@ version_output="$("${binary}" version)"
 grep -Fq "Version: ${HISTORICAL_TAG}" <<<"${version_output}"
 grep -Fq "Git Commit: ${HISTORICAL_COMMIT}" <<<"${version_output}"
 
-if [[ -e /usr/local/lib/aks-flex-node/aks-flex-node-current || \
-      -L /usr/local/lib/aks-flex-node/aks-flex-node-current ]]; then
+if sudo test -e /usr/local/lib/aks-flex-node/aks-flex-node-current || \
+  sudo test -L /usr/local/lib/aks-flex-node/aks-flex-node-current; then
   echo "historical test VM already has a managed agent layout" >&2
   exit 1
 fi
@@ -596,7 +596,7 @@ service=/etc/systemd/system/aks-flex-node-agent.service
 chmod 0755 "${candidate}"
 printf '%s  %s\n' "${HEAD_BINARY_SHA256}" "${candidate}" | sha256sum --check --strict -
 printf '%s  %s\n' "${HISTORICAL_BINARY_SHA256}" /usr/local/bin/aks-flex-node | sudo sha256sum --check --strict -
-if [[ -e "${current_link}" || -L "${current_link}" ]]; then
+if sudo test -e "${current_link}" || sudo test -L "${current_link}"; then
   echo "managed layout existed before migration preflight" >&2
   exit 1
 fi
@@ -605,7 +605,8 @@ sudo install -m 0600 /tmp/config-v0.1.0-head.json /etc/aks-flex-node/config.json
 sudo "${candidate}" agent-upgrade --preflight | sudo tee /tmp/historical-agent-upgrade-preflight.log
 
 # Preflight must not mutate the direct v0.1.0 installation.
-if [[ -e "${current_link}" || -L "${current_link}" || -L /usr/local/bin/aks-flex-node ]]; then
+if sudo test -e "${current_link}" || sudo test -L "${current_link}" || \
+  sudo test -L /usr/local/bin/aks-flex-node; then
   echo "agent-upgrade preflight mutated the legacy binary layout" >&2
   exit 1
 fi
@@ -636,7 +637,7 @@ while true; do
 done
 
 for link in /usr/local/bin/aks-flex-node "${current_link}" "${last_good_link}"; do
-  if [[ ! -L "${link}" ]]; then
+  if ! sudo test -L "${link}"; then
     echo "managed binary link missing after upgrade: ${link}" >&2
     exit 1
   fi
