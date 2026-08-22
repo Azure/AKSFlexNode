@@ -148,8 +148,9 @@ _fetch_arc_bootstrap_config() {
     return 1
   fi
 
+  install -m 0600 /dev/null "${output}"
   remote_exec "${vm_ip}" "sudo cat '${remote_output}'" > "${output}"
-  chmod 0600 "${output}"
+  install -m 0600 /dev/null "${output}.tmp"
   jq \
     --arg nodeIP "${vm_private_ip}" \
     --arg nodeName "${vm_name}" \
@@ -165,7 +166,6 @@ _fetch_arc_bootstrap_config() {
       | .node.kubelet.nodeIP = $nodeIP' \
     "${output}" > "${output}.tmp"
   mv "${output}.tmp" "${output}"
-  chmod 0600 "${output}"
 
   remote_exec "${vm_ip}" "sudo rm -f '${remote_output}' '${remote_binary}'"
 }

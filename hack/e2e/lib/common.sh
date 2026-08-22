@@ -120,7 +120,7 @@ check_prerequisites() {
   log_info "Checking prerequisites..."
   local missing=0
 
-  for cmd in az docker git go jq kubectl make python3 ssh scp openssl; do
+  for cmd in az docker flock git go jq kubectl make python3 ssh scp openssl; do
     if ! command -v "${cmd}" &>/dev/null; then
       log_error "Missing required tool: ${cmd}"
       missing=1
@@ -193,13 +193,28 @@ load_config() {
   E2E_SSH_OPTS="${E2E_SSH_OPTS:--o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}"
 
   # Component versions (match the workflow defaults)
+  if [[ "${E2E_KUBERNETES_VERSION+x}" == "x" ]]; then
+    _E2E_KUBERNETES_VERSION_EXPLICIT=1
+  else
+    _E2E_KUBERNETES_VERSION_EXPLICIT=0
+  fi
   E2E_KUBERNETES_VERSION="${E2E_KUBERNETES_VERSION:-1.35.0}"
   E2E_CONTAINERD_VERSION="${E2E_CONTAINERD_VERSION:-2.0.4}"
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
+  if [[ "${E2E_TARGET_AGENT_POOL_NAME+x}" == "x" ]]; then
+    _E2E_TARGET_AGENT_POOL_NAME_EXPLICIT=1
+  else
+    _E2E_TARGET_AGENT_POOL_NAME_EXPLICIT=0
+  fi
   E2E_TARGET_AGENT_POOL_NAME="${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}"
   # listBootstrapData requires an existing ARM agent pool. The in-cluster
   # controller still uses E2E_TARGET_AGENT_POOL_NAME for its synthetic machine
   # contract, while the MSI repave scenario uses this real pool for join data.
+  if [[ "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME+x}" == "x" ]]; then
+    _E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME_EXPLICIT=1
+  else
+    _E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME_EXPLICIT=0
+  fi
   E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME="${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-${E2E_TARGET_AGENT_POOL_NAME}}"
 
   # Kubelet resource reservation overrides applied to the token node config.
@@ -219,6 +234,8 @@ load_config() {
   E2E_NODE_JOIN_TIMEOUT="${E2E_NODE_JOIN_TIMEOUT:-300}"
   E2E_POD_READY_TIMEOUT="${E2E_POD_READY_TIMEOUT:-120}"
   E2E_BOOTSTRAP_SETTLE_TIME="${E2E_BOOTSTRAP_SETTLE_TIME:-60}"
+  E2E_CLEANUP_TIMEOUT="${E2E_CLEANUP_TIMEOUT:-900}"
+  E2E_CLEANUP_POLL_INTERVAL="${E2E_CLEANUP_POLL_INTERVAL:-5}"
 
   log_info "Configuration loaded:"
   log_info "  Resource Group:   ${E2E_RESOURCE_GROUP}"
@@ -279,17 +296,98 @@ init_work_dir() {
   log_debug "Work directory: ${E2E_WORK_DIR}"
 }
 
+# Atomically reserve a work directory and write its complete deployment
+# manifest. Any nonempty state must first reach verified cleanup; otherwise a
+# new run could erase the only record capable of removing the old resources.
+state_begin_deployment() {
+  local state_json="$1"
+
+  (
+    if ! flock -x 9; then
+      log_error "Failed to lock E2E deployment state"
+      return 1
+    fi
+    local tmp existing_state requested_deployment existing_deployment
+    if ! requested_deployment="$(jq -er '
+      if type != "object" then error("state must be an object")
+      else .deployment_name | select(type == "string" and length > 0)
+      end
+    ' <<<"${state_json}")"; then
+      log_error "New E2E deployment state is invalid or has no deployment_name"
+      return 1
+    fi
+
+    if [[ -f "${E2E_STATE_FILE}" ]]; then
+      if ! existing_state="$(jq -ec '
+        if type == "object" then . else error("state must be an object") end
+      ' "${E2E_STATE_FILE}")"; then
+        log_error "Existing E2E state is invalid; refusing to overwrite cleanup metadata"
+        return 1
+      fi
+      if ! jq -e '
+        length == 0 or
+        (.lifecycle == "cleaned" and
+          (.cleanup_complete == "true" or .cleanup_complete == true))
+      ' <<<"${existing_state}" >/dev/null; then
+        existing_deployment="$(jq -r '.deployment_name // empty' <<<"${existing_state}")"
+        log_error "E2E state already tracks deployment '${existing_deployment:-unknown legacy deployment}'"
+        log_error "Run cleanup with this work directory before deploying '${requested_deployment}', or choose a new E2E_WORK_DIR"
+        return 1
+      fi
+    fi
+
+    if ! tmp="$(mktemp "${E2E_STATE_FILE}.tmp.XXXXXX")"; then
+      log_error "Failed to create temporary E2E state file"
+      return 1
+    fi
+    trap 'rm -f "${tmp}"' EXIT
+    if ! jq -e 'if type == "object" then . else error("state must be an object") end' \
+      <<<"${state_json}" > "${tmp}"; then
+      log_error "Failed to render initial E2E deployment state"
+      return 1
+    fi
+    if ! chmod 0600 "${tmp}" || ! mv "${tmp}" "${E2E_STATE_FILE}"; then
+      log_error "Failed to install initial E2E deployment state"
+      return 1
+    fi
+    trap - EXIT
+  ) 9> "${E2E_STATE_FILE}.lock"
+}
+
 # Write a key=value into the state file (JSON)
 state_set() {
   local key="$1" value="$2"
-  local tmp="${E2E_STATE_FILE}.tmp"
 
-  if [[ -f "${E2E_STATE_FILE}" ]]; then
-    jq --arg k "${key}" --arg v "${value}" '. + {($k): $v}' "${E2E_STATE_FILE}" > "${tmp}"
-  else
-    jq -n --arg k "${key}" --arg v "${value}" '{($k): $v}' > "${tmp}"
-  fi
-  mv "${tmp}" "${E2E_STATE_FILE}"
+  (
+    if ! flock -x 9; then
+      log_error "Failed to lock E2E deployment state"
+      return 1
+    fi
+    local tmp
+    if ! tmp="$(mktemp "${E2E_STATE_FILE}.tmp.XXXXXX")"; then
+      log_error "Failed to create temporary E2E state file"
+      return 1
+    fi
+    trap 'rm -f "${tmp}"' EXIT
+
+    if [[ -f "${E2E_STATE_FILE}" ]]; then
+      if ! jq --arg k "${key}" --arg v "${value}" '. + {($k): $v}' \
+        "${E2E_STATE_FILE}" > "${tmp}"; then
+        log_error "Failed to update E2E state key '${key}'"
+        return 1
+      fi
+    else
+      if ! jq -n --arg k "${key}" --arg v "${value}" '{($k): $v}' > "${tmp}"; then
+        log_error "Failed to initialize E2E state key '${key}'"
+        return 1
+      fi
+    fi
+    if ! chmod 0600 "${tmp}" || ! mv "${tmp}" "${E2E_STATE_FILE}"; then
+      log_error "Failed to install updated E2E state"
+      return 1
+    fi
+    trap - EXIT
+  ) 9> "${E2E_STATE_FILE}.lock"
 }
 
 # Read a value from the state file
@@ -305,11 +403,114 @@ state_get() {
   fi
 }
 
+require_exact_kubernetes_version() {
+  if [[ ! "${E2E_KUBERNETES_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    log_error "E2E_KUBERNETES_VERSION must be an exact x.y.z patch version, got '${E2E_KUBERNETES_VERSION}'"
+    return 1
+  fi
+}
+
+restore_kubernetes_version_from_state() {
+  local persisted_version resource_group cluster_name subscription_id live_version live_cluster cluster_id
+  local persisted_target_pool persisted_bootstrap_pool system_pool live_system_version live_flex_version
+  persisted_version="$(state_get kubernetes_version)"
+  resource_group="$(state_get resource_group)"
+  cluster_name="$(state_get cluster_name)"
+  subscription_id="$(state_get subscription_id "${AZURE_SUBSCRIPTION_ID:-}")"
+  persisted_target_pool="$(state_get target_agent_pool_name "${E2E_TARGET_AGENT_POOL_NAME:-aksflexnodes}")"
+  persisted_bootstrap_pool="$(state_get bootstrap_data_agent_pool_name "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-${persisted_target_pool}}")"
+  system_pool="$(state_get system_pool_name system)"
+
+  if [[ -z "${resource_group}" || -z "${cluster_name}" || -z "${subscription_id}" ]]; then
+    log_error "Deployment state does not identify an AKS cluster and subscription; run the infra command first"
+    return 1
+  fi
+
+  if [[ "${_E2E_TARGET_AGENT_POOL_NAME_EXPLICIT:-0}" == "1" && \
+        "${E2E_TARGET_AGENT_POOL_NAME:-}" != "${persisted_target_pool}" ]]; then
+    log_error "E2E_TARGET_AGENT_POOL_NAME is ${E2E_TARGET_AGENT_POOL_NAME:-}, but deployment state records ${persisted_target_pool}"
+    return 1
+  fi
+  if [[ "${_E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME_EXPLICIT:-0}" == "1" && \
+        "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-}" != "${persisted_bootstrap_pool}" ]]; then
+    log_error "E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME is ${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-}, but deployment state records ${persisted_bootstrap_pool}"
+    return 1
+  fi
+  E2E_TARGET_AGENT_POOL_NAME="${persisted_target_pool}"
+  E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME="${persisted_bootstrap_pool}"
+
+  if ! live_cluster="$(az aks show \
+    --subscription "${subscription_id}" \
+    --resource-group "${resource_group}" \
+    --name "${cluster_name}" \
+    --query '{id:id, version:currentKubernetesVersion || kubernetesVersion}' \
+    --output json 2>/dev/null)" || \
+    ! live_version="$(jq -er '.version | select(type == "string" and length > 0)' <<<"${live_cluster}")" || \
+    ! cluster_id="$(jq -er '.id | select(type == "string" and length > 0)' <<<"${live_cluster}")"; then
+    log_error "Cannot determine the live Kubernetes version for ${resource_group}/${cluster_name}"
+    return 1
+  fi
+  if ! live_system_version="$(az rest \
+    --method get \
+    --url "https://management.azure.com${cluster_id}/agentPools/${system_pool}?api-version=2026-05-02-preview" \
+    --query 'properties.currentOrchestratorVersion || properties.orchestratorVersion' \
+    --output tsv 2>/dev/null)" || [[ -z "${live_system_version}" ]]; then
+    log_error "Cannot determine the live Kubernetes version for system pool ${system_pool}"
+    return 1
+  fi
+  if ! live_flex_version="$(az rest \
+    --method get \
+    --url "https://management.azure.com${cluster_id}/agentPools/${persisted_bootstrap_pool}?api-version=2026-05-02-preview" \
+    --query 'properties.currentOrchestratorVersion || properties.orchestratorVersion' \
+    --output tsv 2>/dev/null)" || [[ -z "${live_flex_version}" ]]; then
+    log_error "Cannot determine the live Kubernetes version for FlexNodes pool ${persisted_bootstrap_pool}"
+    return 1
+  fi
+  if [[ "${live_system_version}" != "${live_version}" || "${live_flex_version}" != "${live_version}" ]]; then
+    log_error "AKS version skew: control plane=${live_version}, system pool=${live_system_version}, FlexNodes pool=${live_flex_version}"
+    return 1
+  fi
+  if [[ -n "${persisted_version}" && "${persisted_version}" != "${live_version}" ]]; then
+    log_error "Deployment state records Kubernetes ${persisted_version}, but the live cluster is ${live_version}"
+    return 1
+  fi
+  if [[ -z "${persisted_version}" ]]; then
+    persisted_version="${live_version}"
+    state_set kubernetes_version "${persisted_version}"
+    log_info "Recovered Kubernetes version from the live cluster: ${persisted_version}"
+  fi
+  if [[ "${_E2E_KUBERNETES_VERSION_EXPLICIT}" == "1" && \
+        "${E2E_KUBERNETES_VERSION}" != "${persisted_version}" ]]; then
+    log_error "E2E_KUBERNETES_VERSION is ${E2E_KUBERNETES_VERSION}, but the existing cluster state records ${persisted_version}"
+    return 1
+  fi
+
+  E2E_KUBERNETES_VERSION="${persisted_version}"
+  state_set system_pool_kubernetes_version "${live_system_version}"
+  state_set flex_pool_kubernetes_version "${live_flex_version}"
+  require_exact_kubernetes_version
+  log_info "Restored Kubernetes version from deployment state: ${E2E_KUBERNETES_VERSION}"
+}
+
 # Dump the state file for debugging
 state_dump() {
   if [[ -f "${E2E_STATE_FILE}" ]]; then
     log_info "Current state:"
-    jq '.' "${E2E_STATE_FILE}"
+    jq '
+      def redact:
+        if type == "object" then
+          with_entries(
+            if (.key | test("(^|_)(bootstrap_)?token$|secret|password|credential"; "i")) then
+              .value = "<redacted>"
+            else
+              .value |= redact
+            end
+          )
+        elif type == "array" then map(redact)
+        else .
+        end;
+      redact
+    ' "${E2E_STATE_FILE}"
   else
     log_info "No state file found"
   fi

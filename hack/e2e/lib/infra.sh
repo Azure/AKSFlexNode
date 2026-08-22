@@ -51,16 +51,55 @@ infra_deploy() {
   local start
   start=$(timer_start)
 
-  if [[ ! "${E2E_KUBERNETES_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    log_error "E2E_KUBERNETES_VERSION must be an exact x.y.z patch version, got '${E2E_KUBERNETES_VERSION}'"
-    return 1
-  fi
+  require_exact_kubernetes_version
 
   local bicep_file="${E2E_INFRA_DIR}/main.bicep"
   if [[ ! -f "${bicep_file}" ]]; then
     log_error "Bicep template not found: ${bicep_file}"
     return 1
   fi
+
+  # Persist deterministic identities before Azure starts provisioning so the
+  # always-run cleanup stage can remove resources after a partial deployment.
+  local deployment_name="e2e-${E2E_NAME_SUFFIX}"
+  local run_id="${GITHUB_RUN_ID:-local-${E2E_NAME_SUFFIX}}"
+  local initial_state
+  initial_state="$(jq -n \
+    --arg lifecycle "provisioning" \
+    --arg resource_group "${E2E_RESOURCE_GROUP}" \
+    --arg location "${E2E_LOCATION}" \
+    --arg subscription_id "${AZURE_SUBSCRIPTION_ID}" \
+    --arg tenant_id "${AZURE_TENANT_ID}" \
+    --arg run_id "${run_id}" \
+    --arg name_suffix "${E2E_NAME_SUFFIX}" \
+    --arg kubernetes_version "${E2E_KUBERNETES_VERSION}" \
+    --arg target_agent_pool_name "${E2E_TARGET_AGENT_POOL_NAME}" \
+    --arg bootstrap_data_agent_pool_name "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}" \
+    --arg system_pool_name "system" \
+    --arg deployment_name "${deployment_name}" \
+    --arg cluster_name "aks-e2e-${E2E_NAME_SUFFIX}" \
+    --arg node_resource_group "MC_aksflex-e2e-${E2E_NAME_SUFFIX}" \
+    --arg vnet_name "vnet-e2e-${E2E_NAME_SUFFIX}" \
+    --arg nsg_name "nsg-e2e-${E2E_NAME_SUFFIX}" \
+    --arg msi_vm_name "vm-e2e-msi-${E2E_NAME_SUFFIX}" \
+    --arg token_vm_name "vm-e2e-token-${E2E_NAME_SUFFIX}" \
+    --arg offline_vm_name "vm-e2e-offline-${E2E_NAME_SUFFIX}" \
+    --arg kubeadm_vm_name "vm-e2e-kubeadm-${E2E_NAME_SUFFIX}" \
+    --arg arc_vm_name "vm-e2e-arc-${E2E_NAME_SUFFIX}" \
+    --arg arc_machine_name "vm-e2e-arc-${E2E_NAME_SUFFIX}-connected" \
+    '{schema_version: 1, lifecycle: $lifecycle, resource_group: $resource_group,
+      location: $location, subscription_id: $subscription_id, tenant_id: $tenant_id,
+      run_id: $run_id, name_suffix: $name_suffix, kubernetes_version: $kubernetes_version,
+      target_agent_pool_name: $target_agent_pool_name,
+      bootstrap_data_agent_pool_name: $bootstrap_data_agent_pool_name,
+      system_pool_name: $system_pool_name,
+      deployment_name: $deployment_name, cluster_name: $cluster_name,
+      node_resource_group: $node_resource_group,
+      vnet_name: $vnet_name, nsg_name: $nsg_name, msi_vm_name: $msi_vm_name,
+      token_vm_name: $token_vm_name, offline_vm_name: $offline_vm_name,
+      kubeadm_vm_name: $kubeadm_vm_name, arc_vm_name: $arc_vm_name,
+      arc_machine_name: $arc_machine_name}')"
+  state_begin_deployment "${initial_state}"
 
   # Ensure resource group exists
   if ! az group show --name "${E2E_RESOURCE_GROUP}" --output none 2>/dev/null; then
@@ -80,7 +119,6 @@ infra_deploy() {
   configure_ssh_identity
 
   # Build tags
-  local run_id="${GITHUB_RUN_ID:-local-$(date +%s)}"
   local tags_json
   tags_json=$(jq -n \
     --arg run "${run_id}" \
@@ -89,7 +127,6 @@ infra_deploy() {
 
   # Deploy
   log_info "Deploying Bicep template (this may take 5-10 minutes)..."
-  local deployment_name="e2e-${E2E_NAME_SUFFIX}"
   az deployment group create \
     --resource-group "${E2E_RESOURCE_GROUP}" \
     --name "${deployment_name}" \
@@ -215,6 +252,7 @@ infra_deploy() {
     return 1
   fi
 
+  state_set "lifecycle" "ready"
   log_success "Infrastructure deployed in $(timer_elapsed "${start}")s"
 }
 

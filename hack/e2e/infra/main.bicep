@@ -52,6 +52,7 @@ var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
 var arcVmName     = 'vm-e2e-arc-${nameSuffix}'
 var vnetName      = 'vnet-e2e-${nameSuffix}'
 var nsgName       = 'nsg-e2e-${nameSuffix}'
+var nodeResourceGroupName = 'MC_aksflex-e2e-${nameSuffix}'
 
 var subnetAksName = 'snet-aks'
 var subnetVmName  = 'snet-vm'
@@ -125,6 +126,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
   }
   properties: {
     dnsPrefix: clusterName
+    nodeResourceGroup: nodeResourceGroupName
     kubernetesVersion: kubernetesVersion
     enableRBAC: true
     aadProfile: {

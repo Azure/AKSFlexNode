@@ -13,6 +13,7 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | `ssh` / `scp` | VM access and artifact copy. |
 | `openssl` | Bootstrap token generation. |
 | `curl` / `sha256sum` / `tar` | Download and verify pinned historical release artifacts. |
+| `flock` | Serialize atomic updates to the per-run cleanup state. |
 | `docker` | Build and push the controller image into the in-cluster local registry. |
 | `git` / `make` | Fetch and render Unbounded-Net manifests. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
@@ -137,6 +138,8 @@ Additional environment variables:
 | `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |
 | `E2E_AGENT_UPGRADE_TIMEOUT` | `300` | Timeout in seconds while waiting for an AgentUpgrade result. |
 | `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for repave. |
+| `E2E_CLEANUP_TIMEOUT` | `900` | Shared deadline in seconds for deployment cancellation and Azure resource deletion. |
+| `E2E_CLEANUP_POLL_INTERVAL` | `5` | Poll interval in seconds for deployment and cleanup convergence. |
 | `AZURE_SUBSCRIPTION_ID` | auto-detected | Azure subscription. |
 | `AZURE_TENANT_ID` | auto-detected | Azure tenant. |
 

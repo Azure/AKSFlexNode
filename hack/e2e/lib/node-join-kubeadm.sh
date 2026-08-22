@@ -296,10 +296,10 @@ node_join_kubeadm() {
   log_info "Creating bootstrap token..."
   local bootstrap_token
   bootstrap_token="$(with_cluster_lock _kubeadm_create_bootstrap_token)"
-  state_set "kubeadm_bootstrap_token" "${bootstrap_token}"
 
   # Step 2: Generate the config file for aks-flex-node agent
   local config_file="${E2E_WORK_DIR}/config-kubeadm.json"
+  install -m 0600 /dev/null "${config_file}"
   cat > "${config_file}" <<EOF
 {
   "azure": {

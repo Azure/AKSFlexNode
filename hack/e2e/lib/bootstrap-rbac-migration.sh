@@ -162,6 +162,10 @@ _generate_historical_config() {
     --subscription "${subscription_id}"
 
   log_info "Generating a real non-expiring ${historicalReleaseTag} bootstrap token and config"
+  # The v0.1.0 helper predates the current secure-output implementation. Create
+  # the destination first so the bootstrap token is never briefly world-readable
+  # under a permissive runner umask.
+  install -m 0600 /dev/null "${config_file}"
   with_cluster_lock python3 "${helper}" generate-node-config \
     --resource-group "${resource_group}" \
     --cluster-name "${cluster_name}" \
@@ -169,6 +173,7 @@ _generate_historical_config() {
     --bootstrap-token \
     --output "${config_file}"
 
+  install -m 0600 /dev/null "${config_file}.tmp"
   jq \
     --arg nodeName "${vm_name}" \
     --arg nodeIP "${vm_private_ip}" \
@@ -483,9 +488,12 @@ _require_daemon_certificate_access() {
   remote_exec "${vm_ip}" \
     "SERVER_URL=${quoted_server} DAEMON_CREDENTIAL_PATH=${quoted_credential} bash -s" <<'REMOTE'
 set -euo pipefail
-ca_file="$(mktemp)"
-trap 'rm -f "${ca_file}"' EXIT
-sudo python3 <<'PY' > "${ca_file}"
+# The credential config is root-only. Keep the derived CA root-only as well and
+# write it through a privileged process; redirecting sudo's stdout to a regular
+# user's mktemp file fails on hardened hosts.
+ca_file="$(sudo mktemp)"
+trap 'sudo rm -f "${ca_file}"' EXIT
+sudo python3 <<'PY' | sudo tee "${ca_file}" >/dev/null
 import base64
 import json
 import sys
@@ -545,6 +553,7 @@ _prepare_head_legacy_config() {
   local source_config="$1"
   local target_config="$2"
 
+  install -m 0600 /dev/null "${target_config}.tmp"
   jq \
     --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
     --arg agentPoolName "${E2E_TARGET_AGENT_POOL_NAME}" \
@@ -555,8 +564,8 @@ _prepare_head_legacy_config() {
       | .agent.machineOperationMode = "disable"
       | .azure.targetAgentPoolName = $agentPoolName
       | .bootstrap.ociImage = $ociImage' \
-    "${source_config}" > "${target_config}"
-  chmod 0600 "${target_config}"
+    "${source_config}" > "${target_config}.tmp"
+  mv "${target_config}.tmp" "${target_config}"
 
   if ! jq -e \
     --arg endpoint "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
