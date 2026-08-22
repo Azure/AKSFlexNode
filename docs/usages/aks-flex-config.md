@@ -71,13 +71,24 @@ Then explicitly remove the obsolete binding:
 
 This migration is idempotent. It automatically deletes only the canonical `aks-flex-node-role` object created by older helpers. If another binding grants the same unsafe edge, or that object has extra subjects, the helper refuses to guess and identifies the objects for manual review. Bootstrap-token config generation refuses to create a token while any such binding exists, rather than either issuing an over-privileged token or unexpectedly breaking an old daemon.
 
-To verify the obsolete binding is gone, run:
+To verify no binding still grants the bootstrap group `system:node`, run:
 
 ```bash
-kubectl get clusterrolebinding aks-flex-node-role
+kubectl get clusterrolebinding -o json | jq -r '
+  .items[]
+  | select(.roleRef.kind == "ClusterRole" and .roleRef.name == "system:node")
+  | .metadata.name as $binding
+  | .subjects[]?
+  | select(.kind == "Group" and .name == "system:bootstrappers:aks-flex-node")
+  | $binding'
 ```
 
-The expected result is `NotFound`. Once certificate issuance has been verified, both the kubelet and long-running Flex daemon use issued client certificates, so removing this binding does not interrupt joined nodes. New and in-progress joins retain the CSR permissions installed above.
+The expected result is no output. The canonical `aks-flex-node-role` object is
+deleted; a safe, repurposed object with that name is preserved. Once certificate
+issuance has been verified, both the kubelet and long-running Flex daemon use
+issued client certificates, so removing the unsafe binding does not interrupt
+joined nodes. New and in-progress joins retain the CSR permissions installed
+above.
 
 Do not roll back a migrated host to an older or development-mode agent that still uses the bootstrap token for ordinary Kubernetes API requests. After this binding is removed, those requests correctly receive `403 Forbidden`. Restore a supported certificate-using agent instead of restoring the broad binding.
 
