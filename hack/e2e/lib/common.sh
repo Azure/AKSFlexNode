@@ -193,7 +193,7 @@ load_config() {
   E2E_SSH_OPTS="${E2E_SSH_OPTS:--o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}"
 
   # Component versions (match the workflow defaults)
-  if [[ "${E2E_KUBERNETES_VERSION+x}" == "x" ]]; then
+  if [[ -n "${E2E_KUBERNETES_VERSION:-}" ]]; then
     _E2E_KUBERNETES_VERSION_EXPLICIT=1
   else
     _E2E_KUBERNETES_VERSION_EXPLICIT=0
@@ -201,7 +201,7 @@ load_config() {
   E2E_KUBERNETES_VERSION="${E2E_KUBERNETES_VERSION:-1.35.0}"
   E2E_CONTAINERD_VERSION="${E2E_CONTAINERD_VERSION:-2.0.4}"
   E2E_RUNC_VERSION="${E2E_RUNC_VERSION:-1.1.12}"
-  if [[ "${E2E_TARGET_AGENT_POOL_NAME+x}" == "x" ]]; then
+  if [[ -n "${E2E_TARGET_AGENT_POOL_NAME:-}" ]]; then
     _E2E_TARGET_AGENT_POOL_NAME_EXPLICIT=1
   else
     _E2E_TARGET_AGENT_POOL_NAME_EXPLICIT=0
@@ -210,7 +210,7 @@ load_config() {
   # listBootstrapData requires an existing ARM agent pool. The in-cluster
   # controller still uses E2E_TARGET_AGENT_POOL_NAME for its synthetic machine
   # contract, while the MSI repave scenario uses this real pool for join data.
-  if [[ "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME+x}" == "x" ]]; then
+  if [[ -n "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-}" ]]; then
     _E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME_EXPLICIT=1
   else
     _E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME_EXPLICIT=0

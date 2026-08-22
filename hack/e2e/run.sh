@@ -221,7 +221,7 @@ cmd_all() {
   collect_logs || true
 
   # Cleanup
-  cleanup
+  cleanup || exit_code=1
 
   echo ""
   log_section "E2E Test Complete"

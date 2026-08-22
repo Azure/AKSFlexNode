@@ -13,7 +13,7 @@ import (
 
 // Embedding the scripts makes Go's test cache invalidate on shell-only changes.
 //
-//go:embed lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh infra/main.bicep
+//go:embed run.sh lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh infra/main.bicep
 var e2eScripts embed.FS
 
 func TestBicepModuleDeploymentNamesAreUniquePerRun(t *testing.T) {
@@ -28,6 +28,50 @@ func TestBicepModuleDeploymentNamesAreUniquePerRun(t *testing.T) {
 		if !strings.Contains(string(mainBicep), want) {
 			t.Errorf("VM module %q does not use a per-run deployment name %q", moduleName, want)
 		}
+	}
+}
+
+func TestLoadConfigTreatsEmptyOptionalValuesAsImplicit(t *testing.T) {
+	t.Parallel()
+
+	commonScript := e2eScriptPath(t, "lib", "common.sh")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+E2E_RESOURCE_GROUP=test-rg
+E2E_LOCATION=test-location
+AZURE_SUBSCRIPTION_ID=test-subscription
+AZURE_TENANT_ID=test-tenant
+E2E_NAME_SUFFIX=test
+E2E_KUBERNETES_VERSION=
+E2E_TARGET_AGENT_POOL_NAME=
+E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME=
+load_config >/dev/null
+printf 'RESULT=%s|%s|%s|%s|%s|%s\n' \
+  "${_E2E_KUBERNETES_VERSION_EXPLICIT}" "${E2E_KUBERNETES_VERSION}" \
+  "${_E2E_TARGET_AGENT_POOL_NAME_EXPLICIT}" "${E2E_TARGET_AGENT_POOL_NAME}" \
+  "${_E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME_EXPLICIT}" "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}"
+`
+	output, err := runBash(t, script, t.TempDir(), commonScript)
+	if err != nil {
+		t.Fatalf("load config failed: %v\n%s", err, output)
+	}
+	const want = "RESULT=0|1.35.0|0|aksflexnodes|0|aksflexnodes\n"
+	if !strings.Contains(string(output), want) {
+		t.Fatalf("empty optional values were treated as explicit: got %q, want %q", output, want)
+	}
+}
+
+func TestFullE2ECleanupFailureIsAggregated(t *testing.T) {
+	t.Parallel()
+
+	runScript, err := e2eScripts.ReadFile("run.sh")
+	if err != nil {
+		t.Fatalf("read embedded run.sh: %v", err)
+	}
+	if !strings.Contains(string(runScript), "cleanup || exit_code=1") {
+		t.Fatal("full E2E does not aggregate cleanup failure into its final result")
 	}
 }
 
