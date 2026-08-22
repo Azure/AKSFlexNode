@@ -51,9 +51,9 @@ This applies only the CSR creation and approval `ClusterRoleBinding` objects for
 `v0.1.1` introduced a separate daemon client certificate, but the version alone does not prove that certificate was issued successfully. Upgrade every bootstrap-token agent to `v0.1.1` or later (preferably the latest release), and on every host verify that the certificate exists, is unexpired, and the agent remains healthy after a restart:
 
 ```bash
-sudo test -s /etc/aks-flex-node/daemon-credentials/client.crt
+sudo test -s /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem
 sudo openssl x509 \
-  -in /etc/aks-flex-node/daemon-credentials/client.crt \
+  -in /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem \
   -noout -subject -enddate -checkend 0
 sudo systemctl restart aks-flex-node-agent.service
 sudo systemctl is-active aks-flex-node-agent.service

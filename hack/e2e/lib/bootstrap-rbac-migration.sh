@@ -26,6 +26,9 @@ readonly historicalInstallerSHA256="c2f7cfc92e62c3a9fb96697b3a3ca170bb8c28d11af8
 readonly historicalRootFS="ghcr.io/azure/agent-ubuntu2404:v20260427"
 readonly legacyNodeRoleBinding="aks-flex-node-role"
 readonly flexNodeBootstrapGroup="system:bootstrappers:aks-flex-node"
+# client-go's rotating FileStore writes the issued certificate and private key
+# into this combined PEM. client.crt/client.key are legacy read-only fallbacks.
+readonly daemonCredentialPath="/etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem"
 
 _historical_artifact_dir() {
   echo "${E2E_WORK_DIR}/historical-${historicalReleaseTag}"
@@ -240,7 +243,7 @@ _install_and_start_historical_node() {
   remote_copy "${config_file}" "${vm_ip}" "/tmp/config-${historicalReleaseTag}.json"
 
   remote_exec "${vm_ip}" \
-    "HISTORICAL_TAG=${historicalReleaseTag} HISTORICAL_COMMIT=${historicalCommit:0:7} HISTORICAL_ARCHIVE_SHA256=${historicalArchiveSHA256} HISTORICAL_BINARY_SHA256=${historicalBinarySHA256} HISTORICAL_HELPER_SHA256=${historicalHelperSHA256} HISTORICAL_INSTALLER_SHA256=${historicalInstallerSHA256} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+    "HISTORICAL_TAG=${historicalReleaseTag} HISTORICAL_COMMIT=${historicalCommit:0:7} HISTORICAL_ARCHIVE_SHA256=${historicalArchiveSHA256} HISTORICAL_BINARY_SHA256=${historicalBinarySHA256} HISTORICAL_HELPER_SHA256=${historicalHelperSHA256} HISTORICAL_INSTALLER_SHA256=${historicalInstallerSHA256} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} DAEMON_CREDENTIAL_PATH=${daemonCredentialPath} bash -s" <<'REMOTE'
 set -euo pipefail
 
 archive=/tmp/aks-flex-node-linux-amd64.tar.gz
@@ -307,7 +310,7 @@ if [[ -L /usr/local/bin/aks-flex-node ]]; then
   exit 1
 fi
 printf '%s  %s\n' "${HISTORICAL_BINARY_SHA256}" /usr/local/bin/aks-flex-node | sudo sha256sum --check --strict -
-if [[ -e /etc/aks-flex-node/daemon-credentials/client.crt ]]; then
+if sudo test -e "${DAEMON_CREDENTIAL_PATH}"; then
   echo "daemon certificate existed before historical bootstrap" >&2
   exit 1
 fi
@@ -350,8 +353,8 @@ if grep -Fq 'running agent daemon in e2e mode' <<<"${historical_logs}"; then
   echo "${HISTORICAL_TAG} daemon unexpectedly started in E2E mode" >&2
   exit 1
 fi
-if [[ -e /etc/aks-flex-node/daemon-credentials/client.crt ]]; then
-  echo "${HISTORICAL_TAG} unexpectedly issued a separate daemon certificate" >&2
+if sudo test -e "${DAEMON_CREDENTIAL_PATH}"; then
+  echo "${HISTORICAL_TAG} unexpectedly issued a daemon certificate" >&2
   exit 1
 fi
 REMOTE
@@ -467,16 +470,18 @@ REMOTE
 _daemon_client_identity() {
   local vm_ip="$1"
   remote_exec "${vm_ip}" \
-    'sudo openssl x509 -in /etc/aks-flex-node/daemon-credentials/client.crt -noout -subject -nameopt RFC2253'
+    "sudo openssl x509 -in ${daemonCredentialPath} -noout -subject -nameopt RFC2253"
 }
 
 _require_daemon_certificate_access() {
   local vm_ip="$1"
   local server_url="$2"
-  local quoted_server
+  local quoted_server quoted_credential
   printf -v quoted_server '%q' "${server_url}"
+  printf -v quoted_credential '%q' "${daemonCredentialPath}"
 
-  remote_exec "${vm_ip}" "SERVER_URL=${quoted_server} bash -s" <<'REMOTE'
+  remote_exec "${vm_ip}" \
+    "SERVER_URL=${quoted_server} DAEMON_CREDENTIAL_PATH=${quoted_credential} bash -s" <<'REMOTE'
 set -euo pipefail
 ca_file="$(mktemp)"
 trap 'rm -f "${ca_file}"' EXIT
@@ -491,8 +496,8 @@ with open(sys.argv[1], 'wb') as stream:
     stream.write(base64.b64decode(ca_data, validate=True))
 PY
 status="$(sudo curl --silent --show-error \
-  --cert /etc/aks-flex-node/daemon-credentials/client.crt \
-  --key /etc/aks-flex-node/daemon-credentials/client.key \
+  --cert "${DAEMON_CREDENTIAL_PATH}" \
+  --key "${DAEMON_CREDENTIAL_PATH}" \
   --cacert "${ca_file}" \
   --output /dev/null \
   --write-out '%{http_code}' \
@@ -508,7 +513,8 @@ _require_old_node_survives_guard() {
   local vm_name="$1"
   local vm_ip="$2"
 
-  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+  remote_exec "${vm_ip}" \
+    "DAEMON_CREDENTIAL_PATH=${daemonCredentialPath} bash -s" <<'REMOTE'
 set -euo pipefail
 sudo systemctl restart aks-flex-node-agent.service
 for _ in $(seq 1 30); do
@@ -528,7 +534,7 @@ if ! sudo systemctl is-active --quiet aks-flex-node-agent.service ||
   sudo systemctl status aks-flex-node-agent.service --no-pager -l >&2 || true
   exit 1
 fi
-if [[ -e /etc/aks-flex-node/daemon-credentials/client.crt ]]; then
+if sudo test -e "${DAEMON_CREDENTIAL_PATH}"; then
   echo "historical daemon unexpectedly created a daemon certificate" >&2
   exit 1
 fi
@@ -580,7 +586,7 @@ _upgrade_historical_node_to_head() {
   remote_copy "${config_file}" "${vm_ip}" /tmp/config-v0.1.0-head.json
 
   remote_exec "${vm_ip}" \
-    "HISTORICAL_BINARY_SHA256=${historicalBinarySHA256} HEAD_BINARY_SHA256=${head_sha} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} bash -s" <<'REMOTE'
+    "HISTORICAL_BINARY_SHA256=${historicalBinarySHA256} HEAD_BINARY_SHA256=${head_sha} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} DAEMON_CREDENTIAL_PATH=${daemonCredentialPath} bash -s" <<'REMOTE'
 set -euo pipefail
 candidate=/tmp/aks-flex-node-head
 current_link=/usr/local/lib/aks-flex-node/aks-flex-node-current
@@ -611,8 +617,7 @@ sudo "${candidate}" agent-upgrade | sudo tee /tmp/historical-agent-upgrade.log
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while true; do
   if sudo systemctl is-active --quiet aks-flex-node-agent.service &&
-    [[ -s /etc/aks-flex-node/daemon-credentials/client.crt ]] &&
-    [[ -s /etc/aks-flex-node/daemon-credentials/client.key ]]; then
+    sudo test -s "${DAEMON_CREDENTIAL_PATH}"; then
     first_pid="$(sudo systemctl show --property MainPID --value aks-flex-node-agent.service)"
     sleep 5
     second_pid="$(sudo systemctl show --property MainPID --value aks-flex-node-agent.service)"
@@ -651,8 +656,8 @@ if [[ "$(sudo readlink -f "/proc/${pid}/exe")" != "${active}" ]]; then
   exit 1
 fi
 
-cert_pub="$(sudo openssl x509 -in /etc/aks-flex-node/daemon-credentials/client.crt -pubkey -noout | sha256sum | awk '{print $1}')"
-key_pub="$(sudo openssl pkey -in /etc/aks-flex-node/daemon-credentials/client.key -pubout | sha256sum | awk '{print $1}')"
+cert_pub="$(sudo openssl x509 -in "${DAEMON_CREDENTIAL_PATH}" -pubkey -noout | sha256sum | awk '{print $1}')"
+key_pub="$(sudo openssl pkey -in "${DAEMON_CREDENTIAL_PATH}" -pubout | sha256sum | awk '{print $1}')"
 if [[ "${cert_pub}" != "${key_pub}" ]]; then
   echo "daemon certificate and private key do not match" >&2
   exit 1

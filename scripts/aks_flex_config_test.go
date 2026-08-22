@@ -449,7 +449,9 @@ func TestSetupNodeRBACPreservesLegacyBindingWithoutExplicitMigration(t *testing.
 	if err == nil {
 		t.Fatalf("setup-node-rbac succeeded without explicit migration while legacy binding exists\n%s", output)
 	}
-	if !strings.Contains(output, "--remove-legacy-node-role-binding") || !strings.Contains(output, "v0.1.1") {
+	if !strings.Contains(output, "--remove-legacy-node-role-binding") ||
+		!strings.Contains(output, "v0.1.1") ||
+		!strings.Contains(output, "/etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem") {
 		t.Fatalf("setup-node-rbac did not explain the compatible migration path:\n%s", output)
 	}
 

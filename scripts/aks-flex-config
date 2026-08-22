@@ -300,8 +300,8 @@ def require_legacy_node_role_binding_absent(bindings: list[dict[str, object]] | 
         f"{unsafe_binding_names(bindings)} still grant {FLEX_NODE_BOOTSTRAP_GROUP!r} the "
         "system:node role. Some older or development agents may still depend on that access. "
         "First upgrade them to a release with daemon client certificates (v0.1.1 or later), "
-        "verify /etc/aks-flex-node/daemon-credentials/client.crt exists and the agent remains "
-        "healthy after restart, then rerun setup-node-rbac with "
+        "verify /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem exists "
+        "and the agent remains healthy after restart, then rerun setup-node-rbac with "
         "--remove-legacy-node-role-binding."
     )
 
