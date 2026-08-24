@@ -1058,6 +1058,51 @@ func TestCleanupRetriesTransientAzureQueries(t *testing.T) {
 	}
 }
 
+func TestCleanupFiltersResourceInventoryByTagWithinGroup(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+	callLog := filepath.Join(workDir, "az-calls")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+AZ_CALL_LOG="$3"
+az() {
+  printf '%s\n' "$*" >> "${AZ_CALL_LOG}"
+  printf '%s\n' '[
+    {"name":"owned","tags":{"github-run":"test-run"}},
+    {"name":"another-run","tags":{"github-run":"other-run"}},
+    {"name":"untagged"}
+  ]'
+}
+inventory="$(_resource_inventory test-rg test-subscription test-run 0)"
+printf 'INVENTORY=%s\n' "${inventory}"
+`
+	output, err := runBash(t, script, workDir, cleanupScript, callLog)
+	if err != nil {
+		t.Fatalf("tagged resource inventory harness failed: %v\n%s", err, output)
+	}
+	text := string(output)
+	if !strings.Contains(text, `"name":"owned"`) ||
+		strings.Contains(text, `"name":"another-run"`) ||
+		strings.Contains(text, `"name":"untagged"`) {
+		t.Fatalf("resource inventory was not filtered to the requested run tag:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "resource list --resource-group test-rg --subscription test-subscription --output json") {
+		t.Fatalf("resource inventory was not scoped to the parent resource group:\n%s", calls)
+	}
+	if strings.Contains(callText, "--tag") {
+		t.Fatalf("resource inventory used Azure CLI's incompatible --resource-group/--tag combination:\n%s", calls)
+	}
+}
+
 func TestCleanupAzureQueryFailureIncludesDiagnostic(t *testing.T) {
 	t.Parallel()
 

@@ -382,8 +382,6 @@ _group_exists_with_retry() {
 _resource_inventory() {
   local resource_group="$1" subscription_id="$2" run_id="${3:-}" deadline="${4:-0}"
   local resource_json attempt=0 last_error="" error_file
-  local -a tag_args=()
-  [[ -z "${run_id}" ]] || tag_args=(--tag "github-run=${run_id}")
 
   if ! error_file="$(mktemp "${E2E_WORK_DIR}/azure-resource-query.XXXXXX")"; then
     log_error "Failed to create temporary Azure query diagnostics"
@@ -396,9 +394,13 @@ _resource_inventory() {
     if resource_json="$(az resource list \
       --resource-group "${resource_group}" \
       --subscription "${subscription_id}" \
-      "${tag_args[@]}" \
       --output json 2>"${error_file}")"; then
-      if jq -e 'type == "array"' <<<"${resource_json}" >/dev/null; then
+      if resource_json="$(jq -ce --arg run_id "${run_id}" '
+        if type != "array" then error("resource list must be an array")
+        elif $run_id == "" then .
+        else [.[] | select((.tags // {})["github-run"] == $run_id)]
+        end
+      ' <<<"${resource_json}")"; then
         rm -f -- "${error_file}"
         printf '%s\n' "${resource_json}"
         return 0
