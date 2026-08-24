@@ -278,11 +278,7 @@ _remaining_cleanup_timeout() {
 _azure_query_can_attempt() {
   local attempt="$1" deadline="${2:-0}"
 
-  if (( deadline > 0 )); then
-    (( SECONDS < deadline ))
-  else
-    (( attempt < 5 ))
-  fi
+  (( attempt < 5 && (deadline <= 0 || SECONDS < deadline) ))
 }
 
 _sleep_before_azure_query_retry() {
@@ -309,6 +305,25 @@ _azure_error_summary() {
   message="${message//$'\r'/ }"
   message="${message//$'\n'/ }"
   printf '%.500s\n' "${message}"
+}
+
+_azure_error_is_authorization_failure() {
+  local message="${1,,}"
+
+  [[ "${message}" == *forbidden* ||
+    "${message}" == *unauthorized* ||
+    "${message}" == *authorizationfailed* ||
+    "${message}" == *authorizationpermissionmismatch* ||
+    "${message}" == *authenticationfailed* ||
+    "${message}" == *invalidauthenticationtoken* ||
+    "${message}" == *expiredauthenticationtoken* ||
+    "${message}" == *"does not have authorization"* ||
+    "${message}" == *"permission denied"* ||
+    "${message}" == *"insufficient privileges"* ]]
+}
+
+_azure_error_is_resource_group_not_found() {
+  [[ "$1" == *ResourceGroupNotFound* ]]
 }
 
 _group_exists_with_retry() {
@@ -341,11 +356,14 @@ _group_exists_with_retry() {
       last_error="$(<"${error_file}")"
       # ARM can report the resource as not found while `az group exists` still
       # exits nonzero during asynchronous AKS-managed resource-group deletion.
-      if [[ "${last_error}" == *ResourceGroupNotFound* ]]; then
+      if _azure_error_is_resource_group_not_found "${last_error}"; then
         rm -f -- "${error_file}"
         printf 'false\n'
         return 0
       fi
+    fi
+    if _azure_error_is_authorization_failure "${last_error}"; then
+      break
     fi
     if ! _azure_query_can_attempt "${attempt}" "${deadline}" || \
       ! _sleep_before_azure_query_retry "${deadline}"; then
@@ -388,6 +406,9 @@ _resource_inventory() {
       last_error="Azure CLI returned a malformed resource inventory"
     else
       last_error="$(<"${error_file}")"
+    fi
+    if _azure_error_is_authorization_failure "${last_error}"; then
+      break
     fi
     if ! _azure_query_can_attempt "${attempt}" "${deadline}" || \
       ! _sleep_before_azure_query_retry "${deadline}"; then
@@ -587,7 +608,7 @@ _validate_expected_node_resource_group() {
 
 _delete_node_resource_group() {
   local node_resource_group="$1" subscription_id="$2" deadline="$3"
-  local exists wait_timeout
+  local delete_error error_file exists wait_timeout
 
   [[ -n "${node_resource_group}" ]] || return 0
   if ! exists="$(_group_exists_with_retry "${node_resource_group}" "${subscription_id}" "${deadline}")"; then
@@ -606,8 +627,24 @@ _delete_node_resource_group() {
       ;;
   esac
 
-  az group delete --name "${node_resource_group}" --subscription "${subscription_id}" \
-    --yes --no-wait --output none 2>/dev/null || true
+  if ! error_file="$(mktemp "${E2E_WORK_DIR}/azure-group-delete.XXXXXX")"; then
+    log_error "Failed to create temporary Azure deletion diagnostics"
+    return 1
+  fi
+  if ! az group delete --name "${node_resource_group}" --subscription "${subscription_id}" \
+    --yes --no-wait --output none 2>"${error_file}"; then
+    delete_error="$(<"${error_file}")"
+    rm -f -- "${error_file}"
+    if _azure_error_is_resource_group_not_found "${delete_error}"; then
+      return 0
+    fi
+    log_error "Failed to delete orphaned AKS node resource group '${node_resource_group}'"
+    if [[ -n "${delete_error}" ]]; then
+      log_error "Azure CLI error: $(_azure_error_summary "${delete_error}")"
+    fi
+    return 1
+  fi
+  rm -f -- "${error_file}"
   if ! wait_timeout="$(_remaining_cleanup_timeout "${deadline}")"; then
     log_error "Cleanup deadline reached before deleting AKS node resource group '${node_resource_group}'"
     return 1
@@ -768,6 +805,8 @@ cleanup() {
 
   case "${resource_group_exists}" in
     false)
+      # The parent group's absence proves the cluster is gone, so this is a
+      # safe recovery path for an exact-name-validated orphan node group.
       if ! _validate_expected_node_resource_group \
         "${node_resource_group}" "${name_suffix}" "${resource_group}" "${cluster_name}" "${location}"; then
         return 1
@@ -958,17 +997,20 @@ cleanup() {
       --resource-group "${resource_group}" --name "${cluster_name}" \
       --subscription "${subscription_id}" --deleted --interval 10 \
       --timeout "${aks_wait_timeout}" 2>/dev/null; then
+      cleanup_failed=1
       if az aks show --resource-group "${resource_group}" --name "${cluster_name}" \
         --subscription "${subscription_id}" --output none 2>/dev/null; then
         log_error "AKS cluster still exists after cleanup timeout: ${cluster_name}"
-        cleanup_failed=1
+      else
+        log_error "Failed to confirm AKS cluster deletion after the wait command failed: ${cluster_name}"
       fi
     fi
   fi
 
-  if ! _delete_node_resource_group "${node_resource_group}" "${subscription_id}" "${cleanup_deadline}"; then
-    cleanup_failed=1
-  fi
+  # AKS owns the managed node resource group's lifecycle and deletes it with
+  # the cluster. Avoid querying or deleting that sibling group directly: the
+  # least-privilege cleanup identity may only have access to the parent group.
+  # https://learn.microsoft.com/azure/aks/faq#can-i-restore-my-cluster-after-i-delete-it-
 
   if [[ -n "${arc_machine_id}" ]]; then
     local arc_wait_timeout

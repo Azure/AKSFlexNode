@@ -121,8 +121,23 @@ func TestCleanupHandlesLegacyDefaultNodeResourceGroup(t *testing.T) {
 			if readErr != nil {
 				t.Fatalf("read az calls: %v", readErr)
 			}
-			if !strings.Contains(string(calls), "group delete --name MC_test-rg_aks-e2e-test_test-location") {
-				t.Fatalf("cleanup did not delete the derived legacy node resource group:\n%s", calls)
+			if test.parentGroupAbsent {
+				if !strings.Contains(string(calls), "group delete --name MC_test-rg_aks-e2e-test_test-location") {
+					t.Fatalf("cleanup did not delete the proven orphan node resource group:\n%s", calls)
+				}
+				return
+			}
+			if !strings.Contains(string(calls), "aks wait --resource-group test-rg --name aks-e2e-test") {
+				t.Fatalf("cleanup did not wait for AKS to delete its legacy node resource group:\n%s", calls)
+			}
+			for _, operation := range []string{
+				"group exists --name MC_test-rg_aks-e2e-test_test-location",
+				"group delete --name MC_test-rg_aks-e2e-test_test-location",
+				"group wait --name MC_test-rg_aks-e2e-test_test-location",
+			} {
+				if strings.Contains(string(calls), operation) {
+					t.Fatalf("live-cluster cleanup directly managed its node resource group with %q:\n%s", operation, calls)
+				}
 			}
 		})
 	}

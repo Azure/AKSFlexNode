@@ -767,6 +767,183 @@ func TestCleanupDeletesOrphanNodeResourceGroupWhenParentIsAbsent(t *testing.T) {
 	}
 }
 
+func TestCleanupReliesOnAKSDeletionForLiveNodeResourceGroup(t *testing.T) {
+	t.Parallel()
+
+	_, _, callLog, output, err := runCleanup(t, cleanupOptions{nodeGroupForbidden: true})
+	if err != nil {
+		t.Fatalf("live-cluster cleanup failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=success") {
+		t.Fatalf("cleanup did not accept confirmed AKS deletion:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "aks wait --resource-group test-rg --name aks-e2e-test") {
+		t.Fatalf("cleanup did not wait for confirmed AKS deletion:\n%s", calls)
+	}
+	for _, operation := range []string{
+		"group exists --name MC_aksflex-e2e-test",
+		"group delete --name MC_aksflex-e2e-test",
+		"group wait --name MC_aksflex-e2e-test",
+	} {
+		if strings.Contains(callText, operation) {
+			t.Fatalf("cleanup directly managed the live cluster's node resource group with %q:\n%s", operation, calls)
+		}
+	}
+}
+
+func TestCleanupDoesNotTouchNodeResourceGroupWhenAKSRemains(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{
+		aksDeleteRemains:   true,
+		nodeGroupForbidden: true,
+	})
+	if err != nil {
+		t.Fatalf("AKS deletion failure harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=error") ||
+		!strings.Contains(string(output), "AKS cluster still exists after cleanup timeout") {
+		t.Fatalf("cleanup accepted a cluster that remained after deletion:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "aks show --resource-group test-rg --name aks-e2e-test") {
+		t.Fatalf("cleanup did not verify that the AKS cluster remained:\n%s", calls)
+	}
+	for _, operation := range []string{
+		"group exists --name MC_aksflex-e2e-test",
+		"group delete --name MC_aksflex-e2e-test",
+		"group wait --name MC_aksflex-e2e-test",
+	} {
+		if strings.Contains(callText, operation) {
+			t.Fatalf("cleanup touched a live cluster's node resource group with %q:\n%s", operation, calls)
+		}
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if strings.Contains(string(state), `"cleanup_complete": "true"`) {
+		t.Fatalf("failed AKS deletion was marked clean: %s", state)
+	}
+}
+
+func TestCleanupDoesNotAssumeAKSDeletionWhenWaitIsUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{
+		aksWaitUnconfirmed: true,
+		nodeGroupForbidden: true,
+	})
+	if err != nil {
+		t.Fatalf("unconfirmed AKS deletion harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=error") ||
+		!strings.Contains(string(output), "Failed to confirm AKS cluster deletion") {
+		t.Fatalf("cleanup accepted an unconfirmed AKS deletion:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "aks show --resource-group test-rg --name aks-e2e-test") {
+		t.Fatalf("cleanup did not inspect AKS after the wait command failed:\n%s", calls)
+	}
+	for _, operation := range []string{
+		"group exists --name MC_aksflex-e2e-test",
+		"group delete --name MC_aksflex-e2e-test",
+		"group wait --name MC_aksflex-e2e-test",
+	} {
+		if strings.Contains(callText, operation) {
+			t.Fatalf("cleanup touched the node resource group after an unconfirmed AKS deletion with %q:\n%s", operation, calls)
+		}
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if strings.Contains(string(state), `"cleanup_complete": "true"`) {
+		t.Fatalf("unconfirmed AKS deletion was marked clean: %s", state)
+	}
+}
+
+func TestCleanupPropagatesOrphanNodeResourceGroupDeleteFailure(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{
+		parentGroupAbsent:    true,
+		nodeGroupDeleteFails: true,
+	})
+	if err != nil {
+		t.Fatalf("orphan deletion failure harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=error") ||
+		!strings.Contains(string(output), "Failed to delete orphaned AKS node resource group") ||
+		!strings.Contains(string(output), "AuthorizationFailed") {
+		t.Fatalf("cleanup swallowed the orphan node resource group deletion failure:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "group delete --name MC_aksflex-e2e-test") {
+		t.Fatalf("cleanup did not attempt orphan node resource group deletion:\n%s", calls)
+	}
+	if strings.Contains(callText, "group wait --name MC_aksflex-e2e-test") {
+		t.Fatalf("cleanup waited after orphan node resource group deletion failed:\n%s", calls)
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if strings.Contains(string(state), `"cleanup_complete": "true"`) {
+		t.Fatalf("failed orphan deletion was marked clean: %s", state)
+	}
+}
+
+func TestCleanupTreatsOrphanDeleteNotFoundAsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	_, statePath, callLog, output, err := runCleanup(t, cleanupOptions{
+		parentGroupAbsent:       true,
+		nodeGroupDeleteNotFound: true,
+	})
+	if err != nil {
+		t.Fatalf("orphan not-found harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=success") {
+		t.Fatalf("cleanup did not accept explicit orphan absence:\n%s", output)
+	}
+	calls, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read az calls: %v", readErr)
+	}
+	callText := string(calls)
+	if !strings.Contains(callText, "group delete --name MC_aksflex-e2e-test") {
+		t.Fatalf("cleanup did not encounter the orphan deletion race:\n%s", calls)
+	}
+	if strings.Contains(callText, "group wait --name MC_aksflex-e2e-test") {
+		t.Fatalf("cleanup waited after Azure reported the orphan absent:\n%s", calls)
+	}
+	state, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if !strings.Contains(string(state), `"cleanup_complete": "true"`) {
+		t.Fatalf("idempotent orphan cleanup was not marked complete: %s", state)
+	}
+}
+
 func TestCleanupRejectsUnexpectedOrphanNodeResourceGroup(t *testing.T) {
 	t.Parallel()
 
@@ -856,7 +1033,7 @@ func TestCleanupRejectsUnexpectedArcMachineID(t *testing.T) {
 func TestCleanupRetriesTransientAzureQueries(t *testing.T) {
 	t.Parallel()
 
-	_, _, callLog, output, err := runCleanup(t, cleanupOptions{transientQueryFailures: true})
+	workDir, _, callLog, output, err := runCleanup(t, cleanupOptions{transientQueryFailures: true})
 	if err != nil {
 		t.Fatalf("transient-query cleanup failed: %v\n%s", err, output)
 	}
@@ -867,11 +1044,17 @@ func TestCleanupRetriesTransientAzureQueries(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("read az calls: %v", readErr)
 	}
-	if strings.Count(string(calls), "group exists") < 8 {
+	if strings.Count(string(calls), "group exists") < 3 {
 		t.Errorf("cleanup did not retry a failed resource-group query:\n%s", calls)
 	}
-	if strings.Count(string(calls), "resource list") < 8 {
-		t.Errorf("cleanup did not retry a failed resource inventory:\n%s", calls)
+	for _, marker := range []string{"group-query-failed", "resource-query-failed"} {
+		failures, readErr := os.ReadFile(filepath.Join(workDir, marker))
+		if readErr != nil {
+			t.Fatalf("read %s: %v", marker, readErr)
+		}
+		if strings.TrimSpace(string(failures)) != "2" {
+			t.Errorf("%s recorded %q transient failures, want 2", marker, strings.TrimSpace(string(failures)))
+		}
 	}
 }
 
@@ -902,6 +1085,85 @@ fi
 	if !strings.Contains(string(output), "RESULT=error") ||
 		!strings.Contains(string(output), "Last Azure CLI error: (TooManyRequests) ARM throttled the cleanup query") {
 		t.Fatalf("cleanup omitted the final Azure CLI diagnostic:\n%s", output)
+	}
+}
+
+func TestCleanupAzureQueriesStopOnAuthorizationFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, query := range []string{"group", "inventory"} {
+		t.Run(query, func(t *testing.T) {
+			t.Parallel()
+
+			workDir := t.TempDir()
+			cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+			callLog := filepath.Join(workDir, "az-calls")
+			script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+AZ_CALL_LOG="$3"
+QUERY="$4"
+E2E_CLEANUP_POLL_INTERVAL=0.01
+az() {
+  printf '%s\n' "$*" >> "${AZ_CALL_LOG}"
+  printf '%s\n' "ERROR: Operation returned an invalid status 'Forbidden'" >&2
+  return 1
+}
+deadline=$((SECONDS + 60))
+if [[ "${QUERY}" == "group" ]]; then
+  _group_exists_with_retry test-rg test-subscription "${deadline}" || true
+else
+  _resource_inventory test-rg test-subscription "" "${deadline}" || true
+fi
+printf 'CALLS=%s\n' "$(wc -l < "${AZ_CALL_LOG}")"
+`
+			output, err := runBash(t, script, workDir, cleanupScript, callLog, query)
+			if err != nil {
+				t.Fatalf("authorization failure harness failed: %v\n%s", err, output)
+			}
+			if !strings.Contains(string(output), "after 1 attempts") ||
+				!strings.Contains(string(output), "invalid status 'Forbidden'") ||
+				!strings.Contains(string(output), "CALLS=1") {
+				t.Fatalf("authorization failure was retried or lost its diagnostic:\n%s", output)
+			}
+		})
+	}
+}
+
+func TestCleanupAzureQueriesBoundRetriesByAttemptAndDeadline(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+	callLog := filepath.Join(workDir, "az-calls")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+AZ_CALL_LOG="$3"
+E2E_CLEANUP_POLL_INTERVAL=0.01
+az() {
+  printf '%s\n' "$*" >> "${AZ_CALL_LOG}"
+  printf '%s\n' '(TooManyRequests) ARM throttled the cleanup query' >&2
+  return 1
+}
+sleep() { :; }
+deadline=$((SECONDS + 60))
+_group_exists_with_retry test-rg test-subscription "${deadline}" || true
+printf 'GROUP_CALLS=%s\n' "$(wc -l < "${AZ_CALL_LOG}")"
+: > "${AZ_CALL_LOG}"
+_resource_inventory test-rg test-subscription "" "${deadline}" || true
+printf 'INVENTORY_CALLS=%s\n' "$(wc -l < "${AZ_CALL_LOG}")"
+`
+	output, err := runBash(t, script, workDir, cleanupScript, callLog)
+	if err != nil {
+		t.Fatalf("bounded retry harness failed: %v\n%s", err, output)
+	}
+	for _, expected := range []string{"GROUP_CALLS=5", "INVENTORY_CALLS=5"} {
+		if !strings.Contains(string(output), expected) {
+			t.Fatalf("Azure query retries were not bounded by attempt count; missing %q:\n%s", expected, output)
+		}
 	}
 }
 
@@ -1084,10 +1346,15 @@ func TestHistoricalTokenRevocationPropagatesDeleteFailure(t *testing.T) {
 type cleanupOptions struct {
 	runTwice                  bool
 	leaveCluster              bool
+	aksDeleteRemains          bool
+	aksWaitUnconfirmed        bool
 	parentGroupAbsent         bool
 	deploymentQueryFails      bool
 	noRunTags                 bool
 	blankVMNames              bool
+	nodeGroupForbidden        bool
+	nodeGroupDeleteFails      bool
+	nodeGroupDeleteNotFound   bool
 	unexpectedNodeResource    bool
 	unexpectedLiveNodeRG      bool
 	legacyDefaultNodeResource bool
@@ -1106,6 +1373,7 @@ func runCleanup(t *testing.T, options cleanupOptions) (string, string, string, [
 	nodeGroupDeleted := filepath.Join(workDir, "node-group-deleted")
 	groupQueryFailed := filepath.Join(workDir, "group-query-failed")
 	resourceQueryFailed := filepath.Join(workDir, "resource-query-failed")
+	clusterDeleted := filepath.Join(workDir, "cluster-deleted")
 	state := `{
   "resource_group": "test-rg",
   "location": "test-location",
@@ -1171,6 +1439,12 @@ LEGACY_DEFAULT_NODE_RG="${13}"
 LEGACY_DETACHED_DISK="${14}"
 LEGACY_DISK_DELETE_PERSISTS="${15}"
 UNSET_SUBSCRIPTION_ENV="${16}"
+AKS_DELETE_REMAINS="${17}"
+NODE_GROUP_FORBIDDEN="${18}"
+NODE_GROUP_DELETE_FAILS="${19}"
+CLUSTER_DELETED="${20}"
+AKS_WAIT_UNCONFIRMED="${21}"
+NODE_GROUP_DELETE_NOT_FOUND="${22}"
 LEGACY_DISK_DELETED="${E2E_WORK_DIR}/legacy-disk-deleted"
 # Keep cleanup fixtures independent from the ambient GitHub Actions run. Tests
 # that need tag-based cleanup persist an explicit run_id in their state.
@@ -1193,32 +1467,56 @@ az() {
   elif [[ "$1 $2" == "group exists" ]]; then
     if [[ "$*" == *"--name MC_aksflex-e2e-test"* || \
             "$*" == *"--name MC_test-rg_aks-e2e-test_test-location"* ]]; then
-      query_failures="$(cat "${GROUP_QUERY_FAILED}" 2>/dev/null || printf '0\n')"
-      if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && "${query_failures}" -lt 8 ]]; then
-        printf '%s\n' "$((query_failures + 1))" > "${GROUP_QUERY_FAILED}"
-        printf '%s\n' '(TooManyRequests) transient resource-group query failure' >&2
+      if [[ "${NODE_GROUP_FORBIDDEN}" == "1" ]]; then
+        printf '%s\n' "ERROR: Operation returned an invalid status 'Forbidden'" >&2
         return 1
       fi
       [[ -f "${NODE_GROUP_DELETED}" ]] && printf 'false\n' || printf 'true\n'
     elif [[ "$*" == *"--name test-rg"* ]]; then
+      query_failures="$(cat "${GROUP_QUERY_FAILED}" 2>/dev/null || printf '0\n')"
+      if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && "${query_failures}" -lt 2 ]]; then
+        printf '%s\n' "$((query_failures + 1))" > "${GROUP_QUERY_FAILED}"
+        printf '%s\n' '(TooManyRequests) transient resource-group query failure' >&2
+        return 1
+      fi
       [[ "${PARENT_GROUP_ABSENT}" == "1" ]] && printf 'false\n' || printf 'true\n'
     else
       printf 'false\n'
     fi
   elif [[ "$1 $2" == "group delete" ]]; then
+    if [[ "${NODE_GROUP_DELETE_FAILS}" == "1" ]]; then
+      printf '%s\n' '(AuthorizationFailed) The client cannot delete this resource group.' >&2
+      return 1
+    fi
+    if [[ "${NODE_GROUP_DELETE_NOT_FOUND}" == "1" ]]; then
+      printf '%s\n' '(ResourceGroupNotFound) Resource group was not found.' >&2
+      return 1
+    fi
     : > "${NODE_GROUP_DELETED}"
   elif [[ "$1 $2" == "group wait" ]]; then
     return 0
   elif [[ "$1 $2" == "vm list" ]]; then
     printf '[]\n'
   elif [[ "$1 $2" == "aks list" ]]; then
-    if [[ "${UNEXPECTED_LIVE_NODE_RG}" == "1" ]]; then
+    if [[ -f "${CLUSTER_DELETED}" ]]; then
+      printf '[]\n'
+    elif [[ "${UNEXPECTED_LIVE_NODE_RG}" == "1" ]]; then
       printf '[{"name":"aks-e2e-test","nodeResourceGroup":"production-live-node-rg"}]\n'
     elif [[ "${LEGACY_DEFAULT_NODE_RG}" == "1" ]]; then
       printf '[{"name":"aks-e2e-test","location":"test-location","nodeResourceGroup":"MC_test-rg_aks-e2e-test_test-location"}]\n'
     else
-      printf '[]\n'
+      printf '[{"name":"aks-e2e-test","location":"test-location","nodeResourceGroup":"MC_aksflex-e2e-test"}]\n'
     fi
+  elif [[ "$1 $2" == "aks delete" ]]; then
+    [[ "${AKS_DELETE_REMAINS}" == "1" ]] || : > "${CLUSTER_DELETED}"
+  elif [[ "$1 $2" == "aks wait" ]]; then
+    [[ "${AKS_DELETE_REMAINS}" != "1" && "${AKS_WAIT_UNCONFIRMED}" != "1" ]]
+  elif [[ "$1 $2" == "aks show" ]]; then
+    if [[ "${AKS_WAIT_UNCONFIRMED}" == "1" ]]; then
+      printf '%s\n' "ERROR: Operation returned an invalid status 'Forbidden'" >&2
+      return 1
+    fi
+    [[ "${AKS_DELETE_REMAINS}" == "1" ]]
   elif [[ "$1 $2" == "resource delete" ]]; then
     if [[ "$*" == *"--ids /own-legacy-disk"* && \
           "${LEGACY_DISK_DELETE_PERSISTS}" != "1" ]]; then
@@ -1227,8 +1525,7 @@ az() {
     return 0
   elif [[ "$1 $2" == "resource list" ]]; then
     query_failures="$(cat "${RESOURCE_QUERY_FAILED}" 2>/dev/null || printf '0\n')"
-    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && -f "${NODE_GROUP_DELETED}" && \
-          "${query_failures}" -lt 8 ]]; then
+    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && "${query_failures}" -lt 2 ]]; then
       printf '%s\n' "$((query_failures + 1))" > "${RESOURCE_QUERY_FAILED}"
       printf '%s\n' '(TooManyRequests) transient resource inventory failure' >&2
       return 1
@@ -1273,7 +1570,10 @@ fi
 		boolString(options.deploymentQueryFails), boolString(options.runTwice),
 		boolString(options.transientQueryFailures), boolString(options.unexpectedLiveNodeRG),
 		boolString(options.legacyDefaultNodeResource), boolString(options.legacyDetachedDisk),
-		boolString(options.legacyDiskDeletePersists), boolString(options.unsetSubscriptionEnv))
+		boolString(options.legacyDiskDeletePersists), boolString(options.unsetSubscriptionEnv),
+		boolString(options.aksDeleteRemains), boolString(options.nodeGroupForbidden),
+		boolString(options.nodeGroupDeleteFails), clusterDeleted,
+		boolString(options.aksWaitUnconfirmed), boolString(options.nodeGroupDeleteNotFound))
 	return workDir, statePath, callLog, output, err
 }
 
