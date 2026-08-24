@@ -723,7 +723,10 @@ _revoke_historical_bootstrap_token() {
   local config_file="$1"
   local token_id
   token_id="$(_historical_token_id "${config_file}")"
-  kubectl delete secret "bootstrap-token-${token_id}" -n kube-system
+  if ! kubectl delete secret "bootstrap-token-${token_id}" -n kube-system; then
+    log_error "Failed to revoke the historical bootstrap token"
+    return 1
+  fi
   log_info "Revoked the historical bootstrap token after certificate migration"
 }
 

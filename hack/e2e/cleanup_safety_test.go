@@ -249,9 +249,9 @@ source "$3"
 _resource_inventory() { cat "${INVENTORY_FILE}"; }
 az() { printf 'AZ=%s\n' "$*"; }
 printf '%s\n' 'IDS-BEGIN'
-_tagged_resource_ids test-rg 12345 test-subscription 12345-1
+_tagged_resource_ids test-rg 12345 test-subscription 12345-1 0
 printf '%s\n' 'IDS-END'
-_delete_tagged_resources test-rg 12345 test-subscription 12345-1
+_delete_tagged_resources test-rg 12345 test-subscription 12345-1 0
 `
 	output, err := runBash(t, script, workDir, inventoryPath, cleanupScript)
 	if err != nil {
@@ -296,10 +296,10 @@ source "$3"
 _resource_inventory() { cat "${INVENTORY_FILE}"; }
 az() { printf 'AZ=%s\n' "$*"; }
 printf '%s\n' 'IDS-BEGIN'
-_legacy_implicit_os_disk_ids test-rg test-subscription \
+_legacy_implicit_os_disk_ids test-rg test-subscription 0 \
   vm-e2e-msi-12345-1 vm-e2e-token-12345-1
 printf '%s\n' 'IDS-END'
-_delete_legacy_implicit_os_disks test-rg test-subscription \
+_delete_legacy_implicit_os_disks test-rg test-subscription 0 \
   vm-e2e-msi-12345-1 vm-e2e-token-12345-1
 `
 	output, err := runBash(t, script, workDir, inventoryPath, cleanupScript)

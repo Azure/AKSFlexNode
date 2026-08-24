@@ -275,53 +275,131 @@ _remaining_cleanup_timeout() {
   printf '%s\n' "${remaining}"
 }
 
-_group_exists_with_retry() {
-  local group_name="$1" subscription_id="$2"
-  local exists attempt
+_azure_query_can_attempt() {
+  local attempt="$1" deadline="${2:-0}"
 
-  for attempt in 1 2 3 4 5; do
+  if (( deadline > 0 )); then
+    (( SECONDS < deadline ))
+  else
+    (( attempt < 5 ))
+  fi
+}
+
+_sleep_before_azure_query_retry() {
+  local deadline="${1:-0}"
+  local delay="${E2E_CLEANUP_POLL_INTERVAL:-5}" remaining whole_seconds
+
+  if [[ ! "${delay}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    log_error "Invalid E2E_CLEANUP_POLL_INTERVAL '${delay}'"
+    return 1
+  fi
+  if (( deadline > 0 )); then
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    whole_seconds="${delay%%.*}"
+    if (( whole_seconds >= remaining )); then
+      delay="${remaining}"
+    fi
+  fi
+  sleep "${delay}"
+}
+
+_azure_error_summary() {
+  local message="$1"
+  message="${message//$'\r'/ }"
+  message="${message//$'\n'/ }"
+  printf '%.500s\n' "${message}"
+}
+
+_group_exists_with_retry() {
+  local group_name="$1" subscription_id="$2" deadline="${3:-0}"
+  local exists attempt=0 last_error="" error_file
+
+  if ! error_file="$(mktemp "${E2E_WORK_DIR}/azure-group-query.XXXXXX")"; then
+    log_error "Failed to create temporary Azure query diagnostics"
+    return 1
+  fi
+
+  while _azure_query_can_attempt "${attempt}" "${deadline}"; do
+    attempt=$((attempt + 1))
+    : > "${error_file}"
     if exists="$(az group exists \
       --name "${group_name}" \
       --subscription "${subscription_id}" \
-      --output tsv 2>/dev/null)"; then
+      --output tsv 2>"${error_file}")"; then
       case "${exists}" in
         true|false)
+          rm -f -- "${error_file}"
           printf '%s\n' "${exists}"
           return 0
           ;;
+        *)
+          last_error="Azure CLI returned an unexpected resource-group existence result: ${exists}"
+          ;;
       esac
+    else
+      last_error="$(<"${error_file}")"
+      # ARM can report the resource as not found while `az group exists` still
+      # exits nonzero during asynchronous AKS-managed resource-group deletion.
+      if [[ "${last_error}" == *ResourceGroupNotFound* ]]; then
+        rm -f -- "${error_file}"
+        printf 'false\n'
+        return 0
+      fi
     fi
-    if (( attempt < 5 )); then
-      sleep "${E2E_CLEANUP_POLL_INTERVAL:-5}"
+    if ! _azure_query_can_attempt "${attempt}" "${deadline}" || \
+      ! _sleep_before_azure_query_retry "${deadline}"; then
+      break
     fi
   done
 
+  rm -f -- "${error_file}"
   log_error "Failed to determine whether resource group '${group_name}' exists after ${attempt} attempts" >&2
+  if [[ -n "${last_error}" ]]; then
+    log_error "Last Azure CLI error: $(_azure_error_summary "${last_error}")" >&2
+  fi
   return 1
 }
 
 _resource_inventory() {
-  local resource_group="$1" subscription_id="$2" run_id="${3:-}"
-  local resource_json attempt
+  local resource_group="$1" subscription_id="$2" run_id="${3:-}" deadline="${4:-0}"
+  local resource_json attempt=0 last_error="" error_file
   local -a tag_args=()
   [[ -z "${run_id}" ]] || tag_args=(--tag "github-run=${run_id}")
 
-  for attempt in 1 2 3 4 5; do
+  if ! error_file="$(mktemp "${E2E_WORK_DIR}/azure-resource-query.XXXXXX")"; then
+    log_error "Failed to create temporary Azure query diagnostics"
+    return 1
+  fi
+
+  while _azure_query_can_attempt "${attempt}" "${deadline}"; do
+    attempt=$((attempt + 1))
+    : > "${error_file}"
     if resource_json="$(az resource list \
       --resource-group "${resource_group}" \
       --subscription "${subscription_id}" \
       "${tag_args[@]}" \
-      --output json 2>/dev/null)" && \
-      jq -e 'type == "array"' <<<"${resource_json}" >/dev/null; then
-      printf '%s\n' "${resource_json}"
-      return 0
+      --output json 2>"${error_file}")"; then
+      if jq -e 'type == "array"' <<<"${resource_json}" >/dev/null; then
+        rm -f -- "${error_file}"
+        printf '%s\n' "${resource_json}"
+        return 0
+      fi
+      last_error="Azure CLI returned a malformed resource inventory"
+    else
+      last_error="$(<"${error_file}")"
     fi
-    if (( attempt < 5 )); then
-      sleep "${E2E_CLEANUP_POLL_INTERVAL:-5}"
+    if ! _azure_query_can_attempt "${attempt}" "${deadline}" || \
+      ! _sleep_before_azure_query_retry "${deadline}"; then
+      break
     fi
   done
 
+  rm -f -- "${error_file}"
   log_error "Failed to inventory resources in '${resource_group}' after ${attempt} attempts" >&2
+  if [[ -n "${last_error}" ]]; then
+    log_error "Last Azure CLI error: $(_azure_error_summary "${last_error}")" >&2
+  fi
   return 1
 }
 
@@ -410,21 +488,21 @@ _legacy_implicit_os_disk_ids_from_inventory() {
 }
 
 _legacy_implicit_os_disk_ids() {
-  local resource_group="$1" subscription_id="$2" resource_json
-  shift 2
+  local resource_group="$1" subscription_id="$2" deadline="$3" resource_json
+  shift 3
 
   (( $# > 0 )) || return 0
-  if ! resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}")"; then
+  if ! resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "" "${deadline}")"; then
     return 1
   fi
   _legacy_implicit_os_disk_ids_from_inventory "${resource_json}" "$@"
 }
 
 _delete_legacy_implicit_os_disks() {
-  local resource_group="$1" subscription_id="$2" disk_ids disk_id
-  shift 2
+  local resource_group="$1" subscription_id="$2" deadline="$3" disk_ids disk_id
+  shift 3
 
-  if ! disk_ids="$(_legacy_implicit_os_disk_ids "${resource_group}" "${subscription_id}" "$@")"; then
+  if ! disk_ids="$(_legacy_implicit_os_disk_ids "${resource_group}" "${subscription_id}" "${deadline}" "$@")"; then
     return 1
   fi
   while IFS= read -r disk_id; do
@@ -512,7 +590,7 @@ _delete_node_resource_group() {
   local exists wait_timeout
 
   [[ -n "${node_resource_group}" ]] || return 0
-  if ! exists="$(_group_exists_with_retry "${node_resource_group}" "${subscription_id}")"; then
+  if ! exists="$(_group_exists_with_retry "${node_resource_group}" "${subscription_id}" "${deadline}")"; then
     log_error "Failed to determine whether AKS node resource group '${node_resource_group}' exists"
     return 1
   fi
@@ -542,7 +620,7 @@ _delete_node_resource_group() {
 }
 
 _delete_tagged_resources() {
-  local resource_group="$1" run_id="$2" subscription_id="$3" legacy_name_suffix="${4:-}"
+  local resource_group="$1" run_id="$2" subscription_id="$3" legacy_name_suffix="${4:-}" deadline="${5:-0}"
   local resource_json resource_type resource_name id
   local -a resource_types=(
     "Microsoft.Compute/disks"
@@ -553,7 +631,7 @@ _delete_tagged_resources() {
   )
 
   [[ -n "${run_id}" ]] || return 0
-  if ! resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}")"; then
+  if ! resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}" "${deadline}")"; then
     log_error "Failed to list E2E resources tagged github-run=${run_id}"
     return 1
   fi
@@ -575,11 +653,11 @@ _delete_tagged_resources() {
 }
 
 _tagged_resource_ids() {
-  local resource_group="$1" run_id="$2" subscription_id="$3" legacy_name_suffix="${4:-}"
+  local resource_group="$1" run_id="$2" subscription_id="$3" legacy_name_suffix="${4:-}" deadline="${5:-0}"
   local resource_json resource_type resource_name id
 
   [[ -n "${run_id}" ]] || return 0
-  resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}")" || return 1
+  resource_json="$(_resource_inventory "${resource_group}" "${subscription_id}" "${run_id}" "${deadline}")" || return 1
   while IFS=$'\t' read -r resource_type resource_name id; do
     [[ -n "${id}" ]] || continue
     if [[ -n "${legacy_name_suffix}" ]] && \
@@ -660,7 +738,8 @@ cleanup() {
   fi
 
   local resource_group_exists
-  if ! resource_group_exists="$(_group_exists_with_retry "${resource_group}" "${subscription_id}")"; then
+  if ! resource_group_exists="$(_group_exists_with_retry \
+    "${resource_group}" "${subscription_id}" "${cleanup_deadline}")"; then
     log_error "Failed to determine whether resource group '${resource_group}' exists"
     return 1
   fi
@@ -745,7 +824,8 @@ cleanup() {
     log_error "Azure returned an invalid VM or AKS cleanup inventory"
     return 1
   fi
-  if ! resource_inventory="$(_resource_inventory "${resource_group}" "${subscription_id}")"; then
+  if ! resource_inventory="$(_resource_inventory \
+    "${resource_group}" "${subscription_id}" "" "${cleanup_deadline}")"; then
     log_error "Failed to inventory E2E resources before cleanup"
     return 1
   fi
@@ -913,7 +993,7 @@ cleanup() {
   log_info "[8/8] Cleaning up tagged network and disk resources..."
   local remaining_ids legacy_remaining_ids empty_inventories=0
   for _ in 1 2 3 4; do
-    if ! _delete_tagged_resources "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}"; then
+    if ! _delete_tagged_resources "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}" "${cleanup_deadline}"; then
       cleanup_failed=1
       break
     fi
@@ -924,20 +1004,20 @@ cleanup() {
       az resource delete --ids "${disk_id}" --subscription "${subscription_id}" --output none 2>/dev/null || true
     done
     if ! _delete_legacy_implicit_os_disks \
-      "${resource_group}" "${subscription_id}" \
+      "${resource_group}" "${subscription_id}" "${cleanup_deadline}" \
       "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
       "${kubeadm_vm_name}" "${arc_vm_name}"; then
       log_error "Failed to delete legacy implicit OS disks"
       cleanup_failed=1
       break
     fi
-    if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}")"; then
+    if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}" "${cleanup_deadline}")"; then
       log_error "Failed to verify tagged-resource deletion"
       cleanup_failed=1
       break
     fi
     if ! legacy_remaining_ids="$(_legacy_implicit_os_disk_ids \
-      "${resource_group}" "${subscription_id}" \
+      "${resource_group}" "${subscription_id}" "${cleanup_deadline}" \
       "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
       "${kubeadm_vm_name}" "${arc_vm_name}")"; then
       log_error "Failed to verify legacy implicit OS-disk deletion"
@@ -960,7 +1040,7 @@ cleanup() {
     cleanup_failed=1
   fi
 
-  if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}")"; then
+  if ! remaining_ids="$(_tagged_resource_ids "${resource_group}" "${resource_owner}" "${subscription_id}" "${legacy_tag_name_suffix}" "${cleanup_deadline}")"; then
     log_error "Failed final tagged-resource verification"
     cleanup_failed=1
   elif [[ -n "${remaining_ids}" ]]; then
@@ -971,7 +1051,7 @@ cleanup() {
 
   local final_inventory expected_names known_remaining captured_id resource_name
   local -a expected_name_args=()
-  if ! final_inventory="$(_resource_inventory "${resource_group}" "${subscription_id}")"; then
+  if ! final_inventory="$(_resource_inventory "${resource_group}" "${subscription_id}" "" "${cleanup_deadline}")"; then
     log_error "Failed final exact-name resource verification"
     cleanup_failed=1
     final_inventory='[]'

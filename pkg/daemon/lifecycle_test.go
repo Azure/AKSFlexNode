@@ -29,6 +29,9 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 		t.Fatalf("write legacy unit: %v", err)
 	}
 	recoveryPath := filepath.Join(t.TempDir(), "aks-flex-node-recovery.sh")
+	if err := os.WriteFile(recoveryPath, []byte("stale"), 0o700); err != nil {
+		t.Fatalf("write legacy recovery script: %v", err)
+	}
 	reloaded := false
 	if err := ensureAgentUpgradeServiceAssetsAt(
 		t.Context(),

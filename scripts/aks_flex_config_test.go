@@ -198,6 +198,83 @@ func TestSetupNodeRBACRejectsManagedRoleRefDriftBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestSetupNodeRBACIdentifiesManagedBindingWithMalformedSubjects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		bindingName string
+	}{
+		{name: "bootstrapper binding", bindingName: bootstrapBindingName},
+		{name: "approval binding", bindingName: approvalBindingName},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			harness := newConfigScriptHarness(t, false, 0)
+			bindings := []map[string]any{
+				{
+					"apiVersion": "rbac.authorization.k8s.io/v1",
+					"kind":       "ClusterRoleBinding",
+					"metadata":   map[string]any{"name": bootstrapBindingName, "resourceVersion": "7"},
+					"roleRef": map[string]any{
+						"apiGroup": rbacv1.GroupName,
+						"kind":     "ClusterRole",
+						"name":     bootstrapRole,
+					},
+					"subjects": []any{map[string]any{
+						"apiGroup": rbacv1.GroupName,
+						"kind":     "Group",
+						"name":     bootstrapGroup,
+					}},
+				},
+				{
+					"apiVersion": "rbac.authorization.k8s.io/v1",
+					"kind":       "ClusterRoleBinding",
+					"metadata":   map[string]any{"name": approvalBindingName, "resourceVersion": "7"},
+					"roleRef": map[string]any{
+						"apiGroup": rbacv1.GroupName,
+						"kind":     "ClusterRole",
+						"name":     approvalRole,
+					},
+					"subjects": []any{map[string]any{
+						"apiGroup": rbacv1.GroupName,
+						"kind":     "Group",
+						"name":     bootstrapGroup,
+					}},
+				},
+			}
+			malformedIndex := 0
+			if test.bindingName == approvalBindingName {
+				malformedIndex = 1
+			}
+			bindings[malformedIndex]["subjects"] = "not-a-list"
+			data, err := json.Marshal(bindings)
+			if err != nil {
+				t.Fatalf("marshal malformed managed bindings: %v", err)
+			}
+			if err := os.WriteFile(harness.managedState, append(data, '\n'), 0o600); err != nil {
+				t.Fatalf("write malformed managed bindings: %v", err)
+			}
+
+			output, err := harness.runSetupNodeRBAC(false)
+			if err == nil {
+				t.Fatalf("setup-node-rbac accepted malformed subjects\n%s", output)
+			}
+			if !strings.Contains(output, test.bindingName) ||
+				!strings.Contains(output, "subjects is not a list") {
+				t.Fatalf("failure did not identify the malformed binding:\n%s", output)
+			}
+
+			mutations, deletes := kubectlOperationIndexes(readCommandCalls(t, harness.commandLogPath))
+			if len(mutations) != 0 || len(deletes) != 0 {
+				t.Fatalf("malformed-subject preflight performed a mutation")
+			}
+		})
+	}
+}
+
 func TestSetupNodeRBACPreservesManagedCustomizations(t *testing.T) {
 	t.Parallel()
 

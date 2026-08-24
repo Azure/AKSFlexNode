@@ -13,8 +13,78 @@ import (
 
 // Embedding the scripts makes Go's test cache invalidate on shell-only changes.
 //
-//go:embed run.sh lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh infra/*.bicep infra/modules/*.bicep
+//go:embed run.sh lib/common.sh lib/cleanup.sh lib/bootstrap-rbac-migration.sh lib/runner.sh infra/*.bicep infra/modules/*.bicep
 var e2eScripts embed.FS
+
+func TestRunnerCleanupIsScopedToCurrentAttempt(t *testing.T) {
+	t.Parallel()
+
+	script, err := e2eScripts.ReadFile("lib/runner.sh")
+	if err != nil {
+		t.Fatalf("read embedded runner script: %v", err)
+	}
+	text := string(script)
+	for _, required := range []string{
+		`local work_dir="${E2E_WORK_DIR:-}"`,
+		`^/tmp/aks-flex-node-e2e(-[A-Za-z0-9][A-Za-z0-9._-]*)?$`,
+		`rm -rf -- "${work_dir}"`,
+		`Refusing to clean unexpected E2E work directory`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("runner cleanup is missing attempt-scoped guard %q", required)
+		}
+	}
+	if strings.Contains(text, `find /tmp`) || strings.Contains(text, `-name 'aks-flex-node-e2e-*'`) {
+		t.Error("runner cleanup still removes work directories owned by other attempts")
+	}
+}
+
+func TestRunnerCleanupRejectsUnsafeWorkDirectories(t *testing.T) {
+	t.Parallel()
+
+	runnerScript := e2eScriptPath(t, "lib", "runner.sh")
+	tests := map[string]func(string) string{
+		"unexpected parent": func(targetDir string) string { return targetDir },
+		"parent traversal":  func(targetDir string) string { return "/tmp/.." + targetDir },
+	}
+	for name, workDirPath := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			targetDir := filepath.Join(t.TempDir(), "aks-flex-node-e2e-test")
+			if err := os.MkdirAll(targetDir, 0o700); err != nil {
+				t.Fatalf("create protected directory: %v", err)
+			}
+			sentinel := filepath.Join(targetDir, "sentinel")
+			if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+				t.Fatalf("write protected sentinel: %v", err)
+			}
+			workDir := workDirPath(targetDir)
+			script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+sudo() { return 1; }
+go() { return 0; }
+if cleanup_runner_workspace; then
+  printf 'RESULT=unexpected-success\n'
+else
+  printf 'RESULT=rejected\n'
+fi
+`
+			output, err := runBash(t, script, workDir, runnerScript)
+			if err != nil {
+				t.Fatalf("runner cleanup safety harness failed: %v\n%s", err, output)
+			}
+			if !strings.Contains(string(output), "RESULT=rejected") {
+				t.Fatalf("runner cleanup accepted unsafe work directory %q:\n%s", workDir, output)
+			}
+			if _, err := os.Stat(sentinel); err != nil {
+				t.Fatalf("runner cleanup removed data outside its allowed path: %v", err)
+			}
+		})
+	}
+}
 
 func TestBicepModuleDeploymentNamesAreUniquePerRun(t *testing.T) {
 	t.Parallel()
@@ -797,11 +867,118 @@ func TestCleanupRetriesTransientAzureQueries(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("read az calls: %v", readErr)
 	}
-	if strings.Count(string(calls), "group exists") < 3 {
+	if strings.Count(string(calls), "group exists") < 8 {
 		t.Errorf("cleanup did not retry a failed resource-group query:\n%s", calls)
 	}
-	if strings.Count(string(calls), "resource list") < 4 {
+	if strings.Count(string(calls), "resource list") < 8 {
 		t.Errorf("cleanup did not retry a failed resource inventory:\n%s", calls)
+	}
+}
+
+func TestCleanupAzureQueryFailureIncludesDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+E2E_CLEANUP_POLL_INTERVAL=0.01
+az() {
+  printf '%s\n' '(TooManyRequests) ARM throttled the cleanup query' >&2
+  return 1
+}
+if _resource_inventory test-rg test-subscription "" 0; then
+  printf 'RESULT=unexpected-success\n'
+else
+  printf 'RESULT=error\n'
+fi
+`
+	output, err := runBash(t, script, workDir, cleanupScript)
+	if err != nil {
+		t.Fatalf("Azure query diagnostic harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=error") ||
+		!strings.Contains(string(output), "Last Azure CLI error: (TooManyRequests) ARM throttled the cleanup query") {
+		t.Fatalf("cleanup omitted the final Azure CLI diagnostic:\n%s", output)
+	}
+}
+
+func TestCleanupTreatsResourceGroupNotFoundAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+	callLog := filepath.Join(workDir, "az-calls")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+AZ_CALL_LOG="$3"
+az() {
+  printf '%s\n' "$*" >> "${AZ_CALL_LOG}"
+  printf '%s\n' '(ResourceGroupNotFound) Resource group was not found.' >&2
+  return 1
+}
+result="$(_group_exists_with_retry test-rg test-subscription 0)"
+printf 'RESULT=%s\n' "${result}"
+printf 'CALLS=%s\n' "$(wc -l < "${AZ_CALL_LOG}")"
+`
+	output, err := runBash(t, script, workDir, cleanupScript, callLog)
+	if err != nil {
+		t.Fatalf("ResourceGroupNotFound harness failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "RESULT=false") ||
+		!strings.Contains(string(output), "CALLS=1") {
+		t.Fatalf("ResourceGroupNotFound was not treated as successful absence:\n%s", output)
+	}
+}
+
+func TestCleanupAzureQueriesHonorExpiredDeadline(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	cleanupScript := e2eScriptPath(t, "lib", "cleanup.sh")
+	callLog := filepath.Join(workDir, "az-calls")
+	sleepLog := filepath.Join(workDir, "sleep-delay")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+AZ_CALL_LOG="$3"
+SLEEP_LOG="$4"
+az() { printf '%s\n' "$*" >> "${AZ_CALL_LOG}"; return 1; }
+sleep() { printf '%s\n' "$1" > "${SLEEP_LOG}"; }
+
+SECONDS=10
+if _group_exists_with_retry test-rg test-subscription 5; then
+  printf 'GROUP=unexpected-success\n'
+else
+  printf 'GROUP=expired\n'
+fi
+if _resource_inventory test-rg test-subscription "" 5; then
+  printf 'INVENTORY=unexpected-success\n'
+else
+  printf 'INVENTORY=expired\n'
+fi
+calls=0
+[[ ! -f "${AZ_CALL_LOG}" ]] || calls="$(wc -l < "${AZ_CALL_LOG}")"
+printf 'CALLS=%s\n' "${calls}"
+
+E2E_CLEANUP_POLL_INTERVAL=30
+SECONDS=10
+_sleep_before_azure_query_retry 11
+printf 'SLEEP=%s\n' "$(<"${SLEEP_LOG}")"
+`
+	output, err := runBash(t, script, workDir, cleanupScript, callLog, sleepLog)
+	if err != nil {
+		t.Fatalf("Azure query deadline harness failed: %v\n%s", err, output)
+	}
+	for _, expected := range []string{"GROUP=expired", "INVENTORY=expired", "CALLS=0", "SLEEP=1"} {
+		if !strings.Contains(string(output), expected) {
+			t.Fatalf("Azure query deadline was not enforced; missing %q:\n%s", expected, output)
+		}
 	}
 }
 
@@ -873,6 +1050,34 @@ func TestHistoricalMigrationReissuesDaemonCertificateBeforeTokenRevocation(t *te
 	revokeIndex := strings.LastIndex(text, `  with_cluster_lock _revoke_historical_bootstrap_token "${config_file}"`)
 	if migrationIndex < 0 || reissueIndex <= migrationIndex || revokeIndex <= reissueIndex {
 		t.Fatalf("certificate reissuance must run after RBAC migration and before token revocation")
+	}
+}
+
+func TestHistoricalTokenRevocationPropagatesDeleteFailure(t *testing.T) {
+	t.Parallel()
+
+	script, err := e2eScripts.ReadFile("lib/bootstrap-rbac-migration.sh")
+	if err != nil {
+		t.Fatalf("read embedded migration script: %v", err)
+	}
+	text := string(script)
+	start := strings.Index(text, "_revoke_historical_bootstrap_token() {")
+	if start < 0 {
+		t.Fatal("historical token revocation helper is absent")
+	}
+	end := strings.Index(text[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("historical token revocation helper is malformed")
+	}
+	body := text[start : start+end]
+	for _, required := range []string{
+		`if ! kubectl delete secret "bootstrap-token-${token_id}" -n kube-system; then`,
+		`log_error "Failed to revoke the historical bootstrap token"`,
+		`return 1`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("historical token revocation does not fail closed on delete errors; missing %q", required)
+		}
 	}
 }
 
@@ -986,12 +1191,14 @@ az() {
   elif [[ "$1 $2 $3 $4" == "deployment operation group list" ]]; then
     printf '[{"properties":{"provisioningState":"Succeeded"}}]\n'
   elif [[ "$1 $2" == "group exists" ]]; then
-    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && ! -f "${GROUP_QUERY_FAILED}" ]]; then
-      : > "${GROUP_QUERY_FAILED}"
-      return 1
-    fi
     if [[ "$*" == *"--name MC_aksflex-e2e-test"* || \
             "$*" == *"--name MC_test-rg_aks-e2e-test_test-location"* ]]; then
+      query_failures="$(cat "${GROUP_QUERY_FAILED}" 2>/dev/null || printf '0\n')"
+      if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && "${query_failures}" -lt 8 ]]; then
+        printf '%s\n' "$((query_failures + 1))" > "${GROUP_QUERY_FAILED}"
+        printf '%s\n' '(TooManyRequests) transient resource-group query failure' >&2
+        return 1
+      fi
       [[ -f "${NODE_GROUP_DELETED}" ]] && printf 'false\n' || printf 'true\n'
     elif [[ "$*" == *"--name test-rg"* ]]; then
       [[ "${PARENT_GROUP_ABSENT}" == "1" ]] && printf 'false\n' || printf 'true\n'
@@ -1019,8 +1226,11 @@ az() {
     fi
     return 0
   elif [[ "$1 $2" == "resource list" ]]; then
-    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && ! -f "${RESOURCE_QUERY_FAILED}" ]]; then
-      : > "${RESOURCE_QUERY_FAILED}"
+    query_failures="$(cat "${RESOURCE_QUERY_FAILED}" 2>/dev/null || printf '0\n')"
+    if [[ "${TRANSIENT_QUERY_FAILURES}" == "1" && -f "${NODE_GROUP_DELETED}" && \
+          "${query_failures}" -lt 8 ]]; then
+      printf '%s\n' "$((query_failures + 1))" > "${RESOURCE_QUERY_FAILED}"
+      printf '%s\n' '(TooManyRequests) transient resource inventory failure' >&2
       return 1
     fi
     if [[ "$*" == *"--tag "* ]]; then
@@ -1077,7 +1287,7 @@ func boolString(value bool) string {
 func e2eScriptPath(t *testing.T, elements ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range []string{"common.sh", "cleanup.sh", "bootstrap-rbac-migration.sh"} {
+	for _, name := range []string{"common.sh", "cleanup.sh", "bootstrap-rbac-migration.sh", "runner.sh"} {
 		contents, err := e2eScripts.ReadFile(filepath.ToSlash(filepath.Join("lib", name)))
 		if err != nil {
 			t.Fatalf("read embedded %s: %v", name, err)

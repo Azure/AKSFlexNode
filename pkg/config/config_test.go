@@ -2267,6 +2267,9 @@ func TestServicePrincipalClientSecretFile(t *testing.T) {
 	if err := os.WriteFile(insecureFile, []byte("file-secret"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
+	if err := os.Chmod(insecureFile, 0o644); err != nil {
+		t.Fatalf("os.Chmod: %v", err)
+	}
 
 	tests := []struct {
 		name    string

@@ -120,12 +120,14 @@ def bootstrap_group_subject() -> dict[str, str]:
     }
 
 
-def binding_has_bootstrap_group(binding: dict[str, object]) -> bool:
+def binding_has_bootstrap_group(name: str, binding: dict[str, object]) -> bool:
     subjects = binding.get("subjects", [])
     if subjects is None:
         subjects = []
     if not isinstance(subjects, list):
-        raise SystemExit("ERROR: managed ClusterRoleBinding subjects is not a list")
+        raise SystemExit(
+            f"ERROR: managed ClusterRoleBinding {name!r} subjects is not a list"
+        )
     return any(
         isinstance(subject, dict)
         and subject.get("apiGroup") == RBAC_API_GROUP
@@ -166,7 +168,7 @@ def validate_managed_binding(
             "this object could discard operator-managed subjects or metadata. Review it manually."
         )
 
-    has_subject = binding_has_bootstrap_group(binding)
+    has_subject = binding_has_bootstrap_group(name, binding)
     if require_subject and not has_subject:
         raise SystemExit(
             f"ERROR: managed ClusterRoleBinding {name!r} does not contain the required "
