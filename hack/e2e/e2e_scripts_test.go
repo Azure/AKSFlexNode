@@ -13,7 +13,7 @@ import (
 
 // Embedding the scripts makes Go's test cache invalidate on shell-only changes.
 //
-//go:embed run.sh lib/common.sh lib/cleanup.sh lib/runner.sh infra/*.bicep infra/modules/*.bicep
+//go:embed run.sh lib/common.sh lib/cleanup.sh lib/controller.sh lib/node-join-arc.sh lib/runner.sh infra/*.bicep infra/modules/*.bicep
 var e2eScripts embed.FS
 
 func TestRunnerCleanupIsScopedToCurrentAttempt(t *testing.T) {
@@ -470,6 +470,272 @@ state_dump
 	}
 	if !strings.Contains(string(output), "192.0.2.1") {
 		t.Fatalf("state dump unexpectedly redacted non-secret metadata: %s", output)
+	}
+}
+
+func TestArcRoleAssignmentIsPersistedOnlyAfterVerification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		mode              string
+		initiallyVerified bool
+		wantSuccess       bool
+		wantCreate        bool
+	}{
+		{name: "existing assignment", mode: "visible", wantSuccess: true},
+		{name: "delayed list visibility", mode: "delayed", wantSuccess: true, wantCreate: true},
+		{name: "wrong principal returned by create", mode: "wrong-principal", wantCreate: true},
+		{name: "wrong scope returned by create", mode: "wrong-scope", wantCreate: true},
+		{name: "list visibility timeout clears stale state", mode: "timeout", initiallyVerified: true, wantCreate: true},
+		{name: "query failure clears stale state without creating", mode: "query-error", initiallyVerified: true},
+	}
+
+	arcScript := e2eScriptPath(t, "lib", "node-join-arc.sh")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			workDir := t.TempDir()
+			callLog := filepath.Join(workDir, "az-calls")
+			listCount := filepath.Join(workDir, "list-count")
+			script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+AZ_CALL_LOG="$3"
+LIST_COUNT="$4"
+MODE="$5"
+INITIALLY_VERIFIED="$6"
+PRINCIPAL_ID=11111111-1111-1111-1111-111111111111
+ROLE_ID=ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8
+CLUSTER_ID=/subscriptions/test/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-aks
+SUBSCRIPTION_ID=test-subscription
+role_record() {
+  jq -n --arg principal "$1" --arg scope "$2" --arg role "${ROLE_ID}" '{
+    id: "/subscriptions/test/providers/Microsoft.Authorization/roleAssignments/test-assignment",
+    principalId: $principal,
+    roleDefinitionId: ("/subscriptions/test/providers/Microsoft.Authorization/roleDefinitions/" + $role),
+    scope: $scope
+  }'
+}
+az() {
+  printf '%s\n' "$*" >> "${AZ_CALL_LOG}"
+  if [[ "$1 $2 $3" == "role assignment list" ]]; then
+    if [[ "${MODE}" == "query-error" ]]; then
+      return 1
+    fi
+    count="$(cat "${LIST_COUNT}" 2>/dev/null || printf '0\n')"
+    count=$((count + 1))
+    printf '%s\n' "${count}" > "${LIST_COUNT}"
+    if [[ "${MODE}" == "visible" || ("${MODE}" == "delayed" && "${count}" -ge 3) ]]; then
+      role_record "${PRINCIPAL_ID}" "${CLUSTER_ID}" | jq -s '.'
+    else
+      printf '[]\n'
+    fi
+  elif [[ "$1 $2 $3" == "role assignment create" ]]; then
+    principal="${PRINCIPAL_ID}"
+    scope="${CLUSTER_ID}"
+    [[ "${MODE}" != "wrong-principal" ]] || principal=22222222-2222-2222-2222-222222222222
+    [[ "${MODE}" != "wrong-scope" ]] || scope="${CLUSTER_ID}/agentPools/other"
+    role_record "${principal}" "${scope}"
+  else
+    return 1
+  fi
+}
+sleep() { :; }
+if [[ "${INITIALLY_VERIFIED}" == "1" ]]; then
+  state_set arc_role_assigned true
+fi
+if _ensure_arc_role_assignment "${PRINCIPAL_ID}" "${CLUSTER_ID}" "${SUBSCRIPTION_ID}"; then
+  printf 'RESULT=success\n'
+else
+  printf 'RESULT=failure\n'
+fi
+printf 'STATE=%s\n' "$(state_get arc_role_assigned)"
+`
+			output, err := runBash(t, script, workDir, arcScript, callLog, listCount, tt.mode, boolString(tt.initiallyVerified))
+			if err != nil {
+				t.Fatalf("Arc role-assignment harness failed: %v\n%s", err, output)
+			}
+			wantResult := "RESULT=failure\n"
+			wantState := "STATE=false\n"
+			if tt.wantSuccess {
+				wantResult = "RESULT=success\n"
+				wantState = "STATE=true\n"
+			}
+			if !strings.Contains(string(output), wantResult) || !strings.Contains(string(output), wantState) {
+				t.Fatalf("Arc role-assignment result did not match expectations:\n%s", output)
+			}
+			calls, readErr := os.ReadFile(callLog)
+			if readErr != nil {
+				t.Fatalf("read Azure CLI calls: %v", readErr)
+			}
+			gotCreate := strings.Contains(string(calls), "role assignment create")
+			if gotCreate != tt.wantCreate {
+				t.Fatalf("role assignment create = %t, want %t; calls:\n%s", gotCreate, tt.wantCreate, calls)
+			}
+			for _, required := range []string{
+				"--assignee-object-id 11111111-1111-1111-1111-111111111111",
+				"--role ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8",
+				"--scope /subscriptions/test/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-aks",
+				"--subscription test-subscription",
+			} {
+				if !strings.Contains(string(calls), required) {
+					t.Errorf("Azure CLI calls omitted %q:\n%s", required, calls)
+				}
+			}
+		})
+	}
+}
+
+func TestAKSContributorRoleDefinitionAllowsBootstrapDataAction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		actions    string
+		notActions string
+		wantAllow  bool
+	}{
+		{name: "exact action", actions: `["Microsoft.ContainerService/managedClusters/agentPools/listBootstrapData/action"]`, notActions: `[]`, wantAllow: true},
+		{name: "managed cluster wildcard", actions: `["Microsoft.ContainerService/managedClusters/*"]`, notActions: `[]`, wantAllow: true},
+		{name: "global wildcard", actions: `["*"]`, notActions: `[]`, wantAllow: true},
+		{name: "explicit exclusion", actions: `["Microsoft.ContainerService/managedClusters/*"]`, notActions: `["Microsoft.ContainerService/managedClusters/agentPools/listBootstrapData/action"]`},
+		{name: "unrelated action", actions: `["Microsoft.Compute/*"]`, notActions: `[]`},
+	}
+
+	arcScript := e2eScriptPath(t, "lib", "node-join-arc.sh")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+ACTIONS="$3"
+NOT_ACTIONS="$4"
+CALL_LOG="$5"
+az() {
+  printf '%s\n' "$*" > "${CALL_LOG}"
+  [[ "$1 $2 $3" == "role definition show" ]] || return 1
+  jq -n --argjson actions "${ACTIONS}" --argjson notActions "${NOT_ACTIONS}" \
+    '{permissions: [{actions: $actions, notActions: $notActions}]}'
+}
+if _aks_contributor_allows_bootstrap_data test-subscription; then
+  printf 'RESULT=allowed\n'
+else
+  printf 'RESULT=denied\n'
+fi
+`
+			workDir := t.TempDir()
+			callLog := filepath.Join(workDir, "az-call")
+			output, err := runBash(t, script, workDir, arcScript, tt.actions, tt.notActions, callLog)
+			if err != nil {
+				t.Fatalf("role-definition harness failed: %v\n%s", err, output)
+			}
+			gotAllow := strings.Contains(string(output), "RESULT=allowed\n")
+			if gotAllow != tt.wantAllow {
+				t.Fatalf("allowed = %t, want %t; output:\n%s", gotAllow, tt.wantAllow, output)
+			}
+			calls, readErr := os.ReadFile(callLog)
+			if readErr != nil {
+				t.Fatalf("read role-definition call: %v", readErr)
+			}
+			for _, required := range []string{
+				"role definition show",
+				"--id /subscriptions/test-subscription/providers/Microsoft.Authorization/roleDefinitions/ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8",
+				"--subscription test-subscription",
+			} {
+				if !strings.Contains(string(calls), required) {
+					t.Errorf("role-definition lookup omitted %q: %s", required, calls)
+				}
+			}
+		})
+	}
+}
+
+func TestArcBootstrapFetchReportsBoundedAuthorizationDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	arcScript := e2eScriptPath(t, "lib", "node-join-arc.sh")
+	fetchCount := filepath.Join(workDir, "fetch-count")
+	script := `
+set -euo pipefail
+E2E_WORK_DIR="$1"
+source "$2"
+FETCH_COUNT="$3"
+E2E_BINARY=/tmp/test-binary
+E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME=flex
+PRINCIPAL_ID=11111111-1111-1111-1111-111111111111
+ROLE_ID=ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8
+CLUSTER_ID=/subscriptions/test/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-aks
+ARC_ID=/subscriptions/test/resourceGroups/test-rg/providers/Microsoft.HybridCompute/machines/test-arc
+SUBSCRIPTION_ID=test-subscription
+remote_copy() { :; }
+remote_exec() {
+  if [[ "$*" == *"fetch-bootstrap-data"* ]]; then
+    count="$(cat "${FETCH_COUNT}" 2>/dev/null || printf '0\n')"
+    printf '%s\n' "$((count + 1))" > "${FETCH_COUNT}"
+    printf '%s\n' 'Command execution failed: fetch bootstrap data returned HTTP status 403: error.code="AuthorizationFailed", error.message="role assignment has not propagated", x-ms-request-id="request-123", x-ms-correlation-request-id="correlation-456"' >&2
+    printf '%s\n' 'Bearer TOP_SECRET_TOKEN_MUST_NOT_APPEAR' >&2
+    return 1
+  fi
+  if [[ "$*" == *"himdsd_active"* ]]; then
+    printf 'true|true\n'
+  fi
+}
+az() {
+  if [[ "$1 $2 $3" == "role assignment list" ]]; then
+    jq -n --arg principal "${PRINCIPAL_ID}" --arg role "${ROLE_ID}" --arg scope "${CLUSTER_ID}" \
+      '[{principalId: $principal, roleDefinitionId: ("/subscriptions/test/providers/Microsoft.Authorization/roleDefinitions/" + $role), scope: $scope}]'
+  elif [[ "$1 $2 $3" == "role definition show" ]]; then
+    printf '%s\n' '{"permissions":[{"actions":["Microsoft.ContainerService/managedClusters/*"],"notActions":[]}]}'
+  elif [[ "$1 $2" == "resource show" ]]; then
+    printf '%s\n' "${PRINCIPAL_ID}"
+  else
+    return 1
+  fi
+}
+sleep() { :; }
+if _fetch_arc_bootstrap_config 192.0.2.1 10.0.0.4 test-node "${CLUSTER_ID}" "${E2E_WORK_DIR}/config.json" "${ARC_ID}" "${PRINCIPAL_ID}" "${SUBSCRIPTION_ID}"; then
+  printf 'RESULT=unexpected-success\n'
+else
+  printf 'RESULT=expected-failure\n'
+fi
+printf 'FETCHES=%s\n' "$(cat "${FETCH_COUNT}")"
+`
+	output, err := runBash(t, script, workDir, arcScript, fetchCount)
+	if err != nil {
+		t.Fatalf("Arc bootstrap diagnostic harness failed: %v\n%s", err, output)
+	}
+	text := string(output)
+	for _, expected := range []string{
+		"RESULT=expected-failure",
+		"FETCHES=60",
+		`error.code="AuthorizationFailed"`,
+		`x-ms-request-id="request-123"`,
+		`x-ms-correlation-request-id="correlation-456"`,
+		"roleAssignmentVisible=true roleAllowsListBootstrapData=true arcPrincipalMatches=true himdsdActive=true azcmagentConnected=true",
+		"still HTTP 403 despite a verified assignment",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("diagnostic output omitted %q:\n%s", expected, output)
+		}
+	}
+	for _, attempt := range []string{"1", "10", "20", "30", "40", "50", "60"} {
+		marker := "Arc authorization diagnostics (" + attempt + "/60)"
+		if strings.Count(text, marker) != 1 {
+			t.Errorf("diagnostic marker %q count = %d, want 1", marker, strings.Count(text, marker))
+		}
+	}
+	if got := strings.Count(text, "Arc authorization diagnostics ("); got != 7 {
+		t.Errorf("authorization diagnostics emitted %d times, want 7", got)
+	}
+	if strings.Contains(text, "TOP_SECRET_TOKEN_MUST_NOT_APPEAR") {
+		t.Fatalf("diagnostics exposed the discarded token: %s", output)
 	}
 }
 
@@ -1559,7 +1825,7 @@ func boolString(value bool) string {
 func e2eScriptPath(t *testing.T, elements ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range []string{"common.sh", "cleanup.sh", "runner.sh"} {
+	for _, name := range []string{"common.sh", "cleanup.sh", "controller.sh", "node-join-arc.sh", "runner.sh"} {
 		contents, err := e2eScripts.ReadFile(filepath.ToSlash(filepath.Join("lib", name)))
 		if err != nil {
 			t.Fatalf("read embedded %s: %v", name, err)
