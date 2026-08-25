@@ -16,7 +16,7 @@ Bootstrap token mode is the recommended quickstart path. It uses Kubernetes TLS 
 
 High-level flow:
 
-1. Run [`scripts/aks-flex-config setup-node-rbac`](../../scripts/aks-flex-config) to setup required node bootstrap RBAC permissions.
+1. Run [`scripts/aks-flex-config setup-node-rbac`](../../scripts/aks-flex-config) to set up the least-privilege node bootstrap RBAC permissions. Clusters configured by an older helper require the explicit compatibility migration documented in the helper guide before another token can be generated.
 2. Run `scripts/aks-flex-config generate-node-config --bootstrap-token` to create a bootstrap token, fetch AKS cluster metadata, and render the host config.
 3. Copy the generated config to `/etc/aks-flex-node/config.json` on the target host.
 4. Run `aks-flex-node preflight --config /etc/aks-flex-node/config.json` to validate host, cluster, rootfs, and artifact prerequisites without mutating the node.

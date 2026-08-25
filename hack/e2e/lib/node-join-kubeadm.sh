@@ -36,10 +36,10 @@ _kubeadm_ensure_rbac() {
   #  - ClusterRoleBindings for CSR creation and auto-approval
   #  - Roles/RoleBindings granting bootstrappers read access to kubeadm config
   #    and kubelet config (required by kubeadm join's preflight phase)
-  #  - ClusterRole/ClusterRoleBinding for bootstrappers to GET nodes
+  #  - ClusterRole/ClusterRoleBinding for kubeadm's bootstrap group to GET nodes
   #  - ConfigMaps: cluster-info (kube-public), kubeadm-config and
   #    kubelet-config (kube-system) consumed by kubeadm join
-  kubectl apply -f - <<EOF
+  if ! kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -84,22 +84,6 @@ subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: Group
   name: system:nodes
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aks-flex-node-role
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:node
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:bootstrappers:aks-flex-node
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: ${kubeadmBootstrapGroup}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -177,16 +161,17 @@ roleRef:
 subjects:
 - kind: Group
   apiGroup: rbac.authorization.k8s.io
-  name: system:bootstrappers:aks-flex-node
-- kind: Group
-  apiGroup: rbac.authorization.k8s.io
   name: ${kubeadmBootstrapGroup}
 EOF
+  then
+    log_error "Failed to apply bootstrap RBAC"
+    return 1
+  fi
 
   # Publish the ConfigMaps that kubeadm join reads during its preflight phase.
   # cluster-info goes into kube-public (publicly readable).
   # kubeadm-config and kubelet-config go into kube-system (bootstrapper-readable).
-  kubectl apply -f - <<EOF
+  if ! kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -229,6 +214,10 @@ data:
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
 EOF
+  then
+    log_error "Failed to apply kubeadm bootstrap ConfigMaps"
+    return 1
+  fi
 
   log_success "Bootstrap RBAC and ConfigMaps configured"
 }
@@ -307,10 +296,10 @@ node_join_kubeadm() {
   log_info "Creating bootstrap token..."
   local bootstrap_token
   bootstrap_token="$(with_cluster_lock _kubeadm_create_bootstrap_token)"
-  state_set "kubeadm_bootstrap_token" "${bootstrap_token}"
 
   # Step 2: Generate the config file for aks-flex-node agent
   local config_file="${E2E_WORK_DIR}/config-kubeadm.json"
+  install -m 0600 /dev/null "${config_file}"
   cat > "${config_file}" <<EOF
 {
   "azure": {

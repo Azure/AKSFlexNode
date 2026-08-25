@@ -4,18 +4,37 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
+import re
 import secrets
+import selectors
+import signal
 import shutil
+import socket
+import stat
 import subprocess
 import sys
+import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com"
 DEFAULT_AGENT_POOL_NAME = "aksflexnodes"
+RBAC_API_GROUP = "rbac.authorization.k8s.io"
+LEGACY_NODE_ROLE_BINDING = "aks-flex-node-role"
+FLEX_NODE_BOOTSTRAP_GROUP = "system:bootstrappers:aks-flex-node"
+RBAC_AUTOUPDATE_ANNOTATION = "rbac.authorization.kubernetes.io/autoupdate"
+MANAGED_BOOTSTRAP_BINDINGS = (
+    ("aks-flex-node-bootstrapper", "system:node-bootstrapper"),
+    (
+        "aks-flex-node-auto-approve-csr",
+        "system:certificates.k8s.io:certificatesigningrequests:nodeclient",
+    ),
+)
 
 
 def log_info(message: str) -> None:
@@ -65,12 +84,427 @@ def setup_node_rbac(args: argparse.Namespace) -> None:
     require_command("kubectl")
     load_admin_kubeconfig(args)
 
-    log_info("applying bootstrap token RBAC bindings")
-    run(["kubectl", "apply", "-f", "-"], input_text=RBAC_MANIFEST)
+    bindings = reconcile_bootstrap_rbac_bindings()
+    if args.remove_legacy_node_role_binding:
+        remove_legacy_node_role_binding(bindings)
+    else:
+        require_legacy_node_role_binding_absent(bindings)
+
+
+def cluster_role_bindings() -> list[dict[str, object]]:
+    raw = run(["kubectl", "get", "clusterrolebindings", "-o", "json"], capture=True)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as err:
+        raise SystemExit(f"ERROR: could not parse ClusterRoleBinding inventory: {err}") from err
+
+    if not isinstance(payload, dict):
+        raise SystemExit("ERROR: ClusterRoleBinding inventory is not a JSON object")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise SystemExit("ERROR: ClusterRoleBinding inventory does not contain an items list")
+    if not all(isinstance(item, dict) for item in items):
+        raise SystemExit("ERROR: ClusterRoleBinding inventory contains a malformed item")
+    return items
+
+
+def expected_role_ref(role_name: str) -> dict[str, str]:
+    return {"apiGroup": RBAC_API_GROUP, "kind": "ClusterRole", "name": role_name}
+
+
+def bootstrap_group_subject() -> dict[str, str]:
+    return {
+        "apiGroup": RBAC_API_GROUP,
+        "kind": "Group",
+        "name": FLEX_NODE_BOOTSTRAP_GROUP,
+    }
+
+
+def binding_has_bootstrap_group(name: str, binding: dict[str, object]) -> bool:
+    subjects = binding.get("subjects", [])
+    if subjects is None:
+        subjects = []
+    if not isinstance(subjects, list):
+        raise SystemExit(
+            f"ERROR: managed ClusterRoleBinding {name!r} subjects is not a list"
+        )
+    return any(
+        isinstance(subject, dict)
+        and subject.get("apiGroup") == RBAC_API_GROUP
+        and subject.get("kind") == "Group"
+        and subject.get("name") == FLEX_NODE_BOOTSTRAP_GROUP
+        and not subject.get("namespace")
+        for subject in subjects
+    )
+
+
+def managed_binding_inventory(bindings: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    expected_names = {name for name, _ in MANAGED_BOOTSTRAP_BINDINGS}
+    managed: dict[str, dict[str, object]] = {}
+    for binding in bindings:
+        metadata = binding.get("metadata")
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+        if name not in expected_names:
+            continue
+        if name in managed:
+            raise SystemExit(f"ERROR: duplicate managed ClusterRoleBinding {name!r} in inventory")
+        managed[name] = binding
+    return managed
+
+
+def validate_managed_binding(
+    name: str,
+    role_name: str,
+    binding: dict[str, object],
+    *,
+    require_subject: bool,
+) -> bool:
+    role_ref = binding.get("roleRef")
+    wanted_role_ref = expected_role_ref(role_name)
+    if role_ref != wanted_role_ref:
+        raise SystemExit(
+            f"ERROR: refusing to modify managed ClusterRoleBinding {name!r}: roleRef is "
+            f"{role_ref!r}, expected {wanted_role_ref!r}. The roleRef is immutable and replacing "
+            "this object could discard operator-managed subjects or metadata. Review it manually."
+        )
+
+    has_subject = binding_has_bootstrap_group(name, binding)
+    if require_subject and not has_subject:
+        raise SystemExit(
+            f"ERROR: managed ClusterRoleBinding {name!r} does not contain the required "
+            f"bootstrap group {FLEX_NODE_BOOTSTRAP_GROUP!r} after reconciliation"
+        )
+    return has_subject
+
+
+def desired_managed_binding(name: str, role_name: str) -> dict[str, object]:
+    return {
+        "apiVersion": f"{RBAC_API_GROUP}/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": name},
+        "roleRef": expected_role_ref(role_name),
+        "subjects": [bootstrap_group_subject()],
+    }
+
+
+def reconcile_bootstrap_rbac_bindings() -> list[dict[str, object]]:
+    before = cluster_role_bindings()
+    managed = managed_binding_inventory(before)
+    actions: list[tuple[str, str, dict[str, object]]] = []
+
+    # Validate every managed name before making any change. A roleRef is
+    # immutable, so replacing a customized binding would lose operator-managed
+    # subjects and metadata.
+    for name, role_name in MANAGED_BOOTSTRAP_BINDINGS:
+        binding = managed.get(name)
+        if binding is None:
+            actions.append(("create", name, desired_managed_binding(name, role_name)))
+            continue
+
+        has_subject = validate_managed_binding(name, role_name, binding, require_subject=False)
+        if has_subject:
+            continue
+
+        metadata = binding.get("metadata")
+        annotations = metadata.get("annotations", {}) if isinstance(metadata, dict) else {}
+        if not isinstance(annotations, dict):
+            raise SystemExit(f"ERROR: managed ClusterRoleBinding {name!r} annotations is not an object")
+        if str(annotations.get(RBAC_AUTOUPDATE_ANNOTATION, "")).lower() == "false":
+            raise SystemExit(
+                f"ERROR: managed ClusterRoleBinding {name!r} disables RBAC autoupdate but is missing "
+                f"the required bootstrap group {FLEX_NODE_BOOTSTRAP_GROUP!r}. Add the subject "
+                "manually or remove the autoupdate=false annotation."
+            )
+        resource_version = metadata.get("resourceVersion") if isinstance(metadata, dict) else None
+        if not isinstance(resource_version, str) or not resource_version:
+            raise SystemExit(
+                f"ERROR: refusing to update managed ClusterRoleBinding {name!r} without a "
+                "resourceVersion concurrency precondition"
+            )
+
+        updated = dict(binding)
+        subjects = binding.get("subjects", [])
+        if subjects is None:
+            subjects = []
+        updated["apiVersion"] = f"{RBAC_API_GROUP}/v1"
+        updated["kind"] = "ClusterRoleBinding"
+        updated["subjects"] = [*subjects, bootstrap_group_subject()]
+        actions.append(("replace", name, updated))
+
+    for operation, name, binding in actions:
+        log_info(f"{operation} managed bootstrap RBAC binding {name}")
+        run(["kubectl", operation, "-f", "-"], input_text=json.dumps(binding), capture=True)
+
+    after = cluster_role_bindings()
+    reconciled = managed_binding_inventory(after)
+    for name, role_name in MANAGED_BOOTSTRAP_BINDINGS:
+        binding = reconciled.get(name)
+        if binding is None:
+            raise SystemExit(f"ERROR: managed ClusterRoleBinding {name!r} is absent after reconciliation")
+        validate_managed_binding(name, role_name, binding, require_subject=True)
+    return after
+
+
+def unsafe_node_role_bindings(bindings: list[dict[str, object]] | None = None) -> list[dict[str, object]]:
+    if bindings is None:
+        bindings = cluster_role_bindings()
+
+    unsafe = []
+    for item in bindings:
+        if not isinstance(item, dict):
+            continue
+        role_ref = item.get("roleRef")
+        subjects = item.get("subjects")
+        if not isinstance(role_ref, dict) or not isinstance(subjects, list):
+            continue
+        if (
+            role_ref.get("apiGroup") != "rbac.authorization.k8s.io"
+            or role_ref.get("kind") != "ClusterRole"
+            or role_ref.get("name") != "system:node"
+        ):
+            continue
+        if any(
+            isinstance(subject, dict)
+            and subject.get("apiGroup") == "rbac.authorization.k8s.io"
+            and subject.get("kind") == "Group"
+            and subject.get("name") == FLEX_NODE_BOOTSTRAP_GROUP
+            for subject in subjects
+        ):
+            unsafe.append(item)
+    return unsafe
+
+
+def unsafe_binding_names(bindings: list[dict[str, object]]) -> str:
+    names = []
+    for binding in bindings:
+        metadata = binding.get("metadata")
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+        names.append(name if isinstance(name, str) and name else "<unnamed>")
+    return ", ".join(sorted(names))
+
+
+def is_canonical_legacy_node_role_binding(binding: dict[str, object]) -> bool:
+    metadata = binding.get("metadata")
+    subjects = binding.get("subjects")
+    if not isinstance(metadata, dict) or metadata.get("name") != LEGACY_NODE_ROLE_BINDING:
+        return False
+    return subjects == [
+        {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Group",
+            "name": FLEX_NODE_BOOTSTRAP_GROUP,
+        }
+    ]
+
+
+def require_legacy_node_role_binding_absent(bindings: list[dict[str, object]] | None = None) -> None:
+    bindings = unsafe_node_role_bindings(bindings)
+    if not bindings:
+        return
+    raise SystemExit(
+        "ERROR: ClusterRoleBinding(s) "
+        f"{unsafe_binding_names(bindings)} still grant {FLEX_NODE_BOOTSTRAP_GROUP!r} the "
+        "system:node role. Some older or development agents may still depend on that access. "
+        "First upgrade them to a release with daemon client certificates (v0.1.1 or later), "
+        "verify /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem exists "
+        "and the agent remains healthy after restart, then rerun setup-node-rbac with "
+        "--remove-legacy-node-role-binding."
+    )
+
+
+class UnixSocketHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: str, *, timeout: float) -> None:
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(self.timeout)
+        try:
+            connection.connect(self.socket_path)
+        except OSError:
+            connection.close()
+            raise
+        self.sock = connection
+
+
+def delete_cluster_role_binding_with_preconditions(name: str, uid: str, resource_version: str) -> None:
+    # kubectl delete does not expose UID/resourceVersion preconditions, and its
+    # --raw mode sends no request body. A proxy on a mode-0600 Unix socket lets
+    # us submit the Kubernetes DeleteOptions body without reimplementing
+    # kubeconfig authentication, exposing admin credentials on a localhost TCP
+    # port, or silently deleting a concurrently replaced object.
+    with tempfile.TemporaryDirectory(prefix="aks-flex-config-") as proxy_dir:
+        socket_path = os.path.join(proxy_dir, "kubectl-proxy.sock")
+        proxy = subprocess.Popen(
+            [
+                "kubectl",
+                "proxy",
+                f"--unix-socket={socket_path}",
+                r"--accept-hosts=^localhost$",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            if proxy.stdout is None or proxy.stderr is None:
+                raise SystemExit("ERROR: failed to capture kubectl proxy startup output")
+
+            startup_output = {"stdout": bytearray(), "stderr": bytearray()}
+            startup_pattern = re.compile(
+                rb"(?:^|\n)Starting to serve on " + re.escape(os.fsencode(socket_path)) + rb"\r?\n"
+            )
+            ready = False
+            deadline = time.monotonic() + 10
+            with selectors.DefaultSelector() as selector:
+                selector.register(proxy.stdout, selectors.EVENT_READ, "stdout")
+                selector.register(proxy.stderr, selectors.EVENT_READ, "stderr")
+                while time.monotonic() < deadline:
+                    events = selector.select(max(0, deadline - time.monotonic()))
+                    if not events:
+                        break
+                    for key, _ in events:
+                        chunk = os.read(key.fd, 4096)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        stream_output = startup_output[key.data]
+                        stream_output.extend(chunk)
+                        if len(stream_output) > 65536:
+                            del stream_output[:-65536]
+                        if key.data == "stdout" and startup_pattern.search(stream_output):
+                            ready = True
+                            break
+                    if ready:
+                        break
+                    if proxy.poll() is not None and not selector.get_map():
+                        break
+
+            if not ready:
+                detail = b"\n".join(
+                    output.strip() for output in startup_output.values() if output.strip()
+                ).decode(errors="replace")
+                if proxy.poll() is None:
+                    raise SystemExit(
+                        "ERROR: timed out starting kubectl proxy for conditional RBAC deletion"
+                        f"{': ' + detail if detail else ''}"
+                    )
+                raise SystemExit(f"ERROR: kubectl proxy failed to start: {detail or 'unknown error'}")
+
+            try:
+                socket_info = os.stat(socket_path, follow_symlinks=False)
+                if not stat.S_ISSOCK(socket_info.st_mode):
+                    raise SystemExit("ERROR: kubectl proxy did not create a Unix socket")
+                os.chmod(socket_path, 0o600)
+                socket_mode = stat.S_IMODE(os.stat(socket_path, follow_symlinks=False).st_mode)
+            except OSError as err:
+                raise SystemExit(f"ERROR: could not secure kubectl proxy Unix socket: {err}") from err
+            if socket_mode != 0o600:
+                raise SystemExit(
+                    f"ERROR: kubectl proxy Unix socket mode is {socket_mode:o}, expected 600"
+                )
+
+            body = json.dumps(
+                {
+                    "apiVersion": "v1",
+                    "kind": "DeleteOptions",
+                    "preconditions": {"uid": uid, "resourceVersion": resource_version},
+                }
+            ).encode()
+            resource_path = f"/apis/{RBAC_API_GROUP}/v1/clusterrolebindings/{quote(name, safe='')}"
+            connection = UnixSocketHTTPConnection(socket_path, timeout=30)
+            try:
+                connection.request(
+                    "DELETE",
+                    resource_path,
+                    body=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                detail = response.read().decode(errors="replace").strip()
+                if response.status == 409:
+                    raise SystemExit(
+                        f"ERROR: refusing to delete ClusterRoleBinding {name!r}: it changed after inspection"
+                    )
+                if not 200 <= response.status < 300:
+                    raise SystemExit(
+                        f"ERROR: conditional deletion of ClusterRoleBinding {name!r} returned "
+                        f"HTTP {response.status}: {detail}"
+                    )
+            except (OSError, http.client.HTTPException) as err:
+                raise SystemExit(
+                    f"ERROR: conditional deletion of ClusterRoleBinding {name!r} failed: {err}"
+                ) from err
+            finally:
+                connection.close()
+        finally:
+            try:
+                os.killpg(proxy.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proxy.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                # The kubectl process may have exited while an exec credential
+                # plugin kept the process group and pipe descriptors alive.
+                os.killpg(proxy.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                proxy.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                log_error(f"kubectl proxy process {proxy.pid} did not exit after SIGKILL")
+            if proxy.stdout is not None:
+                proxy.stdout.close()
+            if proxy.stderr is not None:
+                proxy.stderr.close()
+
+
+def remove_legacy_node_role_binding(bindings: list[dict[str, object]] | None = None) -> None:
+    bindings = unsafe_node_role_bindings(bindings)
+    if not bindings:
+        return
+    if len(bindings) != 1 or not is_canonical_legacy_node_role_binding(bindings[0]):
+        raise SystemExit(
+            "ERROR: refusing automatic removal because the unsafe ClusterRoleBinding set is "
+            f"not the canonical {LEGACY_NODE_ROLE_BINDING!r} object: "
+            f"{unsafe_binding_names(bindings)}. Review and remove only the bootstrap-group "
+            "subjects manually."
+        )
+
+    metadata = bindings[0].get("metadata")
+    uid = metadata.get("uid") if isinstance(metadata, dict) else None
+    resource_version = metadata.get("resourceVersion") if isinstance(metadata, dict) else None
+    if not isinstance(uid, str) or not uid or not isinstance(resource_version, str) or not resource_version:
+        raise SystemExit(
+            "ERROR: refusing automatic removal because the canonical legacy "
+            "ClusterRoleBinding has no UID/resourceVersion preconditions."
+        )
+
+    # Delete only the object version that was inspected above. If another
+    # actor replaces or edits it between inventory and deletion, the API server
+    # rejects the request instead of deleting an unreviewed object.
+    log_info("removing legacy bootstrap node role binding")
+    delete_cluster_role_binding_with_preconditions(LEGACY_NODE_ROLE_BINDING, uid, resource_version)
+    remaining = unsafe_node_role_bindings()
+    if remaining:
+        raise SystemExit(
+            "ERROR: unsafe bootstrap node role binding remains after deletion: "
+            f"{unsafe_binding_names(remaining)}"
+        )
 
 
 def generate_bootstrap_token(args: argparse.Namespace) -> str:
     require_command("kubectl")
+
+    # Do not silently break old agents by deleting their binding while rendering
+    # a config, and never mint another broadly privileged token. Migration is an
+    # explicit setup-node-rbac action after existing agents have been upgraded.
+    require_legacy_node_role_binding_absent()
+    log_info("creating bootstrap token")
 
     token_id = secrets.token_hex(3)
     token_secret = secrets.token_hex(8)
@@ -177,7 +611,6 @@ def render_config(args: argparse.Namespace, mode: str, metadata: dict[str, str])
 
     if mode == "bootstrap-token":
         load_admin_kubeconfig(args)
-        log_info("creating bootstrap token")
         token = generate_bootstrap_token(args)
         server_url = run(
             ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"],
@@ -258,8 +691,16 @@ def build_parser() -> argparse.ArgumentParser:
         subparser.add_argument("--cluster-name", required=True)
         subparser.add_argument("--subscription")
 
-    rbac = subparsers.add_parser("setup-node-rbac", help="Apply node bootstrap RBAC bindings.")
+    rbac = subparsers.add_parser("setup-node-rbac", help="Reconcile node bootstrap RBAC bindings.")
     add_cluster_args(rbac)
+    rbac.add_argument(
+        "--remove-legacy-node-role-binding",
+        action="store_true",
+        help=(
+            "Remove the canonical obsolete aks-flex-node-role binding after existing agents "
+            "have issued daemon certificates and remain healthy after restart."
+        ),
+    )
     rbac.set_defaults(func=setup_node_rbac)
 
     generate = subparsers.add_parser("generate-node-config", help="Render a Flex Node config.")
@@ -280,48 +721,6 @@ def build_parser() -> argparse.ArgumentParser:
     generate.set_defaults(func=generate_node_config)
 
     return parser
-
-
-RBAC_MANIFEST = """
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aks-flex-node-bootstrapper
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:node-bootstrapper
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:bootstrappers:aks-flex-node
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aks-flex-node-auto-approve-csr
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:bootstrappers:aks-flex-node
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aks-flex-node-role
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:node
-subjects:
-- apiGroup: rbac.authorization.k8s.io
-  kind: Group
-  name: system:bootstrappers:aks-flex-node
-""".lstrip()
 
 
 def main() -> None:

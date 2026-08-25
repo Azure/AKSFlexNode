@@ -9,7 +9,7 @@ The helper does not install anything on the target host. It uses Azure CLI and, 
 - Azure CLI authenticated to the subscription that contains the AKS cluster.
 - `python3` on the workstation.
 - `kubectl` on the workstation for `setup-node-rbac` and `--bootstrap-token` config generation.
-- Permission to run `az aks get-credentials --admin` and create Kubernetes `ClusterRoleBinding` and bootstrap token `Secret` objects.
+- Permission to run `az aks get-credentials --admin`, create Kubernetes `ClusterRoleBinding` and bootstrap token `Secret` objects, and remove the obsolete `aks-flex-node-role` binding when present.
 
 ## Save The Helper
 
@@ -46,7 +46,53 @@ Run this once per cluster for bootstrap-token joins:
   --subscription "$SUBSCRIPTION_ID"
 ```
 
-This applies the bootstrap-related `ClusterRoleBinding` objects for the `system:bootstrappers:aks-flex-node` group.
+This applies only the CSR creation and approval `ClusterRoleBinding` objects for the `system:bootstrappers:aks-flex-node` group. If any binding still grants that group the obsolete `system:node` role, the command stops after applying the safe bindings and explains how to migrate. It does not silently remove the binding because older and development-mode agents may still use their bootstrap token after joining.
+
+`v0.1.1` introduced a separate daemon client certificate, but the version alone does not prove that certificate was issued successfully. Upgrade every bootstrap-token agent to `v0.1.1` or later (preferably the latest release), and on every host verify that the certificate exists, is unexpired, and the agent remains healthy after a restart:
+
+```bash
+sudo test -s /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem
+sudo openssl x509 \
+  -in /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem \
+  -noout -subject -enddate -checkend 0
+sudo systemctl restart aks-flex-node-agent.service
+sudo systemctl is-active aks-flex-node-agent.service
+```
+
+Then explicitly remove the obsolete binding:
+
+```bash
+./aks-flex-config setup-node-rbac \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID" \
+  --remove-legacy-node-role-binding
+```
+
+This migration is idempotent. It automatically deletes only the canonical `aks-flex-node-role` object created by older helpers. If another binding grants the same unsafe edge, or that object has extra subjects, the helper refuses to guess and identifies the objects for manual review. Bootstrap-token config generation refuses to create a token while any such binding exists, rather than either issuing an over-privileged token or unexpectedly breaking an old daemon.
+
+To verify no binding still grants the bootstrap group `system:node`, run:
+
+```bash
+kubectl get clusterrolebinding -o json | jq -r '
+  .items[]
+  | select(.roleRef.kind == "ClusterRole" and .roleRef.name == "system:node")
+  | .metadata.name as $binding
+  | .subjects[]?
+  | select(.kind == "Group" and .name == "system:bootstrappers:aks-flex-node")
+  | $binding'
+```
+
+The expected result is no output. The canonical `aks-flex-node-role` object is
+deleted; a safe, repurposed object with that name is preserved. Once certificate
+issuance has been verified, both the kubelet and long-running Flex daemon use
+issued client certificates, so removing the unsafe binding does not interrupt
+joined nodes. New and in-progress joins retain the CSR permissions installed
+above.
+
+Do not roll back a migrated host to an older or development-mode agent that still uses the bootstrap token for ordinary Kubernetes API requests. After this binding is removed, those requests correctly receive `403 Forbidden`. Restore a supported certificate-using agent instead of restoring the broad binding.
+
+Finally, delete bootstrap-token Secrets that are no longer needed. In particular, tokens made by helpers before `v0.1.1` had no expiration. Removing the broad binding limits them to bootstrap permissions, but does not revoke them; do not delete a token that is still being used by an in-progress join.
 
 ## Generate Node Config
 
