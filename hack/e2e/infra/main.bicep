@@ -52,6 +52,7 @@ var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
 var arcVmName     = 'vm-e2e-arc-${nameSuffix}'
 var vnetName      = 'vnet-e2e-${nameSuffix}'
 var nsgName       = 'nsg-e2e-${nameSuffix}'
+var nodeResourceGroupName = 'MC_aksflex-e2e-${nameSuffix}'
 
 var subnetAksName = 'snet-aks'
 var subnetVmName  = 'snet-vm'
@@ -125,6 +126,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
   }
   properties: {
     dnsPrefix: clusterName
+    nodeResourceGroup: nodeResourceGroupName
     kubernetesVersion: kubernetesVersion
     enableRBAC: true
     aadProfile: {
@@ -167,7 +169,7 @@ resource flexAgentPool 'Microsoft.ContainerService/managedClusters/agentPools@20
 // Flex-node VMs (via reusable module)
 // ---------------------------------------------------------------------------
 module vmMsi 'modules/vm.bicep' = {
-  name: 'deploy-vm-msi'
+  name: 'deploy-vm-msi-${nameSuffix}'
   params: {
     location: location
     vmName: msiVmName
@@ -181,7 +183,7 @@ module vmMsi 'modules/vm.bicep' = {
 }
 
 module vmToken 'modules/vm.bicep' = {
-  name: 'deploy-vm-token'
+  name: 'deploy-vm-token-${nameSuffix}'
   params: {
     location: location
     vmName: tokenVmName
@@ -197,7 +199,7 @@ module vmToken 'modules/vm.bicep' = {
 }
 
 module vmOffline 'modules/vm.bicep' = {
-  name: 'deploy-vm-offline'
+  name: 'deploy-vm-offline-${nameSuffix}'
   params: {
     location: location
     vmName: offlineVmName
@@ -211,7 +213,7 @@ module vmOffline 'modules/vm.bicep' = {
 }
 
 module vmKubeadm 'modules/vm.bicep' = {
-  name: 'deploy-vm-kubeadm'
+  name: 'deploy-vm-kubeadm-${nameSuffix}'
   params: {
     location: location
     vmName: kubeadmVmName
@@ -228,7 +230,7 @@ module vmKubeadm 'modules/vm.bicep' = {
 // an official Arc evaluation host by disabling walinuxagent, blocking Azure
 // IMDS, and setting MSFT_ARC_TEST before installing the Connected Machine agent.
 module vmArc 'modules/vm.bicep' = {
-  name: 'deploy-vm-arc'
+  name: 'deploy-vm-arc-${nameSuffix}'
   params: {
     location: location
     vmName: arcVmName

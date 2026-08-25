@@ -9,6 +9,11 @@ name: E2E Tests
 on:
   workflow_dispatch:
     inputs:
+      kubernetes_version:
+        description: "Exact AKS/Flex Node Kubernetes patch version (for example, 1.34.9)"
+        required: false
+        default: "1.35.0"
+        type: string
       skip_cleanup:
         description: "Skip cleanup (keep resources for debugging)"
         required: false
@@ -56,7 +61,9 @@ env:
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   GITHUB_RUN_ID: ${{ github.run_id }}
-  E2E_WORK_DIR: /tmp/aks-flex-node-e2e-${{ github.run_id }}
+  E2E_NAME_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
+  E2E_WORK_DIR: /tmp/aks-flex-node-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+  E2E_KUBERNETES_VERSION: ${{ inputs.kubernetes_version || '1.35.0' }}
 
 jobs:
   e2e:
@@ -105,16 +112,59 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: e2e-logs-${{ github.run_id }}
-          path: /tmp/aks-flex-node-e2e-${{ github.run_id }}/logs/
+          name: e2e-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/aks-flex-node-e2e-${{ github.run_id }}-${{ github.run_attempt }}/logs/
           retention-days: 7
 
       - name: Cleanup
+        id: cleanup
         if: always()
         env:
           E2E_SKIP_CLEANUP: ${{ inputs.skip_cleanup && '1' || '0' }}
         run: ./hack/e2e/run.sh cleanup
 
-      - name: Cleanup runner workspace
+      - name: Prepare cleanup diagnostics
         if: always()
+        run: |
+          set -euo pipefail
+          umask 077
+          state_file="${E2E_WORK_DIR}/state.json"
+          artifact_file="${E2E_WORK_DIR}/cleanup-state.json"
+          [[ -f "${state_file}" ]] || exit 0
+          # Keep the resource names needed for investigation without publishing
+          # secret-sourced account identifiers, addresses, or cluster access data.
+          jq '{
+            lifecycle,
+            cleanup_complete,
+            deployment_name,
+            run_id,
+            resource_owner,
+            name_suffix,
+            cluster_name,
+            node_resource_group,
+            msi_vm_name,
+            token_vm_name,
+            offline_vm_name,
+            kubeadm_vm_name,
+            arc_vm_name,
+            arc_machine_name,
+            vnet_name,
+            nsg_name
+          } | with_entries(select(.value != null and .value != ""))' \
+            "${state_file}" > "${artifact_file}"
+          chmod 0600 "${artifact_file}"
+
+      - name: Upload cleanup diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-cleanup-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/aks-flex-node-e2e-${{ github.run_id }}-${{ github.run_attempt }}/cleanup-state.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cleanup runner workspace
+        # Preserve retry metadata when Azure cleanup fails or is deliberately
+        # skipped. A later successful run must not delete another attempt's state.
+        if: always() && steps.cleanup.outcome == 'success' && inputs.skip_cleanup != true
         run: ./hack/e2e/run.sh runner-cleanup

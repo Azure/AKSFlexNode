@@ -120,12 +120,19 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
         version: imageVersion
       }
       osDisk: {
+        name: '${vmName}-osdisk'
         createOption: 'FromImage'
+        deleteOption: 'Delete'
         managedDisk: { storageAccountType: 'StandardSSD_LRS' }
       }
     }
     networkProfile: {
-      networkInterfaces: [ { id: nic.id } ]
+      networkInterfaces: [
+        {
+          id: nic.id
+          properties: { deleteOption: 'Delete' }
+        }
+      ]
     }
   }
 }
