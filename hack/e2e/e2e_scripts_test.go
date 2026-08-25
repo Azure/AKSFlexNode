@@ -13,7 +13,7 @@ import (
 
 // Embedding the scripts makes Go's test cache invalidate on shell-only changes.
 //
-//go:embed run.sh lib/common.sh lib/cleanup.sh lib/controller.sh lib/node-join-arc.sh lib/runner.sh infra/*.bicep infra/modules/*.bicep
+//go:embed run.sh lib/bootstrap-rbac-migration.sh lib/common.sh lib/cleanup.sh lib/controller.sh lib/node-join-arc.sh lib/runner.sh infra/*.bicep infra/modules/*.bicep
 var e2eScripts embed.FS
 
 func TestRunnerCleanupIsScopedToCurrentAttempt(t *testing.T) {
@@ -1581,6 +1581,79 @@ func TestCleanupQueryFailureDoesNotDeleteResources(t *testing.T) {
 	}
 }
 
+func TestHistoricalCertificateProbeUsesPrivilegedTemporaryFile(t *testing.T) {
+	t.Parallel()
+
+	script, err := e2eScripts.ReadFile("lib/bootstrap-rbac-migration.sh")
+	if err != nil {
+		t.Fatalf("read embedded migration script: %v", err)
+	}
+	for _, required := range []string{
+		`ca_file="$(sudo mktemp)"`,
+		`sudo python3 <<'PY' | sudo tee "${ca_file}" >/dev/null`,
+		`trap 'sudo rm -f "${ca_file}"' EXIT`,
+	} {
+		if !strings.Contains(string(script), required) {
+			t.Fatalf("migration certificate probe is missing %q", required)
+		}
+	}
+}
+
+func TestHistoricalMigrationReissuesDaemonCertificateBeforeTokenRevocation(t *testing.T) {
+	t.Parallel()
+
+	script, err := e2eScripts.ReadFile("lib/bootstrap-rbac-migration.sh")
+	if err != nil {
+		t.Fatalf("read embedded migration script: %v", err)
+	}
+	text := string(script)
+	for _, required := range []string{
+		`old_fingerprint="$(openssl x509 -in "${credential_path}" -outform DER`,
+		`rm -rf -- "${credential_dir}"`,
+		`new_fingerprint="$(openssl x509 -in "${credential_path}" -outform DER`,
+		`_require_daemon_certificate_access "${vm_ip}" "${server_url}"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("historical migration is missing certificate reissuance check %q", required)
+		}
+	}
+
+	migrationIndex := strings.LastIndex(text, `    --remove-legacy-node-role-binding`)
+	reissueIndex := strings.LastIndex(text, `  _reissue_daemon_certificate_after_migration "${vm_ip}" "${server_url}"`)
+	revokeIndex := strings.LastIndex(text, `  with_cluster_lock _revoke_historical_bootstrap_token "${config_file}"`)
+	if migrationIndex < 0 || reissueIndex <= migrationIndex || revokeIndex <= reissueIndex {
+		t.Fatalf("certificate reissuance must run after RBAC migration and before token revocation")
+	}
+}
+
+func TestHistoricalTokenRevocationPropagatesDeleteFailure(t *testing.T) {
+	t.Parallel()
+
+	script, err := e2eScripts.ReadFile("lib/bootstrap-rbac-migration.sh")
+	if err != nil {
+		t.Fatalf("read embedded migration script: %v", err)
+	}
+	text := string(script)
+	start := strings.Index(text, "_revoke_historical_bootstrap_token() {")
+	if start < 0 {
+		t.Fatal("historical token revocation helper is absent")
+	}
+	end := strings.Index(text[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("historical token revocation helper is malformed")
+	}
+	body := text[start : start+end]
+	for _, required := range []string{
+		`if ! kubectl delete secret "bootstrap-token-${token_id}" -n kube-system; then`,
+		`log_error "Failed to revoke the historical bootstrap token"`,
+		`return 1`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("historical token revocation does not fail closed on delete errors; missing %q", required)
+		}
+	}
+}
+
 type cleanupOptions struct {
 	runTwice                  bool
 	leaveCluster              bool
@@ -1825,7 +1898,7 @@ func boolString(value bool) string {
 func e2eScriptPath(t *testing.T, elements ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range []string{"common.sh", "cleanup.sh", "controller.sh", "node-join-arc.sh", "runner.sh"} {
+	for _, name := range []string{"bootstrap-rbac-migration.sh", "common.sh", "cleanup.sh", "controller.sh", "node-join-arc.sh", "runner.sh"} {
 		contents, err := e2eScripts.ReadFile(filepath.ToSlash(filepath.Join("lib", name)))
 		if err != nil {
 			t.Fatalf("read embedded %s: %v", name, err)

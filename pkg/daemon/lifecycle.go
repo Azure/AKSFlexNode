@@ -173,6 +173,11 @@ func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agent
 		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
 			return fmt.Errorf("write %s: %w", asset.path, err)
 		}
+		// Atomic replacement preserves an existing file's mode and applies the
+		// process umask to new files, so reconcile the declared service-asset mode.
+		if err := os.Chmod(asset.path, asset.mode); err != nil {
+			return fmt.Errorf("set permissions on %s: %w", asset.path, err)
+		}
 	}
 	return nil
 }

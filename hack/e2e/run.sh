@@ -24,6 +24,7 @@
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
+#   historical-rbac-migration Build a real v0.1.0 node, upgrade it, and migrate RBAC
 #   nspawn-lifecycle Validate generated lifecycle hooks and restart reconciliation
 #   agent-upgrade Validate managed binary upgrade, rollback, and retry
 #   upgrade-drift Run controller-machine Kubernetes version drift repave test
@@ -106,6 +107,8 @@ source "${SCRIPT_DIR}/lib/node-join.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/validate.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/bootstrap-rbac-migration.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/nspawn-lifecycle.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
@@ -136,7 +139,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|historical-rbac-migration|infra|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -236,6 +239,29 @@ cmd_all() {
 }
 
 # ---------------------------------------------------------------------------
+# Command: historical-rbac-migration
+# ---------------------------------------------------------------------------
+cmd_historical_rbac_migration() {
+  log_section "AKS Flex Node Historical RBAC Migration E2E"
+
+  if [[ "${SKIP_BUILD}" != "1" ]]; then
+    ensure_binary
+  elif [[ -z "${E2E_BINARY:-}" || ! -f "${E2E_BINARY:-}" ]]; then
+    log_error "--skip-build requires --binary <path> or E2E_BINARY set to an existing file"
+    return 1
+  else
+    log_info "Skipping build, using: ${E2E_BINARY}"
+  fi
+
+  # This suite intentionally uses only the token VM. It does not call the
+  # parallel all-node join path, so an unrelated Arc failure cannot mask the
+  # historical compatibility result.
+  infra_deploy
+  ensure_cluster_dependencies
+  historical_rbac_migration_e2e
+}
+
+# ---------------------------------------------------------------------------
 # Command: status
 # ---------------------------------------------------------------------------
 cmd_status() {
@@ -261,7 +287,7 @@ main() {
   init_work_dir
 
   case "${COMMAND}" in
-    all|infra)
+    all|historical-rbac-migration|infra)
       require_exact_kubernetes_version
       ;;
     join|join-msi|join-token|join-offline|join-kubeadm|join-arc|upgrade-drift)
@@ -280,6 +306,9 @@ main() {
   case "${COMMAND}" in
     all)
       cmd_all
+      ;;
+    historical-rbac-migration)
+      cmd_historical_rbac_migration
       ;;
     infra)
       if [[ "${SKIP_BUILD}" != "1" ]]; then
