@@ -1592,6 +1592,8 @@ func TestHistoricalCertificateProbeUsesPrivilegedTemporaryFile(t *testing.T) {
 		`ca_file="$(sudo mktemp)"`,
 		`sudo python3 <<'PY' | sudo tee "${ca_file}" >/dev/null`,
 		`trap 'sudo rm -f "${ca_file}"' EXIT`,
+		`configured = json.load(stream).get('agent', {}).get('nodeName', '')`,
+		`"${SERVER_URL}/api/v1/nodes/${node_name}"`,
 	} {
 		if !strings.Contains(string(script), required) {
 			t.Fatalf("migration certificate probe is missing %q", required)

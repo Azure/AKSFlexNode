@@ -502,15 +502,31 @@ with open('/etc/aks-flex-node/config.json', encoding='utf-8') as stream:
     ca_data = json.load(stream)['node']['kubelet']['caCertData']
 sys.stdout.buffer.write(base64.b64decode(ca_data, validate=True))
 PY
+# Match the agent's resolved identity and avoid depending on feature-specific
+# cluster-wide Node list permission for this baseline certificate check.
+node_name="$(sudo python3 <<'PY'
+import json
+import socket
+
+with open('/etc/aks-flex-node/config.json', encoding='utf-8') as stream:
+    configured = json.load(stream).get('agent', {}).get('nodeName', '')
+node_name = configured.strip() if isinstance(configured, str) else ''
+print(node_name or socket.gethostname().strip().lower())
+PY
+)"
+if [[ -z "${node_name}" ]]; then
+  echo "could not resolve the daemon Node name" >&2
+  exit 1
+fi
 status="$(sudo curl --silent --show-error \
   --cert "${DAEMON_CREDENTIAL_PATH}" \
   --key "${DAEMON_CREDENTIAL_PATH}" \
   --cacert "${ca_file}" \
   --output /dev/null \
   --write-out '%{http_code}' \
-  "${SERVER_URL}/api/v1/nodes?limit=1")"
+  "${SERVER_URL}/api/v1/nodes/${node_name}")"
 if [[ "${status}" != "200" ]]; then
-  echo "daemon client certificate LIST nodes returned HTTP ${status}, want 200" >&2
+  echo "daemon client certificate GET Node ${node_name} returned HTTP ${status}, want 200" >&2
   exit 1
 fi
 REMOTE
