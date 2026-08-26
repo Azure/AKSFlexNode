@@ -18,7 +18,7 @@ env:
 
 jobs:
   build:
-    name: Build and Release
+    name: Build ${{ matrix.binary_name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -26,9 +26,33 @@ jobs:
           - os: linux
             arch: amd64
             goarch: amd64
+            binary_name: aks-flex-node-linux-amd64
+            target: ./cmd/aks-flex-node
+            package: tar.gz
           - os: linux
             arch: arm64
             goarch: arm64
+            binary_name: aks-flex-node-linux-arm64
+            target: ./cmd/aks-flex-node
+            package: tar.gz
+          - os: windows
+            arch: amd64
+            goarch: amd64
+            binary_name: aks-flex-config-windows-amd64.exe
+            target: ./cmd/aks-flex-config
+            package: raw
+          - os: darwin
+            arch: amd64
+            goarch: amd64
+            binary_name: aks-flex-config-darwin-amd64
+            target: ./cmd/aks-flex-config
+            package: raw
+          - os: darwin
+            arch: arm64
+            goarch: arm64
+            binary_name: aks-flex-config-darwin-arm64
+            target: ./cmd/aks-flex-config
+            package: raw
 
     steps:
       - name: Checkout code
@@ -55,6 +79,9 @@ jobs:
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.goarch }}
+          BINARY_NAME: ${{ matrix.binary_name }}
+          TARGET: ${{ matrix.target }}
+          PACKAGE: ${{ matrix.package }}
         run: |
           set -euo pipefail
           GIT_COMMIT=$(git rev-parse --short HEAD)
@@ -62,18 +89,20 @@ jobs:
 
           LDFLAGS="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${RELEASE_VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_DATE} -w -s"
 
-          BINARY_NAME="aks-flex-node-${GOOS}-${GOARCH}"
 
-          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/aks-flex-node
+          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" "${TARGET}"
 
-          # Create tarball
-          tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"
-          echo "ASSET=${BINARY_NAME}.tar.gz" >> "$GITHUB_ENV"
+          if [[ "${PACKAGE}" == "tar.gz" ]]; then
+            tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"
+            echo "ASSET=${BINARY_NAME}.tar.gz" >> "$GITHUB_ENV"
+          else
+            echo "ASSET=${BINARY_NAME}" >> "$GITHUB_ENV"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: binaries-${{ matrix.os }}-${{ matrix.arch }}
+          name: binaries-${{ matrix.binary_name }}
           path: ${{ env.ASSET }}
 
   release:
@@ -99,19 +128,19 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: binaries-*
+          pattern: "*"
           path: ./artifacts
 
       - name: Consolidate artifacts
         run: |
           mkdir -p release-assets
-          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -type f -name "aks-flex-*" -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum *.tar.gz > checksums.txt
+          sha256sum aks-flex-* > checksums.txt
           cat checksums.txt
 
       - name: Create Release
@@ -135,11 +164,19 @@ jobs:
           3. Move the binary to your PATH: \`sudo mv aks-flex-node-* /usr/local/bin/aks-flex-node\`
           4. Make it executable: \`sudo chmod +x /usr/local/bin/aks-flex-node\`
 
-          ### Supported Platforms
+          **Windows workstation config helper:**
+          Download \`aks-flex-config-windows-amd64.exe\` and run it from PowerShell to prepare the cluster and generate the node configuration.
+
+          **macOS workstation config helper:**
+          Download \`aks-flex-config-darwin-amd64\` for Intel Macs or \`aks-flex-config-darwin-arm64\` for Apple Silicon, make it executable, and run it from a terminal.
+
+          ### Supported Node Platforms
 
           - **Ubuntu 22.04 LTS (AMD64)**: \`aks-flex-node-linux-amd64.tar.gz\`
           - **Ubuntu 22.04 LTS (ARM64)**: \`aks-flex-node-linux-arm64.tar.gz\`
           - **Ubuntu 24.04 LTS**: Compatible with AMD64 and ARM64 binaries above
+
+          The config-helper assets support Windows AMD64 and macOS AMD64/ARM64 workstations. The Flex Node machine itself must run a supported Linux distribution.
 
           ### Verification
 
@@ -156,7 +193,7 @@ jobs:
           fi
 
           gh release create "${RELEASE_VERSION}" \
-            release-assets/*.tar.gz \
+            release-assets/aks-flex-* \
             release-assets/checksums.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Release ${RELEASE_VERSION}" \

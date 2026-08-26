@@ -30,7 +30,7 @@ This quickstart involves two machines. Keep them distinct:
 Before you begin, make sure you have:
 
 - An Azure subscription. [Create one for free](https://azure.microsoft.com/free/).
-- **Your workstation**, with the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), `kubectl`, `curl`, and `python3` installed. Sign in with `az login`, then `az account set --subscription "<subscription-id>"`.
+- **Your workstation**, with the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) and `kubectl` installed. Linux workstations need `curl` and `python3` for the script-based helper. macOS can use either the native release binary or the Python helper. Windows workstations need PowerShell and the OpenSSH client for `ssh` and `scp`. Sign in with `az login`, then `az account set --subscription "<subscription-id>"`.
 - **An existing AKS cluster** with a Linux node pool. Azure CNI is recommended so pods are reachable across your network, and you need permission to configure RBAC on the cluster. If you don't have a cluster yet, see [create an AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli).
 - **A Flex Node machine you own**: an on-premises physical server or a virtual machine to join as the worker node. It must:
   - run `systemd` and allow root installation,
@@ -74,6 +74,26 @@ az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME"
 kubectl get nodes
 ```
 
+<details>
+<summary>Windows workstation (PowerShell)</summary>
+
+```powershell
+$SubscriptionId = "<subscription-id>"
+$ResourceGroup = "<resource-group-of-your-aks-cluster>"
+$ClusterName = "<cluster-name>"
+$AgentPoolName = "aksflexnodes"
+
+# Your Flex Node machine, as an SSH target (for example: azureuser@203.0.113.10)
+$TargetHost = "<user>@<flex-node-machine-ip-or-hostname>"
+
+az login
+az account set --subscription $SubscriptionId
+az aks get-credentials --resource-group $ResourceGroup --name $ClusterName
+kubectl get nodes
+```
+
+</details>
+
 You should see your existing cluster nodes in `Ready` state.
 
 ### Step 2: Generate the join configuration
@@ -99,6 +119,68 @@ chmod +x ./aks-flex-config
   --bootstrap-token \
   --output ./aks-flex-node-config.json
 ```
+
+<details>
+<summary>macOS workstation (native binary)</summary>
+
+Download the helper for Intel or Apple Silicon from a tagged release, then generate the config with the same arguments:
+
+```bash
+export AKS_FLEX_NODE_VERSION="<release-tag>"
+case "$(uname -m)" in
+  x86_64) CONFIG_ARCH="amd64" ;;
+  arm64) CONFIG_ARCH="arm64" ;;
+  *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+curl -fL -o ./aks-flex-config \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/aks-flex-config-darwin-${CONFIG_ARCH}"
+chmod +x ./aks-flex-config
+
+./aks-flex-config setup-node-rbac \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID"
+
+./aks-flex-config generate-node-config \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$CLUSTER_NAME" \
+  --subscription "$SUBSCRIPTION_ID" \
+  --agent-pool-name "$AGENT_POOL_NAME" \
+  --bootstrap-token \
+  --output ./aks-flex-node-config.json
+```
+
+</details>
+
+<details>
+<summary>Windows workstation (PowerShell)</summary>
+
+Download the helper from a tagged release, apply the RBAC bindings, and generate the config:
+
+```powershell
+$AksFlexNodeVersion = "<release-tag>"
+$Binary = "aks-flex-config-windows-amd64.exe"
+$DownloadUrl = "https://github.com/Azure/AKSFlexNode/releases/download/$AksFlexNodeVersion/$Binary"
+
+Invoke-WebRequest -Uri $DownloadUrl -OutFile $Binary
+$AksFlexConfig = ".\$Binary"
+
+& $AksFlexConfig setup-node-rbac `
+  --resource-group $ResourceGroup `
+  --cluster-name $ClusterName `
+  --subscription $SubscriptionId
+
+& $AksFlexConfig generate-node-config `
+  --resource-group $ResourceGroup `
+  --cluster-name $ClusterName `
+  --subscription $SubscriptionId `
+  --agent-pool-name $AgentPoolName `
+  --bootstrap-token `
+  --output .\aks-flex-node-config.json
+```
+
+</details>
 
 This produces `aks-flex-node-config.json` in your current folder. `generate-node-config` supports one of the following auth modes: `--bootstrap-token`, `--identity`, `--service-principal --username <client-id> --password <client-secret>`, or `--arc`. This quickstart uses `--bootstrap-token`.
 
@@ -150,6 +232,15 @@ The rendered config should look like this. Comments are shown here only to expla
 scp ./aks-flex-node-config.json "$TARGET_HOST:/tmp/aks-flex-node-config.json"
 ```
 
+<details>
+<summary>Windows workstation (PowerShell)</summary>
+
+```powershell
+scp .\aks-flex-node-config.json "${TargetHost}:/tmp/aks-flex-node-config.json"
+```
+
+</details>
+
 > **Note**
 > The config is staged in `/tmp` because your SSH user cannot write to root-owned `/etc`, and `/etc/aks-flex-node` does not exist yet. The next step creates that directory and installs the file as root with owner-only `0600` permissions.
 
@@ -162,6 +253,15 @@ First, from your workstation, open an SSH session on the Flex Node machine.
 ```bash
 ssh "$TARGET_HOST"
 ```
+
+<details>
+<summary>Windows workstation (PowerShell)</summary>
+
+```powershell
+ssh $TargetHost
+```
+
+</details>
 
 You are now connected to the Flex Node machine. Install the agent and move the generated config into place, as root.
 
@@ -236,6 +336,15 @@ When you are finished, press `Ctrl+C` to stop following the logs, then run `exit
 kubectl get nodes -o wide
 ```
 
+<details>
+<summary>Windows workstation (PowerShell)</summary>
+
+```powershell
+kubectl get nodes -o wide
+```
+
+</details>
+
 Example output:
 
 ```text
@@ -250,6 +359,17 @@ kubectl run hello --image=mcr.microsoft.com/azuredocs/aks-helloworld:v1 \
   --overrides='{"spec":{"nodeName":"<node-name>"}}'
 kubectl get pod hello -o wide
 ```
+
+<details>
+<summary>Windows workstation (PowerShell)</summary>
+
+```powershell
+kubectl run hello --image=mcr.microsoft.com/azuredocs/aks-helloworld:v1 `
+  --overrides='{"spec":{"nodeName":"<node-name>"}}'
+kubectl get pod hello -o wide
+```
+
+</details>
 
 <details>
 <summary>Inspect the nspawn worker (optional)</summary>
@@ -274,6 +394,8 @@ Remove the test workload from your workstation:
 ```bash
 kubectl delete pod hello --ignore-not-found
 ```
+
+This cleanup command works unchanged in PowerShell.
 
 <details>
 <summary>Reset And Uninstall</summary>
