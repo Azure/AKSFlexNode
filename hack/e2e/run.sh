@@ -7,8 +7,9 @@
 #
 # Commands:
 #   all           Run the full E2E flow (default): build, infra, CNI, controller,
-#                 join, validate, unjoin, validate-absent, rejoin, validate, cleanup
+#                 ARM registration, join, validate, unjoin, rejoin, cleanup
 #   infra         Deploy infrastructure, CNI, and controller (AKS + 5 VMs)
+#   arm-registration Validate MSI-based registration through the ARM Machine API
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
 #   join-token    Join only the token node
@@ -60,6 +61,7 @@
 #   E2E_CONTAINERD_VERSION  Containerd version (default: 2.0.4)
 #   E2E_RUNC_VERSION        Runc version (default: 1.1.12)
 #   E2E_TARGET_AGENT_POOL_NAME Target AKS agent pool name (default: aksflexnodes)
+#   E2E_ARM_MACHINE_API_VERSION ARM API version for Machine verification
 #   AZURE_SUBSCRIPTION_ID   Azure subscription (auto-detected if not set)
 #   AZURE_TENANT_ID         Azure tenant (auto-detected if not set)
 #
@@ -106,6 +108,8 @@ source "${SCRIPT_DIR}/lib/node-join.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/validate.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/arm-machine-registration.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/nspawn-lifecycle.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
@@ -136,7 +140,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|infra|arm-registration|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -184,6 +188,9 @@ cmd_all() {
   # Infrastructure, CNI, and in-cluster machine endpoint
   infra_deploy
   ensure_cluster_dependencies
+
+  # ── Real ARM Machine registration ───────────────────────────────────
+  arm_machine_registration_e2e
 
   # ── First join ──────────────────────────────────────────────────────
   node_join_all
@@ -273,6 +280,11 @@ main() {
       fi
       infra_deploy
       ensure_cluster_dependencies
+      ;;
+    arm-registration)
+      ensure_binary
+      ensure_unbounded_net
+      arm_machine_registration_e2e
       ;;
     join)
       ensure_binary
