@@ -739,6 +739,7 @@ func TestSetupNodeRBACRefusesAmbiguousUnsafeBindings(t *testing.T) {
 		{name: "canonical name with additional subject", state: "customized"},
 		{name: "unexpected binding name", state: "renamed"},
 		{name: "namespaced role binding", state: "namespaced"},
+		{name: "default bootstrap token group", state: "default-bootstrap-group"},
 		{name: "owner-managed canonical binding", state: "owned"},
 		{name: "finalized canonical binding", state: "finalized"},
 		{name: "terminating canonical binding", state: "terminating"},
@@ -815,6 +816,22 @@ func TestSetupNodeRBACPreservesSameNamedNonLegacyBinding(t *testing.T) {
 	}
 }
 
+func TestSetupNodeRBACIgnoresUnrelatedBootstrapSubgroup(t *testing.T) {
+	t.Parallel()
+
+	harness := newConfigScriptHarness(t, false, 0)
+	if err := os.WriteFile(harness.legacyState, []byte("unrelated-bootstrap-subgroup\n"), 0o600); err != nil {
+		t.Fatalf("write fake legacy state: %v", err)
+	}
+	output, err := harness.runSetupNodeRBAC(false)
+	if err != nil {
+		t.Fatalf("setup-node-rbac rejected an unrelated bootstrap subgroup: %v\n%s", err, output)
+	}
+	if _, deleteIndexes := kubectlOperationIndexes(readCommandCalls(t, harness.commandLogPath)); len(deleteIndexes) != 0 {
+		t.Fatal("unrelated bootstrap subgroup binding was deleted")
+	}
+}
+
 func TestGenerateBootstrapTokenRequiresCompletedLegacyMigration(t *testing.T) {
 	t.Parallel()
 
@@ -880,24 +897,38 @@ func TestGenerateBootstrapTokenRequiresCompletedLegacyMigration(t *testing.T) {
 	}
 }
 
-func TestGenerateBootstrapTokenRejectsUnsafeNamespacedRoleBinding(t *testing.T) {
+func TestGenerateBootstrapTokenRejectsUnsafeBindings(t *testing.T) {
 	t.Parallel()
 
-	harness := newConfigScriptHarness(t, false, 0)
-	if err := os.WriteFile(harness.legacyState, []byte("namespaced\n"), 0o600); err != nil {
-		t.Fatalf("write fake legacy state: %v", err)
+	tests := []struct {
+		name        string
+		state       string
+		wantBinding string
+	}{
+		{name: "namespaced role binding", state: "namespaced", wantBinding: "RoleBinding/kube-system/legacy-node-access"},
+		{name: "default bootstrap token group", state: "default-bootstrap-group", wantBinding: "ClusterRoleBinding/all-bootstrap-node-role"},
 	}
-	output, err := harness.runGenerateNodeConfig()
-	if err == nil {
-		t.Fatalf("generate-node-config minted a token while an unsafe RoleBinding remained\n%s", output)
-	}
-	if !strings.Contains(output, "RoleBinding/kube-system/legacy-node-access") ||
-		!strings.Contains(output, "--remove-legacy-node-role-binding") {
-		t.Fatalf("failure did not identify the unsafe namespaced binding:\n%s", output)
-	}
-	applyIndexes, deleteIndexes := kubectlOperationIndexes(readCommandCalls(t, harness.commandLogPath))
-	if len(applyIndexes) != 0 || len(deleteIndexes) != 0 {
-		t.Fatal("unsafe namespaced binding check mutated cluster state")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			harness := newConfigScriptHarness(t, false, 0)
+			if err := os.WriteFile(harness.legacyState, []byte(test.state+"\n"), 0o600); err != nil {
+				t.Fatalf("write fake legacy state: %v", err)
+			}
+			output, err := harness.runGenerateNodeConfig()
+			if err == nil {
+				t.Fatalf("generate-node-config minted a token while an unsafe binding remained\n%s", output)
+			}
+			if !strings.Contains(output, test.wantBinding) ||
+				!strings.Contains(output, "--remove-legacy-node-role-binding") {
+				t.Fatalf("failure did not identify the unsafe binding:\n%s", output)
+			}
+			applyIndexes, deleteIndexes := kubectlOperationIndexes(readCommandCalls(t, harness.commandLogPath))
+			if len(applyIndexes) != 0 || len(deleteIndexes) != 0 {
+				t.Fatal("unsafe binding check mutated cluster state")
+			}
+		})
 	}
 }
 
@@ -956,7 +987,7 @@ func TestRepositoryDoesNotBindBootstrapGroupsToLegacyNodeRole(t *testing.T) {
 	sourceRoots := []string{"cmd", "hack", "pkg", "scripts"}
 	bindingPattern := regexp.MustCompile(`(?m)^[ \t]*kind:[ \t]*(?:ClusterRoleBinding|RoleBinding)[ \t]*$`)
 	legacyRolePattern := regexp.MustCompile(`(?m)^[ \t]*name:[ \t]*system:node[ \t]*$`)
-	bootstrapGroupPattern := regexp.MustCompile(`(?m)^[ \t]*name:[ \t]*system:bootstrappers:[^ \t\n]+[ \t]*$`)
+	bootstrapGroupPattern := regexp.MustCompile(`(?m)^[ \t]*name:[ \t]*system:bootstrappers(?::[^ \t\n]+)?[ \t]*$`)
 	documentSeparator := regexp.MustCompile(`(?m)^[ \t]*---[ \t]*$`)
 
 	for _, sourceRoot := range sourceRoots {
@@ -1794,17 +1825,29 @@ elif state == "customized":
             "name": "another-group",
         }],
     })
-elif state == "renamed":
+elif state in {"renamed", "default-bootstrap-group", "unrelated-bootstrap-subgroup"}:
+    binding_name = "custom-bootstrap-node-role"
+    group_name = "system:bootstrappers:aks-flex-node"
+    if state == "default-bootstrap-group":
+        binding_name = "all-bootstrap-node-role"
+        group_name = "system:bootstrappers"
+    elif state == "unrelated-bootstrap-subgroup":
+        binding_name = "unrelated-bootstrap-node-role"
+        group_name = "system:bootstrappers:unrelated"
     items.append({
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "ClusterRoleBinding",
-        "metadata": {"name": "custom-bootstrap-node-role", "uid": "renamed-uid", "resourceVersion": "9"},
+        "metadata": {"name": binding_name, "uid": "renamed-uid", "resourceVersion": "9"},
         "roleRef": {
             "apiGroup": "rbac.authorization.k8s.io",
             "kind": "ClusterRole",
             "name": "system:node",
         },
-        "subjects": [subject],
+        "subjects": [{
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Group",
+            "name": group_name,
+        }],
     })
 elif state == "safe-customized":
     items.append({

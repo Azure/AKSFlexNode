@@ -26,6 +26,7 @@ RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com"
 DEFAULT_AGENT_POOL_NAME = "aksflexnodes"
 RBAC_API_GROUP = "rbac.authorization.k8s.io"
 LEGACY_NODE_ROLE_BINDING = "aks-flex-node-role"
+BOOTSTRAP_DEFAULT_GROUP = "system:bootstrappers"
 FLEX_NODE_BOOTSTRAP_GROUP = "system:bootstrappers:aks-flex-node"
 RBAC_AUTOUPDATE_ANNOTATION = "rbac.authorization.kubernetes.io/autoupdate"
 KUBECTL_LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
@@ -276,7 +277,7 @@ def unsafe_node_role_bindings(bindings: list[dict[str, object]] | None = None) -
             isinstance(subject, dict)
             and subject.get("apiGroup") == RBAC_API_GROUP
             and subject.get("kind") == "Group"
-            and subject.get("name") == FLEX_NODE_BOOTSTRAP_GROUP
+            and subject.get("name") in (BOOTSTRAP_DEFAULT_GROUP, FLEX_NODE_BOOTSTRAP_GROUP)
             for subject in subjects
         ):
             unsafe.append(item)
@@ -339,8 +340,8 @@ def require_legacy_node_role_binding_absent(bindings: list[dict[str, object]] | 
         return
     raise SystemExit(
         "ERROR: RBAC binding(s) "
-        f"{unsafe_binding_names(bindings)} still grant {FLEX_NODE_BOOTSTRAP_GROUP!r} the "
-        "system:node role. Some older or development agents may still depend on that access. "
+        f"{unsafe_binding_names(bindings)} still grant a bootstrap-token group the system:node "
+        "role. Some older or development agents may still depend on that access. "
         "First upgrade them to a release with daemon client certificates (v0.1.1 or later), "
         "verify the running agent is stable and uses its issued daemon certificate for API access, "
         "then rerun setup-node-rbac with "
@@ -507,7 +508,7 @@ def remove_legacy_node_role_binding(bindings: list[dict[str, object]] | None = N
         raise SystemExit(
             "ERROR: refusing automatic removal because the unsafe RBAC binding set is not the "
             f"canonical ClusterRoleBinding {LEGACY_NODE_ROLE_BINDING!r}: "
-            f"{unsafe_binding_names(bindings)}. Review and remove only the bootstrap-group "
+            f"{unsafe_binding_names(bindings)}. Review and remove only the bootstrap-token-group "
             "subjects manually."
         )
 

@@ -46,7 +46,14 @@ Run this once per cluster for bootstrap-token joins:
   --subscription "$SUBSCRIPTION_ID"
 ```
 
-This applies only the CSR creation and approval `ClusterRoleBinding` objects for the `system:bootstrappers:aks-flex-node` group. If any binding still grants that group the obsolete `system:node` role, the command stops after applying the safe bindings and explains how to migrate. It does not silently remove the binding because older and development-mode agents may still use their bootstrap token after joining.
+This applies only the CSR creation and approval `ClusterRoleBinding` objects for
+the `system:bootstrappers:aks-flex-node` group. Kubernetes automatically places
+every bootstrap token in `system:bootstrappers`; the token's
+`auth-extra-groups` value adds the Flex-specific group. If any binding still
+grants either group the obsolete `system:node` role, the command stops after
+applying the safe bindings and explains how to migrate. It does not silently
+remove the binding because older and development-mode agents may still use
+their bootstrap token after joining.
 
 `v0.1.1` introduced a separate daemon client certificate. Before removing the
 legacy binding, upgrade every bootstrap-token agent to `v0.1.1` or later
@@ -177,11 +184,11 @@ lifecycle metadata, or custom labels or annotations. Any other unsafe
 `ClusterRoleBinding` is reported for manual review. A namespaced `RoleBinding`
 can also reference the `system:node` ClusterRole; the helper reports these but
 never deletes them automatically. Inspect its owners and other subjects, then
-remove only the unsafe bootstrap-group edge through the owning deployment or a
-careful manual edit. Bootstrap-token config generation refuses to create a
+remove only the unsafe bootstrap-token-group edge through the owning deployment
+or a careful manual edit. Bootstrap-token config generation refuses to create a
 token while any direct unsafe binding remains.
 
-To verify no binding still grants the bootstrap group `system:node`, run:
+To verify neither bootstrap-token group is still bound to `system:node`, run:
 
 ```bash
 kubectl get clusterrolebindings,rolebindings --all-namespaces -o json | jq -r '
@@ -196,7 +203,10 @@ kubectl get clusterrolebindings,rolebindings --all-namespaces -o json | jq -r '
       | select(
           .apiGroup == "rbac.authorization.k8s.io"
           and .kind == "Group"
-          and .name == "system:bootstrappers:aks-flex-node"
+          and (
+            .name == "system:bootstrappers"
+            or .name == "system:bootstrappers:aks-flex-node"
+          )
         )
     ] | length > 0)
   | if .kind == "RoleBinding" then
@@ -207,11 +217,12 @@ kubectl get clusterrolebindings,rolebindings --all-namespaces -o json | jq -r '
 ```
 
 The expected result is no output. This is intentionally a narrow audit for a
-direct bootstrap-group-to-`system:node` binding. It is not a full effective
-authorization review and does not analyze aggregated or custom ClusterRoles or
-other indirect authorization paths. The canonical `aks-flex-node-role` object
-is deleted; a safe, repurposed object with that name is preserved. Once the
-checks above pass, both the kubelet and long-running Flex daemon use issued
+direct bootstrap-token-group-to-`system:node` binding. It is not a full
+effective authorization review and does not analyze aggregated or custom
+ClusterRoles or other indirect authorization paths. The canonical
+`aks-flex-node-role` object is deleted; a safe, repurposed object with that name
+is preserved. Once the checks above pass, both the kubelet and long-running Flex
+daemon use issued
 client certificates, so removing the unsafe binding does not interrupt joined
 nodes. New and in-progress joins retain the CSR permissions installed above.
 
