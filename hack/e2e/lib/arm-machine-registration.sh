@@ -224,9 +224,16 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  status="$(curl -sS -o "${response_file}" -w '%{http_code}' \
-    -H "Authorization: Bearer ${token}" \
-    "${ARM_MACHINE_URL}" || true)"
+  # Feed the authorization header through stdin so the token is not exposed in
+  # the curl process arguments.
+  status="$(
+    printf 'header = "Authorization: Bearer %s"\n' "${token}" |
+      curl --silent --show-error \
+        --config - \
+        --output "${response_file}" \
+        --write-out '%{http_code}' \
+        "${ARM_MACHINE_URL}" || true
+  )"
   unset token
   case "${status}" in
     404)
