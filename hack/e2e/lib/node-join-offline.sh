@@ -198,6 +198,7 @@ node_join_offline() {
   with_cluster_lock mark_e2e_bootstrap_token_aks_managed \
     "$(jq -er '.azure.bootstrapToken.token' "${config_file}")"
 
+  install -m 0600 /dev/null "${config_file}.tmp"
   jq \
     --arg nodeIP "${vm_private_ip}" \
     --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \

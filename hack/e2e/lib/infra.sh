@@ -51,11 +51,61 @@ infra_deploy() {
   local start
   start=$(timer_start)
 
+  require_exact_kubernetes_version
+
   local bicep_file="${E2E_INFRA_DIR}/main.bicep"
   if [[ ! -f "${bicep_file}" ]]; then
     log_error "Bicep template not found: ${bicep_file}"
     return 1
   fi
+
+  # Persist deterministic identities before Azure starts provisioning so the
+  # always-run cleanup stage can remove resources after a partial deployment.
+  local deployment_name="e2e-${E2E_NAME_SUFFIX}"
+  local run_id="${GITHUB_RUN_ID:-local-${E2E_NAME_SUFFIX}}"
+  # A workflow rerun keeps github.run_id but increments github.run_attempt.
+  # E2E_NAME_SUFFIX includes both, so use it as the ownership tag to keep
+  # cleanup for one attempt from deleting another attempt's resources.
+  local resource_owner="${E2E_NAME_SUFFIX}"
+  local initial_state
+  initial_state="$(jq -n \
+    --arg lifecycle "provisioning" \
+    --arg resource_group "${E2E_RESOURCE_GROUP}" \
+    --arg location "${E2E_LOCATION}" \
+    --arg subscription_id "${AZURE_SUBSCRIPTION_ID}" \
+    --arg tenant_id "${AZURE_TENANT_ID}" \
+    --arg run_id "${run_id}" \
+    --arg resource_owner "${resource_owner}" \
+    --arg name_suffix "${E2E_NAME_SUFFIX}" \
+    --arg kubernetes_version "${E2E_KUBERNETES_VERSION}" \
+    --arg target_agent_pool_name "${E2E_TARGET_AGENT_POOL_NAME}" \
+    --arg bootstrap_data_agent_pool_name "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}" \
+    --arg system_pool_name "system" \
+    --arg deployment_name "${deployment_name}" \
+    --arg cluster_name "aks-e2e-${E2E_NAME_SUFFIX}" \
+    --arg node_resource_group "MC_aksflex-e2e-${E2E_NAME_SUFFIX}" \
+    --arg vnet_name "vnet-e2e-${E2E_NAME_SUFFIX}" \
+    --arg nsg_name "nsg-e2e-${E2E_NAME_SUFFIX}" \
+    --arg msi_vm_name "vm-e2e-msi-${E2E_NAME_SUFFIX}" \
+    --arg token_vm_name "vm-e2e-token-${E2E_NAME_SUFFIX}" \
+    --arg offline_vm_name "vm-e2e-offline-${E2E_NAME_SUFFIX}" \
+    --arg kubeadm_vm_name "vm-e2e-kubeadm-${E2E_NAME_SUFFIX}" \
+    --arg arc_vm_name "vm-e2e-arc-${E2E_NAME_SUFFIX}" \
+    --arg arc_machine_name "vm-e2e-arc-${E2E_NAME_SUFFIX}-connected" \
+    '{schema_version: 1, lifecycle: $lifecycle, resource_group: $resource_group,
+      location: $location, subscription_id: $subscription_id, tenant_id: $tenant_id,
+      run_id: $run_id, resource_owner: $resource_owner,
+      name_suffix: $name_suffix, kubernetes_version: $kubernetes_version,
+      target_agent_pool_name: $target_agent_pool_name,
+      bootstrap_data_agent_pool_name: $bootstrap_data_agent_pool_name,
+      system_pool_name: $system_pool_name,
+      deployment_name: $deployment_name, cluster_name: $cluster_name,
+      node_resource_group: $node_resource_group,
+      vnet_name: $vnet_name, nsg_name: $nsg_name, msi_vm_name: $msi_vm_name,
+      token_vm_name: $token_vm_name, offline_vm_name: $offline_vm_name,
+      kubeadm_vm_name: $kubeadm_vm_name, arc_vm_name: $arc_vm_name,
+      arc_machine_name: $arc_machine_name}')"
+  state_begin_deployment "${initial_state}"
 
   # Ensure resource group exists
   if ! az group show --name "${E2E_RESOURCE_GROUP}" --output none 2>/dev/null; then
@@ -75,16 +125,14 @@ infra_deploy() {
   configure_ssh_identity
 
   # Build tags
-  local run_id="${GITHUB_RUN_ID:-local-$(date +%s)}"
   local tags_json
   tags_json=$(jq -n \
-    --arg run "${run_id}" \
+    --arg run "${resource_owner}" \
     --arg purpose "e2e-test" \
     '{"github-run": $run, "purpose": $purpose}')
 
   # Deploy
   log_info "Deploying Bicep template (this may take 5-10 minutes)..."
-  local deployment_name="e2e-${E2E_NAME_SUFFIX}"
   az deployment group create \
     --resource-group "${E2E_RESOURCE_GROUP}" \
     --name "${deployment_name}" \
@@ -210,6 +258,7 @@ infra_deploy() {
     return 1
   fi
 
+  state_set "lifecycle" "ready"
   log_success "Infrastructure deployed in $(timer_elapsed "${start}")s"
 }
 
@@ -219,8 +268,47 @@ infra_deploy() {
 infra_get_kubeconfig() {
   local cluster_name
   cluster_name="$(state_get cluster_name)"
+  local cluster_id
+  cluster_id="$(state_get cluster_id)"
   local resource_group
   resource_group="$(state_get resource_group)"
+
+  local actual_kubernetes_version system_pool_version flex_pool_version
+  actual_kubernetes_version="$(az aks show \
+    --resource-group "${resource_group}" \
+    --name "${cluster_name}" \
+    --query 'currentKubernetesVersion || kubernetesVersion' \
+    --output tsv)"
+  if [[ "${actual_kubernetes_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "AKS control-plane version is ${actual_kubernetes_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
+  state_set "kubernetes_version" "${actual_kubernetes_version}"
+  log_info "Verified AKS control-plane version: ${actual_kubernetes_version}"
+
+  system_pool_version="$(az rest \
+    --method get \
+    --url "https://management.azure.com${cluster_id}/agentPools/system?api-version=2026-05-02-preview" \
+    --query 'properties.currentOrchestratorVersion || properties.orchestratorVersion' \
+    --output tsv)"
+  if [[ "${system_pool_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "AKS system pool version is ${system_pool_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
+  state_set "system_pool_kubernetes_version" "${system_pool_version}"
+  log_info "Verified AKS system pool version: ${system_pool_version}"
+
+  flex_pool_version="$(az rest \
+    --method get \
+    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}?api-version=2026-05-02-preview" \
+    --query 'properties.currentOrchestratorVersion || properties.orchestratorVersion' \
+    --output tsv)"
+  if [[ "${flex_pool_version}" != "${E2E_KUBERNETES_VERSION}" ]]; then
+    log_error "AKS FlexNodes pool version is ${flex_pool_version}, expected ${E2E_KUBERNETES_VERSION}"
+    return 1
+  fi
+  state_set "flex_pool_kubernetes_version" "${flex_pool_version}"
+  log_info "Verified AKS FlexNodes pool version: ${flex_pool_version}"
 
   log_info "Fetching kubeconfig for ${cluster_name}..."
   az aks get-credentials \

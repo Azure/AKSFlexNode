@@ -12,6 +12,7 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | `python3` | Local registry port readiness checks and helper scripts. |
 | `ssh` / `scp` | VM access and artifact copy. |
 | `openssl` | Bootstrap token generation. |
+| `flock` | Serialize atomic updates to the per-run cleanup state. |
 | `docker` | Build and push the controller image into the in-cluster local registry. |
 | `git` / `make` | Fetch and render Unbounded-Net manifests. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
@@ -107,7 +108,7 @@ Additional environment variables:
 | `E2E_SSH_KEY_FILE` | auto-detected | SSH public key used for VM access. |
 | `E2E_WORK_DIR` | `/tmp/aks-flex-node-e2e` | Working directory for state, configs, and logs. |
 | `E2E_KUBECONFIG` | `$E2E_WORK_DIR/kubeconfig` | Per-run kubeconfig path. Defaults to an isolated file instead of the runner-global kubeconfig. |
-| `E2E_KUBERNETES_VERSION` | `1.35.0` | Kubernetes version used in generated node configs. |
+| `E2E_KUBERNETES_VERSION` | `1.35.0` | Exact Kubernetes version used for the AKS control plane, agent pools, and generated node configs. |
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
@@ -135,6 +136,8 @@ Additional environment variables:
 | `E2E_POD_READY_TIMEOUT` | `120` | Timeout in seconds while waiting for smoke pods. |
 | `E2E_AGENT_UPGRADE_TIMEOUT` | `300` | Timeout in seconds while waiting for an AgentUpgrade result. |
 | `E2E_DRIFT_UPGRADE_TIMEOUT` | `900` | Timeout in seconds while waiting for repave. |
+| `E2E_CLEANUP_TIMEOUT` | `900` | Shared deadline in seconds for deployment cancellation and Azure resource deletion. |
+| `E2E_CLEANUP_POLL_INTERVAL` | `5` | Poll interval in seconds for deployment and cleanup convergence. |
 | `AZURE_SUBSCRIPTION_ID` | auto-detected | Azure subscription. |
 | `AZURE_TENANT_ID` | auto-detected | Azure tenant. |
 

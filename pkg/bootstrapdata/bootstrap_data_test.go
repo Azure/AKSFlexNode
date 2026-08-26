@@ -20,6 +20,15 @@ type staticCredential struct {
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+type errorReadCloser struct {
+	closed bool
+}
+
 func (c staticCredential) GetToken(_ context.Context, options policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	if c.scope != nil && len(options.Scopes) == 1 {
 		*c.scope = options.Scopes[0]
@@ -28,6 +37,18 @@ func (c staticCredential) GetToken(_ context.Context, options policy.TokenReques
 }
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+func (r *errorReadCloser) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func (r *errorReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
 
 func TestFetchAndWrite(t *testing.T) {
 	t.Parallel()
@@ -113,6 +134,172 @@ func TestFetchInMemory(t *testing.T) {
 	}
 	if scope != "https://management.core.usgovcloudapi.net/.default" {
 		t.Fatalf("ARM token scope = %q", scope)
+	}
+}
+
+func TestFetchHTTPErrorDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	const statusOnly = "fetch bootstrap data returned HTTP status 403"
+	boundedCode := strings.Repeat("C", maxARMErrorCodeBytes)
+	boundedMessage := strings.Repeat("M", maxARMErrorMessageBytes)
+	boundedRequestID := strings.Repeat("R", maxARMRequestIDBytes)
+	tests := []struct {
+		name        string
+		body        string
+		headers     http.Header
+		want        string
+		notContains []string
+	}{
+		{
+			name: "structured ARM error",
+			body: `{"error":{"code":"AuthorizationFailed","message":"The caller is not authorized."}}`,
+			headers: http.Header{
+				"X-Ms-Request-Id":             []string{"request-123"},
+				"X-Ms-Correlation-Request-Id": []string{"correlation-456"},
+			},
+			want: statusOnly + `: error.code="AuthorizationFailed", error.message="The caller is not authorized.", x-ms-request-id="request-123", x-ms-correlation-request-id="correlation-456"`,
+		},
+		{
+			name: "missing message and request IDs",
+			body: `{"error":{"code":"Forbidden"}}`,
+			want: statusOnly + `: error.code="Forbidden"`,
+		},
+		{
+			name: "missing code",
+			body: `{"error":{"message":"Access denied"}}`,
+			want: statusOnly + `: error.message="Access denied"`,
+		},
+		{
+			name:        "malformed JSON",
+			body:        `{"error":{"message":"arm-token and body-secret"}`,
+			headers:     http.Header{"X-Ms-Request-Id": []string{"malformed-request"}},
+			want:        statusOnly + `: x-ms-request-id="malformed-request"`,
+			notContains: []string{"arm-token", "body-secret"},
+		},
+		{
+			name:        "unrelated JSON",
+			body:        `{"message":"body-secret","bootstrapToken":"bootstrap-secret"}`,
+			headers:     http.Header{"X-Ms-Correlation-Request-Id": []string{"unrelated-correlation"}},
+			want:        statusOnly + `: x-ms-correlation-request-id="unrelated-correlation"`,
+			notContains: []string{"body-secret", "bootstrap-secret"},
+		},
+		{
+			name:        "invalid UTF-8",
+			body:        string([]byte{0xff, 0xfe}),
+			headers:     http.Header{"X-Ms-Request-Id": []string{"invalid-utf8-request"}},
+			want:        statusOnly + `: x-ms-request-id="invalid-utf8-request"`,
+			notContains: []string{string([]byte{0xff, 0xfe})},
+		},
+		{
+			name: "unrelated secrets omitted and bearer token redacted",
+			body: `{"error":{"code":"AuthorizationFailed","message":"token arm-token was rejected"},` +
+				`"bootstrapToken":"bootstrap-secret","secret":"body-secret"}`,
+			want: statusOnly + `: error.code="AuthorizationFailed", error.message="token [REDACTED] was rejected"`,
+			notContains: []string{
+				"arm-token",
+				"bootstrap-secret",
+				"body-secret",
+			},
+		},
+		{
+			name: "oversized fields are bounded",
+			body: `{"error":{"code":"` + boundedCode + `code-secret","message":"` +
+				boundedMessage + `message-secret"}}`,
+			want: statusOnly + `: error.code="` + boundedCode + `", error.message="` + boundedMessage + `"`,
+			notContains: []string{
+				"code-secret",
+				"message-secret",
+			},
+		},
+		{
+			name: "oversized body uses request ID only",
+			body: `{"error":{"code":"Forbidden","message":"` +
+				strings.Repeat("M", int(maxErrorResponseBytes)) + `body-secret"}}`,
+			headers:     http.Header{"X-Ms-Request-Id": []string{"oversized-request"}},
+			want:        statusOnly + `: x-ms-request-id="oversized-request"`,
+			notContains: []string{"Forbidden", "body-secret"},
+		},
+		{
+			name: "request IDs are bounded sanitized and redacted",
+			body: `{"error":{"code":"Forbidden"}}`,
+			headers: http.Header{
+				"X-Ms-Request-Id":             []string{boundedRequestID + "request-secret"},
+				"X-Ms-Correlation-Request-Id": []string{"correlation\r\narm-token\tvalue"},
+			},
+			want: statusOnly + `: error.code="Forbidden", x-ms-request-id="` + boundedRequestID +
+				`", x-ms-correlation-request-id="correlation  [REDACTED] value"`,
+			notContains: []string{
+				"arm-token",
+				"request-secret",
+				"\r",
+				"\n",
+				"\t",
+			},
+		},
+	}
+
+	options := Options{
+		ClusterResourceID:       "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+		AgentPoolName:           "aksflexnodes",
+		AuthMode:                "msi",
+		ResourceManagerEndpoint: DefaultResourceManagerEndpoint,
+		AuthorityHost:           DefaultAuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := &trackingReadCloser{Reader: strings.NewReader(test.body)}
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusForbidden,
+					Body:       body,
+					Header:     test.headers.Clone(),
+				}, nil
+			})}
+			_, err := fetch(t.Context(), options, dependencies{
+				credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) {
+					return staticCredential{}, nil
+				},
+				httpClient: client,
+			})
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("fetch() error = %v, want %q", err, test.want)
+			}
+			for _, value := range test.notContains {
+				if strings.Contains(err.Error(), value) {
+					t.Errorf("fetch() error exposed %q", value)
+				}
+			}
+			if !body.closed {
+				t.Error("fetch() did not close the error response body")
+			}
+		})
+	}
+
+	err := bootstrapDataHTTPError(&http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     http.Header{"X-Ms-Request-Id": []string{"bodyless-request"}},
+	}, "arm-token")
+	const wantBodyless = `fetch bootstrap data returned HTTP status 503: x-ms-request-id="bodyless-request"`
+	if err.Error() != wantBodyless {
+		t.Fatalf("bodyless HTTP error = %q, want %q", err, wantBodyless)
+	}
+
+	readFailureBody := &errorReadCloser{}
+	err = bootstrapDataHTTPError(&http.Response{
+		StatusCode: http.StatusBadGateway,
+		Body:       readFailureBody,
+		Header:     http.Header{"X-Ms-Correlation-Request-Id": []string{"read-error-correlation"}},
+	}, "arm-token")
+	const wantReadFailure = `fetch bootstrap data returned HTTP status 502: x-ms-correlation-request-id="read-error-correlation"`
+	if err.Error() != wantReadFailure {
+		t.Fatalf("read-failure HTTP error = %q, want %q", err, wantReadFailure)
+	}
+	if !readFailureBody.closed {
+		t.Error("read-failure HTTP error did not close its response body")
 	}
 }
 

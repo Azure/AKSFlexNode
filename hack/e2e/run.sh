@@ -218,7 +218,7 @@ cmd_all() {
   collect_logs || true
 
   # Cleanup
-  cleanup || true
+  cleanup || exit_code=1
 
   echo ""
   log_section "E2E Test Complete"
@@ -259,6 +259,20 @@ main() {
   check_prerequisites
   load_config
   init_work_dir
+
+  case "${COMMAND}" in
+    all|infra)
+      require_exact_kubernetes_version
+      ;;
+    join|join-msi|join-token|join-offline|join-kubeadm|join-arc|upgrade-drift)
+      restore_kubernetes_version_from_state
+      ;;
+    cleanup|runner-cleanup|logs|status|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade)
+      # Recovery and inspection commands must remain usable even when a caller
+      # supplied a bad or stale version value.
+      ;;
+  esac
+
   configure_ssh_identity
 
   trap 'gha_end_group' EXIT

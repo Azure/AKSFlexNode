@@ -32,22 +32,22 @@ cleanup_runner_workspace() {
   df -h / 2>/dev/null || true
 
   local removed=0
-  local dir
-  while IFS= read -r dir; do
-    [[ -n "${dir}" && -d "${dir}" ]] || continue
-    log_info "Removing ${dir}"
+  local work_dir="${E2E_WORK_DIR:-}"
+  if [[ ! "${work_dir}" =~ ^/tmp/aks-flex-node-e2e(-[A-Za-z0-9][A-Za-z0-9._-]*)?$ ]]; then
+    log_error "Refusing to clean unexpected E2E work directory '${work_dir}'"
+    return 1
+  fi
+  if [[ -d "${work_dir}" ]]; then
+    log_info "Removing ${work_dir}"
     if [[ "${can_sudo}" == "1" ]]; then
-      sudo rm -rf -- "${dir}" || { log_warn "Failed to remove ${dir}"; continue; }
+      sudo rm -rf -- "${work_dir}" || { log_warn "Failed to remove ${work_dir}"; return 1; }
     else
-      rm -rf -- "${dir}" || { log_warn "Failed to remove ${dir}"; continue; }
+      rm -rf -- "${work_dir}" || { log_warn "Failed to remove ${work_dir}"; return 1; }
     fi
-    removed=$((removed + 1))
-  done < <(find /tmp -maxdepth 1 -type d \( \
-    -name 'aks-flex-node-e2e' -o \
-    -name 'aks-flex-node-e2e-*' \
-  \) 2>/dev/null || true)
+    removed=1
+  fi
 
-  log_info "Removed ${removed} temporary directories"
+  log_info "Removed ${removed} temporary directory"
 
   if command -v go >/dev/null 2>&1; then
     log_info "Cleaning Go build cache"
