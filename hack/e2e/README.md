@@ -7,6 +7,7 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | Tool | Purpose |
 |------|---------|
 | `az` | Azure CLI, authenticated with `az login`. |
+| `curl` | Submit ARM Machine deletion during registration cleanup. |
 | `jq` | JSON processing. |
 | `kubectl` | Kubernetes operations. |
 | `python3` | Local registry port readiness checks and helper scripts. |
@@ -114,7 +115,7 @@ Additional environment variables:
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
 | `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool provisioned for the MSI scenario and used for `listBootstrapData`. |
-| `E2E_ARM_MACHINE_API_VERSION` | `2025-10-02-preview` | ARM API version used to verify Machine absence and successful registration. |
+| `E2E_ARM_MACHINE_API_VERSION` | `2025-10-02-preview` | ARM API version used to verify Machine registration and deletion. |
 | `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_MEMORY` | `100Mi` | `node.kubelet.systemReserved.memory` override written to the bootstrap-token node config. |
@@ -154,14 +155,14 @@ The suite validates five join paths and one real ARM Machine registration path. 
 | `vm-e2e-arc-*` | Azure Arc Identity + Bootstrap Token | Converts an Azure VM into an official Arc evaluation server, fetches bootstrap data through Arc HIMDS, reconciles through the E2E in-cluster Machine endpoint, and validates the `himdsd.service` dependency. |
 
 Before these controller-backed joins, the suite temporarily configures the MSI
-VM with `agent.machineClient.mode: "arm"` and a unique node name for each
-attempt. It verifies that the target pool has no Machine with that name, runs
-bootstrap, reads the created Machine from ARM, checks its ETag, provisioning
-state, and Kubernetes version, and confirms the create-path log. The host is
-then reset and reused by the normal MSI lifecycle scenario. A failed attempt is
-reset before returning, so the standalone command is safe to rerun against the
-same E2E infrastructure. Machine resources remain scoped to the ephemeral AKS
-cluster and are removed when the cluster is deleted.
+VM with `agent.machineClient.mode: "arm"` and a distinct node name. It verifies
+that the target pool has no Machine with that name, runs bootstrap, reads the
+created Machine from ARM, checks its ETag, provisioning state, and Kubernetes
+version, and confirms the create-path log. It then resets the host and Node,
+deletes the Machine through the agent pool `deleteMachines` action, and verifies
+the resource is absent before the normal MSI lifecycle scenario. Failed and
+interrupted attempts use the same cleanup path, so the standalone command is
+safe to rerun against the same E2E infrastructure.
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted
