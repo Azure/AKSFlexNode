@@ -154,12 +154,14 @@ The suite validates five join paths and one real ARM Machine registration path. 
 | `vm-e2e-arc-*` | Azure Arc Identity + Bootstrap Token | Converts an Azure VM into an official Arc evaluation server, fetches bootstrap data through Arc HIMDS, reconciles through the E2E in-cluster Machine endpoint, and validates the `himdsd.service` dependency. |
 
 Before these controller-backed joins, the suite temporarily configures the MSI
-VM with `agent.machineClient.mode: "arm"` and a distinct node name. It verifies
-that the target pool has no Machine with that name, runs bootstrap, reads the
-created Machine from ARM, checks its ETag, provisioning state, and Kubernetes
-version, and confirms the create-path log. The host is then reset and reused by
-the normal MSI lifecycle scenario. The ARM Machine remains scoped to the
-ephemeral AKS cluster and is removed when the cluster is deleted.
+VM with `agent.machineClient.mode: "arm"` and a unique node name for each
+attempt. It verifies that the target pool has no Machine with that name, runs
+bootstrap, reads the created Machine from ARM, checks its ETag, provisioning
+state, and Kubernetes version, and confirms the create-path log. The host is
+then reset and reused by the normal MSI lifecycle scenario. A failed attempt is
+reset before returning, so the standalone command is safe to rerun against the
+same E2E infrastructure. Machine resources remain scoped to the ephemeral AKS
+cluster and are removed when the cluster is deleted.
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted

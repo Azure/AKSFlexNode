@@ -28,6 +28,11 @@ _arm_machine_url() {
     "${cluster_id}" "${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}" "${machine_name}" "${E2E_ARM_MACHINE_API_VERSION}"
 }
 
+_arm_registration_machine_name() {
+  local vm_name="$1"
+  printf '%s-arm-%s-%s\n' "${vm_name}" "$(date -u +%s)" "${BASHPID}"
+}
+
 _require_arm_machine_preview() {
   local state
   state="$(az feature show \
@@ -170,7 +175,7 @@ _reset_arm_registration_host() {
   local machine_name="$2"
 
   log_info "Resetting the MSI host after ARM Machine registration validation..."
-  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
 set -euo pipefail
 
 /usr/local/bin/aks-flex-node reset
@@ -178,31 +183,79 @@ systemctl stop aks-flex-node-msi-arm-registration.service 2>/dev/null || true
 systemctl reset-failed aks-flex-node-msi-arm-registration.service 2>/dev/null || true
 REMOTE
 
-  _validate_rp_delete_cleanup "${vm_ip}"
-  kubectl delete node "${machine_name}" --ignore-not-found --wait=false
+  _validate_rp_delete_cleanup "${vm_ip}" || return 1
+  kubectl delete node "${machine_name}" --ignore-not-found --wait=false || return 1
   validate_node_absent "${machine_name}"
 }
 
-arm_machine_registration_e2e() {
+_reset_previous_arm_registration_host() {
+  local vm_ip="$1"
+  local machine_name="$2"
+
+  log_info "Resetting the MSI host state from the previous ARM registration attempt..."
+  remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
+set -euo pipefail
+
+if command -v /usr/local/bin/aks-flex-node >/dev/null 2>&1; then
+  /usr/local/bin/aks-flex-node reset
+fi
+systemctl stop aks-flex-node-msi-arm-registration.service 2>/dev/null || true
+systemctl reset-failed aks-flex-node-msi-arm-registration.service 2>/dev/null || true
+REMOTE
+
+  _validate_rp_delete_cleanup "${vm_ip}" || return 1
+  kubectl delete node "${machine_name}" --ignore-not-found --wait=false || return 1
+  validate_node_absent "${machine_name}"
+}
+
+_cleanup_failed_arm_registration() {
+  local vm_ip="$1"
+  local machine_name="$2"
+
+  log_warn "Resetting the MSI host after a failed ARM registration test..."
+  _reset_previous_arm_registration_host "${vm_ip}" "${machine_name}" ||
+    log_warn "Failed to fully reset the MSI host during failure cleanup"
+}
+
+arm_machine_registration_e2e() (
   log_section "ARM Machine Registration E2E (MSI)"
   local start
   start="$(timer_start)"
 
-  local cluster_id vm_ip vm_name machine_name
+  local cluster_id vm_ip vm_name machine_name previous_machine_name
   cluster_id="$(state_get cluster_id)"
   vm_ip="$(state_get msi_vm_ip)"
   vm_name="$(state_get msi_vm_name)"
-  machine_name="${vm_name}-arm"
-  state_set "arm_registration_machine_name" "${machine_name}"
+  previous_machine_name="$(state_get arm_registration_machine_name)"
+  machine_name="$(_arm_registration_machine_name "${vm_name}")"
 
   _require_arm_machine_preview
+  if [[ -n "${previous_machine_name}" ]]; then
+    _reset_previous_arm_registration_host "${vm_ip}" "${previous_machine_name}"
+  fi
+  state_set "arm_registration_machine_name" "${machine_name}"
   _assert_arm_machine_absent "${cluster_id}" "${machine_name}"
   _wait_for_msi_arm_machine_access "${vm_ip}" "${cluster_id}" "${machine_name}"
+
+  local cleanup_armed=1
+  cleanup_on_exit() {
+    local exit_code="$1"
+    trap - EXIT
+    if (( cleanup_armed == 1 )); then
+      _cleanup_failed_arm_registration "${vm_ip}" "${machine_name}"
+    fi
+    exit "${exit_code}"
+  }
+  trap 'cleanup_on_exit "$?"' EXIT
+
   node_join_msi_arm_registration "${machine_name}"
   _validate_arm_machine "${cluster_id}" "${machine_name}"
   _validate_arm_machine_create_log "${vm_ip}" "${machine_name}"
   validate_node_joined "${machine_name}"
   _reset_arm_registration_host "${vm_ip}" "${machine_name}"
 
+  cleanup_armed=0
+  trap - EXIT
+
   log_success "ARM Machine registration E2E passed in $(timer_elapsed "${start}")s"
-}
+)
