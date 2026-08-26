@@ -28,6 +28,7 @@ RBAC_API_GROUP = "rbac.authorization.k8s.io"
 LEGACY_NODE_ROLE_BINDING = "aks-flex-node-role"
 FLEX_NODE_BOOTSTRAP_GROUP = "system:bootstrappers:aks-flex-node"
 RBAC_AUTOUPDATE_ANNOTATION = "rbac.authorization.kubernetes.io/autoupdate"
+KUBECTL_LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
 MANAGED_BOOTSTRAP_BINDINGS = (
     ("aks-flex-node-bootstrapper", "system:node-bootstrapper"),
     (
@@ -91,20 +92,26 @@ def setup_node_rbac(args: argparse.Namespace) -> None:
         require_legacy_node_role_binding_absent(bindings)
 
 
-def cluster_role_bindings() -> list[dict[str, object]]:
-    raw = run(["kubectl", "get", "clusterrolebindings", "-o", "json"], capture=True)
+def rbac_bindings() -> list[dict[str, object]]:
+    # A RoleBinding may reference the cluster-scoped system:node role and grant
+    # its namespaced permissions. Inventory both scopes so the migration cannot
+    # report success while that equivalent unsafe edge remains in a namespace.
+    raw = run(
+        ["kubectl", "get", "clusterrolebindings,rolebindings", "--all-namespaces", "-o", "json"],
+        capture=True,
+    )
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as err:
-        raise SystemExit(f"ERROR: could not parse ClusterRoleBinding inventory: {err}") from err
+        raise SystemExit(f"ERROR: could not parse RBAC binding inventory: {err}") from err
 
     if not isinstance(payload, dict):
-        raise SystemExit("ERROR: ClusterRoleBinding inventory is not a JSON object")
+        raise SystemExit("ERROR: RBAC binding inventory is not a JSON object")
     items = payload.get("items")
     if not isinstance(items, list):
-        raise SystemExit("ERROR: ClusterRoleBinding inventory does not contain an items list")
+        raise SystemExit("ERROR: RBAC binding inventory does not contain an items list")
     if not all(isinstance(item, dict) for item in items):
-        raise SystemExit("ERROR: ClusterRoleBinding inventory contains a malformed item")
+        raise SystemExit("ERROR: RBAC binding inventory contains a malformed item")
     return items
 
 
@@ -142,6 +149,8 @@ def managed_binding_inventory(bindings: list[dict[str, object]]) -> dict[str, di
     expected_names = {name for name, _ in MANAGED_BOOTSTRAP_BINDINGS}
     managed: dict[str, dict[str, object]] = {}
     for binding in bindings:
+        if binding.get("kind") != "ClusterRoleBinding":
+            continue
         metadata = binding.get("metadata")
         name = metadata.get("name") if isinstance(metadata, dict) else None
         if name not in expected_names:
@@ -188,7 +197,7 @@ def desired_managed_binding(name: str, role_name: str) -> dict[str, object]:
 
 
 def reconcile_bootstrap_rbac_bindings() -> list[dict[str, object]]:
-    before = cluster_role_bindings()
+    before = rbac_bindings()
     managed = managed_binding_inventory(before)
     actions: list[tuple[str, str, dict[str, object]]] = []
 
@@ -235,7 +244,7 @@ def reconcile_bootstrap_rbac_bindings() -> list[dict[str, object]]:
         log_info(f"{operation} managed bootstrap RBAC binding {name}")
         run(["kubectl", operation, "-f", "-"], input_text=json.dumps(binding), capture=True)
 
-    after = cluster_role_bindings()
+    after = rbac_bindings()
     reconciled = managed_binding_inventory(after)
     for name, role_name in MANAGED_BOOTSTRAP_BINDINGS:
         binding = reconciled.get(name)
@@ -247,7 +256,7 @@ def reconcile_bootstrap_rbac_bindings() -> list[dict[str, object]]:
 
 def unsafe_node_role_bindings(bindings: list[dict[str, object]] | None = None) -> list[dict[str, object]]:
     if bindings is None:
-        bindings = cluster_role_bindings()
+        bindings = rbac_bindings()
 
     unsafe = []
     for item in bindings:
@@ -258,14 +267,14 @@ def unsafe_node_role_bindings(bindings: list[dict[str, object]] | None = None) -
         if not isinstance(role_ref, dict) or not isinstance(subjects, list):
             continue
         if (
-            role_ref.get("apiGroup") != "rbac.authorization.k8s.io"
+            role_ref.get("apiGroup") != RBAC_API_GROUP
             or role_ref.get("kind") != "ClusterRole"
             or role_ref.get("name") != "system:node"
         ):
             continue
         if any(
             isinstance(subject, dict)
-            and subject.get("apiGroup") == "rbac.authorization.k8s.io"
+            and subject.get("apiGroup") == RBAC_API_GROUP
             and subject.get("kind") == "Group"
             and subject.get("name") == FLEX_NODE_BOOTSTRAP_GROUP
             for subject in subjects
@@ -277,20 +286,47 @@ def unsafe_node_role_bindings(bindings: list[dict[str, object]] | None = None) -
 def unsafe_binding_names(bindings: list[dict[str, object]]) -> str:
     names = []
     for binding in bindings:
+        kind = binding.get("kind")
         metadata = binding.get("metadata")
         name = metadata.get("name") if isinstance(metadata, dict) else None
-        names.append(name if isinstance(name, str) and name else "<unnamed>")
+        name = name if isinstance(name, str) and name else "<unnamed>"
+        if kind == "RoleBinding":
+            namespace = metadata.get("namespace") if isinstance(metadata, dict) else None
+            namespace = namespace if isinstance(namespace, str) and namespace else "<unknown-namespace>"
+            names.append(f"RoleBinding/{namespace}/{name}")
+        elif kind == "ClusterRoleBinding":
+            names.append(f"ClusterRoleBinding/{name}")
+        else:
+            names.append(f"<unknown-kind>/{name}")
     return ", ".join(sorted(names))
 
 
 def is_canonical_legacy_node_role_binding(binding: dict[str, object]) -> bool:
     metadata = binding.get("metadata")
     subjects = binding.get("subjects")
-    if not isinstance(metadata, dict) or metadata.get("name") != LEGACY_NODE_ROLE_BINDING:
+    if (
+        binding.get("apiVersion") != f"{RBAC_API_GROUP}/v1"
+        or binding.get("kind") != "ClusterRoleBinding"
+        or binding.get("roleRef") != expected_role_ref("system:node")
+        or not isinstance(metadata, dict)
+        or metadata.get("name") != LEGACY_NODE_ROLE_BINDING
+        or metadata.get("namespace")
+    ):
+        return False
+    if any(metadata.get(field) for field in ("ownerReferences", "finalizers", "deletionTimestamp")):
+        return False
+    labels = metadata.get("labels")
+    if labels not in (None, {}):
+        return False
+    annotations = metadata.get("annotations")
+    if annotations is not None and (
+        not isinstance(annotations, dict)
+        or any(key != KUBECTL_LAST_APPLIED_ANNOTATION for key in annotations)
+    ):
         return False
     return subjects == [
         {
-            "apiGroup": "rbac.authorization.k8s.io",
+            "apiGroup": RBAC_API_GROUP,
             "kind": "Group",
             "name": FLEX_NODE_BOOTSTRAP_GROUP,
         }
@@ -302,12 +338,12 @@ def require_legacy_node_role_binding_absent(bindings: list[dict[str, object]] | 
     if not bindings:
         return
     raise SystemExit(
-        "ERROR: ClusterRoleBinding(s) "
+        "ERROR: RBAC binding(s) "
         f"{unsafe_binding_names(bindings)} still grant {FLEX_NODE_BOOTSTRAP_GROUP!r} the "
         "system:node role. Some older or development agents may still depend on that access. "
         "First upgrade them to a release with daemon client certificates (v0.1.1 or later), "
-        "verify /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem exists "
-        "and the agent remains healthy after restart, then rerun setup-node-rbac with "
+        "verify the running agent is stable and uses its issued daemon certificate for API access, "
+        "then rerun setup-node-rbac with "
         "--remove-legacy-node-role-binding."
     )
 
@@ -469,8 +505,8 @@ def remove_legacy_node_role_binding(bindings: list[dict[str, object]] | None = N
         return
     if len(bindings) != 1 or not is_canonical_legacy_node_role_binding(bindings[0]):
         raise SystemExit(
-            "ERROR: refusing automatic removal because the unsafe ClusterRoleBinding set is "
-            f"not the canonical {LEGACY_NODE_ROLE_BINDING!r} object: "
+            "ERROR: refusing automatic removal because the unsafe RBAC binding set is not the "
+            f"canonical ClusterRoleBinding {LEGACY_NODE_ROLE_BINDING!r}: "
             f"{unsafe_binding_names(bindings)}. Review and remove only the bootstrap-group "
             "subjects manually."
         )
@@ -698,7 +734,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Remove the canonical obsolete aks-flex-node-role binding after existing agents "
-            "have issued daemon certificates and remain healthy after restart."
+            "have issued daemon certificates and verified stable certificate-backed API access."
         ),
     )
     rbac.set_defaults(func=setup_node_rbac)

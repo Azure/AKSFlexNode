@@ -531,7 +531,7 @@ func TestSetupNodeRBACPreservesLegacyBindingWithoutExplicitMigration(t *testing.
 	}
 	if !strings.Contains(output, "--remove-legacy-node-role-binding") ||
 		!strings.Contains(output, "v0.1.1") ||
-		!strings.Contains(output, "/etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem") {
+		!strings.Contains(output, "issued daemon certificate for API access") {
 		t.Fatalf("setup-node-rbac did not explain the compatible migration path:\n%s", output)
 	}
 
@@ -738,6 +738,12 @@ func TestSetupNodeRBACRefusesAmbiguousUnsafeBindings(t *testing.T) {
 	}{
 		{name: "canonical name with additional subject", state: "customized"},
 		{name: "unexpected binding name", state: "renamed"},
+		{name: "namespaced role binding", state: "namespaced"},
+		{name: "owner-managed canonical binding", state: "owned"},
+		{name: "finalized canonical binding", state: "finalized"},
+		{name: "terminating canonical binding", state: "terminating"},
+		{name: "labeled canonical binding", state: "labeled"},
+		{name: "annotated canonical binding", state: "annotated"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -761,6 +767,27 @@ func TestSetupNodeRBACRefusesAmbiguousUnsafeBindings(t *testing.T) {
 				t.Fatalf("ambiguous binding was deleted: %s", formatCalls(calls))
 			}
 		})
+	}
+}
+
+func TestSetupNodeRBACIgnoresSameNamedNamespacedBindingDuringReconciliation(t *testing.T) {
+	t.Parallel()
+
+	harness := newConfigScriptHarness(t, false, 0)
+	if err := os.WriteFile(harness.legacyState, []byte("safe-namespaced\n"), 0o600); err != nil {
+		t.Fatalf("write fake legacy state: %v", err)
+	}
+	output, err := harness.runSetupNodeRBAC(false)
+	if err != nil {
+		t.Fatalf("setup-node-rbac confused a namespaced RoleBinding with its managed ClusterRoleBinding: %v\n%s", err, output)
+	}
+
+	bindings := readManagedState(t, harness.managedState)
+	if len(bindings) != 2 {
+		t.Fatalf("managed ClusterRoleBinding count = %d, want 2", len(bindings))
+	}
+	if !hasSubject(findManagedBinding(t, bindings, bootstrapBindingName).Subjects, bootstrapGroup) {
+		t.Fatalf("managed ClusterRoleBinding %q is missing bootstrap group", bootstrapBindingName)
 	}
 }
 
@@ -853,6 +880,27 @@ func TestGenerateBootstrapTokenRequiresCompletedLegacyMigration(t *testing.T) {
 	}
 }
 
+func TestGenerateBootstrapTokenRejectsUnsafeNamespacedRoleBinding(t *testing.T) {
+	t.Parallel()
+
+	harness := newConfigScriptHarness(t, false, 0)
+	if err := os.WriteFile(harness.legacyState, []byte("namespaced\n"), 0o600); err != nil {
+		t.Fatalf("write fake legacy state: %v", err)
+	}
+	output, err := harness.runGenerateNodeConfig()
+	if err == nil {
+		t.Fatalf("generate-node-config minted a token while an unsafe RoleBinding remained\n%s", output)
+	}
+	if !strings.Contains(output, "RoleBinding/kube-system/legacy-node-access") ||
+		!strings.Contains(output, "--remove-legacy-node-role-binding") {
+		t.Fatalf("failure did not identify the unsafe namespaced binding:\n%s", output)
+	}
+	applyIndexes, deleteIndexes := kubectlOperationIndexes(readCommandCalls(t, harness.commandLogPath))
+	if len(applyIndexes) != 0 || len(deleteIndexes) != 0 {
+		t.Fatal("unsafe namespaced binding check mutated cluster state")
+	}
+}
+
 func TestKubeadmRBACReconciliation(t *testing.T) {
 	t.Parallel()
 
@@ -906,7 +954,7 @@ func TestRepositoryDoesNotBindBootstrapGroupsToLegacyNodeRole(t *testing.T) {
 	}
 	repositoryRoot := filepath.Dir(workingDir)
 	sourceRoots := []string{"cmd", "hack", "pkg", "scripts"}
-	bindingPattern := regexp.MustCompile(`(?m)^[ \t]*kind:[ \t]*ClusterRoleBinding[ \t]*$`)
+	bindingPattern := regexp.MustCompile(`(?m)^[ \t]*kind:[ \t]*(?:ClusterRoleBinding|RoleBinding)[ \t]*$`)
 	legacyRolePattern := regexp.MustCompile(`(?m)^[ \t]*name:[ \t]*system:node[ \t]*$`)
 	bootstrapGroupPattern := regexp.MustCompile(`(?m)^[ \t]*name:[ \t]*system:bootstrappers:[^ \t\n]+[ \t]*$`)
 	documentSeparator := regexp.MustCompile(`(?m)^[ \t]*---[ \t]*$`)
@@ -1636,10 +1684,12 @@ get)
         exit "$get_exit"
     fi
 
-    case " $* " in
-    *" clusterrolebindings "*) ;;
-    *) exit 46 ;;
-    esac
+    if [ "${2:-}" != "clusterrolebindings,rolebindings" ] ||
+        [ "${3:-}" != "--all-namespaces" ] ||
+        [ "${4:-}" != "-o" ] ||
+        [ "${5:-}" != "json" ]; then
+        exit 46
+    fi
 
     python3 - "${AKS_FLEX_CONFIG_TEST_MANAGED_STATE:?}" "${AKS_FLEX_CONFIG_TEST_LEGACY_STATE:?}" <<'PY'
 import json
@@ -1655,17 +1705,78 @@ subject = {
     "kind": "Group",
     "name": "system:bootstrappers:aks-flex-node",
 }
-if state == "present":
+if state in {"present", "owned", "finalized", "terminating", "labeled", "annotated"}:
+    metadata = {
+        "name": "aks-flex-node-role",
+        "uid": "legacy-uid",
+        "resourceVersion": "7",
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{}",
+        },
+    }
+    if state == "owned":
+        metadata["ownerReferences"] = [{
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "ClusterRole",
+            "name": "external-owner",
+            "uid": "owner-uid",
+        }]
+    elif state == "finalized":
+        metadata["finalizers"] = ["example.test/protect"]
+    elif state == "terminating":
+        metadata["deletionTimestamp"] = "2026-08-26T00:00:00Z"
+    elif state == "labeled":
+        metadata["labels"] = {"app.kubernetes.io/managed-by": "external-controller"}
+    elif state == "annotated":
+        metadata["annotations"]["meta.helm.sh/release-name"] = "external-release"
     items.append({
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "ClusterRoleBinding",
-        "metadata": {"name": "aks-flex-node-role", "uid": "legacy-uid", "resourceVersion": "7"},
+        "metadata": metadata,
         "roleRef": {
             "apiGroup": "rbac.authorization.k8s.io",
             "kind": "ClusterRole",
             "name": "system:node",
         },
         "subjects": [subject],
+    })
+elif state == "namespaced":
+    items.append({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": "legacy-node-access",
+            "namespace": "kube-system",
+            "uid": "namespaced-uid",
+            "resourceVersion": "11",
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:node",
+        },
+        "subjects": [subject],
+    })
+elif state == "safe-namespaced":
+    items.append({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": "aks-flex-node-bootstrapper",
+            "namespace": "default",
+            "uid": "safe-namespaced-uid",
+            "resourceVersion": "12",
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "view",
+        },
+        "subjects": [{
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Group",
+            "name": "readers",
+        }],
     })
 elif state == "customized":
     items.append({
