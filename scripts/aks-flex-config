@@ -282,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# TODO: Remove client-side RBAC setup after migrating to the AKS RP managed API and Azure CLI extension.
 RBAC_MANIFEST = """
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
