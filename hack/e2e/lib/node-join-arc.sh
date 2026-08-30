@@ -12,6 +12,8 @@ readonly arcHybridComputeAPIVersion="2024-07-10"
 # roleClusterAdmin / roleAKSContributor / roleRbacAdmin). The Arc machine
 # principal doesn't exist until after azcmagent connect, so it can't be
 # pre-provisioned via bicep and these are assigned at runtime instead.
+# TODO: replace these broad built-in roles with a single dedicated custom role
+# scoped to only the permissions the Arc machine actually needs.
 readonly aksClusterAdminRoleDefinitionID="0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8"
 readonly aksContributorRoleDefinitionID="ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8"
 readonly aksRBACClusterAdminRoleDefinitionID="b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b"
