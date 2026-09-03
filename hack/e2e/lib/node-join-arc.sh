@@ -8,7 +8,7 @@ set -euo pipefail
 [[ -n "${_E2E_NODE_JOIN_ARC_LOADED:-}" ]] && return 0
 readonly _E2E_NODE_JOIN_ARC_LOADED=1
 readonly arcHybridComputeAPIVersion="2024-07-10"
-# Same built-in roles granted to the MSI Flex Node in infra/main.bicep (see
+# Same built-in roles granted to the MSI Flex Node in hack/e2e/infra/main.bicep (see
 # roleClusterAdmin / roleAKSContributor / roleRbacAdmin). The Arc machine
 # principal doesn't exist until after azcmagent connect, so it can't be
 # pre-provisioned via bicep and these are assigned at runtime instead.
@@ -228,19 +228,24 @@ node_join_arc() {
   state_set "arc_principal_id" "${principal_id}"
 
   if [[ "$(state_get arc_role_assigned)" != "true" ]]; then
-    local role_definition_id
+    local role_assignment_output role_definition_id
     # Grant the Arc machine principal the same roles as the MSI Flex Node so
     # it can call listBootstrapData and operate its AKS Machine resource.
     for role_definition_id in \
       "${aksClusterAdminRoleDefinitionID}" \
       "${aksContributorRoleDefinitionID}" \
       "${aksRBACClusterAdminRoleDefinitionID}"; do
-      az role assignment create \
+      if ! role_assignment_output="$(az role assignment create \
         --assignee-object-id "${principal_id}" \
         --assignee-principal-type ServicePrincipal \
         --role "${role_definition_id}" \
         --scope "${cluster_id}" \
-        --output none
+        --output none 2>&1)"; then
+        if [[ "${role_assignment_output}" != *"RoleAssignmentExists"* ]]; then
+          printf '%s\n' "${role_assignment_output}" >&2
+          return 1
+        fi
+      fi
     done
     state_set "arc_role_assigned" "true"
   fi
