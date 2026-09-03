@@ -3,14 +3,17 @@ package bootstrapdata
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,7 +22,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/google/renameio/v2"
 
 	"github.com/Azure/AKSFlexNode/pkg/azclient"
@@ -31,6 +36,14 @@ const (
 	DefaultResourceManagerEndpoint = "https://management.azure.com"
 	DefaultAuthorityHost           = "https://login.microsoftonline.com"
 	maxResponseBytes               = int64(16 << 20)
+	// The RP bucket refills at one request per second. Twelve hours lets a
+	// 30,000-node scale-out drain with headroom while keeping retries bounded.
+	maxThrottleRetries          = 30_000
+	initialThrottleRetryDelay   = time.Second
+	initialThrottleRetryJitter  = 5 * time.Minute
+	maxThrottleRetryJitter      = time.Hour
+	bootstrapDataAttemptTimeout = 2 * time.Minute
+	bootstrapDataRetryTimeout   = 12 * time.Hour
 )
 
 var (
@@ -97,27 +110,27 @@ func OptionsFromConfig(cfg *config.Config) (Options, error) {
 }
 
 // Data contains the short-lived Kubernetes join credentials returned by
-// listBootstrapData. The raw response is retained only so the bootstrap CLI can
-// write the complete RP response; runtime callers should use the typed fields.
+// listBootstrapData. Runtime callers should use the typed fields.
 type Data struct {
 	BootstrapToken string
 	ClusterFQDN    string
 	CACertData     string
-	raw            map[string]any
+	raw            json.RawMessage
 }
 
 type dependencies struct {
-	credential func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
-	httpClient *http.Client
+	credential   func(Options, azcore.ClientOptions) (azcore.TokenCredential, error)
+	transport    policy.Transporter
+	retryOptions *policy.RetryOptions
+	retryJitter  func(time.Duration) time.Duration
 }
 
 func defaultDependencies() dependencies {
 	return dependencies{
 		credential: newCredential,
-		httpClient: &http.Client{
-			Timeout: 2 * time.Minute,
+		transport: &http.Client{
 			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return fmt.Errorf("bootstrap-data redirects are not allowed")
+				return http.ErrUseLastResponse
 			},
 		},
 	}
@@ -158,6 +171,8 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if err := validateOptions(options); err != nil {
 		return nil, err
 	}
+	retryCtx, cancel := context.WithTimeout(ctx, bootstrapDataRetryTimeout)
+	defer cancel()
 	endpoint := strings.TrimRight(options.ResourceManagerEndpoint, "/")
 	audience := strings.TrimRight(options.ResourceManagerAudience, "/")
 	if audience == "" {
@@ -173,69 +188,148 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if err != nil {
 		return nil, err
 	}
-	token, err := credential.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{audience + "/.default"}})
+	clusterID, err := arm.ParseResourceID(options.ClusterResourceID)
 	if err != nil {
-		return nil, fmt.Errorf("acquire ARM token: %w", err)
+		return nil, fmt.Errorf("parse cluster resource ID: %w", err)
 	}
-	requestURL := endpoint + options.ClusterResourceID + "/agentPools/" + options.AgentPoolName +
-		"/listBootstrapData?api-version=" + options.APIVersion
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, http.NoBody)
+	retryOptions := bootstrapDataRetryOptions()
+	if deps.retryOptions != nil {
+		retryOptions = *deps.retryOptions
+	}
+	transport := deps.transport
+	if transport == nil {
+		transport = http.DefaultClient
+	}
+	client, err := armcontainerservice.NewAgentPoolsClient(clusterID.SubscriptionID, credential, &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			APIVersion:       options.APIVersion,
+			Cloud:            clientOptions.Cloud,
+			Retry:            retryOptions,
+			Transport:        limitedResponseTransport{inner: transport},
+			PerRetryPolicies: []policy.Policy{&retryAfterJitterPolicy{jitter: deps.retryJitter}},
+		},
+		DisableRPRegistration: true,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("create bootstrap-data request: %w", err)
+		return nil, fmt.Errorf("create AgentPools client: %w", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+token.Token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := deps.httpClient.Do(request)
+	var rawResponse *http.Response
+	response, err := client.ListBootstrapData(
+		policy.WithCaptureResponse(retryCtx, &rawResponse),
+		clusterID.ResourceGroupName,
+		clusterID.Name,
+		options.AgentPoolName,
+		armcontainerservice.ListBootstrapDataRequest{},
+		nil,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("fetch bootstrap data: %w", err)
+		return nil, fmt.Errorf("list bootstrap data: %w", err)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_ = response.Body.Close()
-		return nil, fmt.Errorf("fetch bootstrap data returned HTTP status %d", response.StatusCode)
+	if rawResponse == nil {
+		return nil, fmt.Errorf("list bootstrap data returned no HTTP response")
 	}
-	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return nil, fmt.Errorf("read bootstrap data: %w", readErr)
+	raw, err := runtime.Payload(rawResponse)
+	if err != nil {
+		return nil, fmt.Errorf("read bootstrap data: %w", err)
 	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close bootstrap-data response: %w", closeErr)
-	}
-	if int64(len(data)) > maxResponseBytes {
+	if int64(len(raw)) > maxResponseBytes {
 		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", maxResponseBytes)
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse bootstrap data: %w", err)
+	responseData := response.PoolBootstrapData
+	bootstrapToken := ""
+	if responseData.Azure != nil && responseData.Azure.BootstrapToken != nil && responseData.Azure.BootstrapToken.Token != nil {
+		bootstrapToken = *responseData.Azure.BootstrapToken.Token
 	}
-	var responseData struct {
-		Azure struct {
-			BootstrapToken struct {
-				Token string `json:"token"`
-			} `json:"bootstrapToken"`
-		} `json:"azure"`
-		Node struct {
-			Kubelet struct {
-				ClusterFQDN string `json:"clusterFQDN"`
-				CACertData  string `json:"caCertData"`
-			} `json:"kubelet"`
-		} `json:"node"`
-	}
-	if err := json.Unmarshal(data, &responseData); err != nil {
-		return nil, fmt.Errorf("parse typed bootstrap data: %w", err)
-	}
-	if responseData.Azure.BootstrapToken.Token == "" {
+	if bootstrapToken == "" {
 		return nil, fmt.Errorf("bootstrap-data response did not contain a bootstrap token")
 	}
-	if !config.BootstrapTokenPattern.MatchString(responseData.Azure.BootstrapToken.Token) {
+	if !config.BootstrapTokenPattern.MatchString(bootstrapToken) {
 		return nil, fmt.Errorf("bootstrap-data response contained an invalid bootstrap token")
 	}
+	clusterFQDN := ""
+	caCertData := ""
+	if responseData.Node != nil && responseData.Node.Kubelet != nil {
+		if responseData.Node.Kubelet.ClusterFQDN != nil {
+			clusterFQDN = *responseData.Node.Kubelet.ClusterFQDN
+		}
+		if responseData.Node.Kubelet.CaCertData != nil {
+			caCertData = *responseData.Node.Kubelet.CaCertData
+		}
+	}
 	return &Data{
-		BootstrapToken: responseData.Azure.BootstrapToken.Token,
-		ClusterFQDN:    responseData.Node.Kubelet.ClusterFQDN,
-		CACertData:     responseData.Node.Kubelet.CACertData,
-		raw:            raw,
+		BootstrapToken: bootstrapToken,
+		ClusterFQDN:    clusterFQDN,
+		CACertData:     caCertData,
+		raw:            append(json.RawMessage(nil), raw...),
 	}, nil
+}
+
+func bootstrapDataRetryOptions() policy.RetryOptions {
+	return policy.RetryOptions{
+		MaxRetries:    maxThrottleRetries,
+		TryTimeout:    bootstrapDataAttemptTimeout,
+		RetryDelay:    initialThrottleRetryDelay,
+		MaxRetryDelay: bootstrapDataRetryTimeout,
+		ShouldRetry: func(response *http.Response, err error) bool {
+			return err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests
+		},
+	}
+}
+
+type retryAfterJitterPolicy struct {
+	attempt int
+	jitter  func(time.Duration) time.Duration
+}
+
+func (p *retryAfterJitterPolicy) Do(request *policy.Request) (*http.Response, error) {
+	response, err := request.Next()
+	if err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests {
+		if addRetryAfterJitter(response, p.attempt, p.jitter) {
+			p.attempt++
+		}
+	}
+	return response, err
+}
+
+func addRetryAfterJitter(response *http.Response, attempt int, jitter func(time.Duration) time.Duration) bool {
+	retryAfterSeconds, err := strconv.ParseUint(response.Header.Get("Retry-After"), 10, 31)
+	if err != nil || retryAfterSeconds == 0 {
+		return false
+	}
+	if jitter == nil {
+		jitter = randomRetryJitter
+	}
+	window := min(initialThrottleRetryJitter*time.Duration(1<<min(attempt, 4)), maxThrottleRetryJitter)
+	delay := time.Duration(retryAfterSeconds)*time.Second + jitter(window)
+	response.Header.Set("Retry-After-Ms", strconv.FormatInt(delay.Milliseconds(), 10))
+	return true
+}
+
+func randomRetryJitter(maxDelay time.Duration) time.Duration {
+	jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(maxDelay)+1))
+	if err != nil {
+		return maxDelay / 2
+	}
+	return time.Duration(jitter.Int64())
+}
+
+type limitedResponseTransport struct {
+	inner policy.Transporter
+}
+
+func (t limitedResponseTransport) Do(request *http.Request) (*http.Response, error) {
+	response, err := t.inner.Do(request)
+	if err != nil || response == nil || response.Body == nil {
+		return response, err
+	}
+	response.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.LimitReader(response.Body, maxResponseBytes+1),
+		Closer: response.Body,
+	}
+	return response, nil
 }
 
 func validateOptions(options Options) error {

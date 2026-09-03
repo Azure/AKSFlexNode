@@ -2,6 +2,7 @@ package bootstrapdata
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -40,7 +41,7 @@ func TestFetchAndWrite(t *testing.T) {
 		if request.Header.Get("Authorization") != "Bearer arm-token" {
 			t.Error("missing token")
 		}
-		body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}`
+		body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}},"futureField":null}`
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	options := Options{
@@ -51,7 +52,7 @@ func TestFetchAndWrite(t *testing.T) {
 	}
 	err := fetchAndWrite(context.Background(), options, dependencies{
 		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
-		httpClient: client,
+		transport:  client,
 	})
 	if err != nil {
 		t.Fatalf("fetchAndWrite() error = %v", err)
@@ -63,16 +64,46 @@ func TestFetchAndWrite(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o", info.Mode().Perm())
 	}
+	written, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), `"futureField": null`) {
+		t.Fatalf("output did not preserve unknown field: %s", written)
+	}
 }
 
 func TestFetchInMemory(t *testing.T) {
 	t.Parallel()
 
+	const apiVersion = "2026-06-02-preview"
 	const response = `{
 		"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}},
 		"node":{"kubelet":{"clusterFQDN":"api.example.test","caCertData":"Y2E="}}
 	}`
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost {
+			t.Errorf("request method = %q", request.Method)
+		}
+		if request.URL.Host != "management.usgovcloudapi.net" {
+			t.Errorf("request host = %q", request.URL.Host)
+		}
+		if request.URL.Path != "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster/agentPools/aksflexnodes/listBootstrapData" {
+			t.Errorf("request path = %q", request.URL.Path)
+		}
+		if request.URL.Query().Get("api-version") != apiVersion {
+			t.Errorf("api-version = %q", request.URL.Query().Get("api-version"))
+		}
+		if request.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %q", request.Header.Get("Content-Type"))
+		}
+		requestBody, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(requestBody) != "{}" {
+			t.Errorf("request body = %q, want {}", requestBody)
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(response)),
@@ -86,7 +117,7 @@ func TestFetchInMemory(t *testing.T) {
 		ResourceManagerEndpoint: "https://management.usgovcloudapi.net",
 		ResourceManagerAudience: "https://management.core.usgovcloudapi.net",
 		AuthorityHost:           "https://login.microsoftonline.us/",
-		APIVersion:              DefaultAPIVersion,
+		APIVersion:              apiVersion,
 	}
 	var scope string
 	got, err := fetch(t.Context(), options, dependencies{
@@ -97,7 +128,7 @@ func TestFetchInMemory(t *testing.T) {
 			}
 			return staticCredential{scope: &scope}, nil
 		},
-		httpClient: client,
+		transport: client,
 	})
 	if err != nil {
 		t.Fatalf("fetch() error = %v", err)
@@ -138,13 +169,169 @@ func TestFetchRejectsMalformedBootstrapToken(t *testing.T) {
 	}
 	_, err := fetch(t.Context(), options, dependencies{
 		credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) { return staticCredential{}, nil },
-		httpClient: client,
+		transport:  client,
 	})
 	if err == nil || err.Error() != "bootstrap-data response contained an invalid bootstrap token" {
 		t.Fatalf("fetch() error = %v, want invalid token error", err)
 	}
 	if strings.Contains(err.Error(), malformedToken) {
 		t.Fatal("fetch() error exposed malformed bootstrap token")
+	}
+}
+
+func TestFetchRetriesTooManyRequests(t *testing.T) {
+	t.Parallel()
+
+	const responseBody = `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}`
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Body:       io.NopCloser(strings.NewReader("throttled")),
+				Header:     make(http.Header),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	got, err := fetch(t.Context(), validTestOptions(), dependencies{
+		credential:   staticCredentialFactory,
+		transport:    client,
+		retryOptions: noDelayRetryOptions(1),
+	})
+	if err != nil {
+		t.Fatalf("fetch() error = %v", err)
+	}
+	if got.BootstrapToken != "abcdef.0123456789abcdef" {
+		t.Fatalf("BootstrapToken = %q", got.BootstrapToken)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestFetchDoesNotRetryOtherStatusCodes(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       io.NopCloser(strings.NewReader("unavailable")),
+			Header:     http.Header{"Retry-After": []string{"1"}},
+		}, nil
+	})}
+	_, err := fetch(t.Context(), validTestOptions(), dependencies{
+		credential:   staticCredentialFactory,
+		transport:    client,
+		retryOptions: noDelayRetryOptions(3),
+	})
+	if err == nil {
+		t.Fatal("fetch() error = nil, want HTTP 503 response error")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestFetchDoesNotRetryTransportErrors(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, fmt.Errorf("network unavailable")
+	})}
+	_, err := fetch(t.Context(), validTestOptions(), dependencies{
+		credential: staticCredentialFactory,
+		transport:  client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "network unavailable") {
+		t.Fatalf("fetch() error = %v, want transport error", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestAddRetryAfterJitter(t *testing.T) {
+	t.Parallel()
+
+	response := &http.Response{Header: http.Header{"Retry-After": []string{"1"}}}
+	var window time.Duration
+	if !addRetryAfterJitter(response, 0, func(maxDelay time.Duration) time.Duration {
+		window = maxDelay
+		return 2 * time.Second
+	}) {
+		t.Fatal("addRetryAfterJitter() = false")
+	}
+	if window != initialThrottleRetryJitter {
+		t.Fatalf("jitter window = %s, want %s", window, initialThrottleRetryJitter)
+	}
+	if got := response.Header.Get("Retry-After-Ms"); got != "3000" {
+		t.Fatalf("Retry-After-Ms = %q, want 3000", got)
+	}
+}
+
+func TestDefaultTransportRejectsRedirects(t *testing.T) {
+	t.Parallel()
+
+	client, ok := defaultDependencies().transport.(*http.Client)
+	if !ok || client.CheckRedirect == nil {
+		t.Fatal("default transport does not reject redirects")
+	}
+	if err := client.CheckRedirect(&http.Request{}, nil); err != http.ErrUseLastResponse {
+		t.Fatalf("CheckRedirect() error = %v, want http.ErrUseLastResponse", err)
+	}
+}
+
+func TestLimitedResponseTransport(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Repeat("x", int(maxResponseBytes)+2)
+	transport := limitedResponseTransport{inner: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.test", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(got)) != maxResponseBytes+1 {
+		t.Fatalf("response size = %d, want %d", len(got), maxResponseBytes+1)
+	}
+}
+
+func TestFetchRejectsOversizedResponse(t *testing.T) {
+	t.Parallel()
+
+	body := `{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}` + strings.Repeat(" ", int(maxResponseBytes))
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	_, err := fetch(t.Context(), validTestOptions(), dependencies{
+		credential: staticCredentialFactory,
+		transport:  client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "bootstrap data exceeds") {
+		t.Fatalf("fetch() error = %v, want oversized response error", err)
 	}
 }
 
@@ -162,5 +349,31 @@ func TestClientCertificateCredentialOptions(t *testing.T) {
 	options := clientCertificateCredentialOptions(azcore.ClientOptions{})
 	if !options.SendCertificateChain {
 		t.Fatal("SendCertificateChain = false")
+	}
+}
+
+func validTestOptions() Options {
+	return Options{
+		ClusterResourceID:       "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+		AgentPoolName:           "aksflexnodes",
+		AuthMode:                "msi",
+		ResourceManagerEndpoint: DefaultResourceManagerEndpoint,
+		AuthorityHost:           DefaultAuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+}
+
+func staticCredentialFactory(Options, azcore.ClientOptions) (azcore.TokenCredential, error) {
+	return staticCredential{}, nil
+}
+
+func noDelayRetryOptions(maxRetries int32) *policy.RetryOptions {
+	return &policy.RetryOptions{
+		MaxRetries:    maxRetries,
+		RetryDelay:    time.Nanosecond,
+		MaxRetryDelay: time.Nanosecond,
+		ShouldRetry: func(response *http.Response, err error) bool {
+			return err == nil && response != nil && response.StatusCode == http.StatusTooManyRequests
+		},
 	}
 }
