@@ -9,6 +9,8 @@ set -euo pipefail
 readonly _E2E_NODE_JOIN_ARC_LOADED=1
 readonly arcHybridComputeAPIVersion="2024-07-10"
 readonly aksContributorRoleDefinitionID="ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8"
+readonly arcRoleAssignmentWaitAttempts=12
+readonly arcRoleAssignmentPollInterval=5
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
@@ -124,6 +126,80 @@ _wait_for_arc_identity() {
   return 1
 }
 
+_arc_role_assignment_visible() {
+  local principal_id="$1" cluster_id="$2" subscription_id="$3"
+  local assignments
+
+  if ! assignments="$(az role assignment list \
+    --assignee-object-id "${principal_id}" \
+    --role "${aksContributorRoleDefinitionID}" \
+    --scope "${cluster_id}" \
+    --fill-principal-name false \
+    --fill-role-definition-name false \
+    --subscription "${subscription_id}" \
+    --output json)"; then
+    return 2
+  fi
+  jq -e \
+    --arg principalID "${principal_id}" \
+    --arg roleDefinitionID "${aksContributorRoleDefinitionID}" \
+    --arg scope "${cluster_id}" '
+      [
+        .[]
+        | select(
+            ((.principalId // "") | ascii_downcase) == ($principalID | ascii_downcase)
+            and (((.roleDefinitionId // "") | split("/") | last | ascii_downcase) == ($roleDefinitionID | ascii_downcase))
+            and (((.scope // "") | ascii_downcase) == ($scope | ascii_downcase))
+          )
+      ]
+      | length > 0
+    ' <<<"${assignments}" >/dev/null
+}
+
+_ensure_arc_role_assignment() {
+  local principal_id="$1" cluster_id="$2" subscription_id="$3"
+  local assignment_status=0
+
+  state_set "arc_role_assigned" "false"
+  _arc_role_assignment_visible "${principal_id}" "${cluster_id}" "${subscription_id}" || assignment_status=$?
+  case "${assignment_status}" in
+    0)
+      state_set "arc_role_assigned" "true"
+      log_info "Verified the Arc AKS Contributor role assignment"
+      return 0
+      ;;
+    1) ;;
+    *)
+      log_error "Failed to query the Arc AKS Contributor role assignment"
+      return 1
+      ;;
+  esac
+
+  az role assignment create \
+    --assignee-object-id "${principal_id}" \
+    --assignee-principal-type ServicePrincipal \
+    --role "${aksContributorRoleDefinitionID}" \
+    --scope "${cluster_id}" \
+    --subscription "${subscription_id}" \
+    --output none
+
+  for attempt in $(seq 1 "${arcRoleAssignmentWaitAttempts}"); do
+    assignment_status=0
+    _arc_role_assignment_visible "${principal_id}" "${cluster_id}" "${subscription_id}" || assignment_status=$?
+    if [[ "${assignment_status}" -eq 0 ]]; then
+      state_set "arc_role_assigned" "true"
+      log_info "Verified the Arc AKS Contributor role assignment"
+      return 0
+    fi
+    if [[ "${attempt}" -lt "${arcRoleAssignmentWaitAttempts}" ]]; then
+      sleep "${arcRoleAssignmentPollInterval}"
+    fi
+  done
+
+  log_error "Arc AKS Contributor role assignment was not visible at the expected principal, role, and cluster scope"
+  return 1
+}
+
 _fetch_arc_bootstrap_config() {
   local vm_ip="$1" vm_private_ip="$2" vm_name="$3" cluster_id="$4" output="$5"
   local remote_binary="/tmp/aks-flex-node-arc-fetch"
@@ -219,15 +295,7 @@ node_join_arc() {
   state_set "arc_machine_id" "${arc_resource_id}"
   state_set "arc_principal_id" "${principal_id}"
 
-  if [[ "$(state_get arc_role_assigned)" != "true" ]]; then
-    az role assignment create \
-      --assignee-object-id "${principal_id}" \
-      --assignee-principal-type ServicePrincipal \
-      --role "${aksContributorRoleDefinitionID}" \
-      --scope "${cluster_id}" \
-      --output none
-    state_set "arc_role_assigned" "true"
-  fi
+  _ensure_arc_role_assignment "${principal_id}" "${cluster_id}" "${subscription_id}"
 
   local config_file="${E2E_WORK_DIR}/config-arc.json"
   _fetch_arc_bootstrap_config "${vm_ip}" "${vm_private_ip}" "${vm_name}" "${cluster_id}" "${config_file}"

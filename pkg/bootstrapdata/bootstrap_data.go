@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -31,6 +32,10 @@ const (
 	DefaultResourceManagerEndpoint = "https://management.azure.com"
 	DefaultAuthorityHost           = "https://login.microsoftonline.com"
 	maxResponseBytes               = int64(16 << 20)
+	maxErrorResponseBytes          = int64(64 << 10)
+	maxARMErrorCodeBytes           = 256
+	maxARMErrorMessageBytes        = 2048
+	maxARMRequestIDBytes           = 256
 )
 
 var (
@@ -190,8 +195,7 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		return nil, fmt.Errorf("fetch bootstrap data: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_ = response.Body.Close()
-		return nil, fmt.Errorf("fetch bootstrap data returned HTTP status %d", response.StatusCode)
+		return nil, bootstrapDataHTTPError(response, token.Token)
 	}
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	closeErr := response.Body.Close()
@@ -236,6 +240,60 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		CACertData:     responseData.Node.Kubelet.CACertData,
 		raw:            raw,
 	}, nil
+}
+
+func bootstrapDataHTTPError(response *http.Response, bearerToken string) error {
+	statusError := fmt.Errorf("fetch bootstrap data returned HTTP status %d", response.StatusCode)
+	details := make([]string, 0, 4)
+	if response.Body != nil {
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, maxErrorResponseBytes+1))
+		closeErr := response.Body.Close()
+		if readErr == nil && closeErr == nil && int64(len(body)) <= maxErrorResponseBytes && utf8.Valid(body) {
+			var armResponse struct {
+				Error *struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(body, &armResponse) == nil && armResponse.Error != nil {
+				if code := boundedDiagnosticValue(armResponse.Error.Code, bearerToken, maxARMErrorCodeBytes); code != "" {
+					details = append(details, fmt.Sprintf("error.code=%q", code))
+				}
+				if message := boundedDiagnosticValue(armResponse.Error.Message, bearerToken, maxARMErrorMessageBytes); message != "" {
+					details = append(details, fmt.Sprintf("error.message=%q", message))
+				}
+			}
+		}
+	}
+	for _, header := range []string{"x-ms-request-id", "x-ms-correlation-request-id"} {
+		if value := boundedDiagnosticValue(response.Header.Get(header), bearerToken, maxARMRequestIDBytes); value != "" {
+			details = append(details, fmt.Sprintf("%s=%q", header, value))
+		}
+	}
+	if len(details) == 0 {
+		return statusError
+	}
+	return fmt.Errorf("%w: %s", statusError, strings.Join(details, ", "))
+}
+
+func boundedDiagnosticValue(value, bearerToken string, maxBytes int) string {
+	if bearerToken != "" {
+		value = strings.ReplaceAll(value, bearerToken, "[REDACTED]")
+	}
+	value = strings.TrimSpace(value)
+	var result strings.Builder
+	result.Grow(min(len(value), maxBytes))
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			character = ' '
+		}
+		characterBytes := utf8.RuneLen(character)
+		if characterBytes < 0 || result.Len()+characterBytes > maxBytes {
+			break
+		}
+		result.WriteRune(character)
+	}
+	return strings.TrimSpace(result.String())
 }
 
 func validateOptions(options Options) error {
