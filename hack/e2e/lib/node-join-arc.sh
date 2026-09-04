@@ -250,6 +250,12 @@ node_join_arc() {
     state_set "arc_role_assigned" "true"
   fi
 
+  # HIMDS starts during Arc onboarding, before this principal's AKS roles exist.
+  # Restart it after assignment so the bootstrap request cannot reuse in-memory
+  # identity state from before RBAC was granted.
+  log_info "Restarting Arc identity service after AKS role assignment..."
+  remote_exec "${vm_ip}" "sudo systemctl restart himdsd.service && sudo systemctl is-active --quiet himdsd.service"
+
   local config_file="${E2E_WORK_DIR}/config-arc.json"
   _fetch_arc_bootstrap_config "${vm_ip}" "${vm_private_ip}" "${vm_name}" "${cluster_id}" "${config_file}"
 
