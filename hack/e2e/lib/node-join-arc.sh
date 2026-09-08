@@ -8,7 +8,15 @@ set -euo pipefail
 [[ -n "${_E2E_NODE_JOIN_ARC_LOADED:-}" ]] && return 0
 readonly _E2E_NODE_JOIN_ARC_LOADED=1
 readonly arcHybridComputeAPIVersion="2024-07-10"
+# Same built-in roles granted to the MSI Flex Node in hack/e2e/infra/main.bicep (see
+# roleClusterAdmin / roleAKSContributor / roleRbacAdmin). The Arc machine
+# principal doesn't exist until after azcmagent connect, so it can't be
+# pre-provisioned via bicep and these are assigned at runtime instead.
+# TODO: replace these broad built-in roles with a single dedicated custom role
+# scoped to only the permissions the Arc machine actually needs.
+readonly aksClusterAdminRoleDefinitionID="0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8"
 readonly aksContributorRoleDefinitionID="ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8"
+readonly aksRBACClusterAdminRoleDefinitionID="b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b"
 readonly arcRoleAssignmentWaitAttempts=12
 readonly arcRoleAssignmentPollInterval=5
 
@@ -127,12 +135,12 @@ _wait_for_arc_identity() {
 }
 
 _arc_role_assignment_visible() {
-  local principal_id="$1" cluster_id="$2" subscription_id="$3"
+  local principal_id="$1" cluster_id="$2" subscription_id="$3" role_definition_id="$4"
   local assignments
 
   if ! assignments="$(az role assignment list \
     --assignee-object-id "${principal_id}" \
-    --role "${aksContributorRoleDefinitionID}" \
+    --role "${role_definition_id}" \
     --scope "${cluster_id}" \
     --fill-principal-name false \
     --fill-role-definition-name false \
@@ -142,7 +150,7 @@ _arc_role_assignment_visible() {
   fi
   jq -e \
     --arg principalID "${principal_id}" \
-    --arg roleDefinitionID "${aksContributorRoleDefinitionID}" \
+    --arg roleDefinitionID "${role_definition_id}" \
     --arg scope "${cluster_id}" '
       [
         .[]
@@ -156,21 +164,19 @@ _arc_role_assignment_visible() {
     ' <<<"${assignments}" >/dev/null
 }
 
-_ensure_arc_role_assignment() {
-  local principal_id="$1" cluster_id="$2" subscription_id="$3"
+_ensure_arc_role_assignment_for_role() {
+  local principal_id="$1" cluster_id="$2" subscription_id="$3" role_definition_id="$4"
   local assignment_status=0
 
-  state_set "arc_role_assigned" "false"
-  _arc_role_assignment_visible "${principal_id}" "${cluster_id}" "${subscription_id}" || assignment_status=$?
+  _arc_role_assignment_visible "${principal_id}" "${cluster_id}" "${subscription_id}" "${role_definition_id}" || assignment_status=$?
   case "${assignment_status}" in
     0)
-      state_set "arc_role_assigned" "true"
-      log_info "Verified the Arc AKS Contributor role assignment"
+      log_info "Verified the Arc ${role_definition_id} role assignment"
       return 0
       ;;
     1) ;;
     *)
-      log_error "Failed to query the Arc AKS Contributor role assignment"
+      log_error "Failed to query the Arc ${role_definition_id} role assignment"
       return 1
       ;;
   esac
@@ -178,17 +184,16 @@ _ensure_arc_role_assignment() {
   az role assignment create \
     --assignee-object-id "${principal_id}" \
     --assignee-principal-type ServicePrincipal \
-    --role "${aksContributorRoleDefinitionID}" \
+    --role "${role_definition_id}" \
     --scope "${cluster_id}" \
     --subscription "${subscription_id}" \
     --output none
 
   for attempt in $(seq 1 "${arcRoleAssignmentWaitAttempts}"); do
     assignment_status=0
-    _arc_role_assignment_visible "${principal_id}" "${cluster_id}" "${subscription_id}" || assignment_status=$?
+    _arc_role_assignment_visible "${principal_id}" "${cluster_id}" "${subscription_id}" "${role_definition_id}" || assignment_status=$?
     if [[ "${assignment_status}" -eq 0 ]]; then
-      state_set "arc_role_assigned" "true"
-      log_info "Verified the Arc AKS Contributor role assignment"
+      log_info "Verified the Arc ${role_definition_id} role assignment"
       return 0
     fi
     if [[ "${attempt}" -lt "${arcRoleAssignmentWaitAttempts}" ]]; then
@@ -196,8 +201,22 @@ _ensure_arc_role_assignment() {
     fi
   done
 
-  log_error "Arc AKS Contributor role assignment was not visible at the expected principal, role, and cluster scope"
+  log_error "Arc ${role_definition_id} role assignment was not visible at the expected principal, role, and cluster scope"
   return 1
+}
+
+_ensure_arc_role_assignment() {
+  local principal_id="$1" cluster_id="$2" subscription_id="$3"
+  local role_definition_id
+
+  state_set "arc_role_assigned" "false"
+  for role_definition_id in \
+    "${aksClusterAdminRoleDefinitionID}" \
+    "${aksContributorRoleDefinitionID}" \
+    "${aksRBACClusterAdminRoleDefinitionID}"; do
+    _ensure_arc_role_assignment_for_role "${principal_id}" "${cluster_id}" "${subscription_id}" "${role_definition_id}" || return 1
+  done
+  state_set "arc_role_assigned" "true"
 }
 
 _fetch_arc_bootstrap_config() {
@@ -296,6 +315,12 @@ node_join_arc() {
   state_set "arc_principal_id" "${principal_id}"
 
   _ensure_arc_role_assignment "${principal_id}" "${cluster_id}" "${subscription_id}"
+
+  # HIMDS starts during Arc onboarding, before this principal's AKS roles exist.
+  # Restart it after assignment so the bootstrap request cannot reuse in-memory
+  # identity state from before RBAC was granted.
+  log_info "Restarting Arc identity service after AKS role assignment..."
+  remote_exec "${vm_ip}" "sudo systemctl restart himdsd.service && sudo systemctl is-active --quiet himdsd.service"
 
   local config_file="${E2E_WORK_DIR}/config-arc.json"
   _fetch_arc_bootstrap_config "${vm_ip}" "${vm_private_ip}" "${vm_name}" "${cluster_id}" "${config_file}"

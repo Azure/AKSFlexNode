@@ -7,14 +7,26 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
 	"github.com/Azure/AKSFlexNode/pkg/azclient"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+)
+
+const (
+	// ARM can throttle concurrent node bootstrap requests for several minutes.
+	// Keep the backoff bounded while allowing a realistic subscription burst to
+	// clear without requiring the whole bootstrap workflow to restart.
+	armMachineMaxRetries    = 30
+	armMachineTryTimeout    = 2 * time.Minute
+	armMachineRetryDelay    = 5 * time.Second
+	armMachineMaxRetryDelay = time.Minute
 )
 
 type armMachineClient struct {
@@ -34,7 +46,7 @@ func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error
 	if err != nil {
 		return nil, fmt.Errorf("resolve ARM credential: %w", err)
 	}
-	armOpts := &arm.ClientOptions{ClientOptions: clientOpts}
+	armOpts := armMachineClientOptions(clientOpts)
 	client, err := armcontainerservice.NewMachinesClient(machineID.SubscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create machines client: %w", err)
@@ -157,6 +169,18 @@ func validateMachineResourceID(machineID *arm.ResourceID) error {
 
 func azureClientOptionsFromConfig(cfg *config.Config) azcore.ClientOptions {
 	return azclient.ClientOptionsFromConfig(cfg)
+}
+
+func armMachineClientOptions(clientOpts azcore.ClientOptions) *arm.ClientOptions {
+	// The SDK uses ARM's Retry-After, Retry-After-Ms, and x-ms-retry-after-ms
+	// response headers before falling back to this jittered exponential delay.
+	clientOpts.Retry = policy.RetryOptions{
+		MaxRetries:    armMachineMaxRetries,
+		TryTimeout:    armMachineTryTimeout,
+		RetryDelay:    armMachineRetryDelay,
+		MaxRetryDelay: armMachineMaxRetryDelay,
+	}
+	return &arm.ClientOptions{ClientOptions: clientOpts}
 }
 
 func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.ClientOptions) (azcore.TokenCredential, error) {
