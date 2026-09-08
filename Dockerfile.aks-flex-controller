@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_IMAGE_VERSION=1.26.5-1
+ARG GO_IMAGE_VERSION=1.26.6-1
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:${GO_IMAGE_VERSION}-bookworm AS build
 
