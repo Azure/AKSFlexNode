@@ -7,6 +7,7 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | Tool | Purpose |
 |------|---------|
 | `az` | Azure CLI, authenticated with `az login`. |
+| `curl` | Submit ARM Machine deletion during registration cleanup. |
 | `jq` | JSON processing. |
 | `kubectl` | Kubernetes operations. |
 | `python3` | Local registry port readiness checks and helper scripts. |
@@ -49,14 +50,15 @@ The default `all` command runs:
 2. Deploy AKS, four standard test VMs, and one Arc evaluation VM.
 3. Install Unbounded-Net as the real cluster CNI.
 4. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
-5. Join all provisioned Flex Node VMs.
-6. Validate node readiness, node-problem-detector status, and run smoke workloads.
-7. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
-8. Rejoin all Flex Nodes and validate again.
-9. Validate the installed nspawn lifecycle helper and generated systemd hooks, then reconcile a running node through the helper.
-10. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
-11. Run controller-machine-driven repave validation after the agent upgrade.
-12. Collect logs and clean up Azure resources.
+5. Reuse the MSI VM to verify that `EnsureMachine` registers a missing Machine through ARM, then reset the host.
+6. Join all provisioned Flex Node VMs through the existing controller-backed lifecycle paths.
+7. Validate node readiness, node-problem-detector status, and run smoke workloads.
+8. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
+9. Rejoin all Flex Nodes and validate again.
+10. Validate the installed nspawn lifecycle helper and generated systemd hooks, then reconcile a running node through the helper.
+11. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
+12. Run controller-machine-driven repave validation after the agent upgrade.
+13. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -64,8 +66,9 @@ The default `all` command runs:
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, join, validate, unjoin, validate absent, rejoin, validate, lifecycle, agent upgrade, repave, logs, cleanup. |
+| `all` | Full flow: build, infra, ARM registration, join, validate, unjoin, validate absent, rejoin, lifecycle, agent upgrade, repave, logs, cleanup. |
 | `infra` | Deploy AKS, four standard VMs, the Arc VM, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
+| `arm-registration` | Use the MSI VM to register a previously absent ARM Machine, verify the resource and Node, then reset the host. |
 | `join` | Join all Flex Node VMs. |
 | `join-msi` | Join only the managed-identity node. |
 | `join-token` | Join only the bootstrap-token node. |
@@ -112,6 +115,7 @@ Additional environment variables:
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
 | `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool provisioned for the MSI scenario and used for `listBootstrapData`. |
+| `E2E_ARM_MACHINE_API_VERSION` | `2025-10-02-preview` | ARM API version used to verify Machine registration and deletion. |
 | `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_MEMORY` | `100Mi` | `node.kubelet.systemReserved.memory` override written to the bootstrap-token node config. |
@@ -140,7 +144,7 @@ Additional environment variables:
 
 ## Join Modes
 
-The suite validates five join paths. The E2E subscription must have `Microsoft.HybridCompute`, `Microsoft.HybridConnectivity`, and `Microsoft.GuestConfiguration` registered before the run.
+The suite validates five join paths and one real ARM Machine registration path. The E2E subscription must have `Microsoft.ContainerService/PutMachinePreview`, `Microsoft.HybridCompute`, `Microsoft.HybridConnectivity`, and `Microsoft.GuestConfiguration` registered before the run.
 
 | VM | Auth Mode | Join Path |
 |----|-----------|-----------|
@@ -149,6 +153,16 @@ The suite validates five join paths. The E2E subscription must have `Microsoft.H
 | `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test builds a bootstrap artifact bundle at runtime, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}`. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 | `vm-e2e-arc-*` | Azure Arc Identity + Bootstrap Token | Converts an Azure VM into an official Arc evaluation server, fetches bootstrap data through Arc HIMDS, reconciles through the E2E in-cluster Machine endpoint, and validates the `himdsd.service` dependency. |
+
+Before these controller-backed joins, the suite temporarily configures the MSI
+VM with `agent.machineClient.mode: "arm"` and a distinct node name. It verifies
+that the target pool has no Machine with that name, runs bootstrap, reads the
+created Machine from ARM, checks its ETag, provisioning state, and Kubernetes
+version, and confirms the create-path log. It then resets the host and Node,
+deletes the Machine through the agent pool `deleteMachines` action, and verifies
+the resource is absent before the normal MSI lifecycle scenario. Failed and
+interrupted attempts use the same cleanup path, so the standalone command is
+safe to rerun against the same E2E infrastructure.
 
 The bootstrap-token VM is provisioned with an uppercase guest OS hostname while
 its Azure resource name remains lowercase. This verifies that an omitted
@@ -269,6 +283,7 @@ hack/e2e/
     common.sh             Logging, prerequisites, config, state, and SSH helpers.
     infra.sh              Bicep deployment, outputs, and kubeconfig setup.
     controller.sh         Controller image build/deploy and ConfigMap-backed machine goals.
+    arm-machine-registration.sh Real ARM Machine registration validation using MSI.
     node-join.sh          Shared join/unjoin orchestration and remote install helper.
     node-join-msi.sh      Managed identity join/unjoin.
     node-join-arc.sh      Externally managed Arc identity join/unjoin.

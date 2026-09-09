@@ -120,7 +120,7 @@ check_prerequisites() {
   log_info "Checking prerequisites..."
   local missing=0
 
-  for cmd in az docker git go jq kubectl make python3 ssh scp openssl; do
+  for cmd in az curl docker git go jq kubectl make python3 ssh scp openssl; do
     if ! command -v "${cmd}" &>/dev/null; then
       log_error "Missing required tool: ${cmd}"
       missing=1
@@ -201,6 +201,7 @@ load_config() {
   # controller still uses E2E_TARGET_AGENT_POOL_NAME for its synthetic machine
   # contract, while the MSI repave scenario uses this real pool for join data.
   E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME="${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-${E2E_TARGET_AGENT_POOL_NAME}}"
+  E2E_ARM_MACHINE_API_VERSION="${E2E_ARM_MACHINE_API_VERSION:-2025-10-02-preview}"
 
   # Kubelet resource reservation overrides applied to the token node config.
   # The remaining nodes keep the AKS-compatible defaults computed by the agent.
@@ -227,6 +228,7 @@ load_config() {
   log_info "  Name Suffix:      ${E2E_NAME_SUFFIX}"
   log_info "  Agent Pool:       ${E2E_TARGET_AGENT_POOL_NAME}"
   log_info "  Bootstrap Pool:   ${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}"
+  log_info "  Machine API:      ${E2E_ARM_MACHINE_API_VERSION}"
   log_info "  AKS Node VM Size: ${E2E_AKS_NODE_VM_SIZE}"
   log_info "  Flex VM Size:     ${E2E_VM_SIZE}"
   log_info "  Kubeconfig:       ${KUBECONFIG}"

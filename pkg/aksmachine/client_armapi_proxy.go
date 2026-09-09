@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
@@ -37,11 +36,8 @@ func newARMProxyClient(cfg *config.Config, logger *slog.Logger) (MachineClient, 
 	client, err := armcontainerservice.NewMachinesClient(
 		machineID.SubscriptionID,
 		staticARMProxyCredential{},
-		&arm.ClientOptions{
-			ClientOptions: policy.ClientOptions{
-				Transport: transport,
-			},
-		})
+		armMachineClientOptions(policy.ClientOptions{Transport: transport}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create proxied machines client: %w", err)
 	}

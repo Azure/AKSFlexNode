@@ -1,6 +1,7 @@
 name: E2E Tests
 
-# End-to-end tests for MSI, bootstrap-token, and kubeadm-style join flows.
+# End-to-end tests for ARM Machine registration plus MSI, bootstrap-token,
+# Arc, and kubeadm-style join flows.
 #
 # Security note: this workflow uses GitHub OIDC to obtain Azure access for the
 # protected e2e-testing environment. PR runs are allowed only when the PR branch
@@ -90,7 +91,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run E2E tests
+      - name: Run E2E tests, including ARM Machine registration
         env:
           E2E_SKIP_CLEANUP: "1"  # Cleanup handled in dedicated step below
         run: |

@@ -1,14 +1,22 @@
 package aksmachine
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -162,6 +170,136 @@ func TestAzureClientOptionsFromConfig(t *testing.T) {
 	}
 	if opts.Cloud.ActiveDirectoryAuthorityHost != cloud.AzurePublic.ActiveDirectoryAuthorityHost {
 		t.Fatalf("authority host = %q, want public cloud", opts.Cloud.ActiveDirectoryAuthorityHost)
+	}
+}
+
+func TestARMMachineClientOptions(t *testing.T) {
+	t.Parallel()
+
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("not implemented")
+	})
+	opts := armMachineClientOptions(azcore.ClientOptions{Transport: transport})
+
+	if opts.Transport == nil {
+		t.Fatal("Transport was not preserved")
+	}
+	if opts.Retry.MaxRetries != armMachineMaxRetries {
+		t.Fatalf("MaxRetries = %d, want %d", opts.Retry.MaxRetries, armMachineMaxRetries)
+	}
+	if opts.Retry.TryTimeout != armMachineTryTimeout {
+		t.Fatalf("TryTimeout = %s, want %s", opts.Retry.TryTimeout, armMachineTryTimeout)
+	}
+	if opts.Retry.RetryDelay != armMachineRetryDelay {
+		t.Fatalf("RetryDelay = %s, want %s", opts.Retry.RetryDelay, armMachineRetryDelay)
+	}
+	if opts.Retry.MaxRetryDelay != armMachineMaxRetryDelay {
+		t.Fatalf("MaxRetryDelay = %s, want %s", opts.Retry.MaxRetryDelay, armMachineMaxRetryDelay)
+	}
+	if opts.Retry.StatusCodes != nil {
+		t.Fatalf("StatusCodes = %v, want nil to preserve Azure SDK transient status defaults", opts.Retry.StatusCodes)
+	}
+}
+
+func TestARMMachineClientRetriesThrottledRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		call func(context.Context, *armMachineClient) error
+	}{
+		{
+			name: "get",
+			call: func(ctx context.Context, client *armMachineClient) error {
+				_, err := client.Get(ctx)
+				return err
+			},
+		},
+		{
+			name: "create or update",
+			call: func(ctx context.Context, client *armMachineClient) error {
+				_, err := client.Create(ctx, GoalState{KubernetesVersion: "1.34.0"})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var attempts atomic.Int32
+			client := newTestARMMachineClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if attempts.Add(1) == 1 {
+					return throttledMachineResponse(request, "1"), nil
+				}
+				return successfulMachineResponse(t, request), nil
+			}))
+
+			if err := tt.call(t.Context(), client); err != nil {
+				t.Fatalf("machine request error = %v", err)
+			}
+			if got := attempts.Load(); got != 2 {
+				t.Fatalf("request attempts = %d, want 2", got)
+			}
+		})
+	}
+}
+
+func TestARMMachineClientHonorsRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		header      string
+		headerValue string
+	}{
+		{name: "seconds", header: "Retry-After", headerValue: "5"},
+		{name: "milliseconds", header: "Retry-After-Ms", headerValue: "5000"},
+		{name: "ARM milliseconds", header: "x-ms-retry-after-ms", headerValue: "5000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var attempts atomic.Int32
+			client := newTestARMMachineClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				attempts.Add(1)
+				response := throttledMachineResponse(request, "")
+				response.Header.Set(tt.header, tt.headerValue)
+				return response, nil
+			}))
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+
+			_, err := client.Get(ctx)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Get() error = %v, want context deadline exceeded", err)
+			}
+			if got := attempts.Load(); got != 1 {
+				t.Fatalf("request attempts before %s elapsed = %d, want 1", tt.header, got)
+			}
+		})
+	}
+}
+
+func TestARMMachineClientStopsAfterRetryBudget(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	client := newTestARMMachineClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return throttledMachineResponse(request, "1"), nil
+	}))
+
+	_, err := client.Get(t.Context())
+	var responseErr *azcore.ResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("Get() error = %v, want final HTTP 429 response error", err)
+	}
+	if got, want := attempts.Load(), int32(armMachineMaxRetries+1); got != want {
+		t.Fatalf("request attempts = %d, want %d", got, want)
 	}
 }
 
@@ -438,6 +576,67 @@ func TestMachineFromARMBackfillsIdentity(t *testing.T) {
 
 	if machine.ID != "machine-id" || machine.Name != "node1" {
 		t.Fatalf("machine identity = %#v, want backfilled identity", machine)
+	}
+}
+
+func newTestARMMachineClient(t *testing.T, transport policy.Transporter) *armMachineClient {
+	t.Helper()
+
+	machineID, err := machineResourceIDFromConfig(testARMConfig(testClusterResourceID, "flex-node-1", "1.34.0"))
+	if err != nil {
+		t.Fatalf("machineResourceIDFromConfig() error = %v", err)
+	}
+	sdkClient, err := armcontainerservice.NewMachinesClient(
+		machineID.SubscriptionID,
+		staticARMProxyCredential{},
+		armMachineClientOptions(azcore.ClientOptions{Transport: transport}),
+	)
+	if err != nil {
+		t.Fatalf("NewMachinesClient() error = %v", err)
+	}
+	return &armMachineClient{
+		machineID: machineID,
+		client:    sdkClient,
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func throttledMachineResponse(request *http.Request, retryAfterMS string) *http.Response {
+	header := make(http.Header)
+	header.Set("Content-Type", "application/json")
+	if retryAfterMS != "" {
+		header.Set("Retry-After-Ms", retryAfterMS)
+	}
+	return &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"SubscriptionRequestsThrottled","message":"try again later"}}`)),
+		Request:    request,
+	}
+}
+
+func successfulMachineResponse(t *testing.T, request *http.Request) *http.Response {
+	t.Helper()
+
+	body, err := json.Marshal(armcontainerservice.Machine{
+		ID:   ptr(testClusterResourceID + "/agentPools/aksflexnodes/machines/flex-node-1"),
+		Name: ptr("flex-node-1"),
+		Properties: &armcontainerservice.MachineProperties{
+			ETag: ptr("settings-1"),
+			Kubernetes: &armcontainerservice.MachineKubernetesProfile{
+				OrchestratorVersion: ptr("1.34.0"),
+			},
+			ProvisioningState: ptr("Succeeded"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(string(body))),
+		Request:    request,
 	}
 }
 
