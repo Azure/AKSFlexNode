@@ -3,8 +3,9 @@
 # hack/e2e/lib/node-join-msi.sh - Join / unjoin an AKS flex node using MSI auth
 #
 # Functions:
-#   node_join_msi   - Generate MSI config, deploy binary, run agent
-#   node_unjoin_msi - Simulate RP delete and verify node cleanup
+#   node_join_msi                  - Join through the in-cluster Machine endpoint
+#   node_join_msi_arm_registration - Join through the ARM Machine endpoint
+#   node_unjoin_msi                - Simulate RP delete and verify node cleanup
 # =============================================================================
 set -euo pipefail
 
@@ -72,10 +73,22 @@ REMOTE
 }
 
 # ---------------------------------------------------------------------------
-# node_join_msi - Join the MSI VM
+# _node_join_msi - Join the MSI VM with the requested Machine backend.
 # ---------------------------------------------------------------------------
-node_join_msi() {
-  log_section "Joining MSI Node"
+_node_join_msi() {
+  local machine_client_mode="$1"
+  local node_name_override="$2"
+  local bootstrap_unit="$3"
+
+  case "${machine_client_mode}" in
+    arm|in-cluster) ;;
+    *)
+      log_error "Unsupported MSI Machine client mode: ${machine_client_mode}"
+      return 1
+      ;;
+  esac
+
+  log_section "Joining MSI Node (${machine_client_mode} Machine client)"
   local start
   start=$(timer_start)
 
@@ -125,8 +138,7 @@ node_join_msi() {
     "logLevel": "debug",
     "logDir": "/var/log/aks-flex-node",
     "machineClient": {
-      "mode": "in-cluster",
-      "endpointUrl": "${E2E_CONTROLLER_SERVICE_PROXY_PATH}"
+      "mode": "arm"
     },
     "requireMachineRegistration": true
   },
@@ -167,7 +179,20 @@ node_join_msi() {
 }
 EOF
 
-  log_info "Fetching initial AKS RP bootstrap data for the MSI repave scenario..."
+  jq \
+    --arg machineClientMode "${machine_client_mode}" \
+    --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
+    --arg nodeName "${node_name_override}" \
+    '.agent.machineClient = if $machineClientMode == "in-cluster" then
+        {"mode": "in-cluster", "endpointUrl": $machineEndpointURL}
+      else
+        {"mode": "arm"}
+      end
+      | if $nodeName != "" then .agent.nodeName = $nodeName else . end' \
+    "${config_file}" > "${config_file}.tmp"
+  mv "${config_file}.tmp" "${config_file}"
+
+  log_info "Fetching initial AKS RP bootstrap data for the MSI node..."
   install -m 0600 /dev/null "${bootstrap_data_file}"
   with_cluster_lock az rest \
     --only-show-errors \
@@ -188,12 +213,24 @@ EOF
   # Step 2: Put systemd-resolved into the layout supported by LocalDNS.
   prepare_localdns_host_resolver "${vm_ip}"
 
-  # Step 3: Publish the AKS Machine goal and deploy the agent.
-  ensure_flex_controller
-  machine_configmap_upsert "$(state_get msi_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
-  _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-msi"
+  # Step 3: The controller-backed mode needs a pre-created Machine fixture.
+  # ARM mode intentionally starts without one so EnsureMachine registers it.
+  if [[ "${machine_client_mode}" == "in-cluster" ]]; then
+    ensure_flex_controller
+    machine_configmap_upsert "$(state_get msi_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
+  fi
+  _deploy_and_start_agent "${vm_ip}" "${config_file}" "${bootstrap_unit}"
 
-  log_success "MSI node joined in $(timer_elapsed "${start}")s"
+  log_success "MSI node joined with ${machine_client_mode} Machine client in $(timer_elapsed "${start}")s"
+}
+
+node_join_msi() {
+  _node_join_msi "in-cluster" "" "aks-flex-node-msi"
+}
+
+node_join_msi_arm_registration() {
+  local machine_name="$1"
+  _node_join_msi "arm" "${machine_name}" "aks-flex-node-msi-arm-registration"
 }
 
 # ---------------------------------------------------------------------------

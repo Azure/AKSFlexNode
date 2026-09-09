@@ -20,6 +20,11 @@ type staticCredential struct {
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
 func (c staticCredential) GetToken(_ context.Context, options policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	if c.scope != nil && len(options.Scopes) == 1 {
 		*c.scope = options.Scopes[0]
@@ -28,6 +33,11 @@ func (c staticCredential) GetToken(_ context.Context, options policy.TokenReques
 }
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
 
 func TestFetchAndWrite(t *testing.T) {
 	t.Parallel()
@@ -113,6 +123,94 @@ func TestFetchInMemory(t *testing.T) {
 	}
 	if scope != "https://management.core.usgovcloudapi.net/.default" {
 		t.Fatalf("ARM token scope = %q", scope)
+	}
+}
+
+func TestFetchHTTPErrorDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		body        string
+		headers     http.Header
+		want        []string
+		notContains []string
+	}{
+		{
+			name: "structured ARM error",
+			body: `{"error":{"code":"AuthorizationFailed","message":"The caller is not authorized."}}`,
+			headers: http.Header{
+				"X-Ms-Request-Id":             []string{"request-123"},
+				"X-Ms-Correlation-Request-Id": []string{"correlation-456"},
+			},
+			want: []string{
+				"fetch bootstrap data returned HTTP status 403",
+				`error.code="AuthorizationFailed"`,
+				`error.message="The caller is not authorized."`,
+				`x-ms-request-id="request-123"`,
+				`x-ms-correlation-request-id="correlation-456"`,
+			},
+		},
+		{
+			name:        "unrelated response fields are omitted",
+			body:        `{"message":"body-secret","bootstrapToken":"bootstrap-secret"}`,
+			want:        []string{"fetch bootstrap data returned HTTP status 403"},
+			notContains: []string{"body-secret", "bootstrap-secret"},
+		},
+		{
+			name: "bearer token and control characters are sanitized",
+			body: `{"error":{"code":"Forbidden","message":"token arm-token\nwas rejected"}}`,
+			want: []string{
+				`error.code="Forbidden"`,
+				`error.message="token [REDACTED] was rejected"`,
+			},
+			notContains: []string{"arm-token", "\n"},
+		},
+	}
+
+	options := Options{
+		ClusterResourceID:       "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster",
+		AgentPoolName:           "aksflexnodes",
+		AuthMode:                "msi",
+		ResourceManagerEndpoint: DefaultResourceManagerEndpoint,
+		AuthorityHost:           DefaultAuthorityHost,
+		APIVersion:              DefaultAPIVersion,
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := &trackingReadCloser{Reader: strings.NewReader(tt.body)}
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusForbidden,
+					Body:       body,
+					Header:     tt.headers.Clone(),
+				}, nil
+			})}
+			_, err := fetch(t.Context(), options, dependencies{
+				credential: func(Options, azcore.ClientOptions) (azcore.TokenCredential, error) {
+					return staticCredential{}, nil
+				},
+				httpClient: client,
+			})
+			if err == nil {
+				t.Fatal("fetch() error = nil, want HTTP error")
+			}
+			for _, value := range tt.want {
+				if !strings.Contains(err.Error(), value) {
+					t.Errorf("fetch() error = %q, want it to contain %q", err, value)
+				}
+			}
+			for _, value := range tt.notContains {
+				if strings.Contains(err.Error(), value) {
+					t.Errorf("fetch() error exposed %q", value)
+				}
+			}
+			if !body.closed {
+				t.Error("fetch() did not close the error response body")
+			}
+		})
 	}
 }
 
