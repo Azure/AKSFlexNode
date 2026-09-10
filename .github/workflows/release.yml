@@ -150,15 +150,30 @@ jobs:
           <!-- Add your changelog here -->
           EOF
 
-          release_flags=(--verify-tag --latest=false)
+          create_flags=(--verify-tag --latest=false)
+          edit_flags=(--latest=false)
           if [[ "${RELEASE_VERSION}" =~ -(alpha|beta|rc)([.-]|$) ]]; then
-            release_flags+=(--prerelease)
+            create_flags+=(--prerelease)
+            edit_flags+=(--prerelease)
           fi
 
-          gh release create "${RELEASE_VERSION}" \
-            release-assets/*.tar.gz \
-            release-assets/checksums.txt \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "Release ${RELEASE_VERSION}" \
-            --notes-file release-notes.md \
-            "${release_flags[@]}"
+          if gh release view "${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            gh release upload "${RELEASE_VERSION}" \
+              release-assets/*.tar.gz \
+              release-assets/checksums.txt \
+              --clobber \
+              --repo "${GITHUB_REPOSITORY}"
+            gh release edit "${RELEASE_VERSION}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Release ${RELEASE_VERSION}" \
+              --notes-file release-notes.md \
+              "${edit_flags[@]}"
+          else
+            gh release create "${RELEASE_VERSION}" \
+              release-assets/*.tar.gz \
+              release-assets/checksums.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Release ${RELEASE_VERSION}" \
+              --notes-file release-notes.md \
+              "${create_flags[@]}"
+          fi
