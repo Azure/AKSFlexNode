@@ -17,6 +17,44 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | `git` / `make` | Fetch and render Unbounded-Net manifests. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
 
+### Host identity role
+
+The target environment must publish **Azure Kubernetes Service Flex Node Agent
+Role** (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) before running E2E.
+Publication is currently partial (canary), not a global availability or official
+release E2E guarantee. Infrastructure deployment and Arc onboarding check role
+visibility and stop if unavailable, without Contributor/admin fallback.
+
+For fresh infrastructure, Bicep grants the MSI host only this role on the ARM
+FlexNodes pool. The operator/runner assigns the same role at the same pool scope
+to the Arc principal after `azcmagent connect`. The pool is
+`E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME`, including when it differs from the synthetic
+controller pool name. The role grants bootstrap-data retrieval and same-pool
+Machine read/write, with no DataActions or Machine deletion. Assignment readback
+is not an ARM authorization/propagation test.
+
+The runner identity remains separate: it still needs infrastructure management,
+role-assignment, Arc onboarding, admin kubeconfig, and cleanup permissions.
+`scripts/setup/setup-runner.sh` configures those operator permissions, not host
+permissions. The host bootstrap script never assigns its own roles.
+
+For retained environments, incremental Bicep deployment leaves the old broad
+host assignments in place. Follow the
+[operator migration guidance](../../docs/usages/operator-first-boot.md#migrate-existing-host-identities):
+add the new grant, allow propagation, explicitly remove only identified obsolete
+host grants, and audit inherited/group permissions. Do not delete unrelated
+customer or runner permissions.
+
+Local role-assignment regression checks use Bash and `jq`, mock every Azure
+call, and do not provision resources:
+
+```bash
+bash hack/e2e/lib/node-join-arc_test.sh
+```
+
+These checks cover role selection, exact pool/principal readback, idempotency,
+retries, and fail-closed handling; they do not prove live ARM authorization.
+
 ## GitHub Actions Policy
 
 The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the protected `e2e-testing` environment. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
@@ -114,7 +152,7 @@ Additional environment variables:
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
-| `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool provisioned for the MSI scenario and used for `listBootstrapData`. |
+| `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool used for MSI/Arc `listBootstrapData`, Machine operations, and host role assignments. |
 | `E2E_ARM_MACHINE_API_VERSION` | `2025-10-02-preview` | ARM API version used to verify Machine registration and deletion. |
 | `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |

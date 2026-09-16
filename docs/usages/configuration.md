@@ -46,6 +46,21 @@ aks-flex-node preflight --config /etc/aks-flex-node/config.json
 
 At least one join or Azure authentication method must be configured. `azure.bootstrapToken` can be combined with one Azure authentication method (`azure.arc`, `azure.managedIdentity`, or `azure.servicePrincipal`) so kubelet bootstrap and ARM Machine registration can use different credentials. Only one Azure authentication method can be enabled at a time.
 
+For all three Azure identity modes, the operator assigns **Azure Kubernetes
+Service Flex Node Agent Role** (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) at
+`${azure.targetCluster.resourceId}/agentPools/${azure.targetAgentPoolName}`.
+This permits bootstrap-data retrieval and Machine read/write across that pool,
+with no DataActions. The role must be published/visible in the target environment
+before onboarding; do not use Contributor/admin as a fallback. See
+[role assignment and migration](operator-first-boot.md#assign-the-host-identitys-pool-scoped-role).
+This authorization change does not change `agent.requireMachineRegistration`,
+Machine client selection, or Kubernetes bootstrap/lifecycle RBAC. The host
+bootstrap script does not provision identities or grant roles.
+Use `scripts/bootstrap.sh --fetch-bootstrap-data` with the selected auth mode to
+populate the Kubernetes bootstrap token, API server endpoint, and CA. Retain
+those settings: Kubernetes access uses the token/CSR path; the new role does not
+authorize legacy MSI/SP Kubernetes exec-credential access.
+
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
 | `azure.bootstrapToken` | object | Kubernetes bootstrap token authentication. | `{ "token": "abcdef.0123456789abcdef" }` |
