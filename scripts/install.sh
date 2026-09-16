@@ -239,7 +239,6 @@ download_binary() {
 install_binary() {
     local binary_path="$1"
     local install_args=(-m 0755)
-    local staged=""
 
     log_info "Installing binary to $INSTALL_DIR..."
 
@@ -250,7 +249,11 @@ install_binary() {
     fi
 
     (
-        staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || exit 1
+        staged=""
+        if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX"); then
+            log_error "Failed to create staged binary in $INSTALL_DIR"
+            exit 1
+        fi
         trap '[[ -z "${staged:-}" ]] || rm -f "$staged"' EXIT
         if ! install "${install_args[@]}" "$binary_path" "$staged"; then
             log_error "Failed to stage binary at $staged"
