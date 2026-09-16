@@ -22,6 +22,7 @@ fail() {
 command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
 source "$SCRIPT"
+# install.sh only assigns defaults at source time; override after sourcing to keep this test isolated.
 INSTALL_DIR="$WORK_DIR/bin"
 export GOCACHE="$WORK_DIR/gocache"
 mkdir -p "$GOCACHE"
@@ -88,6 +89,7 @@ fi
 if install_binary "$WORK_DIR/missing" >"$WORK_DIR/missing.log" 2>&1; then
     fail "installer succeeded with missing source binary"
 fi
+[[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "failed install clobbered installed binary"
 staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
 if [[ -n "$staged_file" ]]; then
     fail "staged binary was not cleaned up after failed install"
