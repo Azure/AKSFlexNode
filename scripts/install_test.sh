@@ -80,8 +80,7 @@ fi
 
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "old running process exited unexpectedly"
 [[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "installed binary was not replaced"
-staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit) || \
-    fail "failed to scan install directory for staged binary"
+staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
 if [[ -n "$staged_file" ]]; then
     fail "staged binary was not cleaned up"
 fi
@@ -89,8 +88,7 @@ fi
 if install_binary "$WORK_DIR/missing" >"$WORK_DIR/missing.log" 2>&1; then
     fail "installer succeeded with missing source binary"
 fi
-staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit) || \
-    fail "failed to scan install directory after failed install"
+staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
 if [[ -n "$staged_file" ]]; then
     fail "staged binary was not cleaned up after failed install"
 fi

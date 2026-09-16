@@ -239,6 +239,7 @@ download_binary() {
 install_binary() {
     local binary_path="$1"
     local install_args=(-m 0755)
+    local staged=""
 
     log_info "Installing binary to $INSTALL_DIR..."
 
@@ -251,8 +252,14 @@ install_binary() {
     (
         staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || exit 1
         trap '[[ -z "${staged:-}" ]] || rm -f "$staged"' EXIT
-        install "${install_args[@]}" "$binary_path" "$staged" || exit 1
-        mv -f "$staged" "$INSTALL_DIR/aks-flex-node" || exit 1
+        if ! install "${install_args[@]}" "$binary_path" "$staged"; then
+            log_error "Failed to stage binary at $staged"
+            exit 1
+        fi
+        if ! mv -f "$staged" "$INSTALL_DIR/aks-flex-node"; then
+            log_error "Failed to install binary to $INSTALL_DIR/aks-flex-node"
+            exit 1
+        fi
         staged=""
     ) || return 1
 
