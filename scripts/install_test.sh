@@ -86,6 +86,8 @@ AKS_FLEX_NODE_LOG_DIR="$LOG_DIR" \
 
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "old running process exited unexpectedly"
 [[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "installed binary was not replaced"
-find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit | grep -q . && fail "staged binary was not cleaned up"
+if find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit | grep -q .; then
+    fail "staged binary was not cleaned up"
+fi
 
 printf 'install_test: ok\n'

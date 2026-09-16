@@ -242,7 +242,7 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX")
+    staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || return 1
     if ! install -o root -g root -m 0755 "$binary_path" "$staged"; then
         rm -f "$staged"
         return 1
