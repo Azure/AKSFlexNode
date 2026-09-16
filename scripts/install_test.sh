@@ -73,6 +73,10 @@ install_binary "$WORK_DIR/replacement" >"$WORK_DIR/install.log" 2>&1 || {
     cat "$WORK_DIR/install.log" >&2
     fail "installer failed while replacing running binary"
 }
+if [[ $EUID -ne 0 ]]; then
+    grep -q "Installing binary as $(id -un); run the installer with sudo to make it root-owned" "$WORK_DIR/install.log" || \
+        fail "non-root ownership warning was not reported"
+fi
 
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "old running process exited unexpectedly"
 [[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "installed binary was not replaced"

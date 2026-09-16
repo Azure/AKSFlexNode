@@ -239,7 +239,6 @@ download_binary() {
 install_binary() {
     local binary_path="$1"
     local install_args=(-m 0755)
-    local staged=""
 
     log_info "Installing binary to $INSTALL_DIR..."
 
@@ -249,15 +248,13 @@ install_binary() {
         log_warning "Installing binary as $(id -un); run the installer with sudo to make it root-owned"
     fi
 
-    staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || return 1
-    if ! install "${install_args[@]}" "$binary_path" "$staged"; then
-        rm -f "$staged"
-        return 1
-    fi
-    if ! mv -f "$staged" "$INSTALL_DIR/aks-flex-node"; then
-        rm -f "$staged"
-        return 1
-    fi
+    (
+        staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || exit 1
+        trap 'rm -f "$staged"' EXIT
+        install "${install_args[@]}" "$binary_path" "$staged" || exit 1
+        mv -f "$staged" "$INSTALL_DIR/aks-flex-node" || exit 1
+        staged=""
+    ) || return 1
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
