@@ -14,10 +14,10 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
-INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-/usr/local/bin}"
-CONFIG_DIR="${AKS_FLEX_NODE_CONFIG_DIR:-/etc/aks-flex-node}"
-DATA_DIR="${AKS_FLEX_NODE_DATA_DIR:-/var/lib/aks-flex-node}"
-LOG_DIR="${AKS_FLEX_NODE_LOG_DIR:-/var/log/aks-flex-node}"
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/aks-flex-node"
+DATA_DIR="/var/lib/aks-flex-node"
+LOG_DIR="/var/log/aks-flex-node"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
@@ -239,23 +239,34 @@ download_binary() {
 install_binary() {
     local binary_path="$1"
     local install_args=(-m 0755)
-    local staged
+    local staged=""
+
+    cleanup_staged_binary() {
+        [[ -z "${staged:-}" ]] || rm -f "$staged"
+    }
 
     log_info "Installing binary to $INSTALL_DIR..."
 
     if [[ $EUID -eq 0 ]]; then
         install_args=(-o root -g root -m 0755)
+    else
+        log_warning "Installing binary without root ownership because the installer is not running as root"
     fi
 
     staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || return 1
+    trap cleanup_staged_binary RETURN
     if ! install "${install_args[@]}" "$binary_path" "$staged"; then
-        rm -f "$staged"
+        cleanup_staged_binary
+        trap - RETURN
         return 1
     fi
     if ! mv -f "$staged" "$INSTALL_DIR/aks-flex-node"; then
-        rm -f "$staged"
+        cleanup_staged_binary
+        trap - RETURN
         return 1
     fi
+    staged=""
+    trap - RETURN
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
@@ -388,5 +399,6 @@ main() {
     show_next_steps
 }
 
-# Run main function
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
