@@ -241,32 +241,23 @@ install_binary() {
     local install_args=(-m 0755)
     local staged=""
 
-    cleanup_staged_binary() {
-        [[ -z "${staged:-}" ]] || rm -f "$staged"
-    }
-
     log_info "Installing binary to $INSTALL_DIR..."
 
     if [[ $EUID -eq 0 ]]; then
         install_args=(-o root -g root -m 0755)
     else
-        log_warning "Installing binary without root ownership because the installer is not running as root"
+        log_warning "Installing binary as $(id -un); run the installer with sudo to make it root-owned"
     fi
 
     staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || return 1
-    trap cleanup_staged_binary RETURN
     if ! install "${install_args[@]}" "$binary_path" "$staged"; then
-        cleanup_staged_binary
-        trap - RETURN
+        rm -f "$staged"
         return 1
     fi
     if ! mv -f "$staged" "$INSTALL_DIR/aks-flex-node"; then
-        cleanup_staged_binary
-        trap - RETURN
+        rm -f "$staged"
         return 1
     fi
-    staged=""
-    trap - RETURN
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }

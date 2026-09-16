@@ -22,6 +22,7 @@ fail() {
 command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
 source "$SCRIPT"
+INSTALL_DIR="$WORK_DIR/bin"
 export GOCACHE="$WORK_DIR/gocache"
 mkdir -p "$GOCACHE"
 
@@ -56,7 +57,6 @@ GO
 GO111MODULE=off go build -o "$WORK_DIR/running" "$WORK_DIR/running.go"
 GO111MODULE=off go build -o "$WORK_DIR/replacement" "$WORK_DIR/replacement.go"
 
-INSTALL_DIR="$WORK_DIR/bin"
 mkdir -p "$INSTALL_DIR"
 cp "$WORK_DIR/running" "$INSTALL_DIR/aks-flex-node"
 chmod 0755 "$INSTALL_DIR/aks-flex-node"
