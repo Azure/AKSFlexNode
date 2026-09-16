@@ -16,6 +16,7 @@ readonly offlineOCIImage='ghcr.io/azure/agent-ubuntu2404:v20260619'
 readonly offlineContainerdVersion='2.1.8'
 readonly offlineRuncVersion='1.5.0'
 readonly offlineCNIVersion='1.5.1'
+readonly offlineNodeExporterVersion='1.9.1'
 
 _normalize_kubernetes_version_v() {
   local version="$1"
@@ -62,7 +63,8 @@ _build_offline_artifacts_tarball() {
     "containerd": "${offlineContainerdVersion}",
     "runc": "${offlineRuncVersion}",
     "cni": "${offlineCNIVersion}",
-    "crictl": "${crictl_version}"
+    "crictl": "${crictl_version}",
+    "nodeExporter": "${offlineNodeExporterVersion}"
   },
   "containerImages": []
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"runtime"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
@@ -70,6 +71,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		CNI: agentconfig.CNIConfig{
 			PluginVersion: cfg.Networking.CNIVersion,
 		},
+		NodeExporter: nodeExporterConfig(cfg.Node.Kubelet.NodeIP),
 	}
 
 	if profile := cfg.Networking.LocalDNS; profile != nil {
@@ -132,6 +134,27 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	}
 
 	return ac
+}
+
+func nodeExporterConfig(nodeIP string) *agentconfig.AgentNodeExporterConfig {
+	cfg := &agentconfig.AgentNodeExporterConfig{
+		Enabled: true,
+		ExtraArgs: []string{
+			"--no-collector.wifi",
+			"--no-collector.hwmon",
+			"--collector.cpu.info",
+			`--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)`,
+			`--collector.netclass.ignored-devices=^(azv.*|veth.*|[a-f0-9]{15})$`,
+			"--collector.netclass.netlink",
+			`--collector.netdev.device-exclude=^(azv.*|veth.*|[a-f0-9]{15})$`,
+			"--no-collector.arp.netlink",
+		},
+	}
+	if nodeIP != "" {
+		cfg.ListenAddress = net.JoinHostPort(nodeIP, "19100")
+	}
+
+	return cfg
 }
 
 func kubeletConfiguration(cfg *Config) map[string]any {

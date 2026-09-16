@@ -56,6 +56,41 @@ func TestToAgentConfigKubeletLabels(t *testing.T) {
 	}
 }
 
+func TestToAgentConfigNodeExporter(t *testing.T) {
+	t.Parallel()
+
+	agentCfg := ToAgentConfig(&Config{Node: NodeConfig{Kubelet: KubeletConfig{NodeIP: "10.225.0.4"}}}, "kube1")
+	if agentCfg.NodeExporter == nil || !agentCfg.NodeExporter.Enabled {
+		t.Fatal("NodeExporter is not enabled")
+	}
+	if agentCfg.NodeExporter.ListenAddress != "10.225.0.4:19100" {
+		t.Fatalf("NodeExporter.ListenAddress = %q, want 10.225.0.4:19100", agentCfg.NodeExporter.ListenAddress)
+	}
+
+	wantArgs := []string{
+		"--no-collector.wifi",
+		"--no-collector.hwmon",
+		"--collector.cpu.info",
+		`--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)`,
+		`--collector.netclass.ignored-devices=^(azv.*|veth.*|[a-f0-9]{15})$`,
+		"--collector.netclass.netlink",
+		`--collector.netdev.device-exclude=^(azv.*|veth.*|[a-f0-9]{15})$`,
+		"--no-collector.arp.netlink",
+	}
+	if !slices.Equal(agentCfg.NodeExporter.ExtraArgs, wantArgs) {
+		t.Fatalf("NodeExporter.ExtraArgs = %q, want %q", agentCfg.NodeExporter.ExtraArgs, wantArgs)
+	}
+}
+
+func TestToAgentConfigNodeExporterUsesDefaultAddressResolution(t *testing.T) {
+	t.Parallel()
+
+	agentCfg := ToAgentConfig(&Config{}, "kube1")
+	if agentCfg.NodeExporter.ListenAddress != "" {
+		t.Fatalf("NodeExporter.ListenAddress = %q, want empty", agentCfg.NodeExporter.ListenAddress)
+	}
+}
+
 func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	t.Parallel()
 
