@@ -250,7 +250,7 @@ install_binary() {
 
     (
         staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || exit 1
-        trap 'rm -f "$staged"' EXIT
+        trap '[[ -z "${staged:-}" ]] || rm -f "$staged"' EXIT
         install "${install_args[@]}" "$binary_path" "$staged" || exit 1
         mv -f "$staged" "$INSTALL_DIR/aks-flex-node" || exit 1
         staged=""
