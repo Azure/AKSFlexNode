@@ -25,6 +25,8 @@ fail() {
 
 command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
+export GOCACHE="$WORK_DIR/gocache"
+mkdir -p "$GOCACHE"
 
 cat > "$WORK_DIR/running.go" <<'GO'
 package main
@@ -86,7 +88,8 @@ AKS_FLEX_NODE_LOG_DIR="$LOG_DIR" \
 
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "old running process exited unexpectedly"
 [[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "installed binary was not replaced"
-if find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit | grep -q .; then
+staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
+if [[ -n "$staged_file" ]]; then
     fail "staged binary was not cleaned up"
 fi
 

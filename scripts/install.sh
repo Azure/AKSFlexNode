@@ -238,12 +238,17 @@ download_binary() {
 
 install_binary() {
     local binary_path="$1"
+    local install_args=(-m 0755)
     local staged
 
     log_info "Installing binary to $INSTALL_DIR..."
 
+    if [[ $EUID -eq 0 ]]; then
+        install_args=(-o root -g root -m 0755)
+    fi
+
     staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") || return 1
-    if ! install -o root -g root -m 0755 "$binary_path" "$staged"; then
+    if ! install "${install_args[@]}" "$binary_path" "$staged"; then
         rm -f "$staged"
         return 1
     fi
