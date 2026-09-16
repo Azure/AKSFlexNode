@@ -14,10 +14,10 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
-INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/aks-flex-node"
-DATA_DIR="/var/lib/aks-flex-node"
-LOG_DIR="/var/log/aks-flex-node"
+INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-/usr/local/bin}"
+CONFIG_DIR="${AKS_FLEX_NODE_CONFIG_DIR:-/etc/aks-flex-node}"
+DATA_DIR="${AKS_FLEX_NODE_DATA_DIR:-/var/lib/aks-flex-node}"
+LOG_DIR="${AKS_FLEX_NODE_LOG_DIR:-/var/log/aks-flex-node}"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 GITHUB_RELEASES="${GITHUB_API}/releases"
 ASSUME_YES=false
@@ -238,13 +238,19 @@ download_binary() {
 
 install_binary() {
     local binary_path="$1"
+    local staged
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # Install binary
-    cp "$binary_path" "$INSTALL_DIR/aks-flex-node"
-    chmod +x "$INSTALL_DIR/aks-flex-node"
-    chown root:root "$INSTALL_DIR/aks-flex-node"
+    staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX")
+    if ! install -o root -g root -m 0755 "$binary_path" "$staged"; then
+        rm -f "$staged"
+        return 1
+    fi
+    if ! mv -f "$staged" "$INSTALL_DIR/aks-flex-node"; then
+        rm -f "$staged"
+        return 1
+    fi
 
     log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
 }
