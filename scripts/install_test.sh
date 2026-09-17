@@ -158,14 +158,31 @@ assert_no_staged_files
     fail "dangling binary symlink target changed"
 
 rm "$INSTALL_DIR/aks-flex-node"
+mkdir "$INSTALL_DIR/aks-flex-node"
+if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/directory-install.log" 2>&1; then
+    fail "installer succeeded with directory install target"
+fi
+assert_no_staged_files
+[[ -z "$(find "$INSTALL_DIR/aks-flex-node" -mindepth 1 -print -quit)" ]] || \
+    fail "installer moved staged binary into directory install target"
+rmdir "$INSTALL_DIR/aks-flex-node"
+
+rm -f "$managed_binary_dir/aks-flex-node-blue"
+mkdir "$managed_binary_dir/aks-flex-node-blue"
 ln -s "$managed_binary_dir/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
+if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/managed-directory-install.log" 2>&1; then
+    fail "installer succeeded with directory managed slot"
+fi
+assert_no_staged_files
+[[ -z "$(find "$managed_binary_dir/aks-flex-node-blue" -mindepth 1 -print -quit)" ]] || \
+    fail "installer moved staged binary into directory managed slot"
+rmdir "$managed_binary_dir/aks-flex-node-blue"
+cp "$WORK_DIR/replacement" "$managed_binary_dir/aks-flex-node-blue"
+
 if install_binary "$WORK_DIR/missing" >"$WORK_DIR/missing.log" 2>&1; then
     fail "installer succeeded with missing source binary"
 fi
 [[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "failed install clobbered installed binary"
-staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
-if [[ -n "$staged_file" ]]; then
-    fail "staged binary was not cleaned up after failed install"
-fi
+assert_no_staged_files
 
 printf 'install_test: ok\n'

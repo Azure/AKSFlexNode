@@ -285,6 +285,12 @@ install_binary() {
         target_dir="$(dirname "$target_path")"
     fi
 
+    if [[ -d "$target_path" ]]; then
+        # "mv" would move the staged file into the directory instead of replacing the binary.
+        log_error "Refusing to install binary; $target_path is a directory"
+        return 1
+    fi
+
     (
         staged=""
         if ! staged=$(mktemp "$target_dir/.aks-flex-node.XXXXXX"); then
