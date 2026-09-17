@@ -179,6 +179,8 @@ install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 cat /etc/aks-flex-node/config.json
 ```
 
+> `scripts/install.sh` performs first-time installation only. After the agent starts, `/usr/local/bin/aks-flex-node` becomes a symlink into the managed blue/green layout, and the installer refuses to overwrite it; upgrade the agent through the agent upgrade flow instead.
+
 ### Step 5: Run preflight checks
 
 **Run on: your Flex Node machine**
