@@ -1,0 +1,61 @@
+name: E2E Stale Resource Cleanup
+
+# Reclaims Azure resources left behind by interrupted E2E runs or by runs
+# started with skip_cleanup. Every E2E resource is named with the epoch second
+# of its run (for example the cluster "aks-e2e-1787164131"), so anything older
+# than the age threshold is safe to delete.
+#
+# Security note: like the E2E workflow, this uses GitHub OIDC against the
+# protected e2e-testing environment and only runs from the canonical repository.
+
+on:
+  schedule:
+    # Daily at 03:00 UTC.
+    - cron: "0 3 * * *"
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (only list stale resources)"
+        required: false
+        default: false
+        type: boolean
+      max_age_hours:
+        description: "Delete E2E resources older than this many hours"
+        required: false
+        default: "24"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cleanup:
+    name: Delete Stale E2E Resources
+    if: github.repository == 'Azure/AKSFlexNode'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: e2e-testing
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Azure login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Clean up stale E2E resources
+        env:
+          E2E_RESOURCE_GROUP: ${{ secrets.E2E_RESOURCE_GROUP }}
+          E2E_STALE_MAX_AGE_HOURS: ${{ inputs.max_age_hours || '24' }}
+          E2E_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          ./hack/e2e/cleanup-stale.sh
