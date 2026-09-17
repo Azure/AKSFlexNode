@@ -69,7 +69,7 @@ _stale_suffixes() {
   local names name suffix
 
   names="$(az resource list --resource-group "${E2E_RESOURCE_GROUP}" \
-    --query "[].name" -o tsv 2>/dev/null || true)"
+    --query "[].name" -o tsv)" || return 1
 
   while read -r name; do
     [[ -n "${name}" ]] || continue
@@ -97,7 +97,7 @@ _resources_for_suffix() {
 
   az resource list --resource-group "${E2E_RESOURCE_GROUP}" \
     --query "[?contains(name, 'e2e-') && contains(name, '${suffix}')].{type:type,name:name,id:id}" \
-    -o json 2>/dev/null |
+    -o json |
     jq -r '.[] | [.type, .name, .id] | @tsv'
 }
 
@@ -194,19 +194,21 @@ cleanup_stale() {
 
   local now cutoff
   now="$(date +%s)"
-  cutoff=$(( now - E2E_STALE_MAX_AGE_HOURS * 3600 ))
+  cutoff=$(( now - 10#${E2E_STALE_MAX_AGE_HOURS} * 3600 ))
 
   log_info "Resource Group: ${E2E_RESOURCE_GROUP}"
   log_info "Max Age:        ${E2E_STALE_MAX_AGE_HOURS}h (cutoff epoch ${cutoff})"
   log_info "Mode:           $([[ "${E2E_DRY_RUN}" == "1" ]] && echo "dry-run (list only)" || echo "delete")"
 
-  if ! az group show --name "${E2E_RESOURCE_GROUP}" --output none 2>/dev/null; then
+  local resource_group_exists
+  resource_group_exists="$(az group exists --name "${E2E_RESOURCE_GROUP}" --output tsv)"
+  if [[ "${resource_group_exists}" != "true" ]]; then
     log_warn "Resource group ${E2E_RESOURCE_GROUP} not found; nothing to clean up"
     return 0
   fi
 
   local suffixes
-  suffixes="$(_stale_suffixes "${cutoff}")"
+  suffixes="$(_stale_suffixes "${cutoff}")" || return 1
 
   if [[ -z "${suffixes}" ]]; then
     log_success "No stale E2E resources found"
@@ -216,7 +218,7 @@ cleanup_stale() {
   local suffix resources age_hours count=0
   while read -r suffix; do
     [[ -n "${suffix}" ]] || continue
-    resources="$(_resources_for_suffix "${suffix}")"
+    resources="$(_resources_for_suffix "${suffix}")" || return 1
     [[ -n "${resources}" ]] || continue
 
     age_hours=$(( (now - suffix) / 3600 ))
