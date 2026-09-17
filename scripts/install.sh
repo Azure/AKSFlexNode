@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 INSTALL_DIR="/usr/local/bin"
+MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
@@ -241,8 +242,6 @@ install_binary() {
     local install_args=(-m 0755)
     local target_path="$INSTALL_DIR/aks-flex-node"
     local target_dir="$INSTALL_DIR"
-    local managed_binary_dir
-    managed_binary_dir="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
 
     log_info "Installing binary to $INSTALL_DIR..."
 
@@ -254,12 +253,21 @@ install_binary() {
 
     if [[ -L "$target_path" ]]; then
         local resolved_binary resolved_current
-        if ! resolved_binary=$(readlink -f "$target_path") ||
-            ! resolved_current=$(readlink -f "$managed_binary_dir/aks-flex-node-current") ||
-            [[ "$resolved_binary" != "$resolved_current" ]] ||
-            [[ "$resolved_binary" != "$managed_binary_dir/aks-flex-node-blue" &&
-               "$resolved_binary" != "$managed_binary_dir/aks-flex-node-green" ]]; then
-            log_error "Refusing to replace symbolic link at $target_path; it must resolve through $managed_binary_dir/aks-flex-node-current to an active blue or green slot"
+        if ! resolved_binary=$(readlink -e "$target_path"); then
+            log_error "Refusing to replace dangling symbolic link at $target_path"
+            return 1
+        fi
+        if ! resolved_current=$(readlink -e "$MANAGED_BINARY_DIR/aks-flex-node-current"); then
+            log_error "Refusing to replace $target_path; managed activation link is missing"
+            return 1
+        fi
+        if [[ "$resolved_binary" != "$resolved_current" ]]; then
+            log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current"
+            return 1
+        fi
+        if [[ "$resolved_binary" != "$MANAGED_BINARY_DIR/aks-flex-node-blue" &&
+              "$resolved_binary" != "$MANAGED_BINARY_DIR/aks-flex-node-green" ]]; then
+            log_error "Refusing to replace $target_path; managed activation must select a blue or green slot"
             return 1
         fi
         target_path="$resolved_binary"

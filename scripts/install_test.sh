@@ -21,8 +21,10 @@ fail() {
 
 command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
-if [[ $EUID -eq 0 ]]; then
-    stdin_output=$(cat "$SCRIPT" | setpriv --reuid=65534 --regid=65534 --clear-groups bash 2>&1 || true)
+readonly nobody_uid=65534
+readonly nobody_gid=65534
+if [[ $EUID -eq 0 ]] && command -v setpriv >/dev/null; then
+    stdin_output=$(cat "$SCRIPT" | setpriv --reuid="$nobody_uid" --regid="$nobody_gid" --clear-groups bash 2>&1 || true)
 elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
     stdin_output=$(cat "$SCRIPT" | sudo -n -u nobody bash 2>&1 || true)
 else
@@ -32,6 +34,7 @@ grep -q "This script must be run as root" <<<"$stdin_output" || fail "stdin entr
 source "$SCRIPT"
 # install.sh only assigns defaults at source time; override after sourcing to keep this test isolated.
 INSTALL_DIR="$WORK_DIR/bin"
+MANAGED_BINARY_DIR="$WORK_DIR/lib/aks-flex-node"
 export GOCACHE="$WORK_DIR/gocache"
 mkdir -p "$GOCACHE"
 
@@ -94,7 +97,7 @@ if [[ -n "$staged_file" ]]; then
     fail "staged binary was not cleaned up"
 fi
 
-managed_binary_dir="$WORK_DIR/lib/aks-flex-node"
+managed_binary_dir="$MANAGED_BINARY_DIR"
 mkdir -p "$managed_binary_dir"
 cp "$WORK_DIR/running" "$managed_binary_dir/aks-flex-node-blue"
 ln -s "$managed_binary_dir/aks-flex-node-blue" "$managed_binary_dir/aks-flex-node-current"
