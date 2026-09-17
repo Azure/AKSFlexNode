@@ -252,12 +252,16 @@ install_binary() {
     fi
 
     if [[ -L "$target_path" ]]; then
-        local resolved_binary resolved_current
+        local managed_binary_dir resolved_binary resolved_current
+        if ! managed_binary_dir=$(readlink -e "$MANAGED_BINARY_DIR"); then
+            log_error "Refusing to replace $target_path; managed binary directory is missing"
+            return 1
+        fi
         if ! resolved_binary=$(readlink -e "$target_path"); then
             log_error "Refusing to replace dangling symbolic link at $target_path"
             return 1
         fi
-        if ! resolved_current=$(readlink -e "$MANAGED_BINARY_DIR/aks-flex-node-current"); then
+        if ! resolved_current=$(readlink -e "$managed_binary_dir/aks-flex-node-current"); then
             log_error "Refusing to replace $target_path; managed activation link is missing"
             return 1
         fi
@@ -265,8 +269,8 @@ install_binary() {
             log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current"
             return 1
         fi
-        if [[ "$resolved_binary" != "$MANAGED_BINARY_DIR/aks-flex-node-blue" &&
-              "$resolved_binary" != "$MANAGED_BINARY_DIR/aks-flex-node-green" ]]; then
+        if [[ "$resolved_binary" != "$managed_binary_dir/aks-flex-node-blue" &&
+              "$resolved_binary" != "$managed_binary_dir/aks-flex-node-green" ]]; then
             log_error "Refusing to replace $target_path; managed activation must select a blue or green slot"
             return 1
         fi

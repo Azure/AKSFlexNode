@@ -117,6 +117,7 @@ if [[ -n "$staged_file" ]]; then
 fi
 
 rm "$INSTALL_DIR/aks-flex-node"
+cp "$WORK_DIR/running" "$WORK_DIR/unmanaged-aks-flex-node"
 ln -s "$WORK_DIR/unmanaged-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
 if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/unmanaged-install.log" 2>&1; then
     fail "installer replaced unmanaged binary symlink"
@@ -124,6 +125,15 @@ fi
 [[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "unmanaged binary symlink was replaced"
 [[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/unmanaged-aks-flex-node" ]] || \
     fail "unmanaged binary symlink target changed"
+
+rm "$INSTALL_DIR/aks-flex-node"
+ln -s "$WORK_DIR/dangling-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
+if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/dangling-install.log" 2>&1; then
+    fail "installer replaced dangling binary symlink"
+fi
+[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "dangling binary symlink was replaced"
+[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/dangling-aks-flex-node" ]] || \
+    fail "dangling binary symlink target changed"
 
 rm "$INSTALL_DIR/aks-flex-node"
 ln -s "$managed_binary_dir/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
