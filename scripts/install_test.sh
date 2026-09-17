@@ -105,6 +105,10 @@ fi
 
 managed_binary_dir="$MANAGED_BINARY_DIR"
 mkdir -p "$managed_binary_dir"
+assert_no_staged_files() {
+    staged_file=$(find "$INSTALL_DIR" "$managed_binary_dir" -name '.aks-flex-node.*' -print -quit)
+    [[ -z "$staged_file" ]] || fail "staged binary was not cleaned up"
+}
 cp "$WORK_DIR/running" "$managed_binary_dir/aks-flex-node-blue"
 ln -s "$managed_binary_dir/aks-flex-node-blue" "$managed_binary_dir/aks-flex-node-current"
 rm "$INSTALL_DIR/aks-flex-node"
@@ -128,6 +132,7 @@ ln -s "$managed_binary_dir/aks-flex-node-other" "$managed_binary_dir/aks-flex-no
 if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/other-slot-install.log" 2>&1; then
     fail "installer replaced unmanaged managed-layout slot"
 fi
+assert_no_staged_files
 [[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$managed_binary_dir/aks-flex-node-other" ]] || \
     fail "installer changed unmanaged managed-layout slot"
 rm "$managed_binary_dir/aks-flex-node-current"
@@ -139,6 +144,7 @@ ln -s "$WORK_DIR/unmanaged-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
 if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/unmanaged-install.log" 2>&1; then
     fail "installer replaced unmanaged binary symlink"
 fi
+assert_no_staged_files
 [[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "unmanaged binary symlink was replaced"
 [[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/unmanaged-aks-flex-node" ]] || \
     fail "unmanaged binary symlink target changed"
@@ -148,6 +154,7 @@ ln -s "$WORK_DIR/dangling-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
 if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/dangling-install.log" 2>&1; then
     fail "installer replaced dangling binary symlink"
 fi
+assert_no_staged_files
 [[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "dangling binary symlink was replaced"
 [[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/dangling-aks-flex-node" ]] || \
     fail "dangling binary symlink target changed"

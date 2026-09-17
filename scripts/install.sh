@@ -255,6 +255,7 @@ install_binary() {
     fi
 
     if [[ -L "$target_path" ]]; then
+        # Systemd executes this compatibility symlink; replacing it would break managed upgrades and rollbacks.
         local managed_binary_dir resolved_binary resolved_blue="" resolved_current resolved_green=""
         if ! resolved_binary=$(readlink -e "$target_path"); then
             log_error "Refusing to replace dangling symbolic link at $target_path"
@@ -272,16 +273,10 @@ install_binary() {
             log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current. Remove the link or restore the managed activation link."
             return 1
         fi
-        if ! resolved_blue=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME"); then
-            :
-        fi
-        if ! resolved_green=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME"); then
-            :
-        fi
-        # Keep the compatibility symlink intact because systemd executes it.
-        if [[ ( -z "$resolved_blue" && -z "$resolved_green" ) ||
-              ( "$resolved_binary" != "$resolved_blue" &&
-                "$resolved_binary" != "$resolved_green" ) ]]; then
+        resolved_blue=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME" || true)
+        resolved_green=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME" || true)
+        if [[ "$resolved_binary" != "$resolved_blue" &&
+              "$resolved_binary" != "$resolved_green" ]]; then
             log_error "Refusing to replace $target_path; managed activation resolves to $resolved_binary, not $managed_binary_dir/$MANAGED_BINARY_BLUE_NAME or $managed_binary_dir/$MANAGED_BINARY_GREEN_NAME"
             return 1
         fi
