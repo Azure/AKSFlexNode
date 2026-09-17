@@ -16,6 +16,9 @@ REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 INSTALL_DIR="/usr/local/bin"
 MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
+readonly MANAGED_BINARY_CURRENT_NAME="aks-flex-node-current"
+readonly MANAGED_BINARY_BLUE_NAME="aks-flex-node-blue"
+readonly MANAGED_BINARY_GREEN_NAME="aks-flex-node-green"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
@@ -253,15 +256,15 @@ install_binary() {
 
     if [[ -L "$target_path" ]]; then
         local managed_binary_dir resolved_binary resolved_current
-        if ! managed_binary_dir=$(readlink -e "$MANAGED_BINARY_DIR"); then
-            log_error "Refusing to replace $target_path; managed binary directory is missing"
-            return 1
-        fi
         if ! resolved_binary=$(readlink -e "$target_path"); then
             log_error "Refusing to replace dangling symbolic link at $target_path"
             return 1
         fi
-        if ! resolved_current=$(readlink -e "$managed_binary_dir/aks-flex-node-current"); then
+        if ! managed_binary_dir=$(readlink -e "$MANAGED_BINARY_DIR"); then
+            log_error "Refusing to replace $target_path; managed binary directory is missing"
+            return 1
+        fi
+        if ! resolved_current=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_CURRENT_NAME"); then
             log_error "Refusing to replace $target_path; managed activation link is missing"
             return 1
         fi
@@ -269,8 +272,8 @@ install_binary() {
             log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current"
             return 1
         fi
-        if [[ "$resolved_binary" != "$managed_binary_dir/aks-flex-node-blue" &&
-              "$resolved_binary" != "$managed_binary_dir/aks-flex-node-green" ]]; then
+        if [[ "$resolved_binary" != "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME" &&
+              "$resolved_binary" != "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME" ]]; then
             log_error "Refusing to replace $target_path; managed activation must select a blue or green slot"
             return 1
         fi
