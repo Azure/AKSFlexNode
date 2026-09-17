@@ -272,8 +272,14 @@ install_binary() {
             log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current. Remove the link or restore the managed activation link."
             return 1
         fi
-        resolved_blue=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME" || true)
-        resolved_green=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME" || true)
+        resolved_blue="missing-managed-blue-slot"
+        resolved_green="missing-managed-green-slot"
+        if ! resolved_blue=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME"); then
+            resolved_blue="missing-managed-blue-slot"
+        fi
+        if ! resolved_green=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME"); then
+            resolved_green="missing-managed-green-slot"
+        fi
         if [[ "$resolved_binary" != "$resolved_blue" &&
               "$resolved_binary" != "$resolved_green" ]]; then
             log_error "Refusing to replace $target_path; managed activation must select a blue or green slot"

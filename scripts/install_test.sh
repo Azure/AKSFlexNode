@@ -122,6 +122,17 @@ if [[ -n "$staged_file" ]]; then
     fail "managed staged binary was not cleaned up"
 fi
 
+cp "$WORK_DIR/running" "$managed_binary_dir/aks-flex-node-other"
+rm "$managed_binary_dir/aks-flex-node-current"
+ln -s "$managed_binary_dir/aks-flex-node-other" "$managed_binary_dir/aks-flex-node-current"
+if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/other-slot-install.log" 2>&1; then
+    fail "installer replaced unmanaged managed-layout slot"
+fi
+[[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$managed_binary_dir/aks-flex-node-other" ]] || \
+    fail "installer changed unmanaged managed-layout slot"
+rm "$managed_binary_dir/aks-flex-node-current"
+ln -s "$managed_binary_dir/aks-flex-node-blue" "$managed_binary_dir/aks-flex-node-current"
+
 rm "$INSTALL_DIR/aks-flex-node"
 cp "$WORK_DIR/running" "$WORK_DIR/unmanaged-aks-flex-node"
 ln -s "$WORK_DIR/unmanaged-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
