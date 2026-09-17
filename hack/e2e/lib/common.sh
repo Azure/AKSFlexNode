@@ -53,6 +53,23 @@ log_debug()   {
   return 0
 }
 
+readonly flexNodeAgentRoleDefinitionID="8f139b0f-7eaf-460b-a9da-5b1246d9ed0d"
+
+require_flex_node_agent_role() {
+  local subscription_id="$1" role_id
+  if ! role_id="$(az role definition list \
+    --name "${flexNodeAgentRoleDefinitionID}" \
+    --subscription "${subscription_id}" \
+    --query "[?roleType == 'BuiltInRole'].name" -o tsv)"; then
+    log_error "Cannot query Azure Kubernetes Service Flex Node Agent Role in subscription ${subscription_id}; check operator access and role publication before onboarding"
+    return 1
+  fi
+  if [[ "${role_id,,}" != "${flexNodeAgentRoleDefinitionID}" ]]; then
+    log_error "Azure Kubernetes Service Flex Node Agent Role (${flexNodeAgentRoleDefinitionID}) is not published/visible in subscription ${subscription_id}; stop onboarding, with no Contributor or admin fallback"
+    return 1
+  fi
+}
+
 _E2E_GHA_GROUP_OPEN=0
 
 gha_end_group() {

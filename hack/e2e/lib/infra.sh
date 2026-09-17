@@ -57,6 +57,8 @@ infra_deploy() {
     return 1
   fi
 
+  require_flex_node_agent_role "${AZURE_SUBSCRIPTION_ID}" || return 1
+
   # Ensure resource group exists
   if ! az group show --name "${E2E_RESOURCE_GROUP}" --output none 2>/dev/null; then
     log_info "Creating resource group: ${E2E_RESOURCE_GROUP} in ${E2E_LOCATION}"
