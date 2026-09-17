@@ -106,6 +106,7 @@ fi
 managed_binary_dir="$MANAGED_BINARY_DIR"
 mkdir -p "$managed_binary_dir"
 assert_no_staged_files() {
+    local staged_file
     staged_file=$(find "$INSTALL_DIR" "$managed_binary_dir" -name '.aks-flex-node.*' -print -quit)
     [[ -z "$staged_file" ]] || fail "staged binary was not cleaned up"
 }
@@ -121,10 +122,7 @@ install_binary "$WORK_DIR/replacement" >"$WORK_DIR/managed-install.log" 2>&1 || 
 [[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$managed_binary_dir/aks-flex-node-blue" ]] || \
     fail "installer changed managed binary activation"
 [[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "managed binary was not replaced"
-staged_file=$(find "$managed_binary_dir" -name '.aks-flex-node.*' -print -quit)
-if [[ -n "$staged_file" ]]; then
-    fail "managed staged binary was not cleaned up"
-fi
+assert_no_staged_files
 
 cp "$WORK_DIR/running" "$managed_binary_dir/aks-flex-node-other"
 rm "$managed_binary_dir/aks-flex-node-current"
