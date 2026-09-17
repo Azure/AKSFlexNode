@@ -240,6 +240,7 @@ install_binary() {
     local binary_path="$1"
     local install_args=(-m 0755)
     local target_path="$INSTALL_DIR/aks-flex-node"
+    local target_dir="$INSTALL_DIR"
     local managed_binary_dir
     managed_binary_dir="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
 
@@ -258,16 +259,17 @@ install_binary() {
             [[ "$resolved_binary" != "$resolved_current" ]] ||
             [[ "$resolved_binary" != "$managed_binary_dir/aks-flex-node-blue" &&
                "$resolved_binary" != "$managed_binary_dir/aks-flex-node-green" ]]; then
-            log_error "Refusing to replace unexpected symbolic link at $target_path"
+            log_error "Refusing to replace symbolic link at $target_path; it must resolve through $managed_binary_dir/aks-flex-node-current to an active blue or green slot"
             return 1
         fi
         target_path="$resolved_binary"
+        target_dir="$(dirname "$target_path")"
     fi
 
     (
         staged=""
-        if ! staged=$(mktemp "$(dirname "$target_path")/.aks-flex-node.XXXXXX"); then
-            log_error "Failed to create staged binary in $(dirname "$target_path")"
+        if ! staged=$(mktemp "$target_dir/.aks-flex-node.XXXXXX"); then
+            log_error "Failed to create staged binary in $target_dir"
             exit 1
         fi
         trap '[[ -z "${staged:-}" ]] || rm -f "$staged"' EXIT

@@ -113,6 +113,17 @@ if [[ -n "$staged_file" ]]; then
     fail "managed staged binary was not cleaned up"
 fi
 
+rm "$INSTALL_DIR/aks-flex-node"
+ln -s "$WORK_DIR/unmanaged-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
+if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/unmanaged-install.log" 2>&1; then
+    fail "installer replaced unmanaged binary symlink"
+fi
+[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "unmanaged binary symlink was replaced"
+[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/unmanaged-aks-flex-node" ]] || \
+    fail "unmanaged binary symlink target changed"
+
+rm "$INSTALL_DIR/aks-flex-node"
+ln -s "$managed_binary_dir/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
 if install_binary "$WORK_DIR/missing" >"$WORK_DIR/missing.log" 2>&1; then
     fail "installer succeeded with missing source binary"
 fi
