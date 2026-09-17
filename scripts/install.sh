@@ -239,6 +239,9 @@ download_binary() {
 install_binary() {
     local binary_path="$1"
     local install_args=(-m 0755)
+    local target_path="$INSTALL_DIR/aks-flex-node"
+    local managed_binary_dir
+    managed_binary_dir="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
 
     log_info "Installing binary to $INSTALL_DIR..."
 
@@ -248,10 +251,23 @@ install_binary() {
         log_warning "Installing binary as $(id -un); run the installer with sudo to make it root-owned"
     fi
 
+    if [[ -L "$target_path" ]]; then
+        local resolved_binary resolved_current
+        if ! resolved_binary=$(readlink -f "$target_path") ||
+            ! resolved_current=$(readlink -f "$managed_binary_dir/aks-flex-node-current") ||
+            [[ "$resolved_binary" != "$resolved_current" ]] ||
+            [[ "$resolved_binary" != "$managed_binary_dir/aks-flex-node-blue" &&
+               "$resolved_binary" != "$managed_binary_dir/aks-flex-node-green" ]]; then
+            log_error "Refusing to replace unexpected symbolic link at $target_path"
+            return 1
+        fi
+        target_path="$resolved_binary"
+    fi
+
     (
         staged=""
-        if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX"); then
-            log_error "Failed to create staged binary in $INSTALL_DIR"
+        if ! staged=$(mktemp "$(dirname "$target_path")/.aks-flex-node.XXXXXX"); then
+            log_error "Failed to create staged binary in $(dirname "$target_path")"
             exit 1
         fi
         trap '[[ -z "${staged:-}" ]] || rm -f "$staged"' EXIT
@@ -259,8 +275,8 @@ install_binary() {
             log_error "Failed to stage binary at $staged"
             exit 1
         fi
-        if ! mv -f "$staged" "$INSTALL_DIR/aks-flex-node"; then
-            log_error "Failed to install binary to $INSTALL_DIR/aks-flex-node"
+        if ! mv -f "$staged" "$target_path"; then
+            log_error "Failed to install binary to $target_path"
             exit 1
         fi
         staged=""
@@ -397,6 +413,6 @@ main() {
     show_next_steps
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
     main "$@"
 fi

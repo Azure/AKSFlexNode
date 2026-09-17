@@ -21,6 +21,14 @@ fail() {
 
 command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
+if [[ $EUID -eq 0 ]]; then
+    stdin_output=$(cat "$SCRIPT" | setpriv --reuid=65534 --regid=65534 --clear-groups bash 2>&1 || true)
+elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+    stdin_output=$(cat "$SCRIPT" | sudo -n -u nobody bash 2>&1 || true)
+else
+    fail "a privilege-dropping command is required to test the stdin entrypoint"
+fi
+grep -q "This script must be run as root" <<<"$stdin_output" || fail "stdin entrypoint did not reach main"
 source "$SCRIPT"
 # install.sh only assigns defaults at source time; override after sourcing to keep this test isolated.
 INSTALL_DIR="$WORK_DIR/bin"
@@ -84,6 +92,25 @@ kill -0 "$RUNNING_PID" 2>/dev/null || fail "old running process exited unexpecte
 staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
 if [[ -n "$staged_file" ]]; then
     fail "staged binary was not cleaned up"
+fi
+
+managed_binary_dir="$WORK_DIR/lib/aks-flex-node"
+mkdir -p "$managed_binary_dir"
+cp "$WORK_DIR/running" "$managed_binary_dir/aks-flex-node-blue"
+ln -s "$managed_binary_dir/aks-flex-node-blue" "$managed_binary_dir/aks-flex-node-current"
+rm "$INSTALL_DIR/aks-flex-node"
+ln -s "$managed_binary_dir/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
+install_binary "$WORK_DIR/replacement" >"$WORK_DIR/managed-install.log" 2>&1 || {
+    cat "$WORK_DIR/managed-install.log" >&2
+    fail "installer failed while replacing managed binary"
+}
+[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "installer replaced managed binary symlink"
+[[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$managed_binary_dir/aks-flex-node-blue" ]] || \
+    fail "installer changed managed binary activation"
+[[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "managed binary was not replaced"
+staged_file=$(find "$managed_binary_dir" -name '.aks-flex-node.*' -print -quit)
+if [[ -n "$staged_file" ]]; then
+    fail "managed staged binary was not cleaned up"
 fi
 
 if install_binary "$WORK_DIR/missing" >"$WORK_DIR/missing.log" 2>&1; then
