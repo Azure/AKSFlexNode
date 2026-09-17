@@ -23,15 +23,18 @@ command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
 readonly nobody_uid=65534
 readonly nobody_gid=65534
+stdin_test_skipped=false
 if [[ $EUID -eq 0 ]] && command -v setpriv >/dev/null; then
     stdin_output=$(setpriv --reuid="$nobody_uid" --regid="$nobody_gid" --clear-groups bash <"$SCRIPT" 2>&1 || true)
+elif [[ $EUID -ne 0 ]]; then
+    stdin_output=$(bash <"$SCRIPT" 2>&1 || true)
 elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
     stdin_output=$(sudo -n -u nobody bash <"$SCRIPT" 2>&1 || true)
 else
     printf 'install_test: skipping stdin entrypoint test; no privilege-dropping command is available\n' >&2
-    stdin_output=""
+    stdin_test_skipped=true
 fi
-if [[ -n "$stdin_output" ]]; then
+if [[ "$stdin_test_skipped" == false ]]; then
     grep -q "This script must be run as root" <<<"$stdin_output" || fail "stdin entrypoint did not reach main"
 fi
 source "$SCRIPT"

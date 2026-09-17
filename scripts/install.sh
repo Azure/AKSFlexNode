@@ -255,7 +255,7 @@ install_binary() {
     fi
 
     if [[ -L "$target_path" ]]; then
-        local managed_binary_dir resolved_binary resolved_current
+        local managed_binary_dir resolved_binary resolved_blue resolved_current resolved_green
         if ! resolved_binary=$(readlink -e "$target_path"); then
             log_error "Refusing to replace dangling symbolic link at $target_path"
             return 1
@@ -269,11 +269,13 @@ install_binary() {
             return 1
         fi
         if [[ "$resolved_binary" != "$resolved_current" ]]; then
-            log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current"
+            log_error "Refusing to replace $target_path; it resolves to $resolved_binary instead of the active managed binary $resolved_current. Remove the link or restore the managed activation link."
             return 1
         fi
-        if [[ "$resolved_binary" != "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME" &&
-              "$resolved_binary" != "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME" ]]; then
+        resolved_blue=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_BLUE_NAME" || true)
+        resolved_green=$(readlink -e "$managed_binary_dir/$MANAGED_BINARY_GREEN_NAME" || true)
+        if [[ "$resolved_binary" != "$resolved_blue" &&
+              "$resolved_binary" != "$resolved_green" ]]; then
             log_error "Refusing to replace $target_path; managed activation must select a blue or green slot"
             return 1
         fi
