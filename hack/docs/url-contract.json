@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": 1,
+  "description": "Inventory of public Markdown paths and compatibility anchors. Paths are required; anchors are enforced only when protectAnchors is true.",
+  "inventoryGlobs": [
+    "README.md",
+    "SECURITY.md",
+    "docs/**/*.md",
+    "hack/*/README.md"
+  ],
+  "documents": [
+    {
+      "path": "README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-flex-node",
+        "clean-up",
+        "development-and-security",
+        "getting-started",
+        "key-features-and-scenarios",
+        "license",
+        "network-requirements",
+        "next-steps",
+        "overview",
+        "prepare-the-cluster",
+        "prerequisites",
+        "step-1-set-your-variables-and-connect-to-the-cluster",
+        "step-2-generate-the-join-configuration",
+        "step-3-copy-the-configuration-to-your-flex-node-machine",
+        "step-4-install-the-agent-on-your-flex-node-machine",
+        "step-5-run-preflight-checks",
+        "step-6-join-the-node",
+        "step-7-verify-the-node-joined",
+        "troubleshooting",
+        "usage-guides-and-topics"
+      ]
+    },
+    {
+      "path": "SECURITY.md",
+      "protectAnchors": true,
+      "anchors": [
+        "security"
+      ]
+    },
+    {
+      "path": "docs/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-flex-node-documentation",
+        "contribute",
+        "deploy-a-flex-node",
+        "find-reference-information",
+        "report-problems",
+        "try-supplemental-scenarios",
+        "understand-the-system"
+      ]
+    },
+    {
+      "path": "docs/design.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-flex-node-design",
+        "architecture",
+        "authentication-modes",
+        "azure-arc",
+        "bootstrap-token",
+        "command-model",
+        "configuration-model",
+        "detailed-design-topics",
+        "goals",
+        "host-model",
+        "join-flows",
+        "lifecycle-and-repave",
+        "managed-identity",
+        "references",
+        "runtime-and-daemon",
+        "service-principal",
+        "state-and-idempotency",
+        "unbounded-integration"
+      ]
+    },
+    {
+      "path": "docs/design/agent-and-aks.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-rp-and-flex-node-agent-interaction",
+        "appendix-aks-rp-implementation-details",
+        "appendix-minimal-arm-machine-model",
+        "arm-machine-creation-and-bootstrap",
+        "authentication",
+        "control-loops",
+        "current-repave-implementation",
+        "failure-handling",
+        "normal-operation-flow",
+        "operation-signals",
+        "overview",
+        "ownership",
+        "reset-and-delete-flow",
+        "state-and-idempotency",
+        "status-reporting",
+        "upgrade-flow"
+      ]
+    },
+    {
+      "path": "docs/design/in-cluster-machine.md",
+      "protectAnchors": true,
+      "anchors": [
+        "bootstrap-flow",
+        "daemon-flow",
+        "in-cluster-machine-flow",
+        "machine-contract",
+        "request-path"
+      ]
+    },
+    {
+      "path": "docs/design/storage-backed-bootstrap.md",
+      "protectAnchors": true,
+      "anchors": [
+        "1-prepare-the-reusable-image",
+        "2-publish-a-bounded-lifetime-script",
+        "3-provision-identity-network-and-download-access",
+        "4-download-the-generated-script",
+        "5-invoke-once-with-runtime-overrides",
+        "6-record-completion-and-remove-the-downloaded-script",
+        "7-verify-convergence",
+        "agent-download-and-installation",
+        "base-config-contract",
+        "cloud-init",
+        "config-generation",
+        "context",
+        "execution-flow",
+        "expected-first-boot-flow",
+        "failure-and-retry-expectations",
+        "generated-bootstrap-script",
+        "goals",
+        "host-requirements",
+        "input-precedence",
+        "managed-identity",
+        "non-goals",
+        "publishing-model",
+        "recovery-and-idempotency",
+        "runtime-bootstrap-data-refresh",
+        "security-properties",
+        "service-principal",
+        "status",
+        "suggested-storage-layout",
+        "validation"
+      ]
+    },
+    {
+      "path": "docs/development.md",
+      "protectAnchors": true,
+      "anchors": [
+        "adding-a-new-bootstrap-component",
+        "adding-new-features",
+        "additional-resources",
+        "branch-protection",
+        "building-from-source",
+        "code-quality-checks",
+        "code-style-and-conventions",
+        "contributing",
+        "coverage-below-threshold",
+        "development-guide",
+        "development-workflow",
+        "documentation-changes",
+        "example-test-structure",
+        "getting-help",
+        "github-actions-workflows",
+        "installing-golangci-lint",
+        "license",
+        "linter-configuration",
+        "linter-failures",
+        "overview",
+        "pre-commit-workflow",
+        "prerequisites",
+        "project-structure",
+        "pull-request-flow",
+        "pull-request-guidelines",
+        "test-coverage",
+        "test-failures",
+        "test-file-conventions",
+        "testing",
+        "testing-and-cicd",
+        "testing-best-practices",
+        "troubleshooting",
+        "writing-tests"
+      ]
+    },
+    {
+      "path": "docs/labs/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "available-labs",
+        "common-prerequisites",
+        "lab-maintenance",
+        "labs",
+        "topic-matrix"
+      ]
+    },
+    {
+      "path": "docs/labs/aks-private-cluster-cilium.md",
+      "protectAnchors": true,
+      "anchors": [
+        "create-a-private-no-cni-aks-cluster",
+        "create-an-admin-vm-for-the-private-cluster",
+        "create-networks",
+        "create-the-flex-vm",
+        "daemonsets-on-the-flex-node",
+        "generate-bootstrap-config",
+        "install-aks-flex-node-on-the-vm",
+        "install-unmanaged-cilium",
+        "link-private-dns-to-the-flex-vnet",
+        "prerequisites",
+        "private-aks-cluster-with-unmanaged-cilium-and-cross-region-flex-node",
+        "private-link-and-dns",
+        "topology",
+        "troubleshooting",
+        "verify",
+        "what-is-cilium"
+      ]
+    },
+    {
+      "path": "docs/labs/aks-private-cluster-unbounded-net.md",
+      "protectAnchors": true,
+      "anchors": [
+        "create-a-private-no-cni-aks-cluster",
+        "create-an-admin-vm-for-the-private-cluster",
+        "create-networks",
+        "create-sites-and-mesh-peering",
+        "create-the-flex-vm",
+        "daemonsets-on-the-flex-node",
+        "generate-bootstrap-config",
+        "install-aks-flex-node-on-the-vm",
+        "install-unbounded-net",
+        "link-private-dns-to-the-flex-vnet",
+        "prerequisites",
+        "private-aks-cluster-with-unbounded-net-and-cross-region-flex-node",
+        "private-link-and-dns",
+        "topology",
+        "troubleshooting",
+        "verify",
+        "what-is-unbounded-net"
+      ]
+    },
+    {
+      "path": "docs/labs/aks-public-cluster-offline-bootstrap.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-flex-node-with-offline-bootstrap-artifacts",
+        "bootstrap-the-node",
+        "configure-nspawn-containerd-for-the-temporary-local-http-registry",
+        "deploy-the-offline-flex-site-networking-daemonsets",
+        "flex-site-pods-fail-with-https-or-imagepullbackoff",
+        "generate-a-baseline-aks-flex-node-config",
+        "install-host-prerequisites-on-the-target-vm",
+        "install-the-config-and-run-preflight",
+        "install-unbounded-net-with-site-scoped-node-daemonsets",
+        "mirror-bootstrap-and-flex-site-runtime-artifacts",
+        "option-a-use-a-filesystem-bootstrap-artifact-bundle",
+        "option-b-use-a-local-oci-registry-for-bootstrap-and-flex-site-runtime-artifacts",
+        "patch-the-config-for-filesystem-mode",
+        "patch-the-config-for-local-registry-mode",
+        "persistent-lockdown-with-nsg-rules",
+        "preflight-fails-artifact-checks",
+        "preflight-fails-host-packages",
+        "preflight-fails-oci-image-reachable",
+        "preflight-only-host-level-block-with-nftables",
+        "prerequisites",
+        "pull-the-bootstrap-artifact-bundle-to-files",
+        "restrict-egress-after-staging",
+        "stage-the-rootfs-image-as-a-local-oci-layout",
+        "start-the-local-registry",
+        "troubleshooting",
+        "validate-that-offline-artifacts-were-used"
+      ]
+    },
+    {
+      "path": "docs/labs/aks-public-cluster-unbounded-net-vnet-peering.md",
+      "protectAnchors": true,
+      "anchors": [
+        "create-a-public-no-cni-aks-cluster",
+        "create-resource-groups-and-networks",
+        "create-sites-and-mesh-peering",
+        "create-the-flex-vm",
+        "daemonsets-on-the-flex-node",
+        "generate-bootstrap-config",
+        "install-aks-flex-node-on-the-vm",
+        "install-unbounded-net",
+        "prerequisites",
+        "public-aks-cluster-with-unbounded-net-and-cross-region-vnet-peered-flex-node",
+        "topology",
+        "troubleshooting",
+        "verify",
+        "what-is-unbounded-net-doing-here"
+      ]
+    },
+    {
+      "path": "docs/labs/aks-public-cluster-unbounded-net-wireguard.md",
+      "protectAnchors": true,
+      "anchors": [
+        "add-a-public-aks-gateway-node-pool",
+        "create-a-public-no-cni-aks-cluster",
+        "create-resource-groups-and-networks",
+        "create-sites-and-the-aks-gateway-pool",
+        "create-the-flex-vm",
+        "generate-bootstrap-config",
+        "install-aks-flex-node-on-the-vm",
+        "install-unbounded-net",
+        "platform-managed-nsg-notes",
+        "prerequisites",
+        "public-aks-cluster-with-unbounded-net-wireguard-flex-node",
+        "topology",
+        "troubleshooting",
+        "verify-flex-site-membership",
+        "verify-pods-across-sites",
+        "verify-wireguard-gateway-connectivity",
+        "what-is-unbounded-net-doing-here"
+      ]
+    },
+    {
+      "path": "docs/labs/amd-gpu-node-setup.md",
+      "protectAnchors": true,
+      "anchors": [
+        "1-provision-an-amd-gpu-host",
+        "2-prepare-aks-bootstrap-credentials",
+        "3-install-aks-flex-node-on-the-host",
+        "4-write-the-host-config",
+        "5-bootstrap-and-watch-the-node",
+        "amd-gpu-flex-node-setup",
+        "amd-gpu-operator",
+        "before-you-begin",
+        "caveats",
+        "cluster-gpu-stack-manual",
+        "direct-host-bootstrap",
+        "driver-and-image-contract",
+        "host-preparation-example",
+        "image-options",
+        "lightweight-device-plugin",
+        "overview",
+        "provisioning-path",
+        "responsibility-boundary",
+        "troubleshooting",
+        "validated-scope-and-os-policy",
+        "validation"
+      ]
+    },
+    {
+      "path": "docs/labs/gpu-node-setup.md",
+      "protectAnchors": true,
+      "anchors": [
+        "1-provision-a-gpu-capable-host",
+        "2-prepare-aks-bootstrap-credentials",
+        "3-install-aks-flex-node-on-the-host",
+        "4-write-the-host-config",
+        "5-bootstrap-and-watch-the-node",
+        "before-you-begin",
+        "caveats",
+        "cluster-gpu-stack-manual",
+        "direct-host-bootstrap",
+        "driver-and-image-contract",
+        "image-options",
+        "nvidia-gpu-flex-node-setup",
+        "overview",
+        "provisioning-path",
+        "troubleshooting",
+        "validation"
+      ]
+    },
+    {
+      "path": "docs/usage.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-flex-node-usage",
+        "guides"
+      ]
+    },
+    {
+      "path": "docs/usage/aks-flex-config.md",
+      "protectAnchors": true,
+      "anchors": [
+        "aks-flex-config-helper",
+        "azure-arc",
+        "bootstrap-token",
+        "copy-to-host",
+        "generate-node-config",
+        "managed-identity",
+        "prerequisites",
+        "save-the-helper",
+        "service-principal",
+        "setup-node-rbac",
+        "shared-cluster-arguments"
+      ]
+    },
+    {
+      "path": "docs/usage/configuration.md",
+      "protectAnchors": true,
+      "anchors": [
+        "additional-host-mounts",
+        "agent",
+        "aks-localdns",
+        "authentication",
+        "azure",
+        "azure-arc",
+        "azure-arc-1",
+        "bootstrap",
+        "bootstrap-image-and-offline-artifact-overrides",
+        "bootstrap-token",
+        "bootstrap-token-1",
+        "component-version-overrides",
+        "component-versions",
+        "components",
+        "configuration",
+        "image-pull-credential-provider",
+        "kubelet",
+        "legacy-config-compatibility",
+        "managed-identity",
+        "managed-identity-1",
+        "networking",
+        "node",
+        "sample-configurations",
+        "service-principal",
+        "service-principal-1",
+        "target-cluster",
+        "top-level-sections"
+      ]
+    },
+    {
+      "path": "docs/usage/getting-started.md",
+      "protectAnchors": true,
+      "anchors": [
+        "1-setup-azure-features-and-networking-base",
+        "2-create-a-no-cni-aks-cluster",
+        "3-install-unbounded-and-initialize-the-sites",
+        "4-create-the-flexnodes-pool",
+        "5-prepare-the-flex-host-and-azure-identity",
+        "6-download-and-run-the-bootstrap-script",
+        "7-verify-the-joined-node",
+        "arm-machine-registration-fails",
+        "bootstrap-token-expired",
+        "flow",
+        "machineoperation-cache-synchronization-times-out",
+        "node-joins-but-the-host-agent-restarts",
+        "operator-guide-bootstrap-an-aks-flex-node",
+        "preflight-reports-insufficient-disk-space",
+        "prerequisites",
+        "system-node-remains-notready",
+        "troubleshooting"
+      ]
+    },
+    {
+      "path": "docs/usage/joining-nodes.md",
+      "protectAnchors": true,
+      "anchors": [
+        "authentication-mode-selection",
+        "azure-arc",
+        "before-you-begin",
+        "bootstrap-token",
+        "joining-nodes",
+        "managed-identity",
+        "service-principal"
+      ]
+    },
+    {
+      "path": "docs/usage/operations.md",
+      "protectAnchors": true,
+      "anchors": [
+        "agent-service",
+        "managed-agent-upgrade",
+        "nspawn-worker",
+        "operations",
+        "preflight",
+        "reset-and-uninstall",
+        "start",
+        "troubleshooting-checklist",
+        "verify-node-state"
+      ]
+    },
+    {
+      "path": "hack/e2e/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "agent-upgrade-validation",
+        "aks-flex-node-e2e-tests",
+        "commands",
+        "github-actions-policy",
+        "iterative-development",
+        "join-modes",
+        "makefile-targets",
+        "nspawn-lifecycle-validation",
+        "options",
+        "prerequisites",
+        "project-layout",
+        "quick-start",
+        "repave-validation",
+        "stale-resource-cleanup",
+        "state-and-logs",
+        "troubleshooting"
+      ]
+    },
+    {
+      "path": "hack/qemu/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "commands",
+        "development-workflow",
+        "examples",
+        "guest-environment",
+        "how-it-works",
+        "logs",
+        "prerequisites",
+        "qemu-local-vm",
+        "quick-start",
+        "runtime-artifacts",
+        "start",
+        "stop"
+      ]
+    }
+  ]
+}

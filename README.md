@@ -4,7 +4,7 @@
 
 AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual machines and bare metal hosts, enabling them to run as AKS worker nodes outside standard AKS node pools. It is built on top of [Azure Unbounded](https://github.com/Azure/unbounded), which provides the host-side foundation for running and reconciling isolated Kubernetes node environments.
 
-> **Status:** AKS Flex Node is currently alpha software.
+> **Status:** AKS Flex Node is currently in [public preview](https://learn.microsoft.com/en-us/azure/aks/flex-nodes-for-aks-overview).
 
 ## Key Features And Scenarios
 
@@ -52,7 +52,7 @@ Your Flex Node machine and the AKS cluster must be able to reach each other. Con
 
 ### Prepare the cluster
 
-Before joining a node, prepare the target AKS cluster by following the [operator guide](docs/usages/operator-first-boot.md). It covers the FlexNodes pool, Unbounded networking, identity, RBAC, and node registration requirements that are not present on a standard AKS cluster.
+Before joining a node, prepare the target AKS cluster by following the [operator guide](docs/usage/getting-started.md). It covers the FlexNodes pool, Unbounded networking, identity, RBAC, and node registration requirements that are not present on a standard AKS cluster.
 
 > **Note**
 > The controller under `hack/controller-deployment/` is for E2E and development environments. Do not deploy it as part of the user quickstart.
@@ -345,7 +345,7 @@ From your workstation:
 kubectl get csr
 ```
 
-When the AKS Flex CSR approver is not available, inspect and manually approve the daemon CSR using the procedure in [Approve the daemon CSR when required](docs/usages/operator-first-boot.md#7-approve-the-daemon-csr-when-required).
+When the AKS Flex CSR approver is not available, inspect and manually approve the daemon CSR using the procedure in [Approve the daemon CSR when required](docs/usage/getting-started.md#7-approve-the-daemon-csr-when-required).
 
 Manual approval is a temporary preview fallback. Verify that the CSR belongs to the expected node before approving it.
 
@@ -357,6 +357,7 @@ Manual approval is a temporary preview fallback. Verify that the CSR belongs to 
 
 ## Usage Guides And Topics
 
+- [Documentation](docs/README.md) - Choose deployment, architecture, reference, lab, or contributor guidance.
 - [Usage Guide](docs/usage.md) - Installation, configuration, authentication modes, operations, and troubleshooting.
 - [Labs](docs/labs/README.md) - Hands-on Azure scenarios for trying AKS Flex Node end to end.
 - [Design Documentation](docs/design.md) - Architecture, lifecycle, Azure integration, and security model.

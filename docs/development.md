@@ -27,7 +27,7 @@ For a complete list of build targets, run `make help`.
 
 ## Prerequisites
 
-- **Operating System:** Ubuntu 22.04 LTS, 24.04 LTS, or compatible Linux distribution
+- **Operating System:** Ubuntu 24.04 LTS or a compatible Linux distribution
 - **Architecture:** x86_64 (amd64) or arm64
 - **Go:** Use the version specified by `go.mod`
 - **Make:** GNU Make
@@ -362,6 +362,21 @@ We welcome contributions! Here's how to get started:
 - Update `CHANGELOG.md` under `Unreleased`, or explain why no changelog entry is needed
 - Add tests for new functionality
 - Follow the existing code style
+
+### Documentation changes
+
+When you add or update documentation:
+
+- Use direct, task-oriented language and address the reader as **you**.
+- Use sentence case for headings and action verbs for procedural headings.
+- Distinguish commands that run in the Bash environment from commands that run on the flex node host.
+- Follow mutating commands with a verification step and expected state.
+- Don't print or log bootstrap data, kubeconfig content, private keys, service principal credentials, signed URLs, or complete credential-bearing configuration files.
+- Verify implementation claims against the current code, CLI help, scripts, and tests.
+- Use the Microsoft Learn Flex nodes article series as the model for AKS terminology, task order, feature scope, and status.
+- Use the [Project Unbounded documentation](https://github.com/Azure/unbounded/tree/main/docs) for shared Unbounded concepts and resource semantics.
+- Keep existing files under `docs/labs/` at their current paths. Preserve linked heading anchors or add an explicit compatibility anchor before renaming a heading.
+- State when a lab is supplemental or experimental and record its validation status and version scope.
 
 ### Pull Request Flow
 
