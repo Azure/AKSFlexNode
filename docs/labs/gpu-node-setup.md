@@ -2,7 +2,18 @@
 
 How to add an NVIDIA GPU host to an AKS cluster as an AKS Flex Node.
 
-> **Status:** NVIDIA GPU Flex Node support is under active validation.
+> [!IMPORTANT]
+> This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
+>
+> **Status:** Experimental; NVIDIA GPU support is under active validation.
+>
+> **Last validated:** Not recorded
+>
+> **Version scope:** The host image, driver, kernel, agent, and cluster GPU stack must be validated as one combination.
+>
+> **Host OS:** Ubuntu 24.04
+>
+> **Architecture:** amd64
 
 ## Overview
 
@@ -36,10 +47,9 @@ If the image has no driver, you own driver installation, signing for Secure Boot
 
 ### Image options
 
-1. **Ubuntu HPC marketplace image (current validation).** `microsoft-dsvm/ubuntu-hpc/2204/latest`. Other SKUs/versions in the same offer are candidates to validate per region and GPU family:
-   - `microsoft-dsvm/ubuntu-hpc/2204` — baseline for current Flex H100/H200 validation.
-   - `microsoft-dsvm/ubuntu-hpc/2404` — newer kernel; validate before use.
-   - `microsoft-dsvm/ubuntu-hpc/2404-gb` — Grace/Blackwell variant; **not** the current Flex H100/H200 path.
+1. **Ubuntu HPC marketplace image.** Use an Ubuntu 24.04 SKU and validate the selected image version in the target region and GPU family:
+   - `microsoft-dsvm/ubuntu-hpc/2404` — candidate for H100/H200 validation.
+   - `microsoft-dsvm/ubuntu-hpc/2404-gb` — Grace/Blackwell variant; validate only with compatible hardware.
 2. **Custom prebaked image.** Bake the NVIDIA driver, Fabric Manager (multi-GPU SXM), and any required signed kernel modules. Most portable fallback because you own the contract.
 3. **Other GPU marketplace or partner images.** Treat as candidates to validate.
 
@@ -49,7 +59,7 @@ List and pin candidate Ubuntu HPC versions:
 
 ```bash
 az vm image list-skus --publisher microsoft-dsvm --offer ubuntu-hpc --location <region> --output table
-az vm image list --publisher microsoft-dsvm --offer ubuntu-hpc --sku "2204" --location <region> --all --output table
+az vm image list --publisher microsoft-dsvm --offer ubuntu-hpc --sku "2404" --location <region> --all --output table
 ```
 
 ## Cluster GPU stack (manual)
@@ -96,7 +106,7 @@ Use direct host bootstrap when you manage the GPU host lifecycle directly. This 
 
 Create the VM or prepare the bare metal host with:
 
-- Ubuntu 22.04 or 24.04.
+- Ubuntu 24.04.
 - Outbound HTTPS reachability to the AKS API server.
 - A GPU-capable image or prebaked custom image with the NVIDIA driver already installed.
 - Any host-specific networking required to reach the AKS VNet, overlay, or gateway.

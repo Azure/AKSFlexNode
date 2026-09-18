@@ -164,6 +164,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check documentation URL contract
+        run: make docs-check
+
       - name: Check go fmt
         run: |
           UNFORMATTED=$(find . -name '*.go' -not -name '*.pb.go' -not -path './hack/*' | xargs gofmt -s -l)

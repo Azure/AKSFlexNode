@@ -2,6 +2,19 @@
 
 This guide shows how to create a public AKS cluster with no built-in CNI, install `unbounded-net`, connect a VM in another Azure region through VNet peering, and join that VM as an AKS Flex Node.
 
+> [!IMPORTANT]
+> This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
+>
+> **Status:** Validated supplemental scenario
+>
+> **Last validated:** Not recorded
+>
+> **Version scope:** This lab pins Unbounded where it is installed and resolves AKS and agent versions during the procedure. Revalidate the complete combination before reuse.
+>
+> **Host OS:** Ubuntu 24.04
+>
+> **Architecture:** amd64
+
 The validated shape is intentionally different from the WireGuard gateway lab:
 
 - The AKS API server is public.

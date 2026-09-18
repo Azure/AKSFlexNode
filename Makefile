@@ -101,8 +101,13 @@ vet:
 	@echo "Running go vet..."
 	@go vet ./...
 
+.PHONY: docs-check
+docs-check:
+	@echo "Checking documentation URL contract..."
+	@python3 hack/docs/check_url_contract.py
+
 .PHONY: check
-check: fmt-all vet lint test
+check: docs-check fmt-all vet lint test
 	@echo "All checks passed!"
 
 .PHONY: verify
@@ -181,7 +186,8 @@ help:
 	@echo "  fmt-imports        Format imports with goimports"
 	@echo "  fmt-all            Format code and imports"
 	@echo "  vet                Run go vet"
-	@echo "  check              Run fmt-all, vet, lint, and test"
+	@echo "  docs-check         Check protected documentation paths and anchors"
+	@echo "  check              Run docs-check, fmt-all, vet, lint, and test"
 	@echo "  verify             Verify and tidy dependencies"
 	@echo ""
 	@echo "E2E Targets:"

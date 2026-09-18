@@ -2,7 +2,20 @@
 
 How to add an AMD Instinct GPU host to an AKS cluster as an AKS Flex Node.
 
-> **Status:** AMD GPU Flex Node support is under active validation. The current validated host-preparation path is Ubuntu 24.04 on AMD Instinct MI300X hosts. Other AMD GPU families, OS images, and kernel versions are candidates to validate against the same prepared-host contract.
+> [!IMPORTANT]
+> This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
+>
+> **Status:** Experimental; AMD GPU support is under active validation.
+>
+> **Last validated:** Not recorded
+>
+> **Version scope:** This lab records the validated MI300X kernel, ROCm, AMDGPU, and agent versions in the procedure. Revalidate the complete combination before reuse.
+>
+> **Host OS:** Ubuntu 24.04
+>
+> **Architecture:** amd64
+
+The current validated host-preparation path is Ubuntu 24.04 on AMD Instinct MI300X hosts. Other AMD GPU families, OS images, and kernel versions are candidates to validate against the same prepared-host contract.
 
 ## Overview
 
@@ -40,7 +53,7 @@ This guide has been validated for the host preparation portion on:
 
 The validation installed the minimal host package set, removed the Ubuntu cloud image `amdgpu` blacklist entry, loaded the AMDGPU driver, rebooted the VM, and verified that ROCm still detected all 8 MI300X devices after reboot.
 
-Treat other combinations as separate validation targets. Do not assume this exact apt package set works on Ubuntu 22.04, non-Ubuntu distributions, different kernels, or other AMD GPU families without a clean install plus reboot validation.
+Treat other combinations as separate validation targets. Do not assume this exact apt package set works on non-Ubuntu distributions, different Ubuntu releases, different kernels, or other AMD GPU families without a clean install plus reboot validation.
 
 ## Before you begin
 
