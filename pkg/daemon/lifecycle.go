@@ -189,8 +189,10 @@ func UninstallService(log *slog.Logger) phases.Task {
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
-	if err := utilexec.StopService(ctx, t.log, ServiceUnitName); err != nil {
-		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
+	for _, unit := range []string{ServiceUnitName, recoveryServiceUnitName} {
+		if err := utilexec.StopService(ctx, t.log, unit); err != nil {
+			t.log.Warn("failed to stop service (may not be running)", "unit", unit, "error", err)
+		}
 	}
 	if err := utilexec.DisableService(ctx, t.log, ServiceUnitName); err != nil {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)

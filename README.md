@@ -304,6 +304,11 @@ level=INFO msg="removed runtime directory" path=/etc/aks-flex-node
 level=INFO msg="removed runtime directory" path=/var/log/aks-flex-node
 ```
 
+Reset preserves the active agent as a regular executable at `/usr/local/bin/aks-flex-node`
+and removes the managed blue/green binary layout. The command remains available, and
+you can rerun `scripts/install.sh` for a clean reinstall. Use the agent upgrade flow
+for in-place upgrades without reset.
+
 After uninstall, the host should no longer have the agent service or nspawn machines:
 
 ```bash

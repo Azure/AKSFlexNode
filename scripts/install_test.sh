@@ -68,10 +68,19 @@ grep -q "aks-flex-node reset" "$WORK_DIR/managed.log" || fail "managed reinstall
 [[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ]] || fail "managed activation changed"
 assert_no_staged_files
 
-# Reset removes the service unit; reinstall must clean the retained layout and install directly.
+# An absent service unit alone does not make a managed link safe to replace.
 rm "$SERVICE_UNIT_PATH"
+if install_binary "$running_binary" >"$WORK_DIR/inactive-managed.log" 2>&1; then
+    fail "installer replaced a retained managed binary symlink"
+fi
+[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "retained managed binary symlink was removed"
+assert_no_staged_files
+
+# Reset restores a direct binary and removes the managed layout before reinstall.
+cp "$replacement_binary" "$INSTALL_DIR/reset-binary"
+mv -fT "$INSTALL_DIR/reset-binary" "$INSTALL_DIR/aks-flex-node"
+rm -rf "$MANAGED_BINARY_DIR"
 install_binary "$running_binary" >"$WORK_DIR/reset-reinstall.log" 2>&1 || fail "reinstall after reset failed"
-grep -q "layout retained after reset" "$WORK_DIR/reset-reinstall.log" || fail "retained layout cleanup was not reported"
 [[ ! -L "$INSTALL_DIR/aks-flex-node" && -x "$INSTALL_DIR/aks-flex-node" ]] || fail "reset reinstall did not install a direct binary"
 [[ ! -e "$MANAGED_BINARY_DIR" ]] || fail "reset reinstall retained the managed layout"
 assert_no_staged_files
