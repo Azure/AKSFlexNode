@@ -179,7 +179,7 @@ install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 cat /etc/aks-flex-node/config.json
 ```
 
-> `scripts/install.sh` supports initial installation and reinstall after `aks-flex-node reset`. While the agent service is installed, `/usr/local/bin/aks-flex-node` is a symlink into the managed blue/green layout; use the agent upgrade flow for in-place upgrades.
+> Use this script for initial installation or after reset. For upgrades, use the agent upgrade flow.
 
 ### Step 5: Run preflight checks
 
