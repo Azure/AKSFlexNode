@@ -45,9 +45,11 @@ _build_offline_artifacts_tarball() {
   local tools_dir="${E2E_WORK_DIR}/tools"
   local builder="${tools_dir}/agent-artifacts-builder"
   local unbounded_version
+  local unbounded_dir
   local crictl_version
 
   unbounded_version="$(cd "${REPO_ROOT}" && go list -m -f '{{.Version}}' github.com/Azure/unbounded)"
+  unbounded_dir="$(cd "${REPO_ROOT}" && go list -m -f '{{.Dir}}' github.com/Azure/unbounded)"
   crictl_version="$(_crictl_version_for_kubernetes "${kube_version_v}")"
 
   log_info "Building agent-artifacts-builder from github.com/Azure/unbounded@${unbounded_version}..."
@@ -74,6 +76,7 @@ EOF
   "${builder}" \
     --output-dir "${output_dir}" \
     --manifest "${manifest_file}" \
+    --legal-files-dir "${unbounded_dir}" \
     --arch amd64
 
   tar -czf "${tarball}" -C "${output_root}" "${kube_version_v}"
