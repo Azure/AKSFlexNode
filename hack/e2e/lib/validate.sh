@@ -8,6 +8,7 @@
 #   validate_kubelet_reservations <vm_name> <vm_ip> [max_pods] [system_cpu] [system_memory] [kube_cpu] [kube_memory]
 #                                     - Verify the applied kubelet reservation config
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
+#   validate_node_exporter_status <vm_name> <vm_ip> - Verify node exporter metrics
 #   validate_localdns_status <vm_name> <vm_ip> - Verify LocalDNS behavior
 #   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after nspawn reboot
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
@@ -367,6 +368,50 @@ REMOTE
 }
 
 # ---------------------------------------------------------------------------
+# validate_node_exporter_status - Verify nspawn node exporter on the selected VM.
+# ---------------------------------------------------------------------------
+validate_node_exporter_status() {
+  local vm_name="$1"
+  local vm_ip="$2"
+  local node_ip
+  node_ip="$(kubectl get node "${vm_name}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
+  if [[ -z "${node_ip}" ]]; then
+    log_error "Node '${vm_name}' has no InternalIP for node exporter validation"
+    return 1
+  fi
+
+  local quoted_node_ip
+  printf -v quoted_node_ip '%q' "${node_ip}"
+  log_info "Validating node exporter on '${vm_name}' (${node_ip}:19100)..."
+
+  remote_exec "${vm_ip}" "NODE_IP=${quoted_node_ip} sudo --preserve-env=NODE_IP bash -s" <<'REMOTE'
+set -euo pipefail
+machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
+test -n "${machine}"
+systemd-run --quiet --pipe --wait --machine="${machine}" systemctl is-enabled --quiet node-exporter.service
+systemd-run --quiet --pipe --wait --machine="${machine}" systemctl is-active --quiet node-exporter.service
+systemd-run --quiet --pipe --wait --machine="${machine}" test -x /usr/local/bin/node_exporter
+service=$(systemd-run --quiet --pipe --wait --machine="${machine}" systemctl cat node-exporter.service)
+grep -Fq -- "--web.listen-address=${NODE_IP}:19100" <<<"${service}"
+grep -Fq -- '--collector.cpu.info' <<<"${service}"
+
+metrics=$(curl --silent --show-error --fail --noproxy '*' "http://${NODE_IP}:19100/metrics")
+grep -q '^node_exporter_build_info{' <<<"${metrics}"
+grep -q '^node_cpu_seconds_total{' <<<"${metrics}"
+grep -q '^node_memory_MemTotal_bytes ' <<<"${metrics}"
+grep -q '^node_filesystem_size_bytes{' <<<"${metrics}"
+grep -q '^node_network_receive_bytes_total{' <<<"${metrics}"
+
+expected_memory=$(awk '/^MemTotal:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)
+actual_memory=$(awk '/^node_memory_MemTotal_bytes / {printf "%.0f", $2; exit}' <<<"${metrics}")
+test -n "${actual_memory}"
+test "${actual_memory}" = "${expected_memory}"
+REMOTE
+
+  log_success "Node exporter validation passed on '${vm_name}'"
+}
+
+# ---------------------------------------------------------------------------
 # validate_localdns_status - Verify nspawn LocalDNS on the selected VM.
 validate_localdns_status() {
   local vm_name="$1"
@@ -534,6 +579,7 @@ validate_all_nodes() {
     "${E2E_KUBELET_SYSTEM_RESERVED_CPU}" "${E2E_KUBELET_SYSTEM_RESERVED_MEMORY}" \
     "${E2E_KUBELET_KUBE_RESERVED_CPU}" "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  validate_node_exporter_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   if [[ "${_E2E_LOCALDNS_REBOOT_VALIDATED}" != "1" ]]; then
     if validate_localdns_after_reboot "${msi_vm_name}" "${msi_vm_ip}"; then
@@ -543,11 +589,15 @@ validate_all_nodes() {
     fi
   fi
   validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
+  validate_node_exporter_status "${token_vm_name}" "${token_vm_ip}" || failed=1
   # TODO: re-enable once NPD is included in the upstream Unbounded bootstrap
   # artifact bundle and resolver used by offline artifact mode.
   log_info "Skipping node-problem-detector validation on offline node '${offline_vm_name}'"
+  validate_node_exporter_status "${offline_vm_name}" "${offline_vm_ip}" || failed=1
   validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
+  validate_node_exporter_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
   validate_npd_status "${arc_vm_name}" "${arc_vm_ip}" || failed=1
+  validate_node_exporter_status "${arc_vm_name}" "${arc_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"

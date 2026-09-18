@@ -16,6 +16,7 @@ readonly offlineOCIImage='ghcr.io/azure/agent-ubuntu2404:v20260619'
 readonly offlineContainerdVersion='2.1.8'
 readonly offlineRuncVersion='1.5.0'
 readonly offlineCNIVersion='1.5.1'
+readonly offlineNodeExporterVersion='1.9.1'
 
 _normalize_kubernetes_version_v() {
   local version="$1"
@@ -44,9 +45,11 @@ _build_offline_artifacts_tarball() {
   local tools_dir="${E2E_WORK_DIR}/tools"
   local builder="${tools_dir}/agent-artifacts-builder"
   local unbounded_version
+  local unbounded_dir
   local crictl_version
 
   unbounded_version="$(cd "${REPO_ROOT}" && go list -m -f '{{.Version}}' github.com/Azure/unbounded)"
+  unbounded_dir="$(cd "${REPO_ROOT}" && go list -m -f '{{.Dir}}' github.com/Azure/unbounded)"
   crictl_version="$(_crictl_version_for_kubernetes "${kube_version_v}")"
 
   log_info "Building agent-artifacts-builder from github.com/Azure/unbounded@${unbounded_version}..."
@@ -62,7 +65,8 @@ _build_offline_artifacts_tarball() {
     "containerd": "${offlineContainerdVersion}",
     "runc": "${offlineRuncVersion}",
     "cni": "${offlineCNIVersion}",
-    "crictl": "${crictl_version}"
+    "crictl": "${crictl_version}",
+    "nodeExporter": "${offlineNodeExporterVersion}"
   },
   "containerImages": []
 }
@@ -72,6 +76,7 @@ EOF
   "${builder}" \
     --output-dir "${output_dir}" \
     --manifest "${manifest_file}" \
+    --legal-files-dir "${unbounded_dir}" \
     --arch amd64
 
   tar -czf "${tarball}" -C "${output_root}" "${kube_version_v}"

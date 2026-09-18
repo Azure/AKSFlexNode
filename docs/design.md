@@ -46,7 +46,7 @@ Current host-side responsibilities include:
 
 - Install and configure OS prerequisites.
 - Prepare nspawn workspace under `/var/lib/machines`.
-- Download and install Kubernetes, CRI, CNI, runc, containerd, and node-problem-detector artifacts.
+- Download and install Kubernetes, CRI, CNI, runc, containerd, node-problem-detector, and node exporter artifacts.
 - Render containerd, kubelet, CNI, and systemd configuration.
 - Start the active nspawn-backed worker.
 - Install and start `aks-flex-node-agent.service`.
@@ -67,7 +67,7 @@ AKS Flex Node reuses that foundation for:
 AKS Flex Node owns the AKS-specific layer on top:
 
 - AKS cluster authentication and join configuration.
-- AKS-specific kubelet, node-problem-detector, and runtime customization, plus CNI version wiring for the cluster CNI.
+- AKS-specific kubelet, node-problem-detector, node exporter, and runtime customization, plus CNI version wiring for the cluster CNI.
 - Flex Node config and CLI commands.
 - Future AKS RP lifecycle integration through ARM machine state and Kubernetes `Node` signals.
 

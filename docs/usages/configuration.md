@@ -12,6 +12,10 @@ Before starting bootstrap, validate the same config with the non-mutating prefli
 aks-flex-node preflight --config /etc/aks-flex-node/config.json
 ```
 
+AKS Flex Node automatically runs Prometheus node exporter inside the nspawn
+worker. It listens on the configured node IP at port `19100` and exposes
+`/metrics` for AKS-compatible node scraping.
+
 ## Top-Level Sections
 
 | Name | Type | Description |
