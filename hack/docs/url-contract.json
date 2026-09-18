@@ -152,6 +152,7 @@
       "protectAnchors": true,
       "anchors": [
         "adding-a-new-bootstrap-component",
+        "adding-host-bootstrap-behavior",
         "adding-new-features",
         "additional-resources",
         "branch-protection",
@@ -392,6 +393,21 @@
       ]
     },
     {
+      "path": "docs/usage/cli.md",
+      "protectAnchors": false,
+      "anchors": [
+        "command-line-reference",
+        "fetch-bootstrap-data",
+        "operator-commands",
+        "preflight",
+        "reset",
+        "see-also",
+        "service-and-integration-commands",
+        "start",
+        "version"
+      ]
+    },
+    {
       "path": "docs/usage/configuration.md",
       "protectAnchors": true,
       "anchors": [
@@ -410,6 +426,7 @@
         "component-versions",
         "components",
         "configuration",
+        "host-routing",
         "image-pull-credential-provider",
         "kubelet",
         "legacy-config-compatibility",

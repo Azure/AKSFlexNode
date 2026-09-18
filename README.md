@@ -369,7 +369,7 @@ Manual approval is a temporary preview fallback. Verify that the CSR belongs to 
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE.MD) for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 

@@ -26,6 +26,7 @@ Use the Microsoft Learn Flex nodes article series as the primary Azure deploymen
 
 ## Find reference information
 
+- [Command-line reference](usage/cli.md) lists operator commands, flags, aliases, and internal service commands.
 - [Configuration](usage/configuration.md) lists the AKS Flex Node JSON configuration.
 - [Operations](usage/operations.md) covers preflight, startup, agent upgrade, reset, and troubleshooting.
 - [Usage guide index](usage.md) links to task-oriented guidance.

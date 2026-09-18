@@ -170,7 +170,7 @@ On the GPU host:
 sudo su
 install -d -m 0755 /etc/aks-flex-node
 install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-cat /etc/aks-flex-node/config.json
+stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
 ```
 
 ### 5. Bootstrap and watch the node

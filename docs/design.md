@@ -81,14 +81,9 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 `start` performs host bootstrap and installs the long-running systemd service. `bootstrap` remains an alias for compatibility, but new docs should use `start`.
 
-Other important commands:
+Other commands include the non-mutating `preflight` check, protected bootstrap-data retrieval, reset, version reporting, and service integration commands. Some lifecycle commands are hidden from top-level help because systemd or a managed workflow invokes them rather than an operator.
 
-| Command | Purpose |
-|---------|---------|
-| `daemon` / `agent` | Run the long-lived daemon. Intended to be launched by systemd. |
-| `reset` / `unbootstrap` | Remove local Flex Node runtime from the host. |
-| `version` | Print build version, commit, and build time. |
-| `token kubelogin` | Exec credential helper used by kubelet auth flows. |
+See the [Command-line Reference](usage/cli.md) for commands, flags, compatibility aliases, and the operator versus internal command boundary.
 
 ## Configuration Model
 

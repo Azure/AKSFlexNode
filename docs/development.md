@@ -157,7 +157,7 @@ The project uses `.golangci.yml` (v2 format) for linter configuration with the f
 
 ### Test Coverage
 
-The project enforces a minimum test coverage threshold of **30%**. To view detailed coverage:
+CI compares total test coverage with a **30%** target and emits a warning when coverage is lower. It doesn't currently fail the build on coverage alone. To view detailed coverage:
 
 ```bash
 make test-coverage
@@ -247,29 +247,8 @@ If coverage drops below 30%:
 3. Review `coverage.html` for uncovered lines
 4. Consider raising threshold as coverage improves
 
-## Project Structure
 
-```
-AKSFlexNode/
-├── cmd/                     # Command-line interface
-│   ├── aks-flex-controller/ # In-cluster machine endpoint and CSR approver
-│   └── aks-flex-node/       # Main agent CLI
-├── pkg/
-│   ├── aksmachine/          # AKS machine goal/state client abstractions
-│   ├── cmd/                 # Cobra command implementations
-│   ├── config/              # Configuration loading and validation
-│   ├── daemon/              # Host lifecycle, state, and nspawn reconciliation
-│   ├── logger/              # Logging infrastructure
-│   └── utils/               # Utility functions
-├── docs/                    # Documentation
-│   ├── usage/               # Usage scenario guides
-│   └── design/              # Detailed design topics
-├── hack/                    # E2E and local development tooling
-├── scripts/                 # Installation scripts
-├── Makefile               # Build and test targets
-└── go.mod                 # Go module definition
-```
-
+<a id="project-structure"></a>
 ## Code Style and Conventions
 
 - Follow standard Go conventions and idioms
@@ -289,15 +268,17 @@ When adding new features:
 4. Update documentation if needed
 5. Submit a pull request with a clear description
 
-### Adding a New Bootstrap Component
+<a id="adding-a-new-bootstrap-component"></a>
+### Adding host bootstrap behavior
 
-If adding a new component to the bootstrap process:
+AKS Flex Node composes bootstrap work from Unbounded `phases.Task` values instead of a local `pkg/components` registry. Before adding a task:
 
-1. Create a new directory in `pkg/components/`
-2. Implement the `Executor` interface (Install/Uninstall methods)
-3. Add the component to the bootstrap sequence in `pkg/bootstrapper/bootstrapper.go`
-4. Consider dependencies and execution order
-5. Add appropriate tests
+1. Decide whether the behavior belongs in upstream Unbounded or in the AKS-specific layer.
+2. Put AKS-specific host preparation in an appropriate package under `pkg/` and return a `phases.Task`.
+3. Add host preparation to `daemon.SetupHost` or worker setup to `daemon.StartNode` in `pkg/daemon/start.go`, preserving the required serial or parallel ordering.
+4. Keep the task idempotent and provide a corresponding cleanup path when it creates durable host state.
+5. Inject external dependencies through interfaces and add table-driven tests, including a repeated-run case.
+6. Update preflight checks and user documentation when the task introduces a new prerequisite or configuration field.
 
 ## Changelog and Releases
 
@@ -397,7 +378,7 @@ Recommended branch protection rules for `main` and `dev`:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](../LICENSE) file for details.
 
 ## Getting Help
 
