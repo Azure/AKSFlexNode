@@ -58,6 +58,9 @@ jobs:
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      - name: Run installer tests
+        run: make test-install
+
       - name: Generate coverage report
         run: go tool cover -html=coverage.out -o coverage.html
 

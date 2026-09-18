@@ -52,9 +52,14 @@ package-all: package-linux-amd64 package-linux-arm64
 
 # Testing and quality checks
 .PHONY: test
-test:
+test: test-install
 	@echo "Running tests..."
 	@go test -v ./...
+
+.PHONY: test-install
+test-install:
+	@echo "Running installer tests..."
+	@scripts/install_test.sh
 
 .PHONY: test-coverage
 test-coverage:
@@ -164,6 +169,7 @@ help:
 	@echo ""
 	@echo "Test & Quality Targets:"
 	@echo "  test               Run tests"
+	@echo "  test-install       Run installer tests"
 	@echo "  test-coverage      Run tests with coverage report"
 	@echo "  test-race          Run tests with race detector"
 	@echo "  lint               Run golangci-lint"

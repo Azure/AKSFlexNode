@@ -2,14 +2,16 @@
 
 set -euo pipefail
 
+if [[ $EUID -ne 0 ]]; then
+    exec sudo -E bash "$0" "$@"
+fi
+
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$REPO_ROOT/scripts/install.sh"
 WORK_DIR=$(mktemp -d)
 RUNNING_PID=""
 cleanup() {
-    if [[ -n "$RUNNING_PID" ]]; then
-        kill "$RUNNING_PID" 2>/dev/null || true
-    fi
+    [[ -z "$RUNNING_PID" ]] || kill "$RUNNING_PID" 2>/dev/null || true
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -19,153 +21,88 @@ fail() {
     exit 1
 }
 
-command -v go >/dev/null || fail "go is required"
 bash -n "$SCRIPT"
-readonly nobody_uid=65534
-readonly nobody_gid=65534
-stdin_test_skipped=false
-if [[ $EUID -eq 0 ]] && command -v setpriv >/dev/null; then
-    stdin_output=$(setpriv --reuid="$nobody_uid" --regid="$nobody_gid" --clear-groups bash <"$SCRIPT" 2>&1 || true)
-elif [[ $EUID -ne 0 ]]; then
-    stdin_output=$(bash <"$SCRIPT" 2>&1 || true)
-elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
-    stdin_output=$(sudo -n -u nobody bash <"$SCRIPT" 2>&1 || true)
-else
-    printf 'install_test: skipping stdin entrypoint test; no privilege-dropping command is available\n' >&2
-    stdin_test_skipped=true
-fi
-if [[ "$stdin_test_skipped" == false ]]; then
-    grep -q "This script must be run as root" <<<"$stdin_output" || fail "stdin entrypoint did not reach main"
-fi
+command -v flock >/dev/null || fail "flock is required"
+command -v setpriv >/dev/null || fail "setpriv is required"
+
+# The documented curl | bash invocation must reach main even though BASH_SOURCE is empty.
+stdin_output=$(setpriv --reuid=65534 --regid=65534 --clear-groups bash <"$SCRIPT" 2>&1 || true)
+grep -q "This script must be run as root" <<<"$stdin_output" || fail "stdin invocation did not reach main"
+
 source "$SCRIPT"
-# install.sh only assigns defaults at source time; override after sourcing to keep this test isolated.
 INSTALL_DIR="$WORK_DIR/bin"
 MANAGED_BINARY_DIR="$WORK_DIR/lib/aks-flex-node"
-export GOCACHE="$WORK_DIR/gocache"
-mkdir -p "$GOCACHE"
+AGENT_UPGRADE_LOCK_PATH="$WORK_DIR/run/agent-upgrade.lock"
+mkdir -p "$INSTALL_DIR" "$MANAGED_BINARY_DIR"
 
-cat > "$WORK_DIR/running.go" <<'GO'
-package main
-
-import (
-	"os"
-	"time"
-)
-
-func main() {
-	if len(os.Args) > 1 {
-		if err := os.WriteFile(os.Args[1], []byte("ready"), 0600); err != nil {
-			os.Exit(1)
-		}
-	}
-	time.Sleep(30 * time.Second)
-}
-GO
-
-cat > "$WORK_DIR/replacement.go" <<'GO'
-package main
-
-import "fmt"
-
-func main() {
-	fmt.Println("replacement")
-}
-GO
-
-GO111MODULE=off go build -o "$WORK_DIR/running" "$WORK_DIR/running.go"
-GO111MODULE=off go build -o "$WORK_DIR/replacement" "$WORK_DIR/replacement.go"
-
-mkdir -p "$INSTALL_DIR"
-cp "$WORK_DIR/running" "$INSTALL_DIR/aks-flex-node"
-chmod 0755 "$INSTALL_DIR/aks-flex-node"
-
-"$INSTALL_DIR/aks-flex-node" "$WORK_DIR/ready" &
+running_binary=$(type -P sleep)
+replacement_binary=$(type -P printf)
+cp "$running_binary" "$INSTALL_DIR/aks-flex-node"
+"$INSTALL_DIR/aks-flex-node" 30 &
 RUNNING_PID=$!
-for _ in {1..50}; do
-    [[ -f "$WORK_DIR/ready" ]] && break
-    sleep 0.1
-done
-[[ -f "$WORK_DIR/ready" ]] || fail "running binary did not signal readiness"
+sleep 0.1
+kill -0 "$RUNNING_PID" 2>/dev/null || fail "test binary did not remain running"
 
-install_binary "$WORK_DIR/replacement" >"$WORK_DIR/install.log" 2>&1 || {
-    cat "$WORK_DIR/install.log" >&2
-    fail "installer failed while replacing running binary"
-}
-if [[ $EUID -ne 0 ]]; then
-    grep -q "Installing binary as $(id -un); run the installer with sudo to make it root-owned" "$WORK_DIR/install.log" || \
-        fail "non-root ownership warning was not reported"
-fi
+install_binary "$replacement_binary" >/dev/null || fail "could not replace a running binary"
+kill -0 "$RUNNING_PID" 2>/dev/null || fail "replacement stopped the old process"
+[[ "$("$INSTALL_DIR/aks-flex-node" replacement)" == "replacement" ]] || fail "new executions did not use the replacement"
 
-kill -0 "$RUNNING_PID" 2>/dev/null || fail "old running process exited unexpectedly"
-[[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "installed binary was not replaced"
-staged_file=$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)
-if [[ -n "$staged_file" ]]; then
-    fail "staged binary was not cleaned up"
-fi
-
-managed_binary_dir="$MANAGED_BINARY_DIR"
-mkdir -p "$managed_binary_dir"
 assert_no_staged_files() {
-    local staged_file
-    staged_file=$(find "$INSTALL_DIR" "$managed_binary_dir" -name '.aks-flex-node.*' -print -quit)
-    [[ -z "$staged_file" ]] || fail "staged binary was not cleaned up"
+    [[ -z "$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)" ]] || fail "staged binary was not cleaned up"
 }
-cp "$WORK_DIR/replacement" "$managed_binary_dir/aks-flex-node-blue"
-ln -s "$managed_binary_dir/aks-flex-node-blue" "$managed_binary_dir/aks-flex-node-current"
-rm "$INSTALL_DIR/aks-flex-node"
-ln -s "$managed_binary_dir/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
-if install_binary "$WORK_DIR/running" >"$WORK_DIR/managed-install.log" 2>&1; then
-    fail "installer replaced managed binary symlink"
-fi
-grep -q "only performs first-time installation" "$WORK_DIR/managed-install.log" || \
-    fail "managed symlink rejection was not reported"
 assert_no_staged_files
-[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "managed binary symlink was replaced"
-[[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$managed_binary_dir/aks-flex-node-blue" ]] || \
-    fail "installer changed managed binary activation"
-[[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "managed binary was modified"
 
+# Managed installations must use the upgrade flow; the installer must not detach this link.
+cp "$replacement_binary" "$MANAGED_BINARY_DIR/aks-flex-node-blue"
+ln -s "$MANAGED_BINARY_DIR/aks-flex-node-blue" "$MANAGED_BINARY_DIR/aks-flex-node-current"
 rm "$INSTALL_DIR/aks-flex-node"
-cp "$WORK_DIR/running" "$WORK_DIR/unmanaged-aks-flex-node"
-ln -s "$WORK_DIR/unmanaged-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
-if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/unmanaged-install.log" 2>&1; then
-    fail "installer replaced unmanaged binary symlink"
+ln -s "$MANAGED_BINARY_DIR/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
+if install_binary "$running_binary" >"$WORK_DIR/managed.log" 2>&1; then
+    fail "installer replaced a managed binary symlink"
 fi
+grep -q "aks-flex-node reset" "$WORK_DIR/managed.log" || fail "managed reinstall guidance omitted reset"
+[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "managed binary symlink was removed"
+[[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ]] || fail "managed activation changed"
 assert_no_staged_files
-[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "unmanaged binary symlink was replaced"
-[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/unmanaged-aks-flex-node" ]] || \
-    fail "unmanaged binary symlink target changed"
 
+# Unexpected links must be rejected without advising root to execute their targets.
 rm "$INSTALL_DIR/aks-flex-node"
-ln -s "$WORK_DIR/dangling-aks-flex-node" "$INSTALL_DIR/aks-flex-node"
-if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/dangling-install.log" 2>&1; then
-    fail "installer replaced dangling binary symlink"
+ln -s "$replacement_binary" "$INSTALL_DIR/aks-flex-node"
+if install_binary "$running_binary" >"$WORK_DIR/unexpected.log" 2>&1; then
+    fail "installer replaced an unexpected binary symlink"
 fi
+if grep -q "aks-flex-node reset" "$WORK_DIR/unexpected.log"; then
+    fail "unexpected symlink guidance advised executing the link"
+fi
+grep -q "do not execute" "$WORK_DIR/unexpected.log" || fail "unexpected symlink safety guidance was omitted"
+[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$replacement_binary" ]] || fail "unexpected symlink changed"
 assert_no_staged_files
-[[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "dangling binary symlink was replaced"
-[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$WORK_DIR/dangling-aks-flex-node" ]] || \
-    fail "dangling binary symlink target changed"
 
+# A malformed directory target must fail rather than receive the staged binary.
 rm "$INSTALL_DIR/aks-flex-node"
 mkdir "$INSTALL_DIR/aks-flex-node"
-if install_binary "$WORK_DIR/replacement" >"$WORK_DIR/directory-install.log" 2>&1; then
-    fail "installer succeeded with directory install target"
+if install_binary "$replacement_binary" >/dev/null 2>&1; then
+    fail "installer accepted a directory target"
 fi
-assert_no_staged_files
-[[ -z "$(find "$INSTALL_DIR/aks-flex-node" -mindepth 1 -print -quit)" ]] || \
-    fail "installer moved staged binary into directory install target"
+[[ -z "$(find "$INSTALL_DIR/aks-flex-node" -mindepth 1 -print -quit)" ]] || fail "installer moved the staged binary into a directory"
 rmdir "$INSTALL_DIR/aks-flex-node"
-
-install_binary "$WORK_DIR/replacement" >"$WORK_DIR/reinstall.log" 2>&1 || {
-    cat "$WORK_DIR/reinstall.log" >&2
-    fail "installer failed on a clean install target"
-}
 assert_no_staged_files
 
-if install_binary "$WORK_DIR/missing" >"$WORK_DIR/missing.log" 2>&1; then
-    fail "installer succeeded with missing source binary"
+# Failed staging must leave the previous installation intact.
+install_binary "$replacement_binary" >/dev/null
+if install_binary "$WORK_DIR/missing" >/dev/null 2>&1; then
+    fail "installer accepted a missing source"
 fi
-[[ "$("$INSTALL_DIR/aks-flex-node")" == "replacement" ]] || fail "failed install clobbered installed binary"
+[[ "$("$INSTALL_DIR/aks-flex-node" replacement)" == "replacement" ]] || fail "failed staging replaced the installed binary"
 assert_no_staged_files
+
+# Installer and managed activation paths must serialize on the same lock.
+(
+    exec 8>>"$AGENT_UPGRADE_LOCK_PATH"
+    flock -n 8
+    if install_binary "$replacement_binary" >/dev/null 2>&1; then
+        fail "installer ignored the activation lock"
+    fi
+)
 
 printf 'install_test: ok\n'

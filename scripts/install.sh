@@ -20,6 +20,7 @@ REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 INSTALL_DIR="/usr/local/bin"
 MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
+AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
@@ -241,55 +242,66 @@ download_binary() {
     echo "$temp_dir/$binary_name"
 }
 
+is_managed_binary_link() {
+    local target_path="$1"
+    local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
+    local link_target resolved_target
+
+    link_target=$(readlink -- "$target_path") || return 1
+    [[ "$link_target" == "$current_path" ]] || return 1
+    resolved_target=$(readlink -e -- "$target_path") || return 1
+    [[ "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ||
+       "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-green" ]] &&
+        [[ -f "$resolved_target" && -x "$resolved_target" ]]
+}
+
 install_binary() {
     local binary_path="$1"
-    local install_args=(-m 0755)
     local target_path="$INSTALL_DIR/aks-flex-node"
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    if [[ $EUID -eq 0 ]]; then
-        install_args=(-o root -g root -m 0755)
-    else
-        log_warning "Installing binary as $(id -un); run the installer with sudo to make it root-owned"
-    fi
-
-    if [[ -L "$target_path" ]]; then
-        # Once the agent has started, this path is a symlink into the managed blue/green layout
-        # under $MANAGED_BINARY_DIR. Updating that layout requires the agent upgrade protocol,
-        # which serializes activation with the host upgrade lock, preserves the last-good slot,
-        # and synchronizes the nspawn binary. Writing here would race with it, so this installer
-        # only performs first-time installation.
-        log_error "Refusing to replace the symbolic link at $target_path; this installer only performs first-time installation."
-        log_error "Update an already-installed agent through the agent upgrade flow, or remove $target_path (and the managed layout in $MANAGED_BINARY_DIR) to reinstall from scratch."
-        return 1
-    fi
-
-    if [[ -d "$target_path" ]]; then
-        # "mv" would move the staged file into the directory instead of replacing the binary.
-        log_error "Refusing to install binary; $target_path is a directory"
-        return 1
-    fi
-
     (
         staged=""
-        if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX"); then
-            log_error "Failed to create staged binary in $INSTALL_DIR"
+        trap '[[ -z "$staged" ]] || rm -f "$staged"' EXIT
+        umask 077
+
+        # Managed agent upgrades use this lock while switching the blue/green layout.
+        # Holding it through the rename prevents installation during an active upgrade.
+        if ! mkdir -p "$(dirname "$AGENT_UPGRADE_LOCK_PATH")" ||
+            ! exec 9>>"$AGENT_UPGRADE_LOCK_PATH" ||
+            ! flock -n 9; then
+            log_error "Agent binary activation is in progress; retry the installation"
             exit 1
         fi
-        trap '[[ -z "${staged:-}" ]] || rm -f "$staged"' EXIT
-        if ! install "${install_args[@]}" "$binary_path" "$staged"; then
-            log_error "Failed to stage binary at $staged"
+
+        if [[ -L "$target_path" ]]; then
+            # Once the agent has started, this path is a symlink into the managed blue/green layout.
+            # Updating it here would bypass activation locking, rollback, and nspawn synchronization.
+            if is_managed_binary_link "$target_path"; then
+                log_error "Refusing to replace the managed symbolic link at $target_path."
+                log_error "To reinstall, first run 'aks-flex-node reset', then remove $target_path and $MANAGED_BINARY_DIR before rerunning this script. Use the agent upgrade flow for upgrades that do not require a reset."
+            else
+                log_error "Refusing to replace the unexpected symbolic link at $target_path."
+                log_error "Inspect and remove the link before rerunning this script; do not execute it as AKS Flex Node."
+            fi
             exit 1
         fi
-        if ! mv -f "$staged" "$target_path"; then
+
+        if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||
+            ! install -o root -g root -m 0755 "$binary_path" "$staged"; then
+            log_error "Failed to stage binary in $INSTALL_DIR"
+            exit 1
+        fi
+        # -T makes a directory appearing at the target fail rather than receive the staged file.
+        if ! mv -fT "$staged" "$target_path"; then
             log_error "Failed to install binary to $target_path"
             exit 1
         fi
         staged=""
     ) || return 1
 
-    log_success "Binary installed to $INSTALL_DIR/aks-flex-node"
+    log_success "Binary installed to $target_path"
 }
 
 warn_install_dir_not_in_path() {
