@@ -221,6 +221,100 @@ The source files must be absolute, non-symlink regular files with no group or ot
 
 Each kubeconfig can specify its own impersonation fields. For example, the agent user can contain `as: aks-flex-agent` while the kubelet user contains `as: system:node:edge-node-01` and `as-groups: ["system:nodes"]`. Do not place long-lived tokens in either example or runtime config; use renewable exec credentials.
 
+Use Kubernetes RBAC to constrain both the Arc identity's impersonation targets
+and the permissions of the impersonated agent identity. AKS clusters using
+Azure RBAC for Kubernetes authorization evaluate Microsoft Entra principals
+through the Azure authorizer instead, so this pattern requires
+`aadProfile.enableAzureRbac=false`.
+
+The following per-node example permits the Arc principal to impersonate only
+the selected agent service account, node user, and `system:nodes` group. The
+agent service account can only read and watch its own Node. The kubelet receives
+its normal permissions from the standard `system:nodes` bindings.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: <agent-service-account>
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: <agent-service-account>-node-reader
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  resourceNames: ["<node-name>"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: <agent-service-account>-node-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: <agent-service-account>-node-reader
+subjects:
+- kind: ServiceAccount
+  name: <agent-service-account>
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: <agent-service-account>-impersonator
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  resourceNames: ["<agent-service-account>"]
+  verbs: ["impersonate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: <agent-service-account>-impersonator
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: <agent-service-account>-impersonator
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: "<arc-principal-object-id>"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: <node-name>-impersonator
+rules:
+- apiGroups: [""]
+  resources: ["users"]
+  resourceNames: ["system:node:<node-name>"]
+  verbs: ["impersonate"]
+- apiGroups: [""]
+  resources: ["groups"]
+  resourceNames: ["system:nodes"]
+  verbs: ["impersonate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: <node-name>-impersonator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: <node-name>-impersonator
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: "<arc-principal-object-id>"
+```
+
 ## Component Versions
 
 | Name | Type | Description | Sample Value |
