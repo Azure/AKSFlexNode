@@ -15,11 +15,13 @@ Hardware virtualization is strongly recommended (HVF on macOS, KVM on Linux).
 
 On arm64, UEFI firmware (`edk2-aarch64-code.fd`) must be available at a standard path.
 
+The script defaults to 2 CPUs and 2 GB of memory for lightweight VM and tooling development. Use at least 4 CPUs and 4 GB of memory when you run the full AKS Flex Node bootstrap flow; the nspawn worker and Kubernetes components require more capacity.
+
 ## Quick Start
 
 ```bash
-# Start a VM with defaults (2 CPUs, 2GB RAM, 20G disk, SSH on port 2222)
-./hack/qemu/vm.sh start
+# Start a VM sized for AKS Flex Node bootstrap
+./hack/qemu/vm.sh start --cpus 4 --memory 4096
 
 # SSH into the VM
 ssh -o StrictHostKeyChecking=no -p 2222 ubuntu@localhost
@@ -109,7 +111,7 @@ ssh -p 2222 ubuntu@localhost
 # Inside the VM: the repo is already mounted
 cd /flex-node
 sudo su
-./bin/aks-flex-node bootstrap --config <path-to-config>
+./bin/aks-flex-node start --config <path-to-config>
 ```
 
 Edit code and rebuild on the host as usual. Since `/flex-node` is a live mount of the repository, the updated binary is available inside the VM immediately after each build.
