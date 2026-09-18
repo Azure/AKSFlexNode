@@ -27,6 +27,7 @@ func NewCommand() *cobra.Command {
 func runReset(ctx context.Context, logger *slog.Logger) error {
 	tasks := phases.Serial(logger,
 		daemon.UninstallService(logger),
+		daemon.RestoreAgentBinary(logger),
 		daemon.ResetNode(logger),
 	)
 	return phases.ExecuteTask(ctx, logger, tasks)
