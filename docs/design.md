@@ -188,7 +188,7 @@ AKS Flex Node supports one authentication mode per config. The selected mode det
 | Azure Arc | `azure.arc.enabled: true` | Host already registered as an Arc-enabled server. | Host uses the Arc system-assigned identity exposed by local HIMDS. |
 | Service principal | `azure.servicePrincipal` | Automation with static Azure application credentials. | Host stores client credentials and requires secret rotation. |
 
-Only one durable Azure identity mode can be configured at a time. Bootstrap token mode requires the config to include the Kubernetes API server URL and CA data; with Arc, these values and the token are normally fetched from AKS RP before the runtime config is loaded. Paired embedded kubeconfigs instead carry their own API server, CA, exec credential, and impersonation settings for the host agent and kubelet.
+Only one durable Azure identity mode can be configured at a time. Bootstrap token mode requires the config to include the Kubernetes API server URL and CA data; with Arc, these values and the token are normally fetched from AKS RP before the runtime config is loaded. Paired embedded kubeconfigs instead carry their own API server, CA, and exec credential. The host agent can act directly as the Arc principal while the kubelet kubeconfig impersonates the matching `system:node:<node-name>` user in the `system:nodes` group.
 
 Auth mode selection affects only how the node obtains join and API credentials. Host lifecycle mutation remains local and privileged, and AKS/RP remains responsible for workload disruption decisions such as cordon and drain.
 
