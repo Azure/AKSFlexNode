@@ -2,383 +2,138 @@
 
 ## Overview
 
-AKS Flex Node extends Azure Kubernetes Service (AKS) to customer-managed virtual machines and bare metal hosts, enabling them to run as AKS worker nodes outside standard AKS node pools. It is built on top of [Azure Unbounded](https://github.com/Azure/unbounded), which provides the host-side foundation for running and reconciling isolated Kubernetes node environments.
+AKS Flex Node extends Azure Kubernetes Service (AKS) to virtual machines and bare metal hosts that you manage. Use Flex nodes when selected workloads need compute outside standard AKS node pools, such as capacity in another region, on-premises hardware, or specialized accelerators.
 
-> **Status:** AKS Flex Node is currently in [public preview](https://learn.microsoft.com/en-us/azure/aks/flex-nodes-for-aks-overview).
+The Flex Node agent prepares the host, creates an isolated Kubernetes worker environment with systemd-nspawn, joins that worker to AKS, and reconciles its configuration with the state requested by AKS. You retain responsibility for the host operating system, identity, network connectivity, and workload configuration.
 
-## Key Features And Scenarios
+> [!IMPORTANT]
+> AKS Flex Node is currently in [public preview](https://learn.microsoft.com/en-us/azure/aks/flex-nodes-for-aks-overview) and isn't recommended for production workloads. Review the [AKS support policy](https://learn.microsoft.com/azure/aks/support-policies) and the [Supplemental Terms of Use for Microsoft Azure Previews](https://azure.microsoft.com/support/legal/preview-supplemental-terms/) before using it.
 
-- Bootstrap and join virtual machines or bare metal hosts for both amd64 and arm64 as AKS worker nodes.
-- Support hybrid, lab, and specialized hardware scenarios.
-- Use flexible authentication modes, including Azure Arc, managed identity (MSI), and Kubernetes bootstrap token.
-- Automatically detect NVIDIA GPU devices and configure the container runtime for accelerated workloads.
-- Run blue-green in-place updates and upgrades while retaining the existing host.
-- Manage your Flex Node fleet through AKS management APIs for upgrade, repair, reset, and related lifecycle operations.
-- Remediate and repair agent and node state through first-class lifecycle operations.
+## Key features and scenarios
 
-## Getting Started
+- Attach customer-managed virtual machines or bare metal hosts to an AKS cluster.
+- Use `amd64` or `arm64` Linux hosts running Ubuntu 24.04.
+- Authenticate the host to Azure with Azure Arc managed identity, Azure VM managed identity, or a service principal.
+- Run the Kubernetes worker components in an isolated nspawn environment.
+- Apply node settings and lifecycle operations through an AKS Flex node pool and Machine resources.
+- Use customer-managed networking to connect AKS-managed nodes, Flex nodes, pods, and Kubernetes services.
+- Evaluate specialized hardware scenarios, including NVIDIA and AMD GPU hosts.
 
-This quickstart walks you through joining your first **Flex Node machine**, an on-premises physical server or virtual machine you own, to an existing AKS cluster, then running a workload on it. Plan about 10 minutes once the prerequisites are in place.
+## Getting started
 
-### Prerequisites
+<a id="prerequisites"></a>
+<a id="network-requirements"></a>
+<a id="prepare-the-cluster"></a>
+<a id="step-1-set-your-variables-and-connect-to-the-cluster"></a>
+<a id="step-2-generate-the-join-configuration"></a>
+<a id="step-3-copy-the-configuration-to-your-flex-node-machine"></a>
+<a id="step-4-install-the-agent-on-your-flex-node-machine"></a>
+<a id="step-5-run-preflight-checks"></a>
+<a id="step-6-join-the-node"></a>
+<a id="step-7-verify-the-node-joined"></a>
+<a id="clean-up"></a>
+<a id="troubleshooting"></a>
+<a id="next-steps"></a>
 
-This quickstart involves two machines. Keep them distinct:
+The primary deployment workflow uses:
 
-- **Your workstation** is the computer you drive the setup from, using the Azure CLI and `kubectl` (for example, your laptop). It is not joined to the cluster; it only generates the configuration and runs commands. Every step labeled **Run on: your workstation** happens here.
-- **Your Flex Node machine** is the on-premises physical server or virtual machine you are joining to the cluster as a worker node. Every step labeled **Run on: your Flex Node machine** happens there.
+- a public AKS cluster for the repository's end-to-end walkthrough;
+- an AKS cluster created without a built-in network plugin;
+- Unbounded-Net on the AKS-managed nodes and Flex nodes;
+- private Layer 3 connectivity between the AKS-managed node network and the Flex node host network;
+- a Flex node pool;
+- a prepared Ubuntu 24.04 host with an Azure Arc managed identity, Azure VM managed identity, or service principal.
 
-Before you begin, make sure you have:
+Plan AKS API access and node connectivity separately. A public API endpoint allows the host to contact the Kubernetes API server, but it doesn't provide connectivity between AKS-managed nodes, Flex nodes, pods, or kubelet callback endpoints.
 
-- An Azure subscription. [Create one for free](https://azure.microsoft.com/free/).
-- **Your workstation**, with the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), `kubectl`, `curl`, and `python3` installed. Sign in with `az login`, then `az account set --subscription "<subscription-id>"`.
-- **An existing AKS cluster** with a Linux node pool. Azure CNI is recommended so pods are reachable across your network, and you need permission to configure RBAC on the cluster. If you don't have a cluster yet, see [create an AKS cluster](https://learn.microsoft.com/azure/aks/learn/quick-kubernetes-deploy-cli).
-- **A Flex Node machine you own**: an on-premises physical server or a virtual machine to join as the worker node. It must:
-  - run `systemd` and allow root installation,
-  - have at least 4 vCPUs and enough memory for nspawn startup and the Kubernetes components,
-  - be reachable from your workstation over SSH.
+### Understand the command environments
 
-### Network requirements
+The deployment uses two machines:
 
-Your Flex Node machine and the AKS cluster must be able to reach each other. Confirm each item before you start:
+- **Bash environment:** The workstation or admin host where you run Azure CLI, `kubectl`, artifact download, and SSH commands. For a private AKS cluster, this environment must resolve and reach the private API endpoint.
+- **Flex node host:** The customer-managed Ubuntu machine that joins the cluster. Run host installation and bootstrap commands here only when the procedure explicitly directs you to.
 
-- **Outbound HTTPS (TCP 443)** from the Flex Node machine to the AKS API server.
-- **Bidirectional reachability** between the Flex Node machine's private IP and the AKS node private IPs.
-- **Non-overlapping CIDRs** between the host network and the cluster's node and pod address ranges.
-- **NSG and firewall rules** that allow the CNI's cross-node traffic (typically TCP/UDP between node private IPs, and pod CIDR ranges depending on the CNI).
-- **For private AKS clusters:** the Flex Node machine can resolve and reach the private API server endpoint.
+### Complete the deployment
 
-> **Note**
-> On-premises machines usually reach the cluster's private node network through a site-to-site VPN, ExpressRoute, or equivalent routed connectivity. Establishing that link is a prerequisite for this quickstart. For advanced network scenarios such as cross-region, gateway, or custom CNI topologies, follow the [lab guides](docs/labs/README.md).
+1. Review the [documentation index](docs/README.md) and [authentication options](docs/usage/joining-nodes.md).
+2. Plan nonoverlapping AKS node, AKS pod, Flex node, Flex pod, and Kubernetes service address ranges with your network administrator.
+3. Follow the [operator guide](docs/usage/getting-started.md) to prepare the cluster, install Unbounded-Net, create the Flex node pool, prepare the host identity, bootstrap the host, and verify the result.
+4. Use the [operations guide](docs/usage/operations.md) for inspection, upgrade, reset, uninstall, and troubleshooting tasks.
 
-### Prepare the cluster
+The operator workflow creates Azure and Kubernetes resources and requires more than an agent installation on an existing host. Review the complete prerequisites and cleanup steps before you begin.
 
-Before joining a node, prepare the target AKS cluster by following the [operator guide](docs/usage/getting-started.md). It covers the FlexNodes pool, Unbounded networking, identity, RBAC, and node registration requirements that are not present on a standard AKS cluster.
+> [!IMPORTANT]
+> Create the AKS cluster with bring-your-own CNI mode (`--network-plugin none`), then install Unbounded-Net and initialize the AKS and Flex Sites before attaching a host. An AKS-managed CNI on existing node pools doesn't provide pod networking for the external Flex node.
 
-> **Note**
-> The controller under `hack/controller-deployment/` is for E2E and development environments. Do not deploy it as part of the user quickstart.
+### Attach a prepared Azure VM
 
-### Step 1: Set your variables and connect to the cluster
+After the cluster, Unbounded-Net Sites, Flex node pool, private Layer 3 path, and host managed identity are ready, the host attachment is a short operation. The identity must have **Azure Kubernetes Service Flex Node Agent Role** at the target ARM agent-pool scope. This example uses a system-assigned managed identity; see the [operator guide](docs/usage/getting-started.md#assign-the-host-identitys-pool-scoped-role) for role assignment and the [joining guide](docs/usage/joining-nodes.md) for Azure Arc or service principal authentication.
 
-**Run on: your workstation**
-
-```bash
-export SUBSCRIPTION_ID="<subscription-id>"
-export RESOURCE_GROUP="<resource-group-of-your-aks-cluster>"
-export CLUSTER_NAME="<cluster-name>"
-export AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
-
-# Your Flex Node machine, as an SSH target (for example: azureuser@203.0.113.10)
-export TARGET_HOST="<user>@<flex-node-machine-ip-or-hostname>"
-
-az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME"
-kubectl get nodes
-```
-
-You should see your existing cluster nodes in `Ready` state.
-
-### Step 2: Generate the join configuration
-
-**Run on: your workstation**
-
-Download the helper, apply the node bootstrap RBAC bindings, and generate a bootstrap-token config from your cluster's metadata.
+On the flex node host, download the bootstrap script from the same release as the agent. The agent installs missing host packages during bootstrap; the host only needs the script's direct tools, including Bash, `curl`, `tar`, and `jq`.
 
 ```bash
-curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
-chmod +x ./aks-flex-config
+export AKS_RESOURCE_ID="<aks-resource-id>"
+export FLEX_POOL_NAME="<flex-node-pool-name>"
+export AKS_FLEX_NODE_VERSION="v0.1.11"
 
-./aks-flex-config setup-node-rbac \
-  --resource-group "$RESOURCE_GROUP" \
-  --cluster-name "$CLUSTER_NAME" \
-  --subscription "$SUBSCRIPTION_ID"
-
-./aks-flex-config generate-node-config \
-  --resource-group "$RESOURCE_GROUP" \
-  --cluster-name "$CLUSTER_NAME" \
-  --subscription "$SUBSCRIPTION_ID" \
-  --agent-pool-name "$AGENT_POOL_NAME" \
-  --bootstrap-token \
-  --output ./aks-flex-node-config.json
+curl -fsSLo /tmp/aks-flex-node-bootstrap.sh \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
+chmod 0700 /tmp/aks-flex-node-bootstrap.sh
+bash -n /tmp/aks-flex-node-bootstrap.sh
 ```
 
-This produces `aks-flex-node-config.json` in your current folder. `generate-node-config` supports one of the following auth modes: `--bootstrap-token`, `--identity`, `--service-principal --username <client-id> --password <client-secret>`, or `--arc`. This quickstart uses `--bootstrap-token`.
-
-<details>
-<summary>Example Config With Field Notes</summary>
-
-The rendered config should look like this. Comments are shown here only to explain the fields; do not add comments to `/etc/aks-flex-node/config.json`.
-
-```jsonc
-{
-  "azure": {
-    "subscriptionId": "<subscription-id>", // Azure subscription that owns the AKS cluster.
-    "tenantId": "<tenant-id>", // Microsoft Entra tenant for the subscription.
-    "resourceManagerEndpoint": "https://management.azure.com", // Azure Resource Manager endpoint for ARM calls.
-    "targetAgentPoolName": "<agent-pool-name>", // AKS agent pool used for FlexNode machine registration.
-    "bootstrapToken": {
-      "token": "<token-id>.<token-secret>" // Kubernetes bootstrap token created by generate-node-config.
-    },
-    "arc": { "enabled": false }, // Arc is disabled for this bootstrap-token flow.
-    "targetCluster": {
-      "resourceId": "<aks-resource-id>", // Full ARM resource ID of the AKS cluster.
-      "location": "<aks-location>" // Azure region of the AKS cluster.
-    }
-  },
-  "node": {
-    "kubelet": {
-      "clusterFQDN": "<aks-api-server-fqdn>", // AKS API server FQDN.
-      "caCertData": "<base64-ca-data>" // Cluster CA bundle from kubeconfig.
-    }
-  },
-  "networking": {
-    "dnsServiceIP": "<cluster-dns-service-ip>" // Cluster DNS service IP from the AKS network profile.
-  },
-  "agent": {
-    "logLevel": "info", // Agent log verbosity.
-    "logDir": "/var/log/aks-flex-node" // Host log directory.
-  },
-  "components": { "kubernetes": "<aks-kubernetes-version>" } // Kubelet version to install.
-}
-```
-
-</details>
-
-### Step 3: Copy the configuration to your Flex Node machine
-
-**Run on: your workstation**
+Run bootstrap as root. It retrieves fresh pool data, verifies prerequisites, installs the agent, registers the Azure Machine, and starts the nspawn worker:
 
 ```bash
-scp ./aks-flex-node-config.json "$TARGET_HOST:/tmp/aks-flex-node-config.json"
+sudo bash /tmp/aks-flex-node-bootstrap.sh \
+  --auth msi \
+  --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" \
+  --agent-pool-name "$FLEX_POOL_NAME" \
+  --agent-version "$AKS_FLEX_NODE_VERSION"
+
+rm -f /tmp/aks-flex-node-bootstrap.sh
 ```
 
-> **Note**
-> The config is staged in `/tmp` because your SSH user cannot write to root-owned `/etc`, and `/etc/aks-flex-node` does not exist yet. The next step creates that directory and installs the file as root with owner-only `0600` permissions.
+This minimal path downloads the agent from its GitHub release and uses the agent's default online rootfs and component sources. Use the [offline artifacts lab](docs/labs/aks-public-cluster-offline-bootstrap.md) only when you need mirrored or filesystem-backed bootstrap artifacts.
 
-### Step 4: Install the agent on your Flex Node machine
-
-First, from your workstation, open an SSH session on the Flex Node machine.
-
-**Run on: your workstation**
-
-```bash
-ssh "$TARGET_HOST"
-```
-
-You are now connected to the Flex Node machine. Install the agent and move the generated config into place, as root.
-
-**Run on: your Flex Node machine**
-
-```bash
-sudo su
-# Optional: set AKS_FLEX_NODE_VERSION=<release-tag> to install a specific release.
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
-aks-flex-node version
-
-install -d -m 0755 /etc/aks-flex-node
-install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-
-cat /etc/aks-flex-node/config.json
-```
-
-> Use this script for initial installation or after reset. For upgrades, use the agent upgrade flow.
-
-### Step 5: Run preflight checks
-
-**Run on: your Flex Node machine**
-
-Preflight is non-mutating. It validates host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources before bootstrap changes the host.
-
-```bash
-aks-flex-node preflight --config /etc/aks-flex-node/config.json
-```
-
-Confirm all checks pass before continuing.
-
-### Step 6: Join the node
-
-**Run on: your Flex Node machine**
-
-This installs the long-running agent service and starts the local Kubernetes worker environment.
-
-```bash
-umask 022
-aks-flex-node start --config /etc/aks-flex-node/config.json
-```
-
-> **Note**
-> `umask 022` sets standard default permissions (directories `755`, files `644`). The bootstrap creates the node's nspawn rootfs directories, and `755` lets non-root service users such as `dbus` traverse them; without it, the node fails to start. Your credentials are unaffected: the config file remains `0600`.
-
-Confirm the agent is running:
-
-```bash
-systemctl is-active aks-flex-node-agent
-journalctl -u aks-flex-node-agent -f
-```
-
-Example output:
-
-```text
-active
-```
-
-Example logs:
-
-```text
-Started aks-flex-node-agent.service - AKS Flex Node Agent.
-aks-flex-node[3800]: level=INFO msg="running agent daemon" nodeName=aks-flex-config-test
-aks-flex-node[3800]: level=INFO msg="machine state reconciled" status=healthy
-```
-
-When you are finished, press `Ctrl+C` to stop following the logs, then run `exit` twice, once to leave the root shell and once to close the SSH session, to return to your workstation.
-
-### Step 7: Verify the node joined
-
-**Run on: your workstation**
+From the Bash environment, verify both the Kubernetes Node and Azure Machine:
 
 ```bash
 kubectl get nodes -o wide
+az aks machine list \
+  --resource-group "<aks-resource-group>" \
+  --cluster-name "<aks-cluster-name>" \
+  --nodepool-name "$FLEX_POOL_NAME" \
+  --output table
 ```
 
-Example output:
+### Choose a deployment option
 
-```text
-NAME                   STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
-aks-flex-config-test   Ready    <none>   12s   v1.34.3   10.0.0.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1013-azure   containerd://2.0.4
-```
+| Decision | Options | What it controls |
+| --- | --- | --- |
+| Host identity | Azure Arc managed identity, Azure VM managed identity, or service principal | How the Flex Node agent authenticates to Azure and accesses its AKS Machine resource. |
+| AKS API access | Public or private; the primary repository walkthrough uses public access | How the Bash environment and flex node host resolve and reach the Kubernetes API server. |
+| Node connectivity | Private Layer 3 or an evaluated alternative | How AKS-managed nodes, Flex nodes, pods, services, and control-plane callbacks communicate. |
 
-The node name matches the Flex Node machine's hostname unless you set `agent.nodeName` in the config. Schedule a test workload onto it to confirm it can run pods (replace `<node-name>` with the name shown above):
+A Kubernetes bootstrap token establishes initial Kubernetes trust. It doesn't replace the Azure identity required by the primary workflow for Machine registration and reconciliation.
 
-```bash
-kubectl run hello --image=mcr.microsoft.com/azuredocs/aks-helloworld:v1 \
-  --overrides='{"spec":{"nodeName":"<node-name>"}}'
-kubectl get pod hello -o wide
-```
+### Explore additional configurations
 
-<details>
-<summary>Inspect the nspawn worker (optional)</summary>
+The [labs](docs/labs/README.md) cover additional configurations for evaluation, including cross-region virtual network peering, public WireGuard gateways, unmanaged Cilium, offline artifacts, and GPU hosts. Review each lab's status and version scope before use.
 
-AKS Flex Node runs the Kubernetes worker inside a local nspawn machine. You can inspect it from the Flex Node machine:
-
-```bash
-machinectl list
-machinectl status kube1
-journalctl -M kube1 -u kubelet -f
-journalctl -M kube1 -u containerd -f
-```
-
-Watch the kubelet and containerd logs to see how the nspawn-backed worker handles scheduled workloads.
-
-</details>
-
-### Clean up
-
-Remove the test workload from your workstation:
-
-```bash
-kubectl delete pod hello --ignore-not-found
-```
-
-<details>
-<summary>Reset And Uninstall</summary>
-
-To remove AKS Flex Node from the host while preserving externally managed Azure Arc and Azure CLI installations, run the uninstall script as root:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | bash -s -- --force
-```
-
-Example summary:
-
-```text
-SUCCESS: Reset completed
-SUCCESS: Removed directory: /var/lib/aks-flex-node
-SUCCESS: Removed binary: /usr/local/bin/aks-flex-node
-SUCCESS: AKS Flex Node uninstallation completed!
-```
-
-Example reset details:
-
-```text
-level=INFO msg="systemd service uninstalled" unit=aks-flex-node-agent.service
-level=INFO msg="removing machine rootfs" machine=kube1 dir=/var/lib/machines/kube1
-level=INFO msg="removed runtime directory" path=/etc/aks-flex-node
-level=INFO msg="removed runtime directory" path=/var/log/aks-flex-node
-```
-
-After uninstall, the host should no longer have the agent service or nspawn machines:
-
-```bash
-systemctl is-active aks-flex-node-agent
-machinectl list
-```
-
-Example output:
-
-```text
-inactive
-No machines.
-```
-
-Finally, remove the Kubernetes `Node` object from your workstation:
-
-```bash
-kubectl delete node <node-name>
-```
-
-</details>
-
-### Troubleshooting
-
-**The node joins, but `aks-flex-node-agent` is restarting.**
-
-Kubelet bootstrap and daemon authentication are separate. The Kubernetes node can become `Ready` while the long-running agent waits for approval of its daemon CSR.
-
-On the Flex Node machine:
-
-```bash
-systemctl status aks-flex-node-agent
-journalctl -u aks-flex-node-agent --no-pager -n 200
-```
-
-From your workstation:
-
-```bash
-kubectl get csr
-```
-
-When the AKS Flex CSR approver is not available, inspect and manually approve the daemon CSR using the procedure in [Approve the daemon CSR when required](docs/usage/getting-started.md#7-approve-the-daemon-csr-when-required).
-
-Manual approval is a temporary preview fallback. Verify that the CSR belongs to the expected node before approving it.
-
-### Next steps
-
-- **Other authentication modes** (managed identity, service principal, Azure Arc): see the [Usage Guide](docs/usage.md).
-- **Advanced networking** (cross-region, gateway, custom CNI): see the [lab guides](docs/labs/README.md).
-- **GPU workloads:** Flex Node auto-detects NVIDIA GPU devices; see the [Usage Guide](docs/usage.md).
-
-## Usage Guides And Topics
+## Usage guides and topics
 
 - [Documentation](docs/README.md) - Choose deployment, architecture, reference, lab, or contributor guidance.
-- [Usage Guide](docs/usage.md) - Installation, configuration, authentication modes, operations, and troubleshooting.
-- [Labs](docs/labs/README.md) - Hands-on Azure scenarios for trying AKS Flex Node end to end.
-- [Design Documentation](docs/design.md) - Architecture, lifecycle, Azure integration, and security model.
+- [Usage guide](docs/usage.md) - Find joining, configuration, command, and operations documentation.
+- [Labs](docs/labs/README.md) - Evaluate additional Azure, networking, offline, and GPU scenarios.
+- [Design documentation](docs/design.md) - Understand architecture, lifecycle, Azure integration, and local state.
 
-## Development And Security
+## Development and security
 
-- [Development Guide](docs/development.md) - To learn more about build, development, and contribution workflow.
-- [Security Policy](SECURITY.md) - How to report security vulnerabilities.
+- [Development guide](docs/development.md) - Build, test, and contribute to the project.
+- [Security policy](SECURITY.md) - Report security vulnerabilities privately.
 
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**🚀 Built with ❤️ for the Kubernetes community**
-
-![Made with Go](https://img.shields.io/badge/Made%20with-Go-00ADD8?style=flat-square&logo=go)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-Ready-326CE5?style=flat-square&logo=kubernetes)
-![Azure](https://img.shields.io/badge/Azure-Integrated-0078D4?style=flat-square&logo=microsoftazure)
-
-</div>

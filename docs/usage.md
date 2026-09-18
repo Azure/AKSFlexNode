@@ -2,6 +2,8 @@
 
 This section collects scenario-focused guides for installing, joining, operating, and configuring AKS Flex Node.
 
+<a id="start-here"></a>
+<a id="additional-scenarios"></a>
 ## Guides
 
 - [Joining Nodes](usage/joining-nodes.md) - Join a host to AKS using bootstrap token, managed identity, Azure Arc, or service principal authentication.

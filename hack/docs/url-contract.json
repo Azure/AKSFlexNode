@@ -14,8 +14,12 @@
       "protectAnchors": true,
       "anchors": [
         "aks-flex-node",
+        "attach-a-prepared-azure-vm",
+        "choose-a-deployment-option",
         "clean-up",
+        "complete-the-deployment",
         "development-and-security",
+        "explore-additional-configurations",
         "getting-started",
         "key-features-and-scenarios",
         "license",
@@ -32,6 +36,7 @@
         "step-6-join-the-node",
         "step-7-verify-the-node-joined",
         "troubleshooting",
+        "understand-the-command-environments",
         "usage-guides-and-topics"
       ]
     },
@@ -50,6 +55,7 @@
         "contribute",
         "deploy-a-flex-node",
         "find-reference-information",
+        "plan-a-deployment",
         "report-problems",
         "try-supplemental-scenarios",
         "understand-the-system"
@@ -371,8 +377,10 @@
       "path": "docs/usage.md",
       "protectAnchors": true,
       "anchors": [
+        "additional-scenarios",
         "aks-flex-node-usage",
-        "guides"
+        "guides",
+        "start-here"
       ]
     },
     {
@@ -445,18 +453,20 @@
       "path": "docs/usage/getting-started.md",
       "protectAnchors": true,
       "anchors": [
+        "1-create-a-no-cni-aks-cluster",
         "1-setup-azure-features-and-networking-base",
         "2-create-a-no-cni-aks-cluster",
+        "2-install-unbounded-and-initialize-the-sites",
+        "3-install-temporary-aks-flex-daemon-rbac",
         "3-install-unbounded-and-initialize-the-sites",
         "4-create-the-flexnodes-pool",
         "5-prepare-the-flex-host-and-azure-identity",
         "6-download-and-run-the-bootstrap-script",
         "7-verify-the-joined-node",
+        "8-verify-the-joined-node",
         "arm-machine-registration-fails",
         "bootstrap-token-expired",
         "flow",
-        "machineoperation-cache-synchronization-times-out",
-        "node-joins-but-the-host-agent-restarts",
         "operator-guide-bootstrap-an-aks-flex-node",
         "preflight-reports-insufficient-disk-space",
         "prerequisites",
@@ -468,13 +478,16 @@
       "path": "docs/usage/joining-nodes.md",
       "protectAnchors": true,
       "anchors": [
-        "authentication-mode-selection",
         "azure-arc",
+        "azure-host-identity",
         "before-you-begin",
-        "bootstrap-token",
+        "bootstrap-token-evaluation-path",
         "joining-nodes",
+        "kubernetes-bootstrap-data",
         "managed-identity",
-        "service-principal"
+        "service-principal",
+        "understand-the-two-credentials",
+        "verify-the-selected-path"
       ]
     },
     {

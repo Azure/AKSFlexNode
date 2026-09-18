@@ -35,10 +35,6 @@ role-assignment, Arc onboarding, admin kubeconfig, and cleanup permissions.
 `scripts/setup/setup-runner.sh` configures those operator permissions, not host
 permissions.
 
-For retained environments, incremental Bicep deployment leaves the old broad
-host assignments in place. Follow the
-[operator migration guidance](../../docs/usage/getting-started.md#migrate-existing-host-identities).
-
 ## GitHub Actions Policy
 
 The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the protected `e2e-testing` environment. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
