@@ -35,6 +35,12 @@ Flex node pool bootstrap data includes a short-lived Kubernetes bootstrap token,
 
 After TLS bootstrap, kubelet uses its issued client certificate for ongoing Kubernetes API access. The daemon uses a separate Kubernetes credential for lifecycle operations.
 
+As an alternative to bootstrap credentials, configure paired `agent.kubeconfigData` and
+`node.kubelet.kubeconfigData` values when the host agent and kubelet must use
+different renewable Kubernetes identities. The paired kubeconfigs can use Arc
+HIMDS-backed exec credentials with different impersonation settings while Arc
+continues to provide the Azure identity for ARM access.
+
 ## Managed identity
 
 Use managed identity when the Flex node host is an Azure VM. Use the system-assigned identity when it belongs to one VM, or a user-assigned identity when it must be managed or reused separately.

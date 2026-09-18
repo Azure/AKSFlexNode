@@ -101,7 +101,7 @@ The agent reads a JSON config file with these top-level sections:
 - `node` - kubelet settings, labels, taints, maximum pods, and node IP.
 - `npd` - Node Problem Detector version.
 
-At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap; Arc requires bootstrap data fetched from AKS RP.
+At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap. Alternatively, paired embedded agent and kubelet kubeconfigs provide separate renewable Kubernetes identities; Arc then remains responsible for ARM access without requiring Kubernetes bootstrap data.
 
 See [Configuration](usage/configuration.md) for the option reference and sample configs.
 
@@ -189,7 +189,7 @@ AKS Flex Node uses separate Azure and Kubernetes credentials.
 | Service principal | `azure.servicePrincipal` | Authenticate a host that can't use managed identity. Prefer a protected certificate file. |
 | Kubernetes bootstrap token | `azure.bootstrapToken` | Establish initial kubelet and daemon trust with the Kubernetes API server. |
 
-Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access.
+Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access. Paired embedded kubeconfigs instead carry their own API server, CA, exec credential, and impersonation settings for the host agent and kubelet.
 
 A bootstrap-token-only config is available for repository evaluation flows, where Machine registration is best effort by default. The primary Azure Machine workflow requires a durable Azure identity. Authentication doesn't change lifecycle ownership: host mutation remains local and privileged, while AKS or the operator owns workload disruption such as cordon and drain.
 

@@ -44,6 +44,8 @@ CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
 BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE:-}"
+AGENT_KUBECONFIG="${AKS_FLEX_NODE_AGENT_KUBECONFIG:-}"
+KUBELET_KUBECONFIG="${AKS_FLEX_NODE_KUBELET_KUBECONFIG:-}"
 CLUSTER_RESOURCE_ID="${AKS_FLEX_NODE_CLUSTER_RESOURCE_ID:-}"
 AGENT_POOL_NAME="${AKS_FLEX_NODE_AGENT_POOL_NAME:-}"
 RESOURCE_MANAGER_ENDPOINT="${AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT:-}"
@@ -60,6 +62,8 @@ CONFIG_OVERRIDES=()
 unset \
     AKS_FLEX_NODE_SP_CLIENT_SECRET \
     AKS_FLEX_NODE_AGENT_URL \
+    AKS_FLEX_NODE_AGENT_KUBECONFIG \
+    AKS_FLEX_NODE_KUBELET_KUBECONFIG \
     AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
     AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
     AKS_FLEX_NODE_CONFIG_OVERRIDES || true
@@ -102,6 +106,8 @@ Options:
   --bootstrap-oci-image SOURCE   Override bootstrap.ociImage
   --bootstrap-offline-artifacts-source SOURCE
                                  Override bootstrap.offlineArtifacts.source
+  --agent-kubeconfig PATH        Protected kubeconfig embedded for host agent clients
+  --kubelet-kubeconfig PATH      Protected kubeconfig embedded verbatim for kubelet
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
   --install-dir PATH             Binary destination directory
@@ -127,6 +133,8 @@ Environment overrides:
   AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
   AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
   AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
+  AKS_FLEX_NODE_AGENT_KUBECONFIG
+  AKS_FLEX_NODE_KUBELET_KUBECONFIG
   AKS_FLEX_NODE_CONFIG_OVERRIDES
   AKS_FLEX_NODE_INSTALL_DIR
   AKS_FLEX_NODE_CONFIG_PATH
@@ -147,7 +155,7 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--agent-kubeconfig|--kubelet-kubeconfig|--config-overrides|--install-dir|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -173,6 +181,8 @@ parse_args() {
                     --resource-manager-endpoint) RESOURCE_MANAGER_ENDPOINT="$2" ;;
                     --bootstrap-oci-image) BOOTSTRAP_OCI_IMAGE="$2" ;;
                     --bootstrap-offline-artifacts-source) BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="$2" ;;
+                    --agent-kubeconfig) AGENT_KUBECONFIG="$2" ;;
+                    --kubelet-kubeconfig) KUBELET_KUBECONFIG="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
                     --install-dir) INSTALL_DIR="$2" ;;
                     --config-path) CONFIG_PATH="$2" ;;
@@ -254,14 +264,14 @@ check_credential_file_permissions() {
     local path="$1"
     local label="${2:-credential}"
     local permissions
-    [[ "$path" == /* ]] || fatal "service-principal $label file path must be absolute"
-    [[ ! -L "$path" ]] || fatal "service-principal $label file must not be a symlink"
-    [[ -f "$path" ]] || fatal "service-principal $label file must be a regular file"
+    [[ "$path" == /* ]] || fatal "$label file path must be absolute"
+    [[ ! -L "$path" ]] || fatal "$label file must not be a symlink"
+    [[ -f "$path" ]] || fatal "$label file must be a regular file"
     permissions=$(stat -c '%a' "$path")
     if (((8#$permissions & 077) != 0)); then
-        fatal "service-principal $label file must not be accessible by group or other users"
+        fatal "$label file must not be accessible by group or other users"
     fi
-    [[ -s "$path" ]] || fatal "service-principal $label file is empty"
+    [[ -s "$path" ]] || fatal "$label file is empty"
 }
 
 check_secret_file_permissions() {
@@ -281,6 +291,17 @@ validate_sp_credential_selection() {
     [[ -n "$SP_CLIENT_SECRET_FILE" ]] && ((count += 1))
     [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]] && ((count += 1))
     ((count <= 1)) || fatal "configure only one service-principal secret, secret file, or certificate file"
+}
+
+validate_kubeconfig_selection() {
+    if [[ -n "$AGENT_KUBECONFIG" && -z "$KUBELET_KUBECONFIG" ]] ||
+       [[ -z "$AGENT_KUBECONFIG" && -n "$KUBELET_KUBECONFIG" ]]; then
+        fatal "--agent-kubeconfig and --kubelet-kubeconfig must be configured together"
+    fi
+    if [[ -n "$AGENT_KUBECONFIG" ]]; then
+        check_credential_file_permissions "$AGENT_KUBECONFIG" "agent kubeconfig"
+        check_credential_file_permissions "$KUBELET_KUBECONFIG" "kubelet kubeconfig"
+    fi
 }
 
 is_true() {
@@ -485,6 +506,22 @@ apply_auth_override() {
     mv -f "$rendered" "$current"
 }
 
+apply_kubeconfig_overrides() {
+    local current="$1"
+    local rendered="$TEMP_DIR/config-kubeconfigs.json"
+    if [[ -z "$AGENT_KUBECONFIG" ]]; then
+        return 0
+    fi
+    jq --rawfile agentKubeconfig "$AGENT_KUBECONFIG" --rawfile kubeletKubeconfig "$KUBELET_KUBECONFIG" '
+        .agent = (.agent // {}) |
+        .node = (.node // {}) |
+        .node.kubelet = (.node.kubelet // {}) |
+        .agent.kubeconfigData = $agentKubeconfig |
+        .node.kubelet.kubeconfigData = $kubeletKubeconfig
+    ' "$current" > "$rendered"
+    mv -f "$rendered" "$current"
+}
+
 render_config() {
     local output="$1"
     local current="$TEMP_DIR/config-current.json"
@@ -518,6 +555,7 @@ render_config() {
     mv -f "$rendered" "$current"
 
     apply_auth_override "$current"
+    apply_kubeconfig_overrides "$current"
     jq -e . "$current" > "$output"
     chmod 0600 "$output"
 }
@@ -591,6 +629,8 @@ clear_bootstrap_environment() {
     SP_CLIENT_CERTIFICATE_FILE=""
     AGENT_URL=""
     ENV_CONFIG_OVERRIDES=""
+    AGENT_KUBECONFIG=""
+    KUBELET_KUBECONFIG=""
     unset \
         AKS_FLEX_NODE_AUTH \
         AKS_FLEX_NODE_MSI_CLIENT_ID \
@@ -612,6 +652,8 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT \
         AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
         AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
+        AKS_FLEX_NODE_AGENT_KUBECONFIG \
+        AKS_FLEX_NODE_KUBELET_KUBECONFIG \
         AKS_FLEX_NODE_CONFIG_OVERRIDES \
         AKS_FLEX_NODE_INSTALL_DIR \
         AKS_FLEX_NODE_CONFIG_PATH || true
@@ -631,6 +673,7 @@ install_config() {
 main() {
     parse_args "$@"
     validate_sp_credential_selection
+    validate_kubeconfig_selection
     [[ $EUID -eq 0 ]] || fatal "run this script as root"
     check_prerequisites
 

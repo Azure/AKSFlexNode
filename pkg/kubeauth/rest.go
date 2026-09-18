@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
@@ -13,6 +14,14 @@ import (
 // exec-credential material in the FlexNode config. It is used before the daemon
 // client certificate is available, including during bootstrap Machine reads.
 func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
+	if cfg.UsesKubeconfigCredentials() {
+		restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(cfg.Agent.KubeconfigData))
+		if err != nil {
+			return nil, fmt.Errorf("build Kubernetes REST config from agent kubeconfig: %w", err)
+		}
+		return restCfg, nil
+	}
+
 	apiServerURL := cfg.APIServerURL()
 	if apiServerURL == "" {
 		return nil, fmt.Errorf("kubernetes API server URL is empty")
