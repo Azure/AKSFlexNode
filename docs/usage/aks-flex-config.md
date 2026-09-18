@@ -98,24 +98,12 @@ For user-assigned managed identity, pass the client ID with `--username`:
   --output ./aks-flex-node-config.json
 ```
 
-### Service Principal
+### Service principal
 
-Service principal flags follow the `az login --service-principal` convention:
+> [!WARNING]
+> The helper's legacy `--password` option places the service principal secret in the process arguments and writes it into the generated config. Don't use this mode for shared or production environments.
 
-```bash
-./aks-flex-config generate-node-config \
-  --resource-group "$RESOURCE_GROUP" \
-  --cluster-name "$CLUSTER_NAME" \
-  --subscription "$SUBSCRIPTION_ID" \
-  --agent-pool-name "$AGENT_POOL_NAME" \
-  --service-principal \
-  --username "<client-id>" \
-  --password "<client-secret>" \
-  --tenant "<tenant-id>" \
-  --output ./aks-flex-node-config.json
-```
-
-`--tenant` defaults to the current Azure CLI tenant when omitted.
+Use the protected credential-file workflow in [Joining Nodes](joining-nodes.md#service-principal). For an end-to-end workflow that retrieves fresh pool bootstrap data, use the service principal procedure in [Bootstrap an AKS Flex Node](operator-first-boot.md#6-download-and-run-the-bootstrap-script). Both procedures keep the credential in a root-owned file instead of passing it as a command argument.
 
 ### Azure Arc
 
