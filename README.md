@@ -357,6 +357,7 @@ Manual approval is a temporary preview fallback. Verify that the CSR belongs to 
 
 ## Usage Guides And Topics
 
+- [Documentation](docs/README.md) - Choose deployment, architecture, reference, lab, or contributor guidance.
 - [Usage Guide](docs/usage.md) - Installation, configuration, authentication modes, operations, and troubleshooting.
 - [Labs](docs/labs/README.md) - Hands-on Azure scenarios for trying AKS Flex Node end to end.
 - [Design Documentation](docs/design.md) - Architecture, lifecycle, Azure integration, and security model.
