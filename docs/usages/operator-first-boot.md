@@ -1,47 +1,53 @@
 # Operator Guide: Bootstrap an AKS Flex Node
 
-This guide describes the current end-to-end operator flow for creating an AKS
-cluster with no CNI, installing Unbounded networking, creating a FlexNodes pool,
-and joining a prepared Linux host with [`scripts/bootstrap.sh`](../../scripts/bootstrap.sh).
+This guide creates an Azure Kubernetes Service (AKS) cluster without a built-in Container Network Interface (CNI), installs Unbounded-Net, creates a Flex node pool, and attaches a prepared Linux host with [`scripts/bootstrap.sh`](../../scripts/bootstrap.sh).
 
-The bootstrap script is downloaded and run interactively on the host. This guide
-does not use cloud-init.
+The walkthrough uses a public AKS API endpoint and private Layer 3 connectivity between the AKS-managed node network and the flex node host network. API server access and node connectivity are separate decisions: a public API endpoint doesn't provide node, pod, service, or control-plane callback connectivity. For other evaluated topologies, see the [labs](../labs/README.md).
 
-For the architecture and security rationale, see
-[Generated Bootstrap Script Design](../design/storage-backed-bootstrap.md).
+> [!IMPORTANT]
+> AKS Flex Node is a preview feature intended for evaluation. This workflow creates Azure and Kubernetes resources and changes the target host as root. Review the complete procedure and cleanup requirements before you begin.
+
+Run Azure CLI, `kubectl`, artifact download, and SSH commands in your **Bash environment**. Run host preparation and bootstrap commands on the separate **flex node host** only when a step explicitly directs you to.
+
+The bootstrap script is downloaded and run interactively on the host. This guide doesn't use cloud-init. For the architecture and security rationale, see [Generated bootstrap script](../design/storage-backed-bootstrap.md).
 
 ## Flow
 
-1. Create an AKS cluster with `networkPlugin=none`.
-2. Install the Unbounded operator and initialize the cluster and Flex sites.
-3. Install the temporary AKS Flex daemon MachineOperation RBAC.
-4. Create a FlexNodes agent pool.
-5. Prepare a host, download `bootstrap.sh`, and run it with SP or MSI authentication.
-6. Approve the daemon CSR when no AKS Flex CSR controller is deployed.
-7. Verify the ARM Machine, Kubernetes Node, networking, and agent service.
+In this guide, you:
+
+1. Register the preview features and create an AKS cluster with `networkPlugin=none`.
+2. Install Unbounded-Net and connect the AKS and Flex network Sites over the existing private Layer 3 path.
+3. Apply temporary daemon permissions when the cluster doesn't provide them.
+4. Create a Flex node pool.
+5. Prepare a host and authorize its Azure Arc managed identity, Azure VM managed identity, or service principal at the AKS cluster scope.
+6. Download and run the versioned bootstrap script.
+7. Approve the daemon certificate signing request (CSR) when no approver is deployed.
+8. Verify the Azure Machine, Kubernetes Node, networking, workload connectivity, and agent service.
 
 ## Prerequisites
 
-The operator workstation needs:
+The Bash environment needs:
 
 - Azure CLI authenticated to the target subscription;
-- the subscription-level `Microsoft.ContainerService/PutMachinePreview` feature
-  registered, followed by Microsoft.ContainerService provider re-registration;
-- `kubectl`;
-- permission to create AKS and networking resources and to grant the selected
-  pre-provisioned identity access to the AKS cluster;
+- the `aks-preview` Azure CLI extension version required by the selected Flex Node release;
+- `kubectl`, `curl`, `tar`, and an OpenSSH client;
+- permission to create AKS and networking resources, register preview features, create a Flex node pool, and grant the selected host identity access to the AKS cluster;
 - access to the AKS admin kubeconfig;
-- the `kubectl-unbounded` release matching the Unbounded artifacts.
+- the `kubectl-unbounded` release matching the selected Unbounded artifacts;
+- network access to the AKS API server and the flex node host management endpoint.
 
-The target host needs:
+The flex node host needs:
 
 - Ubuntu 24.04;
-- at least 4 vCPU for the validated example;
+- a unique lowercase hostname suitable for a Kubernetes Node name;
+- at least 4 vCPUs for the validated example;
 - a root filesystem with at least 8 GiB free under `/var/lib`;
+- an SSH account with root or passwordless `sudo` access;
 - Bash, curl, tar, jq, nftables, systemd-container, and util-linux;
-- network access to the AKS API server, GitHub agent release, Azure Front Door
-  artifact mirror, and required container registries;
-- a unique lowercase hostname suitable for a Kubernetes Node name.
+- network access to the AKS API server, Azure Resource Manager, Microsoft Entra ID, the selected agent release and artifact mirror, and required container registries;
+- private Layer 3 connectivity to the AKS-managed node network, including the paths required for nodes, pods, services, and API-server-to-kubelet callbacks.
+
+Before bootstrap, select one Azure host identity and grant it the required role at the target AKS cluster scope. Use Azure VM managed identity for an Azure VM, Azure Arc managed identity for an Arc-enabled server, or a service principal when managed identity isn't available. Prefer a certificate over a long-lived service principal secret.
 
 This guide uses:
 
@@ -55,6 +61,7 @@ export AKS_SUBNET_ID="<aks-subnet-resource-id>"
 export AKS_VERSION="1.36.2"
 export FLEX_VERSION="${FLEX_VERSION:-$AKS_VERSION}"
 export FLEX_POOL_NAME="aksflexnodes"
+export AKS_PREVIEW_VERSION="22.0.0b8"
 
 export SERVICE_CIDR="10.94.0.0/16"
 export DNS_SERVICE_IP="10.94.0.10"
@@ -63,8 +70,8 @@ export CLUSTER_POD_CIDR="10.93.0.0/16"
 export FLEX_NODE_CIDR="10.92.0.0/16"
 export FLEX_POD_CIDR="10.95.0.0/16"
 
-export UNBOUNDED_VERSION="v0.2.0"
-export AKS_FLEX_NODE_VERSION="v0.1.5"
+export UNBOUNDED_VERSION="v0.6.0"
+export AKS_FLEX_NODE_VERSION="v0.1.9"
 export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
 
 # bootstrap.sh downloads the agent, rootfs, and Kubernetes bootstrap bundle
@@ -87,25 +94,46 @@ The CIDRs above must not overlap.
 
 ## 1. Create a no-CNI AKS cluster
 
-Select the subscription:
+Select the subscription and confirm the active account:
 
 ```bash
 az account set --subscription "$SUBSCRIPTION_ID"
+az account show --query '{Name:name,SubscriptionId:id}' --output table
 ```
 
-Register the preview feature that permits AKS Flex Node to create or update ARM
-Machine resources. Registration is subscription-scoped and only needs to be
-completed once:
+Install the preview Azure CLI extension required for Flex node pool commands:
 
 ```bash
+az extension add \
+  --name aks-preview \
+  --allow-preview true \
+  --version "$AKS_PREVIEW_VERSION" \
+  --upgrade
+
+az extension show --name aks-preview --query version --output tsv
+```
+
+Register the subscription-level `AKSFlexNodePreview` and `PutMachinePreview` features. Registration only needs to be completed once per subscription:
+
+```bash
+az feature register \
+  --namespace Microsoft.ContainerService \
+  --name AKSFlexNodePreview
+
 az feature register \
   --namespace Microsoft.ContainerService \
   --name PutMachinePreview
 ```
 
-Wait until registration reports `Registered`:
+Wait until both features report `Registered`:
 
 ```bash
+az feature show \
+  --namespace Microsoft.ContainerService \
+  --name AKSFlexNodePreview \
+  --query properties.state \
+  --output tsv
+
 az feature show \
   --namespace Microsoft.ContainerService \
   --name PutMachinePreview \
@@ -113,19 +141,20 @@ az feature show \
   --output tsv
 ```
 
-After the state becomes `Registered`, re-register the resource provider so the
-feature takes effect:
+After both features are registered, refresh the resource provider registration:
 
 ```bash
 az provider register \
   --namespace Microsoft.ContainerService \
   --wait
+
+az provider show \
+  --namespace Microsoft.ContainerService \
+  --query registrationState \
+  --output tsv
 ```
 
-Do not continue to host bootstrap while the feature is still `Registering`.
-Without `PutMachinePreview`, the agent cannot complete its ARM Machine
-create/update step even when its managed identity or service principal has the
-correct AKS role assignment.
+Don't continue until both feature commands and the provider command return `Registered`. Without these features, Azure CLI can't create the Flex node pool and the agent can't complete its Azure Machine create or update operation even when its identity has the correct role assignment.
 
 Create or select the resource group and networking before this step. The AKS
 subnet ID must refer to the subnet where the managed system pool will run.
@@ -142,6 +171,7 @@ az aks create \
   --node-count 1 \
   --node-vm-size Standard_D4s_v5 \
   --network-plugin none \
+  --pod-cidr "$CLUSTER_POD_CIDR" \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
   --service-cidr "$SERVICE_CIDR" \
   --dns-service-ip "$DNS_SERVICE_IP" \
@@ -191,16 +221,17 @@ sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
 kubectl unbounded version
 ```
 
-Initialize the cluster and Flex sites:
+Install the Unbounded operator, and then initialize the cluster and Flex sites:
 
 ```bash
+kubectl unbounded install --timeout 5m
+
 kubectl unbounded site init \
   --name flex-site \
   --cluster-node-cidr "$CLUSTER_NODE_CIDR" \
   --cluster-pod-cidr "$CLUSTER_POD_CIDR" \
   --node-cidr "$FLEX_NODE_CIDR" \
-  --pod-cidr "$FLEX_POD_CIDR" \
-  --install-timeout 10m
+  --pod-cidr "$FLEX_POD_CIDR"
 ```
 
 This installs the Unbounded operator and enables the networking and Machina
@@ -330,87 +361,75 @@ automatically is deployed in the target region.
 
 ## 4. Create the FlexNodes pool
 
-> **TODO:** Azure CLI will support creating FlexNodes pools in a future release.
-> Replace this preview `az rest` flow with the supported `az aks nodepool`
-> command when that capability becomes available.
+A Flex node pool is a logical group for customer-provided compute. Don't configure standard virtual machine scale set properties such as node count, VM size, operating system type, or subnet settings.
 
-Use the preview agent-pool ARM API. A FlexNodes pool supports only a minimal set
-of properties.
-
-Create the request body:
+Create the pool with the preview Azure CLI extension:
 
 ```bash
-cat > /tmp/flex-pool.json <<EOF
-{
-  "properties": {
-    "type": "FlexNodes",
-    "mode": "User",
-    "orchestratorVersion": "${FLEX_VERSION}",
-    "maxPods": 250
-  }
-}
-EOF
+az aks nodepool add \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$AKS_NAME" \
+  --name "$FLEX_POOL_NAME" \
+  --vm-set-type FlexNodes \
+  --mode User \
+  --kubernetes-version "$FLEX_VERSION" \
+  --max-pods 250 \
+  --max-unavailable 1 \
+  --output none
 ```
 
-Create the pool:
+Record the cluster and pool resource IDs, and then inspect the completed pool:
 
 ```bash
 AKS_RESOURCE_ID=$(az aks show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$AKS_NAME" \
-  --query id --output tsv)
+  --query id \
+  --output tsv)
 
-az rest \
-  --method put \
-  --uri "https://management.azure.com${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}?api-version=2026-05-02-preview" \
-  --headers 'Content-Type=application/json' \
-  --body "$(cat /tmp/flex-pool.json)"
-```
-
-Wait until provisioning succeeds:
-
-```bash
 FLEX_POOL_RESOURCE_ID="${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}"
 
-az resource wait \
-  --ids "$FLEX_POOL_RESOURCE_ID" \
-  --api-version 2026-05-02-preview \
-  --custom "properties.provisioningState=='Succeeded'" \
-  --interval 10 \
-  --timeout 900
-```
-
-Inspect the completed pool:
-
-```bash
 az resource show \
   --ids "$FLEX_POOL_RESOURCE_ID" \
   --api-version 2026-05-02-preview \
   --query '{name:name,state:properties.provisioningState,type:properties.type,version:properties.orchestratorVersion}' \
-  --output yaml
+  --output table
 ```
 
-Do not include normal VMSS properties such as `osType`, `count`, `vmSize`, or
-subnet settings. The RP rejects unsupported FlexNodes pool properties.
+Continue when the provisioning state is `Succeeded`, the type is `FlexNodes`, and the returned version matches `FLEX_VERSION`.
 
 ## 5. Prepare the Flex host and Azure identity
 
-Each Flex Node needs an Azure identity so the agent can create and continuously
-read its ARM Machine resource. The supported identity modes are:
+Each flex node host needs an Azure identity so the agent can create and continuously read its Azure Machine resource. Select one identity mode:
 
-- **Managed identity** for an Azure VM. Use the system-assigned identity, or
-  provide the client ID of a user-assigned identity.
-- **Service principal** for an Azure VM or a host outside Azure. Provide its
-  tenant ID, client ID, and either a client secret or certificate/private-key
-  credential through a protected file.
+- **Azure Arc managed identity** for a server that is already connected to Azure Arc. Flex Node uses the existing Arc identity but doesn't manage the Arc agent or resource lifecycle.
+- **Azure VM managed identity** for an Azure VM. Use the system-assigned identity, or provide the client ID of a user-assigned identity.
+- **Service principal** for a host that can't use either managed identity path. Prefer a certificate and private key over a long-lived client secret, and deliver the credential through a protected file.
 
-The selected managed identity or service principal must have **Azure Kubernetes
-Service Contributor Role** at the target AKS cluster resource scope. The
-operator is responsible for provisioning the identity, assigning it to the host
-when applicable, granting the role, and allowing role-assignment propagation to
-complete before bootstrap starts.
+The selected identity must have **Azure Kubernetes Service Contributor Role** at the target AKS cluster resource scope. The operator is responsible for provisioning or enabling the identity, associating it with the host when applicable, granting the role, and allowing role-assignment propagation to complete before bootstrap starts.
 
-Host and identity provisioning are intentionally outside this guide. Start with
+Set the principal object ID for the selected identity, create the cluster-scoped assignment, and verify it from your Bash environment:
+
+```bash
+HOST_PRINCIPAL_OBJECT_ID="<managed-identity-or-service-principal-object-id>"
+
+az role assignment create \
+  --assignee-object-id "$HOST_PRINCIPAL_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Azure Kubernetes Service Contributor Role" \
+  --scope "$AKS_RESOURCE_ID" \
+  --output none
+
+az role assignment list \
+  --assignee "$HOST_PRINCIPAL_OBJECT_ID" \
+  --scope "$AKS_RESOURCE_ID" \
+  --query '[].{role:roleDefinitionName,scope:scope}' \
+  --output table
+```
+
+Continue when the expected role and cluster scope appear. Allow time for the assignment to propagate before bootstrap.
+
+Host and identity provisioning are otherwise outside this guide. Start with
 a prepared Ubuntu host that can reach the AKS API server and artifact endpoints.
 Use a 32 GiB or larger OS disk; the agent preflight requires at least 8 GiB free
 under `/var/lib`.
@@ -428,8 +447,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   util-linux
 ```
 
-Azure CLI does not need to be installed on the host; the bootstrap script uses
-MSI or service-principal OAuth directly.
+Azure CLI doesn't need to be installed on the host. The bootstrap workflow authenticates through Azure Arc, Azure Instance Metadata Service, or service principal OAuth directly.
 
 ## 6. Download and run the bootstrap script
 
@@ -445,8 +463,8 @@ Set the operator-provided values:
 ```bash
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.1.5"
-export UNBOUNDED_VERSION="v0.2.0"
+export AKS_FLEX_NODE_VERSION="v0.1.9"
+export UNBOUNDED_VERSION="v0.6.0"
 export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
 
 # bootstrap.sh downloads the agent, rootfs, and Kubernetes bootstrap bundle
@@ -468,7 +486,7 @@ The shell expands `${AKS_FLEX_NODE_VERSION}`, and the bootstrap script expands
 `{{ARCHIVE_NAME}}` for the host architecture. On an AMD64 host this resolves to:
 
 ```text
-https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.1.5/aks-flex-node-linux-amd64.tar.gz
+https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.1.9/aks-flex-node-linux-amd64.tar.gz
 ```
 
 These URLs download the agent, rootfs, and bootstrap bundle from the central
@@ -484,21 +502,30 @@ Download the raw script instead of piping it directly to Bash:
 install -d -m 0700 /run/aks-flex-node-bootstrap
 
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
-  https://raw.githubusercontent.com/Azure/AKSFlexNode/refs/heads/main/scripts/bootstrap.sh
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
 
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
 ```
 
-The raw repository script contains an unpopulated embedded-config marker. When
-`--fetch-bootstrap-data`, `--cluster-resource-id`, and `--agent-pool-name` are
-provided together, the script automatically starts from an empty config and
-obtains fresh cluster-issued join settings from AKS RP. No base config file is
-required.
+The version-matched repository script contains an unpopulated embedded-config marker. When `--fetch-bootstrap-data`, `--cluster-resource-id`, and `--agent-pool-name` are provided together, the script starts from an empty config and obtains fresh cluster-issued join settings from AKS. No base config file is required.
 
-Install the service-principal credential from the operator's protected secret
-delivery path. Keep this file available after bootstrap because the running
-agent uses it for ARM Machine reconciliation:
+Complete only the command for the identity selected in the preceding section.
+
+For an Azure Arc-enabled server, first confirm that `azcmagent show` reports `Connected`, `himdsd.service` is active, and the Arc machine identity has access to the target AKS cluster. Then run:
+
+```bash
+bash /run/aks-flex-node-bootstrap/bootstrap.sh \
+  --auth arc \
+  --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" \
+  --agent-pool-name "$FLEX_POOL_NAME" \
+  --agent-url "$AKS_FLEX_NODE_AGENT_URL" \
+  --bootstrap-oci-image "$BOOTSTRAP_OCI_IMAGE" \
+  --bootstrap-offline-artifacts-source "$BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE"
+```
+
+For a service principal, install the credential from the operator's protected secret delivery path. Keep this file available after bootstrap because the running agent uses it for Azure Machine reconciliation:
 
 ```bash
 install -d -o root -g root -m 0700 /etc/aks-flex-node/credentials
@@ -572,8 +599,7 @@ The script performs these operations:
 
 1. Loads the empty JSON base.
 2. Applies the cluster and pool overrides.
-3. Uses the selected service principal or managed identity to request an ARM
-   token.
+3. Uses the selected Azure Arc managed identity, Azure VM managed identity, or service principal to request an ARM token.
 4. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
    component version.
 5. Applies rootfs, offline artifact, and runtime config overrides.
@@ -640,17 +666,18 @@ kubectl get nodes -L net.unbounded-cloud.io/site -o wide
 kubectl get sites,sitepeerings -o wide
 ```
 
-Check the ARM Machine:
+Check the Azure Machine resource from your Bash environment:
 
 ```bash
-MACHINE_NAME="<node-name>"
-
-az rest \
-  --method get \
-  --uri "https://management.azure.com${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}/machines/${MACHINE_NAME}?api-version=2025-10-02-preview" \
-  --query '{name:name,state:properties.provisioningState,kubernetes:properties.kubernetes}' \
-  --output yaml
+az aks machine list \
+  --resource-group "$RESOURCE_GROUP" \
+  --cluster-name "$AKS_NAME" \
+  --nodepool-name "$FLEX_POOL_NAME" \
+  --query '[].{name:name,state:properties.provisioningState,nodeName:properties.kubernetes.nodeName,version:properties.kubernetes.currentOrchestratorVersion}' \
+  --output table
 ```
+
+Continue when the Machine for the new Kubernetes Node reports a successful provisioning state and the expected Kubernetes version.
 
 On the host:
 

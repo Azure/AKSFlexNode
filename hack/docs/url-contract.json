@@ -14,24 +14,15 @@
       "protectAnchors": false,
       "anchors": [
         "aks-flex-node",
-        "clean-up",
+        "choose-a-deployment-option",
+        "complete-the-deployment",
         "development-and-security",
+        "explore-additional-configurations",
         "getting-started",
         "key-features-and-scenarios",
         "license",
-        "network-requirements",
-        "next-steps",
         "overview",
-        "prepare-the-cluster",
-        "prerequisites",
-        "step-1-set-your-variables-and-connect-to-the-cluster",
-        "step-2-generate-the-join-configuration",
-        "step-3-copy-the-configuration-to-your-flex-node-machine",
-        "step-4-install-the-agent-on-your-flex-node-machine",
-        "step-5-run-preflight-checks",
-        "step-6-join-the-node",
-        "step-7-verify-the-node-joined",
-        "troubleshooting",
+        "understand-the-command-environments",
         "usage-guides-and-topics"
       ]
     },
@@ -50,6 +41,7 @@
         "contribute",
         "deploy-a-flex-node",
         "find-reference-information",
+        "plan-a-deployment",
         "report-problems",
         "try-supplemental-scenarios",
         "understand-the-system"
@@ -369,8 +361,10 @@
       "path": "docs/usage.md",
       "protectAnchors": false,
       "anchors": [
+        "additional-scenarios",
         "aks-flex-node-usage",
-        "guides"
+        "guides",
+        "start-here"
       ]
     },
     {
@@ -443,13 +437,16 @@
       "path": "docs/usages/joining-nodes.md",
       "protectAnchors": false,
       "anchors": [
-        "authentication-mode-selection",
         "azure-arc",
+        "azure-host-identity",
         "before-you-begin",
-        "bootstrap-token",
+        "bootstrap-token-evaluation-path",
         "joining-nodes",
+        "kubernetes-bootstrap-data",
         "managed-identity",
-        "service-principal"
+        "service-principal",
+        "understand-the-two-credentials",
+        "verify-the-selected-path"
       ]
     },
     {
