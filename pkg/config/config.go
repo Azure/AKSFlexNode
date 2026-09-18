@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -156,8 +157,9 @@ func (d JSONDuration) MarshalJSON() ([]byte, error) {
 
 // AgentConfig holds agent-specific operational configuration.
 type AgentConfig struct {
-	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
-	LogDir   string `json:"logDir"`   // Directory for log files
+	LogLevel       string `json:"logLevel"`                 // Logging level: debug, info, warning, error
+	LogDir         string `json:"logDir"`                   // Directory for log files
+	KubeconfigData string `json:"kubeconfigData,omitempty"` // Embedded kubeconfig used by host Kubernetes clients
 	// NodeName is resolved from the host hostname when omitted.
 	NodeName string `json:"nodeName,omitempty"`
 
@@ -259,6 +261,7 @@ type KubeletConfig struct {
 	Verbosity            int               `json:"verbosity"`
 	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
+	KubeconfigData       string            `json:"kubeconfigData,omitempty"` // Embedded kubeconfig installed verbatim inside nspawn
 	ClusterFQDN          string            `json:"clusterFQDN,omitempty"`    // Kubernetes API server FQDN from AKS RP bootstrap data
 	CACertData           string            `json:"caCertData"`               // Base64-encoded CA certificate data
 	NodeIP               string            `json:"nodeIP"`                   // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
@@ -316,10 +319,21 @@ func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil
 }
 
+// UsesKubeconfigCredentials reports whether both host-agent and kubelet
+// Kubernetes credentials are supplied as embedded kubeconfigs.
+func (cfg *Config) UsesKubeconfigCredentials() bool {
+	return cfg != nil &&
+		strings.TrimSpace(cfg.Agent.KubeconfigData) != "" &&
+		strings.TrimSpace(cfg.Node.Kubelet.KubeconfigData) != ""
+}
+
 // NeedsBootstrapDataRefresh reports whether repave can replace the short-lived
 // bootstrap token by authenticating to AKS RP with a durable Azure credential.
 func (cfg *Config) NeedsBootstrapDataRefresh() bool {
-	return cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.UsesManagedIdentityCredential() || cfg.IsSPConfigured())
+	return cfg != nil &&
+		!cfg.UsesKubeconfigCredentials() &&
+		cfg.IsBootstrapTokenConfigured() &&
+		(cfg.UsesManagedIdentityCredential() || cfg.IsSPConfigured())
 }
 
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
@@ -528,8 +542,56 @@ func validateAzureResourceID(resourceID string) error {
 	return nil
 }
 
+func validateEmbeddedKubeconfig(data string) error {
+	kubeconfig, err := clientcmd.Load([]byte(data))
+	if err != nil {
+		return fmt.Errorf("parse kubeconfig: %w", err)
+	}
+	if kubeconfig.CurrentContext == "" {
+		return fmt.Errorf("current context is empty")
+	}
+	contextConfig, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]
+	if !ok || contextConfig == nil {
+		return fmt.Errorf("current context does not reference an existing context")
+	}
+	cluster, ok := kubeconfig.Clusters[contextConfig.Cluster]
+	if !ok || cluster == nil {
+		return fmt.Errorf("current context does not reference an existing cluster")
+	}
+	if err := validateAbsoluteHTTPSURL(cluster.Server, httpsURLValidationOptions{
+		fieldName: "kubeconfig cluster server",
+		allowPort: true,
+	}); err != nil {
+		return err
+	}
+	if cluster.CertificateAuthority != "" {
+		return fmt.Errorf("certificate-authority file references are not supported")
+	}
+	if len(cluster.CertificateAuthorityData) == 0 {
+		return fmt.Errorf("certificate-authority-data is required")
+	}
+	authInfo, ok := kubeconfig.AuthInfos[contextConfig.AuthInfo]
+	if !ok || authInfo == nil {
+		return fmt.Errorf("current context does not reference an existing user")
+	}
+	switch {
+	case authInfo.ClientCertificate != "":
+		return fmt.Errorf("client-certificate file references are not supported")
+	case authInfo.ClientKey != "":
+		return fmt.Errorf("client-key file references are not supported")
+	case authInfo.TokenFile != "":
+		return fmt.Errorf("token-file references are not supported")
+	case authInfo.Exec != nil && !filepath.IsAbs(authInfo.Exec.Command):
+		return fmt.Errorf("exec command must be an absolute path")
+	}
+	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(data)); err != nil {
+		return fmt.Errorf("validate active kubeconfig context: %w", err)
+	}
+	return nil
+}
+
 func (c *Config) validateBootstrapToken() error {
-	if !c.IsBootstrapTokenConfigured() {
+	if !c.IsBootstrapTokenConfigured() || c.UsesKubeconfigCredentials() {
 		return nil
 	}
 	if err := c.Azure.BootstrapToken.validate(); err != nil {
@@ -844,6 +906,11 @@ func (c *AgentConfig) validate() error {
 	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
 		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)
 	}
+	if strings.TrimSpace(c.KubeconfigData) != "" {
+		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
+			return fmt.Errorf("invalid agent.kubeconfigData: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -916,7 +983,7 @@ func (c *Config) validate() error {
 	if err := c.validateAuthSettings(); err != nil {
 		return err
 	}
-	if c.IsARCEnabled() && !c.IsBootstrapTokenConfigured() {
+	if c.IsARCEnabled() && !c.IsBootstrapTokenConfigured() && !c.UsesKubeconfigCredentials() {
 		return fmt.Errorf("azure.bootstrapToken is required with Arc authentication; fetch fresh bootstrap data before loading the runtime config")
 	}
 	if err := c.validateBootstrapToken(); err != nil {
@@ -957,8 +1024,15 @@ func (c *KubeletConfig) validate() error {
 	if err := validateReservedResources("kubeReserved", c.KubeReserved); err != nil {
 		return err
 	}
+	if strings.TrimSpace(c.KubeconfigData) != "" {
+		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
+			return fmt.Errorf("invalid node.kubelet.kubeconfigData: %w", err)
+		}
+	}
 
-	kubelet := agentconfig.AgentKubeletConfig{}
+	kubelet := agentconfig.AgentKubeletConfig{
+		KubeconfigData: []byte(c.KubeconfigData),
+	}
 	if c.ImageCredentialProvider != nil {
 		kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
 			ConfigPath: c.ImageCredentialProvider.ConfigPath,
@@ -991,6 +1065,12 @@ func validateReservedResources(field string, reservations map[string]string) err
 }
 
 func (c *Config) validateAuthSettings() error {
+	agentKubeconfig := strings.TrimSpace(c.Agent.KubeconfigData) != ""
+	kubeletKubeconfig := strings.TrimSpace(c.Node.Kubelet.KubeconfigData) != ""
+	if agentKubeconfig != kubeletKubeconfig {
+		return fmt.Errorf("agent.kubeconfigData and node.kubelet.kubeconfigData must be configured together")
+	}
+
 	armAuthMethodCount := 0
 	for _, m := range []bool{c.IsARCEnabled(), c.IsSPConfigured(), c.IsMIConfigured()} {
 		if m {
