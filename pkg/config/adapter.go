@@ -100,6 +100,11 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
+	if cfg.UsesKubeconfigCredentials() {
+		ac.Kubelet.KubeconfigData = []byte(cfg.Node.Kubelet.KubeconfigData)
+		return ac
+	}
+
 	switch {
 	case cfg.IsBootstrapTokenConfigured():
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token

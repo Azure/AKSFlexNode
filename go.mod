@@ -8,7 +8,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8 v8.3.0-beta.2
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9 v9.5.0-beta.1
 	github.com/Azure/kubelogin v0.2.15
-	github.com/Azure/unbounded v0.7.0
+	github.com/Azure/unbounded v0.7.1-0.20260918155305-afdab1671873
 	github.com/go-logr/logr v1.4.4
 	github.com/google/renameio/v2 v2.0.2
 	github.com/spf13/cobra v1.10.2
