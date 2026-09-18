@@ -100,7 +100,7 @@ chmod +x ./aks-flex-config
   --output ./aks-flex-node-config.json
 ```
 
-This produces `aks-flex-node-config.json` in your current folder. `generate-node-config` supports one of the following auth modes: `--bootstrap-token`, `--identity`, `--service-principal --username <client-id> --password <client-secret>`, or `--arc`. This quickstart uses `--bootstrap-token`.
+This produces `aks-flex-node-config.json` in your current folder. The helper supports bootstrap token and managed identity configuration. For service principal and Azure Arc workflows, use the protected credential and runtime bootstrap-data procedures in [Joining Nodes](docs/usages/joining-nodes.md). This quickstart uses `--bootstrap-token`.
 
 <details>
 <summary>Example Config With Field Notes</summary>
@@ -175,8 +175,7 @@ aks-flex-node version
 
 install -d -m 0755 /etc/aks-flex-node
 install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-
-cat /etc/aks-flex-node/config.json
+stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
 ```
 
 > Use this script for initial installation or after reset. For upgrades, use the agent upgrade flow.
@@ -369,7 +368,7 @@ Manual approval is a temporary preview fallback. Verify that the CSR belongs to 
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE.MD) for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 

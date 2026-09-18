@@ -151,7 +151,7 @@
       "path": "docs/development.md",
       "protectAnchors": false,
       "anchors": [
-        "adding-a-new-bootstrap-component",
+        "adding-host-bootstrap-behavior",
         "adding-new-features",
         "additional-resources",
         "branch-protection",
@@ -173,7 +173,6 @@
         "overview",
         "pre-commit-workflow",
         "prerequisites",
-        "project-structure",
         "pull-request-flow",
         "pull-request-guidelines",
         "test-coverage",
@@ -392,6 +391,21 @@
       ]
     },
     {
+      "path": "docs/usages/cli.md",
+      "protectAnchors": false,
+      "anchors": [
+        "command-line-reference",
+        "fetch-bootstrap-data",
+        "operator-commands",
+        "preflight",
+        "reset",
+        "see-also",
+        "service-and-integration-commands",
+        "start",
+        "version"
+      ]
+    },
+    {
       "path": "docs/usages/configuration.md",
       "protectAnchors": false,
       "anchors": [
@@ -410,6 +424,7 @@
         "component-versions",
         "components",
         "configuration",
+        "host-routing",
         "image-pull-credential-provider",
         "kubelet",
         "legacy-config-compatibility",
