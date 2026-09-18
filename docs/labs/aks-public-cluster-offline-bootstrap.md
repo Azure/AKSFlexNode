@@ -1,6 +1,21 @@
 # AKS Flex Node With Offline Bootstrap Artifacts
 
-This lab shows how to join a Flex Node when the bootstrap binaries are served from an offline artifact source instead of public upstream URLs. The walkthrough uses a public AKS API server and the [public AKS + unbounded-net + VNet peering lab](aks-public-cluster-unbounded-net-vnet-peering.md) as the network and cluster base, but the same offline artifact flow also works with a private AKS cluster when the target VM can resolve and reach the private API endpoint. The lab changes the Flex VM bootstrap flow to use:
+This lab shows how to join a Flex Node when the bootstrap binaries are served from an offline artifact source instead of public upstream URLs. The walkthrough uses a public AKS API server and the [public AKS + unbounded-net + VNet peering lab](aks-public-cluster-unbounded-net-vnet-peering.md) as the network and cluster base, but the same offline artifact flow also works with a private AKS cluster when the target VM can resolve and reach the private API endpoint.
+
+> [!IMPORTANT]
+> This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
+>
+> **Status:** Experimental
+>
+> **Last validated:** Not recorded
+>
+> **Version scope:** This lab pins Kubernetes, Unbounded, ORAS, rootfs, and artifact versions in the procedure. Use those values as one tested combination and revalidate before reuse.
+>
+> **Host OS:** Ubuntu 24.04
+>
+> **Architecture:** amd64
+
+The lab changes the Flex VM bootstrap flow to use:
 
 - Host prerequisites installed before the node is isolated.
 - A mirrored rootfs OCI image, either as a local OCI layout or in a registry reachable from the target VM.

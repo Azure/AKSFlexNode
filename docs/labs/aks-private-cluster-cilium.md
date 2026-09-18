@@ -2,6 +2,19 @@
 
 This guide shows how to create a private AKS cluster with no built-in CNI, install unmanaged upstream Cilium, connect a VM in another Azure region through VNet peering, and join that VM as an AKS Flex Node.
 
+> [!IMPORTANT]
+> This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
+>
+> **Status:** Validated supplemental scenario
+>
+> **Last validated:** Not recorded
+>
+> **Version scope:** Use the versions selected or resolved by this lab and revalidate them before reuse.
+>
+> **Host OS:** Ubuntu 24.04
+>
+> **Architecture:** amd64
+
 The validated setup uses AKS private cluster mode with `--network-plugin none` and Cilium as the CNI. Cilium is installed manually with cluster-pool IPAM and VXLAN tunnel mode, so pod traffic between AKS and Flex nodes is encapsulated over the existing VNet peering path. Use an AKS Flex Node version that includes eBPF CNI support.
 
 For Cilium concepts and operations, see the [Cilium documentation](https://docs.cilium.io/).
