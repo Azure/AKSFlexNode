@@ -189,7 +189,7 @@ AKS Flex Node uses separate Azure and Kubernetes credentials.
 | Service principal | `azure.servicePrincipal` | Authenticate a host that can't use managed identity. Prefer a protected certificate file. |
 | Kubernetes bootstrap token | `azure.bootstrapToken` | Establish initial kubelet and daemon trust with the Kubernetes API server. |
 
-Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access. Paired embedded kubeconfigs instead carry their own API server, CA, exec credential, and impersonation settings for the host agent and kubelet.
+Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access. Paired embedded kubeconfigs instead carry their own API server, CA, and exec credential. The host agent can act directly as the Arc principal while the kubelet kubeconfig impersonates the matching `system:node:<node-name>` user in the `system:nodes` group.
 
 A bootstrap-token-only config is available for repository evaluation flows, where Machine registration is best effort by default. The primary Azure Machine workflow requires a durable Azure identity. Authentication doesn't change lifecycle ownership: host mutation remains local and privileged, while AKS or the operator owns workload disruption such as cordon and drain.
 
