@@ -44,7 +44,7 @@ aks-flex-node preflight --config /etc/aks-flex-node/config.json
 
 ## Authentication
 
-At least one join or Azure authentication method must be configured. `azure.bootstrapToken` can be combined with one Azure authentication method (`azure.arc`, `azure.managedIdentity`, or `azure.servicePrincipal`) so kubelet bootstrap and ARM Machine registration can use different credentials. Only one Azure authentication method can be enabled at a time.
+At least one join or Azure authentication method must be configured. `azure.bootstrapToken` can be combined with one Azure authentication method (`azure.arc`, `azure.managedIdentity`, or `azure.servicePrincipal`) so kubelet bootstrap and ARM Machine registration can use different credentials. Only one Azure authentication method can be enabled at a time. As an alternative to Kubernetes bootstrap credentials, `agent.kubeconfigData` and `node.kubelet.kubeconfigData` can provide a paired host-agent and kubelet identity.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
@@ -86,6 +86,7 @@ At least one join or Azure authentication method must be configured. `azure.boot
 |------|------|-------------|--------------|
 | `agent.logLevel` | string | Agent log verbosity. | `info` |
 | `agent.logDir` | string | Host directory for agent logs. | `/var/log/aks-flex-node` |
+| `agent.kubeconfigData` | string | Optional complete embedded kubeconfig used by all host-side Kubernetes clients. Must be configured with `node.kubelet.kubeconfigData`. | `<kubeconfig YAML>` |
 | `agent.nodeName` | string | Optional Kubernetes node name override. Defaults to the host hostname. | `edge-node-01` |
 | `agent.machineClient.mode` | string | Machine source. Use `arm` for direct ARM reads or `in-cluster` for the in-cluster read-only endpoint via Kubernetes service proxy. | `in-cluster` |
 | `agent.machineClient.endpointUrl` | string | Backend endpoint. Optional in `arm` mode for dev-test ARM proxy use; required in `in-cluster` mode and must be the Kubernetes API service-proxy path or absolute URL. | `/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy` |
@@ -180,6 +181,7 @@ repave, and `Preferred` validates the profile without enabling the service.
 | `node.kubelet.verbosity` | integer | Kubelet log verbosity. | `2` |
 | `node.kubelet.imageGCHighThreshold` | integer | Image garbage collection high threshold percentage. | `85` |
 | `node.kubelet.imageGCLowThreshold` | integer | Image garbage collection low threshold percentage. | `80` |
+| `node.kubelet.kubeconfigData` | string | Optional complete embedded kubeconfig installed verbatim as `/var/lib/kubelet/kubeconfig` inside nspawn. Must be configured with `agent.kubeconfigData`. | `<kubeconfig YAML>` |
 | `node.kubelet.clusterFQDN` | string | Kubernetes API server FQDN. Required for bootstrap token mode. | `example.hcp.canadacentral.azmk8s.io` |
 | `node.kubelet.caCertData` | string | Base64-encoded cluster CA data. Required for bootstrap token mode. | `<base64-ca-data>` |
 | `node.kubelet.nodeIP` | string | Optional node IP override for kubelet `--node-ip`. | `10.0.0.4` |
@@ -191,6 +193,33 @@ repave, and `Preferred` validates the profile without enabling the service.
 Provider paths must be clean absolute machine paths without whitespace or systemd argument characters. Include the provider files in the OCI rootfs or expose them with read-only `bootstrap.additionalHostMounts`.
 
 The image credential provider executes a plugin to obtain short-lived pull credentials; it does not place registry passwords or tokens in the FlexNode configuration. Do not store static registry credentials in this file or provider configuration.
+
+### Embedded Agent And Kubelet Kubeconfigs
+
+Use paired embedded kubeconfigs when the host agent and kubelet must authenticate as different Kubernetes identities, including Arc HIMDS-backed exec credentials with different impersonation settings. The two fields are optional, but they must be configured together.
+
+In this mode:
+
+- `agent.kubeconfigData` is authoritative for the host daemon manager, node watches, direct Kubernetes operations, and the in-cluster Machine endpoint.
+- `node.kubelet.kubeconfigData` is written byte-for-byte to `/var/lib/kubelet/kubeconfig`; kubelet and Node Problem Detector use it.
+- The API server and CA come from the respective kubeconfig. `node.kubelet.clusterFQDN`, `node.kubelet.caCertData`, and `azure.bootstrapToken` are not required.
+- Kubelet TLS bootstrap and the daemon client-certificate provider are bypassed; the kubeconfig exec credentials remain authoritative. Any previously issued daemon client certificate and private key are removed when the daemon enters this mode.
+- Arc can remain enabled for ARM authentication and makes the agent service depend on `himdsd.service`.
+
+The kubeconfigs must be self-contained: use embedded CA, client certificate, and client key data rather than file references. Token-file references are rejected. Exec commands must be absolute and available in the host for the agent kubeconfig or inside nspawn for the kubelet kubeconfig.
+
+The bootstrap script safely reads protected source files and embeds their exact content into the root-owned `0600` JSON config:
+
+```bash
+sudo ./scripts/bootstrap.sh \
+  --auth arc \
+  --agent-kubeconfig /run/aks-flex-node/agent.kubeconfig \
+  --kubelet-kubeconfig /run/aks-flex-node/kubelet.kubeconfig
+```
+
+The source files must be absolute, non-symlink regular files with no group or other access. Equivalent environment variables are `AKS_FLEX_NODE_AGENT_KUBECONFIG` and `AKS_FLEX_NODE_KUBELET_KUBECONFIG`.
+
+Each kubeconfig can specify its own impersonation fields. For example, the agent user can contain `as: aks-flex-agent` while the kubelet user contains `as: system:node:edge-node-01` and `as-groups: ["system:nodes"]`. Do not place long-lived tokens in either example or runtime config; use renewable exec credentials.
 
 ## Component Versions
 

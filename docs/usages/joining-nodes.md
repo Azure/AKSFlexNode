@@ -117,4 +117,4 @@ Only one durable Azure identity mode can be configured at a time:
 - `azure.arc.enabled: true`
 - `azure.servicePrincipal`
 
-`azure.bootstrapToken` can accompany one of these identities. It is required for Arc because kubelet consumes the short-lived join credential returned by AKS RP while the host agent uses Arc identity for ARM.
+`azure.bootstrapToken` can accompany one of these identities. By default it is required for Arc because kubelet consumes the short-lived join credential returned by AKS RP while the host agent uses Arc identity for ARM. The paired `agent.kubeconfigData` and `node.kubelet.kubeconfigData` mode replaces that Kubernetes bootstrap credential while retaining Arc for ARM and HIMDS-backed exec authentication.
