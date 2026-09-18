@@ -33,7 +33,9 @@ source "$SCRIPT"
 INSTALL_DIR="$WORK_DIR/bin"
 MANAGED_BINARY_DIR="$WORK_DIR/lib/aks-flex-node"
 AGENT_UPGRADE_LOCK_PATH="$WORK_DIR/run/agent-upgrade.lock"
-mkdir -p "$INSTALL_DIR" "$MANAGED_BINARY_DIR"
+SERVICE_UNIT="aks-flex-node-agent-install-test-$RANDOM.service"
+SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
+mkdir -p "$INSTALL_DIR" "$MANAGED_BINARY_DIR" "$(dirname "$SERVICE_UNIT_PATH")"
 
 running_binary=$(type -P sleep)
 replacement_binary=$(type -P printf)
@@ -57,12 +59,21 @@ cp "$replacement_binary" "$MANAGED_BINARY_DIR/aks-flex-node-blue"
 ln -s "$MANAGED_BINARY_DIR/aks-flex-node-blue" "$MANAGED_BINARY_DIR/aks-flex-node-current"
 rm "$INSTALL_DIR/aks-flex-node"
 ln -s "$MANAGED_BINARY_DIR/aks-flex-node-current" "$INSTALL_DIR/aks-flex-node"
+touch "$SERVICE_UNIT_PATH"
 if install_binary "$running_binary" >"$WORK_DIR/managed.log" 2>&1; then
     fail "installer replaced a managed binary symlink"
 fi
 grep -q "aks-flex-node reset" "$WORK_DIR/managed.log" || fail "managed reinstall guidance omitted reset"
 [[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "managed binary symlink was removed"
 [[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ]] || fail "managed activation changed"
+assert_no_staged_files
+
+# Reset removes the service unit; reinstall must clean the retained layout and install directly.
+rm "$SERVICE_UNIT_PATH"
+install_binary "$running_binary" >"$WORK_DIR/reset-reinstall.log" 2>&1 || fail "reinstall after reset failed"
+grep -q "layout retained after reset" "$WORK_DIR/reset-reinstall.log" || fail "retained layout cleanup was not reported"
+[[ ! -L "$INSTALL_DIR/aks-flex-node" && -x "$INSTALL_DIR/aks-flex-node" ]] || fail "reset reinstall did not install a direct binary"
+[[ ! -e "$MANAGED_BINARY_DIR" ]] || fail "reset reinstall retained the managed layout"
 assert_no_staged_files
 
 # Unexpected links must be rejected without advising root to execute their targets.

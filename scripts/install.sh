@@ -2,9 +2,9 @@
 # AKS Flex Node Installation Script
 # This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 #
-# Scope: first-time installation only. Once the agent is running, /usr/local/bin/aks-flex-node is a
-# symlink into the managed blue/green layout and must be updated through the agent upgrade flow;
-# this script refuses to write over that symlink.
+# Scope: initial installation and reinstall after reset. While the agent service is installed,
+# /usr/local/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
+# through the agent upgrade flow.
 
 set -euo pipefail
 
@@ -18,6 +18,8 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
+SERVICE_UNIT="aks-flex-node-agent.service"
+SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 INSTALL_DIR="/usr/local/bin"
 MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
 AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
@@ -278,14 +280,23 @@ install_binary() {
         if [[ -L "$target_path" ]]; then
             # Once the agent has started, this path is a symlink into the managed blue/green layout.
             # Updating it here would bypass activation locking, rollback, and nspawn synchronization.
-            if is_managed_binary_link "$target_path"; then
-                log_error "Refusing to replace the managed symbolic link at $target_path."
-                log_error "To reinstall, first run 'aks-flex-node reset', then remove $target_path and $MANAGED_BINARY_DIR before rerunning this script. Use the agent upgrade flow for upgrades that do not require a reset."
-            else
+            if ! is_managed_binary_link "$target_path"; then
                 log_error "Refusing to replace the unexpected symbolic link at $target_path."
                 log_error "Inspect and remove the link before rerunning this script; do not execute it as AKS Flex Node."
+                exit 1
             fi
-            exit 1
+            if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
+                systemctl is-active --quiet "$SERVICE_UNIT"; then
+                log_error "Refusing to replace the managed symbolic link at $target_path while the agent service is installed or active."
+                log_error "Use the agent upgrade flow, or run 'aks-flex-node reset' before rerunning this script."
+                exit 1
+            fi
+
+            # Reset removes the service but currently retains the managed links. Remove that inactive
+            # layout so the normal first-install path can seed it again when the agent starts.
+            log_warning "Removing the managed binary layout retained after reset"
+            rm -f -- "$target_path"
+            rm -rf -- "$MANAGED_BINARY_DIR"
         fi
 
         if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||
