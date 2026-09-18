@@ -27,7 +27,6 @@ const (
 	// https://cloud-provider-azure.sigs.k8s.io/topics/cross-resource-group-nodes/#unmanaged-nodes
 	managedNodeLabel      = "kubernetes.azure.com/managed"
 	agentPoolNodeLabel    = "kubernetes.azure.com/agentpool"
-	metricsAgentPoolLabel = "agentpool"
 	modeNodeLabel         = "kubernetes.azure.com/mode"
 	nodePoolTypeNodeLabel = "kubernetes.azure.com/nodepool-type"
 	flexNodePoolType      = "FlexNodes"
@@ -205,9 +204,6 @@ func kubeletNodeLabels(cfg *Config) map[string]string {
 	// Keep AKS-owned labels out of the custom labels sent in the Machine goal.
 	labels[managedNodeLabel] = "false"
 	labels[agentPoolNodeLabel] = cfg.Azure.TargetAgentPoolName
-	// CCP Prometheus derives the nodepool dimension from the plain agentpool
-	// label before recording AKS platform node metrics.
-	labels[metricsAgentPoolLabel] = cfg.Azure.TargetAgentPoolName
 	labels[modeNodeLabel] = userNodeMode
 	labels[nodePoolTypeNodeLabel] = flexNodePoolType
 	return labels

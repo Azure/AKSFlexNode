@@ -41,7 +41,6 @@ func TestToAgentConfigKubeletLabels(t *testing.T) {
 			}
 			wantLabels[managedNodeLabel] = "false"
 			wantLabels[agentPoolNodeLabel] = "flexnode-edge"
-			wantLabels[metricsAgentPoolLabel] = "flexnode-edge"
 			wantLabels[modeNodeLabel] = userNodeMode
 			wantLabels[nodePoolTypeNodeLabel] = flexNodePoolType
 
@@ -155,7 +154,6 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 		"env":                 "test",
 		managedNodeLabel:      "false",
 		agentPoolNodeLabel:    "flexnode-edge",
-		metricsAgentPoolLabel: "flexnode-edge",
 		modeNodeLabel:         userNodeMode,
 		nodePoolTypeNodeLabel: flexNodePoolType,
 	}
