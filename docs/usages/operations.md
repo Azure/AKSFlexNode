@@ -1,6 +1,21 @@
 # Operations
 
-This guide summarizes common host and cluster operations for AKS Flex Node.
+This guide covers host inspection, current lifecycle operations, reset, and troubleshooting for AKS Flex Node.
+
+> [!NOTE]
+> The agent implements direct Azure Machine create and read operations, but direct ARM status updates are currently skipped. Unbounded `MachineOperation` handling is available only when the corresponding Kubernetes custom resource is installed and `agent.machineOperationMode` isn't `disable`.
+
+## Current lifecycle capabilities
+
+| Operation | Interface | Current behavior |
+| --- | --- | --- |
+| Kubernetes settings repave | Azure Machine goal plus Kubernetes Node deletion | Provisions the alternate nspawn side and applies the changed settings version. Automatic nspawn rollback isn't implemented. |
+| Node restart | Unbounded `NodeReboot` MachineOperation | Restarts the active nspawn worker and waits for kubelet. |
+| Agent upgrade | Unbounded `AgentUpgrade` MachineOperation or direct candidate activation | Uses blue-green host binaries and restores the last-known-good binary when activation fails. |
+| Agent reset | Unbounded `AgentReset` MachineOperation | Removes local node runtime, marks the operation complete, and stops the daemon. |
+| Local reset | `aks-flex-node reset` or the uninstall script | Removes agent-managed host runtime. Cluster-side Node and Azure Machine cleanup are separate operations. |
+
+AKS or the operator owns workload disruption decisions. Cordon and drain the Kubernetes Node before a disruptive operation when the surrounding control-plane workflow hasn't already done so.
 
 ## Preflight
 
@@ -37,7 +52,7 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 `bootstrap` is currently an alias for `start`, but new docs should prefer `start`.
 
-## Agent Service
+## Agent service
 
 Check the long-running agent service:
 
@@ -47,7 +62,15 @@ systemctl is-active aks-flex-node-agent
 journalctl -u aks-flex-node-agent -f
 ```
 
-## Managed Agent Upgrade
+Kubelet and daemon credentials are separate. If the Kubernetes Node becomes `Ready` while the service restarts every two minutes, inspect pending certificate signing requests (CSRs):
+
+```bash
+kubectl get csr
+```
+
+Use the inspection and approval procedure in [Approve the daemon CSR when required](operator-first-boot.md#7-approve-the-daemon-csr-when-required). Verify the node name and `aks-flex-node-daemons` group before approving a CSR.
+
+## Managed agent upgrade
 
 When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and, when available, the SHA-256 of the compressed archive:
 
@@ -83,20 +106,31 @@ sudo /var/tmp/aks-flex-node-candidate agent-upgrade
 
 The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, and restore last-good on activation failure. If `aks-flex-node-agent.service` is active, direct activation restarts it, verifies the running executable, and synchronizes the active nspawn exec-credential binary. If the service is already inactive during reset/rejoin provisioning, activation preserves that stopped state; the subsequent bootstrap starts the service and worker.
 
-## Nspawn Worker
+## Managed node restart and reset
+
+When the Unbounded MachineOperation API is installed, the daemon handles `NodeReboot` and `AgentReset` operations in addition to `AgentUpgrade`.
+
+A `NodeReboot` restarts the active nspawn worker. An `AgentReset` removes both nspawn sides, host networking artifacts, local daemon state, and agent-managed runtime directories, publishes the MachineOperation result, and stops the daemon service. Neither operation drains workloads; complete cluster-side disruption orchestration before creating the operation.
+
+These operations use a cluster-scoped API. Restrict who can create MachineOperations and monitor the operation status until it reaches `Complete` or `Failed`.
+
+## Nspawn worker
 
 Inspect the local nspawn-backed worker:
 
 ```bash
+ACTIVE_MACHINE=$(sudo jq -r .activeMachine /etc/aks-flex-node/daemon-state.json)
+test "$ACTIVE_MACHINE" = kube1 || test "$ACTIVE_MACHINE" = kube2
+
 machinectl list
-machinectl status kube1
-journalctl -M kube1 -u kubelet -f
-journalctl -M kube1 -u containerd -f
+machinectl status "$ACTIVE_MACHINE"
+journalctl -M "$ACTIVE_MACHINE" -u kubelet -f
+journalctl -M "$ACTIVE_MACHINE" -u containerd -f
 ```
 
-Repave flows use `kube1` and `kube2` as local blue-green nspawn machine names.
+The daemon state file contains operational state, not bootstrap credentials, but it is root-owned and protected from modification. Repave flows alternate between `kube1` and `kube2`. The current flow stops the active side before it provisions and starts the alternate side.
 
-## Verify Node State
+## Verify node state
 
 From your workstation:
 
@@ -107,24 +141,43 @@ kubectl describe node <node-name>
 
 By default, `<node-name>` is the target host hostname unless `agent.nodeName` is set.
 
-## Reset And Uninstall
+## Reset and uninstall
 
-Run the uninstall script as root on the host:
+Before local removal, cordon and drain the Kubernetes Node unless the controlling AKS workflow has already done so:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/uninstall.sh | bash -s -- --force
+kubectl cordon <node-name>
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
 ```
 
-Then remove the Kubernetes `Node` object from your workstation:
+Run the version-matched uninstall script as root on the host:
+
+```bash
+AKS_FLEX_NODE_VERSION="<installed-release-tag>"
+curl -fsSLo /tmp/aks-flex-node-uninstall.sh \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/uninstall.sh"
+chmod 0700 /tmp/aks-flex-node-uninstall.sh
+sudo /tmp/aks-flex-node-uninstall.sh --force
+rm -f /tmp/aks-flex-node-uninstall.sh
+```
+
+The uninstall script runs the local reset, removes the installed binary and agent-managed directories, and preserves externally managed Azure Arc software. It doesn't remove the Kubernetes Node, Azure Machine, Flex node pool, host VM, Azure identity, or role assignments.
+
+After local cleanup, remove or verify removal of the Kubernetes Node and Azure Machine through the controlling AKS workflow. For a standalone evaluation flow, remove the Node explicitly:
 
 ```bash
 kubectl delete node <node-name>
 ```
 
-## Troubleshooting Checklist
+## Troubleshooting checklist
 
-- Check `aks-flex-node-agent` logs with `journalctl -u aks-flex-node-agent -f`.
-- Check kubelet logs with `journalctl -M kube1 -u kubelet -f`.
-- Check container runtime logs with `journalctl -M kube1 -u containerd -f`.
-- Check bootstrap token CSRs with `kubectl get csr`.
-- Check node status with `kubectl describe node <node-name>`.
+- Check `aks-flex-node-agent` state and restart count with `systemctl show aks-flex-node-agent -p ActiveState -p SubState -p NRestarts`.
+- Check agent logs with `journalctl -u aks-flex-node-agent --no-pager -n 200`.
+- Check kubelet logs with `journalctl -M <active-machine> -u kubelet --no-pager -n 200`.
+- Check container runtime logs with `journalctl -M <active-machine> -u containerd --no-pager -n 200`.
+- Determine the active side from `/etc/aks-flex-node/daemon-state.json`; don't assume it is always `kube1` after repave.
+- Check bootstrap and daemon CSRs with `kubectl get csr`.
+- Check Node conditions and events with `kubectl describe node <node-name>`.
+- Check the Azure Machine with `az aks machine show` when the preview CLI supports that command.
+- Treat repeated HTTP 401 or 403 responses from the Machine API as an Azure identity, role assignment, pool, or resource-name problem even when the Kubernetes Node is `Ready`.
+- Don't include tokens, kubeconfig content, private keys, certificates with private keys, or signed URLs in diagnostic output or public issues.

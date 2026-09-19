@@ -1,6 +1,20 @@
-# AKS RP And Flex Node Agent Interaction
+# AKS RP and Flex Node agent interaction
 
-This document describes the intended interaction model between AKS RP and the AKS Flex Node agent for node lifecycle operations such as upgrade, reset, and deletion. Reimage and rollback are treated as upgrade modes because they are driven by the ARM machine settings version.
+This document describes the current and intended interaction between the AKS resource provider (RP) and the AKS Flex Node agent for node lifecycle operations. Reimage and rollback use the same desired-state model as upgrade.
+
+> [!IMPORTANT]
+> **Status:** Partially implemented. Direct ARM Machine create and read, local desired-state reconciliation, nspawn repave, and selected Unbounded `MachineOperation` handlers are implemented. Direct ARM Machine status updates and automatic nspawn rollback aren't implemented. Sections that describe AKS RP orchestration are contract guidance unless identified as current agent behavior.
+
+| Capability | Current state |
+| --- | --- |
+| Create or update an Azure Machine during bootstrap | Implemented through the direct ARM client. |
+| Read desired Machine state | Implemented through direct ARM or the in-cluster development endpoint. |
+| Patch Machine status through direct ARM | Not implemented; the current client logs and skips the update. |
+| Repave after settings drift and Kubernetes Node deletion | Implemented. |
+| Automatically restore the previous nspawn side after a failed repave | Not implemented. |
+| Handle Unbounded `NodeReboot`, `AgentUpgrade`, and `AgentReset` operations | Implemented when the MachineOperation API is installed and handling isn't disabled. |
+| Handle ARM-backed MachineOperations | Not implemented. |
+| Delete the Kubernetes Node during reset | Not implemented by the agent; AKS RP owns Node cleanup after local reset. |
 
 ## Overview
 
@@ -8,16 +22,17 @@ AKS RP owns the AKS control-plane decision making for a Flex Node. The AKS Flex 
 
 The key contract between them is an AKS RP-exposed ARM machine resource. The ARM machine resource acts as the authoritative goal state for one AKS Flex Node instance. It serves the same conceptual purpose as the Machine custom resource used by unbounded-agent, but is exposed through ARM and owned by AKS RP.
 
-AKS RP creates the ARM machine resource before host bootstrap and returns the accepted bootstrap settings to the user. The user runs those bootstrap settings on the host, and after the node joins the cluster the agent continuously reconciles local host/nspawn state from the ARM machine settings version and the Kubernetes `Node` signal for this instance.
+The bootstrap workflow obtains pool bootstrap data and configures the host with an Azure identity. During `aks-flex-node start`, the agent ensures that the Azure Machine exists and that its Kubernetes version matches the local bootstrap goal. After the node joins, the daemon reads desired Machine state and combines it with the Kubernetes `Node` signal for this instance.
 
 Lifecycle operations use these signals:
 
-- Upgrade: AKS RP updates the ARM machine settings, cordons and drains the node, then deletes the Kubernetes `Node` object. The agent observes the node deletion or re-read 404, fetches the ARM machine, and applies the target settings.
-- Reimage: treated as an upgrade mode where the target ARM settings require fresh local provisioning.
-- Rollback: treated as an upgrade mode where the user applies a previous settings version and AKS RP triggers the flow.
-- Reset/delete: AKS RP deletes the ARM machine, cordons and drains the node, then annotates the node. The agent confirms the ARM machine returns 404, wipes host runtime, and deletes the Kubernetes `Node` object.
+- **Repave:** A changed Machine settings version supplies the new goal. After AKS or an operator deletes the Kubernetes `Node`, the agent applies that goal to the alternate nspawn side.
+- **Node restart:** An Unbounded `NodeReboot` MachineOperation restarts the active nspawn worker.
+- **Agent upgrade:** An Unbounded `AgentUpgrade` MachineOperation downloads and activates a candidate agent with host-binary rollback on activation failure.
+- **Agent reset:** An Unbounded `AgentReset` MachineOperation removes local node runtime and then stops the daemon.
+- **Delete signal:** A `kubernetes.azure.com/flex-node-deleting=true:NoSchedule` taint combined with a missing Azure Machine triggers local reset and daemon shutdown.
 
-AKS RP determines upgrade completion from ARM machine status and `observedSettingsVersion`. For reset/delete, Kubernetes `Node` deletion is the primary completion signal, with AKS RP fallback cleanup for stale, NotReady nodes.
+The intended AKS RP flow performs cordon and drain before it sends a destructive node signal. Direct ARM status patching isn't currently available, so AKS must not depend on agent-written Machine status for completion in the current implementation.
 
 At runtime, the Flex Node agent maintains two main authenticated connections:
 
@@ -54,7 +69,7 @@ AKS RP owns:
 - Cordon and drain for workload disruption control.
 - Kubernetes `Node` deletion or annotation used to signal operations.
 - Fallback cleanup for stale, NotReady Kubernetes `Node` objects.
-- Observing operation completion through node readiness and ARM machine status.
+- Observing operation completion through Node readiness and available control-plane signals. A writable agent-to-ARM status contract remains future work.
 
 The Flex Node agent owns:
 
@@ -62,31 +77,30 @@ The Flex Node agent owns:
 - Watching the corresponding Kubernetes `Node` object.
 - Translating goal state and node events into local host/nspawn actions.
 - Provisioning, starting, stopping, and cleaning up nspawn machine sides.
-- Deleting the Kubernetes `Node` object during reset/delete after host cleanup.
-- Reporting local operation status and failures.
-- Preserving enough local state to recover or roll back safely.
+- Resetting local runtime and stopping the daemon after a confirmed delete signal.
+- Reporting operation status where the selected backend supports status updates.
+- Preserving applied-version and active-side state for safe restart and repave decisions.
 
 The agent should not own Kubernetes workload disruption. Cordon and drain belong to AKS RP because AKS RP has the broader cluster context needed to decide when disruption is safe.
 
-## ARM Machine Creation And Bootstrap
+## ARM Machine creation and bootstrap
 
-AKS RP creates the ARM machine resource as part of the user-facing create flow and returns the accepted bootstrap settings to the user. This makes the ARM machine resource the saved goal state before any host mutation starts.
+The current agent ensures the Azure Machine during `aks-flex-node start`, before host and nspawn mutation begins. Local bootstrap configuration is authoritative for this initial operation.
 
-The creation order is:
+The implemented order is:
 
-1. The user requests Flex Node creation from AKS RP.
-2. AKS RP creates the ARM machine resource and returns the accepted bootstrap settings to the user.
-3. The user runs the bootstrap settings on the target host.
-4. The agent bootstraps the host and prepares the local nspawn-backed Kubernetes node from those settings.
-5. The node joins the AKS cluster and the Kubernetes `Node` object exists.
-6. The agent fetches the ARM machine resource, validates that it belongs to this Flex Node instance, and persists the accepted ARM machine settings locally.
-7. The agent starts its runtime control loops for ARM machine fetch/status patch and Kubernetes `Node` watch.
+1. The operator creates the Flex node pool and obtains current bootstrap data.
+2. The operator runs the bootstrap workflow on a host with an authorized Azure identity.
+3. The agent builds a Machine goal from the local config.
+4. The agent reads the Machine by cluster, pool, and normalized node name.
+5. If the Machine is absent, the agent creates it. If its Kubernetes version differs, the agent updates it from the local bootstrap goal.
+6. The agent adopts the returned Machine ETag as the settings-version baseline and writes initial daemon state before host mutation.
+7. The agent prepares and starts the nspawn-backed Kubernetes worker.
+8. The daemon starts its Machine polling and Kubernetes `Node` watch loops.
 
-Creating the ARM machine before host bootstrap ensures a failed or interrupted bootstrap still has a durable goal state for retry and reconciliation.
+Machine creation and update are idempotent for an unchanged Kubernetes version. When `agent.requireMachineRegistration` is `true`, an unavailable or unauthorized Machine API fails bootstrap before host mutation. Bootstrap-token-only evaluation configs default this setting to `false`, so Machine registration failures are logged and bootstrap can continue.
 
-ARM machine creation must be idempotent. If AKS RP retries creation and the ARM machine resource already exists, AKS RP should return the existing accepted bootstrap settings when they match the requested Flex Node instance. The agent should treat the existing ARM machine resource as the source of truth, persist the accepted settings, and continue.
-
-## Control Loops
+## Control loops
 
 The Flex Node agent reconciles two external signals.
 
@@ -116,7 +130,7 @@ flowchart TD
     Reconcile --> Status
 ```
 
-## Normal Operation Flow
+## Normal operation flow
 
 1. After node bootstrap, the ARM machine resource exists for a Flex Node instance.
 2. The Flex Node agent authenticates to ARM and fetches the machine resource.
@@ -124,11 +138,11 @@ flowchart TD
 4. The agent watches the Kubernetes `Node` object for this Flex Node instance.
 5. On startup and watch reconnect, the agent re-reads the Kubernetes `Node` object so a missed upgrade deletion is observed as a 404.
 6. The agent compares ARM desired state, Kubernetes node signals, and local host/nspawn state.
-7. If local state already matches the goal state, the agent reports healthy status and takes no host-mutating action.
+7. If local state already matches the goal state, the agent takes no host-mutating action and attempts a success status update through the selected backend.
 8. If reconciliation is needed and the Kubernetes signal allows it, the agent performs the required host/nspawn operation.
-9. The agent updates local status and exposes operation result for AKS RP observation.
+9. The agent persists successful local state and attempts a status update through the selected backend.
 
-## Current Repave Implementation
+## Current repave implementation
 
 AKS Flex Node no longer runs a standalone local drift detector. Desired node settings come from an AKS machine resource. The agent compares the desired machine goal with locally persisted daemon state and repaves the nspawn-backed worker when Kubernetes `Node` deletion indicates AKS has approved replacement.
 
@@ -148,7 +162,7 @@ For E2E and dev-test clusters, the in-cluster AKS Flex Controller serves pre-cre
 
 The daemon reconciles machine state on startup and on `agent.machineReconcileInterval`.
 
-Production AKS RP machine client integration is still pending. Until then, deployments can use the in-cluster controller as a read-only bridge for pre-created machine state, while direct ARM mode remains the target integration path.
+Direct ARM is the default machine backend and supports Machine create, update, and read operations. The in-cluster controller remains a development and E2E backend that serves pre-created Machine state through the Kubernetes service proxy. Direct ARM status updates are currently a no-op because the Machine status surface is read-only to this client.
 
 Repave requires both conditions:
 
@@ -161,16 +175,16 @@ This keeps scheduling and disruption decisions outside the agent. AKS RP, an ope
 
 1. Load the active side from persisted daemon state (`ActiveMachine`).
 2. Select the alternate side with `goalstates.AlternateMachine`.
-3. Resolve unbounded machine goal state for the alternate side.
-4. Provision the alternate rootfs.
-5. Apply AKS-specific rootfs customization.
-6. Stop the old nspawn side.
-7. Start the new nspawn side.
-8. Wait for kubelet to become active inside the new side.
-9. Start node-problem-detector inside the new side.
+3. Refresh bootstrap data when the durable Azure identity supports it, and resolve the Machine goal for the alternate side.
+4. Stop the active nspawn side and clean up host network state.
+5. Download or stage required artifacts and provision the alternate rootfs.
+6. Apply AKS-specific configuration and install the agent binary in the alternate rootfs.
+7. Start the alternate side and wait for kubelet to become active.
+8. Start Node Problem Detector.
+9. Persist the new applied state and active side.
 10. Clean up the old side's nspawn artifacts.
 
-After successful repave, the daemon patches machine status and persists the applied goal locally.
+After successful repave, the daemon persists the applied goal locally and attempts to patch Machine status. The in-cluster backend records the update; the direct ARM backend currently skips it.
 
 AKS Flex Node uses two local nspawn machine names:
 
@@ -198,11 +212,12 @@ E2E_DRIFT_UPGRADE_TIMEOUT=1200 ./hack/e2e/run.sh upgrade-drift
 
 Current limitations:
 
-- Production AKS RP machine client implementation is pending.
-- Rollback is not yet automatic if failure happens after the old side is stopped but before the new side is fully healthy.
-- Active side selection depends on persisted daemon state. If that state file is missing, corrupt, or stale, repave cannot safely choose the old side and should require operator intervention instead of guessing from runtime `machinectl` state.
+- Direct ARM Machine status updates aren't implemented.
+- ARM-backed MachineOperation handling isn't implemented; the current operation reconciler uses the Unbounded Kubernetes custom resource when that API is installed.
+- Rollback isn't automatic if a repave fails after the old side stops but before the new side becomes healthy. This limitation is separate from agent binary activation rollback, which is implemented.
+- Active-side selection depends on persisted daemon state. If that state file is missing, corrupt, or stale, repave can't safely choose the old side and requires operator intervention instead of guessing from runtime `machinectl` state.
 
-## Upgrade Flow
+## Upgrade flow
 
 ```mermaid
 sequenceDiagram
@@ -218,10 +233,10 @@ sequenceDiagram
     Node-->>Agent: Watch event
     Agent->>ARM: Fetch latest machine goal state
     Agent->>Agent: Compare settings version with applied version
-    Agent->>Host: Provision inactive nspawn side
-    Agent->>Host: Stop old side and start new side
+    Agent->>Host: Stop old side and clean network state
+    Agent->>Host: Provision and start alternate side
     Agent->>Host: Verify kubelet and local services
-    Agent-->>RP: Expose success status
+    Agent->>Agent: Persist applied state
     Node-->>RP: Node becomes Ready
 ```
 
@@ -231,16 +246,16 @@ sequenceDiagram
 4. AKS RP deletes the Kubernetes `Node` object to signal that the node-level operation may proceed.
 5. The Flex Node agent observes the node deletion event and fetches the latest ARM machine goal state.
 6. The agent compares the ARM settings version with its locally applied settings version to confirm drift.
-7. The agent provisions the inactive nspawn side using the ARM machine goal state.
-8. The agent applies AKS-specific rootfs customization, such as node-problem-detector and the `aks-flex-node` binary. Pod networking is provided by the cluster CNI, such as Unbounded-Net in E2E.
-9. The agent stops the old nspawn side and starts the newly provisioned side.
-10. The agent waits for kubelet and required local services to become healthy.
-11. The agent marks the new side as the active applied state and reports success.
-12. AKS RP observes the node becoming Ready and completes any RP-side operation bookkeeping.
+7. The agent resolves the target, stops the active nspawn side, and cleans host network state.
+8. The agent provisions the alternate side and applies AKS-specific customization, such as Node Problem Detector and the `aks-flex-node` binary. Pod networking is provided by the cluster CNI, such as Unbounded-Net in E2E.
+9. The agent starts the alternate side and waits for kubelet and required local services to become healthy.
+10. The agent persists the new side as active and cleans up the old side.
+11. A backend that supports status updates receives the result; direct ARM status patching is currently skipped.
+12. AKS RP can observe the Node becoming `Ready` and complete its operation bookkeeping.
 
-Reimage is a subset of upgrade. AKS RP expresses the target through the ARM machine resource settings version. The agent derives whether it can reuse existing local artifacts or must provision from a fresh image by comparing the new ARM machine settings with the locally applied settings. The nspawn side used to stage the change remains an internal agent choice.
+Reimage is represented by a changed Machine goal and uses the same trigger as upgrade. The current repave implementation provisions the alternate nspawn side from the resolved goal; it doesn't expose a separate reimage operation.
 
-Rollback is also a subset of upgrade. To roll back, the user applies a previous settings version, AKS RP updates the ARM machine settings and triggers the flow, and the agent applies that settings version through the same blue/green nspawn flow used for forward upgrades. The ARM machine resource does not need to keep revision history; it only carries the current desired settings.
+The following rollback flow is a target design, not current automatic behavior. To roll back, the control plane would apply a previous settings version and trigger the same alternating-side reconciliation used for a forward upgrade. The current daemon records the previous settings and Kubernetes versions, but successful repave removes the old nspawn side and a failed repave doesn't automatically restore it.
 
 ```mermaid
 sequenceDiagram
@@ -275,9 +290,9 @@ sequenceDiagram
 8. The agent starts the reconciled side, verifies kubelet health, and records the applied state.
 9. AKS RP observes the recovered node state and completes rollback bookkeeping.
 
-The current ARM machine settings are what make rollback deterministic. The agent should not infer rollback settings only from runtime `machinectl` state.
+A future rollback implementation should use explicit desired settings and persisted applied state. It must not infer rollback settings only from runtime `machinectl` state.
 
-## Reset And Delete Flow
+## Reset and delete flow
 
 ```mermaid
 sequenceDiagram
@@ -296,9 +311,8 @@ sequenceDiagram
     Agent->>Agent: Confirm signal matches missing machine resource
     Agent->>Host: Stop kubelet and nspawn machines
     Agent->>Host: Wipe runtime from host
-    Agent->>Node: Delete Kubernetes Node
-    Agent-->>RP: Expose operation result
-    RP->>Node: Fallback cleanup for stale NotReady Node
+    Agent->>Host: Remove and stop agent service
+    RP->>Node: Delete stale Kubernetes Node if required
 ```
 
 1. AKS RP deletes the ARM machine resource. This is usually triggered by an AKS user operation.
@@ -308,15 +322,12 @@ sequenceDiagram
 5. The ARM fetch returns 404 Not Found.
 6. The agent confirms that the node signal and missing ARM machine resource agree.
 7. The agent performs the host reset flow and wipes node runtime from the host.
-8. The agent deletes the Kubernetes `Node` object.
-9. The agent exposes terminal local status for AKS RP observation.
-10. AKS RP runs a fallback cleaner for stale, NotReady node objects if the agent cannot delete the node.
+8. The agent removes and stops its systemd service.
+9. AKS RP removes the stale Kubernetes `Node` object when required.
 
-The reset/delete host flow removes the local runtime that made the VM participate as this AKS node. Reset should clear all previous installed node state and artifacts from the host.
+The reset/delete host flow removes both nspawn sides, network artifacts, local daemon state, and agent-managed runtime directories. The current agent doesn't delete the Kubernetes `Node` in this flow. Cluster-side Node and Azure resource cleanup remain control-plane or operator responsibilities.
 
-AKS RP owns fallback cleanup for stale, NotReady Kubernetes nodes. This is an AKS RP implementation detail, but it should be delayed enough to avoid racing a healthy but slow Flex Node agent. The fallback cleaner should only act when control-plane state indicates the agent did not complete the expected node deletion or reconciliation. AKS RP can then retry the control-plane signal, rewire the node or machine state, or remove stale NotReady node objects according to RP policy.
-
-## State And Idempotency
+## State and idempotency
 
 The agent should persist the last accepted ARM machine goal state and the last successfully applied machine state. This persisted state is required for safe recovery after agent restart, VM reboot, or partial host operation failure.
 
@@ -324,11 +335,11 @@ Host-mutating operations must be idempotent. Reprocessing the same ARM machine s
 
 The ARM machine resource should include a settings version so the agent can distinguish new desired settings from a repeated observation of the same desired state.
 
-Previous known-good settings are stored locally on the host, not in the ARM machine resource. The exact persistence path is an agent implementation detail, but it should be a well-known host location with checksum verification so the agent can detect corruption before using the data for recovery.
+The host stores the applied and previous settings versions, applied and previous Kubernetes versions, and active nspawn side in `/etc/aks-flex-node/daemon-state.json`. A separate SHA-256 file protects the state from undetected corruption. The state doesn't preserve a complete previous Machine goal or guarantee automatic rollback.
 
 The agent should continue using a single host-operation guard so upgrade, upgrade rollback, reset/delete cleanup, health repair, and other nspawn-mutating operations cannot run concurrently.
 
-## Failure Handling
+## Failure handling
 
 If ARM machine fetch fails, the agent should not start a new host-mutating operation. It can continue reporting current local status and retry fetching goal state.
 
@@ -369,33 +380,36 @@ flowchart TD
     Decision -->|no| Failed
 ```
 
-## Operation Signals
+## Operation signals
 
 AKS RP uses Kubernetes `Node` deletion events and annotations as authoritative operation triggers.
 
 For upgrade operations, AKS RP deletes the Kubernetes `Node` after updating the ARM machine resource and completing required cordon/drain work. The node deletion is the operation trigger. The Flex Node agent then fetches the ARM machine resource and uses it as the upgrade goal state.
 
-For reset/delete operations, AKS RP annotates the node with a reset or delete signal after deleting the ARM machine resource. The Flex Node agent confirms the ARM machine resource returns 404 Not Found before wiping host runtime and deleting the Kubernetes `Node` object.
+For reset/delete operations, AKS RP applies the `kubernetes.azure.com/flex-node-deleting=true:NoSchedule` taint after deleting the ARM machine resource. The Flex Node agent confirms that the Machine returns 404 before wiping local runtime and stopping its daemon. AKS RP or the operator removes the Kubernetes `Node` object.
 
-## Status Reporting
+## Status reporting
 
-The Flex Node agent reports operation status by patching the ARM machine resource status. Status updates should set `provisioningState`, `observedSettingsVersion`, and `message` for in-progress, succeeded, failed, and rollback-applied upgrade states.
+Status behavior depends on the backend and operation type:
 
-AKS RP determines upgrade operation completion from ARM machine status and `observedSettingsVersion`. The operation is complete when machine status reports `provisioningState: "Succeeded"` for the settings version AKS RP requested.
+- The in-cluster development endpoint accepts reconciliation status updates without changing the Machine ETag.
+- The direct ARM client's `PatchStatus` method currently logs that the update is skipped because the Machine status surface is read-only to the client.
+- The Unbounded MachineOperation reconciler updates `MachineOperation.status` for `NodeReboot`, `AgentUpgrade`, and `AgentReset` requests.
+- Kubernetes Node readiness and service state remain observable signals for operators and AKS.
 
-If the ARM machine resource has been deleted during reset/delete, the agent cannot patch machine status. In that case, successful Kubernetes `Node` deletion is the primary completion signal, with AKS RP fallback cleanup for stale, NotReady nodes.
+A future writable ARM status contract can use fields such as `provisioningState`, `observedSettingsVersion`, and `message`, but consumers must not depend on those agent-written ARM fields until the API and client implementation support them. After reset, AKS RP or the operator owns Kubernetes Node and Azure resource cleanup.
 
 ## Authentication
 
 The Flex Node agent requires credentials for two APIs.
 
-For ARM, the agent uses pre-configured credentials retrieved from AKS RP during the user-facing create flow. The bootstrap credential delivery and rotation mechanism follows the bootstrap authentication design described in the broader project docs and is out of scope for this interaction document. The credential must allow reading the machine goal state and patching machine status for the specific Flex Node instance. The agent should not start host-mutating operations if it cannot authenticate to ARM or cannot fetch the machine resource, except for reset/delete where a 404 Not Found is part of the expected confirmation path.
+For ARM, the final config selects Azure Arc managed identity, Azure VM managed identity, or service principal authentication. Pool bootstrap data supplies cluster join settings; it isn't the durable Azure credential. The Azure identity must allow the agent to create or update and read its Machine resource. The agent doesn't start a required Machine registration or a host-mutating reconciliation when it can't authenticate or fetch the Machine, except that a confirmed 404 is one half of the reset/delete signal.
 
-For the Kubernetes API server, the agent should not rely on the kubelet kubeconfig for lifecycle operations. A standard kubelet identity is authorized for kubelet-scoped node behavior and should not be assumed to have permission to delete `Node` objects.
+For Kubernetes, the kubelet and long-running daemon use separate credentials. When bootstrap-token authentication is configured, the daemon requests a client certificate for the node identity and the `aks-flex-node-daemons` group. Its RBAC permits reading the corresponding Node and, when installed, reading MachineOperations and updating their status. The current agent doesn't require permission to delete the Kubernetes Node.
 
-The agent needs a separate Kubernetes credential or explicitly granted RBAC for its lifecycle API calls. That credential must allow watching the corresponding node, reading operation annotations, and deleting that node during reset/delete. Workload disruption remains owned by AKS RP; the agent does not require permission to cordon or drain.
+Workload disruption remains owned by AKS RP or the operator. The agent doesn't cordon or drain workloads.
 
-## Appendix: Minimal ARM Machine Model
+## Appendix: Minimal ARM Machine model
 
 The machine read response follows the ARM SDK model. The Kubernetes profile carries desired settings, and the machine properties ETag is the opaque settings version.
 
@@ -411,7 +425,7 @@ The machine read response follows the ARM SDK model. The Kubernetes profile carr
 }
 ```
 
-Agent operation status uses a separate status-patch model:
+The following status-patch shape is a target ARM contract and isn't written by the current direct ARM client:
 
 ```json
 {
@@ -425,10 +439,10 @@ Agent operation status uses a separate status-patch model:
 }
 ```
 
-The ETag is the drift key. The agent compares it with the locally applied ETag before reconciling host state. Status patches do not update the ETag. Kubernetes `Node` deletion is the upgrade trigger; the ARM machine resource supplies the target settings.
+The ETag is the drift key. The agent compares it with the locally applied ETag before reconciling host state. Kubernetes `Node` deletion is the repave trigger, and the Machine resource supplies the target settings.
 
-Previous known-good settings are persisted locally on the host so rollback does not require ARM to carry historical settings.
+Previous settings metadata is persisted locally for diagnosis and future recovery behavior. The current repave implementation doesn't automatically roll back the nspawn worker.
 
-## Appendix: AKS RP Implementation Details
+## Appendix: AKS RP implementation details
 
 - Define the exact allowed ARM machine `status.provisioningState` values and required status fields, such as reason, message, and last transition time.
