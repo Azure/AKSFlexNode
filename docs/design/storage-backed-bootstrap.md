@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft design for a minimal, cluster-specific AKS Flex Node bootstrap script.
+Implemented by [`scripts/bootstrap.sh`](../../scripts/bootstrap.sh). The script supports an embedded base config or runtime `listBootstrapData` retrieval, protected configuration rendering, agent installation, preflight, and startup. Publishing, storage access, first-boot orchestration, and completion tracking remain responsibilities of the deployment system.
 
 ## Context
 
