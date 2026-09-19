@@ -1,9 +1,11 @@
 package aksmachine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -179,8 +181,43 @@ func armMachineClientOptions(clientOpts azcore.ClientOptions) *arm.ClientOptions
 		TryTimeout:    armMachineTryTimeout,
 		RetryDelay:    armMachineRetryDelay,
 		MaxRetryDelay: armMachineMaxRetryDelay,
+		ShouldRetry:   shouldRetryARMMachineRequest,
 	}
+
 	return &arm.ClientOptions{ClientOptions: clientOpts}
+}
+
+func shouldRetryARMMachineRequest(response *http.Response, err error) bool {
+	if err != nil {
+		// azcore filters non-retriable errors before calling ShouldRetry.
+		return true
+	}
+
+	switch response.StatusCode {
+	case http.StatusRequestTimeout,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	case http.StatusConflict:
+		// AKS returns this subcode while an agent-pool operation such as
+		// extension reconciliation is still in progress. Preserve the body so
+		// the SDK can decode the final response when the conflict is permanent.
+		if response.Body == nil {
+			return false
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		if readErr != nil {
+			return false
+		}
+		_ = response.Body.Close()
+		response.Body = io.NopCloser(bytes.NewReader(body))
+		return bytes.Contains(body, []byte("AnotherOperationInProgress"))
+	default:
+		return false
+	}
 }
 
 func getCredential(cfg *config.Config, logger *slog.Logger, clientOpts azcore.ClientOptions) (azcore.TokenCredential, error) {

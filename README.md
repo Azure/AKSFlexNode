@@ -74,7 +74,7 @@ On the flex node host, download the bootstrap script from the same release as th
 ```bash
 export AKS_RESOURCE_ID="<aks-resource-id>"
 export FLEX_POOL_NAME="<flex-node-pool-name>"
-export AKS_FLEX_NODE_VERSION="v0.1.11"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
 
 curl -fsSLo /tmp/aks-flex-node-bootstrap.sh \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"

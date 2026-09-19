@@ -26,8 +26,8 @@ In this guide, you:
 
 The Bash environment needs:
 
-- Azure CLI authenticated to the target subscription;
-- the `aks-preview` Azure CLI extension version required by the selected Flex Node release;
+- Azure CLI 2.90.0 or later, authenticated to the target subscription;
+- `aks-preview` Azure CLI extension `22.0.0b8` or later;
 - `kubectl`, `curl`, `tar`, and an OpenSSH client;
 - permission to create AKS and networking resources, register preview features, create a Flex node pool, and assign the selected host identity the Flex Node Agent Role at the target ARM agent pool;
 - the Flex Node Agent Role published and visible in the target environment;
@@ -69,8 +69,8 @@ export CLUSTER_POD_CIDR="10.93.0.0/16"
 export FLEX_NODE_CIDR="10.92.0.0/16"
 export FLEX_POD_CIDR="10.95.0.0/16"
 
-export UNBOUNDED_VERSION="v0.6.0"
-export AKS_FLEX_NODE_VERSION="v0.1.9"
+export UNBOUNDED_VERSION="v0.8.0"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
 ```
 
 `FLEX_VERSION` defaults to the AKS control-plane version so the new FlexNodes
@@ -161,7 +161,7 @@ az aks create \
   --kubernetes-version "$AKS_VERSION" \
   --nodepool-name nodepool1 \
   --node-count 1 \
-  --node-vm-size Standard_D4s_v5 \
+  --node-vm-size Standard_D4s_v6 \
   --network-plugin none \
   --pod-cidr "$CLUSTER_POD_CIDR" \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
@@ -263,7 +263,7 @@ kubectl -n unbounded-system rollout status \
 kubectl -n unbounded-system rollout status \
   daemonset/unbounded-net-node --timeout=5m
 
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 kubectl get sites,sitepeerings -o wide
 ```
 
@@ -276,9 +276,30 @@ label.
 
 A Flex node pool is a logical group for customer-provided compute. Don't configure standard virtual machine scale set properties such as node count, VM size, operating system type, or subnet settings.
 
-Create the pool with the preview Azure CLI extension:
+Wait for any cluster operation started by extension or policy reconciliation to finish, and then create the pool with the preview Azure CLI extension:
 
 ```bash
+while true; do
+  if ! STATUS=$(az aks operation show-latest \
+    --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" \
+    --query status --output tsv); then
+    echo "Failed to query the latest AKS operation" >&2
+    exit 1
+  fi
+  case "$STATUS" in
+    InProgress|Running|Updating) sleep 15 ;;
+    Succeeded) break ;;
+    Failed|Canceled)
+      echo "Latest AKS operation ended with status: $STATUS" >&2
+      exit 1
+      ;;
+    *)
+      echo "Unexpected AKS operation status: $STATUS" >&2
+      exit 1
+      ;;
+  esac
+done
+
 az aks nodepool add \
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$AKS_NAME" \
@@ -374,8 +395,7 @@ Set the operator-provided values:
 ```bash
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.1.9"
-export UNBOUNDED_VERSION="v0.6.0"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
 
 ```
 
@@ -454,7 +474,7 @@ install -m 0600 /dev/null /var/lib/aks-flex-node/first-boot-complete
 Check the Node and network site:
 
 ```bash
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 kubectl get sites,sitepeerings -o wide
 ```
 
@@ -497,7 +517,7 @@ bootstrap: running preflight
 bootstrap: starting AKS Flex Node
 ```
 
-Expected ARM Machine registration log:
+Expected Azure Machine registration log:
 
 ```text
 level=INFO msg=started task=ensure-machine
@@ -506,6 +526,10 @@ level=INFO msg=completed task=ensure-machine status=ok
 ```
 
 Run a smoke workload pinned to the Flex Node to verify pod networking.
+
+## Clean up
+
+Follow [Reset and uninstall](operations.md#reset-and-uninstall) to drain the Kubernetes Node, remove local host state, and remove residual Node and Machine resources. If this guide created dedicated Azure resource groups, delete them only after you confirm that they don't contain shared resources.
 
 ## Troubleshooting
 
@@ -516,7 +540,7 @@ that the managed AKS Node has the `cluster` site label:
 
 ```bash
 kubectl -n unbounded-system get pods -o wide
-kubectl get nodes -L net.unbounded-cloud.io/site
+kubectl get nodes -L unbounded-cloud.io/site
 ```
 
 ### Preflight reports insufficient disk space

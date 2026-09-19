@@ -5,11 +5,11 @@ How to add an NVIDIA GPU host to an AKS cluster as an AKS Flex Node.
 > [!IMPORTANT]
 > This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
 >
-> **Status:** Experimental; NVIDIA GPU support is under active validation.
+> **Status:** Validated evaluation scenario
 >
-> **Last validated:** Not recorded
+> **Last validated:** 2026-09-23 with `Standard_NC24ads_A100_v4` in `westus2`
 >
-> **Version scope:** The host image, driver, kernel, agent, and cluster GPU stack must be validated as one combination.
+> **Version scope:** This lab pins AKS Flex Node `v0.2.0`. The host image, driver, kernel, and cluster GPU stack must be validated as one combination.
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -27,10 +27,11 @@ Plan for both before you start.
 ## Before you begin
 
 - An Azure subscription and AKS cluster with `kubectl` admin access.
-- Azure CLI logged in to the target subscription.
+- Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
 - A GPU host with root or sudo access and outbound reach to the AKS API server.
 - A GPU host image that already includes the NVIDIA driver.
+- A 256 GiB host OS disk for the validated A100 configuration; the default 64 GiB disk reached kubelet disk-pressure thresholds after bootstrap and GPU Operator image pulls.
 - Non-overlapping network ranges for the AKS cluster, host network, pods, services, and any connected networks.
 
 ## Driver and image contract
@@ -48,7 +49,7 @@ If the image has no driver, you own driver installation, signing for Secure Boot
 ### Image options
 
 1. **Ubuntu HPC marketplace image.** Use an Ubuntu 24.04 SKU and validate the selected image version in the target region and GPU family:
-   - `microsoft-dsvm/ubuntu-hpc/2404` — candidate for H100/H200 validation.
+   - `microsoft-dsvm/ubuntu-hpc/2404` — validated on `Standard_NC24ads_A100_v4` with image `24.04-v100:24.04.2026092201` and NVIDIA driver `580.178.04`.
    - `microsoft-dsvm/ubuntu-hpc/2404-gb` — Grace/Blackwell variant; validate only with compatible hardware.
 2. **Custom prebaked image.** Bake the NVIDIA driver, Fabric Manager (multi-GPU SXM), and any required signed kernel modules. Most portable fallback because you own the contract.
 3. **Other GPU marketplace or partner images.** Treat as candidates to validate.
@@ -71,23 +72,27 @@ After the Flex node is `Ready`, **you must install the cluster GPU stack yoursel
 - **GPU Feature Discovery (GFD)** — labels nodes with GPU product, driver, and count.
 - **NVIDIA DRA Driver** — optional, only if your workloads use Dynamic Resource Allocation.
 
-Example Helm install with the driver disabled:
+AKS Flex Node already installs the NVIDIA container toolkit inside the nspawn worker. Disable both driver and toolkit management in GPU Operator:
 
 ```bash
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
 helm install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
   --set driver.enabled=false \
+  --set toolkit.enabled=false \
   --set devicePlugin.enabled=true \
-  --set gfd.enabled=true
+  --set gfd.enabled=true \
+  --set 'validator.toolkit.env[0].name=NVIDIA_VISIBLE_DEVICES' \
+  --set 'validator.toolkit.env[0].value=nvidia.com/gpu=all'
 ```
 
-Use your preferred NVIDIA path to install the optional DRA driver only when workloads request DRA `DeviceClass` resources.
+The CDI-qualified validator value makes GPU Operator validate the runtime integration already supplied by AKS Flex Node instead of attempting legacy toolkit injection. Use your preferred NVIDIA path to install the optional DRA driver only when workloads request DRA `DeviceClass` resources.
 
 Confirm the operator picked up the host driver and is not trying to install one:
 
 ```bash
 kubectl -n gpu-operator get pods
 kubectl get clusterpolicy -o jsonpath='{.items[0].spec.driver.enabled}'  # expect: false
+kubectl get clusterpolicy -o jsonpath='{.items[0].spec.toolkit.enabled}' # expect: false
 ```
 
 If you skip this step, the node will be `Ready` but pods will not get GPUs.
@@ -120,67 +125,67 @@ lsmod | grep nvidia
 
 If these fail, fix the image or driver installation first. AKS Flex Node bootstrap should not be the first component to discover a missing or mismatched driver.
 
-### 2. Prepare AKS bootstrap credentials
-
-On your workstation, use `aks-flex-config` to create the bootstrap RBAC and render a host config. This is the same setup used by the general node-joining flow; the GPU-specific requirement is that the target host image already has a working NVIDIA driver.
+On an A100 host, also inspect MIG mode:
 
 ```bash
-RESOURCE_GROUP="<aks-resource-group>"
-CLUSTER_NAME="<aks-cluster-name>"
-SUBSCRIPTION_ID="<subscription-id>"
-AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
-
-curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
-chmod +x ./aks-flex-config
-
-./aks-flex-config setup-node-rbac \
-  --resource-group "$RESOURCE_GROUP" \
-  --cluster-name "$CLUSTER_NAME" \
-  --subscription "$SUBSCRIPTION_ID"
-
-./aks-flex-config generate-node-config \
-  --resource-group "$RESOURCE_GROUP" \
-  --cluster-name "$CLUSTER_NAME" \
-  --subscription "$SUBSCRIPTION_ID" \
-  --agent-pool-name "$AGENT_POOL_NAME" \
-  --bootstrap-token \
-  --output ./aks-flex-node-config.json
+nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader
 ```
 
-Copy `./aks-flex-node-config.json` to the GPU host.
-
-### 3. Install AKS Flex Node on the host
+A100 validation with MIG enabled but no GPU instances failed while generating the CDI specification. Disable MIG and reboot before bootstrap when the node should expose the full physical GPU, or create and validate the intended MIG layout before continuing:
 
 ```bash
-sudo su
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
-aks-flex-node version
+sudo nvidia-smi -mig 0
+sudo reboot
 ```
 
-### 4. Write the host config
+After reconnecting, confirm that `nvidia-smi` reports MIG mode as `Disabled`.
+
+<a id="2-prepare-aks-bootstrap-credentials"></a>
+### 2. Prepare the Azure identity
+
+For an Azure GPU VM, enable a managed identity, assign it Flex Node Agent Role at the target ARM agent-pool scope, and ensure the Flex node pool exists by following the [identity-backed operator workflow](../usage/getting-started.md). For a host outside Azure, use its Azure Arc or service principal path.
+
+Record the cluster resource ID and Flex pool name; you will export them on the GPU host after becoming root.
+
+<a id="3-install-aks-flex-node-on-the-host"></a>
+### 3. Bootstrap the host
+
+On the GPU host, download and inspect the versioned bootstrap script instead of piping it to Bash:
 
 ```bash
-TARGET_HOST="<user>@<host>"
-scp ./aks-flex-node-config.json "$TARGET_HOST:/tmp/aks-flex-node-config.json"
+sudo -i
+
+export AKS_RESOURCE_ID="<full-aks-resource-id>"
+export FLEX_POOL_NAME="aksflexnodes"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
+
+install -d -m 0700 /run/aks-flex-node-bootstrap
+
+curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
+
+chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
+bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+
+bash /run/aks-flex-node-bootstrap/bootstrap.sh \
+  --auth msi \
+  --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" \
+  --agent-pool-name "$FLEX_POOL_NAME" \
+  --agent-version "$AKS_FLEX_NODE_VERSION"
 ```
 
-On the GPU host:
+Use `--msi-client-id` for a user-assigned identity. Use the corresponding Arc or service-principal command from the operator guide for a host that doesn't use Azure VM managed identity.
 
-```bash
-sudo su
-install -d -m 0755 /etc/aks-flex-node
-install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
-stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
-```
+<a id="4-write-the-host-config"></a>
+### 4. Confirm the NVIDIA runtime
 
-### 5. Bootstrap and watch the node
+AKS Flex Node generates the CDI specification and configures the NVIDIA container runtime inside the nspawn worker during bootstrap. Don't run `nvidia-ctk` manually on the host or inside the worker.
 
-```bash
-# Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
-umask 022
-aks-flex-node start --config /etc/aks-flex-node/config.json
-journalctl -u aks-flex-node-agent -f
-```
+Before installing GPU Operator, confirm that the bootstrap output reports successful NVIDIA setup.
+
+<a id="5-bootstrap-and-watch-the-node"></a>
+### 5. Watch the node
 
 From your workstation:
 
@@ -189,7 +194,7 @@ kubectl get nodes -o wide
 kubectl describe node <gpu-flex-node-name>
 ```
 
-After the node is `Ready`, install the cluster GPU stack from the **Cluster GPU stack (manual)** section if it is not already installed. The host driver is local to the node; GPU Operator, Device Plugin, GFD, and optional DRA are cluster components.
+Continue when the node is `Ready`. Then install the cluster GPU stack from the **Cluster GPU stack (manual)** section. The host driver is local to the node; GPU Operator, Device Plugin, GFD, and optional DRA are cluster components.
 
 ## Validation
 
@@ -200,21 +205,59 @@ kubectl get nodes -o wide
 # GPU labels (populated by GFD)
 kubectl get node <gpu-flex-node-name> --show-labels | tr ',' '\n' | grep nvidia.com/gpu
 
-# Host driver and runtime
+# Host driver
 nvidia-smi
 lsmod | grep nvidia
-systemctl is-active containerd aks-flex-node-agent
 ```
 
-Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels present, `nvidia-smi` lists the GPUs, agent and containerd active.
+Run a legacy GPU workload after `nvidia.com/gpu` becomes allocatable:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nvidia-smi-validation
+spec:
+  restartPolicy: Never
+  nodeName: <gpu-flex-node-name>
+  runtimeClassName: nvidia
+  containers:
+  - name: nvidia-smi
+    image: nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04
+    command: ["nvidia-smi"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+```
+
+Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels present, `nvidia.com/gpu: 1` allocatable, the validation Pod succeeds, and `nvidia-smi` lists the GPU.
+
+<a id="current-validation-blockers"></a>
+## Validation result
+
+The successful 2026-09-23 run used:
+
+- AKS `1.36.2`, Unbounded `v0.8.0`, and AKS Flex Node `v0.2.0`;
+- `Standard_NC24ads_A100_v4` in `westus2`;
+- Ubuntu HPC `24.04-v100:24.04.2026092201` with NVIDIA driver `580.178.04`;
+- a 256 GiB OS disk;
+- MIG disabled before bootstrap;
+- managed-identity online bootstrap;
+- GPU Operator `v26.7.1` with driver and toolkit management disabled;
+- the NVIDIA runtime managed by AKS Flex Node;
+- GPU Operator toolkit management disabled and its toolkit validator configured to request the CDI-qualified `nvidia.com/gpu=all` device.
+
+The Flex Node became `Ready`, GPU Feature Discovery labeled the node as `NVIDIA-A100-80GB-PCIe`, `nvidia.com/gpu: 1` became allocatable, and an `nvidia-smi` Pod completed successfully.
+
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| Node not `Ready` | `journalctl -u aks-flex-node-agent`, API-server reachability, bootstrap creds. |
-| Node `Ready`, no GPU labels | GPU Operator and GFD installed? `nvidia-smi` works on host? |
-| GPU Operator complains about driver | Should be `driver.enabled=false`. Fix the image, not the operator. |
+| Node not `Ready` | `kubectl describe node`, kubelet logs in the nspawn worker, API-server reachability, and bootstrap credentials. |
+| Node `Ready`, no GPU labels | GPU Operator and GFD installed? Did bootstrap complete NVIDIA setup? Does `nvidia-smi` work on the host? |
+| GPU Operator toolkit validation can't find `nvidia-smi` | Keep `toolkit.enabled=false` and set its validator's `NVIDIA_VISIBLE_DEVICES` to the CDI-qualified value `nvidia.com/gpu=all`. |
+| GPU Operator complains about the driver | `driver.enabled` should be `false`. Fix the host image rather than asking GPU Operator to replace its driver. |
 | Pods pending for GPU | Workload uses DRA but DRA driver isn't installed, or uses legacy `nvidia.com/gpu` but cluster is DRA-only. Match request style to install. |
 | Driver version drift | Pin the image version. |
 
@@ -223,3 +266,9 @@ Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels
 - AKS Flex Node does not install the NVIDIA kernel driver.
 - AKS Flex Node does not install GPU Operator, Device Plugin, GFD, or DRA. These are manual.
 - Image + driver + kernel + containerd versions are part of the GPU node contract. Record them per validation run.
+
+## Clean up
+
+Remove validation workloads created for this lab. If the GPU stack was installed only for evaluation, remove it by following the NVIDIA operator or plugin documentation for the exact version you installed.
+
+To detach the Flex node, follow [Reset and uninstall](../usage/operations.md#reset-and-uninstall). Don't remove a shared cluster GPU stack while other GPU nodes depend on it.
