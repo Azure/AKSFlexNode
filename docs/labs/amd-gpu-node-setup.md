@@ -58,7 +58,7 @@ Treat other combinations as separate validation targets. Do not assume this exac
 ## Before you begin
 
 - An Azure subscription and AKS cluster with `kubectl` admin access.
-- Azure CLI logged in to the target subscription.
+- Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
 - An AMD Instinct GPU host with root or sudo access and outbound reach to the AKS API server.
 - `curl` and GnuPG (`gpg`) installed on the GPU host for the example ROCm repository setup.
@@ -320,6 +320,9 @@ If these fail, fix the image or driver installation first. AKS Flex Node bootstr
 
 ### 2. Prepare AKS bootstrap credentials
 
+> [!IMPORTANT]
+> This bootstrap-token-only path validates GPU node bootstrap and workload access. It doesn't configure the durable Azure identity required for reliable Azure Machine reconciliation. Use the [identity-backed operator workflow](../usages/operator-first-boot.md) when you need the complete Azure lifecycle path.
+
 On your workstation, use `aks-flex-config` to create the bootstrap RBAC and render a host config. This is the same setup used by the general node-joining flow; the AMD-specific requirement is that the target host image already has working ROCm driver support.
 
 ```bash
@@ -329,7 +332,7 @@ SUBSCRIPTION_ID="<subscription-id>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 # Override this value to validate a different release deliberately.
-AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.14}"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.1.11}"
 curl -fsSLo ./aks-flex-config \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
@@ -355,7 +358,7 @@ Copy `./aks-flex-node-config.json` to the AMD GPU host.
 ```bash
 sudo su
 # Override this value to validate a different release deliberately.
-AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.14}"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.1.11}"
 curl -fsSL \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh" \
   | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION}" bash
@@ -382,6 +385,8 @@ stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
 ### 5. Bootstrap and watch the node
 
 ```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+
 # Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
 umask 022
 aks-flex-node start --config /etc/aks-flex-node/config.json
@@ -462,3 +467,9 @@ The recorded evidence for this guide covers host preparation and post-reboot det
 - Workload containers must provide a compatible ROCm userspace; Flex Node only makes the host devices and sysfs data available to the Kubernetes worker and scheduled containers.
 - Image + driver + kernel + containerd versions are part of the AMD GPU node contract. Record them per validation run.
 - The MI300X path is the first validation target. Validate other AMD GPU families before using this document as a production runbook for them.
+
+## Clean up
+
+Remove validation workloads created for this lab. If the AMD GPU stack was installed only for evaluation, remove it by following the AMD operator or device-plugin documentation for the exact version you installed.
+
+To detach the Flex node, follow [Reset and uninstall](../usages/operations.md#reset-and-uninstall). Don't remove a shared cluster GPU stack while other GPU nodes depend on it.

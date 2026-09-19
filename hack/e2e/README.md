@@ -122,7 +122,7 @@ Additional environment variables:
 | `E2E_KUBELET_KUBE_RESERVED_CPU` | `200m` | `node.kubelet.kubeReserved.cpu` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_KUBE_RESERVED_MEMORY` | `650Mi` | `node.kubelet.kubeReserved.memory` override written to the bootstrap-token node config. |
 | `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the in-cluster local registry. |
-| `E2E_UNBOUNDED_NET_VERSION` | `v0.1.21` | Unbounded-Net release tag used for CNI manifests and default images. |
+| `E2E_UNBOUNDED_NET_VERSION` | `v0.8.0` | Unbounded release tag used for CNI manifests and default images. |
 | `E2E_UNBOUNDED_NET_CONTROLLER_IMAGE` | `ghcr.io/azure/unbounded-net-controller:$E2E_UNBOUNDED_NET_VERSION` | Optional controller image override. |
 | `E2E_UNBOUNDED_NET_NODE_IMAGE` | `ghcr.io/azure/unbounded-net-node:$E2E_UNBOUNDED_NET_VERSION` | Optional node-agent image override. |
 | `E2E_UNBOUNDED_NET_SITE_NAME` | `aks-flex-e2e` | Site name used by Unbounded-Net in E2E. |
