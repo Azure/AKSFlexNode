@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft design for a minimal, cluster-specific AKS Flex Node bootstrap script.
+Implemented by [`scripts/bootstrap.sh`](../../scripts/bootstrap.sh). The script supports an embedded base config or runtime `listBootstrapData` retrieval, protected configuration rendering, agent installation, preflight, and startup. Publishing, storage access, first-boot orchestration, and completion tracking remain responsibilities of the deployment system.
 
 ## Context
 
@@ -280,9 +280,7 @@ convergence. Verify at least:
 - a test workload can start on the node when the environment requires an
   end-to-end networking check.
 
-If the cluster does not run the daemon CSR controller, certificate approval is
-an explicit environment prerequisite. A pending daemon CSR can otherwise cause
-service retries even after kubelet registration succeeds.
+AKS-managed Flex node pools install the daemon RBAC and provide the daemon CSR approver. Standalone controller deployments must explicitly enable an approver.
 
 ### Failure and retry expectations
 
@@ -702,7 +700,3 @@ cloud-init:
 - ARM Machine provisioning reached `Succeeded`;
 - the Kubernetes node became Ready in the expected Unbounded site;
 - the configured jq label appeared on the Node.
-
-The lab lacked the daemon CSR controller, so the daemon CSR required manual
-approval. That prerequisite is independent of script download, config rendering,
-and agent installation.

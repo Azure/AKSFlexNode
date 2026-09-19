@@ -495,7 +495,9 @@
       "protectAnchors": true,
       "anchors": [
         "agent-service",
+        "current-lifecycle-capabilities",
         "managed-agent-upgrade",
+        "managed-node-restart-and-reset",
         "nspawn-worker",
         "operations",
         "preflight",
