@@ -5,14 +5,21 @@ AKS Flex Node extends Azure Kubernetes Service (AKS) to virtual machines and bar
 > [!IMPORTANT]
 > AKS Flex Node is a preview feature. Start with the documented deployment workflow and review its prerequisites and responsibility boundaries before you use a supplemental lab.
 
+## Plan a deployment
+
+Make these decisions separately before you create resources:
+
+| Decision | Examples |
+| --- | --- |
+| Host identity | Azure Arc managed identity, Azure VM managed identity, or service principal |
+| AKS API access | Public or private API endpoint |
+| Node connectivity | Private Layer 3 connectivity or an evaluated gateway topology |
+
+Start with [Joining nodes](usages/joining-nodes.md) to understand the Azure identity and Kubernetes bootstrap credentials. A public API endpoint doesn't provide the network paths required between nodes, pods, services, and kubelet callback endpoints.
+
 ## Deploy a Flex node
 
-The end-to-end operator workflow covers cluster preparation, Unbounded-Net, Flex node pool creation, host identity, bootstrap, and validation:
-
-1. [Review the operator workflow](usages/operator-first-boot.md).
-2. [Compare node authentication methods](usages/joining-nodes.md).
-3. [Generate a node configuration](usages/aks-flex-config.md) when the selected workflow calls for the repository helper.
-4. [Validate and operate the host](usages/operations.md).
+The [end-to-end operator guide](usages/operator-first-boot.md) covers cluster preparation, Unbounded-Net, Flex node pool creation, host identity, bootstrap, and validation. Use the [operations guide](usages/operations.md) after the node is attached.
 
 Use the Microsoft Learn Flex nodes article series as the primary Azure deployment guidance. Repository labs cover additional configurations for evaluation.
 
@@ -28,6 +35,7 @@ Use the Microsoft Learn Flex nodes article series as the primary Azure deploymen
 
 - [Command-line reference](usages/cli.md) lists operator commands, flags, aliases, and internal service commands.
 - [Configuration](usages/configuration.md) lists the AKS Flex Node JSON configuration.
+- [AKS Flex Config Helper](usages/aks-flex-config.md) documents the bootstrap-token helper used by repository evaluation workflows.
 - [Operations](usages/operations.md) covers preflight, startup, agent upgrade, reset, and troubleshooting.
 - [Usage guide index](usage.md) links to task-oriented guidance.
 
