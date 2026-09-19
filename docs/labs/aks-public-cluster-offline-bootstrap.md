@@ -5,11 +5,13 @@ This lab shows how to join a Flex Node when the bootstrap binaries are served fr
 > [!IMPORTANT]
 > This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
 >
-> **Status:** Experimental
+> **Status:** Validated evaluation scenario
 >
-> **Last validated:** Not recorded
+> **Last validated:** 2026-09-20
 >
-> **Version scope:** This lab pins Kubernetes, Unbounded, ORAS, rootfs, and artifact versions in the procedure. Use those values as one tested combination and revalidate before reuse.
+> **Validated versions:** AKS Kubernetes `1.35.0`, Unbounded `v0.8.0`, and Ubuntu `24.04`
+>
+> **Validated scope:** Prebuilt artifact download and checksum validation, filesystem bootstrap, VM-local OCI registry publication and bootstrap, Node readiness, local-registry workload smoke test, unjoin, and rejoin passed. The site-scoped runtime image customization remains scenario-specific and should be rechecked when image names change.
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -53,7 +55,7 @@ KUBERNETES_VERSION_V="v${KUBERNETES_VERSION#v}"
 ROOTFS_IMAGE_UPSTREAM="ghcr.io/azure/agent-ubuntu2404:v20260619"
 ARTIFACT_TAG="v20260708-k8s-${KUBERNETES_VERSION_V}"
 ARTIFACT_BUNDLE_UPSTREAM="ghcr.io/azure/unbounded/bootstrap-artifacts:${ARTIFACT_TAG}"
-UNBOUNDED_VERSION="v0.1.10"
+UNBOUNDED_VERSION="v0.8.0"
 UNBOUNDED_NODE_IMAGE_UPSTREAM="ghcr.io/azure/unbounded-net-node:${UNBOUNDED_VERSION}"
 ```
 
@@ -111,7 +113,7 @@ patches:
     - op: add
       path: /spec/template/spec/nodeSelector
       value:
-        net.unbounded-cloud.io/site: aks-site
+        unbounded-cloud.io/site: aks-site
 EOF
 
 kubectl kustomize "$SPLIT_DIR/aks-site" > "$SPLIT_DIR/daemonset-aks-site.yaml"
@@ -123,21 +125,22 @@ Apply the controller, CRDs, shared node RBAC, and only the AKS-site node DaemonS
 cd /tmp/unbounded
 kubectl apply --server-side --force-conflicts -f deploy/net/rendered/00-namespace.yaml
 kubectl apply --server-side --force-conflicts -f deploy/net/rendered/01-configmap.yaml
+kubectl apply --server-side --force-conflicts -f deploy/machina/crd/unbounded-cloud.io_sites.yaml
 kubectl apply --server-side --force-conflicts -f deploy/net/rendered/crd/
 kubectl apply --server-side --force-conflicts -f deploy/net/rendered/controller/
 kubectl apply --server-side --force-conflicts -f deploy/net/rendered/node/01-serviceaccount.yaml
 kubectl apply --server-side --force-conflicts -f deploy/net/rendered/node/02-rbac.yaml
-kubectl -n unbounded-net delete ds unbounded-net-node --ignore-not-found
+kubectl -n unbounded-system delete ds unbounded-net-node --ignore-not-found
 kubectl apply --server-side --force-conflicts -f "$SPLIT_DIR/daemonset-aks-site.yaml"
 
-kubectl -n unbounded-net rollout status deploy/unbounded-net-controller --timeout=5m
+kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout=5m
 ```
 
 Create the sites and private-L3 peering from the base lab:
 
 ```bash
 kubectl apply -f - <<'EOF'
-apiVersion: net.unbounded-cloud.io/v1alpha1
+apiVersion: unbounded-cloud.io/v1alpha3
 kind: Site
 metadata:
   name: aks-site
@@ -150,7 +153,7 @@ spec:
     - 10.93.0.0/16
   manageCniPlugin: true
 ---
-apiVersion: net.unbounded-cloud.io/v1alpha1
+apiVersion: unbounded-cloud.io/v1alpha3
 kind: Site
 metadata:
   name: flex-site
@@ -175,11 +178,11 @@ spec:
   tunnelProtocol: Auto
 EOF
 
-until kubectl get nodes -l net.unbounded-cloud.io/site=aks-site -o name | grep -q .; do
+until kubectl get nodes -l unbounded-cloud.io/site=aks-site -o name | grep -q .; do
   sleep 2
 done
-kubectl -n unbounded-net rollout status ds/unbounded-net-node-aks-site --timeout=5m
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl -n unbounded-system rollout status ds/unbounded-net-node-aks-site --timeout=5m
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 ```
 
 At this point the AKS node uses the public GHCR image. Do not create the Flex-site node DaemonSet yet; it is applied after the Flex node's containerd is configured for the local HTTP registry.
@@ -217,7 +220,10 @@ oras version
 
 ## Generate A Baseline AKS Flex Node Config
 
-On your workstation, create the bootstrap-token RBAC and generate a node config. This follows the same pattern as the base lab and quickstart.
+On your workstation, create the bootstrap-token RBAC and generate a node config. This follows the same pattern as the base lab.
+
+> [!IMPORTANT]
+> The base lab creates a managed-identity VM and Flex node pool. Add that durable identity to the Kubernetes bootstrap-token config so offline bootstrap also retains Azure Machine reconciliation.
 
 ```bash
 AKS_RG="<aks-resource-group>"
@@ -237,6 +243,10 @@ scripts/aks-flex-config generate-node-config \
   --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
+
+jq '.azure.managedIdentity = {} | .agent.requireMachineRegistration = true' \
+  ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
+mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
 ```
 
 If the Flex VM has multiple private IPs, or if you want to pin the node IP, set `node.kubelet.nodeIP` in the generated config.
@@ -353,7 +363,7 @@ curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
 On the workstation, obtain the exact kube-proxy image selected by the Unbounded-Net controller:
 
 ```bash
-KUBE_PROXY_IMAGE_UPSTREAM="$(kubectl -n unbounded-net get ds unbounded-net-kube-proxy-flex-site \
+KUBE_PROXY_IMAGE_UPSTREAM="$(kubectl -n unbounded-system get ds unbounded-net-kube-proxy-flex-site \
   -o jsonpath='{.spec.template.spec.containers[?(@.name=="kube-proxy")].image}')"
 echo "$KUBE_PROXY_IMAGE_UPSTREAM"
 ```
@@ -674,7 +684,7 @@ On the workstation, render the Flex-site Unbounded-Net DaemonSet from the same b
 
 ```bash
 SPLIT_DIR="/tmp/unbounded/deploy/net/site-split"
-UNBOUNDED_VERSION="v0.1.10"
+UNBOUNDED_VERSION="v0.8.0"
 UNBOUNDED_NODE_IMAGE_LOCAL="127.0.0.1:5000/offline/unbounded-net-node:${UNBOUNDED_VERSION}"
 KUBE_PROXY_IMAGE_LOCAL="127.0.0.1:5000/offline/kube-proxy:${KUBERNETES_VERSION_V}"
 
@@ -707,7 +717,7 @@ patches:
     - op: add
       path: /spec/template/spec/nodeSelector
       value:
-        net.unbounded-cloud.io/site: flex-site
+        unbounded-cloud.io/site: flex-site
 EOF
 
 kubectl kustomize "$SPLIT_DIR/flex-site" > "$SPLIT_DIR/daemonset-flex-site.yaml"
@@ -716,7 +726,7 @@ kubectl kustomize "$SPLIT_DIR/flex-site" > "$SPLIT_DIR/daemonset-flex-site.yaml"
 Unbounded-Net normally creates a managed kube-proxy DaemonSet using the cluster provider's public MCR image. Create a provider kube-proxy DaemonSet for `flex-site` that uses the local mirror instead. The controller detects this coverage and removes its managed kube-proxy label from the Flex node:
 
 ```bash
-kubectl -n unbounded-net get ds unbounded-net-kube-proxy-flex-site -o json | jq \
+kubectl -n unbounded-system get ds unbounded-net-kube-proxy-flex-site -o json | jq \
   --arg image "$KUBE_PROXY_IMAGE_LOCAL" '
     del(.metadata.annotations,
         .metadata.creationTimestamp,
@@ -730,7 +740,7 @@ kubectl -n unbounded-net get ds unbounded-net-kube-proxy-flex-site -o json | jq 
     | .spec.selector.matchLabels["app.kubernetes.io/name"] = "offline-kube-proxy"
     | .spec.template.metadata.labels["app.kubernetes.io/name"] = "offline-kube-proxy"
     | .spec.template.spec.nodeSelector = {
-        "net.unbounded-cloud.io/site": "flex-site"
+        "unbounded-cloud.io/site": "flex-site"
       }
     | (.spec.template.spec.initContainers[]
         | select(.name == "kube-proxy-bootstrap")
@@ -743,24 +753,24 @@ kubectl -n unbounded-net get ds unbounded-net-kube-proxy-flex-site -o json | jq 
 kubectl apply --server-side --force-conflicts -f "$SPLIT_DIR/daemonset-flex-site.yaml"
 kubectl apply --server-side --force-conflicts -f "$SPLIT_DIR/kube-proxy-flex-site.yaml"
 
-kubectl -n unbounded-net rollout status ds/unbounded-net-node-flex-site --timeout=5m
-kubectl -n unbounded-net rollout status ds/offline-kube-proxy-flex-site --timeout=5m
+kubectl -n unbounded-system rollout status ds/unbounded-net-node-flex-site --timeout=5m
+kubectl -n unbounded-system rollout status ds/offline-kube-proxy-flex-site --timeout=5m
 ```
 
 Verify that each site uses its intended image and that the controller-managed public kube-proxy DaemonSet has no desired Flex-site pods:
 
 ```bash
-kubectl -n unbounded-net get ds -o wide
-kubectl -n unbounded-net get pods -o wide
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl -n unbounded-system get ds -o wide
+kubectl -n unbounded-system get pods -o wide
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 kubectl describe node <flex-node-name>
 ```
 
 Expected image placement:
 
 ```text
-unbounded-net-node-aks-site      ghcr.io/azure/unbounded-net-node:v0.1.10
-unbounded-net-node-flex-site     127.0.0.1:5000/offline/unbounded-net-node:v0.1.10
+unbounded-net-node-aks-site      ghcr.io/azure/unbounded-net-node:v0.8.0
+unbounded-net-node-flex-site     127.0.0.1:5000/offline/unbounded-net-node:v0.8.0
 offline-kube-proxy-flex-site     127.0.0.1:5000/offline/kube-proxy:v1.35.0
 ```
 
@@ -863,4 +873,20 @@ For filesystem mode, verify `manifest.json` and expected artifact paths exist:
 ```bash
 sudo test -f "/opt/aks-flex-node/offline/bootstrap-artifacts/${KUBERNETES_VERSION_V}/manifest.json"
 sudo find "/opt/aks-flex-node/offline/bootstrap-artifacts/${KUBERNETES_VERSION_V}" -maxdepth 4 -type f | sort | head -50
+```
+
+## Clean up
+
+Remove temporary firewall rules or local registry configuration created by the selected path. Then delete the Azure resource groups inherited from the base lab:
+
+```bash
+az group delete --name "$AKS_RG" --yes --no-wait
+az group delete --name "$VM_RG" --yes --no-wait
+```
+
+Confirm both commands eventually return `false`:
+
+```bash
+az group exists --name "$AKS_RG"
+az group exists --name "$VM_RG"
 ```

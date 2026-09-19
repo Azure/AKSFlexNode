@@ -60,7 +60,7 @@ On the flex node host, download the bootstrap script from the same release as th
 ```bash
 export AKS_RESOURCE_ID="<aks-resource-id>"
 export FLEX_POOL_NAME="<flex-node-pool-name>"
-export AKS_FLEX_NODE_VERSION="v0.1.11"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
 
 # On cloud images, wait for first-boot package operations to release the
 # package-manager lock. Skip this command when cloud-init isn't installed.

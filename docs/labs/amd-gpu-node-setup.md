@@ -7,7 +7,7 @@ How to add an AMD Instinct GPU host to an AKS cluster as an AKS Flex Node.
 >
 > **Status:** Experimental; AMD GPU support is under active validation.
 >
-> **Last validated:** Not recorded
+> **Last validation attempt:** 2026-09-20; skipped because the required MI300X VM family quota was `0` in the validation subscription
 >
 > **Version scope:** This lab records the validated MI300X kernel, ROCm, AMDGPU, and agent versions in the procedure. Revalidate the complete combination before reuse.
 >
@@ -58,7 +58,7 @@ Treat other combinations as separate validation targets. Do not assume this exac
 ## Before you begin
 
 - An Azure subscription and AKS cluster with `kubectl` admin access.
-- Azure CLI logged in to the target subscription.
+- Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
 - An AMD Instinct GPU host with root or sudo access and outbound reach to the AKS API server.
 - `curl` and GnuPG (`gpg`) installed on the GPU host for the example ROCm repository setup.
@@ -320,6 +320,9 @@ If these fail, fix the image or driver installation first. AKS Flex Node bootstr
 
 ### 2. Prepare AKS bootstrap credentials
 
+> [!IMPORTANT]
+> For the Azure MI300X VM, enable a managed identity, authorize it at the AKS cluster scope, and ensure the Flex node pool exists by following the [identity-backed operator workflow](../usage/getting-started.md).
+
 On your workstation, use `aks-flex-config` to create the bootstrap RBAC and render a host config. This is the same setup used by the general node-joining flow; the AMD-specific requirement is that the target host image already has working ROCm driver support.
 
 ```bash
@@ -329,7 +332,7 @@ SUBSCRIPTION_ID="<subscription-id>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
 # Override this value to validate a different release deliberately.
-AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.14}"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.2.0}"
 curl -fsSLo ./aks-flex-config \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
@@ -346,6 +349,10 @@ chmod +x ./aks-flex-config
   --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
+
+jq '.azure.managedIdentity = {} | .agent.requireMachineRegistration = true' \
+  ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
+mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
 ```
 
 Copy `./aks-flex-node-config.json` to the AMD GPU host.
@@ -355,10 +362,13 @@ Copy `./aks-flex-node-config.json` to the AMD GPU host.
 ```bash
 sudo su
 # Override this value to validate a different release deliberately.
-AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.14}"
-curl -fsSL \
-  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh" \
-  | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION}" bash
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.2.0}"
+curl -fsSLo /tmp/aks-flex-node-install.sh \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh"
+chmod 0700 /tmp/aks-flex-node-install.sh
+bash -n /tmp/aks-flex-node-install.sh
+AKS_FLEX_NODE_VERSION="$AKS_FLEX_NODE_VERSION" bash /tmp/aks-flex-node-install.sh
+rm -f /tmp/aks-flex-node-install.sh
 aks-flex-node version
 ```
 
@@ -382,6 +392,8 @@ stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
 ### 5. Bootstrap and watch the node
 
 ```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+
 # Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
 umask 022
 aks-flex-node start --config /etc/aks-flex-node/config.json
@@ -462,3 +474,9 @@ The recorded evidence for this guide covers host preparation and post-reboot det
 - Workload containers must provide a compatible ROCm userspace; Flex Node only makes the host devices and sysfs data available to the Kubernetes worker and scheduled containers.
 - Image + driver + kernel + containerd versions are part of the AMD GPU node contract. Record them per validation run.
 - The MI300X path is the first validation target. Validate other AMD GPU families before using this document as a production runbook for them.
+
+## Clean up
+
+Remove validation workloads created for this lab. If the AMD GPU stack was installed only for evaluation, remove it by following the AMD operator or device-plugin documentation for the exact version you installed.
+
+To detach the Flex node, follow [Reset and uninstall](../usage/operations.md#reset-and-uninstall). Don't remove a shared cluster GPU stack while other GPU nodes depend on it.

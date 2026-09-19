@@ -7,9 +7,9 @@ How to add an NVIDIA GPU host to an AKS cluster as an AKS Flex Node.
 >
 > **Status:** Experimental; NVIDIA GPU support is under active validation.
 >
-> **Last validated:** Not recorded
+> **Last validation attempt:** 2026-09-20; skipped because the available H100 VM family quota was `0` in the validation subscription
 >
-> **Version scope:** The host image, driver, kernel, agent, and cluster GPU stack must be validated as one combination.
+> **Version scope:** This lab pins AKS Flex Node `v0.2.0`. The host image, driver, kernel, and cluster GPU stack must be validated as one combination.
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -27,7 +27,7 @@ Plan for both before you start.
 ## Before you begin
 
 - An Azure subscription and AKS cluster with `kubectl` admin access.
-- Azure CLI logged in to the target subscription.
+- Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
 - A GPU host with root or sudo access and outbound reach to the AKS API server.
 - A GPU host image that already includes the NVIDIA driver.
@@ -122,7 +122,10 @@ If these fail, fix the image or driver installation first. AKS Flex Node bootstr
 
 ### 2. Prepare AKS bootstrap credentials
 
-On your workstation, use `aks-flex-config` to create the bootstrap RBAC and render a host config. This is the same setup used by the general node-joining flow; the GPU-specific requirement is that the target host image already has a working NVIDIA driver.
+On your workstation, use `aks-flex-config` to create the bootstrap RBAC and render a host config. The GPU-specific requirement is that the target host image already has a working NVIDIA driver.
+
+> [!IMPORTANT]
+> For an Azure GPU VM, enable a managed identity, authorize it at the AKS cluster scope, and ensure the Flex node pool exists by following the [identity-backed operator workflow](../usage/getting-started.md). For a host outside Azure, use its Azure Arc or service principal path.
 
 ```bash
 RESOURCE_GROUP="<aks-resource-group>"
@@ -130,7 +133,9 @@ CLUSTER_NAME="<aks-cluster-name>"
 SUBSCRIPTION_ID="<subscription-id>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 
-curl -fsSLo ./aks-flex-config https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/aks-flex-config
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.2.0}"
+curl -fsSLo ./aks-flex-config \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
 
 ./aks-flex-config setup-node-rbac \
@@ -145,6 +150,11 @@ chmod +x ./aks-flex-config
   --agent-pool-name "$AGENT_POOL_NAME" \
   --bootstrap-token \
   --output ./aks-flex-node-config.json
+
+# For the Azure VM managed-identity path:
+jq '.azure.managedIdentity = {} | .agent.requireMachineRegistration = true' \
+  ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
+mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
 ```
 
 Copy `./aks-flex-node-config.json` to the GPU host.
@@ -153,7 +163,13 @@ Copy `./aks-flex-node-config.json` to the GPU host.
 
 ```bash
 sudo su
-curl -fsSL https://raw.githubusercontent.com/Azure/AKSFlexNode/main/scripts/install.sh | bash
+AKS_FLEX_NODE_VERSION="v0.2.0"
+curl -fsSLo /tmp/aks-flex-node-install.sh \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh"
+chmod 0700 /tmp/aks-flex-node-install.sh
+bash -n /tmp/aks-flex-node-install.sh
+AKS_FLEX_NODE_VERSION="$AKS_FLEX_NODE_VERSION" bash /tmp/aks-flex-node-install.sh
+rm -f /tmp/aks-flex-node-install.sh
 aks-flex-node version
 ```
 
@@ -176,6 +192,8 @@ stat -c '%a %U:%G %n' /etc/aks-flex-node/config.json
 ### 5. Bootstrap and watch the node
 
 ```bash
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
+
 # Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
 umask 022
 aks-flex-node start --config /etc/aks-flex-node/config.json
@@ -223,3 +241,9 @@ Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels
 - AKS Flex Node does not install the NVIDIA kernel driver.
 - AKS Flex Node does not install GPU Operator, Device Plugin, GFD, or DRA. These are manual.
 - Image + driver + kernel + containerd versions are part of the GPU node contract. Record them per validation run.
+
+## Clean up
+
+Remove validation workloads created for this lab. If the GPU stack was installed only for evaluation, remove it by following the NVIDIA operator or plugin documentation for the exact version you installed.
+
+To detach the Flex node, follow [Reset and uninstall](../usage/operations.md#reset-and-uninstall). Don't remove a shared cluster GPU stack while other GPU nodes depend on it.

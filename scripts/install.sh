@@ -263,6 +263,19 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
+    # Minimal and custom images aren't required to pre-create /usr/local/bin.
+    # Create a missing destination, but don't change an existing directory's
+    # ownership or mode because it can be managed by the host image owner.
+    if [[ ! -e "$INSTALL_DIR" ]]; then
+        if ! install -d -o root -g root -m 0755 "$INSTALL_DIR"; then
+            log_error "Failed to create install directory $INSTALL_DIR"
+            return 1
+        fi
+    elif [[ ! -d "$INSTALL_DIR" || -L "$INSTALL_DIR" ]]; then
+        log_error "Install path $INSTALL_DIR is not a regular directory"
+        return 1
+    fi
+
     (
         staged=""
         trap '[[ -z "$staged" ]] || rm -f "$staged"' EXIT

@@ -197,7 +197,10 @@ func TestARMMachineClientOptions(t *testing.T) {
 		t.Fatalf("MaxRetryDelay = %s, want %s", opts.Retry.MaxRetryDelay, armMachineMaxRetryDelay)
 	}
 	if opts.Retry.StatusCodes != nil {
-		t.Fatalf("StatusCodes = %v, want nil to preserve Azure SDK transient status defaults", opts.Retry.StatusCodes)
+		t.Fatalf("StatusCodes = %v, want nil", opts.Retry.StatusCodes)
+	}
+	if opts.Retry.ShouldRetry == nil {
+		t.Fatal("ShouldRetry is nil")
 	}
 }
 
@@ -243,6 +246,56 @@ func TestARMMachineClientRetriesThrottledRequests(t *testing.T) {
 				t.Fatalf("request attempts = %d, want 2", got)
 			}
 		})
+	}
+}
+
+func TestARMMachineClientRetriesAgentPoolConflict(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	client := newTestARMMachineClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if attempts.Add(1) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusConflict,
+				Header:     http.Header{"Retry-After": []string{"0"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"code":"OperationNotAllowed","subcode":"AnotherOperationInProgress"}`,
+				)),
+				Request: request,
+			}, nil
+		}
+		return successfulMachineResponse(t, request), nil
+	}))
+
+	if _, err := client.Create(t.Context(), GoalState{KubernetesVersion: "1.34.0"}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("request attempts = %d, want 2", got)
+	}
+}
+
+func TestARMMachineClientDoesNotRetryPermanentConflict(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	client := newTestARMMachineClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusConflict,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"code":"Conflict","message":"permanent conflict"}`)),
+			Request:    request,
+		}, nil
+	}))
+
+	_, err := client.Create(t.Context(), GoalState{KubernetesVersion: "1.34.0"})
+	var responseErr *azcore.ResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusConflict {
+		t.Fatalf("Create() error = %v, want final HTTP 409 response error", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("request attempts = %d, want 1", got)
 	}
 }
 

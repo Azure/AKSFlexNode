@@ -5,11 +5,13 @@ This guide shows how to create a private AKS cluster with no built-in CNI, insta
 > [!IMPORTANT]
 > This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
 >
-> **Status:** Validated supplemental scenario
+> **Status:** Validated evaluation scenario
 >
-> **Last validated:** Not recorded
+> **Last validated:** 2026-09-20
 >
-> **Version scope:** Use the versions selected or resolved by this lab and revalidate them before reuse.
+> **Validated versions:** AKS Kubernetes `1.35.7`, AKS Flex Node `v0.1.11`, Cilium `1.20.2`, and Ubuntu `24.04.4`
+>
+> **Validated scope:** Private API access, Cilium installation on the AKS and Flex nodes, Flex Node readiness, daemon CSR approval, Cilium rollout on both nodes, and bidirectional cross-node pod traffic passed.
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -22,7 +24,7 @@ For Cilium concepts and operations, see the [Cilium documentation](https://docs.
 ## Prerequisites
 
 - An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and the bootstrap RBAC needed by AKS Flex Node.
-- Azure CLI logged in to the target subscription.
+- Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, `python3`, and SSH/SCP tooling on the workstation or admin VM that will run the lab commands.
 - A command runner that can resolve and reach the private AKS API endpoint. If your workstation cannot, use the admin VM described below.
 - Non-overlapping CIDR ranges for the AKS VNet, Flex VM VNet, Cilium pod CIDR, AKS service CIDR, and any connected networks.
@@ -148,6 +150,7 @@ VM_REGION="<vm-region>"
 AKS_VNET="<aks-vnet-name>"
 FLEX_VNET="<flex-vnet-name>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
+AKS_PREVIEW_VERSION="22.0.0b8"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -214,11 +217,29 @@ az aks create \
   --service-cidr 10.84.0.0/16 \
   --dns-service-ip 10.84.0.10 \
   --node-count 1 \
-  --node-vm-size Standard_D4s_v5 \
+  --node-vm-size Standard_D4s_v6 \
   --generate-ssh-keys
 ```
 
 The AKS node starts `NotReady` until Cilium writes the CNI configuration and initializes the datapath.
+
+Create the Flex node pool used for Azure Machine registration. Before continuing, register `AKSFlexNodePreview` and `PutMachinePreview` as described in [Create a no-CNI AKS cluster](../usage/getting-started.md#1-create-a-no-cni-aks-cluster).
+
+```bash
+az extension add --name aks-preview --allow-preview true \
+  --version "$AKS_PREVIEW_VERSION" --upgrade
+
+while STATUS=$(az aks operation show-latest -g "$AKS_RG" -n "$CLUSTER_NAME" \
+    --query status -o tsv 2>/dev/null) && \
+    [[ "$STATUS" == "InProgress" || "$STATUS" == "Running" ]]; do
+  sleep 15
+done
+
+az aks nodepool add -g "$AKS_RG" --cluster-name "$CLUSTER_NAME" \
+  --name "$AGENT_POOL_NAME" --vm-set-type FlexNodes --mode User \
+  --kubernetes-version "$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query currentKubernetesVersion -o tsv)" \
+  --max-pods 250 --max-unavailable 1 --output none
+```
 
 ## Link Private DNS To The Flex VNet
 
@@ -252,12 +273,38 @@ az vm create \
   --subnet flex-subnet \
   --admin-username azureuser \
   --generate-ssh-keys \
-  --public-ip-sku Standard
+  --public-ip-sku Standard \
+  --assign-identity
 ```
 
-Copy or create an admin kubeconfig on that VM, install `kubectl` and Helm, and verify private cluster access:
+Install Azure CLI, `kubectl`, and Helm on the admin VM. Grant its managed identity `Azure Kubernetes Service Cluster Admin Role` at the AKS resource scope, allow the assignment to propagate, and then authenticate and retrieve a dedicated kubeconfig:
 
 ```bash
+SUBSCRIPTION_ID="<subscription-id>"
+AKS_RESOURCE_ID=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query id -o tsv)
+ADMIN_PRINCIPAL_ID=$(az vm show -g "$VM_RG" -n "$ADMIN_VM_NAME" --query identity.principalId -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$ADMIN_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Azure Kubernetes Service Cluster Admin Role" \
+  --scope "$AKS_RESOURCE_ID"
+```
+
+On the admin VM:
+
+```bash
+SUBSCRIPTION_ID="<subscription-id>"
+AKS_RG="<aks-resource-group>"
+CLUSTER_NAME="<aks-cluster-name>"
+
+az login --identity
+az account set --subscription "$SUBSCRIPTION_ID"
+export KUBECONFIG="$HOME/.kube/aks-flex-cilium"
+install -d -m 0700 "$HOME/.kube"
+install -m 0600 /dev/null "$KUBECONFIG"
+az aks get-credentials -g "$AKS_RG" -n "$CLUSTER_NAME" --admin \
+  --overwrite-existing --file "$KUBECONFIG"
 kubectl get nodes -o wide
 ```
 
@@ -266,10 +313,13 @@ kubectl get nodes -o wide
 Install Cilium with cluster-pool IPAM and VXLAN tunnel mode. Run these commands from a machine that can reach the private AKS API endpoint.
 
 ```bash
+CILIUM_VERSION="1.20.2"
+
 helm repo add cilium https://helm.cilium.io/
 helm repo update
 
 helm upgrade --install cilium cilium/cilium \
+  --version "$CILIUM_VERSION" \
   --namespace kube-system \
   --set ipam.mode=cluster-pool \
   --set ipam.operator.clusterPoolIPv4PodCIDRList='{10.83.0.0/16}' \
@@ -309,15 +359,28 @@ az vm create \
   --subnet flex-subnet \
   --admin-username azureuser \
   --generate-ssh-keys \
-  --public-ip-sku Standard
+  --public-ip-sku Standard \
+  --assign-identity
 ```
+
+Authorize the VM identity at the AKS cluster scope:
+
+```bash
+AKS_RESOURCE_ID=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query id -o tsv)
+FLEX_PRINCIPAL_ID=$(az vm show -g "$VM_RG" -n "$VM_NAME" --query identity.principalId -o tsv)
+az role assignment create --assignee-object-id "$FLEX_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Azure Kubernetes Service Contributor Role" --scope "$AKS_RESOURCE_ID"
+```
+
+Allow the role assignment to propagate before bootstrap. If Machine preflight or registration returns HTTP 403, wait and retry instead of disabling required registration.
 
 Get the VM IPs:
 
 ```bash
-az vm show -g "$VM_RG" -n "$VM_NAME" --show-details \
-  --query '{privateIps:privateIps,publicIps:publicIps}' \
-  -o table
+VM_PRIVATE_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query privateIps -o tsv)
+VM_PUBLIC_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query publicIps -o tsv)
+printf 'private=%s public=%s\n' "$VM_PRIVATE_IP" "$VM_PUBLIC_IP"
 ```
 
 From the VM, verify private API reachability:
@@ -335,14 +398,16 @@ HTTP/2 401
 
 ## Generate Bootstrap Config
 
-Use the config helper from this repository. By default, the installer resolves the latest GitHub release. Set `AKS_FLEX_NODE_VERSION` only when you want to use a specific release tag.
+Use the config helper from this repository. Pin `AKS_FLEX_NODE_VERSION` when you need a repeatable run.
+
+> [!IMPORTANT]
+> The config combines a Kubernetes bootstrap token with the VM managed identity so the daemon can reconcile its Azure Machine after the node joins.
 
 ```bash
-# Optional: uncomment to use a specific release tag.
-# AKS_FLEX_NODE_VERSION="<release-tag>"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.2.0}"
 
 curl -fsSLo ./aks-flex-config \
-  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/aks-flex-config"
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
 
 ./aks-flex-config setup-node-rbac \
@@ -374,6 +439,14 @@ KUBERNETES_VERSION=$(az aks show \
   -n "$CLUSTER_NAME" \
   --query currentKubernetesVersion \
   -o tsv)
+
+jq --arg nodeIP "$VM_PRIVATE_IP" --arg kubernetesVersion "$KUBERNETES_VERSION" \
+  '.node.kubelet.nodeIP = $nodeIP
+   | .components.kubernetes = $kubernetesVersion
+   | .azure.managedIdentity = {}
+   | .agent.requireMachineRegistration = true' \
+  ./aks-flex-node-config.json > ./aks-flex-node-config.json.tmp
+mv ./aks-flex-node-config.json.tmp ./aks-flex-node-config.json
 ```
 
 The config must contain:
@@ -416,11 +489,14 @@ ssh azureuser@"$VM_PUBLIC_IP"
 
 sudo su
 
-# Optional: uncomment to use a specific release tag.
-# AKS_FLEX_NODE_VERSION="<release-tag>"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.2.0}"
 
-curl -fsSL "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/install.sh" \
-  | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}" bash
+curl -fsSLo /tmp/aks-flex-node-install.sh \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh"
+chmod 0700 /tmp/aks-flex-node-install.sh
+bash -n /tmp/aks-flex-node-install.sh
+AKS_FLEX_NODE_VERSION="$AKS_FLEX_NODE_VERSION" bash /tmp/aks-flex-node-install.sh
+rm -f /tmp/aks-flex-node-install.sh
 
 install -d -m 0755 /etc/aks-flex-node
 install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
@@ -428,7 +504,19 @@ install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 # Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
 umask 022
 aks-flex-node version
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
 aks-flex-node start --config /etc/aks-flex-node/config.json
+```
+
+The Kubernetes Node can become `Ready` before the daemon receives its separate client certificate. If `aks-flex-node-agent` restarts while a daemon CSR remains pending, follow [Approve the daemon CSR when required](../usage/getting-started.md#7-approve-the-daemon-csr-when-required).
+
+Verify the durable Azure Machine registration from the admin VM:
+
+```bash
+az aks machine list -g "$AKS_RG" --cluster-name "$CLUSTER_NAME" \
+  --nodepool-name "$AGENT_POOL_NAME" \
+  --query "[?properties.kubernetes.nodeName=='$VM_NAME'].{name:name,state:properties.provisioningState}" \
+  --output table
 ```
 
 ## DaemonSets On The Flex Node
@@ -589,3 +677,19 @@ kubectl get nodes -o wide
 ```
 
 If pods schedule on the Flex node but cannot reach pods on AKS nodes, check Cilium health and VXLAN traffic between node IPs. Ensure NSGs allow node-to-node traffic over the VNet peering path.
+
+## Clean up
+
+Delete the validation workloads described in this lab, and then delete both resource groups:
+
+```bash
+az group delete --name "$AKS_RG" --yes --no-wait
+az group delete --name "$VM_RG" --yes --no-wait
+```
+
+Confirm both commands eventually return `false`:
+
+```bash
+az group exists --name "$AKS_RG"
+az group exists --name "$VM_RG"
+```

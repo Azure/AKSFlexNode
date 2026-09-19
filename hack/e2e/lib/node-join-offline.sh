@@ -13,9 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 readonly offlineArtifactsSource='oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}'
 readonly offlineOCIImage='ghcr.io/azure/agent-ubuntu2404:v20260619'
-readonly offlineContainerdVersion='2.1.8'
-readonly offlineRuncVersion='1.5.0'
-readonly offlineCNIVersion='1.5.1'
+readonly offlineArtifactsMirrorBase='https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases'
 
 _normalize_kubernetes_version_v() {
   local version="$1"
@@ -26,54 +24,35 @@ _normalize_kubernetes_version_v() {
   fi
 }
 
-_crictl_version_for_kubernetes() {
-  local version
-  version="$(_normalize_kubernetes_version_v "$1")"
-  version="${version#v}"
-  local major minor _patch
-  IFS='.' read -r major minor _patch <<< "${version}"
-  printf '%s.%s.0\n' "${major}" "${minor}"
-}
-
 _build_offline_artifacts_tarball() {
   local kube_version_v="$1"
   local output_root="${E2E_WORK_DIR}/offline-bootstrap-artifacts"
   local output_dir="${output_root}/${kube_version_v}"
-  local manifest_file="${E2E_WORK_DIR}/offline-bootstrap-manifest-${kube_version_v}.json"
   local tarball="${E2E_WORK_DIR}/offline-bootstrap-artifacts-${kube_version_v}.tar.gz"
-  local tools_dir="${E2E_WORK_DIR}/tools"
-  local builder="${tools_dir}/agent-artifacts-builder"
-  local unbounded_version
-  local crictl_version
-
-  unbounded_version="$(cd "${REPO_ROOT}" && go list -m -f '{{.Version}}' github.com/Azure/unbounded)"
-  crictl_version="$(_crictl_version_for_kubernetes "${kube_version_v}")"
-
-  log_info "Building agent-artifacts-builder from github.com/Azure/unbounded@${unbounded_version}..."
-  mkdir -p "${tools_dir}"
-  GOBIN="${tools_dir}" go install "github.com/Azure/unbounded/hack/cmd/agent-artifacts-builder@${unbounded_version}"
+  local release_tarball="${E2E_WORK_DIR}/unbounded-bootstrap-artifacts-${kube_version_v}.tar.gz"
+  local release_checksum="${release_tarball}.sha256"
+  local release_name="bootstrap-artifacts-k8s-${kube_version_v}.tar.gz"
+  local mirror_base="${E2E_OFFLINE_ARTIFACTS_MIRROR_BASE:-${offlineArtifactsMirrorBase}}"
+  local release_url="${mirror_base}/${E2E_UNBOUNDED_NET_VERSION}/bootstrap-artifacts/${release_name}"
 
   rm -rf "${output_dir}"
-  mkdir -p "${output_root}"
-  cat > "${manifest_file}" <<EOF
-{
-  "versions": {
-    "kubernetes": "${kube_version_v}",
-    "containerd": "${offlineContainerdVersion}",
-    "runc": "${offlineRuncVersion}",
-    "cni": "${offlineCNIVersion}",
-    "crictl": "${crictl_version}"
-  },
-  "containerImages": []
-}
-EOF
+  mkdir -p "${output_dir}"
 
-  log_info "Building offline bootstrap artifacts for ${kube_version_v}..."
-  "${builder}" \
-    --output-dir "${output_dir}" \
-    --manifest "${manifest_file}" \
-    --arch amd64
+  log_info "Downloading pre-built Unbounded bootstrap artifacts for ${kube_version_v}..."
+  curl -fsSLo "${release_tarball}" "${release_url}"
+  curl -fsSLo "${release_checksum}" "${release_url}.sha256"
+  (
+    cd "$(dirname "${release_tarball}")"
+    # The published checksum can use the release filename rather than the local
+    # path, so normalize it before verification.
+    awk -v file="$(basename "${release_tarball}")" '{print $1 "  " file}' \
+      "$(basename "${release_checksum}")" | sha256sum --check --strict -
+  )
+  tar -xzf "${release_tarball}" -C "${output_dir}"
+  test -s "${output_dir}/manifest.json"
 
+  # Keep the existing remote publishing shape: one top-level Kubernetes version
+  # directory containing the release artifact contents.
   tar -czf "${tarball}" -C "${output_root}" "${kube_version_v}"
   printf '%s\n' "${tarball}"
 }

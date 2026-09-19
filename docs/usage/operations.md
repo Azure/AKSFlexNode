@@ -68,7 +68,7 @@ Kubelet and daemon credentials are separate. If the Kubernetes Node becomes `Rea
 kubectl get csr
 ```
 
-Use the inspection and approval procedure in [Approve the daemon CSR when required](operator-first-boot.md#7-approve-the-daemon-csr-when-required). Verify the node name and `aks-flex-node-daemons` group before approving a CSR.
+Use the inspection and approval procedure in [Approve the daemon CSR when required](getting-started.md#7-approve-the-daemon-csr-when-required). Verify the node name and `aks-flex-node-daemons` group before approving a CSR.
 
 ## Managed agent upgrade
 

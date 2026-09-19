@@ -28,8 +28,8 @@ In this guide, you:
 
 The Bash environment needs:
 
-- Azure CLI authenticated to the target subscription;
-- the `aks-preview` Azure CLI extension version required by the selected Flex Node release;
+- Azure CLI 2.90.0 or later, authenticated to the target subscription;
+- `aks-preview` Azure CLI extension `22.0.0b8` or later;
 - `kubectl`, `curl`, `tar`, and an OpenSSH client;
 - permission to create AKS and networking resources, register preview features, create a Flex node pool, and grant the selected host identity access to the AKS cluster;
 - access to the AKS admin kubeconfig;
@@ -70,8 +70,8 @@ export CLUSTER_POD_CIDR="10.93.0.0/16"
 export FLEX_NODE_CIDR="10.92.0.0/16"
 export FLEX_POD_CIDR="10.95.0.0/16"
 
-export UNBOUNDED_VERSION="v0.6.0"
-export AKS_FLEX_NODE_VERSION="v0.1.9"
+export UNBOUNDED_VERSION="v0.8.0"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
 export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
 
 # bootstrap.sh downloads the agent, rootfs, and Kubernetes bootstrap bundle
@@ -169,7 +169,7 @@ az aks create \
   --kubernetes-version "$AKS_VERSION" \
   --nodepool-name nodepool1 \
   --node-count 1 \
-  --node-vm-size Standard_D4s_v5 \
+  --node-vm-size Standard_D4s_v6 \
   --network-plugin none \
   --pod-cidr "$CLUSTER_POD_CIDR" \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
@@ -270,7 +270,7 @@ kubectl -n unbounded-system rollout status \
 kubectl -n unbounded-system rollout status \
   daemonset/unbounded-net-node --timeout=5m
 
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 kubectl get sites,sitepeerings -o wide
 ```
 
@@ -363,9 +363,16 @@ automatically is deployed in the target region.
 
 A Flex node pool is a logical group for customer-provided compute. Don't configure standard virtual machine scale set properties such as node count, VM size, operating system type, or subnet settings.
 
-Create the pool with the preview Azure CLI extension:
+Wait for any cluster operation started by extension or policy reconciliation to finish, and then create the pool with the preview Azure CLI extension:
 
 ```bash
+while STATUS=$(az aks operation show-latest \
+    --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" \
+    --query status --output tsv 2>/dev/null) && \
+    [[ "$STATUS" == "InProgress" || "$STATUS" == "Running" ]]; do
+  sleep 15
+done
+
 az aks nodepool add \
   --resource-group "$RESOURCE_GROUP" \
   --cluster-name "$AKS_NAME" \
@@ -463,8 +470,8 @@ Set the operator-provided values:
 ```bash
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.1.9"
-export UNBOUNDED_VERSION="v0.6.0"
+export AKS_FLEX_NODE_VERSION="v0.2.0"
+export UNBOUNDED_VERSION="v0.8.0"
 export CENTRAL_ARTIFACTS_ENDPOINT="https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net"
 
 # bootstrap.sh downloads the agent, rootfs, and Kubernetes bootstrap bundle
@@ -486,7 +493,7 @@ The shell expands `${AKS_FLEX_NODE_VERSION}`, and the bootstrap script expands
 `{{ARCHIVE_NAME}}` for the host architecture. On an AMD64 host this resolves to:
 
 ```text
-https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.1.9/aks-flex-node-linux-amd64.tar.gz
+https://unbounded-azure-mirror-ejd3aeefdrhncchk.b01.azurefd.net/releases/aks-flex-node/v0.2.0/aks-flex-node-linux-amd64.tar.gz
 ```
 
 These URLs download the agent, rootfs, and bootstrap bundle from the central
@@ -662,7 +669,7 @@ AKS Flex CSR approver.
 Check the Node and network site:
 
 ```bash
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 kubectl get sites,sitepeerings -o wide
 ```
 
@@ -705,7 +712,7 @@ bootstrap: running preflight
 bootstrap: starting AKS Flex Node
 ```
 
-Expected ARM Machine registration log:
+Expected Azure Machine registration log:
 
 ```text
 level=INFO msg=started task=ensure-machine
@@ -714,6 +721,10 @@ level=INFO msg=completed task=ensure-machine status=ok
 ```
 
 Run a smoke workload pinned to the Flex Node to verify pod networking.
+
+## Clean up
+
+Follow [Reset and uninstall](operations.md#reset-and-uninstall) to drain the Kubernetes Node, remove local host state, and remove residual Node and Machine resources. If this guide created dedicated Azure resource groups, delete them only after you confirm that they don't contain shared resources.
 
 ## Troubleshooting
 
@@ -724,7 +735,7 @@ that the managed AKS Node has the `cluster` site label:
 
 ```bash
 kubectl -n unbounded-system get pods -o wide
-kubectl get nodes -L net.unbounded-cloud.io/site
+kubectl get nodes -L unbounded-cloud.io/site
 ```
 
 ### Preflight reports insufficient disk space
