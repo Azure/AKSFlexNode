@@ -192,6 +192,7 @@
       "path": "docs/labs/aks-private-cluster-cilium.md",
       "protectAnchors": true,
       "anchors": [
+        "clean-up",
         "create-a-private-no-cni-aks-cluster",
         "create-an-admin-vm-for-the-private-cluster",
         "create-networks",
@@ -214,6 +215,7 @@
       "path": "docs/labs/aks-private-cluster-unbounded-net.md",
       "protectAnchors": true,
       "anchors": [
+        "clean-up",
         "create-a-private-no-cni-aks-cluster",
         "create-an-admin-vm-for-the-private-cluster",
         "create-networks",
@@ -239,6 +241,7 @@
       "anchors": [
         "aks-flex-node-with-offline-bootstrap-artifacts",
         "bootstrap-the-node",
+        "clean-up",
         "configure-nspawn-containerd-for-the-temporary-local-http-registry",
         "deploy-the-offline-flex-site-networking-daemonsets",
         "flex-site-pods-fail-with-https-or-imagepullbackoff",
@@ -269,6 +272,7 @@
       "path": "docs/labs/aks-public-cluster-unbounded-net-vnet-peering.md",
       "protectAnchors": true,
       "anchors": [
+        "clean-up",
         "create-a-public-no-cni-aks-cluster",
         "create-resource-groups-and-networks",
         "create-sites-and-mesh-peering",
@@ -290,6 +294,7 @@
       "protectAnchors": true,
       "anchors": [
         "add-a-public-aks-gateway-node-pool",
+        "clean-up",
         "create-a-public-no-cni-aks-cluster",
         "create-resource-groups-and-networks",
         "create-sites-and-the-aks-gateway-pool",
@@ -321,6 +326,7 @@
         "amd-gpu-operator",
         "before-you-begin",
         "caveats",
+        "clean-up",
         "cluster-gpu-stack-manual",
         "direct-host-bootstrap",
         "driver-and-image-contract",
@@ -346,6 +352,7 @@
         "5-bootstrap-and-watch-the-node",
         "before-you-begin",
         "caveats",
+        "clean-up",
         "cluster-gpu-stack-manual",
         "direct-host-bootstrap",
         "driver-and-image-contract",
@@ -480,6 +487,7 @@
         "8-verify-the-joined-node",
         "arm-machine-registration-fails",
         "bootstrap-token-expired",
+        "clean-up",
         "flow",
         "machineoperation-cache-synchronization-times-out",
         "node-joins-but-the-host-agent-restarts",

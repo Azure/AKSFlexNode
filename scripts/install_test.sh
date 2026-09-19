@@ -35,10 +35,20 @@ MANAGED_BINARY_DIR="$WORK_DIR/lib/aks-flex-node"
 AGENT_UPGRADE_LOCK_PATH="$WORK_DIR/run/agent-upgrade.lock"
 SERVICE_UNIT="aks-flex-node-agent-install-test-$RANDOM.service"
 SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
-mkdir -p "$INSTALL_DIR" "$MANAGED_BINARY_DIR" "$(dirname "$SERVICE_UNIT_PATH")"
+mkdir -p "$MANAGED_BINARY_DIR" "$(dirname "$SERVICE_UNIT_PATH")"
 
 running_binary=$(type -P sleep)
 replacement_binary=$(type -P printf)
+
+# Minimal images can omit an empty /usr/local/bin. The installer owns creation
+# of its configured destination before atomically staging the binary there.
+[[ ! -e "$INSTALL_DIR" ]] || fail "missing install directory test setup is invalid"
+install_binary "$replacement_binary" >/dev/null || fail "installer did not create a missing install directory"
+[[ -d "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] || fail "installer did not create a regular install directory"
+[[ "$(stat -c '%a %U %G' "$INSTALL_DIR")" == "755 root root" ]] || fail "installer created install directory with incorrect ownership or mode"
+[[ "$($INSTALL_DIR/aks-flex-node missing-dir)" == "missing-dir" ]] || fail "binary installed into newly created directory is not executable"
+rm "$INSTALL_DIR/aks-flex-node"
+
 cp "$running_binary" "$INSTALL_DIR/aks-flex-node"
 "$INSTALL_DIR/aks-flex-node" 30 &
 RUNNING_PID=$!

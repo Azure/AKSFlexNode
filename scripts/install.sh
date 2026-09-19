@@ -263,6 +263,13 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
+    # Minimal and custom images aren't required to pre-create /usr/local/bin.
+    # Create the root-owned destination before atomic staging within it.
+    if ! install -d -o root -g root -m 0755 "$INSTALL_DIR"; then
+        log_error "Failed to create install directory $INSTALL_DIR"
+        return 1
+    fi
+
     (
         staged=""
         trap '[[ -z "$staged" ]] || rm -f "$staged"' EXIT

@@ -5,13 +5,11 @@ This guide shows how to create a public AKS cluster with no built-in CNI, instal
 > [!IMPORTANT]
 > This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
 >
-> **Status:** Validated supplemental scenario
+> **Status:** Experimental; Unbounded `v0.8.0` update requires end-to-end revalidation
 >
-> **Last validated:** Not recorded
+> **Last validated:** Not recorded for Unbounded `v0.8.0`
 >
-> **Version scope:** This lab pins Unbounded where it is installed and resolves AKS and agent versions during the procedure. Revalidate the complete combination before reuse.
->
-> **Host OS:** Ubuntu 24.04
+> **Version scope:** This lab pins Unbounded `v0.8.0` and AKS Flex Node `v0.1.11`. Revalidate the complete combination before reuse.
 >
 > **Architecture:** amd64
 
@@ -30,8 +28,8 @@ For unbounded-net concepts, custom resources, and operations, see the [Unbounded
 ## Prerequisites
 
 - An Azure subscription where you can create resource groups, VNets, VMs, AKS clusters, VNet peering, and the bootstrap RBAC needed by AKS Flex Node.
-- Azure CLI logged in to the target subscription.
-- `kubectl`, `curl`, `git`, `make`, `jq`, `python3`, and SSH/SCP tooling on the workstation that will run the lab commands.
+- Azure CLI 2.90.0 or later, signed in to the target subscription.
+- `kubectl`, `curl`, `tar`, `jq`, `python3`, and SSH/SCP tools in the Bash environment that runs the lab commands.
 - Non-overlapping CIDR ranges for the AKS VNet, Flex VM VNet, AKS pod CIDR, Flex pod CIDR, AKS service CIDR, and any connected networks.
 - A Flex VM image with Ubuntu 24.04 and sudo access.
 
@@ -115,6 +113,8 @@ VM_REGION="southcentralus"
 AKS_VNET="aks-public-peered-unbounded-vnet"
 FLEX_VNET="flex-public-peered-unbounded-vnet"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
+AKS_NODE_VM_SIZE="${AKS_NODE_VM_SIZE:-Standard_D4s_v6}"
+FLEX_VM_SIZE="${FLEX_VM_SIZE:-Standard_D4s_v5}"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -182,7 +182,7 @@ az aks create \
   --service-cidr 10.94.0.0/16 \
   --dns-service-ip 10.94.0.10 \
   --node-count 1 \
-  --node-vm-size Standard_D4s_v5 \
+  --node-vm-size "$AKS_NODE_VM_SIZE" \
   --generate-ssh-keys
 ```
 
@@ -197,75 +197,55 @@ kubectl get nodes -o wide
 
 ## Install Unbounded-Net
 
-Render and apply `unbounded-net` manifests. This installs the controller and the `unbounded-net-node` DaemonSet.
+Install the versioned `kubectl-unbounded` plugin and bootstrap the operator:
 
 ```bash
-# Check the latest release tag at https://github.com/Azure/unbounded/releases.
-UNBOUNDED_VERSION="v0.1.10"
+UNBOUNDED_VERSION="v0.8.0"
+case "$(uname -m)" in
+  x86_64) UNBOUNDED_ARCH=amd64 ;;
+  aarch64|arm64) UNBOUNDED_ARCH=arm64 ;;
+  *) echo "unsupported architecture" >&2; exit 1 ;;
+esac
 
-git clone --depth 1 --branch "$UNBOUNDED_VERSION" \
-  https://github.com/Azure/unbounded.git /tmp/unbounded
+curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
+tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
+sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
 
-cd /tmp/unbounded
-make VERSION="$UNBOUNDED_VERSION" net-manifests
+kubectl unbounded install --timeout 5m
+```
 
-kubectl apply --server-side --force-conflicts -f deploy/net/rendered/00-namespace.yaml
-kubectl apply --server-side --force-conflicts -f deploy/net/rendered/01-configmap.yaml
-kubectl apply --server-side --force-conflicts -f deploy/net/rendered/crd/
-kubectl apply --server-side --force-conflicts -f deploy/net/rendered/controller/
-kubectl apply --server-side --force-conflicts -f deploy/net/rendered/node/
+## Create Sites And Mesh Peering
+
+Use `site init` to create the AKS cluster Site and Flex Site, and then create a `SitePeering` for the existing private Layer 3 path.
+
+```bash
+kubectl unbounded site init \
+  --name flex-site \
+  --cluster-node-cidr 10.91.0.0/16 \
+  --cluster-pod-cidr 10.93.0.0/16 \
+  --node-cidr 10.92.0.0/16 \
+  --pod-cidr 10.95.0.0/16
+
+kubectl apply -f - <<'EOF'
+apiVersion: net.unbounded-cloud.io/v1alpha1
+kind: SitePeering
+metadata:
+  name: cluster-flex-private-l3
+spec:
+  sites:
+  - cluster
+  - flex-site
+  meshNodes: true
+  tunnelProtocol: Auto
+EOF
 ```
 
 Wait for the controller and node agent:
 
 ```bash
-kubectl -n unbounded-net rollout status deploy/unbounded-net-controller --timeout=5m
-kubectl -n unbounded-net rollout status ds/unbounded-net-node --timeout=5m
-```
-
-## Create Sites And Mesh Peering
-
-Create the AKS cluster site, the Flex site, and a `SitePeering` that tells `unbounded-net` the two sites are already privately reachable through VNet peering.
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: net.unbounded-cloud.io/v1alpha1
-kind: Site
-metadata:
-  name: aks-site
-spec:
-  nodeCidrs:
-  - 10.91.0.0/16
-  podCidrAssignments:
-  - assignmentEnabled: true
-    cidrBlocks:
-    - 10.93.0.0/16
-  manageCniPlugin: true
----
-apiVersion: net.unbounded-cloud.io/v1alpha1
-kind: Site
-metadata:
-  name: flex-site
-spec:
-  nodeCidrs:
-  - 10.92.0.0/16
-  podCidrAssignments:
-  - assignmentEnabled: true
-    cidrBlocks:
-    - 10.95.0.0/16
-  manageCniPlugin: true
----
-apiVersion: net.unbounded-cloud.io/v1alpha1
-kind: SitePeering
-metadata:
-  name: aks-flex-private-l3
-spec:
-  sites:
-  - aks-site
-  - flex-site
-  meshNodes: true
-  tunnelProtocol: Auto
-EOF
+kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout=5m
+kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=5m
 ```
 
 This topology does not need a public `GatewayPool`, and neither site needs a gateway pool assignment. AKS control-plane-to-Flex-kubelet traffic should use the VNet peering path, while pod-to-pod traffic is handled by the `unbounded-net` mesh selected by `tunnelProtocol: Auto`.
@@ -274,16 +254,16 @@ Verify site assignment:
 
 ```bash
 kubectl get sites,sitenodeslices,sitepeerings -o wide
-kubectl get nodes -L net.unbounded-cloud.io/site -o wide
+kubectl get nodes -L unbounded-cloud.io/site -o wide
 ```
 
 Expected result after the AKS node is reconciled:
 
 ```text
-site.net.unbounded-cloud.io/aks-site    ["10.91.0.0/16"]   ...   1   1
-site.net.unbounded-cloud.io/flex-site   ["10.92.0.0/16"]   ...
+site.unbounded-cloud.io/cluster     ["10.91.0.0/16"]   ...   1   1
+site.unbounded-cloud.io/flex-site   ["10.92.0.0/16"]   ...
 
-sitenodeslice.net.unbounded-cloud.io/aks-site-0   aks-site   0   1
+sitenodeslice.net.unbounded-cloud.io/cluster-0   cluster   0   1
 ```
 
 The Flex site gets a `SiteNodeSlice` after the Flex node joins.
@@ -298,7 +278,7 @@ az vm create \
   -n "$VM_NAME" \
   -l "$VM_REGION" \
   --image Ubuntu2404 \
-  --size Standard_D4s_v5 \
+  --size "$FLEX_VM_SIZE" \
   --vnet-name "$FLEX_VNET" \
   --subnet flex-subnet \
   --admin-username azureuser \
@@ -315,10 +295,11 @@ VM_PUBLIC_IP=$(az vm show -g "$VM_RG" -n "$VM_NAME" --show-details --query publi
 echo "private=${VM_PRIVATE_IP} public=${VM_PUBLIC_IP}"
 ```
 
-From the Flex VM, verify public AKS API reachability:
+Resolve the API server name in your Bash environment, and then test it from the flex node host:
 
 ```bash
-curl -k -i https://$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query fqdn -o tsv):443
+AKS_FQDN=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query fqdn -o tsv)
+ssh azureuser@"$VM_PUBLIC_IP" "curl -k -i https://${AKS_FQDN}:443"
 ```
 
 Expected unauthenticated response:
@@ -329,14 +310,16 @@ HTTP/2 401
 
 ## Generate Bootstrap Config
 
-Use the config helper from this repository. By default, the installer resolves the latest GitHub release. Set `AKS_FLEX_NODE_VERSION` only when you want to use a specific release tag.
+Use the config helper from this repository. Pin `AKS_FLEX_NODE_VERSION` when you need a repeatable run.
+
+> [!IMPORTANT]
+> This bootstrap-token-only path validates node bootstrap and the scenario dataplane. It doesn't configure the durable Azure identity required for reliable Azure Machine reconciliation. Use the [identity-backed operator workflow](../usages/operator-first-boot.md) when you need the complete Azure lifecycle path.
 
 ```bash
-# Optional: uncomment to use a specific release tag.
-# AKS_FLEX_NODE_VERSION="<release-tag>"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.1.11}"
 
 curl -fsSLo ./aks-flex-config \
-  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/aks-flex-config"
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/aks-flex-config"
 chmod +x ./aks-flex-config
 
 ./aks-flex-config setup-node-rbac \
@@ -416,10 +399,9 @@ ssh azureuser@"$VM_PUBLIC_IP"
 
 sudo su
 
-# Optional: uncomment to use a specific release tag.
-# AKS_FLEX_NODE_VERSION="<release-tag>"
+AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-v0.1.11}"
 
-curl -fsSL "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION:-main}/scripts/install.sh" \
+curl -fsSL "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/install.sh" \
   | AKS_FLEX_NODE_VERSION="${AKS_FLEX_NODE_VERSION:-}" bash
 
 install -d -m 0755 /etc/aks-flex-node
@@ -428,8 +410,11 @@ install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
 # Keep bootstrap-created nspawn rootfs paths traversable by non-root service users.
 umask 022
 aks-flex-node version
+aks-flex-node preflight --config /etc/aks-flex-node/config.json
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
+
+The Kubernetes Node can become `Ready` before the daemon receives its separate client certificate. If `aks-flex-node-agent` restarts while a daemon CSR remains pending, follow [Approve the daemon CSR when required](../usages/operator-first-boot.md#7-approve-the-daemon-csr-when-required).
 
 Return to your workstation shell after the node starts.
 
@@ -440,7 +425,7 @@ The `unbounded-net-node` DaemonSet is installed by the Unbounded manifests and s
 `unbounded-net` also creates a site-scoped managed kube-proxy DaemonSet for each site, for example:
 
 ```text
-unbounded-net/unbounded-net-kube-proxy-flex-site
+unbounded-system/unbounded-net-kube-proxy-flex-site
 ```
 
 Do not add `kubernetes.azure.com/cluster=<cluster-name>` for this unbounded-net setup. That label is only needed in the kubenet flow to make AKS-managed kube-proxy schedule on Flex Nodes. In this setup, kube-proxy for the Flex site is provided by `unbounded-net`.
@@ -470,8 +455,8 @@ kubectl get sites,sitenodeslices,sitepeerings -o wide
 Expected result:
 
 ```text
-site.net.unbounded-cloud.io/aks-site    ...   NODES   1   SLICES   1
-site.net.unbounded-cloud.io/flex-site   ...   NODES   1   SLICES   1
+site.unbounded-cloud.io/cluster     ...   NODES   1   SLICES   1
+site.unbounded-cloud.io/flex-site   ...   NODES   1   SLICES   1
 sitepeering.net.unbounded-cloud.io/aks-flex-private-l3   SITES   2   MESH NODES   true
 ```
 
@@ -484,8 +469,8 @@ kubectl get pods -A --field-selector spec.nodeName=<flex-vm-node-name> -o wide
 Expected pods:
 
 ```text
-unbounded-net   unbounded-net-node-...                    Running   <flex-vm-node-name>
-unbounded-net   unbounded-net-kube-proxy-flex-site-...     Running   <flex-vm-node-name>
+unbounded-system   unbounded-net-node-...                    Running   <flex-vm-node-name>
+unbounded-system   unbounded-net-kube-proxy-flex-site-...     Running   <flex-vm-node-name>
 ```
 
 Verify exec and logs through the AKS kubelet proxy path:
@@ -512,7 +497,7 @@ hello-from-flex
 Create test pods on AKS and Flex nodes:
 
 ```bash
-AKS_NODE=$(kubectl get nodes -l net.unbounded-cloud.io/site=aks-site -o jsonpath='{.items[0].metadata.name}')
+AKS_NODE=$(kubectl get nodes -l unbounded-cloud.io/site=cluster -o jsonpath='{.items[0].metadata.name}')
 
 kubectl run aks-peering-smoke \
   --image=busybox:1.36 \
@@ -572,9 +557,9 @@ HTTP/2 401
 Check `unbounded-net` resources:
 
 ```bash
-kubectl -n unbounded-net get pods -o wide
+kubectl -n unbounded-system get pods -o wide
 kubectl get sites,sitenodeslices,sitepeerings -o wide
-kubectl get node <flex-vm-node-name> -o yaml | grep -E 'podCIDR|net.unbounded-cloud.io/site'
+kubectl get node <flex-vm-node-name> -o yaml | grep -E 'podCIDR|unbounded-cloud.io/site'
 ```
 
 If `kubectl exec` or `kubectl logs` to a Flex pod fails with a `502` while the Flex node is `Ready`, check whether AKS nodes have a route for the Flex node CIDR through `unbounded0`:
@@ -594,3 +579,24 @@ If pod traffic between AKS and Flex pods fails:
 - Verify neither site has a `SiteGatewayPoolAssignment`.
 - Verify VNet peering has `allowForwardedTraffic=true` in both directions.
 - Verify NSGs allow node-to-node traffic between the AKS VNet and Flex VNet. With `tunnelProtocol: Auto`, Azure route tables for pod CIDRs are not required.
+
+## Clean up
+
+Delete the test pods if they still exist, and then delete both resource groups:
+
+```bash
+kubectl delete pod flex-exec-smoke aks-peering-smoke flex-peering-smoke \
+  --ignore-not-found --wait=false
+
+az group delete --name "$AKS_RG" --yes --no-wait
+az group delete --name "$VM_RG" --yes --no-wait
+```
+
+Confirm both deletions before removing local configuration or validation records:
+
+```bash
+az group exists --name "$AKS_RG"
+az group exists --name "$VM_RG"
+```
+
+Both commands should eventually return `false`.
