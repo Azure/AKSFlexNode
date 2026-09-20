@@ -100,6 +100,37 @@ These commands are invoked by systemd, generated worker configuration, or manage
 
 The last three commands are hidden from the top-level help because they are lifecycle implementation interfaces rather than general operator entry points.
 
+## Generated command surface
+
+The following table is generated from the Cobra command tree. Run `make docs-cli-generate` after changing a command, alias, flag, required setting, or default.
+
+<!-- BEGIN GENERATED CLI REFERENCE -->
+<!-- Run make docs-cli-generate; do not edit this section manually. -->
+
+| Usage | Description | Aliases | Cobra visibility | Local flags |
+| --- | --- | --- | --- | --- |
+| `aks-flex-node agent-upgrade [flags]` | Activate this executable as the host agent daemon | — | hidden | `--preflight` |
+| `aks-flex-node completion` | Generate the autocompletion script for the specified shell | — | listed | — |
+| `aks-flex-node completion bash` | Generate the autocompletion script for bash | — | listed | `--no-descriptions` |
+| `aks-flex-node completion fish [flags]` | Generate the autocompletion script for fish | — | listed | `--no-descriptions` |
+| `aks-flex-node completion powershell [flags]` | Generate the autocompletion script for powershell | — | listed | `--no-descriptions` |
+| `aks-flex-node completion zsh [flags]` | Generate the autocompletion script for zsh | — | listed | `--no-descriptions` |
+| `aks-flex-node daemon [flags]` | Run the AKS Flex Node daemon | `agent` | listed | `--config` (required) |
+| `aks-flex-node fetch-bootstrap-data [flags]` | Fetch current FlexNodes join data from AKS RP | — | listed | `--agent-pool-name` (required); `--api-version` (default: `2026-05-02-preview`); `--auth` (required); `--authority-host` (default: `https://login.microsoftonline.com`); `--cluster-resource-id` (required); `--msi-client-id`; `--output` (required); `--resource-manager-endpoint` (default: `https://management.azure.com`); `--sp-client-certificate-file`; `--sp-client-credential-file`; `--sp-client-id`; `--sp-client-secret-file`; `--sp-tenant-id` |
+| `aks-flex-node help [command]` | Help about any command | — | listed | — |
+| `aks-flex-node nspawn-lifecycle` | Run internal nspawn lifecycle hooks | — | hidden | — |
+| `aks-flex-node nspawn-lifecycle post-start MACHINE` | Reconcile in-machine state after machine start | — | hidden | — |
+| `aks-flex-node nspawn-lifecycle pre-start MACHINE` | Refresh host-side nspawn state before machine start | — | hidden | — |
+| `aks-flex-node nspawn-lifecycle reconcile MACHINE` | Restart a machine and run its lifecycle reconciliation | — | hidden | — |
+| `aks-flex-node preflight [flags]` | Run non-mutating preflight checks | — | listed | `--config` (required); `--fail-on-warnings`; `--ignore-preflight-errors`; `--output` (default: `text`) |
+| `aks-flex-node recover-agent-upgrade [flags]` | Restore the last-known-good agent after a failed upgrade | — | hidden | `--message` |
+| `aks-flex-node reset` | Remove AKS node configuration | `unbootstrap` | listed | — |
+| `aks-flex-node start [flags]` | Bootstrap the node and start the agent service | `bootstrap` | listed | `--config` (required) |
+| `aks-flex-node token` | Kubernetes exec based authentication provider. | — | listed | — |
+| `aks-flex-node token kubelogin [flags]` | Retrieves token via Azure/kubelogin. | — | listed | `--client-certificate-file`; `--pop-claims`; `--pop-enabled`; `--server-id` (default: `6dae42f8-4368-4678-94ff-3960e28e3630`) |
+| `aks-flex-node version` | Show version information | — | listed | — |
+<!-- END GENERATED CLI REFERENCE -->
+
 ## See also
 
 - [Configuration](configuration.md)
