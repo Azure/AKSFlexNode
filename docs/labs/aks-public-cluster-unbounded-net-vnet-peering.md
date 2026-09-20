@@ -13,6 +13,8 @@ This guide shows how to create a public AKS cluster with no built-in CNI, instal
 >
 > **Validated scope:** Cross-region VNet peering, Unbounded Site setup, managed-identity Azure Machine registration, Flex Node readiness, and bidirectional cross-node pod traffic passed.
 >
+> **Host OS:** Ubuntu 24.04.4
+>
 > **Architecture:** amd64
 
 The validated shape is intentionally different from the WireGuard gateway lab:

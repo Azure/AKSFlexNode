@@ -52,6 +52,12 @@ make vet
 
 # Verify and tidy dependencies
 make verify
+
+# Check generated CLI docs, links, safety rules, and stable URLs
+make docs-check
+
+# Report labs with stale validation dates
+make docs-freshness
 ```
 
 ### Testing
