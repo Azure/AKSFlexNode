@@ -188,3 +188,39 @@ func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 		}
 	}
 }
+
+// TestRecoveryScriptPathForPrefix covers the recovery script location.
+//
+// It lives beside the blue/green binaries under the host prefix, so on a host
+// with a read-only /usr it must move with them. The default reproduces the
+// historical path that is baked into the embedded recovery unit.
+func TestRecoveryScriptPathForPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		prefix string
+		want   string
+	}{
+		{
+			name:   "default matches the embedded placeholder",
+			prefix: "",
+			want:   recoveryScriptPath,
+		},
+		{
+			name:   "custom prefix relocates the script",
+			prefix: "/opt/aks-flex-node",
+			want:   "/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-recovery.sh",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := recoveryScriptPathForPrefix(tt.prefix); got != tt.want {
+				t.Errorf("recoveryScriptPathForPrefix(%q) = %q, want %q", tt.prefix, got, tt.want)
+			}
+		})
+	}
+}

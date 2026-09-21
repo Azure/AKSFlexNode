@@ -14,15 +14,22 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const (
 	ServiceUnitName         = "aks-flex-node-agent.service"
 	recoveryServiceUnitName = "aks-flex-node-agent-recovery.service"
-	recoveryScriptPath      = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
-	systemdSystemDir        = "/etc/systemd/system"
-	arcSystemdDependency    = "himdsd.service"
+	// recoveryScriptPath is the path baked into the embedded recovery unit.
+	// It is the substitution placeholder rather than the install location: the
+	// actual path is resolved from the configured host prefix, because /usr is
+	// read-only on some hosts. Keep it in sync with the embedded asset.
+	recoveryScriptPath = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
+	// systemdSystemDir is not prefix-relative. Units must live where systemd
+	// looks for them, and /etc is writable even when /usr is not.
+	systemdSystemDir     = "/etc/systemd/system"
+	arcSystemdDependency = "himdsd.service"
 )
 
 //go:embed assets/aks-flex-node-agent.service
@@ -63,14 +70,27 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 	return nil
 }
 
+// recoveryScriptPathForPrefix returns where the recovery script is installed
+// for a host install prefix. The default prefix reproduces the historical
+// location, so hosts that do not set one are unaffected.
+func recoveryScriptPathForPrefix(prefix string) string {
+	return filepath.Join(goalstates.ResolveHostPaths(prefix).Prefix, "lib", "aks-flex-node", "aks-flex-node-recovery.sh")
+}
+
+// installedRecoveryScriptPath resolves the recovery script location for callers
+// that have no config in hand, using the prefix this agent was installed with.
+func installedRecoveryScriptPath() string {
+	return recoveryScriptPathForPrefix(hostPrefixFromInstalledConfig())
+}
+
 func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
 	return ensureAgentUpgradeServiceAssetsAt(
 		ctx,
 		log,
-		defaultAgentUpgradePaths(),
+		agentUpgradePathsForPrefix(cfg.Agent.HostPrefix),
 		agentServiceOptionsFromConfig(cfg),
 		systemdSystemDir,
-		recoveryScriptPath,
+		recoveryScriptPathForPrefix(cfg.Agent.HostPrefix),
 		utilexec.ReloadSystemd,
 	)
 }
@@ -199,7 +219,7 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 	for _, path := range []string{
 		filepath.Join(systemdSystemDir, ServiceUnitName),
 		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
-		recoveryScriptPath,
+		installedRecoveryScriptPath(),
 		defaultAgentUpgradePaths().SignalPath,
 	} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

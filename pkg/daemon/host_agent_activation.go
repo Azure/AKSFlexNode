@@ -83,7 +83,7 @@ func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationServ
 		paths:          paths,
 		state:          state,
 		systemdDir:     systemdSystemDir,
-		recoveryScript: recoveryScriptPath,
+		recoveryScript: installedRecoveryScriptPath(),
 		serviceOptions: serviceOptions,
 		inspectService: inspectAgentServiceActive,
 	}, paths, nil
