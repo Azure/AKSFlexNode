@@ -102,7 +102,7 @@ The agent reads a JSON config file. The config has these top-level sections:
 
 At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap; Arc requires bootstrap data fetched from AKS RP.
 
-See [Configuration](usages/configuration.md) for the option reference and sample configs.
+See [Configuration](usage/configuration.md) for the option reference and sample configs.
 
 ## Join Flows
 

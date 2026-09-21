@@ -262,7 +262,7 @@ AKSFlexNode/
 │   ├── logger/              # Logging infrastructure
 │   └── utils/               # Utility functions
 ├── docs/                    # Documentation
-│   ├── usages/              # Usage scenario guides
+│   ├── usage/               # Usage scenario guides
 │   └── design/              # Detailed design topics
 ├── hack/                    # E2E and local development tooling
 ├── scripts/                 # Installation scripts
