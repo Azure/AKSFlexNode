@@ -9,7 +9,7 @@
 # A publisher can replace the marker in write_embedded_base_config with a
 # cluster/pool-specific partial config. When --fetch-bootstrap-data is used with
 # explicit cluster and pool coordinates, the raw script starts from {} instead.
-# Usage guide: docs/usages/operator-first-boot.md
+# Usage guide: docs/usage/operator-first-boot.md
 
 set -euo pipefail
 umask 077
