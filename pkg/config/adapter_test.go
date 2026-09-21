@@ -625,3 +625,33 @@ func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 		t.Fatalf("CNI.PluginVersion=%q, want empty", ac.CNI.PluginVersion)
 	}
 }
+
+// TestToAgentConfigMapsHostPrefix covers the host install prefix passthrough.
+//
+// Without it a host that mounts /usr read-only has no way to tell the agent
+// library where its own binaries may be written.
+func TestToAgentConfigMapsHostPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		prefix string
+		want   string
+	}{
+		{name: "unset stays empty so the library default applies", prefix: "", want: ""},
+		{name: "writable prefix is passed through", prefix: "/opt/aks-flex-node", want: "/opt/aks-flex-node"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{}
+			cfg.Agent.HostPrefix = tt.prefix
+
+			if got := ToAgentConfig(cfg, "kube1").HostPrefix; got != tt.want {
+				t.Errorf("HostPrefix = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

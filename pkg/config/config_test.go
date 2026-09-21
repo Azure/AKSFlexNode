@@ -2798,3 +2798,40 @@ func TestIsBootstrapTokenConfigured(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentConfigValidateHostPrefix covers validation of the host install
+// prefix. The rules are owned by the agent library; this asserts they are
+// enforced here rather than surfacing later as a confusing path error.
+func TestAgentConfigValidateHostPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		prefix  string
+		wantErr bool
+	}{
+		{name: "empty selects the default", prefix: "", wantErr: false},
+		{name: "absolute writable prefix", prefix: "/opt/aks-flex-node", wantErr: false},
+		{name: "relative path rejected", prefix: "opt/aks-flex-node", wantErr: true},
+		{name: "filesystem root rejected", prefix: "/", wantErr: true},
+		{name: "unnormalized path rejected", prefix: "/opt/../opt/aks-flex-node/", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &AgentConfig{LogLevel: "info", HostPrefix: tt.prefix}
+			err := cfg.validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("validate() = nil, want an error for prefix %q", tt.prefix)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("validate() = %v, want nil for prefix %q", err, tt.prefix)
+			}
+			if tt.wantErr && err != nil && !strings.Contains(err.Error(), "agent.hostPrefix") {
+				t.Errorf("error %q should name the offending field", err)
+			}
+		})
+	}
+}

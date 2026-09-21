@@ -43,6 +43,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
+		HostPrefix:            cfg.Agent.HostPrefix,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
 		AdditionalHostMounts:  cfg.Bootstrap.AdditionalHostMounts,
