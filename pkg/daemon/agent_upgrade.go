@@ -17,6 +17,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -32,10 +33,70 @@ const (
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
 
+// defaultAgentUpgradePaths resolves the host-side agent upgrade layout for
+// callers that have no config in hand, such as the systemd recovery entry
+// point.
+//
+// The prefix is read from the installed config rather than hardcoded. The
+// daemon is started by systemd and cannot inherit it from the environment that
+// ran bootstrap, and a host that mounts /usr read-only, such as Azure Container
+// Linux, cannot use the default prefix at all.
+//
+// Prefer agentUpgradePathsForPrefix where a config is already available.
 func defaultAgentUpgradePaths() agentUpgradePaths {
-	const binaryDir = "/usr/local/lib/aks-flex-node"
+	return agentUpgradePathsForPrefix(hostPrefixFromInstalledConfig())
+}
+
+// hostPrefixFromInstalledConfig reads the host install prefix from the config
+// this agent was installed with.
+//
+// It deliberately reads AKS Flex Node's own config rather than the agent
+// library's applied config: bootstrap here never writes the latter, so relying
+// on it silently resolves the default prefix and then fails to find a binary
+// that was installed somewhere else entirely.
+//
+// An unreadable or absent config yields the empty prefix, which selects the
+// default, and that is what a host installed before the prefix existed has on
+// disk.
+func hostPrefixFromInstalledConfig() string {
+	return hostPrefixFromConfigFile(filepath.Join(config.ConfigDir, "config.json"))
+}
+
+// hostPrefixFromConfigFile is split out so the parsing rules can be tested
+// without writing to the real system config directory.
+func hostPrefixFromConfigFile(path string) string {
+	data, err := os.ReadFile(path) //#nosec G304 -- trusted path: config.ConfigDir joined with a literal name
+	if err != nil {
+		return ""
+	}
+
+	// Only the prefix is needed, and an unparsable config must not prevent
+	// recovery from running, so decode leniently into a minimal shape.
+	var parsed struct {
+		Agent struct {
+			HostPrefix string `json:"hostPrefix"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return ""
+	}
+
+	return parsed.Agent.HostPrefix
+}
+
+// agentUpgradePathsForPrefix builds the upgrade layout for an installation
+// prefix. The default prefix reproduces the historical absolute locations, so
+// hosts that do not set one are unaffected.
+//
+// SignalPath stays under /etc because that is writable even on hosts with a
+// read-only /usr, and the signal must survive a rollback to a binary that
+// resolves a different prefix.
+func agentUpgradePathsForPrefix(prefix string) agentUpgradePaths {
+	hostPaths := goalstates.ResolveHostPaths(prefix)
+	binaryDir := filepath.Join(hostPaths.Prefix, "lib", "aks-flex-node")
+
 	return agentUpgradePaths{
-		BinaryPath:   "/usr/local/bin/aks-flex-node",
+		BinaryPath:   filepath.Join(hostPaths.BinDir, "aks-flex-node"),
 		BluePath:     filepath.Join(binaryDir, "aks-flex-node-blue"),
 		GreenPath:    filepath.Join(binaryDir, "aks-flex-node-green"),
 		CurrentPath:  filepath.Join(binaryDir, "aks-flex-node-current"),

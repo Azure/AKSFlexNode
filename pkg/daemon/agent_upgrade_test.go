@@ -499,3 +499,108 @@ func TestFilesHaveEqualSHA256(t *testing.T) {
 		t.Fatalf("filesHaveEqualSHA256 = %v, %v", equal, err)
 	}
 }
+
+// TestAgentUpgradePathsForPrefix covers the host layout used by agent upgrade.
+//
+// The default must reproduce the absolute paths this code used before the
+// prefix became configurable, so existing hosts are unaffected. A custom prefix
+// exists for hosts that mount /usr read-only, such as Azure Container Linux,
+// where the default is not writable at all.
+func TestAgentUpgradePathsForPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		prefix       string
+		wantBinary   string
+		wantBlue     string
+		wantLastGood string
+	}{
+		{
+			name:         "empty prefix keeps the historical layout",
+			prefix:       "",
+			wantBinary:   "/usr/local/bin/aks-flex-node",
+			wantBlue:     "/usr/local/lib/aks-flex-node/aks-flex-node-blue",
+			wantLastGood: "/usr/local/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+		{
+			name:         "explicit default matches the empty prefix",
+			prefix:       "/usr/local",
+			wantBinary:   "/usr/local/bin/aks-flex-node",
+			wantBlue:     "/usr/local/lib/aks-flex-node/aks-flex-node-blue",
+			wantLastGood: "/usr/local/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+		{
+			name:         "custom prefix relocates every binary",
+			prefix:       "/opt/aks-flex-node",
+			wantBinary:   "/opt/aks-flex-node/bin/aks-flex-node",
+			wantBlue:     "/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-blue",
+			wantLastGood: "/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := agentUpgradePathsForPrefix(tt.prefix)
+			if paths.BinaryPath != tt.wantBinary {
+				t.Errorf("BinaryPath = %q, want %q", paths.BinaryPath, tt.wantBinary)
+			}
+			if paths.BluePath != tt.wantBlue {
+				t.Errorf("BluePath = %q, want %q", paths.BluePath, tt.wantBlue)
+			}
+			if paths.LastGoodPath != tt.wantLastGood {
+				t.Errorf("LastGoodPath = %q, want %q", paths.LastGoodPath, tt.wantLastGood)
+			}
+
+			// The signal must stay on a filesystem that is writable even when
+			// /usr is read-only, so it does not move with the prefix.
+			if paths.SignalPath != "/etc/aks-flex-node/agent-upgrade-signal.json" {
+				t.Errorf("SignalPath = %q, want it to stay under /etc", paths.SignalPath)
+			}
+		})
+	}
+}
+
+// TestHostPrefixFromInstalledConfig covers prefix recovery for callers that
+// have no config in hand, such as the systemd recovery entry point.
+//
+// Reading AKS Flex Node's own config matters: bootstrap never writes the agent
+// library's applied config, so resolving the prefix from that would silently
+// fall back to the default and then fail to find a binary installed elsewhere.
+func TestHostPrefixFromInstalledConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		write   bool
+		want    string
+	}{
+		{name: "absent config selects the default", write: false, want: ""},
+		{name: "unparsable config selects the default", write: true, content: "{not json", want: ""},
+		{name: "config without a prefix selects the default", write: true, content: `{"agent":{}}`, want: ""},
+		{
+			name:    "configured prefix is returned",
+			write:   true,
+			content: `{"agent":{"hostPrefix":"/opt/aks-flex-node"}}`,
+			want:    "/opt/aks-flex-node",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.json")
+			if tt.write {
+				if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+					t.Fatalf("WriteFile: %v", err)
+				}
+			}
+
+			got := hostPrefixFromConfigFile(path)
+			if got != tt.want {
+				t.Errorf("hostPrefixFromConfigFile = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
