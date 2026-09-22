@@ -1,24 +1,199 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to release"
+      version:
+        description: "SemVer release tag to create or resume (for example, v0.3.0-alpha.1)"
         required: true
+        type: string
+      target_sha:
+        description: "Full commit SHA validated by both the dry-run and publishing runs"
+        required: true
+        type: string
+      dry_run:
+        description: "Validate and build without creating a tag or publishing"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
+  checks: read
   contents: read
 
-env:
-  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Validate release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      target_sha: ${{ steps.release.outputs.target_sha }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      publish: ${{ steps.release.outputs.publish }}
+      tag_exists: ${{ steps.release.outputs.tag_exists }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate release
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REQUESTED_TARGET_SHA: ${{ inputs.target_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          version="${REQUESTED_VERSION}"
+          if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "Invalid release version: ${version}" >&2
+            echo "Expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.NUMBER" >&2
+            exit 1
+          fi
+
+          publish=true
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            publish=false
+          fi
+          if [[ "${publish}" == "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Publishing runs must be dispatched from main, not ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          requested_target_sha="${REQUESTED_TARGET_SHA}"
+          if [[ ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "target_sha must be a full 40-character lowercase commit SHA" >&2
+            exit 1
+          fi
+
+          target_sha="$(git rev-parse HEAD)"
+          tag_exists=false
+          if git show-ref --verify --quiet "refs/tags/${version}"; then
+            tag_exists=true
+            tagged_target_sha="$(git rev-list -n 1 "${version}")"
+            if [[ "${target_sha}" != "${tagged_target_sha}" ]]; then
+              echo "Existing tag ${version} points to ${tagged_target_sha}, not requested commit ${target_sha}" >&2
+              exit 1
+            fi
+          fi
+
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${target_sha}" refs/remotes/origin/main; then
+            if [[ "${publish}" == "true" ]]; then
+              echo "Release commit ${target_sha} is not reachable from main" >&2
+              exit 1
+            fi
+            echo "::warning::Dry-run commit ${target_sha} is not reachable from main"
+          fi
+
+          git show "${target_sha}:CHANGELOG.md" > changelog.md
+          bare_version="${version#v}"
+          prerelease=false
+          if [[ "${version}" == *-* ]]; then
+            prerelease=true
+            if ! grep -Fqx '## [Unreleased]' changelog.md; then
+              echo "CHANGELOG.md does not contain an Unreleased section" >&2
+              exit 1
+            fi
+          else
+            mapfile -t release_headings < <(grep -E "^## \\[${bare_version//./\\.}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" changelog.md || true)
+            if [[ "${#release_headings[@]}" -ne 1 ]]; then
+              echo "CHANGELOG.md must contain exactly one dated ${bare_version} release section" >&2
+              exit 1
+            fi
+            release_date="${release_headings[0]##* - }"
+            if [[ "$(date -u -d "${release_date}" +%F 2>/dev/null || true)" != "${release_date}" ]]; then
+              echo "CHANGELOG.md contains an invalid release date: ${release_date}" >&2
+              exit 1
+            fi
+            comparison_prefix="[${bare_version}]: https://github.com/${GITHUB_REPOSITORY}/compare/"
+            mapfile -t comparison_links < <(grep -F "${comparison_prefix}" changelog.md || true)
+            if [[ "${#comparison_links[@]}" -ne 1 || "${comparison_links[0]}" != "${comparison_prefix}"*"...${version}" ]]; then
+              echo "CHANGELOG.md must contain exactly one comparison link ending at ${version}" >&2
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=${version}"
+            echo "target_sha=${target_sha}"
+            echo "prerelease=${prerelease}"
+            echo "publish=${publish}"
+            echo "tag_exists=${tag_exists}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release validation"
+            echo "- Version: \`${version}\`"
+            echo "- Commit: \`${target_sha}\`"
+            echo "- Prerelease: \`${prerelease}\`"
+            echo "- Publish: \`${publish}\`"
+            echo "- Existing tag: \`${tag_exists}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  quality-gate:
+    name: Verify required checks
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify checks for release commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          required_checks=(
+            "Build"
+            "Test"
+            "Lint"
+            "Security Scan"
+            "Code Quality Checks"
+          )
+
+          for attempt in {1..80}; do
+            check_runs="$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs?filter=latest&per_page=100")"
+            all_successful=true
+
+            for check_name in "${required_checks[@]}"; do
+              conclusion="$(jq -r \
+                --arg name "${check_name}" \
+                '[.check_runs[] | select(.name == $name and .app.slug == "github-actions")][0].conclusion // "pending"' \
+                <<< "${check_runs}")"
+              echo "${check_name}: ${conclusion}"
+              if [[ "${conclusion}" != "success" ]]; then
+                all_successful=false
+              fi
+            done
+
+            if [[ "${all_successful}" == "true" ]]; then
+              echo "All required checks passed for ${TARGET_SHA}."
+              exit 0
+            fi
+
+            if [[ "${attempt}" -lt 80 ]]; then
+              echo "Required checks are not complete; retrying in 15 seconds."
+              sleep 15
+            fi
+          done
+
+          echo "Required checks did not pass for ${TARGET_SHA} within 20 minutes." >&2
+          exit 1
+
   build:
-    name: Build and Release
+    name: Build binary (${{ matrix.os }}/${{ matrix.arch }})
+    needs:
+      - prepare
+      - quality-gate
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -31,9 +206,10 @@ jobs:
             goarch: arm64
 
     steps:
-      - name: Checkout code
+      - name: Checkout release commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -43,32 +219,21 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Validate version
-        run: |
-          set -euo pipefail
-          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
-            echo "Invalid release version: ${RELEASE_VERSION}" >&2
-            exit 1
-          fi
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.goarch }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          GIT_COMMIT=$(git rev-parse --short HEAD)
-          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          git_commit="$(git rev-parse --short HEAD)"
+          build_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          ldflags="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${RELEASE_VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${git_commit} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${build_date} -w -s"
+          binary_name="aks-flex-node-${GOOS}-${GOARCH}"
 
-          LDFLAGS="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${RELEASE_VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_DATE} -w -s"
-
-          BINARY_NAME="aks-flex-node-${GOOS}-${GOARCH}"
-
-          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/aks-flex-node
-
-          # Create tarball
-          tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"
-          echo "ASSET=${BINARY_NAME}.tar.gz" >> "$GITHUB_ENV"
+          go build -ldflags "${ldflags}" -o "${binary_name}" ./cmd/aks-flex-node
+          tar -czf "${binary_name}.tar.gz" "${binary_name}"
+          echo "ASSET=${binary_name}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -76,25 +241,140 @@ jobs:
           name: binaries-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ env.ASSET }}
 
-  release:
-    name: Create Release
-    needs: build
+  authorize:
+    name: Approve release
+    if: needs.prepare.outputs.publish == 'true'
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Confirm approval
+        run: echo "Release approved."
+
+  tag:
+    name: Ensure release tag
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish == 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.authorize.result == 'success'
+    needs:
+      - prepare
+      - build
+      - authorize
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          persist-credentials: false
-
-      - name: Validate version
+      - name: Create annotated tag
+        if: needs.prepare.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
         run: |
           set -euo pipefail
-          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
-            echo "Invalid release version: ${RELEASE_VERSION}" >&2
-            exit 1
-          fi
+          tag_object_sha="$(gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f "tag=${RELEASE_VERSION}" \
+            -f "message=Release ${RELEASE_VERSION}" \
+            -f "object=${TARGET_SHA}" \
+            -f "type=commit" \
+            --jq .sha)"
+
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${RELEASE_VERSION}" \
+            -f "sha=${tag_object_sha}"
+
+      - name: Report existing tag
+        if: needs.prepare.outputs.tag_exists == 'true'
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: echo "Using existing tag ${RELEASE_VERSION}."
+
+  controller-image-dry-run:
+    name: Build controller image (dry run)
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish != 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success'
+    needs:
+      - prepare
+      - build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/controller-image-build.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.target_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      push_image: false
+
+  dry-run-complete:
+    name: Complete dry run
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish != 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.controller-image-dry-run.result == 'success'
+    needs:
+      - prepare
+      - build
+      - controller-image-dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report dry run
+        run: echo "Dry run complete; no tag, image, or release was published."
+
+  controller-image:
+    name: Publish controller image
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish == 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.tag.result == 'success'
+    needs:
+      - prepare
+      - tag
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/controller-image-build.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.target_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      push_image: true
+
+  release:
+    name: Publish GitHub Release
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish == 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.tag.result == 'success' &&
+      needs.controller-image.result == 'success'
+    needs:
+      - prepare
+      - build
+      - tag
+      - controller-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          persist-credentials: false
 
       - name: Download artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -104,21 +384,44 @@ jobs:
 
       - name: Consolidate artifacts
         run: |
+          set -euo pipefail
           mkdir -p release-assets
           find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+
+          expected_assets=(
+            aks-flex-node-linux-amd64.tar.gz
+            aks-flex-node-linux-arm64.tar.gz
+          )
+          for asset in "${expected_assets[@]}"; do
+            if [[ ! -f "release-assets/${asset}" ]]; then
+              echo "Missing release asset: ${asset}" >&2
+              exit 1
+            fi
+          done
+          if [[ "$(find release-assets -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" -ne "${#expected_assets[@]}" ]]; then
+            echo "Unexpected release archive found" >&2
+            exit 1
+          fi
           ls -lh release-assets/
 
       - name: Generate checksums
         run: |
+          set -euo pipefail
           cd release-assets
-          sha256sum *.tar.gz > checksums.txt
+          sha256sum \
+            aks-flex-node-linux-amd64.tar.gz \
+            aks-flex-node-linux-arm64.tar.gz \
+            > checksums.txt
           cat checksums.txt
 
-      - name: Create Release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
+          changelog_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/CHANGELOG.md"
           cat > release-notes.md <<EOF
           ## AKS Flex Node ${RELEASE_VERSION}
 
@@ -147,14 +450,17 @@ jobs:
 
           ### What's Changed
 
-          <!-- Add your changelog here -->
+          See the [${RELEASE_VERSION} changelog](${changelog_url}).
           EOF
 
-          create_flags=(--verify-tag --latest=false)
-          edit_flags=(--latest=false)
-          if [[ "${RELEASE_VERSION}" =~ -(alpha|beta|rc)([.-]|$) ]]; then
-            create_flags+=(--prerelease)
-            edit_flags+=(--prerelease)
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            create_flags=(--prerelease --latest=false)
+            edit_flags=(--prerelease --latest=false)
+          else
+            # Let GitHub select Latest automatically for new stable releases and preserve
+            # the current badge when resuming an existing release.
+            create_flags=(--prerelease=false)
+            edit_flags=(--prerelease=false)
           fi
 
           if gh release view "${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
@@ -175,5 +481,6 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --title "Release ${RELEASE_VERSION}" \
               --notes-file release-notes.md \
+              --verify-tag \
               "${create_flags[@]}"
           fi
