@@ -229,7 +229,11 @@ jobs:
 
   controller-image:
     name: Build controller image
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      needs.prepare.result == 'success' &&
+      needs.tag.result == 'success'
     needs:
       - prepare
       - tag
