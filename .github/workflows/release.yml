@@ -310,7 +310,7 @@ jobs:
       - build
     permissions:
       contents: read
-    uses: ./.github/workflows/controller-image.yml
+    uses: ./.github/workflows/controller-image-build.yml
     with:
       source_ref: ${{ needs.prepare.outputs.target_sha }}
       version: ${{ needs.prepare.outputs.version }}
@@ -346,7 +346,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/controller-image.yml
+    uses: ./.github/workflows/controller-image-build.yml
     with:
       source_ref: ${{ needs.prepare.outputs.target_sha }}
       version: ${{ needs.prepare.outputs.version }}

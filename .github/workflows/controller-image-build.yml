@@ -1,0 +1,94 @@
+name: Build AKS Flex Controller Image
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Git ref or commit to build"
+        required: true
+        type: string
+      version:
+        description: "Version used for image tags and build metadata"
+        required: true
+        type: string
+      push_image:
+        description: "Push the image to GHCR"
+        required: true
+        type: boolean
+
+env:
+  IMAGE_PACKAGE: aks-flex-controller
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  build:
+    name: Build controller image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Configure Docker Buildx
+        run: |
+          set -euo pipefail
+          docker buildx create --name aks-flex-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Login to GHCR
+        if: inputs.push_image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build image
+        env:
+          IMAGE_VERSION: ${{ inputs.version }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+        run: |
+          set -euo pipefail
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/${IMAGE_PACKAGE}"
+          commit_sha="$(git rev-parse HEAD)"
+          short_sha="${commit_sha:0:12}"
+          build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          tags=(
+            "${image}:sha-${short_sha}"
+            "${image}:${IMAGE_VERSION}"
+          )
+          labels=(
+            "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            "org.opencontainers.image.revision=${commit_sha}"
+            "org.opencontainers.image.created=${build_time}"
+            "org.opencontainers.image.title=aks-flex-controller"
+            "org.opencontainers.image.description=In-cluster AKS Flex Node machine endpoint and daemon CSR approver"
+            "org.opencontainers.image.version=${IMAGE_VERSION}"
+          )
+
+          build_args=(
+            --file Dockerfile.aks-flex-controller
+            --platform "${PLATFORMS}"
+            --build-arg "VERSION=${IMAGE_VERSION}"
+            --build-arg "GIT_COMMIT=${short_sha}"
+            --build-arg "BUILD_TIME=${build_time}"
+          )
+
+          for tag in "${tags[@]}"; do
+            build_args+=(--tag "${tag}")
+          done
+          for label in "${labels[@]}"; do
+            build_args+=(--label "${label}")
+          done
+
+          if [[ "${PUSH_IMAGE}" == "true" ]]; then
+            build_args+=(--push)
+          fi
+
+          docker buildx build "${build_args[@]}" .
