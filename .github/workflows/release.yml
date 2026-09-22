@@ -10,6 +10,10 @@ on:
         description: "SemVer release tag to create or resume (for example, v0.3.0-alpha.1)"
         required: true
         type: string
+      target_sha:
+        description: "Full commit SHA validated by both the dry-run and publishing runs"
+        required: true
+        type: string
       dry_run:
         description: "Validate and build without creating a tag or publishing"
         required: true
@@ -37,7 +41,7 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -45,6 +49,7 @@ jobs:
         id: release
         env:
           REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          REQUESTED_TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: |
           set -euo pipefail
@@ -56,12 +61,21 @@ jobs:
             exit 1
           fi
 
+          requested_target_sha="${REQUESTED_TARGET_SHA}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "target_sha must be a full 40-character lowercase commit SHA" >&2
+            exit 1
+          fi
+
+          target_sha="$(git rev-parse HEAD)"
           tag_exists=false
           if git show-ref --verify --quiet "refs/tags/${version}"; then
             tag_exists=true
-            target_sha="$(git rev-list -n 1 "${version}")"
-          else
-            target_sha="$(git rev-parse HEAD)"
+            tagged_target_sha="$(git rev-list -n 1 "${version}")"
+            if [[ "${target_sha}" != "${tagged_target_sha}" ]]; then
+              echo "Existing tag ${version} points to ${tagged_target_sha}, not requested commit ${target_sha}" >&2
+              exit 1
+            fi
           fi
 
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${tag_exists}" != "true" ]]; then
@@ -248,11 +262,19 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: needs.prepare.outputs.publish == 'true'
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish == 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.tag.result == 'success' &&
+      (needs.controller-image.result == 'success' ||
+       (github.event_name == 'push' && needs.controller-image.result == 'skipped'))
     needs:
       - prepare
       - build
       - tag
+      - controller-image
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -323,9 +323,16 @@ After the release pull request is merged, run the **Release** workflow from the 
 - Stable: `v0.3.0`
 - Prerelease: `v0.3.0-alpha.1`, `v0.3.0-beta.1`, or `v0.3.0-rc.1`
 
-Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled. The publishing run:
+Record the full commit SHA from an up-to-date `main` branch, then supply that same `target_sha` to both workflow runs:
 
-1. Selects the current `main` commit, or the immutable commit of an existing tag when resuming a release.
+```bash
+git fetch origin main
+git rev-parse origin/main
+```
+
+Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled and the same version and `target_sha`. The publishing run:
+
+1. Checks out the explicitly selected commit, or verifies that an existing tag points to that commit when resuming a release.
 2. Validates the version and changelog.
 3. Builds release artifacts.
 4. Creates an annotated tag when it does not already exist.
