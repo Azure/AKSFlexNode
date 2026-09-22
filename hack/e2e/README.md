@@ -21,9 +21,9 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 
 The target environment must publish **Azure Kubernetes Service Flex Node Agent
 Role** (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) before running E2E.
-Publication is currently partial (canary), not a global availability or official
-release E2E guarantee. Infrastructure deployment and Arc onboarding check role
-visibility and stop if unavailable, without Contributor/admin fallback.
+Infrastructure deployment and Arc onboarding check role visibility and stop if
+unavailable, without Contributor/admin fallback. Role visibility alone does not
+guarantee end-to-end support in a particular agent release or environment.
 
 For fresh infrastructure, Bicep grants the MSI host only this role on the ARM
 FlexNodes pool. The operator/runner assigns the same role at the same pool scope
@@ -40,20 +40,10 @@ permissions. The host bootstrap script never assigns its own roles.
 
 For retained environments, incremental Bicep deployment leaves the old broad
 host assignments in place. Follow the
-[operator migration guidance](../../docs/usages/operator-first-boot.md#migrate-existing-host-identities):
+[operator migration guidance](../../docs/usage/getting-started.md#migrate-existing-host-identities):
 add the new grant, allow propagation, explicitly remove only identified obsolete
 host grants, and audit inherited/group permissions. Do not delete unrelated
 customer or runner permissions.
-
-Local role-assignment regression checks use Bash and `jq`, mock every Azure
-call, and do not provision resources:
-
-```bash
-bash hack/e2e/lib/node-join-arc_test.sh
-```
-
-These checks cover role selection, exact pool/principal readback, idempotency,
-retries, and fail-closed handling; they do not prove live ARM authorization.
 
 ## GitHub Actions Policy
 
@@ -302,12 +292,39 @@ Keep resources for debugging:
 ./hack/e2e/run.sh --skip-cleanup all
 ```
 
+## Stale Resource Cleanup
+
+Every E2E resource is named with the epoch second of its run (for example the
+cluster `aks-e2e-1787164131`). Interrupted runs and runs started with
+`--skip-cleanup` leave those resources behind, so `hack/e2e/cleanup-stale.sh`
+deletes all E2E resources whose suffix is older than a maximum age (24 hours by
+default).
+
+```bash
+# List stale resources without deleting anything
+E2E_RESOURCE_GROUP=<rg> ./hack/e2e/cleanup-stale.sh --dry-run
+
+# Delete everything older than 6 hours
+E2E_RESOURCE_GROUP=<rg> ./hack/e2e/cleanup-stale.sh --max-age-hours 6
+```
+
+| Option | Environment | Description |
+|--------|-------------|-------------|
+| `-g`, `--resource-group` | `E2E_RESOURCE_GROUP` | Resource group to scan. |
+| `-a`, `--max-age-hours` | `E2E_STALE_MAX_AGE_HOURS` | Age threshold in hours (default `24`). |
+| `-n`, `--dry-run` | `E2E_DRY_RUN=1` | Only list stale resources. |
+
+The `E2E Stale Resource Cleanup` workflow runs the same script daily at 03:00
+UTC against the `e2e-testing` environment. It also accepts a `workflow_dispatch`
+run with `dry_run` and `max_age_hours` inputs for on-demand listing or cleanup.
+
 ## Makefile Targets
 
 ```bash
-make e2e          # Full E2E run.
-make e2e-infra    # Deploy infrastructure and controller.
-make e2e-cleanup  # Clean up E2E resources.
+make e2e                # Full E2E run.
+make e2e-infra          # Deploy infrastructure and controller.
+make e2e-cleanup        # Clean up E2E resources.
+make e2e-cleanup-stale  # Delete stale resources from earlier E2E runs.
 ```
 
 ## Project Layout
@@ -315,6 +332,7 @@ make e2e-cleanup  # Clean up E2E resources.
 ```text
 hack/e2e/
   run.sh                  Main entry point and command dispatcher.
+  cleanup-stale.sh        Delete E2E resources left over from earlier runs.
   infra/
     main.bicep            AKS, VNet, NSG, VMs, identities, and role assignments.
   lib/
@@ -355,4 +373,5 @@ Logs are collected under `$E2E_WORK_DIR/logs/`.
 - **SSH failures:** inspect `state.json` for VM public IPs and confirm the SSH key configured by `E2E_SSH_KEY_FILE` is available.
 - **Node join failures:** run `./hack/e2e/run.sh logs` and inspect agent, bootstrap unit, kubelet, containerd, and node-problem-detector logs.
 - **Repave failures:** check `aks-flex-node-agent` logs, `machinectl list`, and kubelet versions inside `kube1` and `kube2`.
-- **Leftover resources:** run `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/run.sh cleanup`.
+- **Leftover resources:** run `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/run.sh cleanup`, or
+  `E2E_RESOURCE_GROUP=<rg> ./hack/e2e/cleanup-stale.sh` for resources from earlier runs.

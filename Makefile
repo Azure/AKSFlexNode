@@ -52,9 +52,14 @@ package-all: package-linux-amd64 package-linux-arm64
 
 # Testing and quality checks
 .PHONY: test
-test:
+test: test-install
 	@echo "Running tests..."
 	@go test -v ./...
+
+.PHONY: test-install
+test-install:
+	@echo "Running installer tests..."
+	@scripts/install_test.sh
 
 .PHONY: test-coverage
 test-coverage:
@@ -128,6 +133,10 @@ e2e-infra: ## Deploy E2E infrastructure and controller
 e2e-cleanup: ## Clean up E2E test resources
 	@hack/e2e/run.sh cleanup
 
+.PHONY: e2e-cleanup-stale
+e2e-cleanup-stale: ## Delete stale E2E resources (E2E_STALE_MAX_AGE_HOURS, E2E_DRY_RUN)
+	@hack/e2e/cleanup-stale.sh
+
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
@@ -164,6 +173,7 @@ help:
 	@echo ""
 	@echo "Test & Quality Targets:"
 	@echo "  test               Run tests"
+	@echo "  test-install       Run installer tests"
 	@echo "  test-coverage      Run tests with coverage report"
 	@echo "  test-race          Run tests with race detector"
 	@echo "  lint               Run golangci-lint"
@@ -178,6 +188,7 @@ help:
 	@echo "  e2e                Run full E2E test suite"
 	@echo "  e2e-infra          Deploy E2E infrastructure and controller"
 	@echo "  e2e-cleanup        Clean up E2E test resources"
+	@echo "  e2e-cleanup-stale  Delete stale E2E resources from past runs"
 	@echo ""
 	@echo "Other Targets:"
 	@echo "  protoc-tools       Download protobuf compiler and Go/gRPC codegen plugins"

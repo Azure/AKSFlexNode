@@ -52,7 +52,7 @@ Service Flex Node Agent Role** (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) at
 This permits bootstrap-data retrieval and Machine read/write across that pool,
 with no DataActions. The role must be published/visible in the target environment
 before onboarding; do not use Contributor/admin as a fallback. See
-[role assignment and migration](operator-first-boot.md#assign-the-host-identitys-pool-scoped-role).
+[role assignment and migration](getting-started.md#assign-the-host-identitys-pool-scoped-role).
 This authorization change does not change `agent.requireMachineRegistration`,
 Machine client selection, or Kubernetes bootstrap/lifecycle RBAC. The host
 bootstrap script does not provision identities or grant roles.

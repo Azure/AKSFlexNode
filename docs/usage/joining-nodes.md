@@ -55,15 +55,15 @@ For managed identity, service principal, and Arc modes, the operator must assign
 (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) to the host principal at
 `<aks-resource-id>/agentPools/<agent-pool-name>`. The role allows
 `listBootstrapData` and Machine read/write within that pool, with no DataActions;
-it is not an own-Machine-only boundary. Publication is currently partial, so
-check visibility in the target environment before onboarding and stop if absent
+it is not an own-Machine-only boundary. Check role visibility in the target
+environment before onboarding and stop if absent
 without falling back to Contributor/admin. See the
-[operator role assignment and migration steps](operator-first-boot.md#assign-the-host-identitys-pool-scoped-role)
+[operator role assignment and migration steps](getting-started.md#assign-the-host-identitys-pool-scoped-role)
 for the CLI commands, principal ID selection, and propagation requirements.
 
 For this least-privilege flow, use `scripts/bootstrap.sh --auth msi
 --fetch-bootstrap-data` with the target cluster and pool arguments as shown in
-the [first-boot walkthrough](operator-first-boot.md#6-download-and-run-the-bootstrap-script).
+the [first-boot walkthrough](getting-started.md#6-download-and-run-the-bootstrap-script).
 Keep the returned bootstrap token, API server FQDN, and CA in the config:
 kubelet and the daemon use Kubernetes token/CSR credentials, not the managed
 identity's Azure permissions, to access Kubernetes. The role does not authorize
@@ -130,7 +130,7 @@ The credential file contains either the client secret or a PEM/unencrypted PFX a
 
 Use `scripts/bootstrap.sh --auth service-principal --fetch-bootstrap-data` with
 the target cluster, pool, and protected credential arguments from the
-[first-boot walkthrough](operator-first-boot.md#6-download-and-run-the-bootstrap-script).
+[first-boot walkthrough](getting-started.md#6-download-and-run-the-bootstrap-script).
 As with managed identity, retain the fetched Kubernetes bootstrap settings;
 the pool-scoped role authorizes ARM operations, not Kubernetes API access.
 

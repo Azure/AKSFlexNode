@@ -167,7 +167,7 @@ Node Agent Role** (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) at the target ARM
 agent pool before invoking bootstrap, then allows role-assignment propagation.
 The role must be published/visible in the target environment; stop if absent
 without Contributor/admin fallback. See the
-[operator role assignment and migration steps](../usages/operator-first-boot.md#assign-the-host-identitys-pool-scoped-role).
+[operator role assignment and migration steps](../usage/getting-started.md#assign-the-host-identitys-pool-scoped-role).
 For a user-assigned identity, provide the same client ID both to the runtime
 config override and to any caller-owned script-download logic that uses that
 identity. Role assignment uses its principal/object ID, not that client ID.
