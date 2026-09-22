@@ -332,11 +332,12 @@ git rev-parse origin/main
 
 Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled and the same version and `target_sha`. The publishing run:
 
-1. Checks out the explicitly selected commit, or verifies that an existing tag points to that commit when resuming a release.
+1. Checks out the explicitly selected commit, verifies it is reachable from `main`, or verifies that an existing tag points to that commit when resuming a release.
 2. Validates the version and changelog.
-3. Builds release artifacts.
-4. Creates an annotated tag when it does not already exist.
-5. Publishes the controller image, binary archives, checksums, and GitHub Release.
+3. Verifies that the required build, test, lint, security, and code-quality checks passed for the selected commit.
+4. Builds release artifacts.
+5. Creates an annotated tag when it does not already exist.
+6. Publishes the controller image, binary archives, checksums, and GitHub Release.
 
 GitHub Release notes link to `CHANGELOG.md` at the release tag so the referenced content remains immutable. Publishing is idempotent: an existing tag is never moved, while release assets may be replaced when resuming a failed release.
 

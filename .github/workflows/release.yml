@@ -21,6 +21,7 @@ on:
         type: boolean
 
 permissions:
+  checks: read
   contents: read
 
 concurrency:
@@ -61,6 +62,11 @@ jobs:
             exit 1
           fi
 
+          publish=true
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DRY_RUN}" == "true" ]]; then
+            publish=false
+          fi
+
           requested_target_sha="${REQUESTED_TARGET_SHA}"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "target_sha must be a full 40-character lowercase commit SHA" >&2
@@ -81,6 +87,15 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${tag_exists}" != "true" ]]; then
             echo "Tag-triggered release cannot resolve ${version}" >&2
             exit 1
+          fi
+
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${target_sha}" refs/remotes/origin/main; then
+            if [[ "${publish}" == "true" ]]; then
+              echo "Release commit ${target_sha} is not reachable from main" >&2
+              exit 1
+            fi
+            echo "::warning::Dry-run commit ${target_sha} is not reachable from main"
           fi
 
           git show "${target_sha}:CHANGELOG.md" > changelog.md
@@ -109,11 +124,6 @@ jobs:
             fi
           fi
 
-          publish=true
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DRY_RUN}" == "true" ]]; then
-            publish=false
-          fi
-
           {
             echo "version=${version}"
             echo "target_sha=${target_sha}"
@@ -131,9 +141,61 @@ jobs:
             echo "- Existing tag: \`${tag_exists}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  quality-gate:
+    name: Verify required checks
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify checks for release commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          required_checks=(
+            "Build"
+            "Test"
+            "Lint"
+            "Security Scan"
+            "Code Quality Checks"
+          )
+
+          for attempt in {1..80}; do
+            check_runs="$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs?filter=latest&per_page=100")"
+            all_successful=true
+
+            for check_name in "${required_checks[@]}"; do
+              conclusion="$(jq -r \
+                --arg name "${check_name}" \
+                '[.check_runs[] | select(.name == $name and .app.slug == "github-actions")][0].conclusion // "pending"' \
+                <<< "${check_runs}")"
+              echo "${check_name}: ${conclusion}"
+              if [[ "${conclusion}" != "success" ]]; then
+                all_successful=false
+              fi
+            done
+
+            if [[ "${all_successful}" == "true" ]]; then
+              echo "All required checks passed for ${TARGET_SHA}."
+              exit 0
+            fi
+
+            if [[ "${attempt}" -lt 80 ]]; then
+              echo "Required checks are not complete; retrying in 15 seconds."
+              sleep 15
+            fi
+          done
+
+          echo "Required checks did not pass for ${TARGET_SHA} within 20 minutes." >&2
+          exit 1
+
   build:
     name: Build binary (${{ matrix.os }}/${{ matrix.arch }})
-    needs: prepare
+    needs:
+      - prepare
+      - quality-gate
     runs-on: ubuntu-latest
     strategy:
       matrix:
