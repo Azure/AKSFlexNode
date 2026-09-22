@@ -21,9 +21,29 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    name: Validate controller image request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate request
+        env:
+          IMAGE_VERSION: ${{ inputs.version }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${IMAGE_VERSION}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid container image version: ${IMAGE_VERSION}" >&2
+            exit 1
+          fi
+          if [[ "${PUSH_IMAGE}" == "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Controller image publishing must be dispatched from main, not ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
   build:
     name: Build controller image
     if: ${{ !inputs.push_image }}
+    needs: validate
     permissions:
       contents: read
     uses: ./.github/workflows/controller-image-build.yml
@@ -35,6 +55,7 @@ jobs:
   authorize:
     name: Approve controller image publication
     if: inputs.push_image && github.ref == 'refs/heads/main'
+    needs: validate
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -48,7 +69,9 @@ jobs:
       inputs.push_image &&
       github.ref == 'refs/heads/main' &&
       needs.authorize.result == 'success'
-    needs: authorize
+    needs:
+      - validate
+      - authorize
     permissions:
       contents: read
       packages: write

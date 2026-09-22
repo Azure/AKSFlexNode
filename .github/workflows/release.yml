@@ -454,9 +454,13 @@ jobs:
           EOF
 
           if [[ "${PRERELEASE}" == "true" ]]; then
-            release_flags=(--prerelease --latest=false)
+            create_flags=(--prerelease --latest=false)
+            edit_flags=(--prerelease --latest=false)
           else
-            release_flags=(--prerelease=false --latest)
+            # Let GitHub select Latest automatically for new stable releases and preserve
+            # the current badge when resuming an existing release.
+            create_flags=(--prerelease=false)
+            edit_flags=(--prerelease=false)
           fi
 
           if gh release view "${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
@@ -469,7 +473,7 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --title "Release ${RELEASE_VERSION}" \
               --notes-file release-notes.md \
-              "${release_flags[@]}"
+              "${edit_flags[@]}"
           else
             gh release create "${RELEASE_VERSION}" \
               release-assets/*.tar.gz \
@@ -478,5 +482,5 @@ jobs:
               --title "Release ${RELEASE_VERSION}" \
               --notes-file release-notes.md \
               --verify-tag \
-              "${release_flags[@]}"
+              "${create_flags[@]}"
           fi
