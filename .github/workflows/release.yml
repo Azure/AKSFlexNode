@@ -6,19 +6,120 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to release"
+      version:
+        description: "SemVer release tag to create or resume (for example, v0.3.0-alpha.1)"
         required: true
+        type: string
+      dry_run:
+        description: "Validate and build without creating a tag or publishing"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
-env:
-  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Validate release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      target_sha: ${{ steps.release.outputs.target_sha }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      publish: ${{ steps.release.outputs.publish }}
+      tag_exists: ${{ steps.release.outputs.tag_exists }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate release
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+
+          version="${REQUESTED_VERSION}"
+          if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "Invalid release version: ${version}" >&2
+            echo "Expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.NUMBER" >&2
+            exit 1
+          fi
+
+          tag_exists=false
+          if git show-ref --verify --quiet "refs/tags/${version}"; then
+            tag_exists=true
+            target_sha="$(git rev-list -n 1 "${version}")"
+          else
+            target_sha="$(git rev-parse HEAD)"
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${tag_exists}" != "true" ]]; then
+            echo "Tag-triggered release cannot resolve ${version}" >&2
+            exit 1
+          fi
+
+          git show "${target_sha}:CHANGELOG.md" > changelog.md
+          bare_version="${version#v}"
+          prerelease=false
+          if [[ "${version}" == *-* ]]; then
+            prerelease=true
+            if ! grep -Fqx '## [Unreleased]' changelog.md; then
+              echo "CHANGELOG.md does not contain an Unreleased section" >&2
+              exit 1
+            fi
+          else
+            mapfile -t release_headings < <(grep -E "^## \\[${bare_version//./\\.}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" changelog.md || true)
+            if [[ "${#release_headings[@]}" -ne 1 ]]; then
+              echo "CHANGELOG.md must contain exactly one dated ${bare_version} release section" >&2
+              exit 1
+            fi
+            release_date="${release_headings[0]##* - }"
+            if [[ "$(date -u -d "${release_date}" +%F 2>/dev/null || true)" != "${release_date}" ]]; then
+              echo "CHANGELOG.md contains an invalid release date: ${release_date}" >&2
+              exit 1
+            fi
+            if ! grep -F "[${bare_version}]: https://github.com/${GITHUB_REPOSITORY}/compare/" changelog.md | grep -Fq "...${version}"; then
+              echo "CHANGELOG.md does not contain a comparison link ending at ${version}" >&2
+              exit 1
+            fi
+          fi
+
+          publish=true
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DRY_RUN}" == "true" ]]; then
+            publish=false
+          fi
+
+          {
+            echo "version=${version}"
+            echo "target_sha=${target_sha}"
+            echo "prerelease=${prerelease}"
+            echo "publish=${publish}"
+            echo "tag_exists=${tag_exists}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release validation"
+            echo "- Version: \`${version}\`"
+            echo "- Commit: \`${target_sha}\`"
+            echo "- Prerelease: \`${prerelease}\`"
+            echo "- Publish: \`${publish}\`"
+            echo "- Existing tag: \`${tag_exists}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
-    name: Build and Release
+    name: Build binary (${{ matrix.os }}/${{ matrix.arch }})
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -31,9 +132,10 @@ jobs:
             goarch: arm64
 
     steps:
-      - name: Checkout code
+      - name: Checkout release commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -43,32 +145,21 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Validate version
-        run: |
-          set -euo pipefail
-          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
-            echo "Invalid release version: ${RELEASE_VERSION}" >&2
-            exit 1
-          fi
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.goarch }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          GIT_COMMIT=$(git rev-parse --short HEAD)
-          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          git_commit="$(git rev-parse --short HEAD)"
+          build_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          ldflags="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${RELEASE_VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${git_commit} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${build_date} -w -s"
+          binary_name="aks-flex-node-${GOOS}-${GOARCH}"
 
-          LDFLAGS="-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${RELEASE_VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_DATE} -w -s"
-
-          BINARY_NAME="aks-flex-node-${GOOS}-${GOARCH}"
-
-          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/aks-flex-node
-
-          # Create tarball
-          tar -czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}"
-          echo "ASSET=${BINARY_NAME}.tar.gz" >> "$GITHUB_ENV"
+          go build -ldflags "${ldflags}" -o "${binary_name}" ./cmd/aks-flex-node
+          tar -czf "${binary_name}.tar.gz" "${binary_name}"
+          echo "ASSET=${binary_name}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -76,25 +167,97 @@ jobs:
           name: binaries-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ env.ASSET }}
 
-  release:
-    name: Create Release
-    needs: build
+  authorize:
+    name: Approve release
+    if: github.event_name == 'workflow_dispatch' && needs.prepare.outputs.publish == 'true'
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Confirm approval
+        run: echo "Release approved."
+
+  tag:
+    name: Ensure release tag
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      (needs.authorize.result == 'success' || needs.authorize.result == 'skipped')
+    needs:
+      - prepare
+      - build
+      - authorize
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          persist-credentials: false
-
-      - name: Validate version
+      - name: Create annotated tag
+        if: needs.prepare.outputs.publish == 'true' && needs.prepare.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
         run: |
           set -euo pipefail
-          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
-            echo "Invalid release version: ${RELEASE_VERSION}" >&2
-            exit 1
-          fi
+          tag_object_sha="$(gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f "tag=${RELEASE_VERSION}" \
+            -f "message=Release ${RELEASE_VERSION}" \
+            -f "object=${TARGET_SHA}" \
+            -f "type=commit" \
+            --jq .sha)"
+
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${RELEASE_VERSION}" \
+            -f "sha=${tag_object_sha}"
+
+      - name: Report dry run
+        if: needs.prepare.outputs.publish != 'true'
+        run: echo "Dry run complete; no tag was created."
+
+      - name: Report existing tag
+        if: needs.prepare.outputs.publish == 'true' && needs.prepare.outputs.tag_exists == 'true'
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: echo "Using existing tag ${RELEASE_VERSION}."
+
+  controller-image:
+    name: Build controller image
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - prepare
+      - tag
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/controller-image.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.target_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      push_image: ${{ needs.prepare.outputs.publish == 'true' }}
+
+  release:
+    name: Publish GitHub Release
+    if: needs.prepare.outputs.publish == 'true'
+    needs:
+      - prepare
+      - build
+      - tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          persist-credentials: false
 
       - name: Download artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -104,21 +267,26 @@ jobs:
 
       - name: Consolidate artifacts
         run: |
+          set -euo pipefail
           mkdir -p release-assets
           find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Generate checksums
         run: |
+          set -euo pipefail
           cd release-assets
           sha256sum *.tar.gz > checksums.txt
           cat checksums.txt
 
-      - name: Create Release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
+          changelog_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/CHANGELOG.md"
           cat > release-notes.md <<EOF
           ## AKS Flex Node ${RELEASE_VERSION}
 
@@ -147,14 +315,13 @@ jobs:
 
           ### What's Changed
 
-          <!-- Add your changelog here -->
+          See the [${RELEASE_VERSION} changelog](${changelog_url}).
           EOF
 
-          create_flags=(--verify-tag --latest=false)
-          edit_flags=(--latest=false)
-          if [[ "${RELEASE_VERSION}" =~ -(alpha|beta|rc)([.-]|$) ]]; then
-            create_flags+=(--prerelease)
-            edit_flags+=(--prerelease)
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            release_flags=(--prerelease --latest=false)
+          else
+            release_flags=(--latest)
           fi
 
           if gh release view "${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
@@ -167,7 +334,7 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --title "Release ${RELEASE_VERSION}" \
               --notes-file release-notes.md \
-              "${edit_flags[@]}"
+              "${release_flags[@]}"
           else
             gh release create "${RELEASE_VERSION}" \
               release-assets/*.tar.gz \
@@ -175,5 +342,6 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --title "Release ${RELEASE_VERSION}" \
               --notes-file release-notes.md \
-              "${create_flags[@]}"
+              --verify-tag \
+              "${release_flags[@]}"
           fi

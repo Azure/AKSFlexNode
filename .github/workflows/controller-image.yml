@@ -6,6 +6,34 @@ on:
       - "v*"
       - "controller-*"
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Git ref or commit to build"
+        required: false
+        type: string
+      version:
+        description: "Version used for image tags and build metadata"
+        required: false
+        type: string
+      push_image:
+        description: "Push the image to GHCR"
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Git ref or commit to build"
+        required: true
+        type: string
+      version:
+        description: "Version used for image tags and build metadata"
+        required: true
+        type: string
+      push_image:
+        description: "Push the image to GHCR"
+        required: true
+        type: boolean
 
 permissions:
   contents: read
@@ -23,6 +51,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ inputs.source_ref || github.ref }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -32,8 +61,27 @@ jobs:
           docker buildx create --name aks-flex-builder --use
           docker buildx inspect --bootstrap
 
+      - name: Determine build settings
+        id: settings
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REQUESTED_PUSH: ${{ inputs.push_image }}
+        run: |
+          set -euo pipefail
+
+          version="${REQUESTED_VERSION:-${GITHUB_REF_NAME}}"
+          push_image="${REQUESTED_PUSH:-false}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            push_image=true
+          fi
+
+          {
+            echo "version=${version}"
+            echo "push_image=${push_image}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Login to GHCR
-        if: github.event_name != 'pull_request'
+        if: steps.settings.outputs.push_image == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -42,26 +90,31 @@ jobs:
 
       - name: Build image
         env:
-          PUSH_IMAGE: ${{ github.event_name != 'pull_request' }}
+          IMAGE_VERSION: ${{ steps.settings.outputs.version }}
+          PUSH_IMAGE: ${{ steps.settings.outputs.push_image }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           image="ghcr.io/${owner}/${IMAGE_PACKAGE}"
-          short_sha="${GITHUB_SHA::12}"
+          commit_sha="$(git rev-parse HEAD)"
+          short_sha="${commit_sha:0:12}"
           build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          version="${GITHUB_REF_NAME}"
 
           tags=("${image}:sha-${short_sha}")
           labels=(
             "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
-            "org.opencontainers.image.revision=${GITHUB_SHA}"
+            "org.opencontainers.image.revision=${commit_sha}"
             "org.opencontainers.image.created=${build_time}"
             "org.opencontainers.image.title=aks-flex-controller"
             "org.opencontainers.image.description=In-cluster AKS Flex Node machine endpoint and daemon CSR approver"
           )
 
-          if [[ "${GITHUB_REF_TYPE:-}" == "branch" ]]; then
+          if [[ -n "${REQUESTED_VERSION}" ]]; then
+            tags+=("${image}:${IMAGE_VERSION}")
+            labels+=("org.opencontainers.image.version=${IMAGE_VERSION}")
+          elif [[ "${GITHUB_REF_TYPE:-}" == "branch" ]]; then
             branch_tag="$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
             tags+=("${image}:${branch_tag}")
             if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
@@ -75,7 +128,7 @@ jobs:
           build_args=(
             --file Dockerfile.aks-flex-controller
             --platform "${PLATFORMS}"
-            --build-arg "VERSION=${version}"
+            --build-arg "VERSION=${IMAGE_VERSION}"
             --build-arg "GIT_COMMIT=${short_sha}"
             --build-arg "BUILD_TIME=${build_time}"
           )

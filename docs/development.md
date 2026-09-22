@@ -299,6 +299,42 @@ If adding a new component to the bootstrap process:
 4. Consider dependencies and execution order
 5. Add appropriate tests
 
+## Changelog and Releases
+
+[`CHANGELOG.md`](../CHANGELOG.md) is the canonical record of notable user-facing changes. The project maintains it directly and does not use per-PR changelog fragment files.
+
+### Updating the Changelog
+
+A pull request that changes behavior visible to users or operators should add a concise entry under `Unreleased` in the appropriate Keep a Changelog category. Describe the effect of the change rather than its implementation and include a link to the pull request. Tests, refactoring, routine dependency updates, and CI-only changes do not normally require an entry.
+
+Before a stable release, open a release pull request that:
+
+1. Moves the `Unreleased` entries into a `## [X.Y.Z] - YYYY-MM-DD` section.
+2. Adds a new empty `Unreleased` section above the release.
+3. Reviews the entries for user-facing language and removes internal-only details.
+4. Updates the `Unreleased` and release comparison links at the bottom of the file.
+
+Prereleases keep their changes under `Unreleased`; they do not require a permanent changelog section for every alpha, beta, or release candidate.
+
+### Publishing a Release
+
+After the release pull request is merged, run the **Release** workflow from the `main` branch. The repository's `release` GitHub Environment should be configured with required reviewers so publishing requires explicit approval. Supply a SemVer version using one of these forms:
+
+- Stable: `v0.3.0`
+- Prerelease: `v0.3.0-alpha.1`, `v0.3.0-beta.1`, or `v0.3.0-rc.1`
+
+Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled. The publishing run:
+
+1. Selects the current `main` commit, or the immutable commit of an existing tag when resuming a release.
+2. Validates the version and changelog.
+3. Builds release artifacts.
+4. Creates an annotated tag when it does not already exist.
+5. Publishes the controller image, binary archives, checksums, and GitHub Release.
+
+GitHub Release notes link to `CHANGELOG.md` at the release tag so the referenced content remains immutable. Publishing is idempotent: an existing tag is never moved, while release assets may be replaced when resuming a failed release.
+
+Pushing a tag manually remains supported as a recovery path. The normal path should use the manually dispatched workflow so validation happens before tag creation and every artifact is built from the same selected commit.
+
 ## Contributing
 
 We welcome contributions! Here's how to get started:
@@ -315,6 +351,7 @@ We welcome contributions! Here's how to get started:
 - Reference any related issues
 - Ensure all CI checks pass
 - Update documentation for user-facing changes
+- Update `CHANGELOG.md` under `Unreleased`, or explain why no changelog entry is needed
 - Add tests for new functionality
 - Follow the existing code style
 
@@ -337,7 +374,7 @@ Recommended branch protection rules for `main` and `dev`:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](../LICENSE.MD) file for details.
+This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
 
 ## Getting Help
 
