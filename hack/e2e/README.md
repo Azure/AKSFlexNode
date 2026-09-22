@@ -20,30 +20,24 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 ### Host identity role
 
 The target environment must publish **Azure Kubernetes Service Flex Node Agent
-Role** (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) before running E2E.
+Role** before running E2E.
 Infrastructure deployment and Arc onboarding check role visibility and stop if
-unavailable, without Contributor/admin fallback. Role visibility alone does not
-guarantee end-to-end support in a particular agent release or environment.
+unavailable.
 
 For fresh infrastructure, Bicep grants the MSI host only this role on the ARM
 FlexNodes pool. The operator/runner assigns the same role at the same pool scope
 to the Arc principal after `azcmagent connect`. The pool is
 `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME`, including when it differs from the synthetic
-controller pool name. The role grants bootstrap-data retrieval and same-pool
-Machine read/write, with no DataActions or Machine deletion. Assignment readback
-is not an ARM authorization/propagation test.
+controller pool name.
 
 The runner identity remains separate: it still needs infrastructure management,
 role-assignment, Arc onboarding, admin kubeconfig, and cleanup permissions.
 `scripts/setup/setup-runner.sh` configures those operator permissions, not host
-permissions. The host bootstrap script never assigns its own roles.
+permissions.
 
 For retained environments, incremental Bicep deployment leaves the old broad
 host assignments in place. Follow the
-[operator migration guidance](../../docs/usage/getting-started.md#migrate-existing-host-identities):
-add the new grant, allow propagation, explicitly remove only identified obsolete
-host grants, and audit inherited/group permissions. Do not delete unrelated
-customer or runner permissions.
+[operator migration guidance](../../docs/usage/getting-started.md#migrate-existing-host-identities).
 
 ## GitHub Actions Policy
 

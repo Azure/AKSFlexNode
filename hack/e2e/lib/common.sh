@@ -58,9 +58,8 @@ readonly flexNodeAgentRoleDefinitionID="8f139b0f-7eaf-460b-a9da-5b1246d9ed0d"
 require_flex_node_agent_role() {
   local subscription_id="$1" role_id
   if ! role_id="$(az role definition list \
-    --name "${flexNodeAgentRoleDefinitionID}" \
     --subscription "${subscription_id}" \
-    --query "[?roleType == 'BuiltInRole'].name" -o tsv)"; then
+    --query "[?name == '${flexNodeAgentRoleDefinitionID}' && roleType == 'BuiltInRole'].name" -o tsv)"; then
     log_error "Cannot query Azure Kubernetes Service Flex Node Agent Role in subscription ${subscription_id}; check operator access and role publication before onboarding"
     return 1
   fi

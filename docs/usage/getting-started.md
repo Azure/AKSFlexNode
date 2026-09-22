@@ -387,13 +387,10 @@ assignment. Kubernetes bootstrap and lifecycle RBAC remain separate.
 visible in the target environment before onboarding. If the check below fails,
 stop and resolve publication or operator access. Do not substitute Contributor
 or an admin role.
-Role visibility alone does not establish end-to-end support in a particular
-agent release or environment.
 
 Run this on the **operator workstation**, signed into the target Azure cloud,
 tenant, and subscription, after creating the pool in step 4. The operator needs
 permission to read role definitions and create role assignments at that pool.
-These permissions belong to the operator, not to the host.
 
 ```bash
 FLEX_POOL_RESOURCE_ID="${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}"
@@ -403,8 +400,7 @@ FLEX_HOST_PRINCIPAL_ID="$MI_PRINCIPAL_ID"
 # Fail closed if the built-in role is unavailable in the selected subscription.
 if ! ROLE_ID="$(az role definition list \
   --subscription "$SUBSCRIPTION_ID" \
-  --name "$FLEX_NODE_AGENT_ROLE_ID" \
-  --query "[?roleType == 'BuiltInRole'].name" --output tsv)" ||
+  --query "[?name == '$FLEX_NODE_AGENT_ROLE_ID' && roleType == 'BuiltInRole'].name" --output tsv)" ||
   [[ "${ROLE_ID,,}" != "$FLEX_NODE_AGENT_ROLE_ID" ]]; then
   echo "Flex Node Agent Role is not published/visible; stop onboarding. No Contributor/admin fallback." >&2
   exit 1
@@ -436,12 +432,9 @@ principal use the enterprise application's service principal object ID
 (`az ad sp show --id "<client-id>" --query id --output tsv`).
 The client ID still belongs in `--msi-client-id` or `--sp-client-id`.
 
-Verify the returned principal, role, and exact pool scope. Assignment readback
-does not prove propagation to ARM authorization; allow propagation before
-bootstrap. The operator provisions the identity, attaches it to the host where
-applicable, and assigns the role. `scripts/bootstrap.sh` only consumes the
-credentials; it must not grant its own permissions or receive User Access
-Administrator.
+Verify the returned principal, role, and exact pool scope, and allow
+role-assignment propagation before bootstrap. `scripts/bootstrap.sh` uses the
+configured identity; provisioning and role assignment remain operator tasks.
 
 This reduces host ARM privileges, but `listBootstrapData` still provides fresh
 join material. Protect identity credentials and bootstrap output; constraining

@@ -52,22 +52,14 @@ Use `managedIdentity.clientId` when the VM has multiple user-assigned identities
 
 For managed identity, service principal, and Arc modes, the operator must assign
 **Azure Kubernetes Service Flex Node Agent Role**
-(`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) to the host principal at
-`<aks-resource-id>/agentPools/<agent-pool-name>`. The role allows
-`listBootstrapData` and Machine read/write within that pool, with no DataActions;
-it is not an own-Machine-only boundary. Check role visibility in the target
-environment before onboarding and stop if absent
-without falling back to Contributor/admin. See the
-[operator role assignment and migration steps](getting-started.md#assign-the-host-identitys-pool-scoped-role)
-for the CLI commands, principal ID selection, and propagation requirements.
+to the host principal at the target agent-pool scope. See
+[role assignment and migration](getting-started.md#assign-the-host-identitys-pool-scoped-role).
 
 For this least-privilege flow, use `scripts/bootstrap.sh --auth msi
 --fetch-bootstrap-data` with the target cluster and pool arguments as shown in
 the [first-boot walkthrough](getting-started.md#6-download-and-run-the-bootstrap-script).
 Keep the returned bootstrap token, API server FQDN, and CA in the config:
-kubelet and the daemon use Kubernetes token/CSR credentials, not the managed
-identity's Azure permissions, to access Kubernetes. The role does not authorize
-legacy MSI/SP Kubernetes exec-credential access.
+kubelet and the daemon use separate Kubernetes token/CSR credentials.
 
 ## Azure Arc
 
