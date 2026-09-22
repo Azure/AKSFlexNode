@@ -387,13 +387,31 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+
+          expected_assets=(
+            aks-flex-node-linux-amd64.tar.gz
+            aks-flex-node-linux-arm64.tar.gz
+          )
+          for asset in "${expected_assets[@]}"; do
+            if [[ ! -f "release-assets/${asset}" ]]; then
+              echo "Missing release asset: ${asset}" >&2
+              exit 1
+            fi
+          done
+          if [[ "$(find release-assets -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" -ne "${#expected_assets[@]}" ]]; then
+            echo "Unexpected release archive found" >&2
+            exit 1
+          fi
           ls -lh release-assets/
 
       - name: Generate checksums
         run: |
           set -euo pipefail
           cd release-assets
-          sha256sum *.tar.gz > checksums.txt
+          sha256sum \
+            aks-flex-node-linux-amd64.tar.gz \
+            aks-flex-node-linux-arm64.tar.gz \
+            > checksums.txt
           cat checksums.txt
 
       - name: Create or update release
@@ -438,7 +456,7 @@ jobs:
           if [[ "${PRERELEASE}" == "true" ]]; then
             release_flags=(--prerelease --latest=false)
           else
-            release_flags=(--latest)
+            release_flags=(--prerelease=false --latest)
           fi
 
           if gh release view "${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then

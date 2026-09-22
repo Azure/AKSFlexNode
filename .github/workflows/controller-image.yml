@@ -1,21 +1,18 @@
 name: AKS Flex Controller Image
 
 on:
-  push:
-    tags:
-      - "controller-*"
   workflow_dispatch:
     inputs:
       source_ref:
-        description: "Git ref or commit to build"
+        description: "Git ref or commit to build during a dry run"
         required: false
         type: string
       version:
         description: "Version used for image tags and build metadata"
-        required: false
+        required: true
         type: string
       push_image:
-        description: "Push the image to GHCR (only supported from main)"
+        description: "Publish the image from the current main commit"
         required: true
         default: false
         type: boolean
@@ -26,25 +23,37 @@ permissions:
 jobs:
   build:
     name: Build controller image
-    if: github.event_name == 'workflow_dispatch' && !inputs.push_image
+    if: ${{ !inputs.push_image }}
     permissions:
       contents: read
     uses: ./.github/workflows/controller-image-build.yml
     with:
       source_ref: ${{ inputs.source_ref || github.sha }}
-      version: ${{ inputs.version || github.ref_name }}
+      version: ${{ inputs.version }}
       push_image: false
+
+  authorize:
+    name: Approve controller image publication
+    if: inputs.push_image && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Confirm approval
+        run: echo "Controller image publication approved."
 
   publish:
     name: Publish controller image
     if: >-
-      github.event_name == 'push' ||
-      (inputs.push_image && github.ref == 'refs/heads/main')
+      always() &&
+      inputs.push_image &&
+      github.ref == 'refs/heads/main' &&
+      needs.authorize.result == 'success'
+    needs: authorize
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/controller-image-build.yml
     with:
-      source_ref: ${{ inputs.source_ref || github.sha }}
-      version: ${{ inputs.version || github.ref_name }}
+      source_ref: ${{ github.sha }}
+      version: ${{ inputs.version }}
       push_image: true
