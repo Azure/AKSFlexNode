@@ -339,9 +339,9 @@ Leave `dry_run` enabled first. A dry run validates the changelog and builds the 
 5. Creates an annotated tag when it does not already exist.
 6. Publishes the controller image, binary archives, checksums, and GitHub Release.
 
-GitHub Release notes link to `CHANGELOG.md` at the release tag so the referenced content remains immutable. Publishing is idempotent: an existing tag is never moved, while release assets may be replaced when resuming a failed release.
+GitHub Release notes link to `CHANGELOG.md` at the release tag so the referenced content remains immutable. Publishing is idempotent: an existing tag is never moved, while release assets may be replaced when resuming a failed release. Resume a failed release by dispatching the workflow with the existing version and its exact commit SHA.
 
-Pushing a tag manually remains supported as a recovery path. The normal path should use the manually dispatched workflow so validation happens before tag creation and every artifact is built from the same selected commit.
+Release tags must not be pushed manually. The manually dispatched workflow is the only supported publishing path so validation and environment approval happen before tag creation and every artifact is built from the same selected commit.
 
 ## Contributing
 

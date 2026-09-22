@@ -3,7 +3,6 @@ name: AKS Flex Controller Image
 on:
   push:
     tags:
-      - "v*"
       - "controller-*"
   workflow_dispatch:
     inputs:

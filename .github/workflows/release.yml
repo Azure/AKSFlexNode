@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -25,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  group: release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -42,16 +39,16 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
+          ref: ${{ inputs.target_sha }}
           persist-credentials: false
           fetch-depth: 0
 
       - name: Validate release
         id: release
         env:
-          REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
-          REQUESTED_TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REQUESTED_TARGET_SHA: ${{ inputs.target_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
 
@@ -63,12 +60,12 @@ jobs:
           fi
 
           publish=true
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DRY_RUN}" == "true" ]]; then
+          if [[ "${DRY_RUN}" == "true" ]]; then
             publish=false
           fi
 
           requested_target_sha="${REQUESTED_TARGET_SHA}"
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "target_sha must be a full 40-character lowercase commit SHA" >&2
             exit 1
           fi
@@ -82,11 +79,6 @@ jobs:
               echo "Existing tag ${version} points to ${tagged_target_sha}, not requested commit ${target_sha}" >&2
               exit 1
             fi
-          fi
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${tag_exists}" != "true" ]]; then
-            echo "Tag-triggered release cannot resolve ${version}" >&2
-            exit 1
           fi
 
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
@@ -245,7 +237,7 @@ jobs:
 
   authorize:
     name: Approve release
-    if: github.event_name == 'workflow_dispatch' && needs.prepare.outputs.publish == 'true'
+    if: needs.prepare.outputs.publish == 'true'
     needs:
       - prepare
       - build
@@ -307,7 +299,6 @@ jobs:
     name: Build controller image
     if: >-
       always() &&
-      github.event_name == 'workflow_dispatch' &&
       needs.prepare.result == 'success' &&
       needs.tag.result == 'success'
     needs:
@@ -330,8 +321,7 @@ jobs:
       needs.prepare.result == 'success' &&
       needs.build.result == 'success' &&
       needs.tag.result == 'success' &&
-      (needs.controller-image.result == 'success' ||
-       (github.event_name == 'push' && needs.controller-image.result == 'skipped'))
+      needs.controller-image.result == 'success'
     needs:
       - prepare
       - build
