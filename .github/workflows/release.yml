@@ -257,9 +257,10 @@ jobs:
     name: Ensure release tag
     if: >-
       always() &&
+      needs.prepare.outputs.publish == 'true' &&
       needs.prepare.result == 'success' &&
       needs.build.result == 'success' &&
-      (needs.authorize.result == 'success' || needs.authorize.result == 'skipped')
+      needs.authorize.result == 'success'
     needs:
       - prepare
       - build
@@ -269,7 +270,7 @@ jobs:
       contents: write
     steps:
       - name: Create annotated tag
-        if: needs.prepare.outputs.publish == 'true' && needs.prepare.outputs.tag_exists != 'true'
+        if: needs.prepare.outputs.tag_exists != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
@@ -291,20 +292,52 @@ jobs:
             -f "ref=refs/tags/${RELEASE_VERSION}" \
             -f "sha=${tag_object_sha}"
 
-      - name: Report dry run
-        if: needs.prepare.outputs.publish != 'true'
-        run: echo "Dry run complete; no tag was created."
-
       - name: Report existing tag
-        if: needs.prepare.outputs.publish == 'true' && needs.prepare.outputs.tag_exists == 'true'
+        if: needs.prepare.outputs.tag_exists == 'true'
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: echo "Using existing tag ${RELEASE_VERSION}."
 
-  controller-image:
-    name: Build controller image
+  controller-image-dry-run:
+    name: Build controller image (dry run)
     if: >-
       always() &&
+      needs.prepare.outputs.publish != 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success'
+    needs:
+      - prepare
+      - build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/controller-image.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.target_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      push_image: false
+
+  dry-run-complete:
+    name: Complete dry run
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish != 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.controller-image-dry-run.result == 'success'
+    needs:
+      - prepare
+      - build
+      - controller-image-dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report dry run
+        run: echo "Dry run complete; no tag, image, or release was published."
+
+  controller-image:
+    name: Publish controller image
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish == 'true' &&
       needs.prepare.result == 'success' &&
       needs.tag.result == 'success'
     needs:
@@ -317,7 +350,7 @@ jobs:
     with:
       source_ref: ${{ needs.prepare.outputs.target_sha }}
       version: ${{ needs.prepare.outputs.version }}
-      push_image: ${{ needs.prepare.outputs.publish == 'true' }}
+      push_image: true
 
   release:
     name: Publish GitHub Release
