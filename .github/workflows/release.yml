@@ -63,6 +63,10 @@ jobs:
           if [[ "${DRY_RUN}" == "true" ]]; then
             publish=false
           fi
+          if [[ "${publish}" == "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Publishing runs must be dispatched from main, not ${GITHUB_REF}" >&2
+            exit 1
+          fi
 
           requested_target_sha="${REQUESTED_TARGET_SHA}"
           if [[ ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -110,8 +114,10 @@ jobs:
               echo "CHANGELOG.md contains an invalid release date: ${release_date}" >&2
               exit 1
             fi
-            if ! grep -F "[${bare_version}]: https://github.com/${GITHUB_REPOSITORY}/compare/" changelog.md | grep -Fq "...${version}"; then
-              echo "CHANGELOG.md does not contain a comparison link ending at ${version}" >&2
+            comparison_prefix="[${bare_version}]: https://github.com/${GITHUB_REPOSITORY}/compare/"
+            mapfile -t comparison_links < <(grep -F "${comparison_prefix}" changelog.md || true)
+            if [[ "${#comparison_links[@]}" -ne 1 || "${comparison_links[0]}" != "${comparison_prefix}"*"...${version}" ]]; then
+              echo "CHANGELOG.md must contain exactly one comparison link ending at ${version}" >&2
               exit 1
             fi
           fi
