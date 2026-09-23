@@ -13,6 +13,10 @@ import (
 )
 
 const (
+	// MachineNodeLabel links a Node to the same-named ARM Machine, not its
+	// local blue/green nspawn slot.
+	MachineNodeLabel = "unbounded-cloud.io/machine"
+
 	// flexNodeBinaryPath is the path to the aks-flex-node binary inside
 	// the nspawn rootfs. The start task copies the binary here before
 	// starting the kubelet so that exec credential plugins can invoke it.
@@ -183,7 +187,18 @@ func kubeletNodeLabels(cfg *Config) map[string]string {
 	labels[agentPoolNodeLabel] = cfg.Azure.TargetAgentPoolName
 	labels[modeNodeLabel] = userNodeMode
 	labels[nodePoolTypeNodeLabel] = flexNodePoolType
+	SetMachineNodeLabel(labels, cfg.Agent.NodeName)
 	return labels
+}
+
+// SetMachineNodeLabel preserves names that cannot fit in a Kubernetes label:
+// omit the label and retain the existing equal-name Machine/Node identity.
+// Never truncate or hash a Machine name into a different binding.
+func SetMachineNodeLabel(labels map[string]string, machineName string) {
+	delete(labels, MachineNodeLabel)
+	if machineName != "" && len(machineName) <= 63 {
+		labels[MachineNodeLabel] = machineName
+	}
 }
 
 // ResolveMachineGoalState converts FlexNode config to the shared agent config
