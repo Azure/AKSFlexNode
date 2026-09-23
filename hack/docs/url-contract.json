@@ -518,6 +518,17 @@
       ]
     },
     {
+      "path": "hack/acl/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "azure-container-linux-harness",
+        "requirements",
+        "settings",
+        "troubleshooting",
+        "usage"
+      ]
+    },
+    {
       "path": "hack/e2e/README.md",
       "protectAnchors": true,
       "anchors": [
