@@ -404,9 +404,14 @@ AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
 AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
 AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
 AKS_FLEX_NODE_CONFIG_OVERRIDES
+AKS_FLEX_NODE_HOST_PREFIX
 AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
 ```
+
+`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated. The binary
+directory is derived from the host prefix, and a value that names any other
+directory is rejected.
 
 The equivalent non-secret values have CLI flags. A service-principal client
 secret has no CLI value because command arguments are process-visible. Use a
@@ -426,23 +431,27 @@ The script processes JSON in this order:
 
 1. Write the embedded base config into a mode `0700` temporary workspace.
 2. Validate that it is a JSON object.
-3. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
+3. Resolve the host prefix and install the agent under it, as described in
+   [Agent download and installation](#agent-download-and-installation). This
+   happens before rendering because fetching bootstrap data runs the installed
+   binary.
+4. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
    they are available to the bootstrap-data request.
-4. When enabled, acquire an ARM token with MSI or SP, call
+5. When enabled, acquire an ARM token with MSI or SP, call
    `listBootstrapData`, and deep-merge the response.
-5. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
-6. Deep-merge each CLI `--config-overrides` object in invocation order.
-7. Reapply dedicated cluster/pool/endpoint overrides so they remain
+6. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
+7. Deep-merge each CLI `--config-overrides` object in invocation order.
+8. Reapply dedicated cluster/pool/endpoint overrides so they remain
    authoritative.
-8. Apply dedicated rootfs and offline-artifact source overrides.
-9. Set `agent.nodeName` from the lowercase host name only when absent.
-10. Apply the dedicated auth selection.
-11. Validate the final JSON with jq.
-12. Keep the rendered result in the protected workspace while the agent archive
-    is downloaded and installed.
-13. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
+9. Apply dedicated rootfs and offline-artifact source overrides.
+10. Apply `--host-prefix` to `agent.hostPrefix`, when set.
+11. Set `agent.nodeName` from the lowercase host name only when absent.
+12. Apply the dedicated auth selection.
+13. Validate the final JSON with jq, and fail if its host prefix differs from
+    the one the agent was installed under.
+14. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
     `0600`.
-14. Clear bootstrap environment variables, including signed artifact URLs and
+15. Clear bootstrap environment variables, including signed artifact URLs and
     any direct SP secret, before launching the agent commands.
 
 The ARM token, request body, authorization header, and bootstrap-data response
@@ -586,7 +595,14 @@ The script:
 3. Optionally validates the archive SHA-256.
 4. Rejects absolute and parent-traversal tar paths.
 5. Extracts `aks-flex-node-linux-<arch>` or `aks-flex-node`.
-6. Atomically replaces `/usr/local/bin/aks-flex-node` with mode `0755`.
+6. Atomically replaces `<prefix>/bin/aks-flex-node` with mode `0755`.
+
+The host prefix is `--host-prefix` or `AKS_FLEX_NODE_HOST_PREFIX` when set,
+otherwise `agent.hostPrefix` from the base config and config overrides,
+otherwise `/usr/local`. It must be an absolute path. Hosts with a read-only
+`/usr`, such as Azure Container Linux, need a writable prefix like
+`/opt/aks-flex-node`. The prefix is node-local, so bootstrap data cannot change
+it.
 
 The checksum covers the downloaded archive. Supplying a digest is strongly
 recommended, especially for signed URLs or mirrors.
