@@ -36,7 +36,22 @@ _remove_arc_vm_extensions() {
   while IFS= read -r extension; do
     [[ -n "${extension}" ]] || continue
     log_info "Removing Azure VM extension ${extension} before Arc evaluation setup"
-    az vm extension delete --resource-group "${resource_group}" --vm-name "${vm_name}" --name "${extension}" --output none
+    local delete_status=0
+    timeout 180 az vm extension delete \
+      --resource-group "${resource_group}" \
+      --vm-name "${vm_name}" \
+      --name "${extension}" \
+      --output none || delete_status=$?
+    if [[ "${delete_status}" -eq 124 ]]; then
+      # Azure Policy can race by reinstalling extensions while this evaluation
+      # host is already connected to Arc. Don't hang the complete E2E run on an
+      # extension delete timeout; the host-side Arc checks below remain the
+      # authoritative gate.
+      log_warn "Timed out deleting Azure VM extension ${extension}; continuing with Arc host validation"
+    elif [[ "${delete_status}" -ne 0 ]]; then
+      log_error "Failed to delete Azure VM extension ${extension} (exit ${delete_status})"
+      return "${delete_status}"
+    fi
   done < <(az vm extension list --resource-group "${resource_group}" --vm-name "${vm_name}" --query '[].name' -o tsv)
 }
 

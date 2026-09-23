@@ -191,7 +191,7 @@ load_config() {
 
   # Unbounded-Net provides the real CNI for E2E Flex nodes. Defaults match the
   # static VNet/subnet prefixes in hack/e2e/infra/main.bicep.
-  E2E_UNBOUNDED_NET_VERSION="${E2E_UNBOUNDED_NET_VERSION:-v0.1.21}"
+  E2E_UNBOUNDED_NET_VERSION="${E2E_UNBOUNDED_NET_VERSION:-v0.8.0}"
   E2E_UNBOUNDED_NET_SITE_NAME="${E2E_UNBOUNDED_NET_SITE_NAME:-aks-flex-e2e}"
   E2E_UNBOUNDED_NET_NODE_CIDR="${E2E_UNBOUNDED_NET_NODE_CIDR:-10.224.0.0/12}"
   E2E_UNBOUNDED_NET_POD_CIDR="${E2E_UNBOUNDED_NET_POD_CIDR:-10.240.0.0/16}"

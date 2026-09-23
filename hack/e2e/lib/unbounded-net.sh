@@ -51,7 +51,7 @@ apply_unbounded_net_site() {
 
   log_info "Applying Unbounded-Net E2E site '${site_name}' (nodes=${node_cidr}, pods=${pod_cidr})..."
   kubectl apply --server-side --force-conflicts -f - <<EOF
-apiVersion: net.unbounded-cloud.io/v1alpha1
+apiVersion: unbounded-cloud.io/v1alpha3
 kind: Site
 metadata:
   name: ${site_name}
@@ -79,22 +79,23 @@ ensure_unbounded_net() {
   log_info "Applying Unbounded-Net namespace, config, CRDs, controller, and node agent..."
   kubectl apply --server-side --force-conflicts -f "${rendered_dir}/00-namespace.yaml"
   kubectl apply --server-side --force-conflicts -f "${rendered_dir}/01-configmap.yaml"
+  kubectl apply --server-side --force-conflicts -f "${source_dir}/deploy/machina/crd/unbounded-cloud.io_sites.yaml"
   kubectl apply --server-side --force-conflicts -f "${rendered_dir}/crd/"
   kubectl apply --server-side --force-conflicts -f "${rendered_dir}/controller/"
   kubectl apply --server-side --force-conflicts -f "${rendered_dir}/node/"
 
   log_info "Waiting for Unbounded-Net controller..."
-  kubectl -n unbounded-net rollout status deploy/unbounded-net-controller --timeout="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT}s"
+  kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT}s"
 
   apply_unbounded_net_site
 
   log_info "Waiting for Unbounded-Net node DaemonSet..."
-  kubectl -n unbounded-net rollout status ds/unbounded-net-node --timeout="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT}s"
+  kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT}s"
 
   log_info "Waiting for current nodes to be Ready after CNI installation..."
   kubectl wait --for=condition=Ready nodes --all --timeout="${E2E_UNBOUNDED_NET_ROLLOUT_TIMEOUT}s"
 
   kubectl get sites,sitenodeslices -o wide || true
-  kubectl get nodes -L net.unbounded-cloud.io/site -o wide || true
+  kubectl get nodes -L unbounded-cloud.io/site -o wide || true
   log_success "Unbounded-Net CNI is ready"
 }

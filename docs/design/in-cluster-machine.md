@@ -1,6 +1,9 @@
 # In-Cluster Machine Flow
 
-The in-cluster machine endpoint lets FlexNode exercise the same machine lifecycle used by ARM while authenticating through the Kubernetes API server. It is intended for E2E and dev-test environments; direct ARM remains the production backend.
+The in-cluster machine endpoint lets Flex Node exercise the same machine lifecycle used by ARM while authenticating through the Kubernetes API server.
+
+> [!NOTE]
+> **Status:** Implemented for E2E and development environments. Direct ARM is the default deployment backend. The in-cluster controller is a read-only bridge for pre-created test state and isn't a production replacement for the AKS Machine API.
 
 ## Machine contract
 

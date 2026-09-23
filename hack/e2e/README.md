@@ -35,10 +35,6 @@ role-assignment, Arc onboarding, admin kubeconfig, and cleanup permissions.
 `scripts/setup/setup-runner.sh` configures those operator permissions, not host
 permissions.
 
-For retained environments, incremental Bicep deployment leaves the old broad
-host assignments in place. Follow the
-[operator migration guidance](../../docs/usage/getting-started.md#migrate-existing-host-identities).
-
 ## GitHub Actions Policy
 
 The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the protected `e2e-testing` environment. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
@@ -144,9 +140,10 @@ Additional environment variables:
 | `E2E_KUBELET_KUBE_RESERVED_CPU` | `200m` | `node.kubelet.kubeReserved.cpu` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_KUBE_RESERVED_MEMORY` | `650Mi` | `node.kubelet.kubeReserved.memory` override written to the bootstrap-token node config. |
 | `E2E_CONTROLLER_IMAGE` | built per run | Optional pre-built controller image to deploy instead of building and pushing to the in-cluster local registry. |
-| `E2E_UNBOUNDED_NET_VERSION` | `v0.1.21` | Unbounded-Net release tag used for CNI manifests and default images. |
+| `E2E_UNBOUNDED_NET_VERSION` | `v0.8.0` | Unbounded release tag used for CNI manifests and default images. |
 | `E2E_UNBOUNDED_NET_CONTROLLER_IMAGE` | `ghcr.io/azure/unbounded-net-controller:$E2E_UNBOUNDED_NET_VERSION` | Optional controller image override. |
 | `E2E_UNBOUNDED_NET_NODE_IMAGE` | `ghcr.io/azure/unbounded-net-node:$E2E_UNBOUNDED_NET_VERSION` | Optional node-agent image override. |
+| `E2E_OFFLINE_ARTIFACTS_MIRROR_BASE` | Azure Front Door artifact mirror | Base URL for pre-built Unbounded bootstrap artifact releases used by the offline node. |
 | `E2E_UNBOUNDED_NET_SITE_NAME` | `aks-flex-e2e` | Site name used by Unbounded-Net in E2E. |
 | `E2E_UNBOUNDED_NET_NODE_CIDR` | `10.224.0.0/12` | Node CIDR selector for the E2E Unbounded-Net site. |
 | `E2E_UNBOUNDED_NET_POD_CIDR` | `10.240.0.0/16` | Pod CIDR assigned by Unbounded-Net in E2E. |
@@ -172,7 +169,7 @@ The suite validates five join paths and one real ARM Machine registration path. 
 |----|-----------|-----------|
 | `vm-e2e-msi-*` | Managed Identity + Bootstrap Token | Operator-first dual-auth config using AKS RP `listBootstrapData`; repave invalidates the original token and requires an in-memory refresh. |
 | `vm-e2e-token-*` | Bootstrap Token | Kubernetes bootstrap token, RBAC, generated config, and `aks-flex-node start` flow. |
-| `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test builds a bootstrap artifact bundle at runtime, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}`. |
+| `vm-e2e-offline-*` | Bootstrap Token + Offline Artifacts | Bootstrap token config pins `bootstrap.ociImage=ghcr.io/azure/agent-ubuntu2404:v20260619`; the test downloads the version-matched prebuilt bundle from `E2E_OFFLINE_ARTIFACTS_MIRROR_BASE`, verifies its published SHA-256 checksum, publishes it to a VM-local loopback registry, and sets `bootstrap.offlineArtifacts.source=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}`. |
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 | `vm-e2e-arc-*` | Azure Arc Identity + Bootstrap Token | Converts an Azure VM into an official Arc evaluation server, fetches bootstrap data through Arc HIMDS, reconciles through the E2E in-cluster Machine endpoint, and validates the `himdsd.service` dependency. |
 

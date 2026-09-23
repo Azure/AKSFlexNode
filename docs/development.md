@@ -27,7 +27,7 @@ For a complete list of build targets, run `make help`.
 
 ## Prerequisites
 
-- **Operating System:** Ubuntu 22.04 LTS, 24.04 LTS, or compatible Linux distribution
+- **Operating System:** Ubuntu 24.04 LTS or a compatible Linux distribution
 - **Architecture:** x86_64 (amd64) or arm64
 - **Go:** Use the version specified by `go.mod`
 - **Make:** GNU Make
@@ -52,6 +52,12 @@ make vet
 
 # Verify and tidy dependencies
 make verify
+
+# Check generated CLI docs, links, safety rules, and stable URLs
+make docs-check
+
+# Report labs with stale validation dates
+make docs-freshness
 ```
 
 ### Testing
@@ -157,7 +163,7 @@ The project uses `.golangci.yml` (v2 format) for linter configuration with the f
 
 ### Test Coverage
 
-The project enforces a minimum test coverage threshold of **30%**. To view detailed coverage:
+CI compares total test coverage with a **30%** target and emits a warning when coverage is lower. It doesn't currently fail the build on coverage alone. To view detailed coverage:
 
 ```bash
 make test-coverage
@@ -247,29 +253,8 @@ If coverage drops below 30%:
 3. Review `coverage.html` for uncovered lines
 4. Consider raising threshold as coverage improves
 
-## Project Structure
 
-```
-AKSFlexNode/
-├── cmd/                     # Command-line interface
-│   ├── aks-flex-controller/ # In-cluster machine endpoint and CSR approver
-│   └── aks-flex-node/       # Main agent CLI
-├── pkg/
-│   ├── aksmachine/          # AKS machine goal/state client abstractions
-│   ├── cmd/                 # Cobra command implementations
-│   ├── config/              # Configuration loading and validation
-│   ├── daemon/              # Host lifecycle, state, and nspawn reconciliation
-│   ├── logger/              # Logging infrastructure
-│   └── utils/               # Utility functions
-├── docs/                    # Documentation
-│   ├── usage/               # Usage scenario guides
-│   └── design/              # Detailed design topics
-├── hack/                    # E2E and local development tooling
-├── scripts/                 # Installation scripts
-├── Makefile               # Build and test targets
-└── go.mod                 # Go module definition
-```
-
+<a id="project-structure"></a>
 ## Code Style and Conventions
 
 - Follow standard Go conventions and idioms
@@ -289,15 +274,17 @@ When adding new features:
 4. Update documentation if needed
 5. Submit a pull request with a clear description
 
-### Adding a New Bootstrap Component
+<a id="adding-a-new-bootstrap-component"></a>
+### Adding host bootstrap behavior
 
-If adding a new component to the bootstrap process:
+AKS Flex Node composes bootstrap work from Unbounded `phases.Task` values instead of a local `pkg/components` registry. Before adding a task:
 
-1. Create a new directory in `pkg/components/`
-2. Implement the `Executor` interface (Install/Uninstall methods)
-3. Add the component to the bootstrap sequence in `pkg/bootstrapper/bootstrapper.go`
-4. Consider dependencies and execution order
-5. Add appropriate tests
+1. Decide whether the behavior belongs in upstream Unbounded or in the AKS-specific layer.
+2. Put AKS-specific host preparation in an appropriate package under `pkg/` and return a `phases.Task`.
+3. Add host preparation to `daemon.SetupHost` or worker setup to `daemon.StartNode` in `pkg/daemon/start.go`, preserving the required serial or parallel ordering.
+4. Keep the task idempotent and provide a corresponding cleanup path when it creates durable host state.
+5. Inject external dependencies through interfaces and add table-driven tests, including a repeated-run case.
+6. Update preflight checks and user documentation when the task introduces a new prerequisite or configuration field.
 
 ## Changelog and Releases
 
@@ -363,6 +350,21 @@ We welcome contributions! Here's how to get started:
 - Add tests for new functionality
 - Follow the existing code style
 
+### Documentation changes
+
+When you add or update documentation:
+
+- Use direct, task-oriented language and address the reader as **you**.
+- Use sentence case for headings and action verbs for procedural headings.
+- Distinguish commands that run in the Bash environment from commands that run on the flex node host.
+- Follow mutating commands with a verification step and expected state.
+- Don't print or log bootstrap data, kubeconfig content, private keys, service principal credentials, signed URLs, or complete credential-bearing configuration files.
+- Verify implementation claims against the current code, CLI help, scripts, and tests.
+- Use the Microsoft Learn Flex nodes article series as the model for AKS terminology, task order, feature scope, and status.
+- Use the [Project Unbounded documentation](https://github.com/Azure/unbounded/tree/main/docs) for shared Unbounded concepts and resource semantics.
+- Keep existing files under `docs/labs/` at their current paths. Preserve linked heading anchors or add an explicit compatibility anchor before renaming a heading.
+- State when a lab is supplemental or experimental and record its validation status and version scope.
+
 ### Pull Request Flow
 
 1. Developer opens PR
@@ -382,7 +384,7 @@ Recommended branch protection rules for `main` and `dev`:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](../LICENSE) file for details.
 
 ## Getting Help
 
