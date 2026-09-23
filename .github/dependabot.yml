@@ -4,6 +4,25 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      azure:
+        patterns:
+          - github.com/Azure/*
+      golang:
+        patterns:
+          - golang.org/*
+      kubernetes:
+        patterns:
+          - k8s.io/*
+          - sigs.k8s.io/*
+      everything-else:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - github.com/Azure/*
+          - golang.org/*
+          - k8s.io/*
+          - sigs.k8s.io/*
 
   - package-ecosystem: github-actions
     directory: /
