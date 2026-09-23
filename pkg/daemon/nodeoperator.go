@@ -157,7 +157,7 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {
-	return phases.ExecuteTask(ctx, log, ResetNode(log))
+	return phases.ExecuteTask(ctx, log, ResetNode(log, o.hostPrefix()))
 }
 
 func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) error {

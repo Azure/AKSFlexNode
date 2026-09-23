@@ -31,7 +31,7 @@ func runReset(ctx context.Context, logger *slog.Logger) error {
 
 	tasks := phases.Serial(logger,
 		daemon.UninstallService(logger, prefix),
-		daemon.ResetNode(logger),
+		daemon.ResetNode(logger, prefix),
 	)
 	return phases.ExecuteTask(ctx, logger, tasks)
 }

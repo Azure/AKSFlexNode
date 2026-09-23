@@ -322,6 +322,45 @@ validate_no_policy_routing_state() {
   fi
 }
 
+# LocalDNS state used to survive reset, because reset skipped the library's
+# LocalDNS cleanup. The MSI node enables LocalDNS, so this is exercised there.
+validate_no_localdns_state() {
+  local path
+
+  for path in /etc/systemd/system/unbounded-localdns-network.service \
+    /usr/local/libexec/unbounded-localdns-network; do
+    if [[ -e "${path}" ]]; then
+      echo "reset cleanup LocalDNS file ${path} still exists"
+      exit 1
+    fi
+  done
+
+  if [[ -e /sys/class/net/localdns ]]; then
+    echo "reset cleanup LocalDNS interface localdns still exists"
+    ip link show localdns || true
+    exit 1
+  fi
+
+  if command -v nft >/dev/null 2>&1 && sudo nft list table ip unbounded_localdns >/dev/null 2>&1; then
+    echo "reset cleanup LocalDNS nft table unbounded_localdns still exists"
+    sudo nft list table ip unbounded_localdns || true
+    exit 1
+  fi
+}
+
+validate_no_host_helpers() {
+  local path
+
+  for path in /usr/local/bin/unbounded-agent-nspawn-lifecycle \
+    /usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh \
+    /etc/systemd/system/aks-flex-node-agent-recovery.service; do
+    if [[ -e "${path}" ]]; then
+      echo "reset cleanup helper ${path} still exists"
+      exit 1
+    fi
+  done
+}
+
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; do
   if (( SECONDS >= deadline )); then
@@ -346,6 +385,8 @@ validate_no_overlay_interfaces
 validate_no_legacy_cni_rules
 validate_no_wireguard_keys
 validate_no_policy_routing_state
+validate_no_localdns_state
+validate_no_host_helpers
 
 for path in /etc/aks-flex-node /var/log/aks-flex-node; do
   if [[ -e "${path}" ]]; then
