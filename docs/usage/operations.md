@@ -70,6 +70,20 @@ The restarted daemon marks the operation `Complete`. If the candidate cannot rem
 
 MachineOperations are cluster-scoped. The daemon group requires cluster-wide read access to MachineOperations and Nodes, plus MachineOperation status update access, so restrict who can create operations and treat parameter values as sensitive API data. Prefer short-lived, read-only download credentials.
 
+### Optional Machine publication
+
+When a same-named `unbounded-cloud.io/v1alpha3` Machine is published, `NodeReboot`, `AgentReset`, and `AgentUpgrade` capture its `metadata.generation` before execution and report it as `status.observedMachineGeneration` on completion or execution failure. This is the observed **CR generation**, not evidence that ARM settings were applied. Invalid requests that never execute do not report a generation.
+
+The daemon reads the Machine directly, without a Machine watch or startup dependency. Missing Machine objects or a missing Machine API preserve legacy operation execution and omit the generation. Other read errors (including authorization and transient failures) prevent execution and are retried; they are not treated as absence. Daemon credentials need `get` on `machines.unbounded-cloud.io`; the example controller deployment role includes this read-only permission.
+
+AgentUpgrade stores the captured generation in its existing durable upgrade signal. Restart, rollback, and publication retries use that value even if the Machine changes. Older signals without the field remain readable and omit the generation. Terminal status-write retries within the initiating process do not repeat host operations. These in-memory results are bound to the operation UID and discarded when that operation disappears, is replaced, or is already terminal; conflict retries recheck identity before publishing.
+
+Bootstrap adds `unbounded-cloud.io/machine=<ARM Machine name>` to the Node's registration labels. The ARM Machine name is `agent.nodeName`, not the `kube1`/`kube2` nspawn slot. This reserved relationship label overrides a conflicting custom value without changing customer goal labels or the existing AKS markers.
+
+Machine/Node names longer than the 63-character label-value limit remain supported: the relationship label is omitted, never truncated or hashed. Use the existing equal-name lookup (`Machine.metadata.name == Node.metadata.name`) or an explicit `MachineOperation.spec.machineRef`; label-only consumers cannot match these names.
+
+The existing Node reconciliation loop also repairs the relationship label where its credentials already permit Node patches. It preserves other labels and annotations and removes an incorrect relationship label for long names. The example daemon role remains read-only on Nodes: a denied patch is logged and does not block the AKS goal lifecycle. Such existing Nodes need an administrator-applied label or normal Node recreation to receive it; this feature does not broaden Node write privileges. Machine CR edits never drive repave/reset, and the daemon does not write Machine spec or status.
+
 ```bash
 kubectl get machineoperation upgrade-agent-worker-01 -w
 ```
