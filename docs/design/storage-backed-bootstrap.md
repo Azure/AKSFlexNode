@@ -265,6 +265,16 @@ how to retry failed provisioning. A systemd oneshot wrapper can use
 `ConditionPathExists=!/var/lib/aks-flex-node/first-boot-complete` to prevent a
 successful node from being bootstrapped again after reboot.
 
+`aks-flex-node ignition` renders such a wrapper for hosts provisioned by
+Ignition, `aks-flex-node-bootstrap.service`, but conditions it on the agent
+unit, `/etc/systemd/system/aks-flex-node-agent.service`, instead of a marker.
+The agent unit exists once bootstrap has installed the agent, and
+`aks-flex-node reset` removes it together with the wrapper unit. A marker under
+`/var/lib/aks-flex-node` would survive reset and block the host from being
+provisioned again. The wrapper removes the script, which carries the base
+config, once bootstrap succeeds, and keeps the credential file that the config
+references.
+
 ### 7. Verify convergence
 
 The provisioning system should not treat script exit alone as complete cluster

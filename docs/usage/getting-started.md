@@ -447,12 +447,14 @@ For a host outside Azure, prefer an already-connected Azure Arc managed identity
 The script performs these operations:
 
 1. Loads the empty JSON base.
-2. Applies the cluster and pool overrides.
-3. Uses the Azure VM managed identity to request an ARM token.
-4. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
+2. Downloads and verifies the AKS Flex Node agent archive from GitHub Releases,
+   and installs the binary under the host prefix: `/usr/local` unless
+   `--host-prefix` or `agent.hostPrefix` names another.
+3. Applies the cluster and pool overrides.
+4. Uses the Azure VM managed identity to request an ARM token.
+5. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
    component version.
-5. Applies runtime configuration overrides.
-6. Downloads and verifies the AKS Flex Node agent archive from GitHub Releases.
+6. Applies runtime configuration overrides.
 7. Writes `/etc/aks-flex-node/config.json` as `0600 root:root`.
 8. Runs non-mutating preflight.
 9. Registers the ARM Machine and starts the nspawn worker.
