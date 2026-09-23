@@ -135,13 +135,7 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions age
 		return nil, err
 	}
 	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(recoveryScriptPath), []byte(recoveryScript))
-	recoveryContent := recoveryScriptContent
-	for oldPath, newPath := range map[string]string{
-		defaultAgentUpgradePaths().LastGoodPath: binaryPaths.LastGoodPath,
-		defaultAgentUpgradePaths().SignalPath:   binaryPaths.SignalPath,
-	} {
-		recoveryContent = bytes.ReplaceAll(recoveryContent, []byte(oldPath), []byte(newPath))
-	}
+	recoveryContent := renderRecoveryScript(binaryPaths)
 	// Publish dependencies before the main unit that references OnFailure, so an
 	// interrupted update never leaves systemd pointing at missing recovery assets.
 	return []agentServiceAsset{
@@ -182,6 +176,28 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}
 	return content.Bytes(), nil
+}
+
+// renderRecoveryScript points the embedded recovery script at the binary layout
+// for this host.
+//
+// The embedded script contains the paths for the default prefix as literals, so
+// those literals are what gets replaced. Keying the replacement on the paths
+// resolved from the installed config instead matches nothing on a host with a
+// custom prefix, and leaves the script reading last-good from /usr/local, where
+// there is no binary, so a failed upgrade cannot be rolled back.
+func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
+	embedded := agentUpgradePathsForPrefix("")
+	content := recoveryScriptContent
+
+	for oldPath, newPath := range map[string]string{
+		embedded.LastGoodPath: binaryPaths.LastGoodPath,
+		embedded.SignalPath:   binaryPaths.SignalPath,
+	} {
+		content = bytes.ReplaceAll(content, []byte(oldPath), []byte(newPath))
+	}
+
+	return content
 }
 
 func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) error {

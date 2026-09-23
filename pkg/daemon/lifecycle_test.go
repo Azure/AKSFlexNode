@@ -224,3 +224,59 @@ func TestRecoveryScriptPathForPrefix(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderRecoveryScriptFollowsThePrefix covers the recovery script on a host
+// with a custom prefix. The script restores the last-good binary after a failed
+// upgrade, so if it still names the /usr/local path, rollback fails on exactly
+// the hosts that set a prefix.
+func TestRenderRecoveryScriptFollowsThePrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		prefix   string
+		lastGood string
+	}{
+		{
+			name:     "default prefix is unchanged",
+			prefix:   "",
+			lastGood: "/usr/local/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+		{
+			name:     "custom prefix",
+			prefix:   "/opt/aks-flex-node",
+			lastGood: "/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			script := string(renderRecoveryScript(agentUpgradePathsForPrefix(tt.prefix)))
+
+			if !strings.Contains(script, "readlink -f "+tt.lastGood) {
+				t.Fatalf("recovery script does not read %s:\n%s", tt.lastGood, script)
+			}
+			if tt.prefix != "" && strings.Contains(script, "/usr/local/") {
+				t.Fatalf("recovery script still names /usr/local:\n%s", script)
+			}
+		})
+	}
+}
+
+// TestEmbeddedRecoveryScriptNamesTheDefaultPaths pins the literals
+// renderRecoveryScript replaces. If the asset and the default layout drift
+// apart, the replacement silently matches nothing.
+func TestEmbeddedRecoveryScriptNamesTheDefaultPaths(t *testing.T) {
+	t.Parallel()
+
+	defaults := agentUpgradePathsForPrefix("")
+	script := string(recoveryScriptContent)
+
+	for _, path := range []string{defaults.LastGoodPath, defaults.SignalPath} {
+		if !strings.Contains(script, path) {
+			t.Fatalf("embedded recovery script does not contain %s", path)
+		}
+	}
+}
