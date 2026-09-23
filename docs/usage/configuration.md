@@ -20,6 +20,7 @@ aks-flex-node preflight --config /etc/aks-flex-node/config.json
 | `agent` | object | Local agent logging and runtime behavior. |
 | `components` | object | Kubernetes, container runtime, and sandbox image settings. |
 | `bootstrap` | object | Bootstrap settings such as the rootfs OCI image. |
+| `hostRouting` | object | Optional host IPv4 routes and route-overlap checks applied before the nspawn worker starts. |
 | `networking` | object | Cluster networking settings and optional CNI plugin version override. |
 | `node` | object | Kubelet, labels, taints, and node registration settings. |
 | `npd` | object | Optional node-problem-detector version override. |
@@ -81,14 +82,19 @@ separate token/CSR credentials.
 |------|------|-------------|--------------|
 | `azure.arc.enabled` | boolean | Uses the connected host's Arc system-assigned identity for ARM authentication. The Arc agent lifecycle remains externally managed. | `true` |
 
+Earlier configs can contain `azure.arc.machineName`, `azure.arc.resourceGroup`, `azure.arc.location`, or `azure.arc.tags`. The loader accepts these fields for compatibility, but AKS Flex Node doesn't use them. Don't add them to new configs.
+
 ## Service Principal
+
+> [!WARNING]
+> Don't place a service principal secret directly in the JSON config. Store the secret or certificate in a root-owned file with mode `0600`, and configure `clientSecretFile`.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
 | `azure.servicePrincipal.tenantId` | string | Microsoft Entra tenant ID for the service principal. | `70a036f6-8e4d-4615-bad6-149c02e7720d` |
 | `azure.servicePrincipal.clientId` | string | Application client ID. | `00000000-0000-0000-0000-000000000000` |
-| `azure.servicePrincipal.clientSecret` | string | Application client secret. Mutually exclusive with `clientSecretFile`. | `<client-secret>` |
-| `azure.servicePrincipal.clientSecretFile` | string | Path to a protected regular file (no group/other access; e.g., 0600) containing either the application client secret or a PEM/unencrypted PFX certificate and private key. PFX certificate files must use a `.pfx` suffix. Certificate auth sends the leaf thumbprint in `x5t` and the public chain in `x5c` for Subject Name/Issuer compatibility. | `/run/credentials/aks-flex-node-sp` |
+| `azure.servicePrincipal.clientSecret` | string | Legacy inline application client secret. Mutually exclusive with `clientSecretFile`. Avoid this field because the secret becomes part of the config; use `clientSecretFile` instead. | `<client-secret>` |
+| `azure.servicePrincipal.clientSecretFile` | string | Path to a protected regular file (no group/other access; for example, mode `0600`) containing either the application client secret or a PEM or unencrypted PFX certificate and private key. PFX certificate files must use a `.pfx` suffix. Certificate auth sends the leaf thumbprint in `x5t` and the public chain in `x5c` for Subject Name/Issuer compatibility. | `/run/credentials/aks-flex-node-sp` |
 
 ## Agent
 
@@ -97,8 +103,8 @@ separate token/CSR credentials.
 | `agent.logLevel` | string | Agent log verbosity. | `info` |
 | `agent.logDir` | string | Host directory for agent logs. | `/var/log/aks-flex-node` |
 | `agent.nodeName` | string | Optional Kubernetes node name override. Defaults to the host hostname. | `edge-node-01` |
-| `agent.machineClient.mode` | string | Machine source. Use `arm` for direct ARM reads or `in-cluster` for the in-cluster read-only endpoint via Kubernetes service proxy. | `in-cluster` |
-| `agent.machineClient.endpointUrl` | string | Backend endpoint. Optional in `arm` mode for dev-test ARM proxy use; required in `in-cluster` mode and must be the Kubernetes API service-proxy path or absolute URL. | `/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy` |
+| `agent.machineClient.mode` | string | Machine source. Use `arm` for direct ARM reads or `in-cluster` for the in-cluster read-only endpoint via Kubernetes service proxy. | `arm` |
+| `agent.machineClient.endpointUrl` | string | Backend endpoint. Optional in `arm` mode for dev-test ARM proxy use; required in `in-cluster` mode and must be an absolute Kubernetes API service-proxy path with no scheme or host. | `/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy` |
 | `agent.machineReconcileInterval` | duration string | Daemon interval for re-reading machine state. Uses Go duration syntax. | `10m` |
 | `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `true` with Arc, service principal, or managed identity; otherwise `false` |
 | `agent.machineOperationMode` | string | MachineOperation handling mode. | `auto` |
@@ -122,6 +128,48 @@ separate token/CSR credentials.
 | `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |
 | `bootstrap.additionalHostMounts` | array of objects | Optional non-device host paths to bind mount into the nspawn machine. `source` is required, `target` defaults to `source`, and `readOnly` defaults to `false`. Source and target must be clean absolute paths without whitespace, control characters, or `:`. Prefer read-only mounts unless write access is required. | `[{"source":"/opt/config","target":"/etc/config","readOnly":true}]` |
 | `bootstrap.additionalRequiredServices` | array of strings | Optional host systemd service units that the nspawn machine requires and starts after. Use this when a host service must finish configuring or renaming devices before nspawn starts. | `["ib_rdma_configure.service"]` |
+
+## Host routing
+
+Use `hostRouting` when a provider-installed route would otherwise shadow an AKS node, pod, service, or API server CIDR. The agent configures host routes before it starts the nspawn worker. These settings support IPv4 only.
+
+> [!WARNING]
+> An incorrect static route can interrupt host or cluster connectivity. Confirm the destination, gateway, and interface with your network administrator. Test route lookup before and after bootstrap with `ip -4 route get <address-in-cidr>`.
+
+| Name | Type | Description | Default |
+|------|------|-------------|---------|
+| `hostRouting.staticRoutes.enabled` | boolean | Explicitly enables route installation. Set this to `true` when `routes` isn't empty. | `false` |
+| `hostRouting.staticRoutes.routes` | array of objects | IPv4 routes installed with idempotent `ip -4 route replace` operations. | `[]` |
+| `hostRouting.staticRoutes.routes[].destination` | string | Required IPv4 destination in CIDR notation. | None |
+| `hostRouting.staticRoutes.routes[].gateway` | string | Optional IPv4 next hop. When omitted, the agent resolves the default gateway on the selected interface at boot. | Default IPv4 gateway |
+| `hostRouting.staticRoutes.routes[].dev` | string | Optional outbound interface. When omitted, the agent resolves the interface from the default IPv4 route at boot. | Default IPv4 route interface |
+| `hostRouting.staticRoutes.routes[].metric` | integer | Optional route metric. A value of `0` lets the kernel use its default. | `0` |
+| `hostRouting.routeOverlap.expectedCidrs` | array of strings | IPv4 CIDRs that must resolve through the default outbound interface after static routes are applied. | `[]` |
+| `hostRouting.routeOverlap.mode` | string | `WARN` logs overlap and allows startup. `STRICT` prevents the nspawn worker from starting when overlap remains. Values are case-insensitive. | `WARN` |
+
+The agent installs `static-routes.service` when one or more static routes are configured. It installs `check-route-overlap.service` when host-routing setup is enabled. Both units run after `network-online.target` and before `systemd-nspawn@.service`; when static routes are present, the overlap check runs after the static-route unit.
+
+This example installs more-specific routes for the pod and service CIDRs through the host's default IPv4 gateway and blocks worker startup if either CIDR still resolves through another interface:
+
+```json
+{
+  "hostRouting": {
+    "staticRoutes": {
+      "enabled": true,
+      "routes": [
+        { "destination": "10.93.0.0/16" },
+        { "destination": "10.94.0.0/16", "metric": 50 }
+      ]
+    },
+    "routeOverlap": {
+      "expectedCidrs": ["10.93.0.0/16", "10.94.0.0/16"],
+      "mode": "STRICT"
+    }
+  }
+}
+```
+
+When `routes` contains entries and `enabled` is `false`, `start` fails instead of installing the routes. Use `WARN` while evaluating an address plan and `STRICT` when an overlap must prevent the worker from starting.
 
 ## Networking
 

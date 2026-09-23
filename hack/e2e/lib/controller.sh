@@ -142,6 +142,26 @@ _stop_registry_port_forward() {
   fi
 }
 
+_verify_registry_manifest() {
+  local local_port="$1"
+  local repository="$2"
+  local tag="$3"
+  local attempt
+
+  for attempt in $(seq 1 15); do
+    if curl --fail --silent --show-error \
+      --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "http://127.0.0.1:${local_port}/v2/${repository}/manifests/${tag}" \
+      >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  log_error "Controller image manifest ${repository}:${tag} is unavailable from the in-cluster registry"
+  return 1
+}
+
 _build_controller_image() {
   local -n out_image="$1"
 
@@ -151,7 +171,9 @@ _build_controller_image() {
   version="${VERSION:-dev}"
   git_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  tag="$(_sanitize_image_tag "e2e-${GITHUB_RUN_ID:-local}-${E2E_NAME_SUFFIX}-${git_commit}")"
+  # Include a per-build value so retries never reuse a tag that kubelet may
+  # have negatively cached after an earlier registry or push failure.
+  tag="$(_sanitize_image_tag "e2e-${GITHUB_RUN_ID:-local}-${E2E_NAME_SUFFIX}-${git_commit}-$(date -u +%s)-${RANDOM}")"
   local_port="$(_controller_registry_local_port)"
   host_port="$(_controller_registry_hostport)"
   local_image="127.0.0.1:${local_port}/aks-flex-controller:${tag}"
@@ -176,7 +198,9 @@ _build_controller_image() {
   local pushed=0 attempt
   for attempt in 1 2 3; do
     pf_pid=""
-    if _start_registry_port_forward pf_pid "${local_port}" && docker push "${local_image}"; then
+    if _start_registry_port_forward pf_pid "${local_port}" &&
+      docker push "${local_image}" &&
+      _verify_registry_manifest "${local_port}" "aks-flex-controller" "${tag}"; then
       pushed=1
       _stop_registry_port_forward "${pf_pid}"
       break
