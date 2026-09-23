@@ -3,10 +3,13 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -278,5 +281,113 @@ func TestEmbeddedRecoveryScriptNamesTheDefaultPaths(t *testing.T) {
 		if !strings.Contains(script, path) {
 			t.Fatalf("embedded recovery script does not contain %s", path)
 		}
+	}
+}
+
+// TestUninstallPathsSweepEveryPrefix covers the files uninstall removes. The
+// recovery script lives under the prefix, and a host that changed prefix still
+// has one under the old location, so both are removed.
+func TestUninstallPathsSweepEveryPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		prefix string
+		want   []string
+	}{
+		{
+			name:   "default prefix",
+			prefix: "",
+			want:   []string{"/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"},
+		},
+		{
+			name:   "custom prefix also sweeps the default",
+			prefix: "/opt/aks-flex-node",
+			want: []string{
+				"/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-recovery.sh",
+				"/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := uninstallPaths(tt.prefix)
+			for _, path := range append(tt.want,
+				filepath.Join(systemdSystemDir, ServiceUnitName),
+				filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+				"/etc/aks-flex-node/agent-upgrade-signal.json",
+			) {
+				if !slices.Contains(got, path) {
+					t.Fatalf("uninstallPaths(%q) = %v, missing %s", tt.prefix, got, path)
+				}
+			}
+		})
+	}
+}
+
+// TestRemoveIfPresentSkipsAbsentFiles covers uninstall on a read-only /usr.
+// Unlinking a missing file there returns EROFS rather than ENOENT, so the
+// remove must not be attempted at all for an absent file.
+func TestRemoveIfPresentSkipsAbsentFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		lstat   func(string) (os.FileInfo, error)
+		wantErr bool
+		removed bool
+	}{
+		{
+			name:    "absent file is not removed",
+			lstat:   func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+			wantErr: false,
+			removed: false,
+		},
+		{
+			name:    "present file that cannot be removed is an error",
+			lstat:   func(string) (os.FileInfo, error) { return nil, nil },
+			wantErr: true,
+			removed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			removed := false
+			err := removeIfPresentWith("/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh", tt.lstat, func(string) error {
+				removed = true
+				return syscall.EROFS
+			})
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("removeIfPresentWith() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if removed != tt.removed {
+				t.Fatalf("remove called = %v, want %v", removed, tt.removed)
+			}
+		})
+	}
+}
+
+// TestRemoveIfPresentRemovesDanglingSymlink pins Lstat over Stat.
+func TestRemoveIfPresentRemovesDanglingSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Join(dir, "missing"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeIfPresent(link); err != nil {
+		t.Fatalf("removeIfPresent() error = %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dangling symlink was not removed: %v", err)
 	}
 }

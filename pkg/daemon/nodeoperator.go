@@ -161,7 +161,18 @@ func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) er
 }
 
 func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) error {
-	return phases.ExecuteTask(ctx, log, UninstallService(log))
+	return phases.ExecuteTask(ctx, log, UninstallService(log, o.hostPrefix()))
+}
+
+// hostPrefix returns the prefix from the daemon's config. The daemon reset
+// paths remove the installed config before they get here, so the loaded config
+// is the only remaining record of it.
+func (o *nspawnNodeOperator) hostPrefix() string {
+	if o.cfg == nil {
+		return ""
+	}
+
+	return o.cfg.Agent.HostPrefix
 }
 
 func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {

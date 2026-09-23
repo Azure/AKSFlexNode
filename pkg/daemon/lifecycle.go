@@ -214,12 +214,61 @@ func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agent
 }
 
 type uninstallServiceTask struct {
-	log *slog.Logger
+	log    *slog.Logger
+	prefix string
 }
 
-// UninstallService returns a task that stops, disables, removes, and reloads the systemd unit.
-func UninstallService(log *slog.Logger) phases.Task {
-	return &uninstallServiceTask{log: log}
+// UninstallService returns a task that stops, disables, removes, and reloads
+// the systemd unit.
+//
+// The prefix is passed in rather than read from the installed config, because
+// the daemon's reset paths remove /etc/aks-flex-node before they uninstall the
+// service. Reading it at that point returns the default and leaves a prefixed
+// recovery script behind. The recovery script is removed under the given
+// prefix and under the default, so a host that changed prefix is still cleaned.
+func UninstallService(log *slog.Logger, prefix string) phases.Task {
+	return &uninstallServiceTask{log: log, prefix: prefix}
+}
+
+// InstalledHostPrefix returns the host prefix from the installed config, or the
+// empty string when there is none. Callers that are about to remove the config
+// read this first.
+func InstalledHostPrefix() string {
+	return hostPrefixFromInstalledConfig()
+}
+
+// uninstallPaths returns the files UninstallService removes for a prefix.
+func uninstallPaths(prefix string) []string {
+	paths := []string{
+		filepath.Join(systemdSystemDir, ServiceUnitName),
+		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+	}
+	for _, candidate := range goalstates.MergeHostPrefixes(prefix) {
+		paths = append(paths, recoveryScriptPathForPrefix(candidate))
+	}
+
+	return append(paths, agentUpgradePathsForPrefix(prefix).SignalPath)
+}
+
+// removeIfPresent removes a file and treats its absence as success.
+//
+// It checks first. On a read-only filesystem, such as /usr on Azure Container
+// Linux, unlinking a path that does not exist returns EROFS rather than ENOENT,
+// so the default-prefix sweep would otherwise fail reset on a file that was
+// never there. Lstat so a dangling symlink still counts as present.
+func removeIfPresent(path string) error {
+	return removeIfPresentWith(path, os.Lstat, os.Remove)
+}
+
+func removeIfPresentWith(path string, lstat func(string) (os.FileInfo, error), remove func(string) error) error {
+	if _, err := lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+
+	return nil
 }
 
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
@@ -232,14 +281,9 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
 
-	for _, path := range []string{
-		filepath.Join(systemdSystemDir, ServiceUnitName),
-		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
-		installedRecoveryScriptPath(),
-		defaultAgentUpgradePaths().SignalPath,
-	} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", path, err)
+	for _, path := range uninstallPaths(t.prefix) {
+		if err := removeIfPresent(path); err != nil {
+			return err
 		}
 	}
 
