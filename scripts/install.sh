@@ -3,8 +3,9 @@
 # This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 #
 # Scope: initial installation and reinstall after reset. While the agent service is installed,
-# /usr/local/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
-# through the agent upgrade flow.
+# <prefix>/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
+# through the agent upgrade flow. The prefix is /usr/local unless agent.hostPrefix or
+# AKS_FLEX_NODE_HOST_PREFIX sets another one.
 
 set -euo pipefail
 
@@ -20,8 +21,14 @@ REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
-INSTALL_DIR="/usr/local/bin"
-MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
+DEFAULT_HOST_PREFIX="/usr/local"
+INSTALL_DIR="$DEFAULT_HOST_PREFIX/bin"
+MANAGED_BINARY_DIR="$DEFAULT_HOST_PREFIX/lib/aks-flex-node"
+# Host install prefix. Must match agent.hostPrefix in the node config, because the agent resolves
+# its binaries from that. Required on hosts with a read-only /usr, such as Azure Container Linux.
+AKS_FLEX_NODE_HOST_PREFIX="${AKS_FLEX_NODE_HOST_PREFIX:-}"
+HOST_PREFIX=""
+OS_RELEASE_PATH="/etc/os-release"
 AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
@@ -87,11 +94,13 @@ detect_os() {
 }
 
 load_os_release() {
-    if [[ ! -f /etc/os-release ]]; then
+    if [[ ! -f "$OS_RELEASE_PATH" ]]; then
         return 1
     fi
 
     ID=""
+    ID_LIKE=""
+    VARIANT_ID=""
     VERSION_ID=""
     PRETTY_NAME=""
 
@@ -103,6 +112,12 @@ load_os_release() {
             ID)
                 ID="$value"
                 ;;
+            ID_LIKE)
+                ID_LIKE="$value"
+                ;;
+            VARIANT_ID)
+                VARIANT_ID="$value"
+                ;;
             VERSION_ID)
                 VERSION_ID="$value"
                 ;;
@@ -110,11 +125,30 @@ load_os_release() {
                 PRETTY_NAME="$value"
                 ;;
         esac
-    done < /etc/os-release
+    done < "$OS_RELEASE_PATH"
+}
+
+# Azure Container Linux reports ID=azurelinux and a 3.x VERSION_ID, like Azure Linux 3, but /usr is
+# read-only and there is no package manager. VARIANT_ID identifies it; ID_LIKE=flatcar is a second
+# signal in case an image drops VARIANT_ID.
+is_azure_container_linux() {
+    [[ "${VARIANT_ID:-}" == "azurecontainerlinux" ]] && return 0
+    [[ "${ID:-}" == "azurelinux" && " ${ID_LIKE:-} " == *" flatcar "* ]]
 }
 
 check_linux_distribution() {
     if load_os_release; then
+        if is_azure_container_linux; then
+            if [[ "$HOST_PREFIX" == "$DEFAULT_HOST_PREFIX" ]]; then
+                log_error "Detected Azure Container Linux, where $DEFAULT_HOST_PREFIX is read-only"
+                log_error "Set AKS_FLEX_NODE_HOST_PREFIX to a writable location such as /opt/aks-flex-node,"
+                log_error "and set agent.hostPrefix to the same value in the node config"
+                exit 1
+            fi
+            log_info "Detected Azure Container Linux $VERSION_ID with host prefix $HOST_PREFIX"
+            return 0
+        fi
+
         case "$ID" in
             ubuntu)
                 case "$VERSION_ID" in
@@ -163,6 +197,44 @@ check_linux_distribution() {
     else
         log_warning "Cannot detect OS version - continuing installation"
     fi
+}
+
+# config_host_prefix prints agent.hostPrefix from the node config, or nothing.
+config_host_prefix() {
+    local config_path="$CONFIG_DIR/config.json"
+
+    [[ -f "$config_path" ]] || return 0
+    if ! command -v jq &> /dev/null; then
+        log_warning "Cannot read agent.hostPrefix from $config_path without jq" >&2
+        return 0
+    fi
+    jq -r '.agent.hostPrefix // empty' "$config_path"
+}
+
+# resolve_host_prefix sets HOST_PREFIX, INSTALL_DIR and MANAGED_BINARY_DIR.
+#
+# The agent resolves its binaries from agent.hostPrefix, so installing anywhere else leaves them
+# where it does not look. When the config already exists its value is used; the environment
+# variable covers the usual case where the config is written after installation. Both being set to
+# different values is an error rather than a choice.
+resolve_host_prefix() {
+    local from_config from_env="$AKS_FLEX_NODE_HOST_PREFIX"
+
+    from_config=$(config_host_prefix)
+    if [[ -n "$from_config" && -n "$from_env" && "${from_config%/}" != "${from_env%/}" ]]; then
+        log_error "AKS_FLEX_NODE_HOST_PREFIX ($from_env) does not match agent.hostPrefix ($from_config)"
+        return 1
+    fi
+
+    HOST_PREFIX="${from_config:-${from_env:-$DEFAULT_HOST_PREFIX}}"
+    if [[ "$HOST_PREFIX" != /* || "$HOST_PREFIX" == *[[:space:]]* ]]; then
+        log_error "Host prefix must be an absolute path without whitespace: $HOST_PREFIX"
+        return 1
+    fi
+    [[ "$HOST_PREFIX" == "/" ]] || HOST_PREFIX="${HOST_PREFIX%/}"
+
+    INSTALL_DIR="$HOST_PREFIX/bin"
+    MANAGED_BINARY_DIR="$HOST_PREFIX/lib/aks-flex-node"
 }
 
 get_latest_release() {
@@ -263,9 +335,10 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # Minimal and custom images aren't required to pre-create /usr/local/bin.
-    # Create a missing destination, but don't change an existing directory's
-    # ownership or mode because it can be managed by the host image owner.
+    # Minimal and custom images aren't required to pre-create /usr/local/bin,
+    # and a custom host prefix usually doesn't exist yet. Create a missing
+    # destination, but don't change an existing directory's ownership or mode
+    # because it can be managed by the host image owner.
     if [[ ! -e "$INSTALL_DIR" ]]; then
         if ! install -d -o root -g root -m 0755 "$INSTALL_DIR"; then
             log_error "Failed to create install directory $INSTALL_DIR"
@@ -377,6 +450,11 @@ show_next_steps() {
   }
 }
 EOF
+    if [[ "$HOST_PREFIX" != "$DEFAULT_HOST_PREFIX" ]]; then
+        echo ""
+        echo -e "${YELLOW}This host uses a custom prefix. Set it in the config so the agent finds its binaries:${NC}"
+        echo "  \"agent\": { \"hostPrefix\": \"$HOST_PREFIX\" }"
+    fi
     echo ""
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
@@ -411,6 +489,8 @@ main() {
         log_error "This script must be run as root (use sudo)"
         exit 1
     fi
+
+    resolve_host_prefix || exit 1
 
     # Check OS compatibility
     check_linux_distribution

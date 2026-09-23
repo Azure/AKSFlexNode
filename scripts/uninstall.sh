@@ -12,12 +12,17 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration (should match install.sh)
-INSTALL_DIR="/usr/local/bin"
+DEFAULT_HOST_PREFIX="/usr/local"
+INSTALL_DIR="$DEFAULT_HOST_PREFIX/bin"
+MANAGED_BINARY_DIR="$DEFAULT_HOST_PREFIX/lib/aks-flex-node"
+AKS_FLEX_NODE_HOST_PREFIX="${AKS_FLEX_NODE_HOST_PREFIX:-}"
+HOST_PREFIX=""
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
+RECOVERY_UNIT_PATH="/etc/systemd/system/aks-flex-node-agent-recovery.service"
 
 # Functions
 log_info() {
@@ -36,12 +41,27 @@ log_error() {
     echo -e "${RED}ERROR:${NC} $1"
 }
 
+# resolve_host_prefix finds where the binaries were installed. It must run before reset, which
+# removes the config that records agent.hostPrefix.
+resolve_host_prefix() {
+    local config_path="$CONFIG_DIR/config.json" from_config=""
+
+    if [[ -f "$config_path" ]] && command -v jq &> /dev/null; then
+        from_config=$(jq -r '.agent.hostPrefix // empty' "$config_path")
+    fi
+
+    HOST_PREFIX="${from_config:-${AKS_FLEX_NODE_HOST_PREFIX:-$DEFAULT_HOST_PREFIX}}"
+    [[ "$HOST_PREFIX" == "/" ]] || HOST_PREFIX="${HOST_PREFIX%/}"
+    INSTALL_DIR="$HOST_PREFIX/bin"
+    MANAGED_BINARY_DIR="$HOST_PREFIX/lib/aks-flex-node"
+}
+
 confirm_uninstall() {
     echo -e "${YELLOW}AKS Flex Node Uninstaller${NC}"
     echo -e "${YELLOW}===========================${NC}"
     echo ""
     echo "This will remove the following components:"
-    echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
+    echo "• AKS Flex Node binaries ($INSTALL_DIR/aks-flex-node, $MANAGED_BINARY_DIR)"
     echo "• Systemd service (aks-flex-node-agent.service)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
@@ -76,12 +96,14 @@ run_reset() {
         systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
         systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
 
-        if [[ -e "$SERVICE_UNIT_PATH" ]]; then
-            rm -f "$SERVICE_UNIT_PATH"
-            log_success "Removed systemd unit: $SERVICE_UNIT_PATH"
-        else
-            log_info "Systemd unit not found: $SERVICE_UNIT_PATH"
-        fi
+        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
+            if [[ -e "$unit_path" ]]; then
+                rm -f "$unit_path"
+                log_success "Removed systemd unit: $unit_path"
+            else
+                log_info "Systemd unit not found: $unit_path"
+            fi
+        done
 
         systemctl daemon-reload 2>/dev/null || true
         return 0
@@ -110,13 +132,21 @@ remove_directories() {
 }
 
 remove_binary() {
-    log_info "Removing binary..."
+    log_info "Removing binaries..."
 
-    if [[ -f "$INSTALL_DIR/aks-flex-node" ]]; then
+    # -L as well as -e: once the agent has run this is a symlink into the managed layout, and a
+    # dangling one still has to go.
+    if [[ -e "$INSTALL_DIR/aks-flex-node" || -L "$INSTALL_DIR/aks-flex-node" ]]; then
         rm -f "$INSTALL_DIR/aks-flex-node"
         log_success "Removed binary: $INSTALL_DIR/aks-flex-node"
     else
         log_info "Binary not found: $INSTALL_DIR/aks-flex-node"
+    fi
+
+    # Reset keeps the managed blue/green layout so a reinstall can reuse it; uninstall removes it.
+    if [[ -d "$MANAGED_BINARY_DIR" ]]; then
+        rm -rf "$MANAGED_BINARY_DIR"
+        log_success "Removed managed binaries: $MANAGED_BINARY_DIR"
     fi
 }
 
@@ -143,6 +173,8 @@ main() {
         exit 1
     fi
 
+    resolve_host_prefix
+
     # Confirm uninstall
     confirm_uninstall "${1:-}"
 
@@ -158,5 +190,6 @@ main() {
     show_completion_message
 }
 
-# Run main function
-main "$@"
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi

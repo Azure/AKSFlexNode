@@ -60,6 +60,7 @@ test: test-install
 test-install:
 	@echo "Running installer tests..."
 	@scripts/install_test.sh
+	@scripts/uninstall_test.sh
 
 .PHONY: test-coverage
 test-coverage:

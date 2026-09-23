@@ -133,4 +133,78 @@ assert_no_staged_files
     fi
 )
 
+# Host prefix resolution. The agent resolves its binaries from agent.hostPrefix, so the installer
+# has to install under the same prefix.
+CONFIG_DIR="$WORK_DIR/etc"
+mkdir -p "$CONFIG_DIR"
+
+AKS_FLEX_NODE_HOST_PREFIX=""
+resolve_host_prefix || fail "resolving the default prefix failed"
+[[ "$HOST_PREFIX" == "/usr/local" && "$INSTALL_DIR" == "/usr/local/bin" &&
+   "$MANAGED_BINARY_DIR" == "/usr/local/lib/aks-flex-node" ]] || fail "default prefix changed the layout"
+
+AKS_FLEX_NODE_HOST_PREFIX="/opt/aks-flex-node/"
+resolve_host_prefix || fail "resolving the env prefix failed"
+[[ "$INSTALL_DIR" == "/opt/aks-flex-node/bin" &&
+   "$MANAGED_BINARY_DIR" == "/opt/aks-flex-node/lib/aks-flex-node" ]] || fail "env prefix was not applied: $INSTALL_DIR"
+
+if command -v jq >/dev/null; then
+    printf '{"agent":{"hostPrefix":"/opt/from-config"}}' >"$CONFIG_DIR/config.json"
+    AKS_FLEX_NODE_HOST_PREFIX=""
+    resolve_host_prefix || fail "resolving the config prefix failed"
+    [[ "$INSTALL_DIR" == "/opt/from-config/bin" ]] || fail "config prefix was not applied: $INSTALL_DIR"
+
+    AKS_FLEX_NODE_HOST_PREFIX="/opt/other"
+    if resolve_host_prefix >"$WORK_DIR/conflict.log" 2>&1; then
+        fail "a prefix that disagrees with agent.hostPrefix was accepted"
+    fi
+    grep -q "does not match agent.hostPrefix" "$WORK_DIR/conflict.log" || fail "conflict was not explained"
+    rm "$CONFIG_DIR/config.json"
+fi
+
+for bad in "relative/path" "/opt/with space"; do
+    AKS_FLEX_NODE_HOST_PREFIX="$bad"
+    if resolve_host_prefix >/dev/null 2>&1; then
+        fail "invalid prefix accepted: $bad"
+    fi
+done
+AKS_FLEX_NODE_HOST_PREFIX=""
+
+# A custom prefix does not exist before the first install.
+INSTALL_DIR="$WORK_DIR/prefix/bin"
+MANAGED_BINARY_DIR="$WORK_DIR/prefix/lib/aks-flex-node"
+install_binary "$replacement_binary" >/dev/null || fail "install into a missing prefix failed"
+[[ -x "$INSTALL_DIR/aks-flex-node" ]] || fail "binary missing under the new prefix"
+[[ "$(stat -c %a "$INSTALL_DIR")" == "755" ]] || fail "prefix bin dir mode is $(stat -c %a "$INSTALL_DIR"), want 755"
+
+# Azure Container Linux reports ID=azurelinux 3.x like Azure Linux 3, but /usr is read-only, so it
+# must not be accepted with the default prefix.
+write_os_release() {
+    OS_RELEASE_PATH="$WORK_DIR/os-release"
+    printf '%s\n' "$@" >"$OS_RELEASE_PATH"
+}
+
+write_os_release 'ID=azurelinux' 'ID_LIKE="flatcar"' 'VARIANT_ID=azurecontainerlinux' 'VERSION_ID=3.0.20260918'
+HOST_PREFIX="/usr/local"
+if (check_linux_distribution) >"$WORK_DIR/acl-default.log" 2>&1; then
+    fail "Azure Container Linux was accepted with the default prefix"
+fi
+grep -q "AKS_FLEX_NODE_HOST_PREFIX" "$WORK_DIR/acl-default.log" || fail "ACL refusal did not say what to set"
+
+HOST_PREFIX="/opt/aks-flex-node"
+(check_linux_distribution) >"$WORK_DIR/acl-prefix.log" 2>&1 || fail "Azure Container Linux with a prefix was refused"
+grep -q "Detected Azure Container Linux" "$WORK_DIR/acl-prefix.log" || fail "ACL was not identified"
+
+# ID_LIKE=flatcar alone still identifies it, in case an image drops VARIANT_ID.
+write_os_release 'ID=azurelinux' 'ID_LIKE="flatcar"' 'VERSION_ID=3.0.20260918'
+HOST_PREFIX="/usr/local"
+if (check_linux_distribution) >/dev/null 2>&1; then
+    fail "ACL without VARIANT_ID was treated as Azure Linux 3"
+fi
+
+# Plain Azure Linux 3 is unaffected.
+write_os_release 'ID=azurelinux' 'VERSION_ID=3.0.20250101'
+(check_linux_distribution) >"$WORK_DIR/azl.log" 2>&1 || fail "Azure Linux 3 was refused"
+grep -q "Detected Azure Linux" "$WORK_DIR/azl.log" || fail "Azure Linux 3 was not identified"
+
 printf 'install_test: ok\n'
