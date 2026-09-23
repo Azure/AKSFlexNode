@@ -242,39 +242,18 @@ module vmArc 'modules/vm.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Role assignments: grant MSI VM permissions on the AKS cluster
+// Host identity: bootstrap data and Machine read/write on this ARM pool only.
+// The built-in role must be published in the target environment before deployment.
 // ---------------------------------------------------------------------------
-// Azure Kubernetes Service Cluster Admin Role
-resource roleClusterAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, msiVmName, 'aks-cluster-admin')
-  scope: aksCluster
-  properties: {
-    principalId: vmMsi.outputs.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8')
-  }
-}
+var flexNodeAgentRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8f139b0f-7eaf-460b-a9da-5b1246d9ed0d')
 
-// Azure Kubernetes Service Contributor Role permits runtime Machine API and
-// listBootstrapData calls from the MSI Flex Node.
-resource roleAKSContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, msiVmName, 'aks-contributor')
-  scope: aksCluster
+resource roleFlexNodeAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(flexAgentPool.id, msiVmName, flexNodeAgentRoleDefinitionId)
+  scope: flexAgentPool
   properties: {
     principalId: vmMsi.outputs.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8')
-  }
-}
-
-// Azure Kubernetes Service RBAC Cluster Admin
-resource roleRbacAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aksCluster.id, msiVmName, 'aks-rbac-cluster-admin')
-  scope: aksCluster
-  properties: {
-    principalId: vmMsi.outputs.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b')
+    roleDefinitionId: flexNodeAgentRoleDefinitionId
   }
 }
 

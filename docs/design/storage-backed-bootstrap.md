@@ -156,15 +156,15 @@ prerequisites:
 - network reachability to the AKS API server, artifact URL, and required image
   registries;
 - a unique host name suitable for a Kubernetes Node name;
-- the selected managed identity or service principal with the permissions
-  required by the agent's runtime machine-client mode;
+- the selected managed identity, service principal, or already-connected Arc
+  identity with **Azure Kubernetes Service Flex Node Agent Role** at the target
+  agent-pool scope (see [role assignment and migration](../usage/getting-started.md#assign-the-host-identitys-pool-scoped-role));
 - authorization to download the generated script when its URL is private;
 - a readable agent artifact URL, such as a short-lived read-only SAS URL.
 
-For MSI runtime auth, grant the identity the required AKS role before invoking
-bootstrap and allow time for role-assignment propagation. For a user-assigned
-identity, provide the same client ID both to the runtime config override and to
-any caller-owned script-download logic that uses that identity.
+For a user-assigned identity, provide the same client ID both to the runtime
+config override and to any caller-owned script-download logic that uses that
+identity.
 
 Script-download authorization and agent runtime authorization are independent.
 For example, cloud-init can use a user-assigned identity to download a private

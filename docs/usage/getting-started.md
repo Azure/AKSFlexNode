@@ -16,7 +16,7 @@ For the architecture and security rationale, see
 2. Create an AKS cluster with `networkPlugin=none`.
 3. Install the Unbounded operator and initialize the cluster and Flex sites.
 4. Create a FlexNodes agent pool.
-5. Prepare a host, download `bootstrap.sh`, and run it with SP or MSI authentication.
+5. Prepare a host, download `bootstrap.sh`, and run it with SP, MSI, or Arc authentication.
 6. Approve the daemon CSR when no AKS Flex CSR controller is deployed.
 7. Verify the ARM Machine, Kubernetes Node, networking, and agent service.
 
@@ -30,7 +30,10 @@ The operator workstation needs:
 - the subscription-level `Microsoft.ContainerService/PutMachinePreview` feature
   registered, followed by Microsoft.ContainerService provider re-registration
 - permission to create AKS and networking resources and to grant the selected
-  pre-provisioned identity access to the AKS cluster.
+  host identity the Flex Node Agent Role at the target ARM agent pool;
+- the Flex Node Agent Role published/visible in the target environment
+  ([role assignment prerequisites](#assign-the-host-identitys-pool-scoped-role));
+- access to the AKS admin kubeconfig;
 - the `kubectl-unbounded` plugin release matching the Unbounded artifacts.
 
 The target host needs:
@@ -339,12 +342,13 @@ read its ARM Machine resource. The supported identity modes are:
 - **Service principal** for an Azure VM or a host outside Azure. Provide its
   tenant ID, client ID, and either a client secret or certificate/private-key
   credential through a protected file.
+- **Azure Arc** for an already-connected Arc-enabled server. Use its
+  system-assigned identity; the operator owns the Arc agent lifecycle.
 
-The selected managed identity or service principal must have **Azure Kubernetes
-Service Contributor Role** at the target AKS cluster resource scope. For this guide
-we will use a managed identity.
+### Create the example managed identity
 
-Create the managed identity:
+This guide uses a user-assigned managed identity for the example Azure VMSS.
+Create it on the operator workstation:
 
 ```bash
 az identity create \
@@ -352,24 +356,122 @@ az identity create \
   --resource-group ${RESOURCE_GROUP} \
   --name "${AKS_NAME}-mi" \
   --location ${AKS_LOCATION}
-```
 
-Assign the `Azure Kubernetes Service Contributor Role` role to the new identity:
-
-```bash
 export MI_PRINCIPAL_ID=$(az identity show --subscription ${SUBSCRIPTION_ID} --resource-group ${RESOURCE_GROUP} --name "${AKS_NAME}-mi" --query principalId --output tsv)
+export MI_RESOURCE_ID=$(az identity show --subscription ${SUBSCRIPTION_ID} --resource-group ${RESOURCE_GROUP} --name "${AKS_NAME}-mi" --query id --output tsv)
+export MI_CLIENT_ID=$(az identity show --subscription ${SUBSCRIPTION_ID} --resource-group ${RESOURCE_GROUP} --name "${AKS_NAME}-mi" --query clientId --output tsv)
 export AKS_RESOURCE_ID=$(az aks show --subscription ${SUBSCRIPTION_ID} --resource-group ${RESOURCE_GROUP} --name ${AKS_NAME} --query id --output tsv)
-az role assignment create \
-  --assignee-object-id ${MI_PRINCIPAL_ID} \
-  --assignee-principal-type ServicePrincipal \
-  --role "Azure Kubernetes Service Contributor Role" \
-  --scope ${AKS_RESOURCE_ID}
 ```
 
-Create the node pool that will be used for the flex nodes you can use this to create a 3 node VMSS pool:
+For an existing managed identity, service principal, or connected Arc server,
+use its principal/object ID instead of `MI_PRINCIPAL_ID` below.
+
+### Assign the host identity's pool-scoped role
+
+The selected managed identity, service principal, or Arc machine principal needs
+**Azure Kubernetes Service Flex Node Agent Role**
+(`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) at the target **ARM agent pool** scope,
+not at the cluster, resource group, or subscription. This built-in role grants
+only these ARM Actions, with no DataActions:
+
+- `Microsoft.ContainerService/managedClusters/agentPools/listBootstrapData/action`
+- `Microsoft.ContainerService/managedClusters/agentPools/machines/read`
+- `Microsoft.ContainerService/managedClusters/agentPools/machines/write`
+
+The role permits Machine read/write throughout the assigned pool, not just the
+host's own Machine. It does not grant Machine deletion, cluster management,
+admin kubeconfig retrieval, Kubernetes RBAC administration, or Azure role
+assignment. Kubernetes bootstrap and lifecycle RBAC remain separate.
+
+**Role availability prerequisite:** the built-in role must be published and
+visible in the target environment before onboarding. If the check below fails,
+stop and resolve publication or operator access. Do not substitute Contributor
+or an admin role.
+
+Run this on the **operator workstation**, signed into the target Azure cloud,
+tenant, and subscription, after creating the pool in step 4. The operator needs
+permission to read role definitions and create role assignments at that pool.
 
 ```bash
-export MI_CLIENT_ID=$(az identity show --subscription ${SUBSCRIPTION_ID} --resource-group ${RESOURCE_GROUP} --name "${AKS_NAME}-mi" --query id --output tsv)
+FLEX_POOL_RESOURCE_ID="${AKS_RESOURCE_ID}/agentPools/${FLEX_POOL_NAME}"
+FLEX_NODE_AGENT_ROLE_ID="8f139b0f-7eaf-460b-a9da-5b1246d9ed0d"
+FLEX_HOST_PRINCIPAL_ID="$MI_PRINCIPAL_ID"
+
+# Fail closed if the built-in role is unavailable in the selected subscription.
+if ! ROLE_ID="$(az role definition list \
+  --subscription "$SUBSCRIPTION_ID" \
+  --query "[?name == '$FLEX_NODE_AGENT_ROLE_ID' && roleType == 'BuiltInRole'].name" --output tsv)" ||
+  [[ "${ROLE_ID,,}" != "$FLEX_NODE_AGENT_ROLE_ID" ]]; then
+  echo "Flex Node Agent Role is not published/visible; stop onboarding. No Contributor/admin fallback." >&2
+  exit 1
+fi
+
+az role assignment create \
+  --subscription "$SUBSCRIPTION_ID" \
+  --assignee-object-id "$FLEX_HOST_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "$FLEX_NODE_AGENT_ROLE_ID" \
+  --scope "$FLEX_POOL_RESOURCE_ID"
+
+az role assignment list \
+  --subscription "$SUBSCRIPTION_ID" \
+  --assignee-object-id "$FLEX_HOST_PRINCIPAL_ID" \
+  --role "$FLEX_NODE_AGENT_ROLE_ID" \
+  --scope "$FLEX_POOL_RESOURCE_ID" \
+  --fill-principal-name false \
+  --fill-role-definition-name false \
+  --query '[].{principalId:principalId,roleDefinitionId:roleDefinitionId,scope:scope}' \
+  --output table
+```
+
+Use the identity's **principal/object ID**, not its application/client ID:
+for an Azure VM or user-assigned managed identity use `identity.principalId`
+or `principalId`, respectively; for Arc use the connected machine's
+`identity.principalId` (available only after Arc connection); for a service
+principal use the enterprise application's service principal object ID
+(`az ad sp show --id "<client-id>" --query id --output tsv`).
+The client ID still belongs in `--msi-client-id` or `--sp-client-id`.
+
+Verify the returned principal, role, and exact pool scope, and allow
+role-assignment propagation before bootstrap. `scripts/bootstrap.sh` uses the
+configured identity; provisioning and role assignment remain operator tasks.
+
+This reduces host ARM privileges, but `listBootstrapData` still provides fresh
+join material. Protect identity credentials and bootstrap output; constraining
+fresh join material and the resulting Kubernetes privileges remains a GA
+security follow-up, not a guarantee provided by this role.
+
+### Migrate existing host identities
+
+For a fresh environment, assign only the pool-scoped role above. For an existing
+host, add it first, allow propagation, then identify and remove only obsolete
+host assignments by their exact assignment IDs. If an older MSI/SP config used
+Azure credentials directly for Kubernetes, first switch to the bootstrap-data
+token/CSR flow in step 6; the new role grants no Kubernetes data-plane access.
+Earlier examples granted
+Azure Kubernetes Service Contributor Role
+(`ed7f3fbd-7b88-4dd4-9017-9adb7ce333f8`), Azure Kubernetes Service Cluster Admin
+Role (`0ab0b1a8-8aac-4efd-b8c2-3ee1fb270be8`), and Azure Kubernetes Service RBAC
+Cluster Admin (`b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b`) at cluster scope.
+Review each assignment's principal and scope before using
+`az role assignment delete --ids "<obsolete-host-role-assignment-id>"`.
+
+Audit inherited assignments (resource group/subscription) and group-based grants
+as well: adding a narrower role does not override broader permissions. Preserve
+unrelated customer permissions and the separate operator/runner identity's
+management permissions; do not perform blanket deletion. Recheck the host's
+bootstrap and Machine operations after obsolete grants have been removed and
+revocation has propagated. Bicep incremental deployments do **not** delete old
+role assignments removed from the template, so redeploying alone does not
+migrate an existing environment to least privilege.
+
+### Create the example hosts
+
+Create a three-node VMSS for the Flex hosts and attach the user-assigned
+identity. Keep its `MI_CLIENT_ID` for `--msi-client-id` during bootstrap; the
+VMSS attachment uses `MI_RESOURCE_ID`, not the client or principal ID.
+
+```bash
 az vmss create \
   --subscription ${SUBSCRIPTION_ID} \
   --resource-group ${RESOURCE_GROUP} \
@@ -391,6 +493,9 @@ az vmss create \
   --backend-port 22 \
   --assign-identity ${MI_RESOURCE_ID}
 ```
+
+Azure CLI does not need to be installed on the host; the bootstrap script uses
+MSI, service-principal OAuth, or Arc HIMDS directly.
 
 ## 6. Download and run the bootstrap script
 
@@ -538,15 +643,20 @@ For a user-assigned managed identity, use:
   --msi-client-id "<user-assigned-managed-identity-client-id>" \
 ```
 
-The selected managed identity must be assigned to the VM and have the same AKS
-Contributor role at the cluster scope.
+The selected managed identity must be assigned to the VM and have the same
+Flex Node Agent Role at the target ARM agent pool scope.
+
+For an already-connected Arc-enabled server, replace the service-principal
+flags with `--auth arc`. Before running bootstrap, confirm `azcmagent show`
+reports `Connected`, `himdsd` is active, and the operator has assigned the
+pool-scoped role to the Arc machine principal as described in step 5.
 
 The script performs these operations:
 
 1. Loads the empty JSON base.
 2. Applies the cluster and pool overrides.
-3. Uses the selected service principal or managed identity to request an ARM
-   token.
+3. Uses the selected service principal, managed identity, or Arc identity to
+   request an ARM token.
 4. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
    component version.
 5. Applies rootfs, offline artifact, and runtime config overrides.
@@ -643,9 +753,12 @@ Use 32 GiB or more for the validated examples.
 
 Confirm:
 
-- the selected managed identity is assigned to the host, or the service
-  principal credential file is present and mode `0600`;
-- AKS Contributor is scoped to the target cluster for that identity;
+- the selected managed identity is assigned to the host, the service
+  principal credential file is present and mode `0600`, or Arc is connected
+  with `himdsd` active;
+- Azure Kubernetes Service Flex Node Agent Role
+  (`8f139b0f-7eaf-460b-a9da-5b1246d9ed0d`) is published/visible in the target
+  environment and assigned to that principal at the exact target ARM agent pool;
 - role assignment propagation has completed;
 - `--cluster-resource-id` and `--agent-pool-name` are correct.
 

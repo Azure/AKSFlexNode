@@ -29,7 +29,7 @@ See the repository [README](../../README.md#getting-started) for the complete bo
 
 Managed identity mode is intended for Azure VMs that already have a managed identity assigned.
 
-Minimal config shape:
+Identity settings (merge with fetched bootstrap data; not a complete bootstrap config):
 
 ```json
 {
@@ -49,6 +49,17 @@ Minimal config shape:
 ```
 
 Use `managedIdentity.clientId` when the VM has multiple user-assigned identities.
+
+For managed identity, service principal, and Arc modes, the operator must assign
+**Azure Kubernetes Service Flex Node Agent Role**
+to the host principal at the target agent-pool scope. See
+[role assignment and migration](getting-started.md#assign-the-host-identitys-pool-scoped-role).
+
+For this least-privilege flow, use `scripts/bootstrap.sh --auth msi
+--fetch-bootstrap-data` with the target cluster and pool arguments as shown in
+the [first-boot walkthrough](getting-started.md#6-download-and-run-the-bootstrap-script).
+Keep the returned bootstrap token, API server FQDN, and CA in the config:
+kubelet and the daemon use separate Kubernetes token/CSR credentials.
 
 ## Azure Arc
 
@@ -78,13 +89,13 @@ Minimal config shape:
 }
 ```
 
-Use `scripts/bootstrap.sh --auth arc --fetch-bootstrap-data` to populate the token, API server FQDN, CA, and component settings. Before Flex Node bootstrap, `azcmagent show` must report `Connected`, `himdsd` must be active, and the Arc machine principal must have permission to call AKS `listBootstrapData` and operate its AKS Machine resource. For Arc configs, the installed Flex Node systemd unit orders itself after and wants `himdsd.service`.
+Use `scripts/bootstrap.sh --auth arc --fetch-bootstrap-data` to populate the token, API server FQDN, CA, and component settings. Before Flex Node bootstrap, `azcmagent show` must report `Connected`, `himdsd` must be active, and the operator must assign the pool-scoped Flex Node Agent Role to the Arc machine principal after connection creates that principal. For Arc configs, the installed Flex Node systemd unit orders itself after and wants `himdsd.service`.
 
 ## Service Principal
 
 Service principal mode uses static Azure application credentials.
 
-Minimal config shape:
+Identity settings (merge with fetched bootstrap data; not a complete bootstrap config):
 
 ```json
 {
@@ -108,6 +119,12 @@ Minimal config shape:
 ```
 
 The credential file contains either the client secret or a PEM/unencrypted PFX application certificate and private key; the agent detects the credential type from its contents. PFX certificate files must use a `.pfx` suffix. The file must be a non-empty regular file with no group/world access (for example, mode 0600). Only one of `clientSecret` or `clientSecretFile` can be configured. Certificate authentication sends the leaf thumbprint (`x5t`) and public chain (`x5c`), supporting directly registered certificates and Subject Name/Issuer trust policies.
+
+Use `scripts/bootstrap.sh --auth service-principal --fetch-bootstrap-data` with
+the target cluster, pool, and protected credential arguments from the
+[first-boot walkthrough](getting-started.md#6-download-and-run-the-bootstrap-script).
+As with managed identity, retain the fetched Kubernetes bootstrap settings;
+the pool-scoped role authorizes ARM operations, not Kubernetes API access.
 
 ## Authentication Mode Selection
 

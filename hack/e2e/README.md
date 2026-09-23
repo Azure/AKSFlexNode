@@ -17,6 +17,28 @@ The E2E suite provisions a no-CNI AKS cluster, installs Unbounded-Net as the clu
 | `git` / `make` | Fetch and render Unbounded-Net manifests. |
 | `go` | Build the agent binary unless `--binary` is supplied. |
 
+### Host identity role
+
+The target environment must publish **Azure Kubernetes Service Flex Node Agent
+Role** before running E2E.
+Infrastructure deployment and Arc onboarding check role visibility and stop if
+unavailable.
+
+For fresh infrastructure, Bicep grants the MSI host only this role on the ARM
+FlexNodes pool. The operator/runner assigns the same role at the same pool scope
+to the Arc principal after `azcmagent connect`. The pool is
+`E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME`, including when it differs from the synthetic
+controller pool name.
+
+The runner identity remains separate: it still needs infrastructure management,
+role-assignment, Arc onboarding, admin kubeconfig, and cleanup permissions.
+`scripts/setup/setup-runner.sh` configures those operator permissions, not host
+permissions.
+
+For retained environments, incremental Bicep deployment leaves the old broad
+host assignments in place. Follow the
+[operator migration guidance](../../docs/usage/getting-started.md#migrate-existing-host-identities).
+
 ## GitHub Actions Policy
 
 The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the protected `e2e-testing` environment. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
@@ -114,7 +136,7 @@ Additional environment variables:
 | `E2E_CONTAINERD_VERSION` | `2.0.4` | Containerd version used in generated node configs. |
 | `E2E_RUNC_VERSION` | `1.1.12` | Runc version used in generated node configs. |
 | `E2E_TARGET_AGENT_POOL_NAME` | `aksflexnodes` | Synthetic target agent pool name used by controller-backed test modes. |
-| `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool provisioned for the MSI scenario and used for `listBootstrapData`. |
+| `E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME` | `$E2E_TARGET_AGENT_POOL_NAME` | ARM FlexNodes agent pool used for MSI/Arc `listBootstrapData`, Machine operations, and host role assignments. |
 | `E2E_ARM_MACHINE_API_VERSION` | `2025-10-02-preview` | ARM API version used to verify Machine registration and deletion. |
 | `E2E_KUBELET_MAX_PODS` | `58` | `node.maxPods` override written to the bootstrap-token node config. |
 | `E2E_KUBELET_SYSTEM_RESERVED_CPU` | `50m` | `node.kubelet.systemReserved.cpu` override written to the bootstrap-token node config. |
