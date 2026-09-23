@@ -391,3 +391,92 @@ func TestRemoveIfPresentRemovesDanglingSymlink(t *testing.T) {
 		t.Fatalf("dangling symlink was not removed: %v", err)
 	}
 }
+
+func TestRemoveFirstBootUnit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		setup        func(t *testing.T, unitPath string)
+		systemctlErr error
+		wantErr      bool
+		wantCalls    []string
+		wantRemoved  bool
+	}{
+		{
+			name:        "absent unit is left alone",
+			setup:       func(*testing.T, string) {},
+			wantCalls:   nil,
+			wantRemoved: true,
+		},
+		{
+			name: "installed unit is disabled, stopped, and removed",
+			setup: func(t *testing.T, unitPath string) {
+				if err := os.WriteFile(unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantCalls:   []string{"disable --now " + FirstBootUnitName},
+			wantRemoved: true,
+		},
+		{
+			name: "dangling unit link is still disabled and removed",
+			setup: func(t *testing.T, unitPath string) {
+				if err := os.Symlink(unitPath+".missing", unitPath); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantCalls:   []string{"disable --now " + FirstBootUnitName},
+			wantRemoved: true,
+		},
+		{
+			name: "unit that cannot be disabled is kept and reported",
+			setup: func(t *testing.T, unitPath string) {
+				if err := os.WriteFile(unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			systemctlErr: errors.New("systemctl failed"),
+			wantErr:      true,
+			wantCalls:    []string{"disable --now " + FirstBootUnitName},
+			wantRemoved:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			unitPath := filepath.Join(dir, FirstBootUnitName)
+			tt.setup(t, unitPath)
+
+			var calls []string
+			err := removeFirstBootUnit(t.Context(), discardLogger(), dir, func(_ context.Context, _ *slog.Logger, args ...string) error {
+				calls = append(calls, strings.Join(args, " "))
+				return tt.systemctlErr
+			})
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("removeFirstBootUnit() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !slices.Equal(calls, tt.wantCalls) {
+				t.Fatalf("systemctl calls = %q, want %q", calls, tt.wantCalls)
+			}
+			_, statErr := os.Lstat(unitPath)
+			if removed := errors.Is(statErr, os.ErrNotExist); removed != tt.wantRemoved {
+				t.Fatalf("unit removed = %v, want %v", removed, tt.wantRemoved)
+			}
+		})
+	}
+}
+
+// TestFirstBootUnitIsConditionedOnTheAgentUnit pins the path the first-boot unit checks, which
+// has to be where the agent unit is actually written.
+func TestFirstBootUnitIsConditionedOnTheAgentUnit(t *testing.T) {
+	t.Parallel()
+
+	if want := filepath.Join(systemdSystemDir, ServiceUnitName); ServiceUnitPath != want {
+		t.Fatalf("ServiceUnitPath = %q, want %q", ServiceUnitPath, want)
+	}
+}

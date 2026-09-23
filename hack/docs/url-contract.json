@@ -476,6 +476,7 @@
         "bootstrap-token-expired",
         "clean-up",
         "flow",
+        "hosts-provisioned-by-ignition",
         "operator-guide-bootstrap-an-aks-flex-node",
         "preflight-reports-insufficient-disk-space",
         "prerequisites",

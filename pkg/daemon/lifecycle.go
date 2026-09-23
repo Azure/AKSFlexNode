@@ -30,6 +30,14 @@ const (
 	// looks for them, and /etc is writable even when /usr is not.
 	systemdSystemDir     = "/etc/systemd/system"
 	arcSystemdDependency = "himdsd.service"
+
+	// ServiceUnitPath is where the agent unit is installed. The first-boot unit
+	// only runs while it is absent.
+	ServiceUnitPath = systemdSystemDir + "/" + ServiceUnitName
+	// FirstBootUnitName is the oneshot unit that `aks-flex-node ignition`
+	// installs to run bootstrap.sh on first boot. It is shared with reset,
+	// which has to remove it.
+	FirstBootUnitName = "aks-flex-node-bootstrap.service"
 )
 
 //go:embed assets/aks-flex-node-agent.service
@@ -274,6 +282,11 @@ func removeIfPresentWith(path string, lstat func(string) (os.FileInfo, error), r
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
+	// Before the agent is stopped: in the daemon's reset paths, stopping the
+	// agent ends the process running this task.
+	if err := removeFirstBootUnit(ctx, t.log, systemdSystemDir, runSystemctl); err != nil {
+		return err
+	}
 	if err := utilexec.StopService(ctx, t.log, ServiceUnitName); err != nil {
 		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
 	}
@@ -293,4 +306,33 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 
 	t.log.Info("systemd service uninstalled", "unit", ServiceUnitName)
 	return nil
+}
+
+func runSystemctl(ctx context.Context, log *slog.Logger, args ...string) error {
+	return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
+}
+
+// removeFirstBootUnit disables, stops, and removes the first-boot bootstrap
+// unit, if the host was provisioned with one.
+//
+// --now matters. The unit is a oneshot with RemainAfterExit=yes, so without a
+// stop it stays active after its file is gone, and starting it again after the
+// host is provisioned anew does nothing.
+func removeFirstBootUnit(
+	ctx context.Context,
+	log *slog.Logger,
+	unitDir string,
+	systemctl func(context.Context, *slog.Logger, ...string) error,
+) error {
+	unitPath := filepath.Join(unitDir, FirstBootUnitName)
+	if _, err := os.Lstat(unitPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	log.Info("removing first-boot bootstrap unit", "unit", FirstBootUnitName)
+	if err := systemctl(ctx, log, "disable", "--now", FirstBootUnitName); err != nil {
+		return fmt.Errorf("systemctl disable --now %s: %w", FirstBootUnitName, err)
+	}
+
+	return removeIfPresent(unitPath)
 }

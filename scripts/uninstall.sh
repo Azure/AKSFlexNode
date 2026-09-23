@@ -23,6 +23,9 @@ LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 RECOVERY_UNIT_PATH="/etc/systemd/system/aks-flex-node-agent-recovery.service"
+# Installed by `aks-flex-node ignition` to run bootstrap.sh on first boot.
+FIRST_BOOT_UNIT="aks-flex-node-bootstrap.service"
+FIRST_BOOT_UNIT_PATH="/etc/systemd/system/$FIRST_BOOT_UNIT"
 
 # Functions
 log_info() {
@@ -95,8 +98,11 @@ run_reset() {
 
         systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
         systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
+        # --now as well: the first-boot unit stays active after it runs, and a later provisioning
+        # could not start it again.
+        systemctl disable --now "$FIRST_BOOT_UNIT" 2>/dev/null || true
 
-        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
+        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH"; do
             if [[ -e "$unit_path" ]]; then
                 rm -f "$unit_path"
                 log_success "Removed systemd unit: $unit_path"

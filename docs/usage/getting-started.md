@@ -9,7 +9,7 @@ The walkthrough uses a public AKS API endpoint and private Layer 3 connectivity 
 
 Run Azure CLI, `kubectl`, artifact download, and SSH commands in your **Bash environment**. Run host preparation and bootstrap commands on the separate **flex node host** only when a step explicitly directs you to.
 
-The bootstrap script is downloaded and run interactively on the host. This guide doesn't use cloud-init. For the architecture and security rationale, see [Generated bootstrap script](../design/storage-backed-bootstrap.md).
+The bootstrap script is downloaded and run interactively on the host. Hosts provisioned by Ignition, such as Azure Container Linux, get it in an Ignition config instead; see [Hosts provisioned by Ignition](#hosts-provisioned-by-ignition). This guide doesn't use cloud-init. For the architecture and security rationale, see [Generated bootstrap script](../design/storage-backed-bootstrap.md).
 
 ## Flow
 
@@ -466,6 +466,30 @@ rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
 install -d -m 0755 /var/lib/aks-flex-node
 install -m 0600 /dev/null /var/lib/aks-flex-node/first-boot-complete
 ```
+
+### Hosts provisioned by Ignition
+
+Azure Container Linux and other hosts provisioned by Ignition have a read-only `/usr` and no interactive first boot. For those, render an Ignition config in your Bash environment instead of running the script on the host. `aks-flex-node ignition` embeds `bootstrap.sh` and passes everything after `--` to it:
+
+```bash
+aks-flex-node ignition --output node.ign -- \
+  --auth msi \
+  --msi-client-id "<user-assigned-managed-identity-client-id>" \
+  --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" \
+  --agent-pool-name "$FLEX_POOL_NAME" \
+  --agent-version "$AKS_FLEX_NODE_VERSION"
+```
+
+Use `node.ign` as the host's Ignition config; on Azure, that's the VM's custom data. On first boot, Ignition writes:
+
+- `/etc/aks-flex-node/first-boot/bootstrap.sh`, with the `--base-config` file, if one was given, in place of the embedded config.
+- For a service principal, the credential under `/etc/aks-flex-node/credentials/` with mode `0600`. Pass `--sp-client-secret-file` or `--sp-client-certificate-file` to `aks-flex-node ignition`, before `--`.
+- `aks-flex-node-bootstrap.service`, which runs the script with the arguments after `--` once the network is online.
+
+The agent is installed under `/opt/aks-flex-node`, unless `--host-prefix` or `agent.hostPrefix` in the base config names another writable location. The unit retries failures with a delay that grows to five minutes, until `aks-flex-node-agent.service` is installed, and is skipped on later boots. Once bootstrap succeeds, it removes the script, which carries the base config. `aks-flex-node reset` disables and removes the unit. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
+
+The command checks the arguments against the script's options and refuses the ones it sets itself, so mistakes are reported in your Bash environment rather than at first boot. The output contains the base config and any credential, so keep it as private as they are; `--output` creates the file with mode `0600` and doesn't overwrite an existing one.
 
 <a id="7-verify-the-joined-node"></a>
 <a id="8-verify-the-joined-node"></a>

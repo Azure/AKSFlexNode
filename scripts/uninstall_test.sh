@@ -51,4 +51,23 @@ remove_binary >/dev/null
 # A second run over a clean prefix succeeds.
 remove_binary >/dev/null || fail "remove_binary is not idempotent"
 
+# Without a binary to run reset, run_reset removes the units itself, including the first-boot unit
+# from an Ignition install.
+SYSTEMCTL_CALLS="$WORK_DIR/systemctl-calls"
+systemctl() { printf '%s\n' "$*" >>"$SYSTEMCTL_CALLS"; }
+INSTALL_DIR="$WORK_DIR/no-binary/bin"
+SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
+RECOVERY_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-recovery.service"
+FIRST_BOOT_UNIT_PATH="$WORK_DIR/systemd/$FIRST_BOOT_UNIT"
+mkdir -p "$WORK_DIR/systemd"
+touch "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH"
+
+run_reset >/dev/null
+for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH"; do
+    [[ ! -e "$unit_path" ]] || fail "unit was left: $unit_path"
+done
+grep -Fxq "disable --now aks-flex-node-bootstrap.service" "$SYSTEMCTL_CALLS" ||
+    fail "first-boot unit was not stopped: $(tr '\n' ';' <"$SYSTEMCTL_CALLS")"
+unset -f systemctl
+
 printf 'uninstall_test: ok\n'
