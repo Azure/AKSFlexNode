@@ -156,6 +156,7 @@ class NbdServer:
     def __init__(self, image: str, image_format: str = "qcow2", writable: bool = False):
         self._dir = tempfile.mkdtemp(prefix="ukiboot-")
         self.sock_path = os.path.join(self._dir, "nbd.sock")
+        self.proc: subprocess.Popen[bytes] | None = None
 
         args = ["qemu-nbd", "--persistent", "--format", image_format,
                 "--socket", self.sock_path]
@@ -163,28 +164,34 @@ class NbdServer:
             args.append("--read-only")
         args.append(image)
 
-        self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # __exit__ does not run when the constructor raises, so every failure
+        # here cleans up itself.
+        try:
+            self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if os.path.exists(self.sock_path):
-                return
-            if self.proc.poll() is not None:
-                err = self.proc.stderr.read().decode("utf-8", "replace") if self.proc.stderr else ""
-                raise RuntimeError(f"qemu-nbd exited: {err}")
-            time.sleep(0.05)
-        self.close()
-        raise RuntimeError("qemu-nbd did not create its socket in time")
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                if os.path.exists(self.sock_path):
+                    return
+                if self.proc.poll() is not None:
+                    err = self.proc.stderr.read().decode("utf-8", "replace") if self.proc.stderr else ""
+                    raise RuntimeError(f"qemu-nbd exited: {err}")
+                time.sleep(0.05)
+            raise RuntimeError("qemu-nbd did not create its socket in time")
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
-        self.proc.terminate()
-        try:
-            self.proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-            # Reap it: without this the killed qemu-nbd stays a zombie for the
-            # lifetime of the harness, which can outlast many VM cycles.
-            self.proc.wait()
+        if self.proc is not None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                # Reap it: without this the killed qemu-nbd stays a zombie for the
+                # lifetime of the harness, which can outlast many VM cycles.
+                self.proc.wait()
         for cleanup in (lambda: os.unlink(self.sock_path), lambda: os.rmdir(self._dir)):
             try:
                 cleanup()
@@ -441,6 +448,29 @@ class PatchedAddon:
     capacity: int
 
 
+def single_uki(names: list[str], image: Path) -> str:
+    """Return the one UKI under /EFI/Linux.
+
+    systemd-boot picks among several by its own rules, so choosing one here
+    could patch an image that is not the one that boots, and Ignition would
+    then get no config URL.
+    """
+    ukis = sorted(n for n in names if n.lower().endswith(".efi"))
+    if len(ukis) != 1:
+        raise RuntimeError(f"{image} has {len(ukis)} UKIs under /EFI/Linux, expected one: {ukis}")
+    return ukis[0]
+
+
+def fit_cmdline(current: str, extra: str, raw_size: int) -> bytes | None:
+    """Return the merged command line encoded, or None if it and its NUL
+    terminator do not fit in a section of raw_size bytes. Sizes are in encoded
+    bytes, since that is what the section holds."""
+    encoded = f"{current} {extra}".strip().encode()
+    if len(encoded) + 1 > raw_size:
+        return None
+    return encoded
+
+
 def patch_uki_cmdline_addon(image: Path, extra_args: str,
                             image_format: str = "qcow2") -> PatchedAddon:
     """Append kernel command line arguments to a UKI addon on the image's ESP.
@@ -461,10 +491,7 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
                 raise RuntimeError(f"{image} has no EFI system partition")
             fat = Fat32(dev, esp.offset)
 
-            ukis = [n for n in fat.list_names("/EFI/Linux") if n.lower().endswith(".efi")]
-            if not ukis:
-                raise RuntimeError(f"{image} has no UKI under /EFI/Linux")
-            addon_dir = f"/EFI/Linux/{sorted(ukis)[0]}.extra.d"
+            addon_dir = f"/EFI/Linux/{single_uki(fat.list_names('/EFI/Linux'), image)}.extra.d"
 
             best = None
             for addon in sorted(fat.list_names(addon_dir)):
@@ -481,8 +508,8 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
                 vsize, _vaddr, rsize, rptr = sections[".cmdline"]
                 current = fat.read_file(cluster, size, rptr, min(vsize, rsize) if vsize else rsize)
                 current = current.split(b"\x00")[0].decode("utf-8", "replace").strip()
-                merged = f"{current} {extra_args}".strip()
-                if len(merged) + 1 > rsize:
+                merged = fit_cmdline(current, extra_args, rsize)
+                if merged is None:
                     continue
                 if best is None or rsize > best[0]:
                     best = (rsize, addon, cluster, size, header, rptr, merged)
@@ -495,7 +522,7 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
 
             # Rewrite the section body, NUL-padded to its full raw size so no
             # remnant of the previous contents is left behind.
-            body = merged.encode() + b"\x00" * (rsize - len(merged))
+            body = merged + b"\x00" * (rsize - len(merged))
             fat.write_file(cluster, size, rptr, body)
 
             # systemd-stub reads VirtualSize bytes, so a longer string is
@@ -509,13 +536,12 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
             # it. An in-place FAT write is only as good as the cluster mapping.
             verify_header = fat.read_file(cluster, size, 0, min(size, 8192))
             verify = pe_sections(verify_header)[".cmdline"]
-            written = fat.read_file(cluster, size, verify[3], verify[0])
-            written = written.split(b"\x00")[0].decode("utf-8", "replace")
+            written = fat.read_file(cluster, size, verify[3], verify[0]).split(b"\x00")[0]
             if written != merged:
                 raise RuntimeError(
                     f"verification failed for {addon}: read back {written!r}, wrote {merged!r}")
 
-            return PatchedAddon(addon=addon, cmdline=merged, used=len(merged), capacity=rsize)
+            return PatchedAddon(addon=addon, cmdline=merged.decode(), used=len(merged), capacity=rsize)
         finally:
             dev.close()
 
@@ -535,10 +561,7 @@ def read_uki_cmdline(image: Path, image_format: str = "qcow2") -> str:
                 raise RuntimeError(f"{image} has no EFI system partition")
             fat = Fat32(dev, esp.offset)
 
-            ukis = [n for n in fat.list_names("/EFI/Linux") if n.lower().endswith(".efi")]
-            if not ukis:
-                raise RuntimeError(f"{image} has no UKI under /EFI/Linux")
-            uki_name = sorted(ukis)[0]
+            uki_name = single_uki(fat.list_names("/EFI/Linux"), image)
 
             parts: list[str] = []
 
