@@ -17,9 +17,9 @@ func TestRootCommandRegistersGeneratedNSpawnLifecycleShape(t *testing.T) {
 	}
 }
 
+// TestRootCommandRegistersIgnition is not parallel. newRootCommand attaches the
+// package-level token.Command, so building two roots at once races on it.
 func TestRootCommandRegistersIgnition(t *testing.T) {
-	t.Parallel()
-
 	cmd, _, err := newRootCommand().Find([]string{"ignition"})
 	if err != nil {
 		t.Fatalf("Find() error = %v", err)
