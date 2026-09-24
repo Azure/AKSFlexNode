@@ -37,19 +37,21 @@ permissions.
 
 ## GitHub Actions Policy
 
-The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC for the protected `e2e-testing` environment. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
+The `E2E Tests` workflow uses GitHub-hosted runners and Azure OIDC through the `e2e-testing` and `e2e-testing-external` environments. The existing `e2e-testing` environment does not require deployment approval; `e2e-testing-external` is protected by required maintainer review. Automatic runs are intentionally limited because the workflow executes repository code that can create and delete Azure resources.
 
 Automatic E2E runs are allowed for:
 
 - pushes to `main` that touch Go files, `go.mod` / `go.sum`, E2E files, controller deployment files, the controller Dockerfile, or install/config scripts;
-- same-repository pull requests targeting `main` with those same path changes.
+- non-Dependabot, same-repository pull requests targeting `main` with those same path changes;
+- Dependabot pull requests after a maintainer approves the pending `e2e-testing-external` deployment.
 
-Fork pull requests are skipped by the workflow job condition. This prevents unreviewed fork code from receiving Azure OIDC access. To run full E2E for a trusted fork contribution, a maintainer should first review the change and then either:
+All pull requests use the `pull_request` trigger. Pushes, manual runs, scheduled cleanup, and non-Dependabot same-repository PRs retain the existing `e2e-testing` environment without deployment approval. Dependabot-authored PRs are routed to the protected `e2e-testing-external` environment and cannot start until a required reviewer approves them. Approval is the trust decision for the exact workflow run; only after approval does the job check out and execute the dependency update or request an OIDC token.
 
-1. push the contributor's commit to a branch in the canonical repository and open/run E2E from that same-repo branch; or
-2. manually apply the change to a same-repo branch and run `workflow_dispatch`.
+Dependabot-triggered workflows cannot access normal Actions secrets. The Azure client, tenant, and subscription IDs and the E2E configuration must therefore be stored as repository variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `E2E_RESOURCE_GROUP`, `E2E_LOCATION`, `E2E_AKS_NODE_VM_SIZE`, and `E2E_VM_SIZE`. Repository scope provides one configuration source for both environments and the cleanup workflow. Remove the corresponding Actions secrets after migrating their values. Authentication uses only the short-lived GitHub OIDC token, so no long-lived Azure credential is exposed.
 
-Do not use `pull_request_target` to check out and execute fork code with Azure credentials.
+The `e2e-testing-external` environment should require maintainers as reviewers, prevent self-review, and disable administrator bypass where practical. The Azure identity should be limited to isolated, quota-constrained E2E resources. This repository uses customized OIDC subjects in the form `repository_owner_id:<OWNER_ID>:repository_id:<REPOSITORY_ID>:environment:<ENVIRONMENT>`. Configure Azure federated credentials for both `e2e-testing` and `e2e-testing-external` using the subject emitted by GitHub's OIDC login diagnostics rather than committing the numeric IDs. Where supported, also constrain the Dependabot OIDC `event_name` claim appropriately.
+
+Fork pull requests remain skipped. To run full E2E for a trusted fork contribution, a maintainer should review the change, push or apply it to a maintainer-owned branch in the canonical repository, and run E2E from that branch.
 
 ## Quick Start
 
