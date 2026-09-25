@@ -5,8 +5,9 @@ name: E2E Stale Resource Cleanup
 # of its run (for example the cluster "aks-e2e-1787164131"), so anything older
 # than the age threshold is safe to delete.
 #
-# Security note: like the E2E workflow, this uses GitHub OIDC against the
-# protected e2e-testing environment and only runs from the canonical repository.
+# Security note: like the E2E workflow, this uses GitHub OIDC through the
+# e2e-testing environment and only runs from the canonical repository. This
+# environment does not require deployment approval.
 
 on:
   schedule:
@@ -40,20 +41,20 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Azure login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Clean up stale E2E resources
         env:
-          E2E_RESOURCE_GROUP: ${{ secrets.E2E_RESOURCE_GROUP }}
+          E2E_RESOURCE_GROUP: ${{ vars.E2E_RESOURCE_GROUP }}
           E2E_STALE_MAX_AGE_HOURS: ${{ inputs.max_age_hours || '24' }}
           E2E_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
         run: |

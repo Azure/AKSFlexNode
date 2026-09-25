@@ -3,9 +3,10 @@ name: E2E Tests
 # End-to-end tests for ARM Machine registration plus MSI, bootstrap-token,
 # Arc, and kubeadm-style join flows.
 #
-# Security note: this workflow uses GitHub OIDC to obtain Azure access for the
-# protected e2e-testing environment. PR runs are allowed only when the PR branch
-# lives in this repository; fork PRs are blocked at the job level.
+# Security note: this workflow uses GitHub OIDC to obtain Azure access. Trusted
+# pushes and same-repository PRs use e2e-testing. Dependabot PRs use the
+# protected e2e-testing-external environment and require maintainer approval before
+# any code is checked out or an OIDC token is requested.
 
 on:
   workflow_dispatch:
@@ -50,31 +51,34 @@ permissions:
   id-token: write
 
 env:
-  E2E_RESOURCE_GROUP: ${{ secrets.E2E_RESOURCE_GROUP }}
-  E2E_LOCATION: ${{ secrets.E2E_LOCATION }}
-  E2E_AKS_NODE_VM_SIZE: ${{ secrets.E2E_AKS_NODE_VM_SIZE }}
-  E2E_VM_SIZE: ${{ secrets.E2E_VM_SIZE }}
-  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  E2E_RESOURCE_GROUP: ${{ vars.E2E_RESOURCE_GROUP }}
+  E2E_LOCATION: ${{ vars.E2E_LOCATION }}
+  E2E_AKS_NODE_VM_SIZE: ${{ vars.E2E_AKS_NODE_VM_SIZE }}
+  E2E_VM_SIZE: ${{ vars.E2E_VM_SIZE }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
   GITHUB_RUN_ID: ${{ github.run_id }}
   E2E_WORK_DIR: /tmp/aks-flex-node-e2e-${{ github.run_id }}
 
 jobs:
   e2e:
     name: E2E Tests
-    # Only run from the canonical repository, and never for fork PRs. Same-repo
-    # PRs still require the e2e-testing environment/OIDC policy to allow access.
+    # Only canonical same-repository PRs may request access to the protected E2E
+    # environment. Fork PRs remain blocked.
     if: >
       github.repository == 'Azure/AKSFlexNode' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: e2e-testing
+    # Environment approvals cannot be conditional within one environment. Route
+    # only Dependabot-authored PRs through the required-reviewer environment so
+    # pushes and maintainer PRs retain the existing automatic behavior.
+    environment: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && 'e2e-testing-external' || 'e2e-testing' }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -87,9 +91,9 @@ jobs:
       - name: Azure login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Run E2E tests, including ARM Machine registration
         env:
@@ -103,7 +107,7 @@ jobs:
         run: ./hack/e2e/run.sh logs
 
       - name: Upload logs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: e2e-logs-${{ github.run_id }}
