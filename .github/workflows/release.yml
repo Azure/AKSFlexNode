@@ -37,7 +37,7 @@ jobs:
       tag_exists: ${{ steps.release.outputs.tag_exists }}
     steps:
       - name: Checkout release source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
           persist-credentials: false
@@ -207,7 +207,7 @@ jobs:
 
     steps:
       - name: Checkout release commit
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.target_sha }}
           persist-credentials: false
@@ -371,7 +371,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout release commit
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.target_sha }}
           persist-credentials: false
