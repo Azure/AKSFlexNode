@@ -61,7 +61,10 @@ if [[ -n "${RELEASE}" ]]; then
   if ! sudo /usr/local/bin/aks-flex-node host-root >/dev/null 2>&1; then
     host_root=/usr/local
   fi
-elif [[ -n "${managed_current}" ]]; then
+elif [[ -n "${managed_current}" && -e /etc/systemd/system/aks-flex-node-agent.service ]]; then
+  # Only a layout whose service is still installed needs the upgrade path.
+  # Reset removes the service and the config directory but keeps the layout,
+  # and install.sh replaces such a layout and recreates the directories.
   echo "Existing managed layout found at ${managed_current}; activating the separately staged E2E candidate..."
   sudo chmod 0755 /tmp/aks-flex-node-binary
   sudo /tmp/aks-flex-node-binary agent-upgrade
