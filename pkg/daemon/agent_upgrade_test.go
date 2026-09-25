@@ -499,3 +499,65 @@ func TestFilesHaveEqualSHA256(t *testing.T) {
 		t.Fatalf("filesHaveEqualSHA256 = %v, %v", equal, err)
 	}
 }
+
+// TestAgentUpgradePathsUnder covers the host layout used by agent upgrade.
+//
+// Under the legacy root it must reproduce the absolute paths released versions
+// used. A migrated host resolves the host root to the legacy root, and the
+// links and units those versions wrote name these paths.
+func TestAgentUpgradePathsUnder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		root         string
+		wantBinary   string
+		wantBlue     string
+		wantCurrent  string
+		wantLastGood string
+	}{
+		{
+			name:         "host root",
+			root:         "/opt/unbounded",
+			wantBinary:   "/opt/unbounded/bin/aks-flex-node",
+			wantBlue:     "/opt/unbounded/lib/aks-flex-node/aks-flex-node-blue",
+			wantCurrent:  "/opt/unbounded/lib/aks-flex-node/aks-flex-node-current",
+			wantLastGood: "/opt/unbounded/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+		{
+			name:         "legacy root keeps the released layout",
+			root:         "/usr/local",
+			wantBinary:   "/usr/local/bin/aks-flex-node",
+			wantBlue:     "/usr/local/lib/aks-flex-node/aks-flex-node-blue",
+			wantCurrent:  "/usr/local/lib/aks-flex-node/aks-flex-node-current",
+			wantLastGood: "/usr/local/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := agentUpgradePathsUnder(tt.root)
+			if paths.BinaryPath != tt.wantBinary {
+				t.Errorf("BinaryPath = %q, want %q", paths.BinaryPath, tt.wantBinary)
+			}
+			if paths.BluePath != tt.wantBlue {
+				t.Errorf("BluePath = %q, want %q", paths.BluePath, tt.wantBlue)
+			}
+			if paths.CurrentPath != tt.wantCurrent {
+				t.Errorf("CurrentPath = %q, want %q", paths.CurrentPath, tt.wantCurrent)
+			}
+			if paths.LastGoodPath != tt.wantLastGood {
+				t.Errorf("LastGoodPath = %q, want %q", paths.LastGoodPath, tt.wantLastGood)
+			}
+
+			// The signal must stay on a filesystem that is writable even when
+			// /usr is read-only, and survive a rollback to a binary that
+			// predates the host root, so it does not move with the root.
+			if paths.SignalPath != "/etc/aks-flex-node/agent-upgrade-signal.json" {
+				t.Errorf("SignalPath = %q, want it to stay under /etc", paths.SignalPath)
+			}
+		})
+	}
+}

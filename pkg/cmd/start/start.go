@@ -50,6 +50,9 @@ func NewCommand() *cobra.Command {
 }
 
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+	if err := daemon.MigrateHostRoot(logger); err != nil {
+		return err
+	}
 	goal, err := aksmachine.GoalStateFromConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("build goal state from config: %w", err)
@@ -81,6 +84,9 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
+	if err := daemon.PrepareHostRoot(ctx, logger); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
 	tasks := phases.Serial(logger,
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),

@@ -318,7 +318,7 @@ _reset_arm_registration_host() {
   remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
 set -euo pipefail
 
-/usr/local/bin/aks-flex-node reset
+/opt/unbounded/bin/aks-flex-node reset
 systemctl stop aks-flex-node-msi-arm-registration.service 2>/dev/null || true
 systemctl reset-failed aks-flex-node-msi-arm-registration.service 2>/dev/null || true
 REMOTE
@@ -338,9 +338,12 @@ _reset_previous_arm_registration_host() {
   remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
 set -euo pipefail
 
-if command -v /usr/local/bin/aks-flex-node >/dev/null 2>&1; then
-  /usr/local/bin/aks-flex-node reset
-fi
+for binary in /opt/unbounded/bin/aks-flex-node /usr/local/bin/aks-flex-node; do
+  if [[ -x "${binary}" ]]; then
+    "${binary}" reset
+    break
+  fi
+done
 systemctl stop aks-flex-node-msi-arm-registration.service 2>/dev/null || true
 systemctl reset-failed aks-flex-node-msi-arm-registration.service 2>/dev/null || true
 REMOTE

@@ -3,8 +3,9 @@
 # This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 #
 # Scope: initial installation and reinstall after reset. While the agent service is installed,
-# /usr/local/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
-# through the agent upgrade flow.
+# <host root>/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
+# through the agent upgrade flow. The host root is /opt/unbounded, or /usr/local on a host installed
+# by a release before it; the downloaded binary reports which.
 
 set -euo pipefail
 
@@ -20,8 +21,12 @@ REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
-INSTALL_DIR="/usr/local/bin"
-MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
+# Where a release before the host root installs. resolve_install_dir replaces these with the
+# directories the downloaded binary reports.
+LEGACY_ROOT="/usr/local"
+INSTALL_DIR="$LEGACY_ROOT/bin"
+MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"
+LEGACY_AGENT=false
 AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
@@ -244,6 +249,45 @@ download_binary() {
     echo "$temp_dir/$binary_name"
 }
 
+# resolve_install_dir asks the downloaded binary where it keeps its files. A release that answers
+# host-root installs under the host root: /opt/unbounded, or /usr/local on a host an older release
+# installed. An older release has no such command and installs under /usr/local.
+#
+# The binary runs from a copy under $DATA_DIR rather than the download directory, which may be on a
+# noexec /tmp: a failure to run there would be taken for an older release.
+resolve_install_dir() {
+    local binary_path="$1"
+    local staging root
+
+    if ! mkdir -p "$DATA_DIR" || ! staging=$(mktemp -d "$DATA_DIR/.install.XXXXXX"); then
+        log_error "Failed to create a staging directory in $DATA_DIR"
+        return 1
+    fi
+    if ! install -m 0755 "$binary_path" "$staging/aks-flex-node"; then
+        rm -rf -- "$staging"
+        log_error "Failed to stage the binary in $staging"
+        return 1
+    fi
+
+    if root=$("$staging/aks-flex-node" host-root 2>/dev/null); then
+        rm -rf -- "$staging"
+        if [[ "$root" != /* || "$root" == *[[:space:]]* ]]; then
+            log_error "The binary reported an invalid host root: $root"
+            return 1
+        fi
+        root="${root%/}"
+        INSTALL_DIR="$root/bin"
+        MANAGED_BINARY_DIR="$root/lib/aks-flex-node"
+        return 0
+    fi
+
+    rm -rf -- "$staging"
+    INSTALL_DIR="$LEGACY_ROOT/bin"
+    MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"
+    LEGACY_AGENT=true
+    log_warning "This release predates /opt/unbounded and installs under $LEGACY_ROOT"
+}
+
 is_managed_binary_link() {
     local target_path="$1"
     local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
@@ -263,9 +307,10 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # Minimal and custom images aren't required to pre-create /usr/local/bin.
-    # Create a missing destination, but don't change an existing directory's
-    # ownership or mode because it can be managed by the host image owner.
+    # Minimal and custom images aren't required to pre-create /usr/local/bin,
+    # and the host root does not exist before the first installation. Create a
+    # missing destination, but don't change an existing directory's ownership
+    # or mode because it can be managed by the host image owner.
     if [[ ! -e "$INSTALL_DIR" ]]; then
         if ! install -d -o root -g root -m 0755 "$INSTALL_DIR"; then
             log_error "Failed to create install directory $INSTALL_DIR"
@@ -315,6 +360,9 @@ install_binary() {
         if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||
             ! install -o root -g root -m 0755 "$binary_path" "$staged"; then
             log_error "Failed to stage binary in $INSTALL_DIR"
+            if [[ "$LEGACY_AGENT" == true ]]; then
+                log_error "This release predates /opt/unbounded and needs a writable $INSTALL_DIR; install a newer release"
+            fi
             exit 1
         fi
         # -T makes a directory appearing at the target fail rather than receive the staged file.
@@ -436,6 +484,7 @@ main() {
     # Download binary
     local binary_path
     binary_path=$(download_binary "$version" "$os" "$arch")
+    resolve_install_dir "$binary_path" || exit 1
 
     # Install binary
     install_binary "$binary_path"

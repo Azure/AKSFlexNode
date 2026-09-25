@@ -23,6 +23,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
 const (
@@ -32,16 +33,11 @@ const (
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
 
+// defaultAgentUpgradePaths returns the host-side agent upgrade layout under the
+// resolved host root. Callers that change the host migrate it first; see
+// MigrateHostRoot.
 func defaultAgentUpgradePaths() agentUpgradePaths {
-	const binaryDir = "/usr/local/lib/aks-flex-node"
-	return agentUpgradePaths{
-		BinaryPath:   "/usr/local/bin/aks-flex-node",
-		BluePath:     filepath.Join(binaryDir, "aks-flex-node-blue"),
-		GreenPath:    filepath.Join(binaryDir, "aks-flex-node-green"),
-		CurrentPath:  filepath.Join(binaryDir, "aks-flex-node-current"),
-		LastGoodPath: filepath.Join(binaryDir, "aks-flex-node-last-good"),
-		SignalPath:   "/etc/aks-flex-node/agent-upgrade-signal.json",
-	}
+	return agentUpgradePathsUnder(hostroot.Resolve())
 }
 
 type agentUpgradeRequest struct {
@@ -386,6 +382,9 @@ func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
 // RecoverAgentUpgrade records failure and restores both host and active nspawn
 // binaries. It is invoked by the systemd recovery unit through last-good.
 func RecoverAgentUpgrade(ctx context.Context, message string) error {
+	if err := MigrateHostRoot(slog.Default()); err != nil {
+		return err
+	}
 	paths := defaultAgentUpgradePaths()
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
 	if err := signals.recordFailure(message); err != nil {

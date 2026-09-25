@@ -265,6 +265,16 @@ how to retry failed provisioning. A systemd oneshot wrapper can use
 `ConditionPathExists=!/var/lib/aks-flex-node/first-boot-complete` to prevent a
 successful node from being bootstrapped again after reboot.
 
+`aks-flex-node ignition` renders such a wrapper for hosts provisioned by
+Ignition, `aks-flex-node-bootstrap.service`, but conditions it on the agent
+unit, `/etc/systemd/system/aks-flex-node-agent.service`, instead of a marker.
+The agent unit exists once bootstrap has installed the agent, and
+`aks-flex-node reset` removes it together with the wrapper unit. A marker under
+`/var/lib/aks-flex-node` would survive reset and block the host from being
+provisioned again. The wrapper removes the script, which carries the base
+config, once bootstrap succeeds, and keeps the credential file that the config
+references.
+
 ### 7. Verify convergence
 
 The provisioning system should not treat script exit alone as complete cluster
@@ -408,6 +418,10 @@ AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
 ```
 
+`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated. The binary
+directory is the one the agent reports, and a value that names any other
+directory is rejected.
+
 The equivalent non-secret values have CLI flags. A service-principal client
 secret has no CLI value because command arguments are process-visible. Use a
 protected secret file or, when unavoidable, the dedicated environment variable.
@@ -426,20 +440,22 @@ The script processes JSON in this order:
 
 1. Write the embedded base config into a mode `0700` temporary workspace.
 2. Validate that it is a JSON object.
-3. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
+3. Download the agent and install it where it reports, as described in
+   [Agent download and installation](#agent-download-and-installation). This
+   happens before rendering because fetching bootstrap data runs the installed
+   binary.
+4. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
    they are available to the bootstrap-data request.
-4. When enabled, acquire an ARM token with MSI or SP, call
+5. When enabled, acquire an ARM token with MSI or SP, call
    `listBootstrapData`, and deep-merge the response.
-5. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
-6. Deep-merge each CLI `--config-overrides` object in invocation order.
-7. Reapply dedicated cluster/pool/endpoint overrides so they remain
+6. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
+7. Deep-merge each CLI `--config-overrides` object in invocation order.
+8. Reapply dedicated cluster/pool/endpoint overrides so they remain
    authoritative.
-8. Apply dedicated rootfs and offline-artifact source overrides.
-9. Set `agent.nodeName` from the lowercase host name only when absent.
-10. Apply the dedicated auth selection.
-11. Validate the final JSON with jq.
-12. Keep the rendered result in the protected workspace while the agent archive
-    is downloaded and installed.
+9. Apply dedicated rootfs and offline-artifact source overrides.
+10. Set `agent.nodeName` from the lowercase host name only when absent.
+11. Apply the dedicated auth selection.
+12. Validate the final JSON with jq.
 13. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
     `0600`.
 14. Clear bootstrap environment variables, including signed artifact URLs and
@@ -586,7 +602,16 @@ The script:
 3. Optionally validates the archive SHA-256.
 4. Rejects absolute and parent-traversal tar paths.
 5. Extracts `aks-flex-node-linux-<arch>` or `aks-flex-node`.
-6. Atomically replaces `/usr/local/bin/aks-flex-node` with mode `0755`.
+6. Asks the agent for its host root, and atomically replaces
+   `<host root>/bin/aks-flex-node` with mode `0755`.
+
+The host root is what the agent's `host-root` command prints: `/opt/unbounded`,
+or `/usr/local` on a host an earlier release installed. The command runs from a
+copy under `/var/lib/aks-flex-node`, because the temp dir may be on a noexec
+`/tmp` and a failure to run there would be taken for an earlier release. A
+release without the command predates the host root and is installed in
+`/usr/local/bin`; on a host with a read-only `/usr`, such as Azure Container
+Linux, such a release cannot be installed.
 
 The checksum covers the downloaded archive. Supplying a digest is strongly
 recommended, especially for signed URLs or mirrors.

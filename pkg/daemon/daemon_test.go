@@ -42,8 +42,14 @@ func TestBootstrapCredentialRESTConfigExecCredential(t *testing.T) {
 	if restCfg.ExecProvider == nil {
 		t.Fatalf("ExecProvider = nil, want exec credential")
 	}
-	if restCfg.ExecProvider.Command != "/usr/local/bin/aks-flex-node" {
-		t.Fatalf("ExecProvider.Command = %q", restCfg.ExecProvider.Command)
+	// This client runs on the host, where the binary is under the host root. The
+	// kubelet's credential keeps naming the binary inside the machine, which is
+	// not a path a fresh host has.
+	if restCfg.ExecProvider.Command != config.HostBinaryPath() {
+		t.Fatalf("ExecProvider.Command = %q, want %q", restCfg.ExecProvider.Command, config.HostBinaryPath())
+	}
+	if machine := config.ToAgentConfig(cfg, "kube1").Kubelet.Auth.ExecCredential.Command; machine == restCfg.ExecProvider.Command {
+		t.Fatalf("host and machine credentials both run %q", machine)
 	}
 }
 

@@ -435,8 +435,8 @@ jobs:
           **Manual installation:**
           1. Download the appropriate binary for your platform
           2. Extract the archive: \`tar -xzf aks-flex-node-*.tar.gz\`
-          3. Move the binary to your PATH: \`sudo mv aks-flex-node-* /usr/local/bin/aks-flex-node\`
-          4. Make it executable: \`sudo chmod +x /usr/local/bin/aks-flex-node\`
+          3. Install the binary where the agent looks for it: \`sudo install -D -m 0755 aks-flex-node-linux-amd64 /opt/unbounded/bin/aks-flex-node\`, or \`aks-flex-node-linux-arm64\` on ARM64
+          4. Run it as \`/opt/unbounded/bin/aks-flex-node\`, or add \`/opt/unbounded/bin\` to your PATH
 
           ### Supported Platforms
 

@@ -476,6 +476,7 @@
         "bootstrap-token-expired",
         "clean-up",
         "flow",
+        "hosts-provisioned-by-ignition",
         "operator-guide-bootstrap-an-aks-flex-node",
         "preflight-reports-insufficient-disk-space",
         "prerequisites",
@@ -514,6 +515,17 @@
         "start",
         "troubleshooting-checklist",
         "verify-node-state"
+      ]
+    },
+    {
+      "path": "hack/acl/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "azure-container-linux-harness",
+        "requirements",
+        "settings",
+        "troubleshooting",
+        "usage"
       ]
     },
     {

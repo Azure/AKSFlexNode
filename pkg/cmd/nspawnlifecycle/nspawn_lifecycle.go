@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	flexconfig "github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	sharedlifecycle "github.com/Azure/unbounded/pkg/agent/nspawnlifecycle"
@@ -70,6 +71,12 @@ func newPhaseCommand(
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateMachine(args[0]); err != nil {
+				return err
+			}
+
+			// The hooks regenerate the units that invoke them, and name the
+			// helper under the host root, so it has to lead to the files.
+			if err := daemon.MigrateHostRoot(log); err != nil {
 				return err
 			}
 

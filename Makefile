@@ -60,6 +60,8 @@ test: test-install
 test-install:
 	@echo "Running installer tests..."
 	@scripts/install_test.sh
+	@scripts/uninstall_test.sh
+	@scripts/bootstrap_test.sh
 
 .PHONY: test-coverage
 test-coverage:
@@ -195,7 +197,7 @@ help:
 	@echo ""
 	@echo "Test & Quality Targets:"
 	@echo "  test               Run tests"
-	@echo "  test-install       Run installer tests"
+	@echo "  test-install       Run installer, uninstaller, and bootstrap script tests"
 	@echo "  test-coverage      Run tests with coverage report"
 	@echo "  test-race          Run tests with race detector"
 	@echo "  lint               Run golangci-lint"

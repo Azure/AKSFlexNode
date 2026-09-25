@@ -25,7 +25,7 @@ _validate_nspawn_lifecycle_contract() {
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 
-helper="/usr/local/bin/unbounded-agent-nspawn-lifecycle"
+helper="/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle"
 state_file="/etc/aks-flex-node/daemon-state.json"
 machine="$(sudo python3 - <<'PY'
 import json
@@ -69,7 +69,7 @@ _reconcile_nspawn_lifecycle() {
   remote_exec "${vm_ip}" "E2E_NSPAWN_LIFECYCLE_TIMEOUT=${timeout} bash -s" <<'REMOTE'
 set -euo pipefail
 
-helper="/usr/local/bin/unbounded-agent-nspawn-lifecycle"
+helper="/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle"
 machine="$(sudo python3 - <<'PY'
 import json
 with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:

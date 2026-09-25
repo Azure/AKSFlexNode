@@ -118,6 +118,8 @@ The following table is generated from the Cobra command tree. Run `make docs-cli
 | `aks-flex-node daemon [flags]` | Run the AKS Flex Node daemon | `agent` | listed | `--config` (required) |
 | `aks-flex-node fetch-bootstrap-data [flags]` | Fetch current FlexNodes join data from AKS RP | — | listed | `--agent-pool-name` (required); `--api-version` (default: `2026-05-02-preview`); `--auth` (required); `--authority-host` (default: `https://login.microsoftonline.com`); `--cluster-resource-id` (required); `--msi-client-id`; `--output`, `-o` (required); `--resource-manager-endpoint` (default: `https://management.azure.com`); `--sp-client-certificate-file`; `--sp-client-credential-file`; `--sp-client-id`; `--sp-client-secret-file`; `--sp-tenant-id` |
 | `aks-flex-node help [command]` | Help about any command | — | listed | — |
+| `aks-flex-node host-root` | Print the directory that holds the agent's host-side files | — | hidden | — |
+| `aks-flex-node ignition [flags] -- BOOTSTRAP_ARGS...` | Render an Ignition config that bootstraps the host on first boot | — | listed | `--base-config`; `--output`, `-o` (default: `-`); `--sp-client-certificate-file`; `--sp-client-secret-file` |
 | `aks-flex-node nspawn-lifecycle` | Run internal nspawn lifecycle hooks | — | hidden | — |
 | `aks-flex-node nspawn-lifecycle post-start MACHINE` | Reconcile in-machine state after machine start | — | hidden | — |
 | `aks-flex-node nspawn-lifecycle pre-start MACHINE` | Refresh host-side nspawn state before machine start | — | hidden | — |
