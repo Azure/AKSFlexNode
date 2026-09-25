@@ -14,20 +14,20 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const (
 	ServiceUnitName         = "aks-flex-node-agent.service"
 	recoveryServiceUnitName = "aks-flex-node-agent-recovery.service"
-	// recoveryScriptPath is the path baked into the embedded recovery unit.
-	// It is the substitution placeholder rather than the install location: the
-	// actual path is resolved from the configured host prefix, because /usr is
-	// read-only on some hosts. Keep it in sync with the embedded asset.
-	recoveryScriptPath = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
-	// systemdSystemDir is not prefix-relative. Units must live where systemd
-	// looks for them, and /etc is writable even when /usr is not.
+	// embeddedRecoveryScriptPath is the path the embedded recovery unit names,
+	// the one releases before the host root installed to. It is replaced with
+	// the path under the resolved host root when the unit is written. Keep it
+	// in sync with the embedded asset.
+	embeddedRecoveryScriptPath = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
+	// systemdSystemDir is not under the host root. Units must live where
+	// systemd looks for them, and /etc is writable even when /usr is not.
 	systemdSystemDir     = "/etc/systemd/system"
 	arcSystemdDependency = "himdsd.service"
 
@@ -78,27 +78,16 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 	return nil
 }
 
-// recoveryScriptPathForPrefix returns where the recovery script is installed
-// for a host install prefix. The default prefix reproduces the historical
-// location, so hosts that do not set one are unaffected.
-func recoveryScriptPathForPrefix(prefix string) string {
-	return filepath.Join(goalstates.ResolveHostPaths(prefix).Prefix, "lib", "aks-flex-node", "aks-flex-node-recovery.sh")
-}
-
-// installedRecoveryScriptPath resolves the recovery script location for callers
-// that have no config in hand, using the prefix this agent was installed with.
-func installedRecoveryScriptPath() string {
-	return recoveryScriptPathForPrefix(hostPrefixFromInstalledConfig())
-}
-
 func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
+	root := hostroot.Resolve()
+
 	return ensureAgentUpgradeServiceAssetsAt(
 		ctx,
 		log,
-		agentUpgradePathsForPrefix(cfg.Agent.HostPrefix),
+		agentUpgradePathsUnder(root),
 		agentServiceOptionsFromConfig(cfg),
 		systemdSystemDir,
-		recoveryScriptPathForPrefix(cfg.Agent.HostPrefix),
+		recoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
 	)
 }
@@ -142,7 +131,7 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions age
 	if err != nil {
 		return nil, err
 	}
-	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(recoveryScriptPath), []byte(recoveryScript))
+	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(embeddedRecoveryScriptPath), []byte(recoveryScript))
 	recoveryContent := renderRecoveryScript(binaryPaths)
 	// Publish dependencies before the main unit that references OnFailure, so an
 	// interrupted update never leaves systemd pointing at missing recovery assets.
@@ -189,13 +178,12 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 // renderRecoveryScript points the embedded recovery script at the binary layout
 // for this host.
 //
-// The embedded script contains the paths for the default prefix as literals, so
-// those literals are what gets replaced. Keying the replacement on the paths
-// resolved from the installed config instead matches nothing on a host with a
-// custom prefix, and leaves the script reading last-good from /usr/local, where
-// there is no binary, so a failed upgrade cannot be rolled back.
+// The embedded script contains the paths under the legacy root as literals, so
+// those literals are what gets replaced. Left alone on a host installed under
+// the host root, the script reads last-good from /usr/local, where there is no
+// binary, so a failed upgrade cannot be rolled back.
 func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
-	embedded := agentUpgradePathsForPrefix("")
+	embedded := agentUpgradePathsUnder(hostroot.LegacyPath)
 	content := recoveryScriptContent
 
 	for oldPath, newPath := range map[string]string{
@@ -222,47 +210,40 @@ func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agent
 }
 
 type uninstallServiceTask struct {
-	log    *slog.Logger
-	prefix string
+	log *slog.Logger
 }
 
 // UninstallService returns a task that stops, disables, removes, and reloads
 // the systemd unit.
-//
-// The prefix is passed in rather than read from the installed config, because
-// the daemon's reset paths remove /etc/aks-flex-node before they uninstall the
-// service. Reading it at that point returns the default and leaves a prefixed
-// recovery script behind. The recovery script is removed under the given
-// prefix and under the default, so a host that changed prefix is still cleaned.
-func UninstallService(log *slog.Logger, prefix string) phases.Task {
-	return &uninstallServiceTask{log: log, prefix: prefix}
+func UninstallService(log *slog.Logger) phases.Task {
+	return &uninstallServiceTask{log: log}
 }
 
-// InstalledHostPrefix returns the host prefix from the installed config, or the
-// empty string when there is none. Callers that are about to remove the config
-// read this first.
-func InstalledHostPrefix() string {
-	return hostPrefixFromInstalledConfig()
+// uninstallPaths returns the files UninstallService removes. The recovery
+// script is removed under the resolved host root and under the legacy root, so
+// that uninstalling does not depend on the host root having been migrated.
+func uninstallPaths() []string {
+	return uninstallPathsUnder(hostroot.Resolve(), hostroot.LegacyPath)
 }
 
-// uninstallPaths returns the files UninstallService removes for a prefix.
-func uninstallPaths(prefix string) []string {
+func uninstallPathsUnder(root, legacy string) []string {
 	paths := []string{
 		filepath.Join(systemdSystemDir, ServiceUnitName),
 		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+		recoveryScriptPathUnder(root),
 	}
-	for _, candidate := range goalstates.MergeHostPrefixes(prefix) {
-		paths = append(paths, recoveryScriptPathForPrefix(candidate))
+	if root != legacy {
+		paths = append(paths, recoveryScriptPathUnder(legacy))
 	}
 
-	return append(paths, agentUpgradePathsForPrefix(prefix).SignalPath)
+	return append(paths, agentUpgradePathsUnder(root).SignalPath)
 }
 
 // removeIfPresent removes a file and treats its absence as success.
 //
 // It checks first. On a read-only filesystem, such as /usr on Azure Container
 // Linux, unlinking a path that does not exist returns EROFS rather than ENOENT,
-// so the default-prefix sweep would otherwise fail reset on a file that was
+// so the sweep of the legacy root would otherwise fail reset on a file that was
 // never there. Lstat so a dangling symlink still counts as present.
 func removeIfPresent(path string) error {
 	return removeIfPresentWith(path, os.Lstat, os.Remove)
@@ -294,7 +275,7 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
 
-	for _, path := range uninstallPaths(t.prefix) {
+	for _, path := range uninstallPaths() {
 		if err := removeIfPresent(path); err != nil {
 			return err
 		}

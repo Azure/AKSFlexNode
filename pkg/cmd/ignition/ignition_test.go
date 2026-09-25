@@ -99,7 +99,7 @@ func TestValidateBootstrapArgs(t *testing.T) {
 		{name: "missing value", args: []string{"--auth"}, wantErr: "--auth requires a value"},
 		{name: "empty value", args: []string{"--auth", "", "--fetch-bootstrap-data"}, wantErr: "--auth requires a value"},
 		{name: "newline in value", args: []string{"--config-overrides", "{\n}"}, wantErr: "control character"},
-		{name: "host prefix is owned", args: []string{"--host-prefix", "/opt/x"}, wantErr: "use this command's --host-prefix"},
+		{name: "host prefix is not an option", args: []string{"--host-prefix", "/opt/x"}, wantErr: `unknown bootstrap.sh option "--host-prefix"`},
 		{name: "install dir is owned", args: []string{"--install-dir", "/opt/x/bin"}, wantErr: "cannot be passed through"},
 		{name: "config path is owned", args: []string{"--config-path", "/etc/x.json"}, wantErr: "cannot be passed through"},
 		{name: "secret file is owned", args: []string{"--sp-client-secret-file", "/etc/s"}, wantErr: "writes the file to the host"},
@@ -135,46 +135,19 @@ func TestBuildRenderInput(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		baseConfig    string
-		hostPrefix    string
-		hostPrefixSet bool
-		args          []string
-		wantErr       string
-		wantPrefix    string
-		wantBase      string
+		name       string
+		baseConfig string
+		args       []string
+		wantErr    string
+		wantBase   string
 	}{
-		{name: "defaults to a prefix outside /usr", args: msiArgs, wantPrefix: defaultHostPrefix},
+		{name: "bootstrap data only", args: msiArgs},
 		{
-			name:       "base config is compacted and its prefix used",
-			baseConfig: "{\n  \"agent\": {\"hostPrefix\": \"/var/lib/flex\"}\n}\n",
+			name:       "base config is compacted",
+			baseConfig: "{\n  \"agent\": {\"logLevel\": \"debug\"}\n}\n",
 			args:       []string{"--agent-url", "https://example.com/a.tar.gz"},
-			wantPrefix: "/var/lib/flex",
-			wantBase:   `{"agent":{"hostPrefix":"/var/lib/flex"}}`,
+			wantBase:   `{"agent":{"logLevel":"debug"}}`,
 		},
-		{name: "flag prefix", hostPrefix: "/opt/flex", hostPrefixSet: true, args: msiArgs, wantPrefix: "/opt/flex"},
-		{
-			name:          "flag and base config may agree",
-			baseConfig:    `{"agent":{"hostPrefix":"/opt/flex"}}`,
-			hostPrefix:    "/opt/flex",
-			hostPrefixSet: true,
-			args:          msiArgs,
-			wantPrefix:    "/opt/flex",
-			wantBase:      `{"agent":{"hostPrefix":"/opt/flex"}}`,
-		},
-		{
-			name:          "flag and base config must not disagree",
-			baseConfig:    `{"agent":{"hostPrefix":"/opt/one"}}`,
-			hostPrefix:    "/opt/two",
-			hostPrefixSet: true,
-			args:          msiArgs,
-			wantErr:       "does not match agent.hostPrefix",
-		},
-		{name: "empty flag prefix", hostPrefix: "", hostPrefixSet: true, args: msiArgs, wantErr: "must not be empty"},
-		{name: "relative prefix", hostPrefix: "opt/flex", hostPrefixSet: true, args: msiArgs, wantErr: "absolute"},
-		{name: "unnormalized prefix", hostPrefix: "/opt/flex/", hostPrefixSet: true, args: msiArgs, wantErr: "normalized"},
-		{name: "padded prefix", hostPrefix: " /opt/flex", hostPrefixSet: true, args: msiArgs, wantErr: "whitespace"},
-		{name: "root prefix", hostPrefix: "/", hostPrefixSet: true, args: msiArgs, wantErr: "root"},
 		{
 			name:    "an agent source is required",
 			args:    []string{"--auth", "msi", "--fetch-bootstrap-data"},
@@ -195,7 +168,7 @@ func TestBuildRenderInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			opts := options{hostPrefix: tt.hostPrefix}
+			var opts options
 			if tt.baseConfig != "" {
 				opts.baseConfigPath = filepath.Join(t.TempDir(), "base.json")
 				if err := os.WriteFile(opts.baseConfigPath, []byte(tt.baseConfig), 0o600); err != nil {
@@ -203,7 +176,7 @@ func TestBuildRenderInput(t *testing.T) {
 				}
 			}
 
-			in, err := buildRenderInput(opts, tt.hostPrefixSet, tt.args)
+			in, err := buildRenderInput(opts, tt.args)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("buildRenderInput() error = %v, want %q", err, tt.wantErr)
@@ -212,9 +185,6 @@ func TestBuildRenderInput(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("buildRenderInput() error = %v", err)
-			}
-			if in.hostPrefix != tt.wantPrefix {
-				t.Errorf("hostPrefix = %q, want %q", in.hostPrefix, tt.wantPrefix)
 			}
 			if string(in.baseConfig) != tt.wantBase {
 				t.Errorf("baseConfig = %q, want %q", in.baseConfig, tt.wantBase)
@@ -332,14 +302,13 @@ func TestRender(t *testing.T) {
 	}{
 		{
 			name:       "without a base config the script is written as is",
-			in:         renderInput{hostPrefix: "/opt/aks-flex-node", bootstrapArgs: msiArgs},
+			in:         renderInput{bootstrapArgs: msiArgs},
 			wantScript: scripts.Bootstrap,
 		},
 		{
 			name: "base config and credential",
 			in: renderInput{
 				baseConfig:    []byte(`{"azure":{"bootstrapToken":{"token":"abcdef.0123456789abcdef"}}}`),
-				hostPrefix:    "/opt/aks-flex-node",
 				credential:    secret,
 				bootstrapArgs: []string{"--auth", "service-principal", "--agent-version", "v0.1.0"},
 			},
@@ -388,7 +357,7 @@ func TestRender(t *testing.T) {
 				t.Errorf("script content differs from the embedded script with the base config in place")
 			}
 
-			wantArgs := append([]string{"--host-prefix", tt.in.hostPrefix}, tt.in.bootstrapArgs...)
+			wantArgs := append([]string(nil), tt.in.bootstrapArgs...)
 			if tt.in.credential != nil {
 				cred := cfg.Storage.Files[1]
 				if cred.Path != tt.in.credential.hostPath || cred.Mode != 0o600 || cred.Contents.Compression != "" {
@@ -418,7 +387,7 @@ func TestRender(t *testing.T) {
 func TestRenderedModesAreDecimal(t *testing.T) {
 	t.Parallel()
 
-	out, err := render(renderInput{hostPrefix: "/opt/aks-flex-node", bootstrapArgs: msiArgs})
+	out, err := render(renderInput{bootstrapArgs: msiArgs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,13 +416,13 @@ Restart=on-failure
 RestartSec=10s
 RestartSteps=10
 RestartMaxDelaySec=300
-ExecStart=/bin/bash /etc/aks-flex-node/first-boot/bootstrap.sh "--host-prefix" "/opt/aks-flex-node" "--config-overrides" "{\"a\":\"$$HOME %%h\"}"
+ExecStart=/bin/bash /etc/aks-flex-node/first-boot/bootstrap.sh "--auth" "msi" "--config-overrides" "{\"a\":\"$$HOME %%h\"}"
 ExecStartPost=/bin/rm -f /etc/aks-flex-node/first-boot/bootstrap.sh
 
 [Install]
 WantedBy=multi-user.target
 `
-	got := firstBootUnit([]string{"--host-prefix", "/opt/aks-flex-node", "--config-overrides", `{"a":"$HOME %h"}`})
+	got := firstBootUnit([]string{"--auth", "msi", "--config-overrides", `{"a":"$HOME %h"}`})
 	if got != want {
 		t.Fatalf("firstBootUnit() =\n%s\nwant\n%s", got, want)
 	}
@@ -531,7 +500,7 @@ func TestPopulatedScriptReturnsTheBaseConfig(t *testing.T) {
 		name string
 		base string
 	}{
-		{name: "plain", base: `{"agent":{"hostPrefix":"/opt/aks-flex-node"}}`},
+		{name: "plain", base: `{"agent":{"logLevel":"info"}}`},
 		{name: "shell syntax stays literal", base: `{"a":"$HOME $(id) ` + "`id`" + ` 'q' \\ \"d\""}`},
 		{name: "heredoc delimiter inside a value", base: `{"a":"AKS_FLEX_NODE_EMBEDDED_CONFIG"}`},
 		{name: "unicode", base: `{"a":"caf\u00e9 ` + "\u00e9" + `"}`},

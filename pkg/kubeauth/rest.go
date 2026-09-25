@@ -39,5 +39,9 @@ func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
 		return nil, fmt.Errorf("kubernetes client requires bootstrap token or exec credential")
 	}
 	restCfg.ExecProvider = agentCfg.Kubelet.Auth.ExecCredential.DeepCopy()
+	// The agent config's credential is the kubelet's, and names the binary
+	// inside the machine. This client runs on the host, where the binary is
+	// under the host root.
+	restCfg.ExecProvider.Command = config.HostBinaryPath()
 	return restCfg, nil
 }

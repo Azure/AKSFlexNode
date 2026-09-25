@@ -14,6 +14,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
 const (
@@ -24,8 +25,11 @@ const (
 
 // PreflightHostAgentActivation validates a directly staged Flex agent binary
 // and returns the shared activation plan without changing host state.
+//
+// It does not migrate the host root, so it plans against the root the host
+// will resolve once migrated.
 func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
-	service, paths, err := newFlexDaemonActivationService(log)
+	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot())
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
@@ -38,7 +42,10 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if os.Geteuid() != 0 {
 		return agentbinary.ActivationResult{}, fmt.Errorf("host agent upgrade requires root privileges")
 	}
-	service, paths, err := newFlexDaemonActivationService(log)
+	if err := MigrateHostRoot(log); err != nil {
+		return agentbinary.ActivationResult{}, err
+	}
+	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve())
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
@@ -65,7 +72,7 @@ type flexDaemonActivationService struct {
 	serviceWasActive bool
 }
 
-func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationService, agentUpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, root string) (*flexDaemonActivationService, agentUpgradePaths, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -73,7 +80,7 @@ func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationServ
 	if err != nil {
 		return nil, agentUpgradePaths{}, err
 	}
-	paths := defaultAgentUpgradePaths()
+	paths := agentUpgradePathsUnder(root)
 	serviceOptions, err := installedAgentServiceOptions(systemdSystemDir)
 	if err != nil {
 		return nil, agentUpgradePaths{}, err
@@ -83,7 +90,7 @@ func newFlexDaemonActivationService(log *slog.Logger) (*flexDaemonActivationServ
 		paths:          paths,
 		state:          state,
 		systemdDir:     systemdSystemDir,
-		recoveryScript: installedRecoveryScriptPath(),
+		recoveryScript: recoveryScriptPathUnder(root),
 		serviceOptions: serviceOptions,
 		inspectService: inspectAgentServiceActive,
 	}, paths, nil

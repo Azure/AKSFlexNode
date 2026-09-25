@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"runtime"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -17,6 +19,10 @@ const (
 	// the nspawn rootfs. The start task copies the binary here before
 	// starting the kubelet so that exec credential plugins can invoke it.
 	flexNodeBinaryPath = "/usr/local/bin/aks-flex-node"
+
+	// hostBinaryRelativePath is the aks-flex-node compatibility link on the
+	// host, relative to the host root; see HostBinaryPath.
+	hostBinaryRelativePath = "bin/aks-flex-node"
 
 	// aksAADServerID is the Azure AD server application ID for AKS.
 	aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
@@ -43,7 +49,6 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	ac := &agentconfig.AgentConfig{
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
-		HostPrefix:            cfg.Agent.HostPrefix,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
 		AdditionalHostMounts:  cfg.Bootstrap.AdditionalHostMounts,
@@ -202,6 +207,13 @@ func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config,
 	}
 
 	return agentCfg, gs, containerImageArchives, nil
+}
+
+// HostBinaryPath returns the aks-flex-node compatibility link on the host,
+// under the resolved host root. Clients that run on the host, rather than the
+// kubelet inside the machine, invoke the exec credential plugin through it.
+func HostBinaryPath() string {
+	return filepath.Join(hostroot.Resolve(), hostBinaryRelativePath)
 }
 
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node

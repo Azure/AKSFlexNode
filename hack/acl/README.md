@@ -3,8 +3,8 @@
 `acl.py` boots an Azure Container Linux VM from the Ignition config that
 `aks-flex-node ignition` renders, and joins it to a local kind cluster. It
 exercises the path an Ignition-provisioned host takes: the first-boot unit runs
-`bootstrap.sh`, the agent is installed under `/opt/aks-flex-node` because `/usr`
-is read-only, and reset removes what bootstrap installed.
+`bootstrap.sh`, the agent is installed under `/opt/unbounded`, which is writable
+while `/usr` is not, and reset removes what bootstrap installed.
 
 No Azure resources are used. The node joins with a bootstrap token, and the
 agent's machine client talks to an AKS Flex controller deployed in the kind
@@ -38,7 +38,8 @@ later boots cannot depend on them.
 `test` checks that:
 
 - the first-boot unit succeeded, removed the script that carries the bootstrap
-  token, and installed the agent under the prefix and nothing under `/usr/local`
+  token, and installed the agent under `/opt/unbounded` and nothing under
+  `/usr/local`
 - an argument containing `$`, `%`, quotes, and backslashes reached `bootstrap.sh`
   unchanged
 - a pod runs on the node and `kubectl logs` reaches its kubelet

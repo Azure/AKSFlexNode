@@ -3,9 +3,9 @@
 # This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 #
 # Scope: initial installation and reinstall after reset. While the agent service is installed,
-# <prefix>/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
-# through the agent upgrade flow. The prefix is /usr/local unless agent.hostPrefix or
-# AKS_FLEX_NODE_HOST_PREFIX sets another one.
+# <host root>/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
+# through the agent upgrade flow. The host root is /opt/unbounded, or /usr/local on a host installed
+# by a release before it; the downloaded binary reports which.
 
 set -euo pipefail
 
@@ -21,14 +21,12 @@ REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
-DEFAULT_HOST_PREFIX="/usr/local"
-INSTALL_DIR="$DEFAULT_HOST_PREFIX/bin"
-MANAGED_BINARY_DIR="$DEFAULT_HOST_PREFIX/lib/aks-flex-node"
-# Host install prefix. Must match agent.hostPrefix in the node config, because the agent resolves
-# its binaries from that. Required on hosts with a read-only /usr, such as Azure Container Linux.
-AKS_FLEX_NODE_HOST_PREFIX="${AKS_FLEX_NODE_HOST_PREFIX:-}"
-HOST_PREFIX=""
-OS_RELEASE_PATH="/etc/os-release"
+# Where a release before the host root installs. resolve_install_dir replaces these with the
+# directories the downloaded binary reports.
+LEGACY_ROOT="/usr/local"
+INSTALL_DIR="$LEGACY_ROOT/bin"
+MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"
+LEGACY_AGENT=false
 AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
@@ -94,13 +92,11 @@ detect_os() {
 }
 
 load_os_release() {
-    if [[ ! -f "$OS_RELEASE_PATH" ]]; then
+    if [[ ! -f /etc/os-release ]]; then
         return 1
     fi
 
     ID=""
-    ID_LIKE=""
-    VARIANT_ID=""
     VERSION_ID=""
     PRETTY_NAME=""
 
@@ -112,12 +108,6 @@ load_os_release() {
             ID)
                 ID="$value"
                 ;;
-            ID_LIKE)
-                ID_LIKE="$value"
-                ;;
-            VARIANT_ID)
-                VARIANT_ID="$value"
-                ;;
             VERSION_ID)
                 VERSION_ID="$value"
                 ;;
@@ -125,30 +115,11 @@ load_os_release() {
                 PRETTY_NAME="$value"
                 ;;
         esac
-    done < "$OS_RELEASE_PATH"
-}
-
-# Azure Container Linux reports ID=azurelinux and a 3.x VERSION_ID, like Azure Linux 3, but /usr is
-# read-only and there is no package manager. VARIANT_ID identifies it; ID_LIKE=flatcar is a second
-# signal in case an image drops VARIANT_ID.
-is_azure_container_linux() {
-    [[ "${VARIANT_ID:-}" == "azurecontainerlinux" ]] && return 0
-    [[ "${ID:-}" == "azurelinux" && " ${ID_LIKE:-} " == *" flatcar "* ]]
+    done < /etc/os-release
 }
 
 check_linux_distribution() {
     if load_os_release; then
-        if is_azure_container_linux; then
-            if [[ "$HOST_PREFIX" == "$DEFAULT_HOST_PREFIX" ]]; then
-                log_error "Detected Azure Container Linux, where $DEFAULT_HOST_PREFIX is read-only"
-                log_error "Set AKS_FLEX_NODE_HOST_PREFIX to a writable location such as /opt/aks-flex-node,"
-                log_error "and set agent.hostPrefix to the same value in the node config"
-                exit 1
-            fi
-            log_info "Detected Azure Container Linux $VERSION_ID with host prefix $HOST_PREFIX"
-            return 0
-        fi
-
         case "$ID" in
             ubuntu)
                 case "$VERSION_ID" in
@@ -197,44 +168,6 @@ check_linux_distribution() {
     else
         log_warning "Cannot detect OS version - continuing installation"
     fi
-}
-
-# config_host_prefix prints agent.hostPrefix from the node config, or nothing.
-config_host_prefix() {
-    local config_path="$CONFIG_DIR/config.json"
-
-    [[ -f "$config_path" ]] || return 0
-    if ! command -v jq &> /dev/null; then
-        log_warning "Cannot read agent.hostPrefix from $config_path without jq" >&2
-        return 0
-    fi
-    jq -r '.agent.hostPrefix // empty' "$config_path"
-}
-
-# resolve_host_prefix sets HOST_PREFIX, INSTALL_DIR and MANAGED_BINARY_DIR.
-#
-# The agent resolves its binaries from agent.hostPrefix, so installing anywhere else leaves them
-# where it does not look. When the config already exists its value is used; the environment
-# variable covers the usual case where the config is written after installation. Both being set to
-# different values is an error rather than a choice.
-resolve_host_prefix() {
-    local from_config from_env="$AKS_FLEX_NODE_HOST_PREFIX"
-
-    from_config=$(config_host_prefix)
-    if [[ -n "$from_config" && -n "$from_env" && "${from_config%/}" != "${from_env%/}" ]]; then
-        log_error "AKS_FLEX_NODE_HOST_PREFIX ($from_env) does not match agent.hostPrefix ($from_config)"
-        return 1
-    fi
-
-    HOST_PREFIX="${from_config:-${from_env:-$DEFAULT_HOST_PREFIX}}"
-    if [[ "$HOST_PREFIX" != /* || "$HOST_PREFIX" == *[[:space:]]* ]]; then
-        log_error "Host prefix must be an absolute path without whitespace: $HOST_PREFIX"
-        return 1
-    fi
-    [[ "$HOST_PREFIX" == "/" ]] || HOST_PREFIX="${HOST_PREFIX%/}"
-
-    INSTALL_DIR="$HOST_PREFIX/bin"
-    MANAGED_BINARY_DIR="$HOST_PREFIX/lib/aks-flex-node"
 }
 
 get_latest_release() {
@@ -316,6 +249,45 @@ download_binary() {
     echo "$temp_dir/$binary_name"
 }
 
+# resolve_install_dir asks the downloaded binary where it keeps its files. A release that answers
+# host-root installs under the host root: /opt/unbounded, or /usr/local on a host an older release
+# installed. An older release has no such command and installs under /usr/local.
+#
+# The binary runs from a copy under $DATA_DIR rather than the download directory, which may be on a
+# noexec /tmp: a failure to run there would be taken for an older release.
+resolve_install_dir() {
+    local binary_path="$1"
+    local staging root
+
+    if ! mkdir -p "$DATA_DIR" || ! staging=$(mktemp -d "$DATA_DIR/.install.XXXXXX"); then
+        log_error "Failed to create a staging directory in $DATA_DIR"
+        return 1
+    fi
+    if ! install -m 0755 "$binary_path" "$staging/aks-flex-node"; then
+        rm -rf -- "$staging"
+        log_error "Failed to stage the binary in $staging"
+        return 1
+    fi
+
+    if root=$("$staging/aks-flex-node" host-root 2>/dev/null); then
+        rm -rf -- "$staging"
+        if [[ "$root" != /* || "$root" == *[[:space:]]* ]]; then
+            log_error "The binary reported an invalid host root: $root"
+            return 1
+        fi
+        root="${root%/}"
+        INSTALL_DIR="$root/bin"
+        MANAGED_BINARY_DIR="$root/lib/aks-flex-node"
+        return 0
+    fi
+
+    rm -rf -- "$staging"
+    INSTALL_DIR="$LEGACY_ROOT/bin"
+    MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"
+    LEGACY_AGENT=true
+    log_warning "This release predates /opt/unbounded and installs under $LEGACY_ROOT"
+}
+
 is_managed_binary_link() {
     local target_path="$1"
     local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
@@ -336,9 +308,9 @@ install_binary() {
     log_info "Installing binary to $INSTALL_DIR..."
 
     # Minimal and custom images aren't required to pre-create /usr/local/bin,
-    # and a custom host prefix usually doesn't exist yet. Create a missing
-    # destination, but don't change an existing directory's ownership or mode
-    # because it can be managed by the host image owner.
+    # and the host root does not exist before the first installation. Create a
+    # missing destination, but don't change an existing directory's ownership
+    # or mode because it can be managed by the host image owner.
     if [[ ! -e "$INSTALL_DIR" ]]; then
         if ! install -d -o root -g root -m 0755 "$INSTALL_DIR"; then
             log_error "Failed to create install directory $INSTALL_DIR"
@@ -388,6 +360,9 @@ install_binary() {
         if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||
             ! install -o root -g root -m 0755 "$binary_path" "$staged"; then
             log_error "Failed to stage binary in $INSTALL_DIR"
+            if [[ "$LEGACY_AGENT" == true ]]; then
+                log_error "This release predates /opt/unbounded and needs a writable $INSTALL_DIR; install a newer release"
+            fi
             exit 1
         fi
         # -T makes a directory appearing at the target fail rather than receive the staged file.
@@ -450,11 +425,6 @@ show_next_steps() {
   }
 }
 EOF
-    if [[ "$HOST_PREFIX" != "$DEFAULT_HOST_PREFIX" ]]; then
-        echo ""
-        echo -e "${YELLOW}This host uses a custom prefix. Set it in the config so the agent finds its binaries:${NC}"
-        echo "  \"agent\": { \"hostPrefix\": \"$HOST_PREFIX\" }"
-    fi
     echo ""
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
@@ -490,8 +460,6 @@ main() {
         exit 1
     fi
 
-    resolve_host_prefix || exit 1
-
     # Check OS compatibility
     check_linux_distribution
 
@@ -516,6 +484,7 @@ main() {
     # Download binary
     local binary_path
     binary_path=$(download_binary "$version" "$os" "$arch")
+    resolve_install_dir "$binary_path" || exit 1
 
     # Install binary
     install_binary "$binary_path"

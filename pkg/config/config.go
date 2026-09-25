@@ -161,15 +161,6 @@ type AgentConfig struct {
 	// NodeName is resolved from the host hostname when omitted.
 	NodeName string `json:"nodeName,omitempty"`
 
-	// HostPrefix is the installation prefix for the agent's own host-side
-	// files. It does not affect paths inside the nspawn machine.
-	//
-	// Hosts that mount /usr read-only, such as Azure Container Linux, cannot
-	// use the default prefix and must set this to a writable location. It is
-	// never inferred: a wrong guess would place binaries that generated
-	// systemd units already reference by absolute path.
-	HostPrefix string `json:"hostPrefix,omitempty"`
-
 	// MachineClient selects how the agent reads the AKS machine resource.
 	MachineClient MachineClientConfig `json:"machineClient,omitempty"`
 
@@ -852,11 +843,6 @@ func (c *AgentConfig) validate() error {
 	}
 	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
 		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)
-	}
-	// Delegate to the agent library so the prefix rules stay defined in one
-	// place rather than drifting between the two projects.
-	if err := agentconfig.ValidateHostPrefix(c.HostPrefix); err != nil {
-		return fmt.Errorf("invalid agent.hostPrefix: %w", err)
 	}
 	return nil
 }

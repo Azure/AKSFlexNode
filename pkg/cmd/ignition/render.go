@@ -91,7 +91,6 @@ type credential struct {
 type renderInput struct {
 	// baseConfig is compact JSON, or empty to leave bootstrap.sh without one.
 	baseConfig    []byte
-	hostPrefix    string
 	credential    *credential
 	bootstrapArgs []string
 }
@@ -106,7 +105,7 @@ func render(in renderInput) ([]byte, error) {
 		return nil, err
 	}
 
-	args := append([]string{"--host-prefix", in.hostPrefix}, in.bootstrapArgs...)
+	args := append([]string(nil), in.bootstrapArgs...)
 	cfg := ignitionConfig{
 		Ignition: ignitionVersion{Version: specVersion},
 		Storage: storage{

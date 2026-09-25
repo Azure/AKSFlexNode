@@ -12,11 +12,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration (should match install.sh)
-DEFAULT_HOST_PREFIX="/usr/local"
-INSTALL_DIR="$DEFAULT_HOST_PREFIX/bin"
-MANAGED_BINARY_DIR="$DEFAULT_HOST_PREFIX/lib/aks-flex-node"
-AKS_FLEX_NODE_HOST_PREFIX="${AKS_FLEX_NODE_HOST_PREFIX:-}"
-HOST_PREFIX=""
+# The binaries are under the host root, or under the legacy root on a host installed by a release
+# before the host root. There the host root may be a link to the legacy root. Both are swept.
+HOST_ROOT="/opt/unbounded"
+LEGACY_ROOT="/usr/local"
+# The directory reset runs the binary from; see find_install_dir.
+INSTALL_DIR="$HOST_ROOT/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
@@ -44,19 +45,16 @@ log_error() {
     echo -e "${RED}ERROR:${NC} $1"
 }
 
-# resolve_host_prefix finds where the binaries were installed. It must run before reset, which
-# removes the config that records agent.hostPrefix.
-resolve_host_prefix() {
-    local config_path="$CONFIG_DIR/config.json" from_config=""
+# find_install_dir picks the root that holds the binary, so reset can run it.
+find_install_dir() {
+    local root
 
-    if [[ -f "$config_path" ]] && command -v jq &> /dev/null; then
-        from_config=$(jq -r '.agent.hostPrefix // empty' "$config_path")
-    fi
-
-    HOST_PREFIX="${from_config:-${AKS_FLEX_NODE_HOST_PREFIX:-$DEFAULT_HOST_PREFIX}}"
-    [[ "$HOST_PREFIX" == "/" ]] || HOST_PREFIX="${HOST_PREFIX%/}"
-    INSTALL_DIR="$HOST_PREFIX/bin"
-    MANAGED_BINARY_DIR="$HOST_PREFIX/lib/aks-flex-node"
+    for root in "$HOST_ROOT" "$LEGACY_ROOT"; do
+        if [[ -x "$root/bin/aks-flex-node" ]]; then
+            INSTALL_DIR="$root/bin"
+            return 0
+        fi
+    done
 }
 
 confirm_uninstall() {
@@ -64,7 +62,7 @@ confirm_uninstall() {
     echo -e "${YELLOW}===========================${NC}"
     echo ""
     echo "This will remove the following components:"
-    echo "• AKS Flex Node binaries ($INSTALL_DIR/aks-flex-node, $MANAGED_BINARY_DIR)"
+    echo "• AKS Flex Node binaries (under $HOST_ROOT and $LEGACY_ROOT)"
     echo "• Systemd service (aks-flex-node-agent.service)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
@@ -138,21 +136,49 @@ remove_directories() {
 }
 
 remove_binary() {
+    local root
+
     log_info "Removing binaries..."
 
-    # -L as well as -e: once the agent has run this is a symlink into the managed layout, and a
-    # dangling one still has to go.
-    if [[ -e "$INSTALL_DIR/aks-flex-node" || -L "$INSTALL_DIR/aks-flex-node" ]]; then
-        rm -f "$INSTALL_DIR/aks-flex-node"
-        log_success "Removed binary: $INSTALL_DIR/aks-flex-node"
-    else
-        log_info "Binary not found: $INSTALL_DIR/aks-flex-node"
+    for root in "$HOST_ROOT" "$LEGACY_ROOT"; do
+        # -L as well as -e: once the agent has run this is a symlink into the managed layout, and a
+        # dangling one still has to go.
+        if [[ -e "$root/bin/aks-flex-node" || -L "$root/bin/aks-flex-node" ]]; then
+            rm -f "$root/bin/aks-flex-node"
+            log_success "Removed binary: $root/bin/aks-flex-node"
+        fi
+
+        # Reset keeps the managed blue/green layout so a reinstall can reuse it; uninstall removes it.
+        if [[ -d "$root/lib/aks-flex-node" ]]; then
+            rm -rf "$root/lib/aks-flex-node"
+            log_success "Removed managed binaries: $root/lib/aks-flex-node"
+        fi
+    done
+
+    remove_host_root
+}
+
+# remove_host_root removes the host root once nothing is left in it, or the link to the legacy root
+# on a host installed by an older release. A link somewhere else is not the agent's.
+remove_host_root() {
+    local dir
+
+    if [[ -L "$HOST_ROOT" ]]; then
+        if [[ "$(readlink -- "$HOST_ROOT")" == "$LEGACY_ROOT" ]]; then
+            rm -f -- "$HOST_ROOT"
+            log_success "Removed link: $HOST_ROOT"
+        fi
+        return 0
     fi
 
-    # Reset keeps the managed blue/green layout so a reinstall can reuse it; uninstall removes it.
-    if [[ -d "$MANAGED_BINARY_DIR" ]]; then
-        rm -rf "$MANAGED_BINARY_DIR"
-        log_success "Removed managed binaries: $MANAGED_BINARY_DIR"
+    [[ -d "$HOST_ROOT" ]] || return 0
+    for dir in "$HOST_ROOT/lib" "$HOST_ROOT/bin" "$HOST_ROOT/libexec" "$HOST_ROOT"; do
+        rmdir -- "$dir" 2>/dev/null || true
+    done
+    if [[ -e "$HOST_ROOT" ]]; then
+        log_info "Kept $HOST_ROOT: it still holds files"
+    else
+        log_success "Removed directory: $HOST_ROOT"
     fi
 }
 
@@ -179,7 +205,7 @@ main() {
         exit 1
     fi
 
-    resolve_host_prefix
+    find_install_dir
 
     # Confirm uninstall
     confirm_uninstall "${1:-}"

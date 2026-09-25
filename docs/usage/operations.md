@@ -17,6 +17,12 @@ This guide covers host inspection, current lifecycle operations, reset, and trou
 
 AKS or the operator owns workload disruption decisions. Cordon and drain the Kubernetes Node before a disruptive operation when the surrounding control-plane workflow hasn't already done so.
 
+## Where the agent is installed
+
+The agent keeps its binaries and helpers under `/opt/unbounded`: the `aks-flex-node` link in `/opt/unbounded/bin`, the blue/green binaries and recovery script in `/opt/unbounded/lib/aks-flex-node`, and the LocalDNS helper in `/opt/unbounded/libexec`. The config, state, logs, and systemd units stay under `/etc`, `/var`, and `/etc/systemd/system`. `/opt/unbounded/bin` is not on the default `PATH`, so run the host commands below as `/opt/unbounded/bin/aks-flex-node`, or add the directory to `PATH`.
+
+Earlier releases installed these files under `/usr/local`. On a host installed by one of them, the first command of a newer release that changes the host, such as the agent after an AgentUpgrade, links `/opt/unbounded` to `/usr/local`. The files stay where they are and the units are unchanged, so the host can still be returned to the earlier release. `aks-flex-node reset` removes the helpers under both locations and keeps the binaries; the uninstall script removes the binaries from both, and the link. An AgentUpgrade to an earlier release is refused on a host installed under `/opt/unbounded`, because that release would look for its files under `/usr/local`.
+
 ## Preflight
 
 Run preflight before mutating the host. The command validates the config, resolves the nspawn goal state, and checks host prerequisites, API server reachability, rootfs image reachability, and bootstrap artifact sources.

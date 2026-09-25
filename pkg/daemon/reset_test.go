@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 // TestResetNodeCleansUpLocalDNS pins that reset runs the library's full
@@ -17,13 +19,13 @@ import (
 func TestResetNodeCleansUpLocalDNS(t *testing.T) {
 	t.Parallel()
 
-	name := ResetNode(slog.New(slog.DiscardHandler), "/opt/aks-flex-node").Name()
+	name := ResetNode(slog.New(slog.DiscardHandler)).Name()
 
 	for _, want := range []string{
 		"cleanup-localdns-rules",
 		"remove-network-interfaces",
 		"cleanup-routes",
-		"remove-nspawn-lifecycle-helper",
+		"remove-host-helpers",
 	} {
 		if !strings.Contains(name, want) {
 			t.Fatalf("ResetNode does not run %s: %s", want, name)
@@ -31,26 +33,32 @@ func TestResetNodeCleansUpLocalDNS(t *testing.T) {
 	}
 }
 
-func TestNSpawnLifecycleHelperPaths(t *testing.T) {
+// TestHostHelperPaths covers the library helpers reset removes. Reset does not
+// migrate the host root, so the legacy root is swept too, including the LocalDNS
+// helper, which CleanupNetwork removes under the resolved root only.
+func TestHostHelperPaths(t *testing.T) {
 	t.Parallel()
 
+	legacy := goalstates.LegacyHostPaths()
+
 	tests := []struct {
-		name   string
-		prefix string
-		want   []string
+		name     string
+		resolved goalstates.HostPaths
+		want     []string
 	}{
 		{
-			name:   "default prefix",
-			prefix: "",
-			want:   []string{"/usr/local/bin/unbounded-agent-nspawn-lifecycle"},
+			name:     "host root also sweeps the legacy root",
+			resolved: goalstates.HostPaths{Root: "/opt/unbounded", NSpawnLifecycleBinary: "/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle"},
+			want: []string{
+				"/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle",
+				"/usr/local/bin/unbounded-agent-nspawn-lifecycle",
+				"/usr/local/libexec/unbounded-localdns-network",
+			},
 		},
 		{
-			name:   "custom prefix also sweeps the default",
-			prefix: "/opt/aks-flex-node",
-			want: []string{
-				"/opt/aks-flex-node/bin/unbounded-agent-nspawn-lifecycle",
-				"/usr/local/bin/unbounded-agent-nspawn-lifecycle",
-			},
+			name:     "migrated host sweeps the legacy root once",
+			resolved: legacy,
+			want:     []string{"/usr/local/bin/unbounded-agent-nspawn-lifecycle"},
 		},
 	}
 
@@ -58,9 +66,9 @@ func TestNSpawnLifecycleHelperPaths(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := nspawnLifecycleHelperPaths(tt.prefix)
+			got := hostHelperPathsFor(tt.resolved, legacy)
 			if !slices.Equal(got, tt.want) {
-				t.Fatalf("nspawnLifecycleHelperPaths(%q) = %v, want %v", tt.prefix, got, tt.want)
+				t.Fatalf("hostHelperPathsFor(%q) = %v, want %v", tt.resolved.Root, got, tt.want)
 			}
 		})
 	}

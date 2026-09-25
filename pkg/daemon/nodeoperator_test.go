@@ -306,32 +306,3 @@ func (s *testStateStore) Save(context.Context, *State) error {
 func (s *testStateStore) Delete(context.Context) error {
 	return nil
 }
-
-// TestNodeOperatorHostPrefixComesFromLoadedConfig pins where the daemon's reset
-// paths get the prefix. They remove /etc/aks-flex-node before uninstalling the
-// service, so the installed config is gone by then and the loaded config is
-// the only record left.
-func TestNodeOperatorHostPrefixComesFromLoadedConfig(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		cfg  *config.Config
-		want string
-	}{
-		{name: "nil config", cfg: nil, want: ""},
-		{name: "no prefix", cfg: &config.Config{}, want: ""},
-		{name: "custom prefix", cfg: &config.Config{Agent: config.AgentConfig{HostPrefix: "/opt/aks-flex-node"}}, want: "/opt/aks-flex-node"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			o := &nspawnNodeOperator{cfg: tt.cfg}
-			if got := o.hostPrefix(); got != tt.want {
-				t.Fatalf("hostPrefix() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}

@@ -221,7 +221,7 @@ Run it against an already joined environment:
 The `nspawn-lifecycle` command validates the host integration exported by the shared Unbounded lifecycle library:
 
 1. Read each node's persisted active machine and require it to be `kube1` or `kube2`.
-2. Verify `/usr/local/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
+2. Verify `/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
 3. Verify the generated pre-start and post-start systemd hooks invoke that helper with the active machine.
 4. Add a marker to the token node's generated `.nspawn` config and invoke `pre-start`, proving the AKS Flex persisted-config loader regenerates the file.
 5. Invoke `reconcile`, verify the active machine receives a new leader PID, wait for the Kubernetes node to return Ready, and run a smoke workload.

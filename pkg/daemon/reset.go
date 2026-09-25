@@ -13,11 +13,11 @@ import (
 
 // ResetNode returns the task that removes the node runtime from the host.
 //
-// The prefix is the host install prefix. Helpers the agent library installs
-// under it, the nspawn lifecycle helper and the LocalDNS network helper, are
-// removed under that prefix and under the default, so a host that changed
-// prefix is also cleaned up. The managed agent binaries are intentionally kept.
-func ResetNode(log *slog.Logger, prefix string) phases.Task {
+// Helpers the agent library installs under the host root, the nspawn lifecycle
+// helper and the LocalDNS network helper, are removed under the resolved host
+// root and under the legacy root, so reset does not depend on the host root
+// having been migrated. The managed agent binaries are intentionally kept.
+func ResetNode(log *slog.Logger) phases.Task {
 	return phases.Serial(log,
 		phases.Parallel(log,
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
@@ -30,22 +30,27 @@ func ResetNode(log *slog.Logger, prefix string) phases.Task {
 		phases.Parallel(log,
 			// CleanupNetwork also removes the LocalDNS unit, nft table, dummy
 			// interface and helper, which reset previously left behind.
-			reset.CleanupNetwork(log, prefix),
+			reset.CleanupNetwork(log),
 			reset.RemoveWireGuardKeys(log),
 			cleanupLegacyBridgeCNI(log),
 		),
-		removeNSpawnLifecycleHelpers(log, prefix),
+		removeHostHelpers(log),
 		reset.ReloadSystemd(log),
 		config.RemoveRuntimeDirs(log),
 	)
 }
 
-// nspawnLifecycleHelperPaths returns every location the nspawn lifecycle helper
-// may have been installed to for a prefix.
-func nspawnLifecycleHelperPaths(prefix string) []string {
-	var paths []string
-	for _, candidate := range goalstates.MergeHostPrefixes(prefix) {
-		paths = append(paths, goalstates.ResolveHostPaths(candidate).NSpawnLifecycleBinary)
+// hostHelperPaths returns every location the agent library may have installed
+// its host helpers to. CleanupNetwork removes the LocalDNS helper under the
+// resolved root only.
+func hostHelperPaths() []string {
+	return hostHelperPathsFor(goalstates.ResolveHostPaths(), goalstates.LegacyHostPaths())
+}
+
+func hostHelperPathsFor(resolved, legacy goalstates.HostPaths) []string {
+	paths := []string{resolved.NSpawnLifecycleBinary}
+	if legacy.Root != resolved.Root {
+		paths = append(paths, legacy.NSpawnLifecycleBinary, legacy.LocalDNSNetworkHelper)
 	}
 
 	return paths
@@ -57,14 +62,14 @@ type removeFilesTask struct {
 	paths []string
 }
 
-// removeNSpawnLifecycleHelpers removes the nspawn lifecycle helper. The machines
-// that invoke it are gone by the time this runs, and the next start installs it
-// again.
-func removeNSpawnLifecycleHelpers(log *slog.Logger, prefix string) phases.Task {
+// removeHostHelpers removes the nspawn lifecycle helper, and the LocalDNS
+// helper under the legacy root. The machines and units that invoke them are
+// gone by the time this runs, and the next start installs them again.
+func removeHostHelpers(log *slog.Logger) phases.Task {
 	return &removeFilesTask{
-		name:  "remove-nspawn-lifecycle-helper",
+		name:  "remove-host-helpers",
 		log:   log,
-		paths: nspawnLifecycleHelperPaths(prefix),
+		paths: hostHelperPaths(),
 	}
 }
 

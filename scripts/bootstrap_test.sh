@@ -6,9 +6,9 @@ if [[ $EUID -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
 fi
 
-# Every case installs a stub agent as root. Run in a private mount namespace so /usr/local can be
-# overlaid below: a case that falls back to the default prefix then cannot replace a real binary
-# on the host.
+# Every case installs a stub agent as root. Run in a private mount namespace so /usr/local and
+# /var/lib can be overlaid below: a case that installs an older release then cannot replace a real
+# binary on the host, and the staging copy of the agent is not left on the host either.
 if [[ -z "${BOOTSTRAP_TEST_ISOLATED:-}" ]]; then
     command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
     exec env BOOTSTRAP_TEST_ISOLATED=1 unshare --mount --propagation private bash "$0" "$@"
@@ -22,6 +22,10 @@ cleanup() {
     if [[ -n "$SERVER_PID" ]]; then
         kill "$SERVER_PID" 2>/dev/null || true
     fi
+    umount "$WORK_DIR/noexec-tmp" 2>/dev/null || true
+    umount /var/lib 2>/dev/null || true
+    # Twice: a failed legacy case leaves the read-only bind over the overlay.
+    umount /usr/local 2>/dev/null || true
     umount /usr/local 2>/dev/null || true
     rm -rf "$WORK_DIR"
 }
@@ -32,7 +36,7 @@ fail() {
     exit 1
 }
 
-# Relative paths, such as a rejected relative prefix, resolve inside the work dir rather than
+# Relative paths, such as a rejected relative host root, resolve inside the work dir rather than
 # wherever the test was started.
 cd "$WORK_DIR"
 
@@ -42,6 +46,13 @@ mkdir -p "$USR_LOCAL_WRITES" "$WORK_DIR/usr-local/work"
 mount -t overlay overlay \
     -o "lowerdir=/usr/local,upperdir=$USR_LOCAL_WRITES,workdir=$WORK_DIR/usr-local/work" /usr/local ||
     fail "could not overlay /usr/local"
+
+# bootstrap.sh stages the agent under /var/lib/aks-flex-node to ask it for its host root.
+VAR_LIB_WRITES="$WORK_DIR/var-lib/upper"
+mkdir -p "$VAR_LIB_WRITES" "$WORK_DIR/var-lib/work"
+mount -t overlay overlay \
+    -o "lowerdir=/var/lib,upperdir=$VAR_LIB_WRITES,workdir=$WORK_DIR/var-lib/work" /var/lib ||
+    fail "could not overlay /var/lib"
 
 command -v jq >/dev/null || fail "jq is required"
 bash -n "$SCRIPT"
@@ -57,6 +68,17 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
+# host-root is answered before the calls are recorded: bootstrap.sh asks it from a staging copy,
+# and the cases below check that every recorded call ran the installed binary.
+if [[ "${1:-}" == host-root ]]; then
+    printf '%s\n' "$0" >> "${BOOTSTRAP_TEST_CALLS:?}.host-root"
+    if [[ -n "${BOOTSTRAP_TEST_LEGACY:-}" ]]; then
+        printf 'Error: unknown command "host-root" for "aks-flex-node"\n' >&2
+        exit 1
+    fi
+    printf '%s\n' "${BOOTSTRAP_TEST_HOST_ROOT:?}"
+    exit 0
+fi
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
 printf '%s\n' "$0" >> "${BOOTSTRAP_TEST_CALLS}.path"
 if [[ "${1:-}" == fetch-bootstrap-data ]]; then
@@ -106,6 +128,7 @@ JSON
 chmod 0600 "$WORK_DIR/base.json"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/msi-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/msi" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AUTH=service-principal \
 AKS_FLEX_NODE_SP_CLIENT_ID=environment-client \
@@ -120,7 +143,6 @@ AKS_FLEX_NODE_CONFIG_OVERRIDES='{"node":{"labels":{"environment":"true"}}}' \
         --msi-client-id cli-msi \
         --bootstrap-oci-image 'https://cli.example/rootfs.tar.gz' \
         --config-overrides '{"node":{"labels":{"cli":"true"}},"bootstrap":{"offlineArtifacts":{"source":"https://generic-cli.example/ignored.tar.gz"}}}' \
-        --host-prefix "$WORK_DIR/msi" \
         --config-path "$WORK_DIR/msi-etc/config.json" >/dev/null
 
 jq -e '
@@ -137,6 +159,7 @@ grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/arc" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
@@ -144,7 +167,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --fetch-bootstrap-data \
         --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
         --agent-pool-name aksflexnodes \
-        --host-prefix "$WORK_DIR/arc" \
         --config-path "$WORK_DIR/arc-etc/config.json" >/dev/null
 
 jq -e '
@@ -162,6 +184,7 @@ grep -E '^fetch-bootstrap-data .*--auth arc( |$)' "$WORK_DIR/arc-calls" >/dev/nu
 printf 's"e\\cret\n' > "$WORK_DIR/client-secret"
 chmod 0600 "$WORK_DIR/client-secret"
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/sp" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     bash "$SCRIPT" \
         --auth service-principal \
@@ -169,7 +192,6 @@ AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
         --sp-client-secret-file "$WORK_DIR/client-secret" \
         --agent-url "$AGENT_URL" \
         --agent-sha256 "$AGENT_SHA256" \
-        --host-prefix "$WORK_DIR/sp" \
         --config-path "$WORK_DIR/sp-etc/config.json" >/dev/null
 
 jq -e --arg secretFile "$WORK_DIR/client-secret" '
@@ -183,13 +205,13 @@ jq -e --arg secretFile "$WORK_DIR/client-secret" '
 ' "$WORK_DIR/sp-etc/config.json" >/dev/null
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-inline-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/sp-inline" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_SP_CLIENT_SECRET='inline-secret' \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
         --auth service-principal \
         --sp-client-id inline-client \
-        --host-prefix "$WORK_DIR/sp-inline" \
         --config-path "$WORK_DIR/sp-inline-etc/config.json" >/dev/null
 jq -e '
   .azure.servicePrincipal.clientId == "inline-client" and
@@ -199,12 +221,12 @@ jq -e '
 
 ln -s "$WORK_DIR/client-secret" "$WORK_DIR/client-secret-link"
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-link-calls" \
+    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/sp-link" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         bash "$SCRIPT" --auth service-principal \
             --sp-client-id link-client \
             --sp-client-secret-file "$WORK_DIR/client-secret-link" \
-            --host-prefix "$WORK_DIR/sp-link" \
             --config-path "$WORK_DIR/sp-link-etc/config.json" \
             >"$WORK_DIR/sp-link.log" 2>&1; then
     fail "symlink client-secret file was accepted"
@@ -303,6 +325,7 @@ JSON
 chmod 0600 "$WORK_DIR/fetch-base.json"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
 AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
@@ -316,7 +339,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --agent-pool-name aksflexnodes \
         --resource-manager-endpoint "http://127.0.0.1:${port}" \
         --config-overrides '{"azure":{"targetCluster":{"resourceId":"/subscriptions/wrong/resourceGroups/wrong/providers/Microsoft.ContainerService/managedClusters/wrong"},"targetAgentPoolName":"wrongpool"},"node":{"labels":{"fresh":"true"}}}' \
-        --host-prefix "$WORK_DIR/fetch" \
         --config-path "$WORK_DIR/fetch-etc/config.json" >/dev/null
 
 jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
@@ -336,6 +358,7 @@ jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
 # The raw repository script can start from an implicit empty object when fresh
 # bootstrap data and the target cluster/pool are supplied.
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-empty-base-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-empty-base" \
 AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
@@ -345,7 +368,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
         --agent-pool-name aksflexnodes \
         --resource-manager-endpoint "http://127.0.0.1:${port}" \
-        --host-prefix "$WORK_DIR/fetch-empty-base" \
         --config-path "$WORK_DIR/fetch-empty-base-etc/config.json" >/dev/null
 
 jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
@@ -359,9 +381,9 @@ jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
 ' "$WORK_DIR/fetch-empty-base-etc/config.json" >/dev/null
 
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-base-calls" \
+    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/no-base" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         bash "$SCRIPT" --auth msi \
-            --host-prefix "$WORK_DIR/no-base" \
             --config-path "$WORK_DIR/no-base-etc/config.json" \
             >"$WORK_DIR/no-base.log" 2>&1; then
     fail "unpopulated embedded config was accepted without bootstrap-data fetch"
@@ -395,13 +417,13 @@ JSON
 chmod 0600 "$WORK_DIR/fetch-sp-base.json"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-sp-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-sp" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-sp-base.json" \
 AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA=true \
 AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
-        --host-prefix "$WORK_DIR/fetch-sp" \
         --config-path "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
 
 jq -e --arg secretFile "$WORK_DIR/fetch-sp-secret" '
@@ -428,6 +450,7 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
     chmod 0600 "$WORK_DIR/client-certificate"
 
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-cert-calls" \
+    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-cert" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
     AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
     AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
@@ -442,7 +465,6 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
             --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
             --agent-pool-name aksflexnodes \
             --resource-manager-endpoint "http://127.0.0.1:${port}" \
-            --host-prefix "$WORK_DIR/fetch-cert" \
             --config-path "$WORK_DIR/fetch-cert-etc/config.json" >/dev/null
 
     jq -e --arg certificateFile "$WORK_DIR/client-certificate" '
@@ -460,6 +482,7 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
         -out "$WORK_DIR/client-certificate.pfx" >/dev/null 2>&1
     chmod 0600 "$WORK_DIR/client-certificate.pfx"
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-pfx-calls" \
+    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-pfx" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
     AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
     AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
@@ -473,131 +496,121 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
             --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
             --agent-pool-name aksflexnodes \
             --resource-manager-endpoint "http://127.0.0.1:${port}" \
-            --host-prefix "$WORK_DIR/fetch-pfx" \
             --config-path "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
     jq -e --arg certificateFile "$WORK_DIR/client-certificate.pfx" '
       .azure.servicePrincipal.clientSecretFile == $certificateFile and
       .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
     ' "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
 
-# --host-prefix sets agent.hostPrefix and places the binary under <prefix>/bin, where the agent
-# looks for it. A prefix is required on hosts with a read-only /usr.
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/prefix-calls" \
+# The binary goes under the host root the agent reports, in directories created 0755 even under the
+# script's umask, so systemd and the agent can reach it.
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/root-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/root/opt/unbounded" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" \
-        --auth arc \
-        --host-prefix "$WORK_DIR/prefix/opt/aks-flex-node" \
-        --config-path "$WORK_DIR/prefix-etc/config.json" >/dev/null
-jq -e --arg prefix "$WORK_DIR/prefix/opt/aks-flex-node" '.agent.hostPrefix == $prefix' \
-    "$WORK_DIR/prefix-etc/config.json" >/dev/null || fail "--host-prefix was not written to agent.hostPrefix"
-[[ -x "$WORK_DIR/prefix/opt/aks-flex-node/bin/aks-flex-node" ]] || fail "binary was not installed under the prefix"
-for dir in opt opt/aks-flex-node opt/aks-flex-node/bin; do
-    [[ $(stat -c '%a' "$WORK_DIR/prefix/$dir") == 755 ]] || fail "new prefix directory $dir is not 0755"
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/root-etc/config.json" >/dev/null
+[[ -x "$WORK_DIR/root/opt/unbounded/bin/aks-flex-node" ]] || fail "binary was not installed under the host root"
+for dir in opt opt/unbounded opt/unbounded/bin; do
+    [[ $(stat -c '%a' "$WORK_DIR/root/$dir") == 755 ]] || fail "new directory $dir is not 0755"
 done
+[[ "$(sort -u "$WORK_DIR/root-calls.path")" == "$WORK_DIR/root/opt/unbounded/bin/aks-flex-node" ]] ||
+    fail "agent ran from $(sort -u "$WORK_DIR/root-calls.path" | tr '\n' ' '), want the installed binary"
 
-# The prefix can also come from the config alone, in which case the binary follows it.
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/config-prefix-calls" \
+# The host root is asked of a copy under /var/lib, not of the download in the temp dir: on a host
+# that mounts /tmp noexec that could not run, and would be taken for an older release.
+[[ "$(cat "$WORK_DIR/root-calls.host-root")" == /var/lib/aks-flex-node/.bootstrap.*/aks-flex-node ]] ||
+    fail "host-root ran from $(cat "$WORK_DIR/root-calls.host-root"), want the staging copy"
+mkdir -p "$WORK_DIR/noexec-tmp"
+mount -t tmpfs -o noexec,mode=0700 tmpfs "$WORK_DIR/noexec-tmp" || fail "could not mount a noexec temp dir"
+TMPDIR="$WORK_DIR/noexec-tmp" \
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/noexec-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/noexec" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" \
-        --auth arc \
-        --config-overrides "{\"agent\":{\"hostPrefix\":\"$WORK_DIR/config-prefix\"}}" \
-        --config-path "$WORK_DIR/config-prefix-etc/config.json" >/dev/null
-[[ -x "$WORK_DIR/config-prefix/bin/aks-flex-node" ]] || fail "binary did not follow agent.hostPrefix from the config"
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/noexec-etc/config.json" >/dev/null ||
+    fail "bootstrap failed with a noexec temp dir"
+[[ -x "$WORK_DIR/noexec/bin/aks-flex-node" ]] || fail "a noexec temp dir sent the binary elsewhere"
+umount "$WORK_DIR/noexec-tmp"
 
-# --install-dir is deprecated. It is accepted only when it matches the prefix, since the agent
-# cannot find a binary installed anywhere else.
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/matching-dir-calls" \
+# The staging copy does not outlive the run.
+if compgen -G "$VAR_LIB_WRITES/aks-flex-node/.bootstrap.*" >/dev/null; then
+    fail "staging copies were left in /var/lib/aks-flex-node"
+fi
+
+# --install-dir is deprecated. It is accepted only when it matches the directory the agent reports,
+# since the agent cannot find a binary installed anywhere else.
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/matching-calls" \
+BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/matching" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" \
-        --auth arc \
-        --host-prefix "$WORK_DIR/matching" \
+    bash "$SCRIPT" --auth arc \
         --install-dir "$WORK_DIR/matching/bin/" \
         --config-path "$WORK_DIR/matching-etc/config.json" >"$WORK_DIR/matching.log" 2>&1 ||
     fail "a matching --install-dir was rejected"
 grep -q "deprecated" "$WORK_DIR/matching.log" || fail "--install-dir did not warn that it is deprecated"
 
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/mismatch-calls" \
+    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/mismatch" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" \
-            --auth arc \
-            --host-prefix "$WORK_DIR/mismatch" \
+        bash "$SCRIPT" --auth arc \
             --install-dir "$WORK_DIR/elsewhere" \
             --config-path "$WORK_DIR/mismatch-etc/config.json" >"$WORK_DIR/mismatch.log" 2>&1; then
-    fail "an --install-dir that disagrees with the prefix was accepted"
+    fail "an --install-dir that disagrees with the agent was accepted"
 fi
-grep -q "use --host-prefix" "$WORK_DIR/mismatch.log" || fail "mismatch did not say to use --host-prefix"
+grep -q "where this agent looks for its binary" "$WORK_DIR/mismatch.log" || fail "mismatch was not explained"
 [[ ! -e "$WORK_DIR/elsewhere/aks-flex-node" && ! -e "$WORK_DIR/mismatch/bin/aks-flex-node" ]] ||
     fail "a binary was installed despite the mismatch"
 [[ ! -s "$WORK_DIR/mismatch-calls" ]] || fail "the agent was run despite the mismatch"
 
+# A host root that is not an absolute path is refused before anything is installed.
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/relative-calls" \
+    BOOTSTRAP_TEST_HOST_ROOT="relative/root" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --auth arc --host-prefix "relative/prefix" \
-            --config-path "$WORK_DIR/relative-etc/config.json" >/dev/null 2>&1; then
-    fail "a relative --host-prefix was accepted"
+        bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/relative-etc/config.json" >"$WORK_DIR/relative.log" 2>&1; then
+    fail "a relative host root was accepted"
 fi
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/relative-config-calls" \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --auth arc --config-overrides '{"agent":{"hostPrefix":"relative/prefix"}}' \
-            --config-path "$WORK_DIR/relative-config-etc/config.json" >"$WORK_DIR/relative-config.log" 2>&1; then
-    fail "a relative agent.hostPrefix was accepted"
-fi
-grep -q "must be an absolute path" "$WORK_DIR/relative-config.log" || fail "relative agent.hostPrefix was not reported"
-[[ ! -e "$WORK_DIR/relative-config-calls" ]] || fail "the agent was run with a relative prefix"
-[[ ! -e "$WORK_DIR/relative" ]] || fail "a relative prefix was created"
+grep -q "invalid host root" "$WORK_DIR/relative.log" || fail "relative host root was not reported"
+[[ ! -e "$WORK_DIR/relative-calls" && ! -e "$WORK_DIR/relative" ]] || fail "the agent was installed under a relative host root"
 
-# The prefix is node-local and the binary is already installed under it by the time bootstrap data
-# is fetched, so a response that moves a config-sourced prefix is refused rather than leaving the
-# agent split across two prefixes.
-jq --arg prefix "$WORK_DIR/moved" '.agent.hostPrefix = $prefix' "$WORK_DIR/base.json" > "$WORK_DIR/base-prefix.json"
-chmod 0600 "$WORK_DIR/base-prefix.json"
-fetch_moving_prefix() {
-    local name="$1"
-    shift
-    BOOTSTRAP_TEST_CALLS="$WORK_DIR/$name-calls" \
-    BOOTSTRAP_TEST_FETCH_RESPONSE='{"agent":{"hostPrefix":"/opt/moved"}}' \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base-prefix.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" \
-            --auth arc \
-            --fetch-bootstrap-data \
-            --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
-            --agent-pool-name aksflexnodes \
-            --config-path "$WORK_DIR/$name-etc/config.json" "$@" >"$WORK_DIR/$name.log" 2>&1
-}
-if fetch_moving_prefix moved; then
-    fail "bootstrap data that moved agent.hostPrefix was accepted"
-fi
-grep -q "bootstrap data changed agent.hostPrefix" "$WORK_DIR/moved.log" || fail "moved prefix was not reported"
-[[ ! -e "$WORK_DIR/moved-etc/config.json" ]] || fail "config was installed despite the moved prefix"
-
-# --host-prefix is applied after every config source, so it wins over the response.
-fetch_moving_prefix flag-wins --host-prefix "$WORK_DIR/flag-wins" || fail "--host-prefix did not override bootstrap data"
-jq -e --arg prefix "$WORK_DIR/flag-wins" '.agent.hostPrefix == $prefix' "$WORK_DIR/flag-wins-etc/config.json" >/dev/null ||
-    fail "bootstrap data overrode --host-prefix"
-
-# Every case above sets a prefix under the work dir, so nothing may have been written to the
-# default one.
+# Every case above installs under the work dir, so nothing may have been written to /usr/local.
 if [[ -n "$(ls -A "$USR_LOCAL_WRITES")" ]]; then
     fail "a case wrote to /usr/local: $(cd "$USR_LOCAL_WRITES" && find . -mindepth 1 | tr '\n' ' ')"
 fi
 
-# Without a prefix the layout is unchanged: the binary goes to /usr/local/bin and the config does
-# not name a prefix. This case writes to /usr/local, so it runs last and only on the overlay.
-[[ "$(findmnt -n -o FSTYPE /usr/local)" == overlay ]] || fail "/usr/local is not overlaid; refusing the default-prefix case"
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/default-calls" \
+# A release before the host root has no host-root command and looks for its binary in /usr/local/bin,
+# so that is where it goes. These cases write to /usr/local, so they run last and only on the overlay.
+[[ "$(findmnt -n -o FSTYPE /usr/local)" == overlay ]] || fail "/usr/local is not overlaid; refusing the legacy cases"
+
+# On a host where /usr/local is read-only, such as Azure Container Linux, an older release cannot be
+# installed at all, and the operator is told to use a newer one.
+# A read-only bind over the overlay, since overlayfs cannot be remounted read-only.
+{ mount --bind /usr/local /usr/local && mount -o remount,bind,ro /usr/local; } || fail "could not make /usr/local read-only"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/legacy-ro-calls" \
+    BOOTSTRAP_TEST_LEGACY=1 \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/legacy-ro-etc/config.json" >"$WORK_DIR/legacy-ro.log" 2>&1; then
+    fail "an older release was installed on a read-only /usr/local"
+fi
+umount /usr/local || fail "could not make /usr/local writable again"
+grep -q "predates /opt/unbounded" "$WORK_DIR/legacy-ro.log" || fail "a read-only /usr/local was not explained"
+[[ ! -s "$WORK_DIR/legacy-ro-calls" ]] || fail "the agent was run despite a failed install"
+
+# /usr/local/bin belongs to the image, so its mode is left as the image set it.
+legacy_bin_mode=$(stat -c '%a' /usr/local/bin)
+chmod 0750 /usr/local/bin
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/legacy-calls" \
+BOOTSTRAP_TEST_LEGACY=1 \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/default-etc/config.json" >/dev/null
-jq -e '.agent | has("hostPrefix") | not' "$WORK_DIR/default-etc/config.json" >/dev/null ||
-    fail "the default prefix was written to the config"
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/legacy-etc/config.json" >/dev/null
 grep -q BOOTSTRAP_TEST_CALLS "$USR_LOCAL_WRITES/bin/aks-flex-node" 2>/dev/null ||
-    fail "binary was not installed at /usr/local/bin without a prefix"
+    fail "an older release was not installed at /usr/local/bin"
+[[ "$(sort -u "$WORK_DIR/legacy-calls.path")" == /usr/local/bin/aks-flex-node ]] ||
+    fail "an older release ran from $(sort -u "$WORK_DIR/legacy-calls.path" | tr '\n' ' ')"
+[[ $(stat -c '%a' /usr/local/bin) == 750 ]] || fail "the mode of an existing /usr/local/bin was changed"
+chmod "$legacy_bin_mode" /usr/local/bin
 
 echo "bootstrap script tests passed"

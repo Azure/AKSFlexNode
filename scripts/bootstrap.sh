@@ -15,7 +15,13 @@ set -euo pipefail
 umask 077
 
 readonly DEFAULT_REPOSITORY="Azure/AKSFlexNode"
-readonly DEFAULT_HOST_PREFIX="/usr/local"
+# Where an agent released before the host root looks for its binary. A newer
+# agent reports its own directory; see resolve_install_dir.
+readonly LEGACY_INSTALL_DIR="/usr/local/bin"
+# Exec-capable place to run the downloaded agent before it is installed. The
+# temp dir may be on a noexec /tmp, and a failure to run there would be taken
+# for an older agent.
+readonly STAGING_PARENT="/var/lib/aks-flex-node"
 readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
 readonly DEFAULT_AUTHORITY_HOST="https://login.microsoftonline.com"
@@ -39,12 +45,11 @@ SP_CLIENT_CERTIFICATE_FILE="${AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE:-}"
 AGENT_URL="${AKS_FLEX_NODE_AGENT_URL:-}"
 AGENT_VERSION="${AKS_FLEX_NODE_AGENT_VERSION:-}"
 AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
-HOST_PREFIX="${AKS_FLEX_NODE_HOST_PREFIX:-}"
-# Deprecated: derived from the host prefix. Kept only to reject a value the agent would not find.
+# Deprecated: the agent chooses its install directory. Kept only to reject a
+# value the agent would not find.
 REQUESTED_INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-}"
-RESOLVED_HOST_PREFIX=""
 INSTALL_DIR=""
-AGENT_BINARY=""
+LEGACY_AGENT=""
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
@@ -69,6 +74,7 @@ unset \
     AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
     AKS_FLEX_NODE_CONFIG_OVERRIDES || true
 TEMP_DIR=""
+STAGING_DIR=""
 
 log() {
     printf 'bootstrap: %s\n' "$*" >&2
@@ -109,10 +115,7 @@ Options:
                                  Override bootstrap.offlineArtifacts.source
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
-  --host-prefix PATH             Host install prefix for the agent; sets
-                                 agent.hostPrefix. Required on hosts with a
-                                 read-only /usr such as Azure Container Linux
-  --install-dir PATH             Deprecated; the binary goes in <prefix>/bin
+  --install-dir PATH             Deprecated; the agent chooses its directory
   --config-path PATH             Rendered config destination
   -h, --help                     Show this help
 
@@ -136,7 +139,6 @@ Environment overrides:
   AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
   AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
   AKS_FLEX_NODE_CONFIG_OVERRIDES
-  AKS_FLEX_NODE_HOST_PREFIX
   AKS_FLEX_NODE_INSTALL_DIR
   AKS_FLEX_NODE_CONFIG_PATH
 
@@ -156,7 +158,7 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--host-prefix|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -183,7 +185,6 @@ parse_args() {
                     --bootstrap-oci-image) BOOTSTRAP_OCI_IMAGE="$2" ;;
                     --bootstrap-offline-artifacts-source) BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
-                    --host-prefix) HOST_PREFIX="$2" ;;
                     --install-dir) REQUESTED_INSTALL_DIR="$2" ;;
                     --config-path) CONFIG_PATH="$2" ;;
                 esac
@@ -208,6 +209,9 @@ parse_args() {
 }
 
 cleanup() {
+    if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
+        rm -rf "$STAGING_DIR"
+    fi
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
     fi
@@ -496,25 +500,29 @@ apply_auth_override() {
 }
 
 render_config() {
-    local base="$1"
-    local output="$2"
+    local output="$1"
     local current="$TEMP_DIR/config-current.json"
     local rendered="$TEMP_DIR/config-rendered.json"
     local node_name
 
-    cp "$base" "$current"
+    write_base_config "$current"
+    jq -e 'type == "object"' "$current" >/dev/null || fatal "embedded base config must be a JSON object"
     apply_target_overrides "$current"
 
     if is_true "$FETCH_BOOTSTRAP_DATA"; then
         fetch_latest_bootstrap_data "$current"
     fi
 
-    apply_config_overrides "$current"
+    if [[ -n "$ENV_CONFIG_OVERRIDES" ]]; then
+        merge_config_override "$current" "$ENV_CONFIG_OVERRIDES" "AKS_FLEX_NODE_CONFIG_OVERRIDES"
+    fi
+    local override
+    for override in "${CONFIG_OVERRIDES[@]}"; do
+        merge_config_override "$current" "$override" "--config-overrides"
+    done
     apply_target_overrides "$current"
     apply_bootstrap_source_overrides "$current"
     normalize_offline_artifact_versions "$current"
-
-    apply_host_prefix "$current"
 
     node_name=$(hostname | tr '[:upper:]' '[:lower:]')
     jq --arg nodeName "$node_name" '
@@ -526,75 +534,6 @@ render_config() {
     apply_auth_override "$current"
     jq -e . "$current" > "$output"
     chmod 0600 "$output"
-}
-
-apply_config_overrides() {
-    local current="$1"
-    local override
-
-    if [[ -n "$ENV_CONFIG_OVERRIDES" ]]; then
-        merge_config_override "$current" "$ENV_CONFIG_OVERRIDES" "AKS_FLEX_NODE_CONFIG_OVERRIDES"
-    fi
-    for override in "${CONFIG_OVERRIDES[@]}"; do
-        merge_config_override "$current" "$override" "--config-overrides"
-    done
-}
-
-# apply_host_prefix writes --host-prefix into agent.hostPrefix. It runs after every other config
-# source, so the flag wins, matching the rest of the CLI.
-apply_host_prefix() {
-    local current="$1"
-    local rendered="$TEMP_DIR/config-host-prefix.json"
-
-    [[ -n "$HOST_PREFIX" ]] || return 0
-    jq --arg prefix "$HOST_PREFIX" '.agent = (.agent // {}) | .agent.hostPrefix = $prefix' "$current" > "$rendered"
-    mv -f "$rendered" "$current"
-}
-
-config_host_prefix() {
-    local config="$1"
-    local prefix
-
-    prefix=$(jq -r '.agent.hostPrefix // empty' "$config")
-    prefix="${prefix:-$DEFAULT_HOST_PREFIX}"
-    [[ "$prefix" == "/" ]] || prefix="${prefix%/}"
-    printf '%s\n' "$prefix"
-}
-
-# resolve_install_dir picks the binary directory from agent.hostPrefix before the config is
-# rendered. Fetching bootstrap data runs the installed binary, and running it from the temp dir
-# would fail on hosts that mount /tmp noexec. The prefix is node-local, so it comes only from
-# --host-prefix, the base config, and the config overrides; check_rendered_host_prefix confirms
-# the rendered config agrees.
-#
-# The agent looks for its binaries under the prefix, so installing anywhere else leaves it unable
-# to find them, and that only shows once the node is running. The deprecated --install-dir is
-# therefore only accepted when it names the same directory.
-resolve_install_dir() {
-    local base="$1"
-    local sources="$TEMP_DIR/config-prefix-sources.json"
-
-    cp "$base" "$sources"
-    apply_config_overrides "$sources"
-    apply_host_prefix "$sources"
-    RESOLVED_HOST_PREFIX=$(config_host_prefix "$sources")
-    [[ "$RESOLVED_HOST_PREFIX" == /* && "$RESOLVED_HOST_PREFIX" != *[[:space:]]* ]] ||
-        fatal "host prefix must be an absolute path without whitespace: $RESOLVED_HOST_PREFIX"
-    INSTALL_DIR="$RESOLVED_HOST_PREFIX/bin"
-
-    if [[ -n "$REQUESTED_INSTALL_DIR" && "${REQUESTED_INSTALL_DIR%/}" != "$INSTALL_DIR" ]]; then
-        fatal "--install-dir $REQUESTED_INSTALL_DIR does not match host prefix $RESOLVED_HOST_PREFIX; use --host-prefix instead"
-    fi
-    [[ -z "$REQUESTED_INSTALL_DIR" ]] || log "warning: --install-dir is deprecated; use --host-prefix"
-}
-
-check_rendered_host_prefix() {
-    local rendered="$1"
-    local prefix
-
-    prefix=$(config_host_prefix "$rendered")
-    [[ "$prefix" == "$RESOLVED_HOST_PREFIX" ]] ||
-        fatal "bootstrap data changed agent.hostPrefix from $RESOLVED_HOST_PREFIX to $prefix; the prefix is node-local"
 }
 
 detect_architecture() {
@@ -630,11 +569,37 @@ validate_archive_paths() {
     done < "$listing"
 }
 
-# download_agent fetches and verifies the agent into the temp dir. install_agent installs it once
-# the host prefix is known.
-download_agent() {
+# resolve_install_dir asks the downloaded agent where it keeps its files. An
+# agent that answers host-root installs under the host root: /opt/unbounded, or
+# /usr/local on a host an older release installed. An older agent has no such
+# command and looks for its binary in /usr/local/bin.
+resolve_install_dir() {
+    local candidate="$1"
+    local root
+
+    install -d -o root -g root -m 0755 "$STAGING_PARENT"
+    STAGING_DIR=$(mktemp -d "$STAGING_PARENT/.bootstrap.XXXXXX")
+    install -o root -g root -m 0755 "$candidate" "$STAGING_DIR/aks-flex-node"
+    if root=$("$STAGING_DIR/aks-flex-node" host-root 2>/dev/null); then
+        [[ "$root" == /* && "$root" != *[[:space:]]* ]] || fatal "agent reported an invalid host root: $root"
+        INSTALL_DIR="${root%/}/bin"
+    else
+        INSTALL_DIR="$LEGACY_INSTALL_DIR"
+        LEGACY_AGENT=1
+    fi
+    rm -rf "$STAGING_DIR"
+    STAGING_DIR=""
+
+    if [[ -n "$REQUESTED_INSTALL_DIR" ]]; then
+        [[ "${REQUESTED_INSTALL_DIR%/}" == "$INSTALL_DIR" ]] ||
+            fatal "--install-dir $REQUESTED_INSTALL_DIR is not $INSTALL_DIR, where this agent looks for its binary"
+        log "warning: --install-dir is deprecated; the agent chooses its install directory"
+    fi
+}
+
+download_and_install_agent() {
     local arch="$1"
-    local url archive extract_dir expected candidate
+    local url archive extract_dir expected candidate staged
     url=$(resolve_agent_url "$arch")
     archive="$TEMP_DIR/agent.tar.gz"
     extract_dir="$TEMP_DIR/agent"
@@ -654,15 +619,17 @@ download_agent() {
     tar -xzf "$archive" -C "$extract_dir"
     candidate=$(find "$extract_dir" -type f \( -name "$expected" -o -name aks-flex-node \) -print -quit)
     [[ -n "$candidate" ]] || fatal "agent binary not found in archive"
-    AGENT_BINARY="$candidate"
-}
 
-install_agent() {
-    local staged
-
-    install -d -o root -g root -m 0755 "$INSTALL_DIR"
-    staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX")
-    install -o root -g root -m 0755 "$AGENT_BINARY" "$staged"
+    resolve_install_dir "$candidate"
+    # Created only when missing: an existing directory belongs to the image, and on a read-only
+    # /usr/local even setting its mode fails.
+    if ! { [[ -d "$INSTALL_DIR" ]] || install -d -o root -g root -m 0755 "$INSTALL_DIR"; } ||
+        ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX" 2>/dev/null); then
+        [[ -z "$LEGACY_AGENT" ]] ||
+            fatal "this aks-flex-node release predates /opt/unbounded and needs a writable $LEGACY_INSTALL_DIR; use a newer release"
+        fatal "cannot write to $INSTALL_DIR"
+    fi
+    install -o root -g root -m 0755 "$candidate" "$staged"
     mv -f "$staged" "$INSTALL_DIR/aks-flex-node"
     log "installed agent at $INSTALL_DIR/aks-flex-node"
 }
@@ -695,7 +662,6 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
         AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
         AKS_FLEX_NODE_CONFIG_OVERRIDES \
-        AKS_FLEX_NODE_HOST_PREFIX \
         AKS_FLEX_NODE_INSTALL_DIR \
         AKS_FLEX_NODE_CONFIG_PATH || true
 }
@@ -721,17 +687,11 @@ main() {
     chmod 0700 "$TEMP_DIR"
     trap cleanup EXIT
 
-    local arch base_config rendered_config
+    local arch rendered_config
     arch=$(detect_architecture)
-    base_config="$TEMP_DIR/config-base.json"
     rendered_config="$TEMP_DIR/config.json"
-    write_base_config "$base_config"
-    jq -e 'type == "object"' "$base_config" >/dev/null || fatal "embedded base config must be a JSON object"
-    resolve_install_dir "$base_config"
-    download_agent "$arch"
-    install_agent
-    render_config "$base_config" "$rendered_config"
-    check_rendered_host_prefix "$rendered_config"
+    download_and_install_agent "$arch"
+    render_config "$rendered_config"
     install_config "$rendered_config"
     clear_bootstrap_environment
 

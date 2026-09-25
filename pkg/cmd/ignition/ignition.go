@@ -17,15 +17,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
-
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
-
-// defaultHostPrefix is used when neither --host-prefix nor the base config sets one. Hosts
-// provisioned by Ignition typically have a read-only /usr, so the bootstrap.sh default of
-// /usr/local does not work there.
-const defaultHostPrefix = "/opt/aks-flex-node"
 
 // bootstrapValueFlags and bootstrapSwitches are the bootstrap.sh options that take a value and
 // those that do not. TestBootstrapFlagsMatchTheScript keeps them in step with the embedded script.
@@ -47,7 +40,6 @@ var (
 		"--bootstrap-oci-image",
 		"--bootstrap-offline-artifacts-source",
 		"--config-overrides",
-		"--host-prefix",
 		"--install-dir",
 		"--config-path",
 	}
@@ -57,8 +49,7 @@ var (
 // ownedBootstrapFlags are bootstrap.sh options this command sets itself, with the reason a caller
 // cannot pass them.
 var ownedBootstrapFlags = map[string]string{
-	"--host-prefix":                "use this command's --host-prefix",
-	"--install-dir":                "the agent is installed under the host prefix",
+	"--install-dir":                "the agent chooses its install directory",
 	"--config-path":                "the agent unit reads the default config path",
 	"--sp-client-secret-file":      "use this command's --sp-client-secret-file, which also writes the file to the host",
 	"--sp-client-certificate-file": "use this command's --sp-client-certificate-file, which also writes the file to the host",
@@ -66,7 +57,6 @@ var ownedBootstrapFlags = map[string]string{
 
 type options struct {
 	baseConfigPath          string
-	hostPrefix              string
 	spClientSecretFile      string
 	spClientCertificateFile string
 	outputPath              string
@@ -86,8 +76,8 @@ unit that runs bootstrap.sh with BOOTSTRAP_ARGS once the network is up. The unit
 agent is installed and does not run after that. The script, which carries the base config, is
 removed once bootstrap succeeds.
 
-The agent is installed under --host-prefix, because /usr is read-only on these hosts. The output
-contains the base config and credentials, so treat it as a secret.`,
+The agent is installed under /opt/unbounded, which is writable on these hosts. The output contains
+the base config and credentials, so treat it as a secret.`,
 		Example: `  aks-flex-node ignition --base-config base.json -o node.ign -- \
     --auth msi --agent-version v0.1.0 --fetch-bootstrap-data`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -97,7 +87,6 @@ contains the base config and credentials, so treat it as a secret.`,
 
 	flags := cmd.Flags()
 	flags.StringVar(&opts.baseConfigPath, "base-config", "", "Base config JSON for bootstrap.sh; without it bootstrap.sh needs --fetch-bootstrap-data")
-	flags.StringVar(&opts.hostPrefix, "host-prefix", "", "Host install prefix for the agent (default "+defaultHostPrefix+", or agent.hostPrefix from the base config)")
 	flags.StringVar(&opts.spClientSecretFile, "sp-client-secret-file", "", "Service principal client secret file to write to the host")
 	flags.StringVar(&opts.spClientCertificateFile, "sp-client-certificate-file", "", "Service principal client certificate file to write to the host")
 	flags.StringVarP(&opts.outputPath, "output", "o", "-", "Output path, or - for stdout; a file is created with mode 0600")
@@ -111,7 +100,7 @@ func run(cmd *cobra.Command, opts options, bootstrapArgs []string) error {
 		return errors.New("put bootstrap.sh options after --")
 	}
 
-	in, err := buildRenderInput(opts, cmd.Flags().Changed("host-prefix"), bootstrapArgs)
+	in, err := buildRenderInput(opts, bootstrapArgs)
 	if err != nil {
 		return err
 	}
@@ -125,7 +114,7 @@ func run(cmd *cobra.Command, opts options, bootstrapArgs []string) error {
 
 // buildRenderInput validates everything before anything is rendered, so a mistake is reported
 // here rather than by a host that fails on first boot.
-func buildRenderInput(opts options, hostPrefixSet bool, bootstrapArgs []string) (renderInput, error) {
+func buildRenderInput(opts options, bootstrapArgs []string) (renderInput, error) {
 	seen, err := validateBootstrapArgs(bootstrapArgs)
 	if err != nil {
 		return renderInput{}, err
@@ -137,19 +126,13 @@ func buildRenderInput(opts options, hostPrefixSet bool, bootstrapArgs []string) 
 	var in renderInput
 	in.bootstrapArgs = bootstrapArgs
 
-	configPrefix := ""
 	if opts.baseConfigPath != "" {
-		in.baseConfig, configPrefix, err = loadBaseConfig(opts.baseConfigPath)
+		in.baseConfig, err = loadBaseConfig(opts.baseConfigPath)
 		if err != nil {
 			return renderInput{}, err
 		}
 	} else if !seen["--fetch-bootstrap-data"] {
 		return renderInput{}, errors.New("without --base-config, bootstrap.sh needs --fetch-bootstrap-data after --")
-	}
-
-	in.hostPrefix, err = resolveHostPrefix(opts.hostPrefix, hostPrefixSet, configPrefix)
-	if err != nil {
-		return renderInput{}, err
 	}
 
 	in.credential, err = loadCredential(opts)
@@ -198,57 +181,24 @@ func validateUnitArgument(flag, value string) error {
 	return nil
 }
 
-// loadBaseConfig returns the base config as compact JSON, and the host prefix it sets.
-func loadBaseConfig(configPath string) ([]byte, string, error) {
+// loadBaseConfig returns the base config as compact JSON.
+func loadBaseConfig(configPath string) ([]byte, error) {
 	raw, err := os.ReadFile(configPath) // #nosec G304 -- the operator names the file to embed
 	if err != nil {
-		return nil, "", fmt.Errorf("read base config: %w", err)
+		return nil, fmt.Errorf("read base config: %w", err)
 	}
 
-	var base struct {
-		Agent struct {
-			HostPrefix string `json:"hostPrefix"`
-		} `json:"agent"`
-	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
-		return nil, "", fmt.Errorf("base config %s must be a JSON object", configPath)
-	}
-	if err := json.Unmarshal(raw, &base); err != nil {
-		return nil, "", fmt.Errorf("base config %s: %w", configPath, err)
+		return nil, fmt.Errorf("base config %s must be a JSON object", configPath)
 	}
 
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {
-		return nil, "", fmt.Errorf("base config %s: %w", configPath, err)
+		return nil, fmt.Errorf("base config %s: %w", configPath, err)
 	}
 
-	return compact.Bytes(), base.Agent.HostPrefix, nil
-}
-
-func resolveHostPrefix(flagPrefix string, flagSet bool, configPrefix string) (string, error) {
-	prefix := defaultHostPrefix
-	switch {
-	case flagSet && configPrefix != "" && path.Clean(flagPrefix) != path.Clean(configPrefix):
-		return "", fmt.Errorf("--host-prefix %s does not match agent.hostPrefix %s in the base config", flagPrefix, configPrefix)
-	case flagSet:
-		prefix = flagPrefix
-	case configPrefix != "":
-		prefix = configPrefix
-	}
-
-	if prefix == "" {
-		return "", errors.New("--host-prefix must not be empty")
-	}
-	// ValidateHostPrefix trims before checking, but the prefix is used as given.
-	if strings.TrimSpace(prefix) != prefix {
-		return "", fmt.Errorf("host prefix %q must not have surrounding whitespace", prefix)
-	}
-	if err := agentconfig.ValidateHostPrefix(prefix); err != nil {
-		return "", err
-	}
-
-	return prefix, nil
+	return compact.Bytes(), nil
 }
 
 // loadCredential reads the service principal credential to write to the host. The checks are the

@@ -7,7 +7,7 @@
 
 The VM is provisioned only by the Ignition config that `aks-flex-node ignition` renders, plus
 harness access (SSH user, hostname, static address). bootstrap.sh then installs the agent under
-/opt/aks-flex-node and joins the node with a bootstrap token. The agent's machine client talks to
+/opt/unbounded, the host root, and joins the node with a bootstrap token. The agent's machine client talks to
 an in-cluster AKS Flex controller through the API server's service proxy, so no Azure resources
 are involved.
 
@@ -58,7 +58,7 @@ VM_CPUS = os.environ.get("ACL_VM_CPUS", "2")
 VM_MIN_DISK = 20 * 1024**3
 
 NODE_NAME = "acl-harness"
-HOST_PREFIX = "/opt/aks-flex-node"
+HOST_ROOT = "/opt/unbounded"
 SSH_USER = "core"
 CONTROLLER_IMAGE = "localhost/aks-flex-controller:acl-harness"
 PROXY_PATH = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
@@ -761,13 +761,13 @@ RESET_REMOVES = {
         f"/etc/systemd/system/{BOOTSTRAP_UNIT}",
     ],
     "the config, credentials, and logs": ["/etc/aks-flex-node", "/var/log/aks-flex-node"],
-    "the host helpers under the prefix": [
-        f"{HOST_PREFIX}/bin/unbounded-agent-nspawn-lifecycle",
-        f"{HOST_PREFIX}/lib/aks-flex-node/aks-flex-node-recovery.sh",
+    "the host helpers under the host root": [
+        f"{HOST_ROOT}/bin/unbounded-agent-nspawn-lifecycle",
+        f"{HOST_ROOT}/lib/aks-flex-node/aks-flex-node-recovery.sh",
     ],
     "the LocalDNS files": [
         "/etc/systemd/system/unbounded-localdns-network.service",
-        f"{HOST_PREFIX}/libexec/unbounded-localdns-network",
+        f"{HOST_ROOT}/libexec/unbounded-localdns-network",
         "/sys/class/net/localdns",
     ],
 }
@@ -783,13 +783,12 @@ def check_first_boot(checks: Checks) -> None:
     checks.paths_absent("bootstrap.sh, which carries the token, was removed after bootstrap",
                         ["/etc/aks-flex-node/first-boot/bootstrap.sh"])
 
-    installed = ssh(f"sudo test -x {HOST_PREFIX}/bin/aks-flex-node", check=False).returncode == 0
-    checks.expect(installed, f"the agent is installed under {HOST_PREFIX}")
+    installed = ssh(f"sudo test -x {HOST_ROOT}/bin/aks-flex-node", check=False).returncode == 0
+    checks.expect(installed, f"the agent is installed under {HOST_ROOT}")
+    root_is_dir = ssh(f"sudo test -d {HOST_ROOT} -a ! -L {HOST_ROOT}", check=False).returncode == 0
+    checks.expect(root_is_dir, f"{HOST_ROOT} is a directory, not a link to the read-only /usr/local")
     checks.paths_absent("nothing was installed under the read-only /usr/local",
                         ["/usr/local/bin/aks-flex-node", "/usr/local/lib/aks-flex-node"])
-    config_prefix = ssh_out("sudo jq -r .agent.hostPrefix /etc/aks-flex-node/config.json")
-    checks.expect(config_prefix == HOST_PREFIX, "the installed config records the host prefix",
-                  config_prefix)
     probe = ssh_out("sudo jq -r .aclHarness.quoting /etc/aks-flex-node/config.json")
     checks.expect(probe == QUOTING_PROBE, "an argument with $, %, quotes, and backslashes reached "
                   "bootstrap.sh unchanged", f"got {probe!r}")
@@ -839,7 +838,7 @@ def check_reboot(checks: Checks) -> None:
 def reset_node(mode: str) -> None:
     if mode == "cli":
         log("resetting with aks-flex-node reset")
-        ssh(f"sudo {HOST_PREFIX}/bin/aks-flex-node reset", timeout=600)
+        ssh(f"sudo {HOST_ROOT}/bin/aks-flex-node reset", timeout=600)
     else:
         log("resetting with an AgentReset MachineOperation")
         operation = {

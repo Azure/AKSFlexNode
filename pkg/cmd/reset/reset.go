@@ -25,13 +25,9 @@ func NewCommand() *cobra.Command {
 }
 
 func runReset(ctx context.Context, logger *slog.Logger) error {
-	// Read before anything is removed: reset deletes the config that records
-	// the prefix, and the prefixed files cannot be found without it.
-	prefix := daemon.InstalledHostPrefix()
-
 	tasks := phases.Serial(logger,
-		daemon.UninstallService(logger, prefix),
-		daemon.ResetNode(logger, prefix),
+		daemon.UninstallService(logger),
+		daemon.ResetNode(logger),
 	)
 	return phases.ExecuteTask(ctx, logger, tasks)
 }

@@ -12,6 +12,7 @@ WORK_DIR=$(mktemp -d)
 RUNNING_PID=""
 cleanup() {
     [[ -z "$RUNNING_PID" ]] || kill "$RUNNING_PID" 2>/dev/null || true
+    umount "$WORK_DIR/ro" 2>/dev/null || true
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -133,78 +134,67 @@ assert_no_staged_files
     fi
 )
 
-# Host prefix resolution. The agent resolves its binaries from agent.hostPrefix, so the installer
-# has to install under the same prefix.
-CONFIG_DIR="$WORK_DIR/etc"
-mkdir -p "$CONFIG_DIR"
+# The install directories come from the downloaded binary. It is asked from a copy under DATA_DIR,
+# because the download directory may be on a noexec /tmp.
+DATA_DIR="$WORK_DIR/data"
+HOST_ROOT_CALLS="$WORK_DIR/host-root-calls"
 
-AKS_FLEX_NODE_HOST_PREFIX=""
-resolve_host_prefix || fail "resolving the default prefix failed"
-[[ "$HOST_PREFIX" == "/usr/local" && "$INSTALL_DIR" == "/usr/local/bin" &&
-   "$MANAGED_BINARY_DIR" == "/usr/local/lib/aks-flex-node" ]] || fail "default prefix changed the layout"
-
-AKS_FLEX_NODE_HOST_PREFIX="/opt/aks-flex-node/"
-resolve_host_prefix || fail "resolving the env prefix failed"
-[[ "$INSTALL_DIR" == "/opt/aks-flex-node/bin" &&
-   "$MANAGED_BINARY_DIR" == "/opt/aks-flex-node/lib/aks-flex-node" ]] || fail "env prefix was not applied: $INSTALL_DIR"
-
-if command -v jq >/dev/null; then
-    printf '{"agent":{"hostPrefix":"/opt/from-config"}}' >"$CONFIG_DIR/config.json"
-    AKS_FLEX_NODE_HOST_PREFIX=""
-    resolve_host_prefix || fail "resolving the config prefix failed"
-    [[ "$INSTALL_DIR" == "/opt/from-config/bin" ]] || fail "config prefix was not applied: $INSTALL_DIR"
-
-    AKS_FLEX_NODE_HOST_PREFIX="/opt/other"
-    if resolve_host_prefix >"$WORK_DIR/conflict.log" 2>&1; then
-        fail "a prefix that disagrees with agent.hostPrefix was accepted"
-    fi
-    grep -q "does not match agent.hostPrefix" "$WORK_DIR/conflict.log" || fail "conflict was not explained"
-    rm "$CONFIG_DIR/config.json"
-fi
-
-for bad in "relative/path" "/opt/with space"; do
-    AKS_FLEX_NODE_HOST_PREFIX="$bad"
-    if resolve_host_prefix >/dev/null 2>&1; then
-        fail "invalid prefix accepted: $bad"
-    fi
-done
-AKS_FLEX_NODE_HOST_PREFIX=""
-
-# A custom prefix does not exist before the first install.
-INSTALL_DIR="$WORK_DIR/prefix/bin"
-MANAGED_BINARY_DIR="$WORK_DIR/prefix/lib/aks-flex-node"
-install_binary "$replacement_binary" >/dev/null || fail "install into a missing prefix failed"
-[[ -x "$INSTALL_DIR/aks-flex-node" ]] || fail "binary missing under the new prefix"
-[[ "$(stat -c %a "$INSTALL_DIR")" == "755" ]] || fail "prefix bin dir mode is $(stat -c %a "$INSTALL_DIR"), want 755"
-
-# Azure Container Linux reports ID=azurelinux 3.x like Azure Linux 3, but /usr is read-only, so it
-# must not be accepted with the default prefix.
-write_os_release() {
-    OS_RELEASE_PATH="$WORK_DIR/os-release"
-    printf '%s\n' "$@" >"$OS_RELEASE_PATH"
+# make_stub writes a binary that answers host-root with $2, or, with no $2, a release from before the
+# host root, which has no such command.
+make_stub() {
+    local path="$1" root="${2:-}"
+    {
+        printf '#!/bin/bash\n'
+        printf 'if [[ "${1:-}" == host-root ]]; then\n'
+        printf '    printf "%%s\\n" "$0" >> %q\n' "$HOST_ROOT_CALLS"
+        if [[ -n "$root" ]]; then
+            printf '    printf "%%s\\n" %q\n    exit 0\n' "$root"
+        else
+            printf '    echo "Error: unknown command \\"host-root\\"" >&2\n    exit 1\n'
+        fi
+        printf 'fi\nprintf "%%s\\n" "$*"\n'
+    } > "$path"
+    chmod 0755 "$path"
 }
 
-write_os_release 'ID=azurelinux' 'ID_LIKE="flatcar"' 'VARIANT_ID=azurecontainerlinux' 'VERSION_ID=3.0.20260918'
-HOST_PREFIX="/usr/local"
-if (check_linux_distribution) >"$WORK_DIR/acl-default.log" 2>&1; then
-    fail "Azure Container Linux was accepted with the default prefix"
-fi
-grep -q "AKS_FLEX_NODE_HOST_PREFIX" "$WORK_DIR/acl-default.log" || fail "ACL refusal did not say what to set"
-
-HOST_PREFIX="/opt/aks-flex-node"
-(check_linux_distribution) >"$WORK_DIR/acl-prefix.log" 2>&1 || fail "Azure Container Linux with a prefix was refused"
-grep -q "Detected Azure Container Linux" "$WORK_DIR/acl-prefix.log" || fail "ACL was not identified"
-
-# ID_LIKE=flatcar alone still identifies it, in case an image drops VARIANT_ID.
-write_os_release 'ID=azurelinux' 'ID_LIKE="flatcar"' 'VERSION_ID=3.0.20260918'
-HOST_PREFIX="/usr/local"
-if (check_linux_distribution) >/dev/null 2>&1; then
-    fail "ACL without VARIANT_ID was treated as Azure Linux 3"
+make_stub "$WORK_DIR/current-agent" "$WORK_DIR/root/opt/unbounded/"
+LEGACY_AGENT=false
+resolve_install_dir "$WORK_DIR/current-agent" >/dev/null || fail "resolving a current release failed"
+[[ "$INSTALL_DIR" == "$WORK_DIR/root/opt/unbounded/bin" &&
+   "$MANAGED_BINARY_DIR" == "$WORK_DIR/root/opt/unbounded/lib/aks-flex-node" ]] ||
+    fail "a current release was not installed under its host root: $INSTALL_DIR, $MANAGED_BINARY_DIR"
+[[ "$LEGACY_AGENT" == false ]] || fail "a current release was taken for an older one"
+[[ "$(tail -1 "$HOST_ROOT_CALLS")" == "$DATA_DIR"/.install.*/aks-flex-node ]] ||
+    fail "host-root ran from $(tail -1 "$HOST_ROOT_CALLS"), want the staging copy"
+if compgen -G "$DATA_DIR/.install.*" >/dev/null; then
+    fail "the staging copy was left in $DATA_DIR"
 fi
 
-# Plain Azure Linux 3 is unaffected.
-write_os_release 'ID=azurelinux' 'VERSION_ID=3.0.20250101'
-(check_linux_distribution) >"$WORK_DIR/azl.log" 2>&1 || fail "Azure Linux 3 was refused"
-grep -q "Detected Azure Linux" "$WORK_DIR/azl.log" || fail "Azure Linux 3 was not identified"
+# The host root does not exist before the first install.
+install_binary "$replacement_binary" >/dev/null || fail "install into a missing host root failed"
+[[ -x "$INSTALL_DIR/aks-flex-node" ]] || fail "binary missing under the new host root"
+[[ "$(stat -c %a "$INSTALL_DIR")" == "755" ]] || fail "host root bin dir mode is $(stat -c %a "$INSTALL_DIR"), want 755"
+
+make_stub "$WORK_DIR/relative-agent" "relative/root"
+if resolve_install_dir "$WORK_DIR/relative-agent" >/dev/null 2>&1; then
+    fail "a relative host root was accepted"
+fi
+
+make_stub "$WORK_DIR/legacy-agent"
+resolve_install_dir "$WORK_DIR/legacy-agent" >"$WORK_DIR/legacy.log" 2>&1 || fail "resolving an older release failed"
+[[ "$INSTALL_DIR" == "/usr/local/bin" && "$MANAGED_BINARY_DIR" == "/usr/local/lib/aks-flex-node" ]] ||
+    fail "an older release was not installed under /usr/local: $INSTALL_DIR"
+[[ "$LEGACY_AGENT" == true ]] || fail "an older release was not recorded as one"
+grep -q "predates /opt/unbounded" "$WORK_DIR/legacy.log" || fail "an older release was not reported"
+
+# Where that directory is read-only, as on Azure Container Linux, the operator is told why.
+mkdir -p "$WORK_DIR/ro"
+mount -t tmpfs -o ro tmpfs "$WORK_DIR/ro" || fail "could not mount a read-only directory"
+INSTALL_DIR="$WORK_DIR/ro"
+if install_binary "$replacement_binary" >"$WORK_DIR/ro.log" 2>&1; then
+    fail "installed into a read-only directory"
+fi
+umount "$WORK_DIR/ro"
+grep -q "predates /opt/unbounded and needs a writable" "$WORK_DIR/ro.log" || fail "a read-only install directory was not explained"
 
 printf 'install_test: ok\n'

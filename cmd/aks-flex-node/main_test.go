@@ -17,14 +17,24 @@ func TestRootCommandRegistersGeneratedNSpawnLifecycleShape(t *testing.T) {
 	}
 }
 
-// TestRootCommandRegistersIgnition is not parallel. newRootCommand attaches the
-// package-level token.Command, so building two roots at once races on it.
-func TestRootCommandRegistersIgnition(t *testing.T) {
-	cmd, _, err := newRootCommand().Find([]string{"ignition"})
-	if err != nil {
-		t.Fatalf("Find() error = %v", err)
-	}
-	if cmd.Name() != "ignition" {
-		t.Fatalf("Find() command = %q, want ignition", cmd.Name())
+// TestRootCommandRegistersTopLevelCommands is not parallel. newRootCommand
+// attaches the package-level token.Command, so building two roots at once races
+// on it. The subtests share one root for the same reason.
+//
+// host-root is what the install scripts and AgentUpgrade ask a release for, so
+// a build that dropped it would be taken for a release before the host root.
+func TestRootCommandRegistersTopLevelCommands(t *testing.T) {
+	root := newRootCommand()
+
+	for _, name := range []string{"ignition", "host-root"} {
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := root.Find([]string{name})
+			if err != nil {
+				t.Fatalf("Find() error = %v", err)
+			}
+			if cmd.Name() != name {
+				t.Fatalf("Find() command = %q, want %s", cmd.Name(), name)
+			}
+		})
 	}
 }

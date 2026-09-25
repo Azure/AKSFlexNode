@@ -107,7 +107,7 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
-		reset.CleanupNetwork(log, cfg.Agent.HostPrefix),
+		reset.CleanupNetwork(log),
 		StartNode(cfg, log, newMachine, gs, containerImageArchives, o.state, newState),
 		reset.CleanupMachine(log, oldMachine),
 	)
@@ -157,22 +157,11 @@ func (o *nspawnNodeOperator) configForGoalState(ctx context.Context, log *slog.L
 }
 
 func (o *nspawnNodeOperator) ResetNode(ctx context.Context, log *slog.Logger) error {
-	return phases.ExecuteTask(ctx, log, ResetNode(log, o.hostPrefix()))
+	return phases.ExecuteTask(ctx, log, ResetNode(log))
 }
 
 func (o *nspawnNodeOperator) StopDaemon(ctx context.Context, log *slog.Logger) error {
-	return phases.ExecuteTask(ctx, log, UninstallService(log, o.hostPrefix()))
-}
-
-// hostPrefix returns the prefix from the daemon's config. The daemon reset
-// paths remove the installed config before they get here, so the loaded config
-// is the only remaining record of it.
-func (o *nspawnNodeOperator) hostPrefix() string {
-	if o.cfg == nil {
-		return ""
-	}
-
-	return o.cfg.Agent.HostPrefix
+	return phases.ExecuteTask(ctx, log, UninstallService(log))
 }
 
 func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {

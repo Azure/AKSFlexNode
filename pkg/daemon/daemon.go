@@ -38,6 +38,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// logs unless the process explicitly configures its global logger.
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
 
+	// After an AgentUpgrade from a release that predates the host root, this is
+	// the first time the new agent runs on the host.
+	if err := MigrateHostRoot(log); err != nil {
+		return err
+	}
+
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup.
 	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {

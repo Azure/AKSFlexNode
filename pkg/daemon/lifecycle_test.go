@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
 func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.T) {
@@ -95,7 +97,7 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := renderAgentServiceUnit(defaultAgentUpgradePaths().BinaryPath, tt.serviceOptions)
+			got, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
 			if err != nil {
 				t.Fatalf("renderAgentServiceUnit() error = %v", err)
 			}
@@ -137,7 +139,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 			t.Parallel()
 			systemdDir := t.TempDir()
 			if tt.writeUnit {
-				unit, err := renderAgentServiceUnit(defaultAgentUpgradePaths().BinaryPath, tt.serviceOptions)
+				unit, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
 				if err != nil {
 					t.Fatalf("renderAgentServiceUnit() error = %v", err)
 				}
@@ -159,7 +161,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
-	serviceContent, err := renderAgentServiceUnit(defaultAgentUpgradePaths().BinaryPath, agentServiceOptions{})
+	serviceContent, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
 	if err != nil {
 		t.Fatalf("renderAgentServiceUnit() error = %v", err)
 	}
@@ -173,8 +175,8 @@ func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	if !strings.Contains(service, "OnFailure="+recoveryServiceUnitName) {
 		t.Fatalf("service does not activate %s on failure", recoveryServiceUnitName)
 	}
-	if !strings.Contains(string(recoveryServiceUnitContent), "ExecStart="+recoveryScriptPath) {
-		t.Fatalf("recovery service does not execute %s", recoveryScriptPath)
+	if !strings.Contains(string(recoveryServiceUnitContent), "ExecStart="+embeddedRecoveryScriptPath) {
+		t.Fatalf("recovery service does not execute %s", embeddedRecoveryScriptPath)
 	}
 	script := string(recoveryScriptContent)
 	for _, expected := range []string{
@@ -192,28 +194,26 @@ func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	}
 }
 
-// TestRecoveryScriptPathForPrefix covers the recovery script location.
-//
-// It lives beside the blue/green binaries under the host prefix, so on a host
-// with a read-only /usr it must move with them. The default reproduces the
-// historical path that is baked into the embedded recovery unit.
-func TestRecoveryScriptPathForPrefix(t *testing.T) {
+// TestRecoveryScriptPathUnder covers the recovery script location. It lives
+// beside the blue/green binaries under the host root, and under the legacy root
+// it is the path baked into the embedded recovery unit.
+func TestRecoveryScriptPathUnder(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		prefix string
-		want   string
+		name string
+		root string
+		want string
 	}{
 		{
-			name:   "default matches the embedded placeholder",
-			prefix: "",
-			want:   recoveryScriptPath,
+			name: "legacy root matches the embedded placeholder",
+			root: hostroot.LegacyPath,
+			want: embeddedRecoveryScriptPath,
 		},
 		{
-			name:   "custom prefix relocates the script",
-			prefix: "/opt/aks-flex-node",
-			want:   "/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-recovery.sh",
+			name: "host root",
+			root: "/opt/unbounded",
+			want: "/opt/unbounded/lib/aks-flex-node/aks-flex-node-recovery.sh",
 		},
 	}
 
@@ -221,34 +221,34 @@ func TestRecoveryScriptPathForPrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := recoveryScriptPathForPrefix(tt.prefix); got != tt.want {
-				t.Errorf("recoveryScriptPathForPrefix(%q) = %q, want %q", tt.prefix, got, tt.want)
+			if got := recoveryScriptPathUnder(tt.root); got != tt.want {
+				t.Errorf("recoveryScriptPathUnder(%q) = %q, want %q", tt.root, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestRenderRecoveryScriptFollowsThePrefix covers the recovery script on a host
-// with a custom prefix. The script restores the last-good binary after a failed
-// upgrade, so if it still names the /usr/local path, rollback fails on exactly
-// the hosts that set a prefix.
-func TestRenderRecoveryScriptFollowsThePrefix(t *testing.T) {
+// TestRenderRecoveryScriptFollowsTheHostRoot covers the recovery script on a
+// host installed under the host root. The script restores the last-good binary
+// after a failed upgrade, so if it still names the /usr/local path, rollback
+// fails there.
+func TestRenderRecoveryScriptFollowsTheHostRoot(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
-		prefix   string
+		root     string
 		lastGood string
 	}{
 		{
-			name:     "default prefix is unchanged",
-			prefix:   "",
+			name:     "legacy root is unchanged",
+			root:     hostroot.LegacyPath,
 			lastGood: "/usr/local/lib/aks-flex-node/aks-flex-node-last-good",
 		},
 		{
-			name:     "custom prefix",
-			prefix:   "/opt/aks-flex-node",
-			lastGood: "/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-last-good",
+			name:     "host root",
+			root:     "/opt/unbounded",
+			lastGood: "/opt/unbounded/lib/aks-flex-node/aks-flex-node-last-good",
 		},
 	}
 
@@ -256,57 +256,57 @@ func TestRenderRecoveryScriptFollowsThePrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			script := string(renderRecoveryScript(agentUpgradePathsForPrefix(tt.prefix)))
+			script := string(renderRecoveryScript(agentUpgradePathsUnder(tt.root)))
 
 			if !strings.Contains(script, "readlink -f "+tt.lastGood) {
 				t.Fatalf("recovery script does not read %s:\n%s", tt.lastGood, script)
 			}
-			if tt.prefix != "" && strings.Contains(script, "/usr/local/") {
+			if tt.root != hostroot.LegacyPath && strings.Contains(script, "/usr/local/") {
 				t.Fatalf("recovery script still names /usr/local:\n%s", script)
 			}
 		})
 	}
 }
 
-// TestEmbeddedRecoveryScriptNamesTheDefaultPaths pins the literals
-// renderRecoveryScript replaces. If the asset and the default layout drift
+// TestEmbeddedRecoveryScriptNamesTheLegacyPaths pins the literals
+// renderRecoveryScript replaces. If the asset and the legacy layout drift
 // apart, the replacement silently matches nothing.
-func TestEmbeddedRecoveryScriptNamesTheDefaultPaths(t *testing.T) {
+func TestEmbeddedRecoveryScriptNamesTheLegacyPaths(t *testing.T) {
 	t.Parallel()
 
-	defaults := agentUpgradePathsForPrefix("")
+	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
 	script := string(recoveryScriptContent)
 
-	for _, path := range []string{defaults.LastGoodPath, defaults.SignalPath} {
+	for _, path := range []string{legacy.LastGoodPath, legacy.SignalPath} {
 		if !strings.Contains(script, path) {
 			t.Fatalf("embedded recovery script does not contain %s", path)
 		}
 	}
 }
 
-// TestUninstallPathsSweepEveryPrefix covers the files uninstall removes. The
-// recovery script lives under the prefix, and a host that changed prefix still
-// has one under the old location, so both are removed.
-func TestUninstallPathsSweepEveryPrefix(t *testing.T) {
+// TestUninstallPathsSweepBothRoots covers the files uninstall removes. The
+// recovery script is removed under the legacy root too, so uninstalling does
+// not depend on the host root having been migrated.
+func TestUninstallPathsSweepBothRoots(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		prefix string
-		want   []string
+		name string
+		root string
+		want []string
 	}{
 		{
-			name:   "default prefix",
-			prefix: "",
-			want:   []string{"/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"},
-		},
-		{
-			name:   "custom prefix also sweeps the default",
-			prefix: "/opt/aks-flex-node",
+			name: "host root also sweeps the legacy root",
+			root: "/opt/unbounded",
 			want: []string{
-				"/opt/aks-flex-node/lib/aks-flex-node/aks-flex-node-recovery.sh",
+				"/opt/unbounded/lib/aks-flex-node/aks-flex-node-recovery.sh",
 				"/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh",
 			},
+		},
+		{
+			name: "migrated host sweeps the legacy root once",
+			root: hostroot.LegacyPath,
+			want: []string{"/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"},
 		},
 	}
 
@@ -314,15 +314,16 @@ func TestUninstallPathsSweepEveryPrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := uninstallPaths(tt.prefix)
-			for _, path := range append(tt.want,
+			got := uninstallPathsUnder(tt.root, hostroot.LegacyPath)
+			want := append(tt.want,
 				filepath.Join(systemdSystemDir, ServiceUnitName),
 				filepath.Join(systemdSystemDir, recoveryServiceUnitName),
 				"/etc/aks-flex-node/agent-upgrade-signal.json",
-			) {
-				if !slices.Contains(got, path) {
-					t.Fatalf("uninstallPaths(%q) = %v, missing %s", tt.prefix, got, path)
-				}
+			)
+			slices.Sort(got)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Fatalf("uninstallPathsUnder(%q) = %v, want %v", tt.root, got, want)
 			}
 		})
 	}
