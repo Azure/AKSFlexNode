@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
@@ -171,6 +172,9 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := r.reconcileMachineNodeLabel(ctx, nodeSnap.node); err != nil {
+		return err
+	}
 
 	decision := decide(machineSnap, nodeSnap, state)
 	r.log.Info("daemon reconcile decision", "decision", decision.Kind, "reason", decision.Reason)
@@ -187,6 +191,33 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	default:
 		return fmt.Errorf("unsupported daemon decision %q", decision.Kind)
 	}
+}
+
+func (r *repaveReconciler) reconcileMachineNodeLabel(ctx context.Context, node *corev1.Node) error {
+	if node == nil {
+		return nil
+	}
+	before := node.DeepCopy()
+	if node.Labels == nil {
+		node.Labels = make(map[string]string)
+	}
+	config.SetMachineNodeLabel(node.Labels, r.nodeName)
+	old, had := before.Labels[config.MachineNodeLabel]
+	value, has := node.Labels[config.MachineNodeLabel]
+	if old == value && had == has {
+		return nil
+	}
+	err := r.client.Patch(ctx, node, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	if apierrors.IsForbidden(err) {
+		// Older daemon roles are deliberately read-only on Nodes. Do not grant
+		// fleet-wide write access just to backfill a relationship label.
+		r.log.Warn("cannot reconcile Machine label with current Node permissions; bootstrap sets it on new Nodes", "node", node.Name, "error", err)
+		return nil
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("reconcile Machine label on Node %s: %w", node.Name, err)
+	}
+	return nil
 }
 
 func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot, error) {

@@ -90,13 +90,13 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 		state:   &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
 		signals: agentUpgradeSignalStore{path: path},
 	}
-	if err := executor.RecordPending(t.Context(), "operation-1"); err != nil {
+	if _, err := executor.RecordPending(t.Context(), "operation-1"); err != nil {
 		t.Fatalf("first RecordPending: %v", err)
 	}
-	if err := executor.RecordPending(t.Context(), "operation-1"); !errors.Is(err, errAgentUpgradeAlreadyPending) {
+	if _, err := executor.RecordPending(t.Context(), "operation-1"); !errors.Is(err, errAgentUpgradeAlreadyPending) {
 		t.Fatalf("second RecordPending error = %v, want errAgentUpgradeAlreadyPending", err)
 	}
-	if err := executor.RecordPending(t.Context(), "operation-2"); err == nil || !strings.Contains(err.Error(), "operation-1") {
+	if _, err := executor.RecordPending(t.Context(), "operation-2"); err == nil || !strings.Contains(err.Error(), "operation-1") {
 		t.Fatalf("competing RecordPending error = %v", err)
 	}
 }
@@ -106,7 +106,7 @@ func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "signals", "agent-upgrade.json")
 	store := agentUpgradeSignalStore{path: path}
-	if err := store.recordPending("operation-1", "kube1", "instance-1"); err != nil {
+	if err := store.recordPending("operation-1", "kube1", "instance-1", 7); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
 	if err := store.recordCandidate("/slots/green"); err != nil {
@@ -122,7 +122,7 @@ func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if signal == nil || signal.OperationName != "operation-1" || signal.ActiveMachine != "kube1" || signal.CandidatePath != "/slots/green" || signal.InitiatingDaemonInstance != "instance-1" || !signal.SwitchCommitted || signal.Failure != "rolled back" || !signal.RecoveryRequired {
+	if signal == nil || signal.ObservedMachineGeneration != 7 || signal.OperationName != "operation-1" || signal.ActiveMachine != "kube1" || signal.CandidatePath != "/slots/green" || signal.InitiatingDaemonInstance != "instance-1" || !signal.SwitchCommitted || signal.Failure != "rolled back" || !signal.RecoveryRequired {
 		t.Fatalf("signal = %#v", signal)
 	}
 	info, err := os.Stat(path)
@@ -214,7 +214,7 @@ func TestHostAgentUpgradeExecutorAbortUsesCleanupContext(t *testing.T) {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordPending("operation-1", "", "instance-1"); err != nil {
+	if err := signals.recordPending("operation-1", "", "instance-1", 0); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
 	if err := signals.recordCandidate(paths.GreenPath); err != nil {
@@ -237,7 +237,7 @@ func TestHostAgentUpgradeExecutorAbortPreservesSignalOnRollbackFailure(t *testin
 
 	paths := testAgentUpgradePaths(t)
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordPending("operation-1", "", "instance-1"); err != nil {
+	if err := signals.recordPending("operation-1", "", "instance-1", 0); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
 	if err := signals.recordCandidate(paths.BluePath); err != nil {
@@ -303,11 +303,12 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 	}
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
 	if err := signals.write(agentUpgradeSignal{
-		OperationName:            "operation-1",
-		CandidatePath:            paths.BluePath,
-		InitiatingDaemonInstance: "initiator",
-		RecoveryRequired:         true,
-		Failure:                  "candidate failed",
+		OperationName:             "operation-1",
+		CandidatePath:             paths.BluePath,
+		InitiatingDaemonInstance:  "initiator",
+		ObservedMachineGeneration: 7,
+		RecoveryRequired:          true,
+		Failure:                   "candidate failed",
 	}); err != nil {
 		t.Fatalf("write signal: %v", err)
 	}
@@ -325,6 +326,9 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 			finished++
 			if result.Phase != machinav1alpha3.OperationPhaseFailed {
 				t.Fatalf("phase = %s, want Failed", result.Phase)
+			}
+			if result.ObservedMachineGeneration != 7 {
+				t.Fatalf("generation = %d, want 7", result.ObservedMachineGeneration)
 			}
 			return nil
 		},
@@ -373,11 +377,12 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 	}
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
 	if err := signals.write(agentUpgradeSignal{
-		OperationName:            "operation-1",
-		ActiveMachine:            "kube1",
-		CandidatePath:            paths.BluePath,
-		InitiatingDaemonInstance: "previous-instance",
-		SwitchCommitted:          true,
+		OperationName:             "operation-1",
+		ActiveMachine:             "kube1",
+		CandidatePath:             paths.BluePath,
+		InitiatingDaemonInstance:  "previous-instance",
+		ObservedMachineGeneration: 7,
+		SwitchCommitted:           true,
 	}); err != nil {
 		t.Fatalf("write signal: %v", err)
 	}
@@ -394,17 +399,63 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 			if result.Phase != machinav1alpha3.OperationPhaseComplete {
 				t.Fatalf("phase = %s, want Complete", result.Phase)
 			}
+			if result.ObservedMachineGeneration != 7 {
+				t.Fatalf("generation = %d, want 7", result.ObservedMachineGeneration)
+			}
+			if finished == 1 {
+				return errors.New("status unavailable")
+			}
+			return nil
+		},
+	}
+	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err == nil {
+		t.Fatal("expected status write failure")
+	}
+	if signal, err := signals.read(); err != nil || signal == nil || signal.ObservedMachineGeneration != 7 {
+		t.Fatalf("signal after failed publication = %#v, %v", signal, err)
+	}
+	// A subsequent process must publish the durable value, without a Machine read.
+	restarted := *executor
+	restarted.instanceID = "another-instance"
+	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, &restarted); err != nil {
+		t.Fatalf("publication retry: %v", err)
+	}
+	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, &restarted); err != nil {
+		t.Fatalf("duplicate publication: %v", err)
+	}
+	if finished != 2 {
+		t.Fatalf("finish calls = %d, want 2", finished)
+	}
+	if signal, err := signals.read(); err != nil || signal != nil {
+		t.Fatalf("signal after success = %#v, %v", signal, err)
+	}
+}
+
+func TestLegacyAgentUpgradeSignalOmitsGeneration(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "signal.json")
+	// Pre-generation signals remain valid and must never acquire a newer value
+	// during recovery.
+	if err := os.WriteFile(path, []byte(`{"operationName":"op","failure":"interrupted"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	executor := &hostAgentUpgradeExecutor{
+		signals: agentUpgradeSignalStore{path: path},
+		paths:   testAgentUpgradePaths(t),
+		finishMachineOperation: func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
+			calls++
+			if result.ObservedMachineGeneration != 0 || result.Phase != machinav1alpha3.OperationPhaseFailed {
+				t.Fatalf("legacy result = %#v", result)
+			}
 			return nil
 		},
 	}
 	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err != nil {
-		t.Fatalf("publishAndClearAgentUpgradeSignal: %v", err)
+		t.Fatal(err)
 	}
-	if finished != 1 {
-		t.Fatalf("finish calls = %d, want 1", finished)
-	}
-	if signal, err := signals.read(); err != nil || signal != nil {
-		t.Fatalf("signal after success = %#v, %v", signal, err)
+	if calls != 1 {
+		t.Fatalf("finish calls = %d", calls)
 	}
 }
 
@@ -413,7 +464,7 @@ func TestPublishAgentUpgradeSignalIgnoresInitiatingProcess(t *testing.T) {
 
 	paths := testAgentUpgradePaths(t)
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordPending("operation-1", "kube1", "current-instance"); err != nil {
+	if err := signals.recordPending("operation-1", "kube1", "current-instance", 0); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
 	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "current-instance"}
