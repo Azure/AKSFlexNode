@@ -93,7 +93,6 @@ clusters:
 - name: cluster
   cluster:
     server: https://cluster.example:443
-    certificate-authority-data: Y2E=
 users:
 - name: agent
   user:

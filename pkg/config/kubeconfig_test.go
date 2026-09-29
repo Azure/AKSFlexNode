@@ -79,6 +79,24 @@ func TestValidateEmbeddedKubeconfig(t *testing.T) {
 			),
 			wantErr: "token-file references",
 		},
+		"unused cluster file reference": {
+			data: strings.Replace(
+				validEmbeddedKubeconfig,
+				"users:\n",
+				"- name: unused\n  cluster:\n    server: https://unused.example:443\n    certificate-authority: /run/unused-ca.crt\nusers:\n",
+				1,
+			),
+			wantErr: "certificate-authority file references",
+		},
+		"unused user file reference": {
+			data: strings.Replace(
+				validEmbeddedKubeconfig,
+				"contexts:\n",
+				"- name: unused\n  user:\n    tokenFile: /run/unused-token\ncontexts:\n",
+				1,
+			),
+			wantErr: "token-file references",
+		},
 	}
 
 	for name, tt := range tests {

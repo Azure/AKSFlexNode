@@ -1,6 +1,7 @@
 package kubeauth
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -16,7 +17,6 @@ clusters:
 - name: cluster
   cluster:
     server: https://cluster.example:443
-    certificate-authority-data: Y2E=
 users:
 - name: agent
   user:
@@ -59,6 +59,40 @@ contexts:
 		t.Fatalf("Impersonate.Groups = %#v", restCfg.Impersonate.Groups)
 	}
 	if got := restCfg.Impersonate.Extra["example.com/scope"]; len(got) != 1 || got[0] != "machine" {
-		t.Fatalf("Impersonate.Extra = %#v", restCfg.Impersonate.Extra)
+		t.Fatalf("Impersonate.Extra = %#v", got)
+	}
+}
+
+func TestBootstrapRESTConfigRejectsInvalidAgentTLSData(t *testing.T) {
+	t.Parallel()
+
+	const invalidTLSKubeconfig = `apiVersion: v1
+kind: Config
+current-context: default
+clusters:
+- name: cluster
+  cluster:
+    server: https://cluster.example:443
+users:
+- name: agent
+  user:
+    client-certificate-data: bmFk
+    client-key-data: bmFk
+contexts:
+- name: default
+  context:
+    cluster: cluster
+    user: agent
+`
+	cfg := &config.Config{
+		Agent: config.AgentConfig{KubeconfigData: invalidTLSKubeconfig},
+		Node: config.NodeConfig{
+			Kubelet: config.KubeletConfig{KubeconfigData: invalidTLSKubeconfig},
+		},
+	}
+
+	_, err := BootstrapRESTConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "validate agent kubeconfig TLS material") {
+		t.Fatalf("BootstrapRESTConfig() error = %v, want transport validation error", err)
 	}
 }
