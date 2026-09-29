@@ -51,7 +51,7 @@ JSON
     chmod 0600 "$output"
     exit 0
 fi
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_AGENT_KUBECONFIG AKS_FLEX_NODE_KUBELET_KUBECONFIG AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
 AGENT
@@ -80,6 +80,24 @@ cat > "$WORK_DIR/base.json" <<'JSON'
 JSON
 chmod 0600 "$WORK_DIR/base.json"
 
+cat > "$WORK_DIR/environment-agent.kubeconfig" <<'EOF'
+environment-agent
+EOF
+cat > "$WORK_DIR/environment-kubelet.kubeconfig" <<'EOF'
+environment-kubelet
+EOF
+cat > "$WORK_DIR/cli-agent.kubeconfig" <<'EOF'
+apiVersion: v1
+kind: Config
+current-context: agent
+EOF
+cat > "$WORK_DIR/cli-kubelet.kubeconfig" <<'EOF'
+apiVersion: v1
+kind: Config
+current-context: kubelet
+EOF
+chmod 0600 "$WORK_DIR"/*.kubeconfig
+
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/msi-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AUTH=service-principal \
@@ -89,11 +107,15 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
 AKS_FLEX_NODE_AGENT_SHA256="$AGENT_SHA256" \
 AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE='https://environment.example/rootfs.tar.gz' \
 AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE='https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz' \
+AKS_FLEX_NODE_AGENT_KUBECONFIG="$WORK_DIR/environment-agent.kubeconfig" \
+AKS_FLEX_NODE_KUBELET_KUBECONFIG="$WORK_DIR/environment-kubelet.kubeconfig" \
 AKS_FLEX_NODE_CONFIG_OVERRIDES='{"node":{"labels":{"environment":"true"}}}' \
     bash "$SCRIPT" \
         --auth msi \
         --msi-client-id cli-msi \
         --bootstrap-oci-image 'https://cli.example/rootfs.tar.gz' \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig" \
         --config-overrides '{"node":{"labels":{"cli":"true"}},"bootstrap":{"offlineArtifacts":{"source":"https://generic-cli.example/ignored.tar.gz"}}}' \
         --install-dir "$WORK_DIR/msi-bin" \
         --config-path "$WORK_DIR/msi-etc/config.json" >/dev/null
@@ -104,12 +126,26 @@ jq -e '
   .azure.arc.enabled == false and
   .bootstrap.ociImage == "https://cli.example/rootfs.tar.gz" and
   .bootstrap.offlineArtifacts.source == "https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz" and
+  .agent.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: agent\n" and
+  .node.kubelet.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: kubelet\n" and
   .node.labels == {"base":"true", "environment":"true", "cli":"true"} and
   (.agent.nodeName | length > 0)
 ' "$WORK_DIR/msi-etc/config.json" >/dev/null
 [[ $(stat -c '%a' "$WORK_DIR/msi-etc/config.json") == 600 ]] || fail "MSI config mode is not 0600"
 grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK_DIR/msi-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
+
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    bash "$SCRIPT" \
+        --auth msi \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --agent-url "$AGENT_URL" \
+        --install-dir "$WORK_DIR/missing-pair-bin" \
+        --config-path "$WORK_DIR/missing-pair-config.json" >"$WORK_DIR/missing-pair.out" 2>&1; then
+    fail "bootstrap accepted an unpaired agent kubeconfig"
+fi
+grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
