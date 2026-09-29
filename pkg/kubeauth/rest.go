@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/transport"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
@@ -18,6 +19,13 @@ func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
 		restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(cfg.Agent.KubeconfigData))
 		if err != nil {
 			return nil, fmt.Errorf("build Kubernetes REST config from agent kubeconfig: %w", err)
+		}
+		transportCfg, err := restCfg.TransportConfig()
+		if err != nil {
+			return nil, fmt.Errorf("validate agent kubeconfig transport: %w", err)
+		}
+		if _, err := transport.TLSConfigFor(transportCfg); err != nil {
+			return nil, fmt.Errorf("validate agent kubeconfig TLS material: %w", err)
 		}
 		return restCfg, nil
 	}

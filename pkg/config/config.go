@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -554,35 +555,46 @@ func validateEmbeddedKubeconfig(data string) error {
 	if !ok || contextConfig == nil {
 		return fmt.Errorf("current context does not reference an existing context")
 	}
-	cluster, ok := kubeconfig.Clusters[contextConfig.Cluster]
-	if !ok || cluster == nil {
+	for name, cluster := range kubeconfig.Clusters {
+		if cluster == nil {
+			return fmt.Errorf("kubeconfig cluster %q is empty", name)
+		}
+		if err := validateAbsoluteHTTPSURL(cluster.Server, httpsURLValidationOptions{
+			fieldName: fmt.Sprintf("kubeconfig cluster %q server", name),
+			allowPort: true,
+		}); err != nil {
+			return err
+		}
+		if cluster.CertificateAuthority != "" {
+			return fmt.Errorf("certificate-authority file references are not supported for cluster %q", name)
+		}
+		if len(cluster.CertificateAuthorityData) == 0 {
+			return fmt.Errorf("certificate-authority-data is required for cluster %q", name)
+		}
+	}
+	for name, authInfo := range kubeconfig.AuthInfos {
+		if authInfo == nil {
+			return fmt.Errorf("kubeconfig user %q is empty", name)
+		}
+		switch {
+		case authInfo.ClientCertificate != "":
+			return fmt.Errorf("client-certificate file references are not supported for user %q", name)
+		case authInfo.ClientKey != "":
+			return fmt.Errorf("client-key file references are not supported for user %q", name)
+		case authInfo.TokenFile != "":
+			return fmt.Errorf("token-file references are not supported for user %q", name)
+		case authInfo.Exec != nil && !filepath.IsAbs(authInfo.Exec.Command):
+			return fmt.Errorf("exec command must be an absolute path for user %q", name)
+		}
+	}
+	if cluster, ok := kubeconfig.Clusters[contextConfig.Cluster]; !ok || cluster == nil {
 		return fmt.Errorf("current context does not reference an existing cluster")
 	}
-	if err := validateAbsoluteHTTPSURL(cluster.Server, httpsURLValidationOptions{
-		fieldName: "kubeconfig cluster server",
-		allowPort: true,
-	}); err != nil {
-		return err
-	}
-	if cluster.CertificateAuthority != "" {
-		return fmt.Errorf("certificate-authority file references are not supported")
-	}
-	if len(cluster.CertificateAuthorityData) == 0 {
-		return fmt.Errorf("certificate-authority-data is required")
-	}
-	authInfo, ok := kubeconfig.AuthInfos[contextConfig.AuthInfo]
-	if !ok || authInfo == nil {
+	if authInfo, ok := kubeconfig.AuthInfos[contextConfig.AuthInfo]; !ok || authInfo == nil {
 		return fmt.Errorf("current context does not reference an existing user")
 	}
-	switch {
-	case authInfo.ClientCertificate != "":
-		return fmt.Errorf("client-certificate file references are not supported")
-	case authInfo.ClientKey != "":
-		return fmt.Errorf("client-key file references are not supported")
-	case authInfo.TokenFile != "":
-		return fmt.Errorf("token-file references are not supported")
-	case authInfo.Exec != nil && !filepath.IsAbs(authInfo.Exec.Command):
-		return fmt.Errorf("exec command must be an absolute path")
+	if err := clientcmd.Validate(*kubeconfig); err != nil {
+		return fmt.Errorf("validate kubeconfig: %w", err)
 	}
 	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(data)); err != nil {
 		return fmt.Errorf("validate active kubeconfig context: %w", err)
@@ -1028,6 +1040,13 @@ func (c *KubeletConfig) validate() error {
 		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
 			return fmt.Errorf("invalid node.kubelet.kubeconfigData: %w", err)
 		}
+		kubeconfig, err := clientcmd.Load([]byte(c.KubeconfigData))
+		if err != nil {
+			return fmt.Errorf("parse node.kubelet.kubeconfigData: %w", err)
+		}
+		contextConfig := kubeconfig.Contexts[kubeconfig.CurrentContext]
+		cluster := kubeconfig.Clusters[contextConfig.Cluster]
+		c.CACertData = base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
 	}
 
 	kubelet := agentconfig.AgentKubeletConfig{
