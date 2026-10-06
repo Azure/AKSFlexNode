@@ -59,7 +59,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	nodeName := cfg.Agent.NodeName
-	// TODO: use the ARM machine resource name once the AKS RP Machine API contract is defined.
+	// ARM Machine resources and Kubernetes Nodes use the configured node name.
 	aksMachineName := nodeName
 	mgr, err := ctrl.NewManager(restCfg, manager.Options{
 		Scheme: newScheme(),
@@ -89,6 +89,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create direct Kubernetes client: %w", err)
 	}
+	upgrades.machineReader = directClient
+	upgrades.machineName = aksMachineName
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,
@@ -102,6 +104,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:               mgr.GetClient(),
+		Reader:               directClient,
 		Log:                  log,
 		NodeName:             nodeName,
 		AKSMachineName:       aksMachineName,

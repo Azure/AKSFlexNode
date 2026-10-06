@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -23,6 +24,7 @@ const machineOperationModeAuto = "auto"
 
 type machineOperationReconcilerOptions struct {
 	Client               client.Client
+	Reader               client.Reader
 	Log                  *slog.Logger
 	NodeName             string
 	AKSMachineName       string
@@ -35,6 +37,16 @@ type machineOperationHandlers struct {
 	log          *slog.Logger
 	operator     nodeOperator
 	agentUpgrade agentUpgradeExecutor
+	reader       client.Reader
+	machineName  string
+	// The shared controller serializes handlers. Retain terminal results across
+	// status-write retries rather than executing host side effects again.
+	pendingResults map[string]pendingMachineOperationResult
+}
+
+type pendingMachineOperationResult struct {
+	uid    types.UID
+	result daemon.MachineOperationResult[int64]
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
@@ -85,11 +97,18 @@ func machineOperationReconciler(
 		log:          opts.Log,
 		operator:     opts.Operator,
 		agentUpgrade: opts.AgentUpgrade,
+		reader:       opts.Reader,
+		machineName:  opts.AKSMachineName,
 	}
-	reconciler, err := daemon.NewMachinaMachineOperationReconciler(
-		opts.Client,
-		opts.NodeName,
+	if handlers.reader == nil {
+		handlers.reader = opts.Client
+	}
+	operationClient := &machineOperationIdentityClient{Client: opts.Client, reader: handlers.reader}
+	reconciler, err := daemon.NewMachinaMachineOperationReconcilerWithReader(
+		operationClient,
+		operationClient,
 		opts.AKSMachineName,
+		opts.NodeName,
 		daemon.MachineOperationHandlers{
 			machinav1alpha3.OperationNodeReboot:   handlers.reconcileNodeReboot,
 			machinav1alpha3.OperationAgentUpgrade: handlers.reconcileAgentUpgrade,
@@ -102,7 +121,11 @@ func machineOperationReconciler(
 	opts.Log.Info(
 		"Machina MachineOperation API found; enabling machine operation reconciler",
 	)
-	return reconciler, nil
+	return &machineOperationIdentityReconciler{
+		MachineOperationRequestReconciler: reconciler,
+		reader:                            handlers.reader,
+		handlers:                          handlers,
+	}, nil
 }
 
 func hasMachineOperationAPI(c client.Client) (bool, error) {
@@ -124,6 +147,13 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 	store daemon.MachineOperationStore[int64],
 	op daemon.MachineOperation,
 ) (ctrl.Result, error) {
+	if result, ok := h.pendingResult(ctx, op.Name); ok {
+		return h.finishMachineOperation(ctx, store, op, result)
+	}
+	generation, err := observedMachineGeneration(ctx, h.reader, h.machineName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := store.MarkInProgress(ctx, op, "restarting active nspawn node"); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark NodeReboot MachineOperation in progress: %w", err)
 	}
@@ -134,18 +164,15 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 			op,
 			"ExecutionFailed",
 			err.Error(),
+			generation,
 		)
 	}
-	// FlexNode does not have a Machina Machine CR, so observed machine
-	// generation is intentionally unset.
-	if err := store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
-		Phase:   machinav1alpha3.OperationPhaseComplete,
-		Reason:  "Succeeded",
-		Message: "NodeReboot completed",
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("finish NodeReboot MachineOperation: %w", err)
-	}
-	return ctrl.Result{}, nil
+	return h.finishMachineOperation(ctx, store, op, daemon.MachineOperationResult[int64]{
+		Phase:                     machinav1alpha3.OperationPhaseComplete,
+		Reason:                    "Succeeded",
+		Message:                   "NodeReboot completed",
+		ObservedMachineGeneration: generation,
+	})
 }
 
 func (h *machineOperationHandlers) reconcileAgentUpgrade(
@@ -153,9 +180,12 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 	store daemon.MachineOperationStore[int64],
 	op daemon.MachineOperation,
 ) (ctrl.Result, error) {
+	if result, ok := h.pendingResult(ctx, op.Name); ok {
+		return h.finishMachineOperation(ctx, store, op, result)
+	}
 	request, err := parseAgentUpgradeRequest(op.Parameters)
 	if err != nil {
-		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
+		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error(), 0)
 	}
 	activationLock, err := h.agentUpgrade.Acquire()
 	if errors.Is(err, agentbinary.ErrActivationInProgress) {
@@ -172,13 +202,14 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 	// Persist the recovery signal before InProgress. The shared reconciler does
 	// not enqueue InProgress operations after a process crash, so the signal
 	// must exist before the status can become non-reconcilable.
-	if err := h.agentUpgrade.RecordPending(ctx, op.Name); err != nil {
+	generation, err := h.agentUpgrade.RecordPending(ctx, op.Name)
+	if err != nil {
 		if errors.Is(err, errAgentUpgradeAlreadyPending) {
 			// Retry a previously failed recovery handoff. An ordinary duplicate
 			// remains a no-op while the delayed daemon restart is pending.
 			return ctrl.Result{}, h.agentUpgrade.RetryRecovery(ctx)
 		}
-		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+		return ctrl.Result{}, fmt.Errorf("record pending AgentUpgrade: %w", err)
 	}
 	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
 		cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
@@ -193,13 +224,13 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
 			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
 		}
-		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error(), generation)
 	}
 	if err := h.agentUpgrade.Restart(ctx); err != nil {
 		if abortErr := h.agentUpgrade.Abort(ctx); abortErr != nil {
 			return h.beginAgentUpgradeRecovery(ctx, op, err, abortErr)
 		}
-		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon")
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon", generation)
 	}
 	// Restart scheduling is the old daemon's final responsibility. Keep the
 	// operation InProgress and let the restarted or recovery daemon publish the
@@ -241,6 +272,19 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	store daemon.MachineOperationStore[int64],
 	op daemon.MachineOperation,
 ) (ctrl.Result, error) {
+	if result, ok := h.pendingResult(ctx, op.Name); ok {
+		if _, err := h.finishMachineOperation(ctx, store, op, result); err != nil {
+			return ctrl.Result{}, err
+		}
+		if result.Phase == machinav1alpha3.OperationPhaseComplete {
+			return ctrl.Result{}, h.operator.StopDaemon(ctx, h.log)
+		}
+		return ctrl.Result{}, nil
+	}
+	generation, err := observedMachineGeneration(ctx, h.reader, h.machineName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := store.MarkInProgress(
 		ctx,
 		op,
@@ -255,14 +299,14 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 			op,
 			"ExecutionFailed",
 			err.Error(),
+			generation,
 		)
 	}
-	// FlexNode does not have a Machina Machine CR, so observed machine
-	// generation is intentionally unset.
-	if err := store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
-		Phase:   machinav1alpha3.OperationPhaseComplete,
-		Reason:  "Succeeded",
-		Message: "AgentReset completed",
+	if _, err := h.finishMachineOperation(ctx, store, op, daemon.MachineOperationResult[int64]{
+		Phase:                     machinav1alpha3.OperationPhaseComplete,
+		Reason:                    "Succeeded",
+		Message:                   "AgentReset completed",
+		ObservedMachineGeneration: generation,
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("finish AgentReset MachineOperation: %w", err)
 	}
@@ -286,6 +330,7 @@ func (h *machineOperationHandlers) unsupportedOperation(
 			"operation kind %s is not supported by AKS FlexNode daemon",
 			op.Kind,
 		),
+		0,
 	)
 }
 
@@ -294,15 +339,52 @@ func (h *machineOperationHandlers) finishFailedMachineOperation(
 	store daemon.MachineOperationStore[int64],
 	op daemon.MachineOperation,
 	reason, message string,
+	generation int64,
 ) (ctrl.Result, error) {
-	// FlexNode does not have a Machina Machine CR, so observed machine
-	// generation is intentionally unset.
-	if err := store.Finish(ctx, op, daemon.MachineOperationResult[int64]{
-		Phase:   machinav1alpha3.OperationPhaseFailed,
-		Reason:  reason,
-		Message: message,
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("finish failed MachineOperation: %w", err)
+	return h.finishMachineOperation(ctx, store, op, daemon.MachineOperationResult[int64]{
+		Phase:                     machinav1alpha3.OperationPhaseFailed,
+		Reason:                    reason,
+		Message:                   message,
+		ObservedMachineGeneration: generation,
+	})
+}
+
+func (h *machineOperationHandlers) finishMachineOperation(ctx context.Context, store daemon.MachineOperationStore[int64], op daemon.MachineOperation, result daemon.MachineOperationResult[int64]) (ctrl.Result, error) {
+	if h.pendingResults == nil {
+		h.pendingResults = make(map[string]pendingMachineOperationResult)
 	}
+	identity, _ := ctx.Value(machineOperationIdentityKey{}).(machineOperationIdentity)
+	h.pendingResults[op.Name] = pendingMachineOperationResult{uid: identity.uid, result: result}
+	if err := store.Finish(ctx, op, result); err != nil {
+		return ctrl.Result{}, fmt.Errorf("finish MachineOperation: %w", err)
+	}
+	delete(h.pendingResults, op.Name)
 	return ctrl.Result{}, nil
+}
+
+func (h *machineOperationHandlers) pendingResult(ctx context.Context, name string) (daemon.MachineOperationResult[int64], bool) {
+	pending, ok := h.pendingResults[name]
+	identity, _ := ctx.Value(machineOperationIdentityKey{}).(machineOperationIdentity)
+	if ok && pending.uid != identity.uid {
+		delete(h.pendingResults, name)
+		return daemon.MachineOperationResult[int64]{}, false
+	}
+	return pending.result, ok
+}
+
+// Use an uncached reader: publication is optional and must not create a Machine
+// informer or make cache startup depend on the Machine API.
+func observedMachineGeneration(ctx context.Context, reader client.Reader, name string) (int64, error) {
+	if reader == nil {
+		return 0, nil
+	}
+	var machine machinav1alpha3.Machine
+	err := reader.Get(ctx, client.ObjectKey{Name: name}, &machine)
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read projected Machine %s generation: %w", name, err)
+	}
+	return machine.Generation, nil
 }

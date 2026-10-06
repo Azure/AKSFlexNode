@@ -543,6 +543,7 @@ func TestMachineOperationHandlersAgentResetStopFailure(t *testing.T) {
 }
 
 type fakeAgentUpgradeExecutor struct {
+	generation int64
 	pending    bool
 	staged     bool
 	aborted    bool
@@ -563,9 +564,9 @@ func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
-func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error {
+func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) (int64, error) {
 	f.pending = true
-	return f.pendingErr
+	return f.generation, f.pendingErr
 }
 
 func (f *fakeAgentUpgradeExecutor) RetryRecovery(context.Context) error {
