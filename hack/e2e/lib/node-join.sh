@@ -43,12 +43,11 @@ _deploy_and_start_agent() {
   remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} RELEASE=${release} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
 set -euo pipefail
 
-# The agent is installed under the host root. A layout an earlier join left is
-# found there, or under /usr/local on a host an older release installed, where
-# activating the candidate links the host root to it.
-host_root=/opt/unbounded
+# A layout an earlier join left is under the host root, or under /usr/local on
+# a host an older release installed, where activating the candidate links the
+# host root to it.
 managed_current=""
-for root in "${host_root}" /usr/local; do
+for root in /opt/unbounded /usr/local; do
   if [[ -e "${root}/lib/aks-flex-node/aks-flex-node-current" || -L "${root}/lib/aks-flex-node/aks-flex-node-current" ]]; then
     managed_current="${root}/lib/aks-flex-node/aks-flex-node-current"
     break
@@ -57,10 +56,6 @@ done
 if [[ -n "${RELEASE}" ]]; then
   echo "Installing AKS Flex Node ${RELEASE} from its GitHub release..."
   sudo AKS_FLEX_NODE_VERSION="${RELEASE}" bash /tmp/aks-flex-node-install.sh --yes
-  # A release that predates the host root installs under /usr/local.
-  if ! sudo /usr/local/bin/aks-flex-node host-root >/dev/null 2>&1; then
-    host_root=/usr/local
-  fi
 elif [[ -n "${managed_current}" && -e /etc/systemd/system/aks-flex-node-agent.service ]]; then
   # Only a layout whose service is still installed needs the upgrade path.
   # Reset removes the service and the config directory but keeps the layout,
@@ -74,7 +69,12 @@ else
     bash /tmp/aks-flex-node-install.sh --yes
 fi
 
-sudo "${host_root}/bin/aks-flex-node" version
+# install.sh puts the binary under the host root once the host has one, and in
+# /usr/local/bin before that where it is writable. The agent copies itself under
+# the host root when it starts.
+agent=/opt/unbounded/bin/aks-flex-node
+[[ -x "${agent}" ]] || agent=/usr/local/bin/aks-flex-node
+sudo "${agent}" version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
@@ -104,7 +104,7 @@ echo "Running preflight checks before bootstrap..."
 set +e
 {
   echo "=== preflight ${UNIT_NAME} $(date -Is) ==="
-  sudo "${host_root}/bin/aks-flex-node" preflight --config /etc/aks-flex-node/config.json --output text
+  sudo "${agent}" preflight --config /etc/aks-flex-node/config.json --output text
   preflight_rc=$?
   echo "=== preflight ${UNIT_NAME} exit ${preflight_rc} ==="
   exit "${preflight_rc}"
@@ -124,7 +124,7 @@ sudo systemd-run \
   --unit="${UNIT_NAME}" \
   --description="AKS Flex Node E2E (${UNIT_NAME})" \
   --remain-after-exit \
-  "${host_root}/bin/aks-flex-node" bootstrap --config /etc/aks-flex-node/config.json
+  "${agent}" bootstrap --config /etc/aks-flex-node/config.json
 
 echo "Waiting up to ${E2E_NODE_JOIN_TIMEOUT}s for aks-flex-node-agent.service to start..."
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
@@ -174,6 +174,19 @@ if ! systemctl is-active --quiet aks-flex-node-agent.service; then
 fi
 
 echo "aks-flex-node-agent.service is installed, enabled, and active"
+
+# On a host installed under a real /opt/unbounded, the agent removes the binary
+# install.sh left in /usr/local/bin once it runs from the host root.
+if [[ -d /opt/unbounded && ! -L /opt/unbounded ]]; then
+  for _ in $(seq 1 30); do
+    [[ -f /usr/local/bin/aks-flex-node && ! -L /usr/local/bin/aks-flex-node ]] || break
+    sleep 2
+  done
+  if [[ -f /usr/local/bin/aks-flex-node && ! -L /usr/local/bin/aks-flex-node ]]; then
+    echo "the agent left the binary install.sh put in /usr/local/bin"
+    exit 1
+  fi
+fi
 
 sleep 10
 

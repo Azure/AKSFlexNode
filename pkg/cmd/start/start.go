@@ -87,6 +87,9 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	if err := daemon.PrepareHostRoot(ctx, logger); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
+	if err := daemon.InstallHostBinary(ctx, logger); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
 	tasks := phases.Serial(logger,
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),

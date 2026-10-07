@@ -418,9 +418,9 @@ AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
 ```
 
-`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated. The binary
-directory is the one the agent reports, and a value that names any other
-directory is rejected.
+`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated. The script
+chooses the binary directory, and a value that names any other directory is
+rejected.
 
 The equivalent non-secret values have CLI flags. A service-principal client
 secret has no CLI value because command arguments are process-visible. Use a
@@ -602,16 +602,17 @@ The script:
 3. Optionally validates the archive SHA-256.
 4. Rejects absolute and parent-traversal tar paths.
 5. Extracts `aks-flex-node-linux-<arch>` or `aks-flex-node`.
-6. Asks the agent for its host root, and atomically replaces
-   `<host root>/bin/aks-flex-node` with mode `0755`.
+6. Chooses the binary directory, and atomically replaces `aks-flex-node` there
+   with mode `0755`.
 
-The host root is what the agent's `host-root` command prints: `/opt/unbounded`,
-or `/usr/local` on a host an earlier release installed. The command runs from a
-copy under `/var/lib/aks-flex-node`, because the temp dir may be on a noexec
-`/tmp` and a failure to run there would be taken for an earlier release. A
-release without the command predates the host root and is installed in
-`/usr/local/bin`; on a host with a read-only `/usr`, such as Azure Container
-Linux, such a release cannot be installed.
+The directory is chosen from the host, without running the agent:
+`/opt/unbounded/bin` on a host already installed under `/opt/unbounded`, since
+reset keeps the layout there; `/usr/local/bin` where that is writable, as
+earlier releases were installed, so one of them finds itself there; and
+`/opt/unbounded/bin` otherwise, as on Azure Container Linux, where `/usr` is
+read-only. An agent started from `/usr/local/bin` copies itself to
+`/opt/unbounded/bin` and removes the copy in `/usr/local/bin` once it runs from
+there.
 
 The checksum covers the downloaded archive. Supplying a digest is strongly
 recommended, especially for signed URLs or mirrors.

@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"errors"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -23,7 +26,8 @@ func TestHostRootMarkersAreTheReleasedBinaryLayout(t *testing.T) {
 		path   string
 		marker bool
 	}{
-		{name: "compatibility link", path: legacy.BinaryPath, marker: true},
+		// Install scripts put the plain binary there on fresh hosts too.
+		{name: "compatibility link", path: legacy.BinaryPath, marker: false},
 		{name: "blue slot", path: legacy.BluePath, marker: true},
 		{name: "green slot", path: legacy.GreenPath, marker: true},
 		{name: "current link", path: legacy.CurrentPath, marker: true},
@@ -46,5 +50,160 @@ func TestHostRootMarkersAreTheReleasedBinaryLayout(t *testing.T) {
 				t.Fatalf("%s is a marker = %v, want %v", rel, got, tt.marker)
 			}
 		})
+	}
+}
+
+// TestInstallHostBinary covers the copy that seeds the layout under the host
+// root: made only when no usable binary is there, from the running one.
+func TestInstallHostBinary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, target string)
+		wantCopy bool
+	}{
+		{name: "fresh host", setup: func(*testing.T, string) {}, wantCopy: true},
+		{
+			name: "a usable binary is kept",
+			setup: func(t *testing.T, target string) {
+				writeExecutable(t, target, "installed")
+			},
+		},
+		{
+			name: "a managed link to a usable slot is kept",
+			setup: func(t *testing.T, target string) {
+				slot := filepath.Join(filepath.Dir(target), "slot")
+				writeExecutable(t, slot, "installed")
+				if err := os.Symlink(slot, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "a dangling link is replaced",
+			setup: func(t *testing.T, target string) {
+				if err := os.Symlink(filepath.Join(filepath.Dir(target), "missing"), target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantCopy: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			self := filepath.Join(dir, "running")
+			writeExecutable(t, self, "running")
+			target := filepath.Join(dir, "root", "bin", binaryName)
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(t, target)
+
+			prepared := false
+			err := installHostBinary(slog.New(slog.DiscardHandler), target,
+				func() error { prepared = true; return nil },
+				func() (string, error) { return self, nil })
+			if err != nil {
+				t.Fatalf("installHostBinary() error = %v", err)
+			}
+
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if copied := string(got) == "running"; copied != tt.wantCopy || prepared != tt.wantCopy {
+				t.Fatalf("copied = %v, prepared = %v, want %v", copied, prepared, tt.wantCopy)
+			}
+			if tt.wantCopy {
+				info, err := os.Stat(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != agentUpgradeBinaryMode {
+					t.Fatalf("installed binary mode = %v, want %v", info.Mode().Perm(), os.FileMode(agentUpgradeBinaryMode))
+				}
+			}
+		})
+	}
+}
+
+// TestRemoveLegacySeed removes the copy an install script left in
+// /usr/local/bin only on a host installed under a real host root, and only
+// when it is a regular file.
+func TestRemoveLegacySeed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		root     string
+		seed     string
+		wantKept bool
+	}{
+		{name: "installed under the host root", root: "dir", seed: "file"},
+		{name: "linked to the legacy root", root: "link", seed: "file", wantKept: true},
+		{name: "not installed yet", root: "", seed: "file", wantKept: true},
+		{name: "a link is not a seed", root: "dir", seed: "link", wantKept: true},
+		{name: "no seed", root: "dir", seed: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			root := filepath.Join(dir, "opt", "unbounded")
+			legacy := filepath.Join(dir, "usr", "local")
+			seed := filepath.Join(legacy, "bin", binaryName)
+			for _, d := range []string{filepath.Dir(root), filepath.Dir(seed)} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			switch tt.root {
+			case "dir":
+				if err := os.Mkdir(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			case "link":
+				if err := os.Symlink(legacy, root); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			switch tt.seed {
+			case "file":
+				writeExecutable(t, seed, "seed")
+			case "link":
+				if err := os.Symlink("/bin/true", seed); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := removeLegacySeed(slog.New(slog.DiscardHandler), root, seed); err != nil {
+				t.Fatalf("removeLegacySeed() error = %v", err)
+			}
+
+			_, err := os.Lstat(seed)
+			if kept := err == nil; kept != (tt.wantKept && tt.seed != "") {
+				t.Fatalf("seed kept = %v, want %v", kept, tt.wantKept)
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }

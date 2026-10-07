@@ -46,8 +46,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup.
+	if err := InstallHostBinary(ctx, log); err != nil {
+		return err
+	}
 	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
 		return err
+	}
+	// After the units are rewritten, so nothing names the copy it removes.
+	if err := RemoveLegacySeed(log); err != nil {
+		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {

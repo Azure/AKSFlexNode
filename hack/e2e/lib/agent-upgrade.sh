@@ -31,35 +31,16 @@ sudo install -d -m 0755 "${work}"
 sudo install -m 0755 /tmp/aks-flex-node-e2e-upgrade-binary "${work}/aks-flex-node-linux-amd64"
 sudo tar -C "${work}" -czf "${work}/success.tar.gz" aks-flex-node-linux-amd64
 
-# It answers host-root the way a current release does, so verification accepts
-# it and the failure comes from the daemon.
 cat >/tmp/aks-flex-node-e2e-broken <<'BROKEN'
 #!/bin/sh
 if [ "${1:-}" = "version" ]; then
   echo "e2e-forced-daemon-failure"
   exit 0
 fi
-if [ "${1:-}" = "host-root" ]; then
-  readlink -m /opt/unbounded
-  exit 0
-fi
 exit 42
 BROKEN
 sudo install -m 0755 /tmp/aks-flex-node-e2e-broken "${work}/aks-flex-node-linux-amd64"
 sudo tar -C "${work}" -czf "${work}/failure.tar.gz" aks-flex-node-linux-amd64
-
-# A release before the host root has no host-root command.
-cat >/tmp/aks-flex-node-e2e-legacy <<'LEGACY'
-#!/bin/sh
-if [ "${1:-}" = "version" ]; then
-  echo "e2e-release-before-the-host-root"
-  exit 0
-fi
-echo "Error: unknown command \"${1:-}\" for \"aks-flex-node\"" >&2
-exit 1
-LEGACY
-sudo install -m 0755 /tmp/aks-flex-node-e2e-legacy "${work}/aks-flex-node-linux-amd64"
-sudo tar -C "${work}" -czf "${work}/legacy.tar.gz" aks-flex-node-linux-amd64
 check_dir="$(mktemp -d)"
 sudo tar -C "${check_dir}" -xzf "${work}/failure.tar.gz"
 sudo "${check_dir}/aks-flex-node-linux-amd64" version >/dev/null
@@ -297,25 +278,6 @@ agent_upgrade_e2e() {
   fi
   _agent_upgrade_assert_synchronized "${vm_ip}"
   validate_node_joined "${vm_name}"
-
-  # A release before the host root would look for its files under /usr/local,
-  # where this host has none, so verification refuses it and nothing changes.
-  local legacy_op="agent-upgrade-legacy-${suffix}" legacy_digest refused_snapshot refused_binary_digest
-  legacy_digest="$(_agent_upgrade_digest "${vm_ip}" legacy.tar.gz)"
-  _agent_upgrade_apply "${legacy_op}" "${vm_name}" legacy.tar.gz "${legacy_digest}" "legacy-${suffix}"
-  _agent_upgrade_wait_phase "${legacy_op}" Failed
-  if ! kubectl get machineoperation "${legacy_op}" -o jsonpath='{.status.message}' | grep -q "predates the host root"; then
-    log_error "AgentUpgrade to a release before the host root was not refused by verification"
-    kubectl get machineoperation "${legacy_op}" -o yaml || true
-    return 1
-  fi
-  refused_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
-  IFS='|' read -r _ _ refused_binary_digest _ <<<"${refused_snapshot}"
-  if [[ "${refused_binary_digest}" != "${retry_binary_digest}" ]]; then
-    log_error "A refused AgentUpgrade changed the active binary: ${refused_snapshot}"
-    return 1
-  fi
-  remote_exec "${vm_ip}" 'sudo systemctl is-active --quiet aks-flex-node-agent.service'
 
   _agent_upgrade_direct_activation "${vm_name}" "${vm_ip}"
   smoke_test "${vm_name}" "agent-upgrade"

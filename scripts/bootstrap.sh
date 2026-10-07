@@ -15,13 +15,10 @@ set -euo pipefail
 umask 077
 
 readonly DEFAULT_REPOSITORY="Azure/AKSFlexNode"
-# Where an agent released before the host root looks for its binary. A newer
-# agent reports its own directory; see resolve_install_dir.
-readonly LEGACY_INSTALL_DIR="/usr/local/bin"
-# Exec-capable place to run the downloaded agent before it is installed. The
-# temp dir may be on a noexec /tmp, and a failure to run there would be taken
-# for an older agent.
-readonly STAGING_PARENT="/var/lib/aks-flex-node"
+# Where the agent keeps its files, and where releases before it did; see
+# resolve_install_dir.
+readonly HOST_ROOT="/opt/unbounded"
+readonly LEGACY_ROOT="/usr/local"
 readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
 readonly DEFAULT_AUTHORITY_HOST="https://login.microsoftonline.com"
@@ -45,11 +42,10 @@ SP_CLIENT_CERTIFICATE_FILE="${AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE:-}"
 AGENT_URL="${AKS_FLEX_NODE_AGENT_URL:-}"
 AGENT_VERSION="${AKS_FLEX_NODE_AGENT_VERSION:-}"
 AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
-# Deprecated: the agent chooses its install directory. Kept only to reject a
-# value the agent would not find.
+# Deprecated: the installer chooses the install directory. Kept only to reject
+# a different one.
 REQUESTED_INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-}"
 INSTALL_DIR=""
-LEGACY_AGENT=""
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
@@ -74,7 +70,6 @@ unset \
     AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
     AKS_FLEX_NODE_CONFIG_OVERRIDES || true
 TEMP_DIR=""
-STAGING_DIR=""
 
 log() {
     printf 'bootstrap: %s\n' "$*" >&2
@@ -115,7 +110,7 @@ Options:
                                  Override bootstrap.offlineArtifacts.source
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
-  --install-dir PATH             Deprecated; the agent chooses its directory
+  --install-dir PATH             Deprecated; the installer chooses it
   --config-path PATH             Rendered config destination
   -h, --help                     Show this help
 
@@ -209,9 +204,6 @@ parse_args() {
 }
 
 cleanup() {
-    if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
-        rm -rf "$STAGING_DIR"
-    fi
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
     fi
@@ -569,31 +561,29 @@ validate_archive_paths() {
     done < "$listing"
 }
 
-# resolve_install_dir asks the downloaded agent where it keeps its files. An
-# agent that answers host-root installs under the host root: /opt/unbounded, or
-# /usr/local on a host an older release installed. An older agent has no such
-# command and looks for its binary in /usr/local/bin.
+# resolve_install_dir picks where to install the agent without running it:
+# under the host root on a host already installed there, since reset keeps the
+# layout; in /usr/local/bin where that is writable, as earlier releases were, so
+# one of them finds itself there, while a newer agent copies itself under the
+# host root when it starts; and under the host root otherwise, as on Azure
+# Container Linux, where /usr/local is read-only.
 resolve_install_dir() {
-    local candidate="$1"
-    local root
+    local probe
 
-    install -d -o root -g root -m 0755 "$STAGING_PARENT"
-    STAGING_DIR=$(mktemp -d "$STAGING_PARENT/.bootstrap.XXXXXX")
-    install -o root -g root -m 0755 "$candidate" "$STAGING_DIR/aks-flex-node"
-    if root=$("$STAGING_DIR/aks-flex-node" host-root 2>/dev/null); then
-        [[ "$root" == /* && "$root" != *[[:space:]]* ]] || fatal "agent reported an invalid host root: $root"
-        INSTALL_DIR="${root%/}/bin"
+    if [[ -d "$HOST_ROOT" && ! -L "$HOST_ROOT" ]]; then
+        INSTALL_DIR="$HOST_ROOT/bin"
+    elif { [[ -d "$LEGACY_ROOT/bin" ]] || install -d -o root -g root -m 0755 "$LEGACY_ROOT/bin" 2>/dev/null; } &&
+        probe=$(mktemp "$LEGACY_ROOT/bin/.aks-flex-node.XXXXXX" 2>/dev/null); then
+        rm -f "$probe"
+        INSTALL_DIR="$LEGACY_ROOT/bin"
     else
-        INSTALL_DIR="$LEGACY_INSTALL_DIR"
-        LEGACY_AGENT=1
+        INSTALL_DIR="$HOST_ROOT/bin"
     fi
-    rm -rf "$STAGING_DIR"
-    STAGING_DIR=""
 
     if [[ -n "$REQUESTED_INSTALL_DIR" ]]; then
         [[ "${REQUESTED_INSTALL_DIR%/}" == "$INSTALL_DIR" ]] ||
-            fatal "--install-dir $REQUESTED_INSTALL_DIR is not $INSTALL_DIR, where this agent looks for its binary"
-        log "warning: --install-dir is deprecated; the agent chooses its install directory"
+            fatal "--install-dir $REQUESTED_INSTALL_DIR is not $INSTALL_DIR, where this host keeps the agent"
+        log "warning: --install-dir is deprecated; the installer chooses the install directory"
     fi
 }
 
@@ -620,13 +610,10 @@ download_and_install_agent() {
     candidate=$(find "$extract_dir" -type f \( -name "$expected" -o -name aks-flex-node \) -print -quit)
     [[ -n "$candidate" ]] || fatal "agent binary not found in archive"
 
-    resolve_install_dir "$candidate"
-    # Created only when missing: an existing directory belongs to the image, and on a read-only
-    # /usr/local even setting its mode fails.
+    resolve_install_dir
+    # Created only when missing: an existing directory belongs to the image.
     if ! { [[ -d "$INSTALL_DIR" ]] || install -d -o root -g root -m 0755 "$INSTALL_DIR"; } ||
         ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX" 2>/dev/null); then
-        [[ -z "$LEGACY_AGENT" ]] ||
-            fatal "this aks-flex-node release predates /opt/unbounded and needs a writable $LEGACY_INSTALL_DIR; use a newer release"
         fatal "cannot write to $INSTALL_DIR"
     fi
     install -o root -g root -m 0755 "$candidate" "$staged"

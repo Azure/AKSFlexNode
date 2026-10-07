@@ -448,7 +448,8 @@ The script performs these operations:
 
 1. Loads the empty JSON base.
 2. Downloads and verifies the AKS Flex Node agent archive from GitHub Releases,
-   and installs the binary at `/opt/unbounded/bin/aks-flex-node`. See
+   and installs the binary. The agent moves itself to
+   `/opt/unbounded/bin/aks-flex-node` when it starts. See
    [Where the agent is installed](operations.md#where-the-agent-is-installed).
 3. Applies the cluster and pool overrides.
 4. Uses the Azure VM managed identity to request an ARM token.

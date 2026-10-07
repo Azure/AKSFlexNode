@@ -6,9 +6,8 @@ if [[ $EUID -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
 fi
 
-# Every case installs a stub agent as root. Run in a private mount namespace so /usr/local and
-# /var/lib can be overlaid below: a case that installs an older release then cannot replace a real
-# binary on the host, and the staging copy of the agent is not left on the host either.
+# Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded. Run in a private
+# mount namespace so both can be overlaid below, and no case can replace a real binary on the host.
 if [[ -z "${BOOTSTRAP_TEST_ISOLATED:-}" ]]; then
     command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
     exec env BOOTSTRAP_TEST_ISOLATED=1 unshare --mount --propagation private bash "$0" "$@"
@@ -23,8 +22,8 @@ cleanup() {
         kill "$SERVER_PID" 2>/dev/null || true
     fi
     umount "$WORK_DIR/noexec-tmp" 2>/dev/null || true
-    umount /var/lib 2>/dev/null || true
-    # Twice: a failed legacy case leaves the read-only bind over the overlay.
+    umount /opt 2>/dev/null || true
+    # Twice: a failed read-only case leaves its bind over the overlay.
     umount /usr/local 2>/dev/null || true
     umount /usr/local 2>/dev/null || true
     rm -rf "$WORK_DIR"
@@ -36,23 +35,22 @@ fail() {
     exit 1
 }
 
-# Relative paths, such as a rejected relative host root, resolve inside the work dir rather than
-# wherever the test was started.
 cd "$WORK_DIR"
 
-# Writes to /usr/local land in the overlay's upper dir, which is checked at the end.
+# Writes to /usr/local and /opt land in the overlays' upper dirs.
 USR_LOCAL_WRITES="$WORK_DIR/usr-local/upper"
-mkdir -p "$USR_LOCAL_WRITES" "$WORK_DIR/usr-local/work"
+[[ -d /opt ]] || fail "/opt is required"
+for dir in usr-local opt; do
+    mkdir -p "$WORK_DIR/$dir/upper" "$WORK_DIR/$dir/work"
+done
 mount -t overlay overlay \
     -o "lowerdir=/usr/local,upperdir=$USR_LOCAL_WRITES,workdir=$WORK_DIR/usr-local/work" /usr/local ||
     fail "could not overlay /usr/local"
-
-# bootstrap.sh stages the agent under /var/lib/aks-flex-node to ask it for its host root.
-VAR_LIB_WRITES="$WORK_DIR/var-lib/upper"
-mkdir -p "$VAR_LIB_WRITES" "$WORK_DIR/var-lib/work"
 mount -t overlay overlay \
-    -o "lowerdir=/var/lib,upperdir=$VAR_LIB_WRITES,workdir=$WORK_DIR/var-lib/work" /var/lib ||
-    fail "could not overlay /var/lib"
+    -o "lowerdir=/opt,upperdir=$WORK_DIR/opt/upper,workdir=$WORK_DIR/opt/work" /opt ||
+    fail "could not overlay /opt"
+# Start from a fresh host whatever this one has installed.
+rm -rf /opt/unbounded /usr/local/bin/aks-flex-node
 
 command -v jq >/dev/null || fail "jq is required"
 bash -n "$SCRIPT"
@@ -68,17 +66,6 @@ make_agent_archive() {
     mkdir -p "$dir"
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
-# host-root is answered before the calls are recorded: bootstrap.sh asks it from a staging copy,
-# and the cases below check that every recorded call ran the installed binary.
-if [[ "${1:-}" == host-root ]]; then
-    printf '%s\n' "$0" >> "${BOOTSTRAP_TEST_CALLS:?}.host-root"
-    if [[ -n "${BOOTSTRAP_TEST_LEGACY:-}" ]]; then
-        printf 'Error: unknown command "host-root" for "aks-flex-node"\n' >&2
-        exit 1
-    fi
-    printf '%s\n' "${BOOTSTRAP_TEST_HOST_ROOT:?}"
-    exit 0
-fi
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
 printf '%s\n' "$0" >> "${BOOTSTRAP_TEST_CALLS}.path"
 if [[ "${1:-}" == fetch-bootstrap-data ]]; then
@@ -128,7 +115,6 @@ JSON
 chmod 0600 "$WORK_DIR/base.json"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/msi-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/msi" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AUTH=service-principal \
 AKS_FLEX_NODE_SP_CLIENT_ID=environment-client \
@@ -159,7 +145,6 @@ grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/arc" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
@@ -178,13 +163,12 @@ jq -e '
 grep -E '^fetch-bootstrap-data .*--auth arc( |$)' "$WORK_DIR/arc-calls" >/dev/null
 # Every command, including the bootstrap-data fetch, runs the installed binary. Running it from
 # the temp dir would fail on hosts that mount /tmp noexec.
-[[ "$(sort -u "$WORK_DIR/arc-calls.path")" == "$WORK_DIR/arc/bin/aks-flex-node" ]] ||
+[[ "$(sort -u "$WORK_DIR/arc-calls.path")" == /usr/local/bin/aks-flex-node ]] ||
     fail "agent ran from $(sort -u "$WORK_DIR/arc-calls.path" | tr '\n' ' '), want the installed binary"
 
 printf 's"e\\cret\n' > "$WORK_DIR/client-secret"
 chmod 0600 "$WORK_DIR/client-secret"
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/sp" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     bash "$SCRIPT" \
         --auth service-principal \
@@ -205,7 +189,6 @@ jq -e --arg secretFile "$WORK_DIR/client-secret" '
 ' "$WORK_DIR/sp-etc/config.json" >/dev/null
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-inline-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/sp-inline" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_SP_CLIENT_SECRET='inline-secret' \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
@@ -221,7 +204,6 @@ jq -e '
 
 ln -s "$WORK_DIR/client-secret" "$WORK_DIR/client-secret-link"
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-link-calls" \
-    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/sp-link" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         bash "$SCRIPT" --auth service-principal \
@@ -325,7 +307,6 @@ JSON
 chmod 0600 "$WORK_DIR/fetch-base.json"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
 AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
@@ -358,7 +339,6 @@ jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
 # The raw repository script can start from an implicit empty object when fresh
 # bootstrap data and the target cluster/pool are supplied.
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-empty-base-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-empty-base" \
 AKS_FLEX_NODE_IMDS_ENDPOINT="http://127.0.0.1:${port}/metadata/identity/oauth2/token" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
@@ -381,7 +361,6 @@ jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
 ' "$WORK_DIR/fetch-empty-base-etc/config.json" >/dev/null
 
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-base-calls" \
-    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/no-base" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         bash "$SCRIPT" --auth msi \
             --config-path "$WORK_DIR/no-base-etc/config.json" \
@@ -417,7 +396,6 @@ JSON
 chmod 0600 "$WORK_DIR/fetch-sp-base.json"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-sp-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-sp" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-sp-base.json" \
 AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA=true \
 AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
@@ -450,7 +428,6 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
     chmod 0600 "$WORK_DIR/client-certificate"
 
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-cert-calls" \
-    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-cert" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
     AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
     AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
@@ -482,7 +459,6 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
         -out "$WORK_DIR/client-certificate.pfx" >/dev/null 2>&1
     chmod 0600 "$WORK_DIR/client-certificate.pfx"
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/fetch-pfx-calls" \
-    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/fetch-pfx" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/fetch-base.json" \
     AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
     AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
@@ -502,115 +478,94 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
       .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
     ' "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
 
-# The binary goes under the host root the agent reports, in directories created 0755 even under the
-# script's umask, so systemd and the agent can reach it.
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/root-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/root/opt/unbounded" \
+# assert_ran_from checks that every recorded call of a case ran the binary it installed.
+assert_ran_from() {
+    local calls="$1" want="$2"
+    [[ "$(sort -u "$calls.path")" == "$want" ]] ||
+        fail "agent ran from $(sort -u "$calls.path" | tr '\n' ' '), want $want"
+}
+
+# Every case above ran on a fresh host with a writable /usr/local/bin, so the binary went there, as
+# earlier releases did. The agent copies itself under the host root when it starts.
+grep -q BOOTSTRAP_TEST_CALLS "$USR_LOCAL_WRITES/bin/aks-flex-node" ||
+    fail "the agent was not installed at /usr/local/bin"
+[[ ! -e /opt/unbounded ]] || fail "bootstrap created /opt/unbounded on a host with a writable /usr/local"
+
+# /usr/local/bin belongs to the image, so its mode is left as the image set it.
+legacy_bin_mode=$(stat -c '%a' /usr/local/bin)
+chmod 0750 /usr/local/bin
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/mode-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/root-etc/config.json" >/dev/null
-[[ -x "$WORK_DIR/root/opt/unbounded/bin/aks-flex-node" ]] || fail "binary was not installed under the host root"
-for dir in opt opt/unbounded opt/unbounded/bin; do
-    [[ $(stat -c '%a' "$WORK_DIR/root/$dir") == 755 ]] || fail "new directory $dir is not 0755"
-done
-[[ "$(sort -u "$WORK_DIR/root-calls.path")" == "$WORK_DIR/root/opt/unbounded/bin/aks-flex-node" ]] ||
-    fail "agent ran from $(sort -u "$WORK_DIR/root-calls.path" | tr '\n' ' '), want the installed binary"
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/mode-etc/config.json" >/dev/null
+[[ $(stat -c '%a' /usr/local/bin) == 750 ]] || fail "the mode of an existing /usr/local/bin was changed"
+chmod "$legacy_bin_mode" /usr/local/bin
 
-# The host root is asked of a copy under /var/lib, not of the download in the temp dir: on a host
-# that mounts /tmp noexec that could not run, and would be taken for an older release.
-[[ "$(cat "$WORK_DIR/root-calls.host-root")" == /var/lib/aks-flex-node/.bootstrap.*/aks-flex-node ]] ||
-    fail "host-root ran from $(cat "$WORK_DIR/root-calls.host-root"), want the staging copy"
+# The agent runs from where it was installed, never from the temp dir, which may be noexec.
 mkdir -p "$WORK_DIR/noexec-tmp"
 mount -t tmpfs -o noexec,mode=0700 tmpfs "$WORK_DIR/noexec-tmp" || fail "could not mount a noexec temp dir"
 TMPDIR="$WORK_DIR/noexec-tmp" \
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/noexec-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/noexec" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/noexec-etc/config.json" >/dev/null ||
     fail "bootstrap failed with a noexec temp dir"
-[[ -x "$WORK_DIR/noexec/bin/aks-flex-node" ]] || fail "a noexec temp dir sent the binary elsewhere"
 umount "$WORK_DIR/noexec-tmp"
+assert_ran_from "$WORK_DIR/noexec-calls" /usr/local/bin/aks-flex-node
 
-# The staging copy does not outlive the run.
-if compgen -G "$VAR_LIB_WRITES/aks-flex-node/.bootstrap.*" >/dev/null; then
-    fail "staging copies were left in /var/lib/aks-flex-node"
-fi
+# A host linked to /usr/local by an earlier release keeps its files there.
+ln -s /usr/local /opt/unbounded
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/linked-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/linked-etc/config.json" >/dev/null
+assert_ran_from "$WORK_DIR/linked-calls" /usr/local/bin/aks-flex-node
+rm /opt/unbounded
 
-# --install-dir is deprecated. It is accepted only when it matches the directory the agent reports,
-# since the agent cannot find a binary installed anywhere else.
+# Where /usr/local is read-only, as on Azure Container Linux, the binary goes under the host root, in
+# directories created 0755 even under the script's umask, so systemd and the agent can reach it. A
+# read-only bind over the overlay, since overlayfs cannot be remounted read-only.
+{ mount --bind /usr/local /usr/local && mount -o remount,bind,ro /usr/local; } || fail "could not make /usr/local read-only"
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/readonly-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/readonly-etc/config.json" >/dev/null ||
+    fail "bootstrap failed with a read-only /usr/local"
+umount /usr/local || fail "could not make /usr/local writable again"
+assert_ran_from "$WORK_DIR/readonly-calls" /opt/unbounded/bin/aks-flex-node
+for dir in /opt/unbounded /opt/unbounded/bin; do
+    [[ $(stat -c '%a' "$dir") == 755 ]] || fail "new directory $dir is not 0755"
+done
+
+# A host installed under the host root keeps it, whatever /usr/local allows: reset leaves the layout
+# there.
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/installed-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/installed-etc/config.json" >/dev/null
+assert_ran_from "$WORK_DIR/installed-calls" /opt/unbounded/bin/aks-flex-node
+
+# --install-dir is deprecated. It is accepted only when it matches the directory the installer
+# picks.
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/matching-calls" \
-BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/matching" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc \
-        --install-dir "$WORK_DIR/matching/bin/" \
+        --install-dir /opt/unbounded/bin/ \
         --config-path "$WORK_DIR/matching-etc/config.json" >"$WORK_DIR/matching.log" 2>&1 ||
     fail "a matching --install-dir was rejected"
 grep -q "deprecated" "$WORK_DIR/matching.log" || fail "--install-dir did not warn that it is deprecated"
 
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/mismatch-calls" \
-    BOOTSTRAP_TEST_HOST_ROOT="$WORK_DIR/mismatch" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         bash "$SCRIPT" --auth arc \
             --install-dir "$WORK_DIR/elsewhere" \
             --config-path "$WORK_DIR/mismatch-etc/config.json" >"$WORK_DIR/mismatch.log" 2>&1; then
-    fail "an --install-dir that disagrees with the agent was accepted"
+    fail "an --install-dir that disagrees with the installer was accepted"
 fi
-grep -q "where this agent looks for its binary" "$WORK_DIR/mismatch.log" || fail "mismatch was not explained"
-[[ ! -e "$WORK_DIR/elsewhere/aks-flex-node" && ! -e "$WORK_DIR/mismatch/bin/aks-flex-node" ]] ||
-    fail "a binary was installed despite the mismatch"
+grep -q "where this host keeps the agent" "$WORK_DIR/mismatch.log" || fail "mismatch was not explained"
+[[ ! -e "$WORK_DIR/elsewhere/aks-flex-node" ]] || fail "a binary was installed despite the mismatch"
 [[ ! -s "$WORK_DIR/mismatch-calls" ]] || fail "the agent was run despite the mismatch"
-
-# A host root that is not an absolute path is refused before anything is installed.
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/relative-calls" \
-    BOOTSTRAP_TEST_HOST_ROOT="relative/root" \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/relative-etc/config.json" >"$WORK_DIR/relative.log" 2>&1; then
-    fail "a relative host root was accepted"
-fi
-grep -q "invalid host root" "$WORK_DIR/relative.log" || fail "relative host root was not reported"
-[[ ! -e "$WORK_DIR/relative-calls" && ! -e "$WORK_DIR/relative" ]] || fail "the agent was installed under a relative host root"
-
-# Every case above installs under the work dir, so nothing may have been written to /usr/local.
-if [[ -n "$(ls -A "$USR_LOCAL_WRITES")" ]]; then
-    fail "a case wrote to /usr/local: $(cd "$USR_LOCAL_WRITES" && find . -mindepth 1 | tr '\n' ' ')"
-fi
-
-# A release before the host root has no host-root command and looks for its binary in /usr/local/bin,
-# so that is where it goes. These cases write to /usr/local, so they run last and only on the overlay.
-[[ "$(findmnt -n -o FSTYPE /usr/local)" == overlay ]] || fail "/usr/local is not overlaid; refusing the legacy cases"
-
-# On a host where /usr/local is read-only, such as Azure Container Linux, an older release cannot be
-# installed at all, and the operator is told to use a newer one.
-# A read-only bind over the overlay, since overlayfs cannot be remounted read-only.
-{ mount --bind /usr/local /usr/local && mount -o remount,bind,ro /usr/local; } || fail "could not make /usr/local read-only"
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/legacy-ro-calls" \
-    BOOTSTRAP_TEST_LEGACY=1 \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/legacy-ro-etc/config.json" >"$WORK_DIR/legacy-ro.log" 2>&1; then
-    fail "an older release was installed on a read-only /usr/local"
-fi
-umount /usr/local || fail "could not make /usr/local writable again"
-grep -q "predates /opt/unbounded" "$WORK_DIR/legacy-ro.log" || fail "a read-only /usr/local was not explained"
-[[ ! -s "$WORK_DIR/legacy-ro-calls" ]] || fail "the agent was run despite a failed install"
-
-# /usr/local/bin belongs to the image, so its mode is left as the image set it.
-legacy_bin_mode=$(stat -c '%a' /usr/local/bin)
-chmod 0750 /usr/local/bin
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/legacy-calls" \
-BOOTSTRAP_TEST_LEGACY=1 \
-AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/legacy-etc/config.json" >/dev/null
-grep -q BOOTSTRAP_TEST_CALLS "$USR_LOCAL_WRITES/bin/aks-flex-node" 2>/dev/null ||
-    fail "an older release was not installed at /usr/local/bin"
-[[ "$(sort -u "$WORK_DIR/legacy-calls.path")" == /usr/local/bin/aks-flex-node ]] ||
-    fail "an older release ran from $(sort -u "$WORK_DIR/legacy-calls.path" | tr '\n' ' ')"
-[[ $(stat -c '%a' /usr/local/bin) == 750 ]] || fail "the mode of an existing /usr/local/bin was changed"
-chmod "$legacy_bin_mode" /usr/local/bin
 
 echo "bootstrap script tests passed"

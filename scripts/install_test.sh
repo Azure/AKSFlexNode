@@ -12,7 +12,7 @@ WORK_DIR=$(mktemp -d)
 RUNNING_PID=""
 cleanup() {
     [[ -z "$RUNNING_PID" ]] || kill "$RUNNING_PID" 2>/dev/null || true
-    umount "$WORK_DIR/ro" 2>/dev/null || true
+    umount "$WORK_DIR/readonly/usr/local" 2>/dev/null || true
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -134,67 +134,50 @@ assert_no_staged_files
     fi
 )
 
-# The install directories come from the downloaded binary. It is asked from a copy under DATA_DIR,
-# because the download directory may be on a noexec /tmp.
-DATA_DIR="$WORK_DIR/data"
-HOST_ROOT_CALLS="$WORK_DIR/host-root-calls"
-
-# make_stub writes a binary that answers host-root with $2, or, with no $2, a release from before the
-# host root, which has no such command.
-make_stub() {
-    local path="$1" root="${2:-}"
-    {
-        printf '#!/bin/bash\n'
-        printf 'if [[ "${1:-}" == host-root ]]; then\n'
-        printf '    printf "%%s\\n" "$0" >> %q\n' "$HOST_ROOT_CALLS"
-        if [[ -n "$root" ]]; then
-            printf '    printf "%%s\\n" %q\n    exit 0\n' "$root"
-        else
-            printf '    echo "Error: unknown command \\"host-root\\"" >&2\n    exit 1\n'
-        fi
-        printf 'fi\nprintf "%%s\\n" "$*"\n'
-    } > "$path"
-    chmod 0755 "$path"
+# The install directories come from the host, never from running the binary. Each case points the
+# roots at the work dir.
+use_roots() {
+    HOST_ROOT="$WORK_DIR/$1/opt/unbounded"
+    LEGACY_ROOT="$WORK_DIR/$1/usr/local"
+    mkdir -p "$(dirname "$HOST_ROOT")" "$LEGACY_ROOT"
 }
 
-make_stub "$WORK_DIR/current-agent" "$WORK_DIR/root/opt/unbounded/"
-LEGACY_AGENT=false
-resolve_install_dir "$WORK_DIR/current-agent" >/dev/null || fail "resolving a current release failed"
-[[ "$INSTALL_DIR" == "$WORK_DIR/root/opt/unbounded/bin" &&
-   "$MANAGED_BINARY_DIR" == "$WORK_DIR/root/opt/unbounded/lib/aks-flex-node" ]] ||
-    fail "a current release was not installed under its host root: $INSTALL_DIR, $MANAGED_BINARY_DIR"
-[[ "$LEGACY_AGENT" == false ]] || fail "a current release was taken for an older one"
-[[ "$(tail -1 "$HOST_ROOT_CALLS")" == "$DATA_DIR"/.install.*/aks-flex-node ]] ||
-    fail "host-root ran from $(tail -1 "$HOST_ROOT_CALLS"), want the staging copy"
-if compgen -G "$DATA_DIR/.install.*" >/dev/null; then
-    fail "the staging copy was left in $DATA_DIR"
-fi
+assert_install_root() {
+    local want="$1" case="$2"
+    [[ "$INSTALL_DIR" == "$want/bin" && "$MANAGED_BINARY_DIR" == "$want/lib/aks-flex-node" ]] ||
+        fail "$case: installs under $INSTALL_DIR and $MANAGED_BINARY_DIR, want $want"
+    [[ -z "$(find "$LEGACY_ROOT" -name '.aks-flex-node.*' -print -quit 2>/dev/null)" ]] ||
+        fail "$case: the writability probe was left behind"
+}
 
-# The host root does not exist before the first install.
+# A writable /usr/local/bin is used as earlier releases used it, so one of them finds itself there,
+# and is created when missing, as install_binary would.
+use_roots fresh
+resolve_install_dir
+assert_install_root "$LEGACY_ROOT" "a fresh host"
+[[ -d "$LEGACY_ROOT/bin" ]] || fail "a missing /usr/local/bin was not created"
+
+# A host installed under the host root keeps it: reset leaves the layout there.
+use_roots installed
+mkdir -p "$HOST_ROOT"
+resolve_install_dir
+assert_install_root "$HOST_ROOT" "a host installed under the host root"
+
+# A host an earlier release installed has the host root linked to /usr/local, where its files are.
+use_roots linked
+ln -s "$LEGACY_ROOT" "$HOST_ROOT"
+resolve_install_dir
+assert_install_root "$LEGACY_ROOT" "a linked host"
+
+# Where /usr/local is read-only, as on Azure Container Linux, the binary goes under the host root,
+# which does not exist before the first install.
+use_roots readonly
+mount -t tmpfs -o ro tmpfs "$LEGACY_ROOT" || fail "could not mount a read-only /usr/local"
+resolve_install_dir
+umount "$LEGACY_ROOT"
+assert_install_root "$HOST_ROOT" "a read-only /usr/local"
 install_binary "$replacement_binary" >/dev/null || fail "install into a missing host root failed"
 [[ -x "$INSTALL_DIR/aks-flex-node" ]] || fail "binary missing under the new host root"
 [[ "$(stat -c %a "$INSTALL_DIR")" == "755" ]] || fail "host root bin dir mode is $(stat -c %a "$INSTALL_DIR"), want 755"
-
-make_stub "$WORK_DIR/relative-agent" "relative/root"
-if resolve_install_dir "$WORK_DIR/relative-agent" >/dev/null 2>&1; then
-    fail "a relative host root was accepted"
-fi
-
-make_stub "$WORK_DIR/legacy-agent"
-resolve_install_dir "$WORK_DIR/legacy-agent" >"$WORK_DIR/legacy.log" 2>&1 || fail "resolving an older release failed"
-[[ "$INSTALL_DIR" == "/usr/local/bin" && "$MANAGED_BINARY_DIR" == "/usr/local/lib/aks-flex-node" ]] ||
-    fail "an older release was not installed under /usr/local: $INSTALL_DIR"
-[[ "$LEGACY_AGENT" == true ]] || fail "an older release was not recorded as one"
-grep -q "predates /opt/unbounded" "$WORK_DIR/legacy.log" || fail "an older release was not reported"
-
-# Where that directory is read-only, as on Azure Container Linux, the operator is told why.
-mkdir -p "$WORK_DIR/ro"
-mount -t tmpfs -o ro tmpfs "$WORK_DIR/ro" || fail "could not mount a read-only directory"
-INSTALL_DIR="$WORK_DIR/ro"
-if install_binary "$replacement_binary" >"$WORK_DIR/ro.log" 2>&1; then
-    fail "installed into a read-only directory"
-fi
-umount "$WORK_DIR/ro"
-grep -q "predates /opt/unbounded and needs a writable" "$WORK_DIR/ro.log" || fail "a read-only install directory was not explained"
 
 printf 'install_test: ok\n'

@@ -49,7 +49,7 @@ var (
 // ownedBootstrapFlags are bootstrap.sh options this command sets itself, with the reason a caller
 // cannot pass them.
 var ownedBootstrapFlags = map[string]string{
-	"--install-dir":                "the agent chooses its install directory",
+	"--install-dir":                "the installer chooses its install directory",
 	"--config-path":                "the agent unit reads the default config path",
 	"--sp-client-secret-file":      "use this command's --sp-client-secret-file, which also writes the file to the host",
 	"--sp-client-certificate-file": "use this command's --sp-client-certificate-file, which also writes the file to the host",
