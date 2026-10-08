@@ -37,6 +37,23 @@ func TestHostLayout(t *testing.T) {
 			t.Fatalf("marker %s is not part of the layout a move copies", marker)
 		}
 	}
+
+	// A directory the move removes holds AKS Flex Node's own files and none
+	// of the agent library's, which install into shared directories.
+	for _, dir := range hostLayoutDirs() {
+		owned := false
+		for _, rel := range hostLayout() {
+			owned = owned || filepath.Dir(rel) == dir
+		}
+		if !owned {
+			t.Fatalf("directory %s holds no file of the layout", dir)
+		}
+		for _, path := range []string{library.NSpawnLifecycleBinary, library.LocalDNSNetworkHelper} {
+			if filepath.Dir(path) == filepath.Join(hostroot.LegacyPath, dir) {
+				t.Fatalf("directory %s holds the agent library's %s", dir, path)
+			}
+		}
+	}
 }
 
 func TestSyncDirs(t *testing.T) {

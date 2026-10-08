@@ -34,8 +34,8 @@ github.com/Azure/go-autorest/tracing v0.6.0 h1:TYi4+3m5t6K48TGI9AUdb+IzbnSxvnvUM
 github.com/Azure/go-autorest/tracing v0.6.0/go.mod h1:+vhtPC754Xsa23ID7GlGsrdKBpUA79WCAKPPZVC2DeU=
 github.com/Azure/kubelogin v0.2.20 h1:1RqZWK8PIrmr5S+ZcSbc8tG42isbq/TdoFgH/sWaH00=
 github.com/Azure/kubelogin v0.2.20/go.mod h1:STfhkSTxPV1z9EKH9Z/AK5hU0QThpmfrUkaU0AiMlcY=
-github.com/Azure/unbounded v0.9.1-0.20261008000744-3f8bdec23b00 h1:mfKdJ8RO4570BM5NyyQVp963qNCVsiB/jeAW0gFZbOM=
-github.com/Azure/unbounded v0.9.1-0.20261008000744-3f8bdec23b00/go.mod h1:2RK5DMRcw6YyVkJxNmrau5U60fMZ17TypnyhZdnzr/s=
+github.com/Azure/unbounded v0.9.1-0.20261008005930-47f78b42ecd6 h1:B3DAAEZxZpk1+RQakTDgRzF1IL8MZ0gq2GoQPLHNtMw=
+github.com/Azure/unbounded v0.9.1-0.20261008005930-47f78b42ecd6/go.mod h1:2RK5DMRcw6YyVkJxNmrau5U60fMZ17TypnyhZdnzr/s=
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1 h1:WJTmL004Abzc5wDB5VtZG2PJk5ndYDgVacGqfirKxjM=
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1/go.mod h1:tCcJZ0uHAmvjsVYzEFivsRTN00oz5BEsRgQHu5JZ9WE=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0 h1:Nljr4q1GRA/5vCrMONS+g4u4LRHNgOXVSh3O43J2CnI=

@@ -51,6 +51,14 @@ func hostLayout() []string {
 	return files
 }
 
+// hostLayoutDirs returns the directories, relative to the host root, that hold
+// only files of the host-side layout. Earlier releases created them for AKS
+// Flex Node alone, so moving a linked host removes them from the legacy root
+// once they are empty. bin and libexec are shared, and stay.
+func hostLayoutDirs() []string {
+	return []string{managedBinaryDir}
+}
+
 // reconcileHostRootUnderLock moves a host an earlier release installed from
 // /usr/local into a real /opt/unbounded once neither the current nor the
 // last-good binary is from such a release, and finishes a move that was
@@ -76,6 +84,7 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 	paths := defaultAgentUpgradePaths()
 	restarted, err := hostroot.ReconcileMove(ctx, log, hostroot.MoveOptions{
 		Files: hostLayout(),
+		Dirs:  hostLayoutDirs(),
 		// The directories a fresh installation's PrepareHostRoot creates.
 		Subdirs:      []string{"bin", managedBinaryDir, "libexec"},
 		Record:       hostRootAgentsPath,
