@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AKS Flex Node · bootstrap, components, and NVIDIA GPU activation</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; color: #172b43; background: #edf2f8; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible, a:focus-visible { outline: 3px solid #327dc8; outline-offset: 3px; }
+    .viewer { height: 100vh; height: 100dvh; width: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; padding: 18px 22px; }
+    .viewer-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .viewer-title { margin: 0; font-size: clamp(20px, 2vw, 29px); letter-spacing: -.025em; }
+    .viewer-subtitle { margin: 5px 0 0; color: #52647b; font-size: 13px; }
+    .header-controls { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .view-tabs { display: flex; gap: 3px; padding: 4px; border: 1px solid #c8d5e5; border-radius: 11px; background: #ffffff; }
+    .view-tab { padding: 9px 15px; border: 0; border-radius: 7px; background: transparent; color: #475d75; font-size: 13px; font-weight: 650; }
+    .view-tab[aria-selected="true"] { background: #175da8; color: #ffffff; }
+    .viewer-main { display: grid; grid-row: 2; grid-column: 1; grid-template-columns: minmax(0, 1.05fr) minmax(310px, 1fr); gap: 16px; min-height: 0; min-width: 0; }
+    .viewer:not([data-view="bootstrap"]) { grid-template-rows: auto minmax(0, 1fr); }
+    .components-panel { display: grid; grid-row: 2; grid-column: 1; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; border: 1px solid #c8d5e5; border-radius: 16px; overflow: hidden; background: #f7f9fc; }
+    .components-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #dce4ee; flex-wrap: wrap; }
+    .components-heading { font-size: 14px; font-weight: 650; }
+    .zoom-controls { display: flex; align-items: center; gap: 6px; }
+    .zoom-button { min-width: 34px; padding: 6px 10px; background: #ffffff; border: 1px solid #bdcde0; border-radius: 7px; color: #175da8; font-size: 13px; }
+    .zoom-button:disabled { opacity: .4; cursor: default; }
+    .zoom-button[aria-pressed="true"] { color: #ffffff; background: #175da8; border-color: #175da8; }
+    .zoom-value { min-width: 42px; text-align: center; color: #475d75; font-size: 12px; }
+    .components-viewport { min-height: 0; min-width: 0; overflow: auto; outline-offset: -3px; }
+    .components-stage { display: grid; place-items: center; }
+    .components-image { display: block; max-width: none; user-select: none; }
+    .components-error { color: #a64040; padding: 20px; margin: 0; }
+    .diagram-frame { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; overflow: hidden; border: 1px solid #c8d5e5; border-radius: 16px; background: #f7f9fc; }
+    .diagram-caption { display: flex; justify-content: space-between; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #dce4ee; font-size: 12px; color: #52647b; }
+    .diagram-caption strong { color: #172b43; }
+    .column-order { display: none; }
+    .flow-map { display: grid; grid-template-rows: repeat(12, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 0; padding: 14px 18px; min-width: 0; min-height: 0; }
+    .flow-item { position: relative; min-width: 0; min-height: 0; }
+    .flow-item:not(:last-child)::after { content: "↓"; position: absolute; left: 24px; bottom: -8px; width: 12px; height: 8px; color: #647a93; font-size: 12px; line-height: 8px; text-align: center; pointer-events: none; }
+    .flow-node { --accent: #175da8; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; height: 100%; padding: 5px 12px; border: 1px solid #bdcde0; border-radius: 9px; background: #ffffff; color: #172b43; text-align: left; }
+    .flow-node:hover { background: #edf5ff; }
+    .flow-node.visited { background: #f3f7fc; }
+    .flow-node.selected { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); background: #edf5ff; }
+    .flow-number { display: grid; place-items: center; width: 34px; height: 34px; background: var(--accent); color: #ffffff; border-radius: 9px; font-size: 14px; font-weight: 700; }
+    .flow-copy { min-width: 0; }
+    .flow-label, .flow-mobile-label { display: block; font-size: clamp(15px, 1.3vw, 19px); font-weight: 650; line-height: 1.2; }
+    .flow-mobile-label { display: none; }
+    .flow-hint { display: block; margin-top: 3px; font-size: 12px; color: #475d75; line-height: 1.2; }
+    .flow-addon { display: block; margin-top: 1px; color: #354e6b; font-size: 12px; line-height: 1.2; }
+    .flow-node.has-addon .flow-label { font-size: clamp(15px, 1.2vw, 18px); }
+    .flow-category { max-width: 130px; color: var(--accent); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; text-align: right; }
+    .detail-panel { --accent: #175da8; display: flex; flex-direction: column; gap: 18px; min-width: 0; min-height: 0; padding: clamp(18px, 2.3vw, 32px); border: 1px solid #c8d5e5; border-radius: 16px; background: #ffffff; overflow: auto; }
+    .detail-top { display: flex; align-items: center; gap: 14px; }
+    .detail-top > div:nth-child(2) { min-width: 0; flex: 1; }
+    .detail-modes { display: flex; gap: 3px; padding: 3px; border: 1px solid #c8d5e5; border-radius: 9px; }
+    .detail-mode { padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: #475d75; font-size: 11px; }
+    .detail-mode[aria-pressed="true"] { background: #175da8; color: #ffffff; }
+    .ownership-detail { min-width: 0; }
+    .ownership-summary { margin: 0 0 12px; color: #52647b; font-size: 13px; line-height: 1.4; }
+    .owner-group { padding: 12px 14px; border: 1px solid #c8d5e5; border-radius: 10px; background: #f4f8fe; }
+    .owner-group + .owner-group { margin-top: 10px; }
+    .owner-group[data-owner="core"] { border-color: #9bcab9; background: #eff9f5; }
+    .owner-group h3 { margin: 0 0 6px; font-size: 15px; }
+    .owner-group[data-owner="core"] h3 { color: #08776c; }
+    .owner-group ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.45; }
+    .owner-source { margin: 10px 0 0; color: #52647b; font: 11px/1.4 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+    .step-badge { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 14px; background: #eef2f8; color: var(--accent); font-weight: 700; font-size: 23px; flex-shrink: 0; }
+    .step-phase { color: var(--accent); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .step-position { color: #52647b; font-size: 13px; margin-top: 5px; }
+    .detail-title { font-size: clamp(23px, 2.35vw, 34px); line-height: 1.15; letter-spacing: -.025em; margin: 0; }
+    .detail-lines { margin: 0; padding-left: 21px; font-size: clamp(14px, 1.25vw, 18px); line-height: 1.5; }
+    .detail-lines li + li { margin-top: 10px; }
+    .command-block { min-width: 0; }
+    .command-options { display: flex; gap: 5px; margin-bottom: 8px; }
+    .command-option { border: 1px solid #bdcde0; border-radius: 7px; padding: 5px 10px; color: #175da8; background: #ffffff; font-size: 12px; }
+    .command-option[aria-pressed="true"] { background: #175da8; border-color: #175da8; color: #ffffff; }
+    .detail-code { margin: 0; padding: 12px 14px; border-radius: 10px; border: 1px solid #d9e3ef; color: #175da8; background: #f4f7fb; font: 13px/1.55 "SFMono-Regular", Consolas, monospace; overflow-x: auto; overflow-wrap: normal; white-space: pre; }
+    .command-note { margin: 6px 0 0; color: #52647b; font-size: 11px; line-height: 1.3; }
+    .context-box { padding: 16px; border-radius: 12px; border: 1px solid #d4e1ef; background: #f4f8fe; }
+    .context-box h3 { font-size: 16px; margin: 0 0 8px; }
+    .context-box p { color: #52647b; font-size: 14px; line-height: 1.5; margin: 0; }
+    .next-hint { color: #52647b; font-size: 12px; line-height: 1.4; margin: auto 0 0; padding-top: 8px; }
+    .viewer-footer { display: grid; gap: 9px; }
+    .footer-controls { display: grid; grid-template-columns: 120px minmax(0, 1fr) 120px; align-items: center; gap: 18px; }
+    .nav-button { border: 1px solid #b9cce2; border-radius: 10px; padding: 10px 12px; color: #175da8; background: #ffffff; font-weight: 600; font-size: 14px; }
+    .nav-button:disabled { opacity: .4; cursor: default; }
+    .nav-button:not(:disabled):hover { background: #edf5ff; }
+    .step-navigation { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 5px; min-width: 0; }
+    .step-jump { padding: 9px 2px; border-radius: 8px; border: 1px solid #c5d4e6; color: #52647b; background: #ffffff; font-size: 12px; }
+    .step-jump[aria-current="step"] { background: #175da8; color: #ffffff; border-color: #175da8; font-weight: 700; }
+    .footer-meta { display: flex; align-items: center; gap: 16px; }
+    .keyboard-help { font-size: 12px; color: #52647b; white-space: nowrap; }
+    kbd { font: inherit; font-weight: 600; color: #172b43; }
+    progress { width: 100%; min-width: 0; height: 6px; appearance: none; border: 0; border-radius: 4px; background: #d6e0ee; color: #327dc8; }
+    progress::-webkit-progress-bar { background: #d6e0ee; border-radius: 4px; }
+    progress::-webkit-progress-value { background: #327dc8; border-radius: 4px; }
+    progress::-moz-progress-bar { background: #327dc8; border-radius: 4px; }
+    .screen-reader-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    [hidden] { display: none !important; }
+    noscript { position: fixed; inset: 0; display: grid; place-content: center; background: #ffffff; padding: 24px; z-index: 2; }
+    @media (max-height: 960px) {
+      .flow-map { gap: 6px; padding: 12px 16px; }
+      .flow-node { grid-template-columns: 26px minmax(0, 1fr) auto; padding: 3px 10px; gap: 10px; }
+      .flow-number { width: 26px; height: 26px; font-size: 12px; border-radius: 7px; }
+      .flow-hint { display: none; }
+      .flow-item:not(:last-child)::after { left: 17px; height: 6px; bottom: -6px; line-height: 6px; font-size: 10px; }
+    }
+    @media (max-height: 820px) {
+      .flow-addon { display: none; }
+    }
+    @media (max-height: 760px) {
+      .viewer { padding: 12px 16px; gap: 10px; }
+      .viewer-title { font-size: 23px; }
+      .detail-panel { gap: 12px; padding: 18px; }
+      .step-badge { width: 42px; height: 42px; border-radius: 10px; font-size: 19px; }
+      .detail-title { font-size: 25px; }
+      .detail-lines { font-size: 14px; line-height: 1.4; }
+      .detail-lines li + li { margin-top: 7px; }
+      .context-box { padding: 12px; }
+      .context-box p { font-size: 13px; line-height: 1.4; }
+      .detail-code { font-size: 12px; padding: 10px; }
+      .ownership-summary { font-size: 12px; margin-bottom: 8px; }
+      .owner-group { padding: 10px; }
+      .owner-group ul { font-size: 12px; }
+      .owner-group h3 { font-size: 13px; }
+    }
+    @media (max-width: 760px) {
+      .viewer { padding: 10px; gap: 8px; }
+      .viewer-title { font-size: 14px; }
+      .viewer-header { gap: 8px; }
+      .header-controls { gap: 0; }
+      .view-tabs { padding: 3px; gap: 2px; }
+      .view-tab { padding: 8px 7px; font-size: 11px; }
+      .components-toolbar { padding: 8px 10px; }
+      .components-heading { font-size: 12px; }
+      .zoom-button { padding: 6px 8px; font-size: 12px; }
+      .viewer-subtitle { display: none; }
+      .viewer-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1.15fr); gap: 8px; }
+      .diagram-caption { padding: 6px 10px; font-size: 11px; }
+      .single-column-order { display: none; }
+      .column-order { display: inline; }
+      .flow-map { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); grid-auto-flow: column; padding: 8px; gap: 6px; }
+      .flow-node { grid-template-columns: 18px minmax(0, 1fr); gap: 5px; padding: 3px 5px; }
+      .flow-number { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
+      .flow-category, .flow-label, .flow-hint, .flow-addon { display: none; }
+      .flow-mobile-label { display: block; font-size: 12px; }
+      .flow-item:not(:last-child)::after { left: 8px; }
+      .flow-item:nth-child(4n)::after { display: none; }
+      .detail-panel { gap: 8px; padding: 12px; }
+      .detail-top { gap: 9px; }
+      .step-badge { width: 28px; height: 28px; font-size: 13px; border-radius: 7px; }
+      .step-phase { font-size: 10px; }
+      .step-position { margin-top: 2px; font-size: 11px; }
+      .detail-title { font-size: 20px; }
+      .detail-lines { font-size: 12px; line-height: 1.35; padding-left: 17px; }
+      .detail-lines li + li { margin-top: 5px; }
+      .detail-code { font-size: 10px; line-height: 1.3; padding: 7px; }
+      .detail-mode { padding: 5px 6px; font-size: 10px; }
+      .ownership-summary { font-size: 11px; line-height: 1.25; margin-bottom: 6px; }
+      .owner-group { padding: 7px 9px; }
+      .owner-group + .owner-group { margin-top: 6px; }
+      .owner-group h3 { font-size: 12px; margin-bottom: 4px; }
+      .owner-group ul { font-size: 11px; line-height: 1.3; }
+      .owner-source { display: none; }
+      .command-options { margin-bottom: 5px; }
+      .command-option { font-size: 10px; padding: 4px 8px; }
+      .command-note { font-size: 10px; }
+      .context-box, .next-hint { display: none; }
+      .footer-controls { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .step-navigation { grid-column: 1 / -1; grid-row: 1; gap: 3px; }
+      .nav-button { padding: 8px; font-size: 12px; }
+      .step-jump { font-size: 10px; padding: 8px 1px; }
+      .footer-meta { flex-wrap: wrap; gap: 5px; }
+      .keyboard-help { font-size: 10px; }
+    }
+    @media (max-height: 740px) and (max-width: 760px) {
+      .detail-panel { gap: 6px; padding: 10px; }
+      .ownership-summary, .command-note { display: none; }
+    }
+    @media (max-height: 660px) and (min-width: 761px) {
+      .context-box, .next-hint, .single-column-order { display: none; }
+      .column-order { display: inline; }
+      .flow-map { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(6, minmax(0, 1fr)); grid-auto-flow: column; gap: 6px; padding: 10px; }
+      .flow-node { grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 4px 8px; }
+      .flow-number { width: 24px; height: 24px; font-size: 12px; }
+      .flow-category, .flow-label { display: none; }
+      .flow-mobile-label { display: block; font-size: 14px; }
+      .flow-item:nth-child(6n)::after { display: none; }
+    }
+    @media (max-height: 530px) and (min-width: 761px) {
+      .viewer-subtitle { display: none; }
+      .viewer-title { font-size: 20px; }
+      .viewer-main { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); }
+      .detail-panel { gap: 6px; padding: 10px; }
+      .detail-title { font-size: 21px; }
+      .detail-lines { font-size: 12px; line-height: 1.35; }
+      .detail-lines li + li { margin-top: 5px; }
+      .step-badge { width: 30px; height: 30px; font-size: 15px; }
+      .detail-code { padding: 6px 9px; font-size: 11px; line-height: 1.25; }
+      .command-options { margin-bottom: 5px; }
+      .command-option { font-size: 11px; padding: 3px 8px; }
+      .flow-node { grid-template-columns: 20px minmax(0, 1fr); padding: 3px 6px; gap: 6px; }
+      .flow-number { width: 20px; height: 20px; font-size: 11px; }
+      .flow-mobile-label { font-size: 12px; }
+      .ownership-summary { display: none; }
+      .owner-group { padding: 6px 9px; }
+      .owner-group + .owner-group { margin-top: 5px; }
+      .owner-group ul { font-size: 11px; line-height: 1.3; }
+      .owner-group h3 { font-size: 12px; margin-bottom: 3px; }
+      .owner-source { display: none; }
+      .command-note { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="viewer" data-view="bootstrap">
+    <header class="viewer-header">
+      <div>
+        <h1 class="viewer-title">AKS Flex Node</h1>
+        <p id="viewer-subtitle" class="viewer-subtitle">Full-flow overview + selected-step detail. Nothing advances automatically.</p>
+      </div>
+      <div class="header-controls">
+        <div id="view-tabs" class="view-tabs" role="tablist" aria-label="Viewer sections">
+          <button id="bootstrap-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="bootstrap-panel" tabindex="0">Bootstrap</button>
+          <button id="components-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="components-panel" tabindex="-1">Components</button>
+          <button id="nvidia-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="nvidia-panel" tabindex="-1">NVIDIA GPU</button>
+        </div>
+      </div>
+    </header>
+    <main id="bootstrap-panel" class="viewer-main" role="tabpanel" aria-labelledby="bootstrap-tab">
+      <section class="diagram-frame" aria-label="Complete bootstrap flow">
+        <div class="diagram-caption"><strong>Bootstrap flow</strong><span class="single-column-order">Executor · Flex-specific additions noted</span><span class="column-order">Read down each column</span></div>
+        <ol id="flow-map" class="flow-map" aria-label="Bootstrap steps in sequence"></ol>
+        <!-- Keep detailed source content inert; never shrink it into an unreadable thumbnail. -->
+        <template id="flow-source">
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="1810" viewBox="0 0 1520 1810" role="img" aria-labelledby="title description">
+  <title id="title">AKS Flex Node bootstrap flow and steps</title>
+  <desc id="description">The primary AKS Flex Node bootstrap path using a durable Azure identity and fresh pool bootstrap data. The operator first prepares the cluster, networking, Flex pool, and authorized Linux host. On the host, the script installs the agent, fetches bootstrap data and saves protected configuration, then runs preflight. The start command ensures the ARM Machine and adopts its ETag, resolves the kube1 worker goal, prepares the host, provisions the rootfs and AKS customizations, starts the worker, waits for the kubelet service, and starts Node Problem Detector. It saves applied state and installs and starts the host daemon. The daemon obtains a separate Kubernetes client certificate and enters Machine polling and Node watch reconciliation. The operator must separately verify Kubernetes Node readiness and workload networking. Blocking errors stop the sequence; bootstrap is not an automatic rollback transaction.</desc>
+
+  <defs>
+    <style>
+      text { font-family: Inter, "Segoe UI", Arial, sans-serif; fill: #172b43; }
+      .title { font-size: 32px; font-weight: 700; }
+      .subtitle { font-size: 17px; fill: #52647b; }
+      .heading { font-size: 21px; font-weight: 700; }
+      .section { font-size: 18px; font-weight: 700; }
+      .body { font-size: 16px; }
+      .small { font-size: 14px; fill: #52647b; }
+      .label { font-size: 14px; font-weight: 600; }
+      .tag { font-size: 12px; font-weight: 700; }
+      .number { font-size: 17px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+      .mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; }
+      .script-text { fill: #7051a7; }
+      .flex-text { fill: #175da8; }
+      .core-text { fill: #08776c; }
+      .error-text { fill: #a64040; }
+      .muted { fill: #52647b; }
+      .flow { fill: none; stroke: #536a85; stroke-width: 2.5; marker-end: url(#arrow); }
+      .exchange { fill: none; stroke: #327dc8; stroke-width: 2; marker-start: url(#exchange-arrow); marker-end: url(#exchange-arrow); }
+      .failure { fill: none; stroke: #bd6262; stroke-width: 2; marker-end: url(#failure-arrow); }
+    </style>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L9 4.5 L0 9 Z" fill="#536a85"/>
+    </marker>
+    <marker id="exchange-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#327dc8"/>
+    </marker>
+    <marker id="failure-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#bd6262"/>
+    </marker>
+  </defs>
+
+  <rect width="1520" height="1810" fill="#f7f9fc"/>
+  <text x="60" y="56" class="title">AKS Flex Node bootstrap flow</text>
+  <text x="60" y="85" class="subtitle">From an authorized Linux host to an nspawn worker and a continuously reconciling Flex daemon.</text>
+
+  <g id="operator-prerequisites">
+    <rect x="60" y="116" width="1400" height="128" rx="14" fill="#edf5ff" stroke="#a8c8ec" stroke-width="1.5"/>
+    <text x="84" y="146" class="section flex-text">Before starting: operator-owned prerequisites</text>
+    <text x="84" y="177" class="section">Cluster &amp; networking</text>
+    <text x="84" y="202" class="small">AKS Flex pool + BYO CNI + configured Unbounded-Net Sites</text>
+    <text x="84" y="225" class="small">API access and node / pod / service connectivity</text>
+    <line x1="526" y1="162" x2="526" y2="228" stroke="#c7daee"/>
+    <text x="550" y="177" class="section">Host &amp; Azure identity</text>
+    <text x="550" y="202" class="small">Ubuntu 24.04; VM / Arc managed identity or service principal</text>
+    <text x="550" y="225" class="small">Pool-scoped AKS Flex Node Agent Role; script tools installed</text>
+    <line x1="992" y1="162" x2="992" y2="228" stroke="#c7daee"/>
+    <text x="1016" y="177" class="section">Run the bootstrap script as root</text>
+    <text x="1016" y="202" class="mono flex-text">bootstrap.sh --fetch-bootstrap-data …</text>
+    <text x="1016" y="225" class="small">Supply cluster, pool, auth mode, and agent version.</text>
+  </g>
+
+  <rect x="60" y="286" width="920" height="1318" rx="18" fill="#ffffff" stroke="#bac8d9" stroke-width="1.5"/>
+  <text x="84" y="317" class="section">On the Flex host: execute top to bottom</text>
+  <text x="1060" y="317" class="section muted">External systems / supporting notes</text>
+
+  <!-- scripts/bootstrap.sh main(): install binary, render/install config, preflight, start. -->
+  <g id="step-1">
+    <circle cx="108" cy="366" r="18" fill="#8062b3"/>
+    <text x="108" y="372" class="number">1</text>
+    <rect x="140" y="340" width="816" height="92" rx="11" fill="#f5f1ff" stroke="#c8b7e2"/>
+    <text x="160" y="369" class="heading">Download and install the agent</text>
+    <text x="936" y="368" text-anchor="end" class="tag script-text">SCRIPT</text>
+    <text x="160" y="392" class="small">Validate archive paths; verify SHA-256 when configured; install the matching architecture.</text>
+    <text x="160" y="414" class="mono script-text">/usr/local/bin/aks-flex-node</text>
+  </g>
+  <path d="M548 432 V456" class="flow"/>
+
+  <g id="agent-artifacts">
+    <rect x="1060" y="340" width="400" height="92" rx="11" fill="#f8fafc" stroke="#c3cedd"/>
+    <text x="1080" y="370" class="heading">Agent release / mirror</text>
+    <text x="1080" y="395" class="small">Versioned GitHub release or configured URL</text>
+    <text x="1080" y="416" class="small">Agent archive for Linux amd64 / arm64</text>
+  </g>
+  <path d="M956 385 H1060" class="exchange"/>
+  <text x="1008" y="375" text-anchor="middle" class="label flex-text">HTTPS</text>
+
+  <g id="step-2">
+    <circle cx="108" cy="482" r="18" fill="#8062b3"/>
+    <text x="108" y="488" class="number">2</text>
+    <rect x="140" y="456" width="816" height="98" rx="11" fill="#f5f1ff" stroke="#c8b7e2"/>
+    <text x="160" y="485" class="heading">Fetch bootstrap data and write configuration</text>
+    <text x="936" y="484" text-anchor="end" class="tag script-text">SCRIPT</text>
+    <text x="160" y="510" class="small">Authenticate to AKS; merge pool data, host identity, node name, and configuration overrides.</text>
+    <text x="160" y="533" class="mono script-text">/etc/aks-flex-node/config.json  ·  root-owned, mode 0600</text>
+  </g>
+  <path d="M548 554 V578" class="flow"/>
+
+  <g id="aks-bootstrap-data">
+    <rect x="1060" y="456" width="400" height="98" rx="11" fill="#edf5ff" stroke="#a8c8ec"/>
+    <text x="1080" y="486" class="heading flex-text">AKS pool bootstrap-data API</text>
+    <text x="1080" y="511" class="small">Cluster endpoint, CA, short-lived token, settings</text>
+    <text x="1080" y="534" class="mono flex-text">listBootstrapData</text>
+  </g>
+  <path d="M956 505 H1060" class="exchange"/>
+  <text x="1008" y="495" text-anchor="middle" class="label flex-text">ARM</text>
+
+  <g id="step-3">
+    <circle cx="108" cy="604" r="18" fill="#8062b3"/>
+    <text x="108" y="610" class="number">3</text>
+    <rect x="140" y="578" width="816" height="98" rx="11" fill="#f5f1ff" stroke="#c8b7e2"/>
+    <text x="160" y="607" class="heading">Run preflight checks</text>
+    <text x="936" y="606" text-anchor="end" class="tag script-text">PREFLIGHT</text>
+    <text x="160" y="632" class="small">Check configuration, host, API connectivity, artifact sources, and Arc when selected.</text>
+    <text x="160" y="655" class="small">No OS / worker provisioning yet; blocking errors stop the script.</text>
+  </g>
+
+  <g id="fail-fast-note">
+    <rect x="1060" y="578" width="400" height="112" rx="11" fill="#fff3f1" stroke="#ddb1ab"/>
+    <text x="1080" y="608" class="heading error-text">Fail-fast gates</text>
+    <text x="1080" y="633" class="small">Blocking errors stop later bootstrap steps.</text>
+    <text x="1080" y="656" class="small">Agent + config are already installed at preflight.</text>
+    <text x="1080" y="678" class="small">No automatic rollback is implied.</text>
+  </g>
+  <path d="M956 628 H1060" class="failure"/>
+  <text x="1008" y="618" text-anchor="middle" class="label error-text">fail</text>
+
+  <path d="M548 676 V724" class="flow"/>
+  <rect x="339" y="686" width="418" height="25" rx="6" fill="#ffffff"/>
+  <text x="548" y="704" text-anchor="middle" class="mono flex-text">aks-flex-node start --config …</text>
+
+  <!-- EnsureMachine precedes host setup. Bootstrap adopts the ETag, not the entire remote goal. -->
+  <g id="step-4">
+    <circle cx="108" cy="750" r="18" fill="#327dc8"/>
+    <text x="108" y="756" class="number">4</text>
+    <rect x="140" y="724" width="816" height="100" rx="11" fill="#f2f7ff" stroke="#a8c8ec"/>
+    <text x="160" y="753" class="heading">Ensure the AKS Machine and capture its ETag</text>
+    <text x="936" y="752" text-anchor="end" class="tag flex-text">FLEX</text>
+    <text x="160" y="779" class="small">GET the Machine; create if absent, or update when its Kubernetes version differs.</text>
+    <text x="160" y="802" class="small">Keep local bootstrap settings authoritative; use the returned ETag as the applied baseline.</text>
+  </g>
+  <path d="M548 824 V848" class="flow"/>
+
+  <g id="aks-machine-api">
+    <rect x="1060" y="724" width="400" height="110" rx="11" fill="#edf5ff" stroke="#a8c8ec"/>
+    <text x="1080" y="754" class="heading flex-text">AKS ARM Machine</text>
+    <text x="1080" y="778" class="small">Durable Azure identity authenticates this call.</text>
+    <text x="1080" y="801" class="small">Registration is required in the primary path.</text>
+    <text x="1080" y="823" class="small">Runs before OS / worker mutation.</text>
+  </g>
+  <path d="M956 776 H1060" class="exchange"/>
+  <text x="1008" y="766" text-anchor="middle" class="label flex-text">GET / PUT</text>
+
+  <g id="step-5">
+    <circle cx="108" cy="874" r="18" fill="#327dc8"/>
+    <text x="108" y="880" class="number">5</text>
+    <rect x="140" y="848" width="816" height="88" rx="11" fill="#f2f7ff" stroke="#a8c8ec"/>
+    <text x="160" y="877" class="heading">Resolve the initial worker goal</text>
+    <text x="936" y="876" text-anchor="end" class="tag flex-text">FLEX + CORE</text>
+    <text x="160" y="902" class="small">Adapt Flex configuration → shared AgentConfig; select kube1; resolve artifact sources.</text>
+    <text x="160" y="924" class="small">Seed applied state in memory. Persist it only after worker startup succeeds.</text>
+  </g>
+  <path d="M548 936 V960" class="flow"/>
+
+  <g id="shared-core-note">
+    <rect x="1060" y="848" width="400" height="212" rx="11" fill="#eaf8f2" stroke="#9bcab9"/>
+    <text x="1080" y="881" class="heading core-text">Shared Unbounded agent library</text>
+    <text x="1080" y="909" class="small">Flex invokes embedded Go code, not another</text>
+    <text x="1080" y="932" class="small">agent process.</text>
+    <line x1="1080" y1="950" x2="1440" y2="950" stroke="#c1ddcf"/>
+    <text x="1080" y="976" class="section">Goal → host → rootfs → node start</text>
+    <text x="1080" y="1003" class="small">Green steps use shared execution phases</text>
+    <text x="1080" y="1026" class="small">with Flex-specific configuration and additions.</text>
+    <text x="1080" y="1048" class="small">OS / worker mutation begins at step 6.</text>
+  </g>
+
+  <g id="step-6">
+    <circle cx="108" cy="986" r="18" fill="#168b7d"/>
+    <text x="108" y="992" class="number">6</text>
+    <rect x="140" y="960" width="816" height="100" rx="11" fill="#eff9f5" stroke="#9bcab9"/>
+    <text x="160" y="989" class="heading">Prepare the host</text>
+    <text x="936" y="988" text-anchor="end" class="tag core-text">HOST PHASE</text>
+    <text x="160" y="1015" class="small">Install missing packages; configure OS and nftables; disable Docker and swap; harden APT.</text>
+    <text x="160" y="1038" class="small">Apply optional Flex host routes and route-overlap checks.</text>
+  </g>
+  <path d="M548 1060 V1084" class="flow"/>
+
+  <g id="step-7">
+    <circle cx="108" cy="1110" r="18" fill="#168b7d"/>
+    <text x="108" y="1116" class="number">7</text>
+    <rect x="140" y="1084" width="816" height="100" rx="11" fill="#eff9f5" stroke="#9bcab9"/>
+    <text x="160" y="1113" class="heading">Provision kube1 and apply AKS customizations</text>
+    <text x="936" y="1112" text-anchor="end" class="tag core-text">ROOTFS PHASE</text>
+    <text x="160" y="1139" class="small">Stage images; create the rootfs; install Kubernetes / CRI / CNI binaries.</text>
+    <text x="160" y="1162" class="small">Configure nspawn dependencies; add the Flex binary and Node Problem Detector.</text>
+  </g>
+  <path d="M548 1184 V1208" class="flow"/>
+
+  <g id="worker-artifacts">
+    <rect x="1060" y="1084" width="400" height="100" rx="11" fill="#f8fafc" stroke="#c3cedd"/>
+    <text x="1080" y="1114" class="heading">Worker artifacts</text>
+    <text x="1080" y="1140" class="small">OCI rootfs + Kubernetes / CRI / CNI + NPD</text>
+    <text x="1080" y="1163" class="small">Online, mirrored, or offline sources</text>
+  </g>
+  <path d="M956 1135 H1060" class="exchange"/>
+  <text x="1008" y="1125" text-anchor="middle" class="label flex-text">fetch / stage</text>
+
+  <!-- WaitForKubelet checks the local systemd service; it is not a Node Ready gate. -->
+  <g id="step-8">
+    <circle cx="108" cy="1234" r="18" fill="#168b7d"/>
+    <text x="108" y="1240" class="number">8</text>
+    <rect x="140" y="1208" width="816" height="112" rx="11" fill="#eff9f5" stroke="#9bcab9"/>
+    <text x="160" y="1237" class="heading">Start the worker and check local services</text>
+    <text x="936" y="1236" text-anchor="end" class="tag core-text">NODE START</text>
+    <text x="160" y="1263" class="small">Boot kube1; start containerd and kubelet; begin kubelet TLS bootstrap.</text>
+    <text x="160" y="1286" class="small">Wait for the kubelet systemd service to be active, then start Node Problem Detector.</text>
+    <text x="160" y="1308" class="label core-text">Local service health does not prove that the Kubernetes Node is Ready.</text>
+  </g>
+  <path d="M548 1320 V1344" class="flow"/>
+
+  <g id="step-9">
+    <circle cx="108" cy="1370" r="18" fill="#327dc8"/>
+    <text x="108" y="1376" class="number">9</text>
+    <rect x="140" y="1344" width="816" height="112" rx="11" fill="#f2f7ff" stroke="#a8c8ec"/>
+    <text x="160" y="1373" class="heading">Persist applied state; install and start the daemon</text>
+    <text x="936" y="1372" text-anchor="end" class="tag flex-text">FLEX</text>
+    <text x="160" y="1399" class="small">Save ETag, Kubernetes version, and active side kube1, with a state-file checksum.</text>
+    <text x="160" y="1422" class="small">Install service / recovery assets; enable and start the host daemon with systemd.</text>
+    <text x="160" y="1444" class="mono flex-text">aks-flex-node-agent.service</text>
+  </g>
+  <path d="M548 1456 V1480" class="flow"/>
+
+  <g id="step-10">
+    <circle cx="108" cy="1506" r="18" fill="#327dc8"/>
+    <text x="108" y="1512" class="number">10</text>
+    <rect x="140" y="1480" width="816" height="112" rx="11" fill="#f2f7ff" stroke="#a8c8ec"/>
+    <text x="160" y="1509" class="heading">Enter steady-state reconciliation</text>
+    <text x="936" y="1508" text-anchor="end" class="tag flex-text">DAEMON</text>
+    <text x="160" y="1535" class="small">Obtain the daemon client certificate; poll ARM Machine goals and watch the local Node.</text>
+    <text x="160" y="1558" class="small">Handle optional MachineOperations; host changes remain gated by lifecycle signals.</text>
+    <text x="160" y="1580" class="label flex-text">Kubelet and daemon certificates are separate.</text>
+  </g>
+
+  <g id="kubernetes-api">
+    <rect x="1060" y="1208" width="400" height="384" rx="11" fill="#edf5ff" stroke="#a8c8ec"/>
+    <text x="1080" y="1241" class="heading flex-text">AKS Kubernetes API</text>
+    <text x="1080" y="1278" class="section">Step 8: kubelet trust</text>
+    <text x="1080" y="1304" class="small">Bootstrap token → kubelet client certificate</text>
+    <text x="1080" y="1327" class="small">Node registration proceeds through this API.</text>
+    <line x1="1080" y1="1348" x2="1440" y2="1348" stroke="#c7daee"/>
+    <text x="1080" y="1376" class="section">Step 10: daemon trust</text>
+    <text x="1080" y="1402" class="small">Separate client certificate + rotation</text>
+    <text x="1080" y="1425" class="small">Scoped Node watch and optional operations</text>
+    <line x1="1080" y1="1447" x2="1440" y2="1447" stroke="#c7daee"/>
+    <text x="1080" y="1475" class="section">Azure identity remains separate</text>
+    <text x="1080" y="1501" class="small">Used for ARM Machine access; it is not</text>
+    <text x="1080" y="1524" class="small">replaced by the Kubernetes bootstrap token.</text>
+    <text x="1080" y="1564" class="label flex-text">Bootstrap trust → ongoing credentials</text>
+  </g>
+  <path d="M956 1264 H1060" class="exchange"/>
+  <text x="1008" y="1254" text-anchor="middle" class="label flex-text">TLS</text>
+  <path d="M956 1540 H1060" class="exchange"/>
+  <text x="1008" y="1530" text-anchor="middle" class="label flex-text">CSR / watch</text>
+
+  <path d="M548 1592 V1640" class="flow"/>
+  <g id="operator-verification">
+    <rect x="60" y="1640" width="1400" height="110" rx="14" fill="#eaf8f2" stroke="#9bcab9" stroke-width="1.5"/>
+    <text x="84" y="1673" class="heading core-text">Operator verification: confirm the worker is actually usable</text>
+    <text x="84" y="1700" class="body">Check Kubernetes Node Ready and the Azure Machine; run a smoke workload and validate pod networking.</text>
+    <text x="84" y="1727" class="mono core-text">kubectl get nodes -o wide   ·   az aks machine list …   ·   journalctl -u aks-flex-node-agent</text>
+  </g>
+
+  <text x="60" y="1785" class="small">Scope: durable Azure identity + --fetch-bootstrap-data path. Bootstrap-token-only evaluation and development backends have different registration behavior.</text>
+</svg>
+        </template>
+      </section>
+      <section id="detail-panel" class="detail-panel" aria-labelledby="detail-title">
+        <div class="detail-top">
+          <div id="step-badge" class="step-badge" aria-hidden="true">P</div>
+          <div><div id="step-phase" class="step-phase"></div><div id="step-position" class="step-position"></div></div>
+          <div class="detail-modes" role="group" aria-label="Selected step information">
+            <button id="mode-details" class="detail-mode" type="button" aria-pressed="true">Details</button>
+            <button id="mode-ownership" class="detail-mode" type="button" aria-pressed="false">Ownership</button>
+          </div>
+        </div>
+        <h2 id="detail-title" class="detail-title"></h2>
+        <section id="ownership-detail" class="ownership-detail" aria-label="Operation ownership" hidden>
+          <p id="ownership-summary" class="ownership-summary"></p>
+          <div id="ownership-groups"></div>
+          <p id="ownership-source" class="owner-source"></p>
+        </section>
+        <ul id="detail-lines" class="detail-lines"></ul>
+        <div id="command-block" class="command-block" hidden>
+          <div id="command-options" class="command-options" role="group" aria-label="Verification commands" hidden></div>
+          <pre id="detail-code" class="detail-code"></pre>
+          <p id="command-note" class="command-note" hidden></p>
+        </div>
+        <aside id="context-box" class="context-box" hidden><h3 id="context-title"></h3><p id="context-body"></p></aside>
+        <p id="next-hint" class="next-hint"></p>
+      </section>
+    </main>
+    <section id="components-panel" class="components-panel" role="tabpanel" aria-labelledby="components-tab" hidden>
+      <div class="components-toolbar">
+        <span class="components-heading">Node agent components · goal fetching + blue/green upgrades</span>
+        <div class="zoom-controls" role="group" aria-label="Component diagram zoom">
+          <button id="zoom-out" class="zoom-button" type="button" aria-label="Zoom out" title="Zoom out (-)">−</button>
+          <output id="zoom-value" class="zoom-value" aria-live="polite">Fit</output>
+          <button id="zoom-in" class="zoom-button" type="button" aria-label="Zoom in" title="Zoom in (+)">+</button>
+          <button id="zoom-fit" class="zoom-button" type="button" aria-pressed="true" title="Fit the diagram to the viewport (0)">Fit</button>
+          <button id="zoom-actual" class="zoom-button" type="button" title="Show the SVG at its original size">100%</button>
+        </div>
+      </div>
+      <div id="components-viewport" class="components-viewport" tabindex="0" role="region" aria-label="Node agent component diagram. Use plus and minus to zoom, zero to fit, and arrow keys to pan when zoomed.">
+        <div id="components-stage" class="components-stage">
+          <img id="components-image" class="components-image" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNDAwIiBoZWlnaHQ9IjE2MzAiIHZpZXdCb3g9IjAgMCAxNDAwIDE2MzAiIHJvbGU9ImltZyIgYXJpYS1sYWJlbGxlZGJ5PSJ0aXRsZSBkZXNjcmlwdGlvbiI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+QUtTIEZsZXggTm9kZSBBZ2VudCBjb250YWluaW5nIHRoZSBVbmJvdW5kZWQgYWdlbnQgY29yZTwvdGl0bGU+CiAgPGRlc2MgaWQ9ImRlc2NyaXB0aW9uIj5BIGNvbnRhaW5tZW50IGRpYWdyYW0gb2YgdGhlIEFLUyBGbGV4IE5vZGUgQWdlbnQuIFRoZSBvdXRlciBhZ2VudCBjb250YWlucyBBS1MgaWRlbnRpdHkgYW5kIE1hY2hpbmUgaW50ZWdyYXRpb24sIGEgY29uZmlndXJhdGlvbiBhZGFwdGVyLCBkYWVtb24gcmVjb25jaWxpYXRpb24gYW5kIGFwcGxpZWQgc3RhdGUsIGFuZCBhbiBlbWJlZGRlZCBVbmJvdW5kZWQgYWdlbnQgY29yZS4gVGhlIGNvcmUgaXMgdGhlIHNoYXJlZCBVbmJvdW5kZWQgR28gbGlicmFyeSwgbm90IGEgc2VwYXJhdGUgdW5ib3VuZGVkLWFnZW50IHByb2Nlc3MuIEl0IHByb3ZpZGVzIGFydGlmYWN0IGFuZCBnb2FsLXN0YXRlIHJlc29sdXRpb24sIGhvc3QgYW5kIHdvcmtlciBwaGFzZXMsIGFuZCBsaWZlY3ljbGUgdXRpbGl0aWVzLiBUaGUgRmxleCBhZ2VudCBmZXRjaGVzIGRlc2lyZWQgTWFjaGluZSBnb2FsIHN0YXRlIGZyb20gQUtTIEFSTSBhbmQgd2F0Y2hlcyBLdWJlcm5ldGVzIE5vZGUgc2lnbmFscy4gSXRzIG5zcGF3biBibHVlL2dyZWVuIHVwZ3JhZGUgYWx0ZXJuYXRlcyBiZXR3ZWVuIGt1YmUxIGFuZCBrdWJlMjogc3RvcCB0aGUgb2xkIHdvcmtlciBhbmQgY2xlYW4gbmV0d29yayBzdGF0ZSwgcHJvdmlzaW9uIGFuZCBzdGFydCB0aGUgYWx0ZXJuYXRlIHdvcmtlciwgY2hlY2sga3ViZWxldCBhbmQgcGVyc2lzdCB0aGUgYWN0aXZlIHNpZGUsIHRoZW4gcmVtb3ZlIHRoZSBvbGQgcm9vdGZzLiBBIGNoYW5nZWQgc2V0dGluZ3MgdmVyc2lvbiBhbmQgYW4gYWJzZW50IE5vZGUgZ2F0ZSB0aGlzIG9wZXJhdGlvbi4gVGhpcyBpcyBzZXF1ZW50aWFsIHJlcGxhY2VtZW50LCBub3QgemVyby1kb3dudGltZSBIQSBvciBhdXRvbWF0aWMgcm9sbGJhY2suIFRoZSB3b3JrZXJzIHNoYXJlIHRoZSBob3N0IGtlcm5lbCBhbmQgbmV0d29yayBuYW1lc3BhY2UuPC9kZXNjPgoKICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgdGV4dCB7IGZvbnQtZmFtaWx5OiBJbnRlciwgIlNlZ29lIFVJIiwgQXJpYWwsIHNhbnMtc2VyaWY7IGZpbGw6ICMxNzJiNDM7IH0KICAgICAgLnRpdGxlIHsgZm9udC1zaXplOiAzMnB4OyBmb250LXdlaWdodDogNzAwOyB9CiAgICAgIC5zdWJ0aXRsZSB7IGZvbnQtc2l6ZTogMTdweDsgZmlsbDogIzUyNjQ3YjsgfQogICAgICAuaGVhZGluZyB7IGZvbnQtc2l6ZTogMjNweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAuc2VjdGlvbiB7IGZvbnQtc2l6ZTogMThweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAuYm9keSB7IGZvbnQtc2l6ZTogMTZweDsgfQogICAgICAuc21hbGwgeyBmb250LXNpemU6IDE0cHg7IGZpbGw6ICM1MjY0N2I7IH0KICAgICAgLmxhYmVsIHsgZm9udC1zaXplOiAxNHB4OyBmb250LXdlaWdodDogNjAwOyB9CiAgICAgIC5tb25vIHsgZm9udC1mYW1pbHk6ICJTRk1vbm8tUmVndWxhciIsIENvbnNvbGFzLCBtb25vc3BhY2U7IGZvbnQtc2l6ZTogMTRweDsgfQogICAgICAuZmxleC10ZXh0IHsgZmlsbDogIzE3NWRhODsgfQogICAgICAuY29yZS10ZXh0IHsgZmlsbDogIzA4Nzc2YzsgfQogICAgICAubXV0ZWQgeyBmaWxsOiAjNTI2NDdiOyB9CiAgICAgIC5mbG93IHsgZmlsbDogbm9uZTsgc3Ryb2tlOiAjNTM2YTg1OyBzdHJva2Utd2lkdGg6IDIuNTsgbWFya2VyLWVuZDogdXJsKCNhcnJvdyk7IH0KICAgICAgLmZsZXgtZmxvdyB7IGZpbGw6IG5vbmU7IHN0cm9rZTogIzMyN2RjODsgc3Ryb2tlLXdpZHRoOiAyLjU7IG1hcmtlci1lbmQ6IHVybCgjZmxleC1hcnJvdyk7IH0KICAgIDwvc3R5bGU+CiAgICA8bWFya2VyIGlkPSJhcnJvdyIgbWFya2VyV2lkdGg9IjkiIG1hcmtlckhlaWdodD0iOSIgcmVmWD0iOCIgcmVmWT0iNC41IiBvcmllbnQ9ImF1dG8iIG1hcmtlclVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxwYXRoIGQ9Ik0wIDAgTDkgNC41IEwwIDkgWiIgZmlsbD0iIzUzNmE4NSIvPgogICAgPC9tYXJrZXI+CiAgICA8bWFya2VyIGlkPSJmbGV4LWFycm93IiBtYXJrZXJXaWR0aD0iOSIgbWFya2VySGVpZ2h0PSI5IiByZWZYPSI4IiByZWZZPSI0LjUiIG9yaWVudD0iYXV0byIgbWFya2VyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHBhdGggZD0iTTAgMCBMOSA0LjUgTDAgOSBaIiBmaWxsPSIjMzI3ZGM4Ii8+CiAgICA8L21hcmtlcj4KICA8L2RlZnM+CgogIDxyZWN0IHdpZHRoPSIxNDAwIiBoZWlnaHQ9IjE2MzAiIGZpbGw9IiNmN2Y5ZmMiLz4KICA8dGV4dCB4PSI2MCIgeT0iNTYiIGNsYXNzPSJ0aXRsZSI+RmxleCBOb2RlIEFnZW50IGNvbnRhaW5zIHRoZSBVbmJvdW5kZWQgYWdlbnQgY29yZTwvdGV4dD4KICA8dGV4dCB4PSI2MCIgeT0iODUiIGNsYXNzPSJzdWJ0aXRsZSI+QUtTIGludGVncmF0aW9uIGFyb3VuZCBhbiBlbWJlZGRlZCwgcmV1c2FibGUgd29ya2VyLWhvc3QgZW5naW5lLjwvdGV4dD4KCiAgPGcgaWQ9ImFrcy1tYW5hZ2VtZW50Ij4KICAgIDxyZWN0IHg9IjE0MCIgeT0iMTE1IiB3aWR0aD0iMTEyMCIgaGVpZ2h0PSIxMzQiIHJ4PSIxNCIgZmlsbD0iI2VkZjVmZiIgc3Ryb2tlPSIjYThjOGVjIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogICAgPHRleHQgeD0iMTY0IiB5PSIxNTAiIGNsYXNzPSJoZWFkaW5nIGZsZXgtdGV4dCI+QUtTIGNvbnRyb2wgcGxhbmU8L3RleHQ+CiAgICA8dGV4dCB4PSIxMjM2IiB5PSIxNDkiIHRleHQtYW5jaG9yPSJlbmQiIGNsYXNzPSJzbWFsbCI+QUtTIC8gb3BlcmF0b3Igb3ducyBjb3Jkb24sIGRyYWluLCBhbmQgZGlzcnVwdGlvbiBkZWNpc2lvbnMuPC90ZXh0PgogICAgPHRleHQgeD0iMTY0IiB5PSIxODUiIGNsYXNzPSJzZWN0aW9uIj5BUk0gTWFjaGluZSBBUEk8L3RleHQ+CiAgICA8dGV4dCB4PSIxNjQiIHk9IjIxMiIgY2xhc3M9ImJvZHkiPkRlc2lyZWQgbm9kZSBzZXR0aW5ncyArIHNldHRpbmdzIHZlcnNpb24gLyBFVGFnPC90ZXh0PgogICAgPGxpbmUgeDE9IjcwMCIgeTE9IjE3MSIgeDI9IjcwMCIgeTI9IjIyNyIgc3Ryb2tlPSIjYzdkYWVlIi8+CiAgICA8dGV4dCB4PSI3MzIiIHk9IjE4NSIgY2xhc3M9InNlY3Rpb24iPkt1YmVybmV0ZXMgQVBJPC90ZXh0PgogICAgPHRleHQgeD0iNzMyIiB5PSIyMTIiIGNsYXNzPSJib2R5Ij5Ob2RlIHNpZ25hbHMgKyBvcHRpb25hbCBNYWNoaW5lT3BlcmF0aW9uczwvdGV4dD4KICA8L2c+CgogIDxnIGlkPSJsaW51eC1ob3N0Ij4KICAgIDxyZWN0IHg9IjYwIiB5PSIyODAiIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjEyNjAiIHJ4PSIxOCIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjYmFjOGQ5IiBzdHJva2Utd2lkdGg9IjEuNSIvPgogICAgPHRleHQgeD0iODQiIHk9IjMxMyIgY2xhc3M9InNlY3Rpb24iPkN1c3RvbWVyLW1hbmFnZWQgTGludXggaG9zdDwvdGV4dD4KCiAgICA8ZyBpZD0iZ29hbC1zdGF0ZS1mZXRjaCI+CiAgICAgIDxwYXRoIGQ9Ik00NDAgMzQwIFYyNDkiIGNsYXNzPSJmbGV4LWZsb3ciLz4KICAgICAgPHRleHQgeD0iNDU4IiB5PSIyOTciIGNsYXNzPSJsYWJlbCBmbGV4LXRleHQiPkZldGNoIGdvYWwgc3RhdGUgKEFSTSBHRVQgLyBwb2xsaW5nKTwvdGV4dD4KICAgICAgPHRleHQgeD0iNDU4IiB5PSIzMjAiIGNsYXNzPSJzbWFsbCI+UmVhZCBkZXNpcmVkIHNldHRpbmdzICsgRVRhZzwvdGV4dD4KICAgIDwvZz4KICAgIDxnIGlkPSJub2RlLXdhdGNoLWV2ZW50cyI+CiAgICAgIDxwYXRoIGQ9Ik0xMDEwIDI0OSBWMzQwIiBjbGFzcz0iZmxleC1mbG93Ii8+CiAgICAgIDx0ZXh0IHg9IjEwMzAiIHk9IjMwNSIgY2xhc3M9ImxhYmVsIGZsZXgtdGV4dCI+Tm9kZSB3YXRjaCBldmVudHM8L3RleHQ+CiAgICA8L2c+CgogICAgPCEtLSBUaGUgc2hhcmVkIGNvcmUgaXMgdmlzdWFsbHkgYW5kIHN0cnVjdHVyYWxseSBuZXN0ZWQgaW5zaWRlIHRoZSBGbGV4IGFnZW50LiAtLT4KICAgIDxnIGlkPSJmbGV4LW5vZGUtYWdlbnQiPgogICAgICA8cmVjdCB4PSI5NiIgeT0iMzQwIiB3aWR0aD0iMTIwOCIgaGVpZ2h0PSI1MDAiIHJ4PSIxNiIgZmlsbD0iI2YyZjdmZiIgc3Ryb2tlPSIjMzI3ZGM4IiBzdHJva2Utd2lkdGg9IjIiLz4KICAgICAgPHRleHQgeD0iMTIwIiB5PSIzNzkiIGNsYXNzPSJoZWFkaW5nIGZsZXgtdGV4dCI+QUtTIEZsZXggTm9kZSBBZ2VudDwvdGV4dD4KICAgICAgPHRleHQgeD0iMTI4MCIgeT0iMzc4IiB0ZXh0LWFuY2hvcj0iZW5kIiBjbGFzcz0ibW9ubyBmbGV4LXRleHQiPmFrcy1mbGV4LW5vZGUtYWdlbnQuc2VydmljZTwvdGV4dD4KICAgICAgPHRleHQgeD0iMTIwIiB5PSI0MDUiIGNsYXNzPSJib2R5Ij5PbmUgaG9zdCBhZ2VudDogQUtTLXNwZWNpZmljIHBvbGljeSArIGVtYmVkZGVkIFVuYm91bmRlZCBmdW5jdGlvbmFsaXR5PC90ZXh0PgogICAgICA8dGV4dCB4PSIxMjAiIHk9IjQzMSIgY2xhc3M9ImxhYmVsIGZsZXgtdGV4dCI+QUtTLVNQRUNJRklDIExBWUVSPC90ZXh0PgoKICAgICAgPGcgaWQ9ImFrcy1pZGVudGl0eS1hbmQtbWFjaGluZSI+CiAgICAgICAgPHJlY3QgeD0iMTIwIiB5PSI0NDUiIHdpZHRoPSIzNjgiIGhlaWdodD0iMTIwIiByeD0iMTAiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iI2MyZDdlZiIvPgogICAgICAgIDx0ZXh0IHg9IjE0MCIgeT0iNDc1IiBjbGFzcz0ic2VjdGlvbiI+SWRlbnRpdHkgJmFtcDsgTWFjaGluZSBpbnRlZ3JhdGlvbjwvdGV4dD4KICAgICAgICA8dGV4dCB4PSIxNDAiIHk9IjUwMSIgY2xhc3M9InNtYWxsIj5BenVyZSBWTSAvIEFyYyBpZGVudGl0eSBvciBzZXJ2aWNlIHByaW5jaXBhbDwvdGV4dD4KICAgICAgICA8dGV4dCB4PSIxNDAiIHk9IjUyMiIgY2xhc3M9InNtYWxsIj5GZXRjaCBLdWJlcm5ldGVzIGJvb3RzdHJhcCBkYXRhPC90ZXh0PgogICAgICAgIDx0ZXh0IHg9IjE0MCIgeT0iNTQzIiBjbGFzcz0ic21hbGwiPkVuc3VyZSBhbmQgcmVhZCB0aGUgQUtTIEFSTSBNYWNoaW5lPC90ZXh0PgogICAgICA8L2c+CgogICAgICA8ZyBpZD0iZmxleC1jb25maWd1cmF0aW9uLWFkYXB0ZXIiPgogICAgICAgIDxyZWN0IHg9IjUxNiIgeT0iNDQ1IiB3aWR0aD0iMzY4IiBoZWlnaHQ9IjEyMCIgcng9IjEwIiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNjMmQ3ZWYiLz4KICAgICAgICA8dGV4dCB4PSI1MzYiIHk9IjQ3NSIgY2xhc3M9InNlY3Rpb24iPkNvbmZpZ3VyYXRpb24gJmFtcDsgY3VzdG9taXphdGlvbjwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI1MzYiIHk9IjUwMSIgY2xhc3M9InNtYWxsIj5GbGV4IGNvbmZpZ3VyYXRpb24g4oaSIHNoYXJlZCBBZ2VudENvbmZpZzwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI1MzYiIHk9IjUyMiIgY2xhc3M9InNtYWxsIj5BS1Mgbm9kZSBsYWJlbHMgYW5kIGt1YmVsZXQgc2V0dGluZ3M8L3RleHQ+CiAgICAgICAgPHRleHQgeD0iNTM2IiB5PSI1NDMiIGNsYXNzPSJzbWFsbCI+Tm9kZSBQcm9ibGVtIERldGVjdG9yOyBvcHRpb25hbCBob3N0IHJvdXRpbmc8L3RleHQ+CiAgICAgIDwvZz4KCiAgICAgIDxnIGlkPSJmbGV4LWRhZW1vbi1wb2xpY3kiPgogICAgICAgIDxyZWN0IHg9IjkxMiIgeT0iNDQ1IiB3aWR0aD0iMzY4IiBoZWlnaHQ9IjEyMCIgcng9IjEwIiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNjMmQ3ZWYiLz4KICAgICAgICA8dGV4dCB4PSI5MzIiIHk9IjQ3NSIgY2xhc3M9InNlY3Rpb24iPkRhZW1vbiBwb2xpY3kgJmFtcDsgYXBwbGllZCBzdGF0ZTwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI5MzIiIHk9IjUwMSIgY2xhc3M9InNtYWxsIj5BUk0gZ29hbCArIGxvY2FsIEt1YmVybmV0ZXMgTm9kZSB3YXRjaDwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI5MzIiIHk9IjUyMiIgY2xhc3M9InNtYWxsIj5SZXBhdmUsIHJlc2V0LCBhbmQgTWFjaGluZU9wZXJhdGlvbiBoYW5kbGVyczwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI5MzIiIHk9IjU0MyIgY2xhc3M9InNtYWxsIj5QZXJzaXN0IHNldHRpbmdzIHZlcnNpb24gKyBhY3RpdmUgd29ya2VyIHNpZGU8L3RleHQ+CiAgICAgIDwvZz4KCiAgICAgIDxwYXRoIGQ9Ik03MDAgNTY1IFY2MzUiIGNsYXNzPSJmbGV4LWZsb3ciLz4KICAgICAgPHJlY3QgeD0iNTA0IiB5PSI1ODYiIHdpZHRoPSIzOTIiIGhlaWdodD0iMjYiIHJ4PSI2IiBmaWxsPSIjZjJmN2ZmIi8+CiAgICAgIDx0ZXh0IHg9IjcwMCIgeT0iNjA1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibGFiZWwgZmxleC10ZXh0Ij5BZGFwdCBnb2FsIHN0YXRlICsgaW52b2tlIHNoYXJlZCBvcGVyYXRpb25zPC90ZXh0PgoKICAgICAgPGcgaWQ9ImVtYmVkZGVkLXVuYm91bmRlZC1hZ2VudC1jb3JlIj4KICAgICAgICA8cmVjdCB4PSIxMjAiIHk9IjYzNSIgd2lkdGg9IjExNjAiIGhlaWdodD0iMTc1IiByeD0iMTQiIGZpbGw9IiNlYWY4ZjIiIHN0cm9rZT0iIzU0YTY4ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgICAgICAgPHRleHQgeD0iMTQwIiB5PSI2NjciIGNsYXNzPSJoZWFkaW5nIGNvcmUtdGV4dCI+VW5ib3VuZGVkIGFnZW50IGNvcmU8L3RleHQ+CiAgICAgICAgPHJlY3QgeD0iOTU0IiB5PSI2NDgiIHdpZHRoPSIzMDYiIGhlaWdodD0iMjkiIHJ4PSIxNCIgZmlsbD0iI2Q2ZWVlNCIvPgogICAgICAgIDx0ZXh0IHg9IjExMDciIHk9IjY2OCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9ImxhYmVsIGNvcmUtdGV4dCI+RU1CRURERUQgU0hBUkVEIExJQlJBUklFUzwvdGV4dD4KICAgICAgICA8dGV4dCB4PSIxNDAiIHk9IjY5MyIgY2xhc3M9Im1vbm8gY29yZS10ZXh0Ij5naXRodWIuY29tL0F6dXJlL3VuYm91bmRlZC9wa2cvYWdlbnQvKjwvdGV4dD4KCiAgICAgICAgPGcgaWQ9ImFydGlmYWN0cy1hbmQtZ29hbC1zdGF0ZXMiPgogICAgICAgICAgPHJlY3QgeD0iMTQwIiB5PSI3MTEiIHdpZHRoPSIzNTIiIGhlaWdodD0iODEiIHJ4PSI5IiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNiZmRlZDIiLz4KICAgICAgICAgIDx0ZXh0IHg9IjE1OCIgeT0iNzM4IiBjbGFzcz0ic2VjdGlvbiI+QXJ0aWZhY3RzICZhbXA7IGdvYWwgc3RhdGVzPC90ZXh0PgogICAgICAgICAgPHRleHQgeD0iMTU4IiB5PSI3NjEiIGNsYXNzPSJzbWFsbCI+UmVzb2x2ZSB3b3JrZXIgY29uZmlndXJhdGlvbiBhbmQgZG93bmxvYWRzPC90ZXh0PgogICAgICAgICAgPHRleHQgeD0iMTU4IiB5PSI3ODIiIGNsYXNzPSJzbWFsbCI+T0NJIHJvb3RmcywgcnVudGltZSBiaW5hcmllcywgb2ZmbGluZSBhcnRpZmFjdHM8L3RleHQ+CiAgICAgICAgPC9nPgoKICAgICAgICA8ZyBpZD0iaG9zdC1hbmQtd29ya2VyLXBoYXNlcyI+CiAgICAgICAgICA8cmVjdCB4PSI1MjQiIHk9IjcxMSIgd2lkdGg9IjM1MiIgaGVpZ2h0PSI4MSIgcng9IjkiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iI2JmZGVkMiIvPgogICAgICAgICAgPHRleHQgeD0iNTQyIiB5PSI3MzgiIGNsYXNzPSJzZWN0aW9uIj5Ib3N0ICZhbXA7IHdvcmtlciBwaGFzZXM8L3RleHQ+CiAgICAgICAgICA8dGV4dCB4PSI1NDIiIHk9Ijc2MSIgY2xhc3M9InNtYWxsIj5QcmVmbGlnaHQgY2hlY2tzIGFuZCBob3N0IHByZXBhcmF0aW9uPC90ZXh0PgogICAgICAgICAgPHRleHQgeD0iNTQyIiB5PSI3ODIiIGNsYXNzPSJzbWFsbCI+UHJvdmlzaW9uIHJvb3Rmczsgc3RhcnQsIHN0b3AsIGFuZCBjbGVhbiB3b3JrZXI8L3RleHQ+CiAgICAgICAgPC9nPgoKICAgICAgICA8ZyBpZD0ibGlmZWN5Y2xlLXV0aWxpdGllcyI+CiAgICAgICAgICA8cmVjdCB4PSI5MDgiIHk9IjcxMSIgd2lkdGg9IjM1MiIgaGVpZ2h0PSI4MSIgcng9IjkiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iI2JmZGVkMiIvPgogICAgICAgICAgPHRleHQgeD0iOTI2IiB5PSI3MzgiIGNsYXNzPSJzZWN0aW9uIj5MaWZlY3ljbGUgdXRpbGl0aWVzPC90ZXh0PgogICAgICAgICAgPHRleHQgeD0iOTI2IiB5PSI3NjEiIGNsYXNzPSJzbWFsbCI+RGFlbW9uIGNyZWRlbnRpYWxzIGFuZCBjb250cm9sbGVyIGhlbHBlcnM8L3RleHQ+CiAgICAgICAgICA8dGV4dCB4PSI5MjYiIHk9Ijc4MiIgY2xhc3M9InNtYWxsIj5uc3Bhd24gaG9va3MgYW5kIGFnZW50LWJpbmFyeSBhY3RpdmF0aW9uPC90ZXh0PgogICAgICAgIDwvZz4KICAgICAgPC9nPgogICAgPC9nPgoKICAgIDwhLS0gTWFuYWdlZCBydW50aW1lIGlzIG91dHNpZGUgdGhlIGFnZW50IHByb2Nlc3MsIHRob3VnaCBvbiB0aGUgc2FtZSBob3N0LiAtLT4KICAgIDxwYXRoIGQ9Ik03MDAgODEwIFY5MDAiIGNsYXNzPSJmbG93Ii8+CiAgICA8cmVjdCB4PSI0OTEiIHk9Ijg1NSIgd2lkdGg9IjQxOCIgaGVpZ2h0PSIyNyIgcng9IjYiIGZpbGw9IiNmZmZmZmYiLz4KICAgIDx0ZXh0IHg9IjcwMCIgeT0iODc0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibGFiZWwgbXV0ZWQiPk1hbmFnZXMgaG9zdCBzZXJ2aWNlcywgZmlsZXN5c3RlbXMsIGFuZCB3b3JrZXIgbGlmZWN5Y2xlPC90ZXh0PgoKICAgIDxnIGlkPSJob3N0LXNlcnZpY2UtbWFuYWdlbWVudCI+CiAgICAgIDxyZWN0IHg9Ijk2IiB5PSI5MDAiIHdpZHRoPSIxMjA4IiBoZWlnaHQ9IjY4IiByeD0iMTIiIGZpbGw9IiNlZWYyZjgiIHN0cm9rZT0iI2MzY2VkZCIvPgogICAgICA8dGV4dCB4PSIxMjAiIHk9IjkyOSIgY2xhc3M9InNlY3Rpb24iPkhvc3Qgc3lzdGVtZCArIG1hY2hpbmVjdGwgKyBzeXN0ZW1kLW5zcGF3bjwvdGV4dD4KICAgICAgPHRleHQgeD0iMTIwIiB5PSI5NTIiIGNsYXNzPSJzbWFsbCI+U3RhcnQgLyBzdG9wIC8gcmVwbGFjZSB0aGUgd29ya2VyOyBjb25maWd1cmUgbGlmZWN5Y2xlIGhvb2tzIGFuZCBkZXZpY2UgbW91bnRzLjwvdGV4dD4KICAgICAgPHRleHQgeD0iMTI4MCIgeT0iOTI5IiB0ZXh0LWFuY2hvcj0iZW5kIiBjbGFzcz0ibW9ubyBtdXRlZCI+L3Zhci9saWIvbWFjaGluZXMve2t1YmUxLGt1YmUyfTwvdGV4dD4KICAgIDwvZz4KCiAgICA8cGF0aCBkPSJNNzAwIDk2OCBWMTAxMiIgY2xhc3M9ImZsb3ciLz4KCiAgICA8ZyBpZD0ibnNwYXduLWJsdWUtZ3JlZW4tdXBncmFkZSI+CiAgICAgIDxyZWN0IHg9Ijk2IiB5PSIxMDEyIiB3aWR0aD0iMTIwOCIgaGVpZ2h0PSI0MDQiIHJ4PSIxNCIgZmlsbD0iI2Y4ZmFmYyIgc3Ryb2tlPSIjOGZhM2JjIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogICAgICA8dGV4dCB4PSIxMTYiIHk9IjEwNDQiIGNsYXNzPSJoZWFkaW5nIj5uc3Bhd24gYmx1ZS9ncmVlbiB1cGdyYWRlIChyZXBhdmUpPC90ZXh0PgogICAgICA8dGV4dCB4PSIxMjgwIiB5PSIxMDQzIiB0ZXh0LWFuY2hvcj0iZW5kIiBjbGFzcz0ic21hbGwiPk1hbmFnZWQgd29ya2VyIHJ1bnRpbWUsIG91dHNpZGUgdGhlIGFnZW50IHByb2Nlc3M8L3RleHQ+CgogICAgICA8cmVjdCB4PSIxMTYiIHk9IjEwNjQiIHdpZHRoPSIxMTY0IiBoZWlnaHQ9IjQyIiByeD0iOSIgZmlsbD0iI2ZmZjRkZiIgc3Ryb2tlPSIjZTdjZmEwIi8+CiAgICAgIDx0ZXh0IHg9IjEzNiIgeT0iMTA5MCIgY2xhc3M9ImxhYmVsIj5UcmlnZ2VyOiBjaGFuZ2VkIE1hY2hpbmUgc2V0dGluZ3MgdmVyc2lvbiArIE5vZGUgYWJzZW50IGFmdGVyIEFLUyAvIG9wZXJhdG9yIGNvcmRvbiwgZHJhaW4sIGFuZCBOb2RlIGRlbGV0aW9uLjwvdGV4dD4KCiAgICAgIDxnIGlkPSJibHVlLXdvcmtlciI+CiAgICAgICAgPHJlY3QgeD0iMTE2IiB5PSIxMTMyIiB3aWR0aD0iMzcyIiBoZWlnaHQ9IjE4NCIgcng9IjEyIiBmaWxsPSIjZWRmNWZmIiBzdHJva2U9IiM2ZDlmZDIiIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgICAgICAgPHRleHQgeD0iMTM2IiB5PSIxMTY0IiBjbGFzcz0iaGVhZGluZyBmbGV4LXRleHQiPkJsdWU6IGt1YmUxPC90ZXh0PgogICAgICAgIDx0ZXh0IHg9IjEzNiIgeT0iMTE4OSIgY2xhc3M9ImJvZHkiPkN1cnJlbnQgd29ya2VyIC8gb2xkIGNvbmZpZ3VyYXRpb248L3RleHQ+CiAgICAgICAgPHJlY3QgeD0iMTM2IiB5PSIxMjA0IiB3aWR0aD0iMzMyIiBoZWlnaHQ9IjY4IiByeD0iOSIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjYzJkN2VmIi8+CiAgICAgICAgPHRleHQgeD0iMzAyIiB5PSIxMjMwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ic2VjdGlvbiI+a3ViZWxldCArIGNvbnRhaW5lcmQgLyBydW5jPC90ZXh0PgogICAgICAgIDx0ZXh0IHg9IjMwMiIgeT0iMTI1MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9InNtYWxsIj5Qb2QgY29udGFpbmVycyArIGNsdXN0ZXItaW5zdGFsbGVkIENOSTwvdGV4dD4KICAgICAgICA8dGV4dCB4PSIxMzYiIHk9IjEyOTgiIGNsYXNzPSJsYWJlbCBmbGV4LXRleHQiPlN0b3BwZWQgYmVmb3JlIGdyZWVuIGlzIHByb3Zpc2lvbmVkPC90ZXh0PgogICAgICA8L2c+CgogICAgICA8ZyBpZD0icmVwYXZlLXNlcXVlbmNlIj4KICAgICAgICA8dGV4dCB4PSI2OTgiIHk9IjExNTgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJsYWJlbCBtdXRlZCI+MS4gU3RvcCBibHVlOyBjbGVhbiBob3N0IG5ldHdvcms8L3RleHQ+CiAgICAgICAgPHRleHQgeD0iNjk4IiB5PSIxMTg1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibGFiZWwgbXV0ZWQiPjIuIFByb3Zpc2lvbiArIHN0YXJ0IGdyZWVuPC90ZXh0PgogICAgICAgIDxwYXRoIGQ9Ik00ODggMTIwMiBIOTA4IiBjbGFzcz0iZmxvdyIvPgogICAgICAgIDx0ZXh0IHg9IjY5OCIgeT0iMTIyNyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9ImxhYmVsIG11dGVkIj4zLiBDaGVjayBrdWJlbGV0OyBwZXJzaXN0IGdyZWVuIGFzIGFjdGl2ZTwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI2OTgiIHk9IjEyNTQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJsYWJlbCBtdXRlZCI+NC4gUmVtb3ZlIG9sZCBibHVlIHJvb3RmczwvdGV4dD4KICAgICAgPC9nPgoKICAgICAgPGcgaWQ9ImdyZWVuLXdvcmtlciI+CiAgICAgICAgPHJlY3QgeD0iOTA4IiB5PSIxMTMyIiB3aWR0aD0iMzcyIiBoZWlnaHQ9IjE4NCIgcng9IjEyIiBmaWxsPSIjZWFmOGYyIiBzdHJva2U9IiM1NGE2OGUiIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgICAgICAgPHRleHQgeD0iOTI4IiB5PSIxMTY0IiBjbGFzcz0iaGVhZGluZyBjb3JlLXRleHQiPkdyZWVuOiBrdWJlMjwvdGV4dD4KICAgICAgICA8dGV4dCB4PSI5MjgiIHk9IjExODkiIGNsYXNzPSJib2R5Ij5SZXBsYWNlbWVudCAvIGRlc2lyZWQgY29uZmlndXJhdGlvbjwvdGV4dD4KICAgICAgICA8cmVjdCB4PSI5MjgiIHk9IjEyMDQiIHdpZHRoPSIzMzIiIGhlaWdodD0iNjgiIHJ4PSI5IiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNiZmRlZDIiLz4KICAgICAgICA8dGV4dCB4PSIxMDk0IiB5PSIxMjMwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ic2VjdGlvbiI+a3ViZWxldCArIGNvbnRhaW5lcmQgLyBydW5jPC90ZXh0PgogICAgICAgIDx0ZXh0IHg9IjEwOTQiIHk9IjEyNTMiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJzbWFsbCI+UG9kIGNvbnRhaW5lcnMgKyBjbHVzdGVyLWluc3RhbGxlZCBDTkk8L3RleHQ+CiAgICAgICAgPHRleHQgeD0iOTI4IiB5PSIxMjk4IiBjbGFzcz0ibGFiZWwgY29yZS10ZXh0Ij5OZXcgYWN0aXZlIHNpZGUgYWZ0ZXIga3ViZWxldCBjaGVjazwvdGV4dD4KICAgICAgPC9nPgoKICAgICAgPGcgaWQ9Im5leHQtdXBncmFkZSI+CiAgICAgICAgPHBhdGggZD0iTTEwOTQgMTMxNiBWMTM1MCBIMzAyIFYxMzE2IiBjbGFzcz0iZmxvdyIgc3Ryb2tlLWRhc2hhcnJheT0iNiA0Ii8+CiAgICAgICAgPHRleHQgeD0iNjk4IiB5PSIxMzQxIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibGFiZWwgbXV0ZWQiPk5leHQgdXBncmFkZSByZXZlcnNlcyB0aGUgc2xvdHM6IGt1YmUyIOKGkiBrdWJlMTwvdGV4dD4KICAgICAgPC9nPgogICAgICA8dGV4dCB4PSIxMTYiIHk9IjEzODgiIGNsYXNzPSJzbWFsbCI+U2VxdWVudGlhbCByZXBsYWNlbWVudCwgbm90IHplcm8tZG93bnRpbWUgSEE6IHRoZSBvbGQgd29ya2VyIHN0b3BzIGZpcnN0OyBhdXRvbWF0aWMgd29ya2VyIHJvbGxiYWNrIGlzIG5vdCBpbXBsZW1lbnRlZC48L3RleHQ+CiAgICA8L2c+CgogICAgPHBhdGggZD0iTTcwMCAxNDE2IFYxNDQwIiBmaWxsPSJub25lIiBzdHJva2U9IiNhYzhkNTIiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWRhc2hhcnJheT0iNCAzIi8+CiAgICA8ZyBpZD0iaG9zdC1yZXNvdXJjZXMiPgogICAgICA8cmVjdCB4PSI5NiIgeT0iMTQ0MCIgd2lkdGg9IjEyMDgiIGhlaWdodD0iNzIiIHJ4PSIxMiIgZmlsbD0iI2ZmZmFmMCIgc3Ryb2tlPSIjZGZjOTkzIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogICAgICA8dGV4dCB4PSIxMjAiIHk9IjE0NjkiIGNsYXNzPSJzZWN0aW9uIj5TaGFyZWQgaG9zdCByZXNvdXJjZXM8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjM1NCIgeT0iMTQ2OSIgY2xhc3M9ImJvZHkiPktlcm5lbCArIG5ldHdvcmsgbmFtZXNwYWNlOyBHUFUgLyBSRE1BIC8gc3RvcmFnZSBkZXZpY2VzIGFuZCBob3N0IGRyaXZlcnM8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjEyMCIgeT0iMTQ5NSIgY2xhc3M9InNtYWxsIj5Cb3RoIHNsb3RzIHVzZSBzZWxlY3RlZCBob3N0IGJpbmQgbW91bnRzLiBDTkkgaXMgaW5zdGFsbGVkIHNlcGFyYXRlbHkgKGZvciBleGFtcGxlLCBVbmJvdW5kZWQtTmV0KS4gbnNwYXduIGlzIG5vdCBhIFZNIHNlY3VyaXR5IGJvdW5kYXJ5LjwvdGV4dD4KICAgIDwvZz4KICA8L2c+CgogIDxnIGlkPSJjb21wb3NpdGlvbi1ub3RlIj4KICAgIDx0ZXh0IHg9IjYwIiB5PSIxNTc1IiBjbGFzcz0ibGFiZWwiPkNvbnRhaW5tZW50IG1lYW5zIGNvZGUgY29tcG9zaXRpb24sIG5vdCBhIHNlY29uZCBhZ2VudCBwcm9jZXNzLjwvdGV4dD4KICAgIDx0ZXh0IHg9IjYwIiB5PSIxNjAwIiBjbGFzcz0ic21hbGwiPkZsZXggZW1iZWRzIFVuYm91bmRlZCdzIHNoYXJlZCBsaWJyYXJpZXMgKGN1cnJlbnRseSB2MC44LjApLCBub3QgdGhlIHN0YW5kYWxvbmUgdW5ib3VuZGVkLWFnZW50IENMSSBvciBpdHMgYWdlbnQtc3BlY2lmaWMgYm9vdHN0cmFwIGNvb3JkaW5hdG9yLjwvdGV4dD4KICA8L2c+Cjwvc3ZnPgo=" width="1400" height="1630" draggable="false" alt="AKS Flex Node Agent contains the shared Unbounded agent core, fetches ARM Machine goals, watches Kubernetes Node events, and manages alternating kube1 and kube2 workers during blue/green upgrades.">
+        </div>
+        <p id="components-error" class="components-error" role="alert" hidden>Unable to display the embedded component diagram.</p>
+      </div>
+    </section>
+    <section id="nvidia-panel" class="components-panel" role="tabpanel" aria-labelledby="nvidia-tab" hidden>
+      <div class="components-toolbar">
+        <span class="components-heading">NVIDIA GPU activation · host driver → Unbounded setup → Kubernetes resources</span>
+        <div class="zoom-controls" role="group" aria-label="NVIDIA activation diagram zoom">
+          <button id="nvidia-zoom-out" class="zoom-button" type="button" aria-label="Zoom out" title="Zoom out (-)">−</button>
+          <output id="nvidia-zoom-value" class="zoom-value" aria-live="polite">Fit</output>
+          <button id="nvidia-zoom-in" class="zoom-button" type="button" aria-label="Zoom in" title="Zoom in (+)">+</button>
+          <button id="nvidia-zoom-fit" class="zoom-button" type="button" aria-pressed="true" title="Fit the diagram to the viewport (0)">Fit</button>
+          <button id="nvidia-zoom-actual" class="zoom-button" type="button" title="Show the SVG at its original size">100%</button>
+        </div>
+      </div>
+      <div id="nvidia-viewport" class="components-viewport" tabindex="0" role="region" aria-label="NVIDIA GPU activation diagram. Use plus and minus to zoom, zero to fit, and arrow keys to pan when zoomed.">
+        <div id="nvidia-stage" class="components-stage">
+          <img id="nvidia-image" class="components-image" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAwIiBoZWlnaHQ9IjEwNTAiIHZpZXdCb3g9IjAgMCAxNjAwIDEwNTAiIHJvbGU9ImltZyIgYXJpYS1sYWJlbGxlZGJ5PSJ0aXRsZSBkZXNjcmlwdGlvbiI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+TlZJRElBIEdQVSBhY3RpdmF0aW9uIG9uIGFuIEFLUyBGbGV4IE5vZGU8L3RpdGxlPgogIDxkZXNjIGlkPSJkZXNjcmlwdGlvbiI+QSBuaW5lLXN0ZXAgTlZJRElBIEdQVSBhY3RpdmF0aW9uIGZsb3cgd2l0aCBleHBsaWNpdCBvd25lcnNoaXAgYm91bmRhcmllcy4gU3RlcCAxIGlzIG1hbmFnZWQgYnkgdGhlIHVzZXIgb3IgaG9zdCBvd25lci4gU3RlcHMgMiB0aHJvdWdoIDcgYXJlIG1hbmFnZWQgYnkgRmxleCBhbmQgVW5ib3VuZGVkOiBGbGV4IHByb3ZpZGVzIGludGVncmF0aW9uLCBhbmQgVW5ib3VuZGVkIGltcGxlbWVudHMgR1BVIHNldHVwLiBTdGVwcyA4IGFuZCA5IGFyZSBtYW5hZ2VkIGJ5IHRoZSB1c2VyIG9yIGNsdXN0ZXIgb3BlcmF0b3IuIFRoZSBob3N0IG93bmVyIHN1cHBsaWVzIGFuZCBtYWludGFpbnMgYSB3b3JraW5nIE5WSURJQSBrZXJuZWwgZHJpdmVyLiBVbmJvdW5kZWQgY29yZSBkaXNjb3ZlcnMgZGV2aWNlIG5vZGVzLCBtYXRjaGluZyBsaWJyYXJpZXMsIGFuZCB0aGUgYWN0aXZlIGRyaXZlciB2ZXJzaW9uOyBwcm92aXNpb25zIGEgR1BVLWNhcGFibGUgbnNwYXduIHJvb3RmcyB3aXRoIHRoZSBOVklESUEgdG9vbGtpdDsgYW5kIGNvbmZpZ3VyZXMgZGV2aWNlIG1vdW50cywgcGVybWlzc2lvbnMsIGFuZCB0aGUgY29udGFpbmVyZCBOVklESUEgcnVudGltZS4gT24gZXZlcnkgbWFuYWdlZCBuc3Bhd24gc3RhcnQsIGEgcHJlLXN0YXJ0IGhvb2sgcmVmcmVzaGVzIGNvbmZpZ3VyYXRpb24uIFRoZSBwb3N0LXN0YXJ0IGhvb2sgc3RvcHMga3ViZWxldCBhbmQgY29udGFpbmVyZCwgcmVidWlsZHMgdGhlIGhvc3QtbWF0Y2hlZCBkcml2ZXIgcm9vdCwgZ2VuZXJhdGVzIGEgQ0RJIHNwZWNpZmljYXRpb24sIHRoZW4gc3RhcnRzIGNvbnRhaW5lcmQsIGltcG9ydHMgY29uZmlndXJlZCBpbWFnZSBhcmNoaXZlcywgYW5kIHN0YXJ0cyBrdWJlbGV0LiBGbGV4IHN1cHBsaWVzIGl0cyBjb25maWd1cmF0aW9uIGFkYXB0ZXIgYW5kIGhvb2sgd3JhcHBlciwgbm90IGEgc2VwYXJhdGUgR1BVIHNldHVwIGltcGxlbWVudGF0aW9uLiBBZnRlciB0aGUgTm9kZSBpcyBSZWFkeSwgdGhlIG9wZXJhdG9yIGluc3RhbGxzIHRoZSBEZXZpY2UgUGx1Z2luIGFuZCBHRkQsIG9wdGlvbmFsbHkgdGhyb3VnaCBHUFUgT3BlcmF0b3Igd2l0aCBkcml2ZXIgYW5kIHRvb2xraXQgbWFuYWdlbWVudCBkaXNhYmxlZC4gQSBHUFUgd29ya2xvYWQgdmFsaWRhdGVzIHJlc291cmNlIGFkdmVydGlzZW1lbnQgYW5kIGRldmljZSBhY2Nlc3MuIFJ1bnRpbWUgc2V0dXAgZG9lcyBub3QgaW5zdGFsbCB0aGUgaG9zdCBkcml2ZXIgb3IgY2x1c3RlciBwbHVnaW5zLjwvZGVzYz4KICA8IS0tIFNvdXJjZXM6IEFLU0ZsZXhOb2RlIHBrZy9jbWQvbnNwYXdubGlmZWN5Y2xlL25zcGF3bl9saWZlY3ljbGUuZ28gYW5kIGRvY3MvbGFicy9ncHUtbm9kZS1zZXR1cC5tZDsKICAgICAgIFVuYm91bmRlZCB2MC44LjAgcGtnL2FnZW50L25zcGF3bmxpZmVjeWNsZS9saWZlY3ljbGUuZ28sCiAgICAgICBwaGFzZXMvbm9kZXN0YXJ0L252aWRpYV9saWZlY3ljbGUuZ28sIG52aWRpYS5nbywgY3JpLmdvLCBhbmQgcm9vdGZzL2Fzc2V0cy8qLiAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgdGV4dCB7IGZvbnQtZmFtaWx5OiBJbnRlciwgIlNlZ29lIFVJIiwgQXJpYWwsIHNhbnMtc2VyaWY7IGZpbGw6ICMxNzJiNDM7IH0KICAgICAgLnRpdGxlIHsgZm9udC1zaXplOiAzMnB4OyBmb250LXdlaWdodDogNzAwOyB9CiAgICAgIC5zdWJ0aXRsZSB7IGZvbnQtc2l6ZTogMThweDsgZmlsbDogIzUyNjQ3YjsgfQogICAgICAuaGVhZGluZyB7IGZvbnQtc2l6ZTogMjJweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAuc2VjdGlvbiB7IGZvbnQtc2l6ZTogMTdweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAuYm9keSB7IGZvbnQtc2l6ZTogMTdweDsgfQogICAgICAuc21hbGwgeyBmb250LXNpemU6IDE1cHg7IGZpbGw6ICM1MjY0N2I7IH0KICAgICAgLnRhZyB7IGZvbnQtc2l6ZTogMTJweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAubW9ubyB7IGZvbnQtZmFtaWx5OiAiU0ZNb25vLVJlZ3VsYXIiLCBDb25zb2xhcywgbW9ub3NwYWNlOyBmb250LXNpemU6IDE1cHg7IH0KICAgICAgLmNvcmUgeyBmaWxsOiAjMDg3NzZjOyB9CiAgICAgIC5mbGV4IHsgZmlsbDogIzE3NWRhODsgfQogICAgICAub3BlcmF0b3IgeyBmaWxsOiAjODA1YjIyOyB9CiAgICAgIC5sZWdlbmQgeyBmb250LXNpemU6IDE2cHg7IGZvbnQtd2VpZ2h0OiA2MDA7IH0KICAgICAgLmZsb3cgeyBmaWxsOiBub25lOyBzdHJva2U6ICM1MzZhODU7IHN0cm9rZS13aWR0aDogMi41OyBtYXJrZXItZW5kOiB1cmwoI2Fycm93KTsgfQogICAgICAucmVwZWF0IHsgZmlsbDogbm9uZTsgc3Ryb2tlOiAjMTY4YjdkOyBzdHJva2Utd2lkdGg6IDI7IHN0cm9rZS1kYXNoYXJyYXk6IDcgNTsgbWFya2VyLWVuZDogdXJsKCNjb3JlLWFycm93KTsgfQogICAgPC9zdHlsZT4KICAgIDxtYXJrZXIgaWQ9ImFycm93IiBtYXJrZXJXaWR0aD0iOSIgbWFya2VySGVpZ2h0PSI5IiByZWZYPSI4IiByZWZZPSI0LjUiIG9yaWVudD0iYXV0byIgbWFya2VyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNMCAwIEw5IDQuNSBMMCA5IFoiIGZpbGw9IiM1MzZhODUiLz48L21hcmtlcj4KICAgIDxtYXJrZXIgaWQ9ImNvcmUtYXJyb3ciIG1hcmtlcldpZHRoPSI5IiBtYXJrZXJIZWlnaHQ9IjkiIHJlZlg9IjgiIHJlZlk9IjQuNSIgb3JpZW50PSJhdXRvIiBtYXJrZXJVbml0cz0idXNlclNwYWNlT25Vc2UiPjxwYXRoIGQ9Ik0wIDAgTDkgNC41IEwwIDkgWiIgZmlsbD0iIzE2OGI3ZCIvPjwvbWFya2VyPgogIDwvZGVmcz4KCiAgPHJlY3Qgd2lkdGg9IjE2MDAiIGhlaWdodD0iMTA1MCIgZmlsbD0iI2Y3ZjlmYyIvPgogIDx0ZXh0IHg9IjYwIiB5PSI1NiIgY2xhc3M9InRpdGxlIj5OVklESUEgR1BVIGFjdGl2YXRpb248L3RleHQ+CiAgPHRleHQgeD0iNjAiIHk9Ijg3IiBjbGFzcz0ic3VidGl0bGUiPkhvc3QgZHJpdmVyIOKGkiBuc3Bhd24gR1BVIHJ1bnRpbWUg4oaSIEt1YmVybmV0ZXMgR1BVIHJlc291cmNlczwvdGV4dD4KICA8ZyBpZD0ib3duZXJzaGlwLWxlZ2VuZCIgYXJpYS1sYWJlbD0iT3duZXJzaGlwOiB1c2VyIG9yIGhvc3Qgb3duZXIgbWFuYWdlcyBzdGVwIDE7IEZsZXggYW5kIFVuYm91bmRlZCBtYW5hZ2Ugc3RlcHMgMiB0byA3OyB1c2VyIG9yIGNsdXN0ZXIgb3BlcmF0b3IgbWFuYWdlcyBzdGVwcyA4IGFuZCA5LiI+CiAgICA8cmVjdCB4PSI5NzAiIHk9IjI5IiB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHJ4PSIyIiBmaWxsPSIjZjVkZmI3IiBzdHJva2U9IiNjYmE2NjQiLz4KICAgIDx0ZXh0IHg9Ijk5NiIgeT0iNDIiIGNsYXNzPSJsZWdlbmQgb3BlcmF0b3IiPlVzZXIgLyBob3N0IG93bmVyOiBzdGVwIDE8L3RleHQ+CiAgICA8cmVjdCB4PSI5NzAiIHk9IjU1IiB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHJ4PSIyIiBmaWxsPSIjYmNlNGQzIiBzdHJva2U9IiM1NGE2OGUiLz4KICAgIDx0ZXh0IHg9Ijk5NiIgeT0iNjgiIGNsYXNzPSJsZWdlbmQgY29yZSI+RmxleCArIFVuYm91bmRlZCBtYW5hZ2VkOiBzdGVwcyAy4oCTNzwvdGV4dD4KICAgIDxyZWN0IHg9Ijk3MCIgeT0iODEiIHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgcng9IjIiIGZpbGw9IiNmNWRmYjciIHN0cm9rZT0iI2NiYTY2NCIvPgogICAgPHRleHQgeD0iOTk2IiB5PSI5NCIgY2xhc3M9ImxlZ2VuZCBvcGVyYXRvciI+VXNlciAvIGNsdXN0ZXIgb3BlcmF0b3I6IHN0ZXBzIDjigJM5PC90ZXh0PgogIDwvZz4KCiAgPGcgaWQ9Imhvc3QtYW5kLXdvcmtlci1wcmVwYXJhdGlvbiI+CiAgICA8cmVjdCB4PSI0MCIgeT0iMTIwIiB3aWR0aD0iMTUyMCIgaGVpZ2h0PSIyMjIiIHJ4PSIxNSIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjYzhkNWU1Ii8+CiAgICA8dGV4dCB4PSI2MCIgeT0iMTQ4IiBjbGFzcz0ic2VjdGlvbiI+SE9TVCBPV05FUiBQUkVQQVJFUyBUSEUgSE9TVCDihpIgQUdFTlQgUFJFUEFSRVMgVEhFIFdPUktFUjwvdGV4dD4KICAgIDx0ZXh0IHg9IjE1NDAiIHk9IjE0OCIgdGV4dC1hbmNob3I9ImVuZCIgY2xhc3M9InNtYWxsIj5Ib3N0IGRyaXZlciBzdGF5cyBvbiB0aGUgaG9zdDsgdGhlIE5WSURJQSB0b29sa2l0IHJ1bnMgaW5zaWRlIG5zcGF3bi48L3RleHQ+CgogICAgPGcgaWQ9ImdwdS1zdGVwLTEiPgogICAgICA8cmVjdCB4PSI2MCIgeT0iMTcwIiB3aWR0aD0iNDQwIiBoZWlnaHQ9IjE1MiIgcng9IjExIiBmaWxsPSIjZmZmN2U4IiBzdHJva2U9IiNkZWM0OTYiLz4KICAgICAgPHRleHQgeD0iODAiIHk9IjIwMiIgY2xhc3M9ImhlYWRpbmciPjEgIEhvc3QgcHJlcmVxdWlzaXRlczwvdGV4dD4KICAgICAgPHRleHQgeD0iNDgwIiB5PSIyMDAiIHRleHQtYW5jaG9yPSJlbmQiIGNsYXNzPSJ0YWcgb3BlcmF0b3IiPlVTRVIgLyBIT1NUIE9XTkVSPC90ZXh0PgogICAgICA8dGV4dCB4PSI4MCIgeT0iMjM3IiBjbGFzcz0iYm9keSI+SW5zdGFsbCBkcml2ZXI7IGVuc3VyZSBtb2R1bGVzIGFyZSBsb2FkZWQ8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjgwIiB5PSIyNjMiIGNsYXNzPSJib2R5Ij5Db25maXJtIG52aWRpYS1zbWkgd29ya3Mgb24gdGhlIGhvc3Q8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjgwIiB5PSIyOTMiIGNsYXNzPSJzbWFsbCI+VGhlIGFnZW50IGRvZXMgbm90IGluc3RhbGwgdGhlIGtlcm5lbCBkcml2ZXIuPC90ZXh0PgogICAgPC9nPgogICAgPHBhdGggZD0iTTUwMCAyNDYgSDU4MCIgY2xhc3M9ImZsb3ciLz4KICAgIDx0ZXh0IHg9IjU0MCIgeT0iMjMyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0idGFnIG9wZXJhdG9yIj5IQU5ET0ZGPC90ZXh0PgogICAgPGcgaWQ9ImdwdS1zdGVwLTIiPgogICAgICA8cmVjdCB4PSI1ODAiIHk9IjE3MCIgd2lkdGg9IjQ0MCIgaGVpZ2h0PSIxNTIiIHJ4PSIxMSIgZmlsbD0iI2VmZjlmNSIgc3Ryb2tlPSIjOWJjYWI5Ii8+CiAgICAgIDx0ZXh0IHg9IjYwMCIgeT0iMjAyIiBjbGFzcz0iaGVhZGluZyI+MiAgRGlzY292ZXIgR1BVIHN0YXRlPC90ZXh0PgogICAgICA8dGV4dCB4PSIxMDAwIiB5PSIyMDAiIHRleHQtYW5jaG9yPSJlbmQiIGNsYXNzPSJ0YWcgY29yZSI+VU5CT1VOREVEPC90ZXh0PgogICAgICA8dGV4dCB4PSI2MDAiIHk9IjIzNyIgY2xhc3M9ImJvZHkiPkdQVSBub2RlcyArIG1hdGNoaW5nIENVREEgLyBOVk1MIGxpYnM8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjYwMCIgeT0iMjYzIiBjbGFzcz0iYm9keSI+QWN0aXZlIGRyaXZlciB2ZXJzaW9uIGFuZCBob3N0IGhlbHBlcnM8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjYwMCIgeT0iMjkzIiBjbGFzcz0ic21hbGwiPlJlamVjdCBpbmNvbXBsZXRlIE5WSURJQSBzdGF0ZS48L3RleHQ+CiAgICA8L2c+CiAgICA8cGF0aCBkPSJNMTAyMCAyNDYgSDExMDAiIGNsYXNzPSJmbG93Ii8+CiAgICA8ZyBpZD0iZ3B1LXN0ZXAtMyI+CiAgICAgIDxyZWN0IHg9IjExMDAiIHk9IjE3MCIgd2lkdGg9IjQ0MCIgaGVpZ2h0PSIxNTIiIHJ4PSIxMSIgZmlsbD0iI2VmZjlmNSIgc3Ryb2tlPSIjOWJjYWI5Ii8+CiAgICAgIDx0ZXh0IHg9IjExMjAiIHk9IjIwMiIgY2xhc3M9ImhlYWRpbmciPjMgIFByZXBhcmUgR1BVIHdvcmtlcjwvdGV4dD4KICAgICAgPHRleHQgeD0iMTUyMCIgeT0iMjAwIiB0ZXh0LWFuY2hvcj0iZW5kIiBjbGFzcz0idGFnIGNvcmUiPlVOQk9VTkRFRDwvdGV4dD4KICAgICAgPHRleHQgeD0iMTEyMCIgeT0iMjM3IiBjbGFzcz0iYm9keSI+TlZJRElBLWNhcGFibGUgT0NJIHJvb3RmcyBpbmNsdWRlcyB0b29sa2l0PC90ZXh0PgogICAgICA8dGV4dCB4PSIxMTIwIiB5PSIyNjMiIGNsYXNzPSJib2R5Ij5CaW5kIGRldmljZXMgLyBsaWJzOyBncmFudCBEZXZpY2VBbGxvdzwvdGV4dD4KICAgICAgPHRleHQgeD0iMTEyMCIgeT0iMjkzIiBjbGFzcz0ic21hbGwiPldyaXRlIGNvbnRhaW5lcmQgTlZJRElBIHJ1bnRpbWUgKyBDREkgY29uZmlnLjwvdGV4dD4KICAgIDwvZz4KICA8L2c+CgogIDxnIGlkPSJ1bmJvdW5kZWQtbGlmZWN5Y2xlIj4KICAgIDxyZWN0IHg9IjQwIiB5PSIzOTQiIHdpZHRoPSIxNTIwIiBoZWlnaHQ9IjMxMiIgcng9IjE1IiBmaWxsPSIjZWFmOGYyIiBzdHJva2U9IiM5YmNhYjkiIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgICA8dGV4dCB4PSI2MCIgeT0iNDIyIiBjbGFzcz0ic2VjdGlvbiBjb3JlIj5GTEVYICsgVU5CT1VOREVEIE1BTkFHRUQgwrcgRVZFUlkgTlNQQVdOIFNUQVJUPC90ZXh0PgogICAgPHRleHQgeD0iMTU0MCIgeT0iNDIyIiB0ZXh0LWFuY2hvcj0iZW5kIiBjbGFzcz0ic2VjdGlvbiBmbGV4Ij5GbGV4IHN1cHBsaWVzIGNvbmZpZyArIGhvb2sgd3JhcHBlcjsgVW5ib3VuZGVkIGV4ZWN1dGVzIEdQVSBzZXR1cC48L3RleHQ+CgogICAgPGcgaWQ9ImdwdS1zdGVwLTQiPgogICAgICA8cmVjdCB4PSI2MCIgeT0iNDQyIiB3aWR0aD0iMzQwIiBoZWlnaHQ9IjE5OCIgcng9IjExIiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNhN2NiYmQiLz4KICAgICAgPHRleHQgeD0iODAiIHk9IjQ3NiIgY2xhc3M9ImhlYWRpbmciPjQgIFByZS1zdGFydCArIGJvb3Q8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjgwIiB5PSI1MDgiIGNsYXNzPSJib2R5Ij5SZWZyZXNoIG5zcGF3biBjb25maWcgZnJvbSBob3N0PC90ZXh0PgogICAgICA8dGV4dCB4PSI4MCIgeT0iNTM0IiBjbGFzcz0iYm9keSI+Qm9vdDsgYWN0aXZhdGUgZGV2aWNlIC8gbGliIG1vdW50czwvdGV4dD4KICAgICAgPHRleHQgeD0iODAiIHk9IjU2MCIgY2xhc3M9ImJvZHkiPkV4ZWNTdGFydFBvc3QgaW52b2tlcyBHUFUgc2V0dXA8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjgwIiB5PSI2MDEiIGNsYXNzPSJtb25vIGNvcmUiPm5zcGF3bi1saWZlY3ljbGUgcHJlL3Bvc3Qtc3RhcnQ8L3RleHQ+CiAgICA8L2c+CiAgICA8cGF0aCBkPSJNNDAwIDUzMiBINDQwIiBjbGFzcz0iZmxvdyIvPgogICAgPGcgaWQ9ImdwdS1zdGVwLTUiPgogICAgICA8cmVjdCB4PSI0NDAiIHk9IjQ0MiIgd2lkdGg9IjM0MCIgaGVpZ2h0PSIxOTgiIHJ4PSIxMSIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjYTdjYmJkIi8+CiAgICAgIDx0ZXh0IHg9IjQ2MCIgeT0iNDc2IiBjbGFzcz0iaGVhZGluZyI+NSAgUGF1c2UgKyByZWJ1aWxkPC90ZXh0PgogICAgICA8dGV4dCB4PSI0NjAiIHk9IjUwOCIgY2xhc3M9ImJvZHkiPlN0b3Aga3ViZWxldCwgdGhlbiBjb250YWluZXJkPC90ZXh0PgogICAgICA8dGV4dCB4PSI0NjAiIHk9IjUzNCIgY2xhc3M9ImJvZHkiPlJld2lyZSBsaWJyYXJ5IGxpbmtzOyBydW4gbGRjb25maWc8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjQ2MCIgeT0iNTYwIiBjbGFzcz0iYm9keSI+QnVpbGQgaG9zdC1tYXRjaGVkIGRyaXZlciByb290PC90ZXh0PgogICAgICA8dGV4dCB4PSI0NjAiIHk9IjU4OCIgY2xhc3M9Im1vbm8gY29yZSI+L3J1bi9udmlkaWEvZHJpdmVyPC90ZXh0PgogICAgICA8dGV4dCB4PSI0NjAiIHk9IjYxOSIgY2xhc3M9InNtYWxsIj5FcGhlbWVyYWwgZHJpdmVyIGZpbGVzIGFyZSByZWJ1aWx0LjwvdGV4dD4KICAgIDwvZz4KICAgIDxwYXRoIGQ9Ik03ODAgNTMyIEg4MjAiIGNsYXNzPSJmbG93Ii8+CiAgICA8ZyBpZD0iZ3B1LXN0ZXAtNiI+CiAgICAgIDxyZWN0IHg9IjgyMCIgeT0iNDQyIiB3aWR0aD0iMzQwIiBoZWlnaHQ9IjE5OCIgcng9IjExIiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNhN2NiYmQiLz4KICAgICAgPHRleHQgeD0iODQwIiB5PSI0NzYiIGNsYXNzPSJoZWFkaW5nIj42ICBHZW5lcmF0ZSBDREkgc3BlYzwvdGV4dD4KICAgICAgPHRleHQgeD0iODQwIiB5PSI1MDgiIGNsYXNzPSJtb25vIj5udmlkaWEtY3RrIGNkaSBnZW5lcmF0ZTwvdGV4dD4KICAgICAgPHRleHQgeD0iODQwIiB5PSI1MzQiIGNsYXNzPSJtb25vIj4tLWRyaXZlci1yb290IC9ydW4vbnZpZGlhL2RyaXZlcjwvdGV4dD4KICAgICAgPHRleHQgeD0iODQwIiB5PSI1NjAiIGNsYXNzPSJib2R5Ij5EZXNjcmliZSBkZXZpY2VzICsgZHJpdmVyIG1vdW50czwvdGV4dD4KICAgICAgPHRleHQgeD0iODQwIiB5PSI1ODgiIGNsYXNzPSJtb25vIGNvcmUiPi9ldGMvY2RpL252aWRpYS55YW1sPC90ZXh0PgogICAgICA8dGV4dCB4PSI4NDAiIHk9IjYxOSIgY2xhc3M9InNtYWxsIj5LZWVwIHN5bWxpbmsgKyBsZGNhY2hlIGhvb2tzLjwvdGV4dD4KICAgIDwvZz4KICAgIDxwYXRoIGQ9Ik0xMTYwIDUzMiBIMTIwMCIgY2xhc3M9ImZsb3ciLz4KICAgIDxnIGlkPSJncHUtc3RlcC03Ij4KICAgICAgPHJlY3QgeD0iMTIwMCIgeT0iNDQyIiB3aWR0aD0iMzQwIiBoZWlnaHQ9IjE5OCIgcng9IjExIiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiNhN2NiYmQiLz4KICAgICAgPHRleHQgeD0iMTIyMCIgeT0iNDc2IiBjbGFzcz0iaGVhZGluZyI+NyAgUmVzdG9yZSBzZXJ2aWNlczwvdGV4dD4KICAgICAgPHRleHQgeD0iMTIyMCIgeT0iNTA4IiBjbGFzcz0iYm9keSI+U3RhcnQgY29udGFpbmVyZDwvdGV4dD4KICAgICAgPHRleHQgeD0iMTIyMCIgeT0iNTM0IiBjbGFzcz0iYm9keSI+SW1wb3J0IGNvbmZpZ3VyZWQgaW1hZ2UgYXJjaGl2ZXM8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjEyMjAiIHk9IjU2MCIgY2xhc3M9ImJvZHkiPlN0YXJ0IGt1YmVsZXQ8L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjEyMjAiIHk9IjYwMSIgY2xhc3M9InNtYWxsIj5OVklESUEgcnVudGltZSArIENESSBhcmUgbm93IHdpcmVkLjwvdGV4dD4KICAgIDwvZz4KCiAgICA8cGF0aCBkPSJNMTMxMCA2NDAgVjY4MCBIMjMwIFY2NDAiIGNsYXNzPSJyZXBlYXQiLz4KICAgIDxyZWN0IHg9IjQ5OCIgeT0iNjYyIiB3aWR0aD0iNTA0IiBoZWlnaHQ9IjMxIiByeD0iNyIgZmlsbD0iI2VhZjhmMiIvPgogICAgPHRleHQgeD0iNzUwIiB5PSI2ODQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJzZWN0aW9uIGNvcmUiPk5leHQgbWFuYWdlZCBuc3Bhd24gc3RhcnQgcmVwZWF0cyBzdGVwcyA04oCTNzwvdGV4dD4KICA8L2c+CgogIDxwYXRoIGQ9Ik0xMzIwIDMyMiBWMzY2IEgyNCBWNTMyIEg2MCIgY2xhc3M9ImZsb3ciLz4KICA8cmVjdCB4PSI0OTQiIHk9IjM1MCIgd2lkdGg9IjYxMiIgaGVpZ2h0PSIzMSIgcng9IjciIGZpbGw9IiNmN2Y5ZmMiLz4KICA8dGV4dCB4PSI4MDAiIHk9IjM3MiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9InNlY3Rpb24iPkJvb3RzdHJhcCwgcmVib290LCBvciByZXBhdmUgZW50ZXJzIHRoZSBsaWZlY3ljbGUgaG9va3M8L3RleHQ+CgogIDx0ZXh0IHg9IjgwMCIgeT0iNzM0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ic2VjdGlvbiI+R1BVIHJ1bnRpbWUgcmVhZHkg4oaSIGNsdXN0ZXIgR1BVIHBsdWdpbnMgZW5hYmxlIEdQVSB3b3JrbG9hZHM8L3RleHQ+CgogIDxnIGlkPSJrdWJlcm5ldGVzLWdwdS1leHBvc3VyZSI+CiAgICA8cmVjdCB4PSI0MCIgeT0iNzUwIiB3aWR0aD0iMTUyMCIgaGVpZ2h0PSIxOTYiIHJ4PSIxNSIgZmlsbD0iI2ZmZmFmMiIgc3Ryb2tlPSIjZGVjNDk2Ii8+CiAgICA8dGV4dCB4PSI2MCIgeT0iNzc4IiBjbGFzcz0ic2VjdGlvbiBvcGVyYXRvciI+VVNFUiAvIENMVVNURVIgT1BFUkFUT1IgTUFOQUdFRCDCtyBTVEVQUyA44oCTOTwvdGV4dD4KICAgIDx0ZXh0IHg9IjEzNDAiIHk9Ijc3OCIgdGV4dC1hbmNob3I9ImVuZCIgY2xhc3M9InNtYWxsIj5EZXBsb3kgYW5kIG1haW50YWluIEdQVSBwbHVnaW5zOyBzY2hlZHVsZSBhbmQgdmFsaWRhdGUgR1BVIHdvcmtsb2Fkcy48L3RleHQ+CiAgICA8ZyBpZD0iZ3B1LXN0ZXAtOCI+CiAgICAgIDxyZWN0IHg9Ijg1MCIgeT0iNzk4IiB3aWR0aD0iNjkwIiBoZWlnaHQ9IjEyNiIgcng9IjExIiBmaWxsPSIjZmZmN2U4IiBzdHJva2U9IiNkZWM0OTYiLz4KICAgICAgPHRleHQgeD0iODcwIiB5PSI4MjkiIGNsYXNzPSJoZWFkaW5nIj44ICBJbnN0YWxsIGNsdXN0ZXIgR1BVIHN0YWNrPC90ZXh0PgogICAgICA8dGV4dCB4PSI4NzAiIHk9Ijg1NiIgY2xhc3M9ImJvZHkiPkRldmljZSBQbHVnaW4gKyBHRkQsIG9wdGlvbmFsbHkgdmlhIEdQVSBPcGVyYXRvcjwvdGV4dD4KICAgICAgPHRleHQgeD0iODcwIiB5PSI4ODEiIGNsYXNzPSJib2R5Ij5HUFUgT3BlcmF0b3I6IGRyaXZlci5lbmFibGVkPWZhbHNlLCB0b29sa2l0LmVuYWJsZWQ9ZmFsc2U8L3RleHQ+CiAgICAgIDx0ZXh0IHg9Ijg3MCIgeT0iOTA1IiBjbGFzcz0ic21hbGwiPkRSQSBpcyBvcHRpb25hbC4gVGhlIGFnZW50IGRvZXMgbm90IGluc3RhbGwgdGhlc2UgY2x1c3RlciBjb21wb25lbnRzLjwvdGV4dD4KICAgIDwvZz4KICAgIDxwYXRoIGQ9Ik04NTAgODYyIEg3NjAiIGNsYXNzPSJmbG93Ii8+CiAgICA8ZyBpZD0iZ3B1LXN0ZXAtOSI+CiAgICAgIDxyZWN0IHg9IjYwIiB5PSI3OTgiIHdpZHRoPSI3MDAiIGhlaWdodD0iMTI2IiByeD0iMTEiIGZpbGw9IiNmZmY3ZTgiIHN0cm9rZT0iI2RlYzQ5NiIvPgogICAgICA8dGV4dCB4PSI4MCIgeT0iODI5IiBjbGFzcz0iaGVhZGluZyI+OSAgQWR2ZXJ0aXNlICsgdmFsaWRhdGUgR1BVIHdvcmtsb2FkczwvdGV4dD4KICAgICAgPHRleHQgeD0iODAiIHk9Ijg1NiIgY2xhc3M9ImJvZHkiPkRldmljZSBQbHVnaW4gcHVibGlzaGVzIG52aWRpYS5jb20vZ3B1OyBHRkQgYWRkcyBsYWJlbHMuPC90ZXh0PgogICAgICA8dGV4dCB4PSI4MCIgeT0iODgxIiBjbGFzcz0iYm9keSI+UmVxdWVzdCBhIEdQVTsgdmFsaWRhdGUgYSBDVURBIC8gbnZpZGlhLXNtaSB3b3JrbG9hZC48L3RleHQ+CiAgICAgIDx0ZXh0IHg9IjgwIiB5PSI5MDUiIGNsYXNzPSJzbWFsbCI+Q0RJIHN1cHBsaWVzIHBvZCBkZXZpY2VzIGFuZCBob3N0LW1hdGNoZWQgZHJpdmVyIGxpYnJhcmllcy48L3RleHQ+CiAgICA8L2c+CiAgPC9nPgoKICA8ZyBpZD0ib3BlcmF0b3ItaGFuZG9mZiI+CiAgICA8cGF0aCBkPSJNMTQ1MCA2NDAgVjc5OCIgY2xhc3M9ImZsb3ciLz4KICAgIDxyZWN0IHg9IjEzNTAiIHk9IjcxMyIgd2lkdGg9IjIwMCIgaGVpZ2h0PSIzNCIgcng9IjUiIGZpbGw9IiNmN2Y5ZmMiLz4KICAgIDx0ZXh0IHg9IjE0NTAiIHk9IjcyNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9InRhZyBvcGVyYXRvciI+Tk9ERSBSRUFEWTwvdGV4dD4KICAgIDx0ZXh0IHg9IjE0NTAiIHk9Ijc0MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9InNtYWxsIj5IYW5kb2ZmIHRvIGNsdXN0ZXIgb3BlcmF0b3I8L3RleHQ+CiAgPC9nPgoKICA8dGV4dCB4PSI2MCIgeT0iOTgxIiBjbGFzcz0ic21hbGwiPkZhaWx1cmUgZ2F0ZXM6IG5vIE5WSURJQSBkZXZpY2Ugbm9kZXMg4oaSIHNraXAuIEluY29tcGxldGUgZHJpdmVyIHN0YXRlIG9yIENESSBmYWlsdXJlIOKGkiBmYWlsIHNldHVwOyBmYWlsZWQgbGlmZWN5Y2xlIGhvb2tzIHRyaWdnZXIgc3lzdGVtZCByZXRyeS48L3RleHQ+CiAgPHRleHQgeD0iNjAiIHk9IjEwMDYiIGNsYXNzPSJzbWFsbCI+QWRkaW5nIGEgR1BVIHRvIGEgQ1BVLW9ubHkgd29ya2VyIHJlcXVpcmVzIGFuIE5WSURJQS1jYXBhYmxlIHJvb3Rmcy4gTGVnYWN5IERldmljZSBQbHVnaW4gcmVzb3VyY2VzIGFyZSBzaG93bjsgRFJBIHVzZXMgYSBzZXBhcmF0ZSByZXNvdXJjZSBtb2RlbC48L3RleHQ+CiAgPHRleHQgeD0iNjAiIHk9IjEwMzEiIGNsYXNzPSJzbWFsbCI+U2NvcGU6IEZsZXgncyBzaGFyZWQgVW5ib3VuZGVkIHYwLjguMCBwYXRoLiBLZXJuZWwgZHJpdmVycyBhbmQgdGhlIGNsdXN0ZXIgR1BVIHN0YWNrIHJlbWFpbiBvcGVyYXRvci1tYW5hZ2VkLjwvdGV4dD4KPC9zdmc+Cg==" width="1600" height="1050" draggable="false" alt="NVIDIA activation: operator supplies host drivers; Unbounded discovers GPUs and prepares nspawn, rebuilds the driver root and CDI during lifecycle hooks, and restores worker services. The operator installs the Device Plugin and GFD to advertise GPUs to workloads.">
+        </div>
+        <p id="nvidia-error" class="components-error" role="alert" hidden>Unable to display the embedded NVIDIA activation diagram.</p>
+      </div>
+    </section>
+    <footer id="bootstrap-controls" class="viewer-footer">
+      <div class="footer-controls">
+        <button id="previous" class="nav-button" type="button">← Previous</button>
+        <nav id="step-navigation" class="step-navigation" aria-label="Jump to a bootstrap step"></nav>
+        <button id="next" class="nav-button" type="button">Next →</button>
+      </div>
+      <div class="footer-meta">
+        <span id="keyboard-help" class="keyboard-help"><kbd>←</kbd> / <kbd>→</kbd> or <kbd>Space</kbd> · <kbd>Home</kbd>: prerequisites · <kbd>End</kbd>: verify</span>
+        <progress id="walkthrough-progress" max="11" value="0" aria-label="Walkthrough position"></progress>
+      </div>
+    </footer>
+    <div id="announcement" class="screen-reader-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  </div>
+  <noscript><p>Enable JavaScript to view the bootstrap flow and use keyboard navigation.</p></noscript>
+  <script>
+    (() => {
+      "use strict";
+      const byId = id => document.getElementById(id);
+      const source = byId("flow-source").content;
+      const sourceById = id => source.querySelector(`[id="${id}"]`);
+      const viewer = document.querySelector(".viewer");
+      const viewNames = ["bootstrap", "components", "nvidia"];
+      const tabs = viewNames.map(name => byId(`${name}-tab`));
+      let activeView = "bootstrap";
+      function diagramState(name, controlPrefix) {
+        return {
+          viewport: byId(`${name}-viewport`), image: byId(`${name}-image`), stage: byId(`${name}-stage`),
+          error: byId(`${name}-error`), fit: true, scale: 1,
+          zoomIn: byId(`${controlPrefix}zoom-in`), zoomOut: byId(`${controlPrefix}zoom-out`),
+          zoomFit: byId(`${controlPrefix}zoom-fit`), zoomActual: byId(`${controlPrefix}zoom-actual`),
+          zoomValue: byId(`${controlPrefix}zoom-value`),
+        };
+      }
+      const diagrams = {
+        components: diagramState("components", ""),
+        nvidia: diagramState("nvidia", "nvidia-"),
+      };
+
+      function sizeDiagram(preserveCenter = false, name = activeView) {
+        const diagram = diagrams[name];
+        if (!diagram || activeView !== name) return;
+        const width = diagram.viewport.clientWidth;
+        const height = diagram.viewport.clientHeight;
+        if (!width || !height) return;
+        const oldImage = diagram.image.getBoundingClientRect();
+        const viewport = diagram.viewport.getBoundingClientRect();
+        const centerX = oldImage.width ? (viewport.left + width / 2 - oldImage.left) / oldImage.width : .5;
+        const centerY = oldImage.height ? (viewport.top + height / 2 - oldImage.top) / oldImage.height : .5;
+        const naturalWidth = diagram.image.naturalWidth || Number(diagram.image.getAttribute("width"));
+        const naturalHeight = diagram.image.naturalHeight || Number(diagram.image.getAttribute("height"));
+        if (diagram.fit) diagram.scale = Math.min(width / naturalWidth, height / naturalHeight);
+        const imageWidth = Math.floor(naturalWidth * diagram.scale);
+        const imageHeight = Math.floor(naturalHeight * diagram.scale);
+        diagram.image.style.width = `${imageWidth}px`;
+        diagram.image.style.height = `${imageHeight}px`;
+        diagram.stage.style.width = `${Math.max(width, imageWidth)}px`;
+        diagram.stage.style.height = `${Math.max(height, imageHeight)}px`;
+        if (preserveCenter && !diagram.fit) {
+          diagram.viewport.scrollLeft = centerX * imageWidth - width / 2;
+          diagram.viewport.scrollTop = centerY * imageHeight - height / 2;
+        } else if (diagram.fit) {
+          diagram.viewport.scrollLeft = 0;
+          diagram.viewport.scrollTop = 0;
+        }
+        diagram.zoomValue.textContent = `${Math.round(diagram.scale * 100)}%`;
+        diagram.zoomFit.setAttribute("aria-pressed", String(diagram.fit));
+        diagram.zoomOut.disabled = !diagram.fit && diagram.scale <= .1;
+        diagram.zoomIn.disabled = diagram.scale >= 3;
+      }
+      function zoomDiagram(factor, name = activeView) {
+        const diagram = diagrams[name];
+        if (!diagram || activeView !== name) return;
+        diagram.fit = false;
+        diagram.scale = Math.max(.1, Math.min(3, diagram.scale * factor));
+        sizeDiagram(true, name);
+      }
+      function fitActiveDiagram() {
+        if (!diagrams[activeView]) return;
+        diagrams[activeView].fit = true;
+        sizeDiagram();
+      }
+      function setView(name, focusTab = false) {
+        activeView = name;
+        viewer.dataset.view = name;
+        tabs.forEach((tab, index) => {
+          const selected = viewNames[index] === name;
+          tab.setAttribute("aria-selected", String(selected));
+          tab.tabIndex = selected ? 0 : -1;
+          byId(`${viewNames[index]}-panel`).hidden = !selected;
+        });
+        byId("bootstrap-controls").hidden = name !== "bootstrap";
+        byId("viewer-subtitle").textContent = name === "bootstrap"
+          ? "Full-flow overview + selected-step detail. Nothing advances automatically."
+          : "Full diagram by default. Use + / − to inspect details, 0 to fit; pan inside the diagram when zoomed.";
+        if (focusTab) byId(`${name}-tab`).focus();
+        if (diagrams[name]) sizeDiagram();
+      }
+      tabs.forEach((tab, index) => tab.addEventListener("click", () => setView(viewNames[index])));
+      byId("view-tabs").addEventListener("keydown", event => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+        const index = tabs.indexOf(document.activeElement);
+        if (index < 0) return;
+        let next;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        setView(viewNames[next], true);
+      });
+      for (const [name, diagram] of Object.entries(diagrams)) {
+        diagram.zoomIn.addEventListener("click", () => zoomDiagram(1.25, name));
+        diagram.zoomOut.addEventListener("click", () => zoomDiagram(1 / 1.25, name));
+        diagram.zoomFit.addEventListener("click", () => { diagram.fit = true; sizeDiagram(false, name); });
+        diagram.zoomActual.addEventListener("click", () => { diagram.fit = false; diagram.scale = 1; sizeDiagram(true, name); });
+        diagram.image.addEventListener("load", () => sizeDiagram(false, name));
+        diagram.image.addEventListener("error", () => { diagram.error.hidden = false; diagram.stage.hidden = true; });
+        new ResizeObserver(() => sizeDiagram(false, name)).observe(diagram.viewport);
+      }
+      const directText = group => Array.from(group.children).filter(node => node.localName === "text");
+      const phaseColor = step => overview[step][3] === "Unbounded" ? "#08776c" : overview[step][3] === "Flex" ? "#175da8" : "#52647b";
+      const related = [
+        [], ["agent-artifacts"], ["aks-bootstrap-data"], ["fail-fast-note"], ["aks-machine-api"],
+        ["shared-core-note"], ["shared-core-note"], ["worker-artifacts"], ["kubernetes-api"], [],
+        ["kubernetes-api", "aks-machine-api"], [],
+      ];
+      const steps = [{
+        id: "operator-prerequisites", title: "Prepare the cluster and host", phase: "Operator prerequisites",
+        lines: [
+          "Prepare an AKS Flex pool, BYO CNI, Unbounded-Net Sites, and API / node / pod / service connectivity.",
+          "Use an Ubuntu 24.04 host with VM or Arc managed identity, or a service principal, authorized at the pool scope.",
+          "Install the script's required tools. Run as root with the cluster, pool, auth mode, and agent version.",
+        ],
+        code: "bootstrap.sh --fetch-bootstrap-data …",
+      }];
+      for (let i = 1; i <= 10; i++) {
+        const texts = directText(sourceById(`step-${i}`));
+        steps.push({
+          id: `step-${i}`,
+          title: texts.find(node => node.classList.contains("heading")).textContent,
+          phase: i === 5 ? "Goal resolution" : texts.find(node => node.classList.contains("tag")).textContent,
+          lines: texts.filter(node => node.matches(".small, .body, .label") && !node.classList.contains("mono")).map(node => node.textContent),
+          code: texts.filter(node => node.classList.contains("mono")).map(node => node.textContent).join("\n"),
+        });
+      }
+      steps.push({
+        id: "operator-verification", title: "Verify node + workloads", phase: "Operator verification",
+        lines: [
+          "Check Node Ready and the Azure Machine.",
+          "Run a smoke workload and verify pod networking; local kubelet health alone is insufficient.",
+        ],
+        commands: [
+          { label: "Node", code: "kubectl get nodes -o wide" },
+          {
+            label: "Machine",
+            code: [
+              'az aks machine list -g "<resource-group>" \\',
+              '  --cluster-name "<cluster-name>" \\',
+              '  --nodepool-name "<flex-pool-name>" -o table',
+            ].join("\n"),
+            note: "Replace the quoted placeholders with your AKS values.",
+          },
+          { label: "Logs", code: "journalctl -u aks-flex-node-agent" },
+        ],
+      });
+      const contextFor = index => {
+        if (!related[index].length) return null;
+        const group = sourceById(related[index][0]);
+        const texts = directText(group);
+        let body = texts.filter(node => node.classList.contains("small")).map(node => node.textContent).join(" ");
+        if (index === 5 || index === 6) body = "Embedded Go libraries supply goal-state resolution, host preparation, rootfs provisioning, and node startup. This is not a second agent process.";
+        if (index === 8) body = "Bootstrap token → kubelet client certificate. Node registration proceeds through this API.";
+        if (index === 10) body = "The daemon uses its own client certificate and scoped Node watch. The durable Azure identity remains responsible for ARM Machine access.";
+        return { title: texts.find(node => node.classList.contains("heading")).textContent, body };
+      };
+      const overview = [
+        ["Prepare cluster + identity", "Prereqs", "Flex pool, CNI, connectivity, and authorized host", "Operator", ""],
+        ["Download + install agent", "Install agent", "Versioned binary for the host architecture", "Flex", ""],
+        ["Fetch bootstrap data + config", "Fetch data", "AKS endpoint, CA, token, and protected configuration", "Flex", ""],
+        ["Run base preflight checks", "Preflight", "Validate the host, API, and artifact sources", "Unbounded", "Flex add-ons: config, Arc and NPD checks"],
+        ["Ensure AKS Machine", "AKS Machine", "Register if needed; adopt the Machine ETag", "Flex", ""],
+        ["Resolve the worker goal", "Worker goal", "Resolve kube1 configuration and artifact sources", "Unbounded", "Flex setup: adapt AKS config; seed local state"],
+        ["Prepare the host", "Host setup", "Packages, OS, firewall, Docker/swap, and APT", "Unbounded", "Flex-specific: optional host routes + overlap checks"],
+        ["Provision kube1 rootfs", "Rootfs", "Rootfs and Kubernetes / CRI / CNI binaries", "Unbounded", "Flex-specific: service deps, Flex binary, NPD"],
+        ["Start nspawn + kubelet", "Start worker", "Start the worker and check kubelet's service", "Unbounded", "Flex add-on: start Node Problem Detector"],
+        ["Save state + start daemon", "Save + daemon", "Persist the active side; enable the host service", "Flex", "Unbounded helper: agent-binary links"],
+        ["Reconcile goals + Node", "Reconcile", "ARM goal polling and Kubernetes Node watch", "Flex", "Unbounded helpers: certificates and controller"],
+        ["Verify node + workloads", "Verify", "Node Ready, Azure Machine, and workload networking", "Operator", ""],
+      ];
+      // Classify the implementation, not the caller. Delegating to the core
+      // does not make its operation Flex-owned; list actual Flex additions separately.
+      const ownership = [
+        { operator: ["Prepare cluster, CNI, connectivity, and host identity."], source: "docs/usage/getting-started.md" },
+        { flex: ["Download, validate, and install the agent archive."], source: "scripts/bootstrap.sh" },
+        { flex: ["Authenticate to AKS and fetch pool bootstrap data.", "Merge overrides and write protected configuration."], source: "scripts/bootstrap.sh; pkg/bootstrapdata" },
+        { core: ["Host, API, and artifact checks; shared check runner."], flex: ["Flex config validation; Arc and NPD checks."], source: "pkg/cmd/preflight/preflight.go" },
+        { flex: ["Machine GET/create/update and ETag baseline."], source: "pkg/aksmachine/ensure.go" },
+        { core: ["Resolve download sources and nspawn goal state."], flex: ["Adapt AKS config; select kube1 and seed applied state."], source: "pkg/config/adapter.go; pkg/cmd/start/start.go" },
+        { core: ["Install packages; configure OS and nftables.", "Disable Docker/swap; harden APT."], flex: ["Optional static routes and route-overlap checks."], source: "pkg/daemon/start.go: SetupHost" },
+        { core: ["Stage images and provision the rootfs.", "Install Kubernetes, CRI, and CNI binaries."], flex: ["Configure required service dependencies.", "Copy the Flex binary; download NPD."], source: "pkg/daemon/start.go: StartNode" },
+        { core: ["Start nspawn, containerd, and kubelet.", "Wait for kubelet's systemd service to be active."], flex: ["Start Node Problem Detector."], source: "pkg/daemon/start.go: StartNode" },
+        { core: ["Agent-binary link/layout helpers."], flex: ["Persist and checksum applied state.", "Install, enable, and start daemon/recovery services."], source: "pkg/daemon/state.go; lifecycle.go; agent_upgrade_binary.go" },
+        { core: ["Daemon certificates and rotation.", "Shared controller and operation-dispatch helpers."], flex: ["ARM goal reads, Node signals, and local state.", "AKS repave/reset policy and operation handlers."], source: "pkg/daemon/daemon.go; repave_reconciler.go" },
+        { operator: ["Check Node Ready and Azure Machine state.", "Run smoke workloads and verify networking."], source: "docs/usage/getting-started.md" },
+      ];
+      const executionLabel = index => index === 6 || index === 7
+        ? "Unbounded + Flex-specific steps" : overview[index][3];
+      const stageNodes = [];
+      const jumps = [];
+      let current = -1;
+      let detailMode = "details";
+      const span = (className, text) => {
+        const node = document.createElement("span");
+        node.className = className;
+        node.textContent = text;
+        return node;
+      };
+
+      steps.forEach((step, index) => {
+        const [label, mobileLabel, hint, , addition] = overview[index];
+        const accessibleName = `${index > 0 && index < 11 ? `Step ${index}: ` : ""}${step.title}. Executor: ${executionLabel(index)}.${addition ? ` ${addition}.` : ""}`;
+        const item = document.createElement("li");
+        item.className = "flow-item";
+        const node = document.createElement("button");
+        node.id = `flow-node-${index}`;
+        node.type = "button";
+        node.className = addition ? "flow-node has-addon" : "flow-node";
+        node.style.setProperty("--accent", phaseColor(index));
+        node.setAttribute("aria-label", accessibleName);
+        const copy = span("flow-copy", "");
+        copy.append(span("flow-label", label), span("flow-mobile-label", mobileLabel));
+        copy.append(addition ? span("flow-addon", addition) : span("flow-hint", hint));
+        node.append(span("flow-number", index === 0 ? "P" : index === 11 ? "✓" : String(index)), copy, span("flow-category", executionLabel(index)));
+        node.addEventListener("click", () => select(index));
+        item.append(node);
+        byId("flow-map").append(item);
+        stageNodes.push(node);
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "step-jump";
+        button.textContent = index === 0 ? "Prep" : index === 11 ? "Verify" : String(index);
+        button.title = accessibleName;
+        button.setAttribute("aria-label", accessibleName);
+        button.addEventListener("click", () => select(index));
+        byId("step-navigation").append(button);
+        jumps.push(button);
+      });
+
+      function renderDetailMode() {
+        const showOwnership = detailMode === "ownership";
+        const step = steps[current];
+        byId("detail-panel").dataset.mode = detailMode;
+        byId("mode-details").setAttribute("aria-pressed", String(!showOwnership));
+        byId("mode-ownership").setAttribute("aria-pressed", String(showOwnership));
+        byId("ownership-detail").hidden = !showOwnership;
+        byId("detail-lines").hidden = showOwnership;
+        byId("command-block").hidden = showOwnership || !(step.commands?.length || step.code);
+        byId("context-box").hidden = showOwnership || !contextFor(current);
+        byId("next-hint").hidden = showOwnership;
+        byId("detail-panel").scrollTop = 0;
+      }
+      byId("mode-details").addEventListener("click", () => { detailMode = "details"; renderDetailMode(); });
+      byId("mode-ownership").addEventListener("click", () => { detailMode = "ownership"; renderDetailMode(); });
+
+      function select(index) {
+        const target = Math.max(0, Math.min(steps.length - 1, index));
+        if (current === target) return;
+        current = target;
+        const step = steps[current];
+        const position = current === 0 ? "Before bootstrap" : current === 11 ? "After bootstrap" : `Step ${current} of 10`;
+        document.body.dataset.step = String(current);
+        stageNodes.forEach((node, i) => {
+          node.classList.toggle("selected", i === current);
+          node.classList.toggle("visited", i < current);
+          if (i === current) node.setAttribute("aria-current", "step"); else node.removeAttribute("aria-current");
+        });
+        jumps.forEach((button, i) => {
+          if (i === current) button.setAttribute("aria-current", "step"); else button.removeAttribute("aria-current");
+        });
+        byId("detail-panel").style.setProperty("--accent", phaseColor(current));
+        byId("step-badge").textContent = current === 0 ? "P" : current === 11 ? "✓" : String(current).padStart(2, "0");
+        byId("step-phase").textContent = step.phase;
+        byId("step-position").textContent = position;
+        byId("detail-title").textContent = step.title;
+        byId("detail-lines").replaceChildren(...step.lines.map(text => {
+          const item = document.createElement("li"); item.textContent = text; return item;
+        }));
+        const commands = step.commands ?? (step.code ? [{ code: step.code }] : []);
+        byId("command-block").hidden = !commands.length;
+        byId("command-options").hidden = commands.length < 2;
+        const commandButtons = commands.map((command, index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "command-option";
+          button.textContent = command.label ?? "Command";
+          button.addEventListener("click", () => showCommand(index));
+          return button;
+        });
+        function showCommand(index) {
+          const command = commands[index];
+          byId("detail-code").textContent = command?.code ?? "";
+          byId("command-note").textContent = command?.note ?? "";
+          byId("command-note").hidden = !command?.note;
+          commandButtons.forEach((button, i) => button.setAttribute("aria-pressed", String(i === index)));
+          byId("detail-code").scrollLeft = 0;
+        }
+        byId("command-options").replaceChildren(...commandButtons);
+        showCommand(0);
+        const context = contextFor(current);
+        byId("context-box").hidden = !context;
+        byId("context-title").textContent = context?.title ?? "";
+        byId("context-body").textContent = context?.body ?? "";
+        byId("next-hint").textContent = current < steps.length - 1 ? `Next: ${steps[current + 1].title}` : "End of walkthrough. Press Home to return to prerequisites.";
+        byId("previous").disabled = current === 0;
+        byId("next").disabled = current === steps.length - 1;
+        byId("walkthrough-progress").value = current;
+        byId("walkthrough-progress").setAttribute("aria-valuetext", `${position}: ${step.title}`);
+        const owners = ownership[current];
+        byId("ownership-summary").textContent = owners.operator ? "Operator-owned work outside both agents."
+          : current === 6 || current === 7 ? "Unbounded + Flex-specific steps. Core work and Flex additions are separated below."
+          : overview[current][4] ? `Main action: ${overview[current][0]} (${overview[current][3]}). ${overview[current][4]}.`
+          : `This action is implemented by ${overview[current][3]}.`;
+        byId("ownership-groups").replaceChildren(...[
+          ["core", "Unbounded only"], ["flex", "Flex only"], ["operator", "Operator"],
+        ].filter(([key]) => owners[key]?.length).map(([key, label]) => {
+          const group = document.createElement("section");
+          group.className = "owner-group";
+          group.dataset.owner = key;
+          const heading = document.createElement("h3"); heading.textContent = label;
+          const list = document.createElement("ul");
+          list.replaceChildren(...owners[key].map(text => { const li = document.createElement("li"); li.textContent = text; return li; }));
+          group.append(heading, list);
+          return group;
+        }));
+        byId("ownership-source").textContent = owners.source;
+        byId("announcement").textContent = `${position}. ${step.title}. Executor: ${executionLabel(current)}. ${overview[current][4]}`;
+        renderDetailMode();
+      }
+      byId("previous").addEventListener("click", () => select(current - 1));
+      byId("next").addEventListener("click", () => select(current + 1));
+      document.addEventListener("keydown", event => {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+        if (event.target.closest?.("input, textarea, select, [contenteditable='true'], [role='tablist']")) return;
+        if (diagrams[activeView]) {
+          if (event.key === "+" || event.key === "=") zoomDiagram(1.25);
+          else if (event.key === "-") zoomDiagram(1 / 1.25);
+          else if (event.key === "0") fitActiveDiagram();
+          else return;
+          event.preventDefault();
+          return;
+        }
+        let target;
+        if (["ArrowRight", "ArrowDown", "PageDown"].includes(event.key)) target = current + 1;
+        else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) target = current - 1;
+        else if (event.key === "Home") target = 0;
+        else if (event.key === "End") target = steps.length - 1;
+        else if (event.key === " ") {
+          // Preserve native Space activation on focused buttons/links: one action, not two.
+          if (event.target.closest?.("button, a, [role='button']")) return;
+          target = current + (event.shiftKey ? -1 : 1);
+        } else return;
+        event.preventDefault();
+        select(target);
+      });
+      select(0);
+    })();
+  </script>
+</body>
+</html>
