@@ -21,11 +21,11 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	armruntime "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/google/renameio/v2"
 
 	"github.com/Azure/AKSFlexNode/pkg/azclient"
@@ -206,7 +206,7 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		transport = http.DefaultClient
 	}
 	var bearerToken string
-	client, err := armcontainerservice.NewAgentPoolsClient(clusterID.SubscriptionID, credential, &arm.ClientOptions{
+	armClientOptions := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
 			APIVersion:       options.APIVersion,
 			Cloud:            clientOptions.Cloud,
@@ -215,19 +215,36 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 			PerRetryPolicies: []policy.Policy{&retryAfterJitterPolicy{jitter: deps.retryJitter}},
 		},
 		DisableRPRegistration: true,
-	})
+	}
+	pipeline, err := armruntime.NewPipeline(
+		"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice",
+		"v9.6.0",
+		credential,
+		runtime.PipelineOptions{},
+		armClientOptions,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("create AgentPools client: %w", err)
+		return nil, fmt.Errorf("create bootstrap-data pipeline: %w", err)
 	}
 	var rawResponse *http.Response
-	response, err := client.ListBootstrapData(
+	urlPath := "/subscriptions/" + url.PathEscape(clusterID.SubscriptionID) +
+		"/resourceGroups/" + url.PathEscape(clusterID.ResourceGroupName) +
+		"/providers/Microsoft.ContainerService/managedClusters/" + url.PathEscape(clusterID.Name) +
+		"/agentPools/" + url.PathEscape(options.AgentPoolName) +
+		"/listBootstrapData"
+	request, err := runtime.NewRequest(
 		policy.WithCaptureResponse(retryCtx, &rawResponse),
-		clusterID.ResourceGroupName,
-		clusterID.Name,
-		options.AgentPoolName,
-		armcontainerservice.ListBootstrapDataRequest{},
-		nil,
+		http.MethodPost,
+		runtime.JoinPaths(endpoint, urlPath),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("create list bootstrap data request: %w", err)
+	}
+	request.Raw().Header.Set("Accept", "application/json")
+	if err := runtime.MarshalAsJSON(request, struct{}{}); err != nil {
+		return nil, fmt.Errorf("marshal list bootstrap data request: %w", err)
+	}
+	response, err := pipeline.Do(request)
 	if err != nil {
 		if rawResponse != nil {
 			return nil, bootstrapDataHTTPError(rawResponse, bearerToken)
@@ -237,6 +254,9 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if rawResponse == nil {
 		return nil, fmt.Errorf("list bootstrap data returned no HTTP response")
 	}
+	if !runtime.HasStatusCode(response, http.StatusOK) {
+		return nil, bootstrapDataHTTPError(rawResponse, bearerToken)
+	}
 	raw, err := runtime.Payload(rawResponse)
 	if err != nil {
 		return nil, fmt.Errorf("read bootstrap data: %w", err)
@@ -244,7 +264,22 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 	if int64(len(raw)) > maxResponseBytes {
 		return nil, fmt.Errorf("bootstrap data exceeds %d bytes", maxResponseBytes)
 	}
-	responseData := response.PoolBootstrapData
+	var responseData struct {
+		Azure *struct {
+			BootstrapToken *struct {
+				Token *string `json:"token"`
+			} `json:"bootstrapToken"`
+		} `json:"azure"`
+		Node *struct {
+			Kubelet *struct {
+				ClusterFQDN *string `json:"clusterFQDN"`
+				CACertData  *string `json:"caCertData"`
+			} `json:"kubelet"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal(raw, &responseData); err != nil {
+		return nil, fmt.Errorf("unmarshal bootstrap data: %w", err)
+	}
 	bootstrapToken := ""
 	if responseData.Azure != nil && responseData.Azure.BootstrapToken != nil && responseData.Azure.BootstrapToken.Token != nil {
 		bootstrapToken = *responseData.Azure.BootstrapToken.Token
@@ -261,8 +296,8 @@ func fetch(ctx context.Context, options Options, deps dependencies) (*Data, erro
 		if responseData.Node.Kubelet.ClusterFQDN != nil {
 			clusterFQDN = *responseData.Node.Kubelet.ClusterFQDN
 		}
-		if responseData.Node.Kubelet.CaCertData != nil {
-			caCertData = *responseData.Node.Kubelet.CaCertData
+		if responseData.Node.Kubelet.CACertData != nil {
+			caCertData = *responseData.Node.Kubelet.CACertData
 		}
 	}
 	return &Data{
