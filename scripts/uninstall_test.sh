@@ -49,6 +49,17 @@ remove_binary >/dev/null
 assert_removed "$HOST_ROOT"
 [[ ! -e "$HOST_ROOT" ]] || fail "empty host root was left: $(find "$HOST_ROOT" | tr '\n' ' ')"
 
+# A move to the host root that was interrupted leaves its copy beside it and its marker in it, and
+# neither keeps the host root.
+populate "$HOST_ROOT"
+touch "$HOST_ROOT/.moving"
+mkdir -p "$HOST_ROOT.staging/bin"
+touch "$HOST_ROOT.staging/bin/aks-flex-node"
+remove_binary >/dev/null
+assert_removed "$HOST_ROOT"
+[[ ! -e "$HOST_ROOT" ]] || fail "an unfinished move kept the host root: $(find "$HOST_ROOT" | tr '\n' ' ')"
+[[ ! -e "$HOST_ROOT.staging" ]] || fail "an unfinished move's copy was left"
+
 # The legacy root is swept as well, because uninstalling does not depend on the host root having
 # been migrated, and a host root that still holds something else is kept.
 populate "$LEGACY_ROOT"

@@ -335,6 +335,48 @@ sudo systemctl is-active --quiet aks-flex-node-agent.service
 REMOTE
 }
 
+# _host_root_migration_wait_moved waits for the daemon to move a linked host into
+# a real /opt/unbounded, then checks nothing is left of the older layout and the
+# units and the running daemon follow the new one.
+_host_root_migration_wait_moved() {
+  local vm_ip="$1"
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+moved() {
+  [[ -d /opt/unbounded && ! -L /opt/unbounded && ! -e /opt/unbounded/.moving ]] || return 1
+  pid="$(systemctl show --property MainPID --value aks-flex-node-agent.service)"
+  [[ "${pid:-0}" -gt 0 && "$(sudo readlink -f "/proc/${pid}/exe")" == /opt/unbounded/lib/aks-flex-node/* ]]
+}
+for _ in $(seq 1 60); do
+  moved && break
+  sleep 5
+done
+if ! moved; then
+  echo "the host was not moved to /opt/unbounded: $(ls -ld /opt/unbounded 2>&1)" >&2
+  sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager >&2 || true
+  exit 1
+fi
+for path in /opt/unbounded.staging /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node \
+  /usr/local/bin/unbounded-agent-nspawn-lifecycle /etc/aks-flex-node/host-root-agents; do
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    echo "${path} is left after the move" >&2
+    exit 1
+  fi
+done
+sudo grep -Fq "ExecStart=/opt/unbounded/lib/aks-flex-node/aks-flex-node-current agent" \
+  /etc/systemd/system/aks-flex-node-agent.service ||
+  { echo "agent unit does not run the moved current link" >&2; exit 1; }
+hooks="$(sudo sh -c 'grep -h nspawn-lifecycle /etc/systemd/system/systemd-nspawn@*.service.d/override.conf \
+  /etc/systemd/system/unbounded-agent-regenerate-config@*.service 2>/dev/null' || true)"
+[[ -n "${hooks}" ]] || { echo "found no nspawn lifecycle hooks" >&2; exit 1; }
+if grep -v -F /opt/unbounded/bin/unbounded-agent-nspawn-lifecycle <<<"${hooks}"; then
+  echo "nspawn lifecycle hooks do not all run the moved helper" >&2
+  exit 1
+fi
+sudo systemctl is-active --quiet aks-flex-node-agent.service
+REMOTE
+}
+
 host_root_migration_e2e() {
   local release="${E2E_LEGACY_RELEASE:-v0.2.0}"
   log_section "Host Root Migration from ${release}"
@@ -369,6 +411,16 @@ host_root_migration_e2e() {
     log_error "The migrated host is not running from the older layout: ${snapshot}"
     return 1
   fi
+  _agent_upgrade_assert_synchronized "${vm_ip}"
+  _agent_upgrade_validate_kubelet_auth "${vm_name}" "${vm_ip}"
+
+  # The next upgrade pushes the older release out of last-good, and the daemon
+  # it starts moves the host into a real /opt/unbounded.
+  op="host-root-move-${suffix}"
+  _agent_upgrade_apply "${op}" "${vm_name}" success.tar.gz "${success_digest}" "move-${suffix}"
+  _agent_upgrade_wait_phase "${op}" Complete
+  _host_root_migration_wait_moved "${vm_ip}"
+  validate_node_joined "${vm_name}"
   _agent_upgrade_assert_synchronized "${vm_ip}"
   _agent_upgrade_validate_kubelet_auth "${vm_name}" "${vm_ip}"
   smoke_test "${vm_name}" "host-root-migration"

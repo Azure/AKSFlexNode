@@ -163,6 +163,12 @@ remove_binary() {
 remove_host_root() {
     local dir
 
+    # A move to the host root that was interrupted leaves its copy beside the host root.
+    if [[ -e "$HOST_ROOT.staging" ]]; then
+        rm -rf -- "$HOST_ROOT.staging"
+        log_success "Removed directory: $HOST_ROOT.staging"
+    fi
+
     if [[ -L "$HOST_ROOT" ]]; then
         if [[ "$(readlink -- "$HOST_ROOT")" == "$LEGACY_ROOT" ]]; then
             rm -f -- "$HOST_ROOT"
@@ -172,6 +178,8 @@ remove_host_root() {
     fi
 
     [[ -d "$HOST_ROOT" ]] || return 0
+    # The marker of a move that has not finished.
+    rm -f -- "$HOST_ROOT/.moving"
     for dir in "$HOST_ROOT/lib" "$HOST_ROOT/bin" "$HOST_ROOT/libexec" "$HOST_ROOT"; do
         rmdir -- "$dir" 2>/dev/null || true
     done

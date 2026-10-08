@@ -1,0 +1,175 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
+)
+
+// hostRootAgentsPath records the digest of every binary that has run as the
+// daemon on a host linked to the legacy root; see hostroot.ReconcileMove. It is
+// under the config directory, which reset removes.
+const hostRootAgentsPath = "/etc/aks-flex-node/host-root-agents"
+
+// hostLayout returns every file of the host-side layout, relative to the host
+// root: AKS Flex Node's own binaries and recovery script, and the helpers the
+// agent library installs there. Moving a linked host copies these from the
+// legacy root.
+func hostLayout() []string {
+	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
+	library := goalstates.LegacyHostPaths()
+
+	var files []string
+	for _, path := range []string{
+		legacy.BinaryPath,
+		legacy.BluePath,
+		legacy.GreenPath,
+		legacy.CurrentPath,
+		legacy.LastGoodPath,
+		recoveryScriptPathUnder(hostroot.LegacyPath),
+		library.NSpawnLifecycleBinary,
+		library.LocalDNSNetworkHelper,
+	} {
+		rel, err := filepath.Rel(hostroot.LegacyPath, path)
+		if err != nil {
+			panic(err) // Every path above is built under the legacy root.
+		}
+		files = append(files, rel)
+	}
+
+	return files
+}
+
+// reconcileHostRootUnderLock moves a host an earlier release installed from
+// /usr/local into a real /opt/unbounded once neither the current nor the
+// last-good binary is from such a release, and finishes a move that was
+// interrupted. It reports whether it restarted the daemon.
+//
+// It holds the activation lock, which keeps an AgentUpgrade or a direct
+// activation from changing the layout under it. An AgentReset cannot overlap
+// it either: the daemon runs it before it opens the reconcile gate. A local
+// reset stops the daemon first, which interrupts a move at worst, and the next
+// start finishes it.
+//
+// A failure is logged, never returned: the daemon is healthy either way, and
+// the next start retries.
+func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor) bool {
+	lock, err := upgrades.Acquire()
+	if err != nil {
+		log.Warn("not moving the agent's files to the host root: an activation holds the lock", "error", err)
+
+		return false
+	}
+	defer func() { _ = lock.Close() }()
+
+	paths := defaultAgentUpgradePaths()
+	restarted, err := hostroot.ReconcileMove(ctx, log, hostroot.MoveOptions{
+		Files: hostLayout(),
+		// The directories a fresh installation's PrepareHostRoot creates.
+		Subdirs:      []string{"bin", managedBinaryDir, "libexec"},
+		Record:       hostRootAgentsPath,
+		SignalPath:   paths.SignalPath,
+		CurrentPath:  paths.CurrentPath,
+		LastGoodPath: paths.LastGoodPath,
+		RewriteUnits: func(ctx context.Context) error {
+			return rewriteHostRootUnits(ctx, log, cfg, state)
+		},
+		Restart: upgrades.Restart,
+	})
+	if err != nil {
+		log.Warn("could not move the agent's files to the host root; the next daemon start retries", "error", err)
+	}
+
+	return restarted
+}
+
+// rewriteHostRootUnits points every unit and script that names the host-side
+// files at the files under the host root.
+func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore) error {
+	// The agent unit, the recovery unit and the recovery script.
+	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
+		return err
+	}
+
+	active, err := activeMachineFromStore(ctx, state)
+	if err != nil {
+		return err
+	}
+
+	machineCfg := cfg.DeepCopy()
+	if active.State.AppliedKubernetesVersion != "" {
+		machineCfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
+	}
+	agentCfg := config.ToAgentConfig(machineCfg, active.Name)
+
+	// The nspawn lifecycle helper, the machine's service override and its
+	// config regeneration unit.
+	rootFS, err := goalstates.ResolveNSpawnConfig(agentCfg, active.Name)
+	if err != nil {
+		return fmt.Errorf("resolve machine nspawn config: %w", err)
+	}
+	if err := rootfs.EnsureNSpawnConfig(log, rootFS).Do(ctx); err != nil {
+		return err
+	}
+
+	// The LocalDNS network unit and its helper, on a host that has them. The
+	// network they configure is already up, so the unit is not run again.
+	if _, err := os.Stat(filepath.Join(goalstates.SystemdSystemDir, goalstates.LocalDNSNetworkUnit)); err == nil {
+		gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
+		if err != nil {
+			return fmt.Errorf("resolve machine goal state: %w", err)
+		}
+		if err := nodestart.WriteLocalDNSNetworkFiles(gs.NodeStart); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+		return fmt.Errorf("reload systemd after moving to the host root: %w", err)
+	}
+
+	// The writers fsync each file before renaming it into place; the renames
+	// need their directories synced before the legacy files go.
+	return syncDirs(
+		systemdSystemDir,
+		filepath.Dir(rootFS.ServiceOverrideFile),
+		filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())),
+	)
+}
+
+// syncDirs makes the entries in each directory durable: the files renamed into
+// it or removed from it. Each directory is synced once.
+func syncDirs(dirs ...string) error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, dir := range dirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+
+		f, err := os.Open(dir) //nolint:gosec // The agent's own directories.
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sync %s: %w", dir, err))
+			continue
+		}
+		if err := errors.Join(f.Sync(), f.Close()); err != nil {
+			errs = append(errs, fmt.Errorf("sync %s: %w", dir, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}

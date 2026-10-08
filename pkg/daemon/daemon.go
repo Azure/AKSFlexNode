@@ -159,6 +159,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				// last-good process starts and consumes the retained signal.
 				return
 			default:
+				// After the upgrade is reported, so a move never runs
+				// before this binary has shown it can start, and so the signal
+				// it waits for is gone.
+				if reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades) {
+					// A restart is scheduled; the next process opens the gate.
+					return
+				}
 				gate.open()
 				return
 			}

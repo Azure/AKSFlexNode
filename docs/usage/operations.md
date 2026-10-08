@@ -23,7 +23,12 @@ The agent keeps its binaries and helpers under `/opt/unbounded`: the `aks-flex-n
 
 Where `/usr/local/bin` is writable, the install scripts put the binary there, as earlier releases were installed. The agent copies itself to `/opt/unbounded/bin` when it starts, and removes the copy in `/usr/local/bin` once it runs from there. Where `/usr/local` is read-only, as on Azure Container Linux, the scripts install under `/opt/unbounded` directly.
 
-Earlier releases installed these files under `/usr/local`. On a host installed by one of them, the first command of a newer release that changes the host, such as the agent after an AgentUpgrade, links `/opt/unbounded` to `/usr/local`. The files stay where they are and the units are unchanged, so the host can still be returned to the earlier release. `aks-flex-node reset` removes the helpers under both locations and keeps the binaries; the uninstall script removes the binaries from both, and the link. On a host installed under a real `/opt/unbounded`, an AgentUpgrade to an earlier release fails as any upgrade whose daemon cannot start does: that release looks for its files under `/usr/local`, and the agent restores the last-good binary.
+Earlier releases installed these files under `/usr/local`. A host installed by one of them reaches `/opt/unbounded` in two stages:
+
+1. **Linked.** The first command of a newer release that changes the host, such as the agent after an AgentUpgrade, links `/opt/unbounded` to `/usr/local`. The files stay where they are and the units are unchanged, so the host can still be returned to the earlier release, which is still the last-good binary.
+2. **Moved.** Once neither the current nor the last-good binary is from an earlier release, the agent copies the files into a real `/opt/unbounded`, points the units at them, removes them from `/usr/local`, and restarts itself. That is at the first agent start after the AgentUpgrade that pushes the earlier release out of last-good. To move a host that is not due another upgrade, apply the release it already runs as an AgentUpgrade. A move that is interrupted is finished or started over at the next agent start.
+
+`aks-flex-node reset` removes the helpers under both locations and keeps the binaries; the uninstall script removes the binaries from both, and the link or the directory, at any stage. On a host installed under a real `/opt/unbounded`, an AgentUpgrade to an earlier release fails as any upgrade whose daemon cannot start does: that release looks for its files under `/usr/local`, and the agent restores the last-good binary.
 
 ## Preflight
 
