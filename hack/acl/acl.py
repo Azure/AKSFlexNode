@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Boot Azure Container Linux from `aks-flex-node ignition` and join it to a kind cluster.
+"""Boot Azure Container Linux from the documented Butane config and join it to a kind cluster.
 
     hack/acl/acl.py up --image ACL.qcow2   build, create the cluster and network, boot the VM
     hack/acl/acl.py test [--reset MODE]    check the node, reboot it, reset it, check cleanup
     hack/acl/acl.py down                   remove the VM, the network, and the cluster
 
-The VM is provisioned only by the Ignition config that `aks-flex-node ignition` renders, plus
-harness access (SSH user, hostname, static address). bootstrap.sh then installs the agent under
+The VM is provisioned only by the Ignition config that scripts/aks-flex-node-bootstrap.bu renders,
+as getting-started documents, plus harness access (SSH user, hostname, static address). Butane
+runs from its container image. bootstrap.sh then installs the agent under
 /opt/unbounded/agent, the host root, and joins the node with a bootstrap token. The agent's machine client talks to
 an in-cluster AKS Flex controller through the API server's service proxy, so no Azure resources
 are involved.
@@ -71,9 +72,11 @@ FAKE_CLUSTER_ID = (
     "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acl-harness"
     "/providers/Microsoft.ContainerService/managedClusters/acl-harness"
 )
-# Passed to bootstrap.sh through the first-boot unit's command line. It arrives in the installed
-# config unchanged only if the unit quotes $, %, quotes, and backslashes correctly.
+# Passed to bootstrap.sh through bootstrap.env, quoted as getting-started says. It arrives in the
+# installed config unchanged only if that quoting keeps $, %, quotes, and backslashes as written.
 QUOTING_PROBE = """$HOME ${X} %h %% "q" \\ it's"""
+BUTANE_TEMPLATE = REPO / "scripts" / "aks-flex-node-bootstrap.bu"
+BUTANE_IMAGE = os.environ.get("ACL_BUTANE_IMAGE", "quay.io/coreos/butane:v0.29.0")
 
 AGENT_ARCHIVE = "aks-flex-node-linux-amd64.tar.gz"
 IGNITION_NAME = "config.ign"
@@ -476,17 +479,35 @@ def base_config(token: str, version: str) -> dict:
     }
 
 
-def render_ignition(agent: Path, config: dict, agent_url: str, agent_sha256: str) -> dict:
-    base_path = STATE / "base-config.json"
-    base_path.write_text(json.dumps(config, indent=2) + "\n")
-    base_path.chmod(0o600)
-    rendered = STATE / "node.ign"
-    rendered.unlink(missing_ok=True)
-    run([str(agent), "ignition", "--base-config", str(base_path), "--output", str(rendered), "--",
-         "--agent-url", agent_url,
-         "--agent-sha256", agent_sha256,
-         "--config-overrides", json.dumps({"aclHarness": {"quoting": QUOTING_PROBE}})])
-    return json.loads(rendered.read_text())
+def env_file_value(value: str) -> str:
+    """Quote a value for a systemd environment file, as getting-started says to: single quotes keep
+    it as written, and a value with a single quote in it goes in double quotes, with " and \\
+    escaped."""
+    if "'" not in value:
+        return f"'{value}'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def render_ignition(config: dict, agent_url: str, agent_sha256: str) -> dict:
+    """Render the documented Butane config from the three files it names, as an operator does."""
+    files = STATE / "first-boot"
+    shutil.rmtree(files, ignore_errors=True)
+    files.mkdir(mode=0o700)
+    shutil.copyfile(REPO / "scripts" / "bootstrap.sh", files / "bootstrap.sh")
+    for name, content in (
+        ("base-config.json", json.dumps(config, indent=2) + "\n"),
+        ("bootstrap.env", "".join(f"{key}={env_file_value(value)}\n" for key, value in {
+            "AKS_FLEX_NODE_AGENT_URL": agent_url,
+            "AKS_FLEX_NODE_AGENT_SHA256": agent_sha256,
+            "AKS_FLEX_NODE_CONFIG_OVERRIDES": json.dumps({"aclHarness": {"quoting": QUOTING_PROBE}}),
+        }.items())),
+    ):
+        path = files / name
+        path.write_text(content)
+        path.chmod(0o600)
+    rendered = capture(["docker", "run", "--rm", "-i", "-v", f"{files}:/files:ro,z", BUTANE_IMAGE,
+                        "--strict", "--files-dir", "/files"], input=BUTANE_TEMPLATE.read_text())
+    return json.loads(rendered)
 
 
 def data_url(content: str) -> str:
@@ -782,8 +803,8 @@ def check_first_boot(checks: Checks) -> None:
                   f"{BOOTSTRAP_UNIT} succeeded on first boot", f"ActiveState={active} Result={result}")
     checks.expect(unit_property(BOOTSTRAP_UNIT, "InvocationID") != "",
                   f"{BOOTSTRAP_UNIT} ran in this boot")
-    checks.paths_absent("bootstrap.sh, which carries the token, was removed after bootstrap",
-                        ["/etc/aks-flex-node/first-boot/bootstrap.sh"])
+    checks.paths_absent("the first-boot files, which carry the token, were removed after bootstrap",
+                        ["/etc/aks-flex-node/first-boot"])
 
     installed = ssh(f"sudo test -x {HOST_ROOT}/bin/aks-flex-node", check=False).returncode == 0
     checks.expect(installed, f"the agent is installed under {HOST_ROOT}")
@@ -794,8 +815,8 @@ def check_first_boot(checks: Checks) -> None:
     checks.paths_absent("nothing was installed under the read-only /usr/local",
                         ["/usr/local/bin/aks-flex-node", "/usr/local/lib/aks-flex-node"])
     probe = ssh_out("sudo jq -r .aclHarness.quoting /etc/aks-flex-node/config.json")
-    checks.expect(probe == QUOTING_PROBE, "an argument with $, %, quotes, and backslashes reached "
-                  "bootstrap.sh unchanged", f"got {probe!r}")
+    checks.expect(probe == QUOTING_PROBE, "a setting with $, %, quotes, and backslashes reached "
+                  "bootstrap.sh unchanged through bootstrap.env", f"got {probe!r}")
     checks.expect(unit_property(AGENT_UNIT, "ActiveState") == "active", f"{AGENT_UNIT} is active")
 
 
@@ -922,7 +943,7 @@ def cmd_up(args: argparse.Namespace) -> None:
         die(f"image not found: {image}")
     check_prerequisites()
     stop_vm()
-    agent, controller = build_binaries()
+    _, controller = build_binaries()
     public_key = ensure_ssh_key()
 
     create_network()
@@ -934,7 +955,7 @@ def cmd_up(args: argparse.Namespace) -> None:
     kubectl("delete", "node", NODE_NAME, "--ignore-not-found", quiet=True)
 
     serve_base = f"http://{GATEWAY}:{SERVE_PORT}"
-    doc = render_ignition(agent, base_config(token, version), f"{serve_base}/{AGENT_ARCHIVE}",
+    doc = render_ignition(base_config(token, version), f"{serve_base}/{AGENT_ARCHIVE}",
                           sha256(STATE / AGENT_ARCHIVE))
     ignition = STATE / IGNITION_NAME
     ignition.write_text(json.dumps(add_harness_access(doc, public_key), indent=2) + "\n")

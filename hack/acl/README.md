@@ -1,8 +1,11 @@
 # Azure Container Linux harness
 
 `acl.py` boots an Azure Container Linux VM from the Ignition config that
-`aks-flex-node ignition` renders, and joins it to a local kind cluster. It
-exercises the path an Ignition-provisioned host takes: the first-boot unit runs
+[`scripts/aks-flex-node-bootstrap.bu`](../../scripts/aks-flex-node-bootstrap.bu)
+renders, set up as
+[Hosts provisioned by Ignition](../../docs/usage/getting-started.md#hosts-provisioned-by-ignition)
+describes, and joins it to a local kind cluster. It exercises the path an
+Ignition-provisioned host takes: the first-boot unit runs
 `bootstrap.sh`, the agent is installed under `/opt/unbounded/agent`, which is
 writable while `/usr` is not, and reset removes what bootstrap installed.
 
@@ -13,7 +16,8 @@ cluster, reached through the API server's service proxy.
 ## Requirements
 
 - Linux with KVM (`/dev/kvm` readable and writable)
-- `docker`, `kind`, `kubectl`, `go`
+- `docker`, `kind`, `kubectl`, `go`. Butane runs from its container image,
+  `quay.io/coreos/butane`, which docker pulls on first use.
 - `qemu-system-x86_64`, `qemu-img`, `qemu-nbd`, and OVMF firmware (the `ovmf`
   or `edk2-ovmf` package)
 - `ip`, `iptables`, `nsenter`, `ssh`, `ssh-keygen`
@@ -30,17 +34,20 @@ hack/acl/acl.py down
 ```
 
 `up` builds the agent and controller, creates the kind cluster and a bridge on
-`192.168.111.0/24`, deploys the controller, renders the Ignition config, and
-boots the VM. It returns once the first-boot unit has finished and the node is
+`192.168.111.0/24`, deploys the controller, and renders the Ignition config from
+the template, the repository's `bootstrap.sh`, a base config with a bootstrap
+token, and a `bootstrap.env` with the agent URL and digest. It then boots the
+VM. It returns once the first-boot unit has finished and the node is
 Ready. The Ignition config and agent archive are served only while `up` runs, so
 later boots cannot depend on them.
 
 `test` checks that:
 
-- the first-boot unit succeeded, removed the script that carries the bootstrap
-  token, and installed the agent under `/opt/unbounded/agent`, in an
+- the first-boot unit succeeded, removed `/etc/aks-flex-node/first-boot`, whose
+  files carry the bootstrap token, and installed the agent under `/opt/unbounded/agent`, in an
   `/opt/unbounded` created 0755, and nothing under `/usr/local`
-- an argument containing `$`, `%`, quotes, and backslashes reached `bootstrap.sh`
+- a setting containing `$`, `%`, quotes, and backslashes, quoted in
+  `bootstrap.env` as the getting-started guide says, reached `bootstrap.sh`
   unchanged
 - a pod runs on the node and `kubectl logs` reaches its kubelet
 - after a reboot, the first-boot unit is skipped and the node is Ready again
@@ -71,6 +78,7 @@ and firewall rules.
 | `ACL_SERVE_PORT` | `8299` | Port for the Ignition config and agent archive |
 | `ACL_VM_MEMORY`, `ACL_VM_CPUS` | `4096`, `2` | VM size |
 | `ACL_STATE_DIR` | `.vm/acl` | Build output, disk overlay, logs, and SSH key |
+| `ACL_BUTANE_IMAGE` | `quay.io/coreos/butane:v0.29.0` | Butane image that renders the template |
 
 ## Troubleshooting
 

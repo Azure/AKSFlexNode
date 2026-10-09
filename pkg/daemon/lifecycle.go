@@ -34,9 +34,9 @@ const (
 	// ServiceUnitPath is where the agent unit is installed. The first-boot unit
 	// only runs while it is absent.
 	ServiceUnitPath = systemdSystemDir + "/" + ServiceUnitName
-	// FirstBootUnitName is the oneshot unit that `aks-flex-node ignition`
-	// installs to run bootstrap.sh on first boot. It is shared with reset,
-	// which has to remove it.
+	// FirstBootUnitName is the oneshot unit that runs bootstrap.sh on first
+	// boot on a host provisioned by Ignition, as scripts/aks-flex-node-bootstrap.bu
+	// documents. Reset removes it; a host without it is left alone.
 	FirstBootUnitName = "aks-flex-node-bootstrap.service"
 )
 
@@ -294,7 +294,8 @@ func runSystemctl(ctx context.Context, log *slog.Logger, args ...string) error {
 }
 
 // removeFirstBootUnit disables, stops, and removes the first-boot bootstrap
-// unit, if the host was provisioned with one.
+// unit, if the host was provisioned with one. On any other host the unit file
+// is absent and nothing is done.
 //
 // --now matters. The unit is a oneshot with RemainAfterExit=yes, so without a
 // stop it stays active after its file is gone, and starting it again after the

@@ -26,7 +26,9 @@ LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 RECOVERY_UNIT_PATH="/etc/systemd/system/aks-flex-node-agent-recovery.service"
-# Installed by `aks-flex-node ignition` to run bootstrap.sh on first boot.
+# Runs bootstrap.sh on first boot on a host provisioned by Ignition; see
+# scripts/aks-flex-node-bootstrap.bu. Its inputs, under $CONFIG_DIR/first-boot,
+# go with the config directory. Other hosts don't have it.
 FIRST_BOOT_UNIT="aks-flex-node-bootstrap.service"
 FIRST_BOOT_UNIT_PATH="/etc/systemd/system/$FIRST_BOOT_UNIT"
 
@@ -98,11 +100,8 @@ run_reset() {
 
         systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
         systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
-        # --now as well: the first-boot unit stays active after it runs, and a later provisioning
-        # could not start it again.
-        systemctl disable --now "$FIRST_BOOT_UNIT" 2>/dev/null || true
 
-        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH"; do
+        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
             if [[ -e "$unit_path" ]]; then
                 rm -f "$unit_path"
                 log_success "Removed systemd unit: $unit_path"
@@ -110,6 +109,14 @@ run_reset() {
                 log_info "Systemd unit not found: $unit_path"
             fi
         done
+
+        # Only a host provisioned by Ignition has it. --now as well: the first-boot unit stays
+        # active after it runs, and a later provisioning could not start it again.
+        if [[ -e "$FIRST_BOOT_UNIT_PATH" || -L "$FIRST_BOOT_UNIT_PATH" ]]; then
+            systemctl disable --now "$FIRST_BOOT_UNIT" 2>/dev/null || true
+            rm -f "$FIRST_BOOT_UNIT_PATH"
+            log_success "Removed systemd unit: $FIRST_BOOT_UNIT_PATH"
+        fi
 
         systemctl daemon-reload 2>/dev/null || true
         return 0

@@ -124,6 +124,17 @@ for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PA
 done
 grep -Fxq "disable --now aks-flex-node-bootstrap.service" "$SYSTEMCTL_CALLS" ||
     fail "first-boot unit was not stopped: $(tr '\n' ';' <"$SYSTEMCTL_CALLS")"
+
+# A host not provisioned by Ignition has no first-boot unit, and nothing is done about one.
+: >"$SYSTEMCTL_CALLS"
+touch "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"
+output=$(run_reset)
+for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
+    [[ ! -e "$unit_path" ]] || fail "unit was left: $unit_path"
+done
+if grep -q aks-flex-node-bootstrap "$SYSTEMCTL_CALLS" || grep -q aks-flex-node-bootstrap <<<"$output"; then
+    fail "a host without the first-boot unit was told about it: $(tr '\n' ';' <"$SYSTEMCTL_CALLS") $output"
+fi
 unset -f systemctl
 
 printf 'uninstall_test: ok\n'

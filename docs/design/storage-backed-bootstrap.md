@@ -265,15 +265,24 @@ how to retry failed provisioning. A systemd oneshot wrapper can use
 `ConditionPathExists=!/var/lib/aks-flex-node/first-boot-complete` to prevent a
 successful node from being bootstrapped again after reboot.
 
-`aks-flex-node ignition` renders such a wrapper for hosts provisioned by
-Ignition, `aks-flex-node-bootstrap.service`, but conditions it on the agent
-unit, `/etc/systemd/system/aks-flex-node-agent.service`, instead of a marker.
-The agent unit exists once bootstrap has installed the agent, and
+For hosts provisioned by Ignition, such as Azure Container Linux,
+[`scripts/aks-flex-node-bootstrap.bu`](../../scripts/aks-flex-node-bootstrap.bu)
+is such a wrapper, as a Butane config. Ignition writes the published script
+unchanged, the base config, and the script's settings to
+`/etc/aks-flex-node/first-boot`, with only root able to read them, and enables
+`aks-flex-node-bootstrap.service`. Once the network is online, the unit runs the
+script with the settings from a systemd environment file and the base config
+from `AKS_FLEX_NODE_BASE_CONFIG_FILE`. It retries a failure with a delay that
+grows to five minutes, since a first boot has no later chance to bootstrap.
+
+The unit is conditioned on the agent unit,
+`/etc/systemd/system/aks-flex-node-agent.service`, instead of a marker. The
+agent unit exists once bootstrap has installed the agent, and
 `aks-flex-node reset` removes it together with the wrapper unit. A marker under
 `/var/lib/aks-flex-node` would survive reset and block the host from being
-provisioned again. The wrapper removes the script, which carries the base
-config, once bootstrap succeeds, and keeps the credential file that the config
-references.
+provisioned again. Once bootstrap succeeds, the unit removes
+`/etc/aks-flex-node/first-boot`, whose files carry the base config and can carry
+a signed agent URL, and keeps the credential file that the config references.
 
 ### 7. Verify convergence
 
