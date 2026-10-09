@@ -324,6 +324,22 @@ def pe_sections(header: bytes) -> dict[str, tuple[int, int, int, int, int]]:
             for entry in range(table, table + count * 40, 40)}
 
 
+def cmdline_room(header: bytes) -> int:
+    """Return how many bytes, terminator included, the .cmdline section can
+    hold once its VirtualSize grows: its raw size, but no further in memory than
+    the next section's VirtualAddress, or SizeOfImage when it is the last. A
+    section padded past either would overlap what the loader maps next."""
+    sections = pe_sections(header)
+    _vsize, vaddr, rsize, _rptr, _entry = sections[".cmdline"]
+    lfanew = struct.unpack_from("<I", header, 0x3C)[0]
+    # SizeOfImage is 56 bytes into the optional header in PE32 and PE32+ alike.
+    limit = struct.unpack_from("<I", header, lfanew + 24 + 56)[0]
+    for other_vaddr in (entry[1] for entry in sections.values()):
+        if other_vaddr > vaddr:
+            limit = min(limit, other_vaddr)
+    return max(0, min(rsize, limit - vaddr))
+
+
 @dataclass(frozen=True)
 class PatchedAddon:
     """Where the patch landed, for logging."""
@@ -385,7 +401,7 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
                 vsize, _vaddr, rsize, rptr, entry = sections[".cmdline"]
                 current = fat.read_file(cluster, size, rptr, min(vsize, rsize) if vsize else rsize)
                 current = current.split(b"\x00")[0].decode("utf-8", "replace").strip()
-                merged = fit_cmdline(current, extra_args, rsize)
+                merged = fit_cmdline(current, extra_args, cmdline_room(header))
                 if merged is None:
                     continue
                 if best is None or rsize > best[0]:
