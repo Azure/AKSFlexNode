@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -126,6 +127,10 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	gate := newStartupGate()
+	// The manager stops early, with a cause, when the daemon may not take work
+	// and is not replaced in time; see holdForHostRoot.
+	mgrCtx, stopManager := context.WithCancelCause(ctx)
+	defer stopManager(nil)
 	if err := daemon.SetupController(
 		"aks-flex-node-daemon",
 		mgr,
@@ -162,8 +167,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
 				// it waits for is gone.
-				if reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades) {
-					// A restart is scheduled; the next process opens the gate.
+				restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades)
+				if reason := holdForHostRoot(restarted, upgrades.paths, defaultAgentUpgradePaths()); reason != "" {
+					// The gate stays closed; the next process opens it.
+					if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
+						stopManager(err)
+					}
 					return
 				}
 				gate.open()
@@ -178,8 +187,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		}
 	}()
 
-	err = mgr.Start(ctx)
+	err = mgr.Start(mgrCtx)
 	repaves.log.Info("daemon shutting down")
+	// A daemon that was told to stop exits as it always has. One that stopped
+	// itself waiting to be replaced exits with an error, so Restart= starts it.
+	if cause := context.Cause(mgrCtx); err == nil && ctx.Err() == nil && cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
 	return err
 }
 

@@ -12,10 +12,11 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
-// AKS Flex Node keeps its own host-side files under the host root, /opt/unbounded
-// resolved through symlinks; see the hostroot package. Releases before the host
-// root installed them under /usr/local. On a host installed by one of those, the
-// first command that changes the host links /opt/unbounded to /usr/local, and
+// AKS Flex Node keeps its own host-side files under the host root, hostroot.Path
+// (/opt/unbounded/agent) resolved through symlinks; see the hostroot package. Its
+// parent, /opt/unbounded, belongs to the host. Releases before the host root
+// installed the files under /usr/local. On a host installed by one of those, the
+// first command that changes the host links hostroot.Path to /usr/local, and
 // every path is built from the resolved root, so the paths an older release
 // wrote into links and units still compare equal to the ones built here.
 const (
@@ -104,16 +105,19 @@ func installHostBinary(log *slog.Logger, target string, prepare func() error, ex
 // a host installed under a real host root, where nothing runs it. Only a regular
 // file is removed: a link there is an earlier release's compatibility link, or
 // an operator's.
+//
+// The host has to be fully installed there, not partway through a move from
+// /usr/local: until the move has restarted the daemon from the host root, the
+// daemon may still be running from the files under /usr/local, and the move
+// removes none of them until then.
 func RemoveLegacySeed(log *slog.Logger) error {
-	return removeLegacySeed(log, hostroot.Path, legacySeedPath)
+	return removeLegacySeed(log, hostroot.Installed, legacySeedPath)
 }
 
-func removeLegacySeed(log *slog.Logger, root, seed string) error {
-	if info, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect %s: %w", root, err)
-	} else if !info.IsDir() {
+func removeLegacySeed(log *slog.Logger, installed func() (bool, error), seed string) error {
+	if done, err := installed(); err != nil {
+		return fmt.Errorf("inspect the host root: %w", err)
+	} else if !done {
 		return nil
 	}
 

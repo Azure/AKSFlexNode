@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
@@ -59,10 +60,19 @@ func hostLayoutDirs() []string {
 	return []string{managedBinaryDir}
 }
 
+// hostRootRestartWait bounds how long a daemon that may not take work waits for
+// systemd to replace it before it exits; see holdForHostRoot. It is long enough
+// that exiting after it, and being restarted RestartSec later, can never reach
+// the unit's StartLimitBurst within StartLimitIntervalSec and trip recovery
+// into a rollback.
+const hostRootRestartWait = 2 * time.Minute
+
 // reconcileHostRootUnderLock moves a host an earlier release installed from
-// /usr/local into a real /opt/unbounded once neither the current nor the
+// /usr/local into a real hostroot.Path once neither the current nor the
 // last-good binary is from such a release, and finishes a move that was
-// interrupted. It reports whether it restarted the daemon.
+// interrupted. It reports whether it queued the daemon's restart, which the
+// move does from its first pass, before it removes anything under /usr/local;
+// the restarted daemon removes the files there.
 //
 // It holds the activation lock, which keeps an AgentUpgrade or a direct
 // activation from changing the layout under it. An AgentReset cannot overlap
@@ -71,7 +81,8 @@ func hostLayoutDirs() []string {
 // start finishes it.
 //
 // A failure is logged, never returned: the daemon is healthy either way, and
-// the next start retries.
+// the next start retries; see holdForHostRoot for a failure that leaves the
+// layout moved under the running daemon.
 func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor) bool {
 	lock, err := upgrades.Acquire()
 	if err != nil {
@@ -101,6 +112,39 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 	}
 
 	return restarted
+}
+
+// holdForHostRoot reports why this process may not take work after reconciling
+// the host root, or "" if it may. It may not once it has queued its own
+// restart from the host root, nor when the host root no longer resolves to
+// where it did at startup: the move swapped the copy in and then failed, and
+// the AgentUpgrade executor still names the files under /usr/local, which the
+// units may no longer run.
+func holdForHostRoot(restarted bool, startup, current agentUpgradePaths) string {
+	switch {
+	case restarted:
+		return "the daemon queued its restart from the host root"
+	case startup != current:
+		return fmt.Sprintf("the host root moved from %s to %s under the running daemon",
+			filepath.Dir(startup.CurrentPath), filepath.Dir(current.CurrentPath))
+	default:
+		return ""
+	}
+}
+
+// awaitReplacement keeps a daemon that may not take work idle until systemd
+// stops it, which ends ctx, and returns nil then. If that has not happened
+// within wait it returns an error, so the daemon exits and Restart= starts it
+// from the units as they are now; the next start finishes or retries the move.
+func awaitReplacement(ctx context.Context, log *slog.Logger, reason string, wait time.Duration) error {
+	log.Info("not taking work until the daemon is restarted", "reason", reason, "timeout", wait)
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(wait):
+		return fmt.Errorf("%s, and it was not restarted within %s", reason, wait)
+	}
 }
 
 // rewriteHostRootUnits points every unit and script that names the host-side

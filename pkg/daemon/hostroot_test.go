@@ -133,47 +133,35 @@ func TestInstallHostBinary(t *testing.T) {
 }
 
 // TestRemoveLegacySeed removes the copy an install script left in
-// /usr/local/bin only on a host installed under a real host root, and only
-// when it is a regular file.
+// /usr/local/bin only once the host is fully installed under a real host root,
+// and only when it is a regular file. The library reports a missing root, one
+// linked to /usr/local, and one partway through a move as not installed; in the
+// last the daemon may still run from /usr/local.
 func TestRemoveLegacySeed(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		root     string
-		seed     string
-		wantKept bool
+		name         string
+		installed    bool
+		installedErr error
+		seed         string
+		wantKept     bool
+		wantErr      bool
 	}{
-		{name: "installed under the host root", root: "dir", seed: "file"},
-		{name: "linked to the legacy root", root: "link", seed: "file", wantKept: true},
-		{name: "not installed yet", root: "", seed: "file", wantKept: true},
-		{name: "a link is not a seed", root: "dir", seed: "link", wantKept: true},
-		{name: "no seed", root: "dir", seed: ""},
+		{name: "installed under the host root", installed: true, seed: "file"},
+		{name: "not installed: absent, linked, or moving", installed: false, seed: "file", wantKept: true},
+		{name: "the host root cannot be inspected", installedErr: errors.New("permission denied"), seed: "file", wantKept: true, wantErr: true},
+		{name: "a link is not a seed", installed: true, seed: "link", wantKept: true},
+		{name: "no seed", installed: true, seed: ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dir := t.TempDir()
-			root := filepath.Join(dir, "opt", "unbounded")
-			legacy := filepath.Join(dir, "usr", "local")
-			seed := filepath.Join(legacy, "bin", binaryName)
-			for _, d := range []string{filepath.Dir(root), filepath.Dir(seed)} {
-				if err := os.MkdirAll(d, 0o755); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			switch tt.root {
-			case "dir":
-				if err := os.Mkdir(root, 0o755); err != nil {
-					t.Fatal(err)
-				}
-			case "link":
-				if err := os.Symlink(legacy, root); err != nil {
-					t.Fatal(err)
-				}
+			seed := filepath.Join(t.TempDir(), "usr", "local", "bin", binaryName)
+			if err := os.MkdirAll(filepath.Dir(seed), 0o755); err != nil {
+				t.Fatal(err)
 			}
 
 			switch tt.seed {
@@ -185,11 +173,13 @@ func TestRemoveLegacySeed(t *testing.T) {
 				}
 			}
 
-			if err := removeLegacySeed(slog.New(slog.DiscardHandler), root, seed); err != nil {
-				t.Fatalf("removeLegacySeed() error = %v", err)
+			installed := func() (bool, error) { return tt.installed, tt.installedErr }
+			err := removeLegacySeed(slog.New(slog.DiscardHandler), installed, seed)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("removeLegacySeed() error = %v, want error %v", err, tt.wantErr)
 			}
 
-			_, err := os.Lstat(seed)
+			_, err = os.Lstat(seed)
 			if kept := err == nil; kept != (tt.wantKept && tt.seed != "") {
 				t.Fatalf("seed kept = %v, want %v", kept, tt.wantKept)
 			}
