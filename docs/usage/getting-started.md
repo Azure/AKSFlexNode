@@ -9,7 +9,7 @@ The walkthrough uses a public AKS API endpoint and private Layer 3 connectivity 
 
 Run Azure CLI, `kubectl`, artifact download, and SSH commands in your **Bash environment**. Run host preparation and bootstrap commands on the separate **flex node host** only when a step explicitly directs you to.
 
-The bootstrap script is downloaded and run interactively on the host. This guide doesn't use cloud-init. For the architecture and security rationale, see [Generated bootstrap script](../design/storage-backed-bootstrap.md).
+The bootstrap script is downloaded and run interactively on the host. Hosts provisioned by Ignition, such as Azure Container Linux, get it in an Ignition config instead; see [Hosts provisioned by Ignition](#hosts-provisioned-by-ignition). This guide doesn't use cloud-init. For the architecture and security rationale, see [Generated bootstrap script](../design/storage-backed-bootstrap.md).
 
 ## Flow
 
@@ -447,12 +447,15 @@ For a host outside Azure, prefer an already-connected Azure Arc managed identity
 The script performs these operations:
 
 1. Loads the empty JSON base.
-2. Applies the cluster and pool overrides.
-3. Uses the Azure VM managed identity to request an ARM token.
-4. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
+2. Downloads and verifies the AKS Flex Node agent archive from GitHub Releases,
+   and installs the binary. The agent copies itself to
+   `/opt/unbounded/agent/bin/aks-flex-node` when it starts. See
+   [Where the agent is installed](operations.md#where-the-agent-is-installed).
+3. Applies the cluster and pool overrides.
+4. Uses the Azure VM managed identity to request an ARM token.
+5. Calls `listBootstrapData` for a fresh bootstrap token, API endpoint, CA, and
    component version.
-5. Applies runtime configuration overrides.
-6. Downloads and verifies the AKS Flex Node agent archive from GitHub Releases.
+6. Applies runtime configuration overrides.
 7. Writes `/etc/aks-flex-node/config.json` as `0600 root:root`.
 8. Runs non-mutating preflight.
 9. Registers the ARM Machine and starts the nspawn worker.
@@ -466,6 +469,57 @@ rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
 install -d -m 0755 /var/lib/aks-flex-node
 install -m 0600 /dev/null /var/lib/aks-flex-node/first-boot-complete
 ```
+
+### Hosts provisioned by Ignition
+
+Azure Container Linux and other hosts provisioned by Ignition have a read-only `/usr` and no interactive first boot. Give them the bootstrap script in their Ignition config instead of running it on the host. [`scripts/aks-flex-node-bootstrap.bu`](../../scripts/aks-flex-node-bootstrap.bu) is a [Butane](https://coreos.github.io/butane/) config that does this, from three files in the same directory:
+
+- `bootstrap.sh`, from the release the host installs, unchanged.
+- `base-config.json`, the base config: `{}` when bootstrap data is fetched from AKS, as here.
+- `bootstrap.env`, the script's settings: one `AKS_FLEX_NODE_*` variable per line, as `bootstrap.sh --help` lists them.
+
+In your Bash environment, with `AKS_RESOURCE_ID`, `FLEX_POOL_NAME`, and `AKS_FLEX_NODE_VERSION` set as in the previous step:
+
+```bash
+mkdir -m 0700 node-ignition && cd node-ignition
+
+for file in bootstrap.sh aks-flex-node-bootstrap.bu; do
+  curl -fsSLO "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/${file}"
+done
+
+echo '{}' > base-config.json
+
+cat > bootstrap.env <<SETTINGS
+AKS_FLEX_NODE_AUTH=msi
+AKS_FLEX_NODE_MSI_CLIENT_ID=<user-assigned-managed-identity-client-id>
+AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA=true
+AKS_FLEX_NODE_CLUSTER_RESOURCE_ID=${AKS_RESOURCE_ID}
+AKS_FLEX_NODE_AGENT_POOL_NAME=${FLEX_POOL_NAME}
+AKS_FLEX_NODE_AGENT_VERSION=${AKS_FLEX_NODE_VERSION}
+SETTINGS
+
+butane --strict --files-dir . aks-flex-node-bootstrap.bu > node.ign
+```
+
+Without Butane installed, run its container image instead:
+
+```bash
+podman run --rm -i -v "$PWD:/files:ro,z" quay.io/coreos/butane:release \
+  --strict --files-dir /files < aks-flex-node-bootstrap.bu > node.ign
+```
+
+Use `node.ign` as the host's Ignition config; on Azure, that's the VM's custom data.
+
+`bootstrap.env` is a systemd environment file, not a shell script:
+
+- `$` and `%` are taken literally, never expanded.
+- Wrap a JSON value, such as `AKS_FLEX_NODE_CONFIG_OVERRIDES`, in single quotes, which keep it exactly as written. A value that contains a single quote goes in double quotes instead, with `"` and `\` escaped by a backslash, or in `base-config.json`.
+- Don't set `AKS_FLEX_NODE_CONFIG_PATH` or `AKS_FLEX_NODE_INSTALL_DIR`: the agent unit reads the default config path, and the installer chooses its directory. The unit sets `AKS_FLEX_NODE_BASE_CONFIG_FILE` itself.
+- For a service principal, uncomment the credential entries in the template, put the secret or certificate file next to it, and set `AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE` or `AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE` to its path under `/etc/aks-flex-node/credentials/`. Don't put the secret itself in `bootstrap.env`.
+
+On first boot, Ignition writes the three files to `/etc/aks-flex-node/first-boot/`, which only root can read, and enables `aks-flex-node-bootstrap.service`. Once the network is online, the unit runs the script with those settings, and the agent is installed under `/opt/unbounded/agent`, which is writable on these hosts. The unit retries failures with a delay that grows to five minutes, until `aks-flex-node-agent.service` is installed, and is skipped on later boots. Once bootstrap succeeds, it removes `/etc/aks-flex-node/first-boot/`, whose files can carry a bootstrap token and a signed agent URL. `aks-flex-node reset` and the uninstall script disable and remove the unit by its name, so keep that name. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
+
+`node.ign` and the files it's rendered from carry the base config and settings, so keep them as private as those are.
 
 <a id="7-verify-the-joined-node"></a>
 <a id="8-verify-the-joined-node"></a>

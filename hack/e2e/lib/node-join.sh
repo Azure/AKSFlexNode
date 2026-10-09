@@ -26,10 +26,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/controller.sh"
 # ---------------------------------------------------------------------------
 # Internal: upload binary & config, start agent on a VM
 # ---------------------------------------------------------------------------
+# An optional fourth argument names an AKS Flex Node release to install from
+# GitHub instead of the build under test.
 _deploy_and_start_agent() {
   local vm_ip="$1"
   local config_file="$2"
   local unit_name="$3"
+  local release="${4:-}"
 
   log_info "Uploading binary and config to ${vm_ip}..."
   remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
@@ -37,12 +40,27 @@ _deploy_and_start_agent() {
   remote_copy "${REPO_ROOT}/scripts/install.sh" "${vm_ip}" "/tmp/aks-flex-node-install.sh"
 
   log_info "Installing and starting flex node agent on ${vm_ip}..."
-  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
+  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} RELEASE=${release} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
 set -euo pipefail
 
-managed_current=/usr/local/lib/aks-flex-node/aks-flex-node-current
-if [[ -e "${managed_current}" || -L "${managed_current}" ]]; then
-  echo "Existing managed layout found; activating the separately staged E2E candidate..."
+# A layout an earlier join left is under the host root, or under /usr/local on
+# a host an older release installed, where activating the candidate links the
+# host root to it.
+managed_current=""
+for root in /opt/unbounded/agent /usr/local; do
+  if [[ -e "${root}/lib/aks-flex-node/aks-flex-node-current" || -L "${root}/lib/aks-flex-node/aks-flex-node-current" ]]; then
+    managed_current="${root}/lib/aks-flex-node/aks-flex-node-current"
+    break
+  fi
+done
+if [[ -n "${RELEASE}" ]]; then
+  echo "Installing AKS Flex Node ${RELEASE} from its GitHub release..."
+  sudo AKS_FLEX_NODE_VERSION="${RELEASE}" bash /tmp/aks-flex-node-install.sh --yes
+elif [[ -n "${managed_current}" && -e /etc/systemd/system/aks-flex-node-agent.service ]]; then
+  # Only a layout whose service is still installed needs the upgrade path.
+  # Reset removes the service and the config directory but keeps the layout,
+  # and install.sh replaces such a layout and recreates the directories.
+  echo "Existing managed layout found at ${managed_current}; activating the separately staged E2E candidate..."
   sudo chmod 0755 /tmp/aks-flex-node-binary
   sudo /tmp/aks-flex-node-binary agent-upgrade
 else
@@ -51,7 +69,12 @@ else
     bash /tmp/aks-flex-node-install.sh --yes
 fi
 
-sudo /usr/local/bin/aks-flex-node version
+# install.sh puts the binary under the host root once the host has one, and in
+# /usr/local/bin before that where it is writable. The agent copies itself under
+# the host root when it starts.
+agent=/opt/unbounded/agent/bin/aks-flex-node
+[[ -x "${agent}" ]] || agent=/usr/local/bin/aks-flex-node
+sudo "${agent}" version
 
 sudo cp /tmp/config.json /etc/aks-flex-node/
 
@@ -81,7 +104,7 @@ echo "Running preflight checks before bootstrap..."
 set +e
 {
   echo "=== preflight ${UNIT_NAME} $(date -Is) ==="
-  sudo /usr/local/bin/aks-flex-node preflight --config /etc/aks-flex-node/config.json --output text
+  sudo "${agent}" preflight --config /etc/aks-flex-node/config.json --output text
   preflight_rc=$?
   echo "=== preflight ${UNIT_NAME} exit ${preflight_rc} ==="
   exit "${preflight_rc}"
@@ -101,7 +124,7 @@ sudo systemd-run \
   --unit="${UNIT_NAME}" \
   --description="AKS Flex Node E2E (${UNIT_NAME})" \
   --remain-after-exit \
-  /usr/local/bin/aks-flex-node bootstrap --config /etc/aks-flex-node/config.json
+  "${agent}" bootstrap --config /etc/aks-flex-node/config.json
 
 echo "Waiting up to ${E2E_NODE_JOIN_TIMEOUT}s for aks-flex-node-agent.service to start..."
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
@@ -151,6 +174,19 @@ if ! systemctl is-active --quiet aks-flex-node-agent.service; then
 fi
 
 echo "aks-flex-node-agent.service is installed, enabled, and active"
+
+# On a host installed under a real /opt/unbounded/agent, the agent removes the binary
+# install.sh left in /usr/local/bin once it runs from the host root.
+if [[ -d /opt/unbounded/agent && ! -L /opt/unbounded/agent ]]; then
+  for _ in $(seq 1 30); do
+    [[ -f /usr/local/bin/aks-flex-node && ! -L /usr/local/bin/aks-flex-node ]] || break
+    sleep 2
+  done
+  if [[ -f /usr/local/bin/aks-flex-node && ! -L /usr/local/bin/aks-flex-node ]]; then
+    echo "the agent left the binary install.sh put in /usr/local/bin"
+    exit 1
+  fi
+fi
 
 sleep 10
 
@@ -322,6 +358,49 @@ validate_no_policy_routing_state() {
   fi
 }
 
+# LocalDNS state used to survive reset, because reset skipped the library's
+# LocalDNS cleanup. The MSI node enables LocalDNS, so this is exercised there.
+validate_no_localdns_state() {
+  local path
+
+  # Under both roots: reset does not depend on the host root having been migrated.
+  for path in /etc/systemd/system/unbounded-localdns-network.service \
+    /opt/unbounded/agent/libexec/unbounded-localdns-network \
+    /usr/local/libexec/unbounded-localdns-network; do
+    if [[ -e "${path}" ]]; then
+      echo "reset cleanup LocalDNS file ${path} still exists"
+      exit 1
+    fi
+  done
+
+  if [[ -e /sys/class/net/localdns ]]; then
+    echo "reset cleanup LocalDNS interface localdns still exists"
+    ip link show localdns || true
+    exit 1
+  fi
+
+  if command -v nft >/dev/null 2>&1 && sudo nft list table ip unbounded_localdns >/dev/null 2>&1; then
+    echo "reset cleanup LocalDNS nft table unbounded_localdns still exists"
+    sudo nft list table ip unbounded_localdns || true
+    exit 1
+  fi
+}
+
+validate_no_host_helpers() {
+  local path
+
+  for path in /opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle \
+    /usr/local/bin/unbounded-agent-nspawn-lifecycle \
+    /opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-recovery.sh \
+    /usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh \
+    /etc/systemd/system/aks-flex-node-agent-recovery.service; do
+    if [[ -e "${path}" ]]; then
+      echo "reset cleanup helper ${path} still exists"
+      exit 1
+    fi
+  done
+}
+
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while systemctl list-unit-files aks-flex-node-agent.service --no-legend | grep -q '^aks-flex-node-agent.service'; do
   if (( SECONDS >= deadline )); then
@@ -346,6 +425,8 @@ validate_no_overlay_interfaces
 validate_no_legacy_cni_rules
 validate_no_wireguard_keys
 validate_no_policy_routing_state
+validate_no_localdns_state
+validate_no_host_helpers
 
 for path in /etc/aks-flex-node /var/log/aks-flex-node; do
   if [[ -e "${path}" ]]; then

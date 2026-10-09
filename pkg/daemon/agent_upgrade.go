@@ -23,6 +23,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
 const (
@@ -32,16 +33,11 @@ const (
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
 
+// defaultAgentUpgradePaths returns the host-side agent upgrade layout under the
+// resolved host root. Callers that change the host migrate it first; see
+// MigrateHostRoot.
 func defaultAgentUpgradePaths() agentUpgradePaths {
-	const binaryDir = "/usr/local/lib/aks-flex-node"
-	return agentUpgradePaths{
-		BinaryPath:   "/usr/local/bin/aks-flex-node",
-		BluePath:     filepath.Join(binaryDir, "aks-flex-node-blue"),
-		GreenPath:    filepath.Join(binaryDir, "aks-flex-node-green"),
-		CurrentPath:  filepath.Join(binaryDir, "aks-flex-node-current"),
-		LastGoodPath: filepath.Join(binaryDir, "aks-flex-node-last-good"),
-		SignalPath:   "/etc/aks-flex-node/agent-upgrade-signal.json",
-	}
+	return agentUpgradePathsUnder(hostroot.Resolve())
 }
 
 type agentUpgradeRequest struct {
@@ -192,7 +188,10 @@ type hostAgentUpgradeExecutor struct {
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 	runningExecutable      func() (string, error)
 	nspawnBinaryPath       func(string) string
-	instanceID             string
+	// guardLegacySeed runs before Stage switches anything; see the function
+	// of the same name. Nil skips it.
+	guardLegacySeed func() error
+	instanceID      string
 }
 
 func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader) (*hostAgentUpgradeExecutor, error) {
@@ -212,7 +211,10 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
 		runningExecutable:      runningAgentExecutable,
 		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
-		instanceID:             instanceID,
+		guardLegacySeed: func() error {
+			return guardLegacySeed(log, hostroot.LegacyReleased, legacySeedPath)
+		},
+		instanceID: instanceID,
 	}, nil
 }
 
@@ -273,6 +275,11 @@ func (e *hostAgentUpgradeExecutor) RecordFailure(message string) error {
 }
 
 func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgradeRequest) error {
+	if e.guardLegacySeed != nil {
+		if err := e.guardLegacySeed(); err != nil {
+			return err
+		}
+	}
 	if err := ensureAgentUpgradeLayout(ctx, e.log, e.paths); err != nil {
 		return fmt.Errorf("initialize agent binary layout: %w", err)
 	}
@@ -385,8 +392,17 @@ func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
 
 // RecoverAgentUpgrade records failure and restores both host and active nspawn
 // binaries. It is invoked by the systemd recovery unit through last-good.
+//
+// It recovers whatever the host root, since recovery is what brings a failed
+// upgrade back. A host root that cannot be migrated is logged and left as it
+// is, and the layout is the one this binary runs from: the recovery script runs
+// the resolved last-good link, so that is the layout systemd uses.
 func RecoverAgentUpgrade(ctx context.Context, message string) error {
-	paths := defaultAgentUpgradePaths()
+	log := slog.Default()
+	if err := MigrateHostRoot(log); err != nil {
+		log.Warn("recovering the agent without migrating the host root", "error", err)
+	}
+	paths := recoveryAgentUpgradePaths(runningAgentExecutable, hostroot.Resolve)
 	signals := agentUpgradeSignalStore{path: paths.SignalPath}
 	if err := signals.recordFailure(message); err != nil {
 		return err
@@ -399,6 +415,18 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 		return err
 	}
 	return ctx.Err()
+}
+
+// recoveryAgentUpgradePaths returns the layout the running binary is a slot
+// of, or the one under the resolved host root when it is not in a slot.
+func recoveryAgentUpgradePaths(executable func() (string, error), resolve func() string) agentUpgradePaths {
+	if self, err := executable(); err == nil {
+		root := filepath.Dir(filepath.Dir(filepath.Dir(self)))
+		if paths := agentUpgradePathsUnder(root); self == paths.BluePath || self == paths.GreenPath {
+			return paths
+		}
+	}
+	return agentUpgradePathsUnder(resolve())
 }
 
 func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c client.Client, executor *hostAgentUpgradeExecutor) error {

@@ -50,6 +50,20 @@ func NewCommand() *cobra.Command {
 }
 
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+	if err := daemon.MigrateHostRoot(logger); err != nil {
+		return err
+	}
+	// Before any client is built: one that authenticates with an exec
+	// credential runs the binary under the host root, which an install script
+	// may have put in /usr/local/bin instead. Copying it first also fails a
+	// host whose host root cannot run programs before the machine is
+	// registered.
+	if err := daemon.PrepareHostRoot(ctx, logger); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
+	if err := daemon.InstallHostBinary(ctx, logger); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
 	goal, err := aksmachine.GoalStateFromConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("build goal state from config: %w", err)
@@ -88,6 +102,11 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	)
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
+	}
+	// The daemon removes it at startup too. Doing it here as well closes the
+	// window in which an AgentUpgrade to an earlier release could find it.
+	if err := daemon.RemoveLegacySeed(logger); err != nil {
+		logger.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 	}
 	logger.Info("operation completed successfully", "operation", "bootstrap", "duration", time.Since(start))
 

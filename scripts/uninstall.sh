@@ -12,12 +12,25 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration (should match install.sh)
-INSTALL_DIR="/usr/local/bin"
+# The binaries are under the host root, or under the legacy root on a host installed by a release
+# before the host root. There the host root may be a link to the legacy root. Both are swept. The
+# host root must match hostroot.Path in the agent library. Its parent, /opt/unbounded, belongs to the
+# host, which may stage files there, and is never removed.
+HOST_ROOT="/opt/unbounded/agent"
+LEGACY_ROOT="/usr/local"
+# The directory reset runs the binary from; see find_install_dir.
+INSTALL_DIR="$HOST_ROOT/bin"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
 LOG_DIR="/var/log/aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
+RECOVERY_UNIT_PATH="/etc/systemd/system/aks-flex-node-agent-recovery.service"
+# Runs bootstrap.sh on first boot on a host provisioned by Ignition; see
+# scripts/aks-flex-node-bootstrap.bu. Its inputs, under $CONFIG_DIR/first-boot,
+# go with the config directory. Other hosts don't have it.
+FIRST_BOOT_UNIT="aks-flex-node-bootstrap.service"
+FIRST_BOOT_UNIT_PATH="/etc/systemd/system/$FIRST_BOOT_UNIT"
 
 # Functions
 log_info() {
@@ -36,12 +49,24 @@ log_error() {
     echo -e "${RED}ERROR:${NC} $1"
 }
 
+# find_install_dir picks the root that holds the binary, so reset can run it.
+find_install_dir() {
+    local root
+
+    for root in "$HOST_ROOT" "$LEGACY_ROOT"; do
+        if [[ -x "$root/bin/aks-flex-node" ]]; then
+            INSTALL_DIR="$root/bin"
+            return 0
+        fi
+    done
+}
+
 confirm_uninstall() {
     echo -e "${YELLOW}AKS Flex Node Uninstaller${NC}"
     echo -e "${YELLOW}===========================${NC}"
     echo ""
     echo "This will remove the following components:"
-    echo "• AKS Flex Node binary ($INSTALL_DIR/aks-flex-node)"
+    echo "• AKS Flex Node binaries (under $HOST_ROOT and $LEGACY_ROOT)"
     echo "• Systemd service (aks-flex-node-agent.service)"
     echo "• Configuration directory ($CONFIG_DIR)"
     echo "• Data directory ($DATA_DIR)"
@@ -76,11 +101,21 @@ run_reset() {
         systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
         systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
 
-        if [[ -e "$SERVICE_UNIT_PATH" ]]; then
-            rm -f "$SERVICE_UNIT_PATH"
-            log_success "Removed systemd unit: $SERVICE_UNIT_PATH"
-        else
-            log_info "Systemd unit not found: $SERVICE_UNIT_PATH"
+        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
+            if [[ -e "$unit_path" ]]; then
+                rm -f "$unit_path"
+                log_success "Removed systemd unit: $unit_path"
+            else
+                log_info "Systemd unit not found: $unit_path"
+            fi
+        done
+
+        # Only a host provisioned by Ignition has it. --now as well: the first-boot unit stays
+        # active after it runs, and a later provisioning could not start it again.
+        if [[ -e "$FIRST_BOOT_UNIT_PATH" || -L "$FIRST_BOOT_UNIT_PATH" ]]; then
+            systemctl disable --now "$FIRST_BOOT_UNIT" 2>/dev/null || true
+            rm -f "$FIRST_BOOT_UNIT_PATH"
+            log_success "Removed systemd unit: $FIRST_BOOT_UNIT_PATH"
         fi
 
         systemctl daemon-reload 2>/dev/null || true
@@ -110,13 +145,58 @@ remove_directories() {
 }
 
 remove_binary() {
-    log_info "Removing binary..."
+    local root
 
-    if [[ -f "$INSTALL_DIR/aks-flex-node" ]]; then
-        rm -f "$INSTALL_DIR/aks-flex-node"
-        log_success "Removed binary: $INSTALL_DIR/aks-flex-node"
+    log_info "Removing binaries..."
+
+    for root in "$HOST_ROOT" "$LEGACY_ROOT"; do
+        # -L as well as -e: once the agent has run this is a symlink into the managed layout, and a
+        # dangling one still has to go.
+        if [[ -e "$root/bin/aks-flex-node" || -L "$root/bin/aks-flex-node" ]]; then
+            rm -f "$root/bin/aks-flex-node"
+            log_success "Removed binary: $root/bin/aks-flex-node"
+        fi
+
+        # Reset keeps the managed blue/green layout so a reinstall can reuse it; uninstall removes it.
+        if [[ -d "$root/lib/aks-flex-node" ]]; then
+            rm -rf "$root/lib/aks-flex-node"
+            log_success "Removed managed binaries: $root/lib/aks-flex-node"
+        fi
+    done
+
+    remove_host_root
+}
+
+# remove_host_root removes the host root once nothing is left in it, or the link to the legacy root
+# on a host installed by an older release. A link somewhere else is not the agent's, and neither is
+# the host root's parent, which stays whatever is in it.
+remove_host_root() {
+    local dir
+
+    # A move to the host root that was interrupted leaves its copy beside the host root.
+    if [[ -e "$HOST_ROOT.staging" ]]; then
+        rm -rf -- "$HOST_ROOT.staging"
+        log_success "Removed directory: $HOST_ROOT.staging"
+    fi
+
+    if [[ -L "$HOST_ROOT" ]]; then
+        if [[ "$(readlink -- "$HOST_ROOT")" == "$LEGACY_ROOT" ]]; then
+            rm -f -- "$HOST_ROOT"
+            log_success "Removed link: $HOST_ROOT"
+        fi
+        return 0
+    fi
+
+    [[ -d "$HOST_ROOT" ]] || return 0
+    # The marker of a move that has not finished.
+    rm -f -- "$HOST_ROOT/.moving"
+    for dir in "$HOST_ROOT/lib" "$HOST_ROOT/bin" "$HOST_ROOT/libexec" "$HOST_ROOT"; do
+        rmdir -- "$dir" 2>/dev/null || true
+    done
+    if [[ -e "$HOST_ROOT" ]]; then
+        log_info "Kept $HOST_ROOT: it still holds files"
     else
-        log_info "Binary not found: $INSTALL_DIR/aks-flex-node"
+        log_success "Removed directory: $HOST_ROOT"
     fi
 }
 
@@ -133,7 +213,8 @@ show_completion_message() {
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"
     echo ""
-    echo "The system has been returned to its pre-installation state."
+    echo "The system has been returned to its pre-installation state. Anything the host staged under"
+    echo "$(dirname "$HOST_ROOT") was left there."
 }
 
 main() {
@@ -142,6 +223,8 @@ main() {
         log_error "This script must be run as root (use sudo)"
         exit 1
     fi
+
+    find_install_dir
 
     # Confirm uninstall
     confirm_uninstall "${1:-}"
@@ -158,5 +241,6 @@ main() {
     show_completion_message
 }
 
-# Run main function
-main "$@"
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi

@@ -3,8 +3,10 @@
 # This script downloads and installs an AKS Flex Node binary from GitHub releases or a custom archive URL.
 #
 # Scope: initial installation and reinstall after reset. While the agent service is installed,
-# /usr/local/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
-# through the agent upgrade flow.
+# <host root>/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
+# through the agent upgrade flow. The host root is /opt/unbounded/agent, or /usr/local on a host
+# installed by a release before it; see resolve_install_dir. The rest of /opt/unbounded belongs to
+# the host, which may stage files there, and is never changed.
 
 set -euo pipefail
 
@@ -20,8 +22,12 @@ REPO="Azure/AKSFlexNode"
 SERVICE_NAME="aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
-INSTALL_DIR="/usr/local/bin"
-MANAGED_BINARY_DIR="/usr/local/lib/aks-flex-node"
+# Where the agent keeps its files, and where releases before it did. resolve_install_dir picks the
+# install directories from them. Must match hostroot.Path in the agent library.
+HOST_ROOT="/opt/unbounded/agent"
+LEGACY_ROOT="/usr/local"
+INSTALL_DIR="$LEGACY_ROOT/bin"
+MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"
 AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
@@ -244,6 +250,25 @@ download_binary() {
     echo "$temp_dir/$binary_name"
 }
 
+# resolve_install_dir picks where to install without running the binary: under the host root on a
+# host already installed there, since reset keeps the layout; in /usr/local/bin where that is
+# writable, as earlier releases were, so one of them finds itself there, while a newer agent copies
+# itself under the host root when it starts; and under the host root otherwise, as on Azure
+# Container Linux, where /usr/local is read-only.
+resolve_install_dir() {
+    local root="$HOST_ROOT" probe
+
+    if [[ ! -d "$HOST_ROOT" || -L "$HOST_ROOT" ]] &&
+        { [[ -d "$LEGACY_ROOT/bin" ]] || install -d -o root -g root -m 0755 "$LEGACY_ROOT/bin" 2>/dev/null; } &&
+        probe=$(mktemp "$LEGACY_ROOT/bin/.aks-flex-node.XXXXXX" 2>/dev/null); then
+        rm -f -- "$probe"
+        root="$LEGACY_ROOT"
+    fi
+
+    INSTALL_DIR="$root/bin"
+    MANAGED_BINARY_DIR="$root/lib/aks-flex-node"
+}
+
 is_managed_binary_link() {
     local target_path="$1"
     local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
@@ -263,9 +288,10 @@ install_binary() {
 
     log_info "Installing binary to $INSTALL_DIR..."
 
-    # Minimal and custom images aren't required to pre-create /usr/local/bin.
-    # Create a missing destination, but don't change an existing directory's
-    # ownership or mode because it can be managed by the host image owner.
+    # Minimal and custom images aren't required to pre-create /usr/local/bin,
+    # and the host root does not exist before the first installation. Create a
+    # missing destination, but don't change an existing directory's ownership
+    # or mode because it can be managed by the host image owner.
     if [[ ! -e "$INSTALL_DIR" ]]; then
         if ! install -d -o root -g root -m 0755 "$INSTALL_DIR"; then
             log_error "Failed to create install directory $INSTALL_DIR"
@@ -301,7 +327,7 @@ install_binary() {
             if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
                 systemctl is-active --quiet "$SERVICE_UNIT"; then
                 log_error "Refusing to replace the managed symbolic link at $target_path while the agent service is installed or active."
-                log_error "Use the agent upgrade flow, or run 'aks-flex-node reset' before rerunning this script."
+                log_error "Use the agent upgrade flow, or run '$target_path reset' before rerunning this script."
                 exit 1
             fi
 
@@ -381,10 +407,12 @@ EOF
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
     echo -e "${BLUE}Command Line Usage:${NC}"
-    echo "  Bootstrap node:         aks-flex-node bootstrap --config $CONFIG_DIR/config.json"
-    echo "  Run daemon directly:    aks-flex-node daemon --config $CONFIG_DIR/config.json"
-    echo "  Reset node:             aks-flex-node reset"
-    echo "  Check version:          aks-flex-node version"
+    echo "  Bootstrap node:         $INSTALL_DIR/aks-flex-node start --config $CONFIG_DIR/config.json"
+    echo "  Run daemon directly:    $INSTALL_DIR/aks-flex-node daemon --config $CONFIG_DIR/config.json"
+    echo ""
+    echo "  Once bootstrapped, the agent runs from $HOST_ROOT/bin, which is not on the default PATH:"
+    echo "  Reset node:             $HOST_ROOT/bin/aks-flex-node reset"
+    echo "  Check version:          $HOST_ROOT/bin/aks-flex-node version"
     echo ""
     echo -e "${YELLOW}Directories:${NC}"
     echo "  Configuration: $CONFIG_DIR"
@@ -436,6 +464,7 @@ main() {
     # Download binary
     local binary_path
     binary_path=$(download_binary "$version" "$os" "$arch")
+    resolve_install_dir
 
     # Install binary
     install_binary "$binary_path"

@@ -265,6 +265,25 @@ how to retry failed provisioning. A systemd oneshot wrapper can use
 `ConditionPathExists=!/var/lib/aks-flex-node/first-boot-complete` to prevent a
 successful node from being bootstrapped again after reboot.
 
+For hosts provisioned by Ignition, such as Azure Container Linux,
+[`scripts/aks-flex-node-bootstrap.bu`](../../scripts/aks-flex-node-bootstrap.bu)
+is such a wrapper, as a Butane config. Ignition writes the published script
+unchanged, the base config, and the script's settings to
+`/etc/aks-flex-node/first-boot`, with only root able to read them, and enables
+`aks-flex-node-bootstrap.service`. Once the network is online, the unit runs the
+script with the settings from a systemd environment file and the base config
+from `AKS_FLEX_NODE_BASE_CONFIG_FILE`. It retries a failure with a delay that
+grows to five minutes, since a first boot has no later chance to bootstrap.
+
+The unit is conditioned on the agent unit,
+`/etc/systemd/system/aks-flex-node-agent.service`, instead of a marker. The
+agent unit exists once bootstrap has installed the agent, and
+`aks-flex-node reset` removes it together with the wrapper unit. A marker under
+`/var/lib/aks-flex-node` would survive reset and block the host from being
+provisioned again. Once bootstrap succeeds, the unit removes
+`/etc/aks-flex-node/first-boot`, whose files carry the base config and can carry
+a signed agent URL, and keeps the credential file that the config references.
+
 ### 7. Verify convergence
 
 The provisioning system should not treat script exit alone as complete cluster
@@ -408,6 +427,10 @@ AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
 ```
 
+`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated. The script
+chooses the binary directory, and a value that names any other directory is
+rejected.
+
 The equivalent non-secret values have CLI flags. A service-principal client
 secret has no CLI value because command arguments are process-visible. Use a
 protected secret file or, when unavoidable, the dedicated environment variable.
@@ -426,20 +449,22 @@ The script processes JSON in this order:
 
 1. Write the embedded base config into a mode `0700` temporary workspace.
 2. Validate that it is a JSON object.
-3. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
+3. Download the agent and install it where it reports, as described in
+   [Agent download and installation](#agent-download-and-installation). This
+   happens before rendering because fetching bootstrap data runs the installed
+   binary.
+4. Apply dedicated cluster resource ID, pool name, and ARM endpoint overrides so
    they are available to the bootstrap-data request.
-4. When enabled, acquire an ARM token with MSI or SP, call
+5. When enabled, acquire an ARM token with MSI or SP, call
    `listBootstrapData`, and deep-merge the response.
-5. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
-6. Deep-merge each CLI `--config-overrides` object in invocation order.
-7. Reapply dedicated cluster/pool/endpoint overrides so they remain
+6. Deep-merge `AKS_FLEX_NODE_CONFIG_OVERRIDES`, when present.
+7. Deep-merge each CLI `--config-overrides` object in invocation order.
+8. Reapply dedicated cluster/pool/endpoint overrides so they remain
    authoritative.
-8. Apply dedicated rootfs and offline-artifact source overrides.
-9. Set `agent.nodeName` from the lowercase host name only when absent.
-10. Apply the dedicated auth selection.
-11. Validate the final JSON with jq.
-12. Keep the rendered result in the protected workspace while the agent archive
-    is downloaded and installed.
+9. Apply dedicated rootfs and offline-artifact source overrides.
+10. Set `agent.nodeName` from the lowercase host name only when absent.
+11. Apply the dedicated auth selection.
+12. Validate the final JSON with jq.
 13. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
     `0600`.
 14. Clear bootstrap environment variables, including signed artifact URLs and
@@ -586,18 +611,30 @@ The script:
 3. Optionally validates the archive SHA-256.
 4. Rejects absolute and parent-traversal tar paths.
 5. Extracts `aks-flex-node-linux-<arch>` or `aks-flex-node`.
-6. Atomically replaces `/usr/local/bin/aks-flex-node` with mode `0755`.
+6. Chooses the binary directory, and atomically replaces `aks-flex-node` there
+   with mode `0755`.
+
+The directory is chosen from the host, without running the agent:
+`/opt/unbounded/agent/bin` on a host already installed under a real
+`/opt/unbounded/agent`, since reset keeps the layout there; `/usr/local/bin`
+where that is writable, as earlier releases were installed, so one of them finds
+itself there; and `/opt/unbounded/agent/bin` otherwise, as on Azure Container
+Linux, where `/usr` is read-only. An agent started from `/usr/local/bin` copies
+itself to `/opt/unbounded/agent/bin` and removes the copy in `/usr/local/bin`
+once the host is fully installed there. `/opt/unbounded` itself belongs to the
+host, which may stage files there, so it alone never counts as an installation.
 
 The checksum covers the downloaded archive. Supplying a digest is strongly
 recommended, especially for signed URLs or mirrors.
 
 ## Execution flow
 
-After installing the binary and config, the script executes:
+After installing the binary and config, the script runs the binary it installed,
+in the directory chosen above:
 
 ```console
-aks-flex-node preflight --config /etc/aks-flex-node/config.json --output text
-aks-flex-node start --config /etc/aks-flex-node/config.json
+"$INSTALL_DIR/aks-flex-node" preflight --config /etc/aks-flex-node/config.json --output text
+"$INSTALL_DIR/aks-flex-node" start --config /etc/aks-flex-node/config.json
 ```
 
 Preflight failure stops the script before start. The existing binary owns host

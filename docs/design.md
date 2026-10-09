@@ -82,7 +82,7 @@ The primary command is:
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
-`start` performs host bootstrap and installs the long-running systemd service. `bootstrap` remains an alias for compatibility, but new docs should use `start`.
+`start` performs host bootstrap and installs the long-running systemd service. `bootstrap` remains an alias for compatibility, but new docs should use `start`. On the host, the binary lives under `/opt/unbounded/agent/bin`, which is not on the default `PATH`; see [Where the agent is installed](usage/operations.md#where-the-agent-is-installed).
 
 Other commands include the non-mutating `preflight` check, protected bootstrap-data retrieval, reset, version reporting, and service integration commands. Some lifecycle commands are hidden from top-level help because systemd or a managed workflow invokes them rather than an operator.
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -38,10 +39,23 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// logs unless the process explicitly configures its global logger.
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
 
+	// After an AgentUpgrade from a release that predates the host root, this is
+	// the first time the new agent runs on the host.
+	if err := MigrateHostRoot(log); err != nil {
+		return err
+	}
+
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup.
+	if err := InstallHostBinary(ctx, log); err != nil {
+		return err
+	}
 	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
 		return err
+	}
+	// After the units are rewritten, so nothing names the copy it removes.
+	if err := RemoveLegacySeed(log); err != nil {
+		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
@@ -113,6 +127,10 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	gate := newStartupGate()
+	// The manager stops early, with a cause, when the daemon may not take work
+	// and is not replaced in time; see holdForHostRoot.
+	mgrCtx, stopManager := context.WithCancelCause(ctx)
+	defer stopManager(nil)
 	if err := daemon.SetupController(
 		"aks-flex-node-daemon",
 		mgr,
@@ -146,6 +164,17 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				// last-good process starts and consumes the retained signal.
 				return
 			default:
+				// After the upgrade is reported, so a move never runs
+				// before this binary has shown it can start, and so the signal
+				// it waits for is gone.
+				restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades)
+				if reason := holdForHostRoot(restarted, upgrades.paths, defaultAgentUpgradePaths()); reason != "" {
+					// The gate stays closed; the next process opens it.
+					if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
+						stopManager(err)
+					}
+					return
+				}
 				gate.open()
 				return
 			}
@@ -158,13 +187,18 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		}
 	}()
 
-	err = mgr.Start(ctx)
+	err = mgr.Start(mgrCtx)
 	repaves.log.Info("daemon shutting down")
+	// A daemon that was told to stop exits as it always has. One that stopped
+	// itself waiting to be replaced exits with an error, so Restart= starts it.
+	if cause := context.Cause(mgrCtx); err == nil && ctx.Err() == nil && cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
 	return err
 }
 
 func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, func(), error) {
-	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg)
+	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg, config.HostBinaryPath())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,6 +236,9 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 	}
 }
 
-func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
-	return kubeauth.BootstrapRESTConfig(cfg)
+// bootstrapCredentialRESTConfig builds the client the daemon uses until its own
+// certificate is issued. An exec credential runs plugin, the host's
+// aks-flex-node.
+func bootstrapCredentialRESTConfig(cfg *config.Config, plugin string) (*rest.Config, error) {
+	return kubeauth.BootstrapRESTConfigWithPlugin(cfg, plugin)
 }
