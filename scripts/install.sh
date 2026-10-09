@@ -327,7 +327,7 @@ install_binary() {
             if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
                 systemctl is-active --quiet "$SERVICE_UNIT"; then
                 log_error "Refusing to replace the managed symbolic link at $target_path while the agent service is installed or active."
-                log_error "Use the agent upgrade flow, or run 'aks-flex-node reset' before rerunning this script."
+                log_error "Use the agent upgrade flow, or run '$target_path reset' before rerunning this script."
                 exit 1
             fi
 
@@ -407,10 +407,12 @@ EOF
     echo -e "${YELLOW}Usage Options:${NC}"
     echo ""
     echo -e "${BLUE}Command Line Usage:${NC}"
-    echo "  Bootstrap node:         aks-flex-node bootstrap --config $CONFIG_DIR/config.json"
-    echo "  Run daemon directly:    aks-flex-node daemon --config $CONFIG_DIR/config.json"
-    echo "  Reset node:             aks-flex-node reset"
-    echo "  Check version:          aks-flex-node version"
+    echo "  Bootstrap node:         $INSTALL_DIR/aks-flex-node start --config $CONFIG_DIR/config.json"
+    echo "  Run daemon directly:    $INSTALL_DIR/aks-flex-node daemon --config $CONFIG_DIR/config.json"
+    echo ""
+    echo "  Once bootstrapped, the agent runs from $HOST_ROOT/bin, which is not on the default PATH:"
+    echo "  Reset node:             $HOST_ROOT/bin/aks-flex-node reset"
+    echo "  Check version:          $HOST_ROOT/bin/aks-flex-node version"
     echo ""
     echo -e "${YELLOW}Directories:${NC}"
     echo "  Configuration: $CONFIG_DIR"
