@@ -106,7 +106,7 @@ The default `all` command runs:
 | `smoke` | Run smoke workloads only. |
 | `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
 | `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
-| `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local` and then the move into `/opt/unbounded/agent`. |
+| `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local`, that a noexec `/opt` keeps it linked, the move into `/opt/unbounded/agent`, and that an AgentUpgrade back to the earlier release cannot install it under `/usr/local`. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -224,8 +224,10 @@ Run it against an already joined environment:
 The `host-root-migration` command reinstalls the bootstrap-token VM with an earlier release, `E2E_LEGACY_RELEASE` (default `v0.2.0`), which installs under `/usr/local`:
 
 1. Upgrade it to the build under test, and verify `/opt/unbounded/agent` links to `/usr/local`, `/opt/unbounded` is `0755` root, and the unit still runs the earlier layout, which last-good still needs.
-2. Upgrade again, which pushes the earlier release out of last-good. Wait for the daemon to copy the files into a real `/opt/unbounded/agent`, point the units at them and restart from there, and for the restarted daemon to remove the earlier layout.
-3. Verify nothing is left under `/usr/local`, the agent unit and nspawn hooks run the moved files, the daemon runs from `/opt/unbounded/agent`, kubelet still authenticates, and a workload runs.
+2. Mount `/opt` noexec and upgrade again, which pushes the earlier release out of last-good. Verify the daemon reports that it cannot move to a noexec `/opt` and keeps the host linked, with nothing copied and the units unchanged. Then restore `/opt`.
+3. Restart the daemon, and wait for it to copy the files into a real `/opt/unbounded/agent`, point the units at them and restart from there, and for the restarted daemon to remove the earlier layout.
+4. Verify nothing is left under `/usr/local`, the agent unit and nspawn hooks run the moved files, the daemon runs from `/opt/unbounded/agent`, and kubelet still authenticates.
+5. Put an executable at `/usr/local/bin/aks-flex-node`, which the earlier release would take as its own binary, make it immutable, and apply an AgentUpgrade to the earlier release: it fails before anything is switched. Make it removable and apply it again: the upgrade removes it, the earlier release cannot start, and the agent rolls back to last-good with nothing installed under `/usr/local`. Then run a workload.
 
 ```bash
 ./hack/e2e/run.sh host-root-migration
