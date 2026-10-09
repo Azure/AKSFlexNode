@@ -373,14 +373,31 @@ done
 sudo grep -Fq "ExecStart=/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current agent" \
   /etc/systemd/system/aks-flex-node-agent.service ||
   { echo "agent unit does not run the moved current link" >&2; exit 1; }
+sudo systemctl is-active --quiet aks-flex-node-agent.service
+REMOTE
+}
+
+# _host_root_migration_assert_helper checks a moved host's nspawn lifecycle
+# helper is the running agent's binary, and that every hook the machine's units
+# run names it under /opt/unbounded/agent. The move copies the earlier release's
+# helper, and only rewriting the units for the move replaces it.
+_host_root_migration_assert_helper() {
+  local vm_ip="$1"
+  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+helper=/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle
+pid="$(systemctl show --property MainPID --value aks-flex-node-agent.service)"
+[[ "${pid:-0}" -gt 0 ]] || { echo "aks-flex-node-agent.service is not running" >&2; exit 1; }
+running="$(sudo readlink -f "/proc/${pid}/exe")"
+sudo cmp -s "${helper}" "${running}" ||
+  { echo "${helper} is not the running agent's binary ${running}" >&2; exit 1; }
 hooks="$(sudo sh -c 'grep -h nspawn-lifecycle /etc/systemd/system/systemd-nspawn@*.service.d/override.conf \
   /etc/systemd/system/unbounded-agent-regenerate-config@*.service 2>/dev/null' || true)"
 [[ -n "${hooks}" ]] || { echo "found no nspawn lifecycle hooks" >&2; exit 1; }
-if grep -v -F /opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle <<<"${hooks}"; then
-  echo "nspawn lifecycle hooks do not all run the moved helper" >&2
+if grep -v -F "${helper}" <<<"${hooks}"; then
+  echo "nspawn lifecycle hooks do not all run ${helper}" >&2
   exit 1
 fi
-sudo systemctl is-active --quiet aks-flex-node-agent.service
 REMOTE
 }
 
@@ -498,7 +515,11 @@ host_root_migration_e2e() {
   vm_ip="$(state_get token_vm_ip)"
   suffix="$(date +%s)"
 
-  # Start over from a host the older release installed.
+  # Start over from a host the older release installed. The older daemon
+  # discovers the MachineOperation API only when it starts, so the API goes in
+  # first, rather than restarting it after: every start counts against the
+  # unit's start limit, which the move's restart below has to stay inside.
+  _agent_upgrade_ensure_api
   node_unjoin_token
   _host_root_migration_uninstall "${vm_ip}"
   node_join_token "${release}"
@@ -507,9 +528,6 @@ host_root_migration_e2e() {
 
   # The older daemon performs the upgrade. This build's daemon then starts on a
   # host it did not install, and links the host root to the older layout.
-  _agent_upgrade_ensure_api
-  remote_exec "${vm_ip}" 'sudo systemctl restart aks-flex-node-agent.service'
-  validate_node_joined "${vm_name}"
   _agent_upgrade_prepare_server "${vm_ip}"
   success_digest="$(_agent_upgrade_digest "${vm_ip}" success.tar.gz)"
   op="host-root-migration-${suffix}"
@@ -543,9 +561,16 @@ host_root_migration_e2e() {
   # The next daemon start tries again, and moves it.
   remote_exec "${vm_ip}" 'sudo systemctl restart aks-flex-node-agent.service'
   _host_root_migration_wait_moved "${vm_ip}"
+  _host_root_migration_assert_helper "${vm_ip}"
   validate_node_joined "${vm_name}"
   _agent_upgrade_assert_synchronized "${vm_ip}"
   _agent_upgrade_validate_kubelet_auth "${vm_name}" "${vm_ip}"
+
+  # Restart the machine, as a host reboot would. Its pre-start runs through the
+  # helper, and the earlier release's helper would point the hooks back at
+  # /usr/local, which the move removed, so the machine would not start again.
+  _reconcile_nspawn_lifecycle token
+  _host_root_migration_assert_helper "${vm_ip}"
 
   _host_root_migration_downgrade "${vm_name}" "${vm_ip}" "${release}" "${suffix}"
   validate_node_joined "${vm_name}"
