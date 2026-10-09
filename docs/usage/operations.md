@@ -31,7 +31,7 @@ Don't link it from `/usr/local/bin`. An earlier release takes an executable at `
 
 `/opt/unbounded/agent` is reserved for the agent. The rest of `/opt/unbounded` belongs to the host, for example for staged offline artifacts or OCI layouts: the agent creates `/opt/unbounded` with mode `0755` if it is missing, and otherwise never changes or removes it or anything else in it. Mount a volume at a subdirectory such as `/opt/unbounded/artifacts` rather than over `/opt/unbounded`, so it does not hide the agent.
 
-The filesystem that holds `/opt/unbounded/agent` must allow running programs, so `/opt` must not be mounted `noexec`; `start` fails before it registers the machine if the agent cannot run from there.
+The filesystem that holds `/opt/unbounded/agent` must allow running programs, so `/opt` must not be mounted `noexec`. `aks-flex-node preflight` fails where it is, and `start` fails before it registers the machine if the agent cannot run from there.
 
 Where `/usr/local/bin` is writable, the install scripts put the binary there, as earlier releases were installed. The agent copies itself to `/opt/unbounded/agent/bin` when it starts, and removes the copy in `/usr/local/bin` once nothing it runs is under `/usr/local`. Where `/usr/local` is read-only, as on Azure Container Linux, the scripts install under `/opt/unbounded/agent` directly.
 
@@ -42,7 +42,7 @@ Earlier releases installed these files under `/usr/local`. A host installed by o
 
    Nothing under `/usr/local` is removed until the agent runs from the copy, so a move that is interrupted, or a restart that fails, leaves both copies in place, and the next agent start finishes it. An agent that has queued its restart, or that finds the files moved under it by a move that then failed, takes no work; if it is not restarted within two minutes it exits, and systemd starts it again.
 
-   A host where the agent cannot run from `/opt/unbounded/agent`, because `/opt` is mounted `noexec` or for another reason, stays linked. The agent logs why, removes the copy, points the units back at `/usr/local` if an interrupted move had already pointed them at the copy, and tries again at its next start.
+   A host where the agent cannot run from `/opt/unbounded/agent`, because `/opt` is mounted `noexec` or for another reason, stays linked. The agent logs why, removes any copy it made, points the units back at `/usr/local` if an interrupted move had already pointed them at the copy, and tries again at its next start.
 
 `aks-flex-node reset` removes the helpers under both locations and keeps the binaries; the uninstall script removes the binaries from both, then `/opt/unbounded/agent` itself, as a link or an emptied directory, and an interrupted move's `/opt/unbounded/agent.staging`, at any stage. It leaves `/opt/unbounded`.
 
