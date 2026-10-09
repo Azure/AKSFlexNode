@@ -629,11 +629,12 @@ recommended, especially for signed URLs or mirrors.
 
 ## Execution flow
 
-After installing the binary and config, the script executes:
+After installing the binary and config, the script runs the binary it installed,
+in the directory chosen above:
 
 ```console
-aks-flex-node preflight --config /etc/aks-flex-node/config.json --output text
-aks-flex-node start --config /etc/aks-flex-node/config.json
+"$INSTALL_DIR/aks-flex-node" preflight --config /etc/aks-flex-node/config.json --output text
+"$INSTALL_DIR/aks-flex-node" start --config /etc/aks-flex-node/config.json
 ```
 
 Preflight failure stops the script before start. The existing binary owns host

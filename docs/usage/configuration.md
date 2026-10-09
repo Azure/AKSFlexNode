@@ -6,6 +6,8 @@ AKS Flex Node reads a JSON config file passed with `--config`.
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
+Run the binary from where the install script put it, which the script prints. Once `start` has run, it is `/opt/unbounded/agent/bin/aks-flex-node`, which is not on the default `PATH`; see [Where the agent is installed](operations.md#where-the-agent-is-installed).
+
 Before starting bootstrap, validate the same config with the non-mutating preflight command:
 
 ```bash

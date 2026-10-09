@@ -438,6 +438,10 @@ jobs:
           3. Install the binary where the agent looks for it: \`sudo install -D -m 0755 aks-flex-node-linux-amd64 /opt/unbounded/agent/bin/aks-flex-node\`, or \`aks-flex-node-linux-arm64\` on ARM64
           4. Run it as \`/opt/unbounded/agent/bin/aks-flex-node\`, or add \`/opt/unbounded/agent/bin\` to your PATH
 
+          ### Where the agent is installed
+
+          The agent runs from \`/opt/unbounded/agent/bin/aks-flex-node\`, which is not on the default PATH. Releases before it moved there left \`aks-flex-node\` in \`/usr/local/bin\`, so scripts and runbooks that run it by name need the full path. \`/opt/unbounded/agent\` must be on a filesystem that allows running programs. See [Where the agent is installed](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/docs/usage/operations.md#where-the-agent-is-installed).
+
           ### Supported Platforms
 
           - **Ubuntu 22.04 LTS (AMD64)**: \`aks-flex-node-linux-amd64.tar.gz\`
