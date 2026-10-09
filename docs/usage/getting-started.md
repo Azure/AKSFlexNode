@@ -448,8 +448,8 @@ The script performs these operations:
 
 1. Loads the empty JSON base.
 2. Downloads and verifies the AKS Flex Node agent archive from GitHub Releases,
-   and installs the binary. The agent moves itself to
-   `/opt/unbounded/bin/aks-flex-node` when it starts. See
+   and installs the binary. The agent copies itself to
+   `/opt/unbounded/agent/bin/aks-flex-node` when it starts. See
    [Where the agent is installed](operations.md#where-the-agent-is-installed).
 3. Applies the cluster and pool overrides.
 4. Uses the Azure VM managed identity to request an ARM token.
@@ -490,7 +490,7 @@ Use `node.ign` as the host's Ignition config; on Azure, that's the VM's custom d
 - For a service principal, the credential under `/etc/aks-flex-node/credentials/` with mode `0600`. Pass `--sp-client-secret-file` or `--sp-client-certificate-file` to `aks-flex-node ignition`, before `--`.
 - `aks-flex-node-bootstrap.service`, which runs the script with the arguments after `--` once the network is online.
 
-The agent is installed under `/opt/unbounded`, which is writable on these hosts. The unit retries failures with a delay that grows to five minutes, until `aks-flex-node-agent.service` is installed, and is skipped on later boots. Once bootstrap succeeds, it removes the script, which carries the base config. `aks-flex-node reset` disables and removes the unit. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
+The agent is installed under `/opt/unbounded/agent`, which is writable on these hosts. The unit retries failures with a delay that grows to five minutes, until `aks-flex-node-agent.service` is installed, and is skipped on later boots. Once bootstrap succeeds, it removes the script, which carries the base config. `aks-flex-node reset` disables and removes the unit. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
 
 The command checks the arguments against the script's options and refuses the ones it sets itself, so mistakes are reported in your Bash environment rather than at first boot. The output contains the base config and any credential, so keep it as private as they are; `--output` creates the file with mode `0600` and doesn't overwrite an existing one.
 

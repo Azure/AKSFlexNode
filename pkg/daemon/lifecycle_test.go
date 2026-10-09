@@ -212,8 +212,8 @@ func TestRecoveryScriptPathUnder(t *testing.T) {
 		},
 		{
 			name: "host root",
-			root: "/opt/unbounded",
-			want: "/opt/unbounded/lib/aks-flex-node/aks-flex-node-recovery.sh",
+			root: "/opt/unbounded/agent",
+			want: "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-recovery.sh",
 		},
 	}
 
@@ -247,8 +247,8 @@ func TestRenderRecoveryScriptFollowsTheHostRoot(t *testing.T) {
 		},
 		{
 			name:     "host root",
-			root:     "/opt/unbounded",
-			lastGood: "/opt/unbounded/lib/aks-flex-node/aks-flex-node-last-good",
+			root:     "/opt/unbounded/agent",
+			lastGood: "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-last-good",
 		},
 	}
 
@@ -297,9 +297,9 @@ func TestUninstallPathsSweepBothRoots(t *testing.T) {
 	}{
 		{
 			name: "host root also sweeps the legacy root",
-			root: "/opt/unbounded",
+			root: "/opt/unbounded/agent",
 			want: []string{
-				"/opt/unbounded/lib/aks-flex-node/aks-flex-node-recovery.sh",
+				"/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-recovery.sh",
 				"/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh",
 			},
 		},

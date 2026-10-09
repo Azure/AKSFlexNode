@@ -606,13 +606,14 @@ The script:
    with mode `0755`.
 
 The directory is chosen from the host, without running the agent:
-`/opt/unbounded/bin` on a host already installed under `/opt/unbounded`, since
-reset keeps the layout there; `/usr/local/bin` where that is writable, as
-earlier releases were installed, so one of them finds itself there; and
-`/opt/unbounded/bin` otherwise, as on Azure Container Linux, where `/usr` is
-read-only. An agent started from `/usr/local/bin` copies itself to
-`/opt/unbounded/bin` and removes the copy in `/usr/local/bin` once it runs from
-there.
+`/opt/unbounded/agent/bin` on a host already installed under a real
+`/opt/unbounded/agent`, since reset keeps the layout there; `/usr/local/bin`
+where that is writable, as earlier releases were installed, so one of them finds
+itself there; and `/opt/unbounded/agent/bin` otherwise, as on Azure Container
+Linux, where `/usr` is read-only. An agent started from `/usr/local/bin` copies
+itself to `/opt/unbounded/agent/bin` and removes the copy in `/usr/local/bin`
+once the host is fully installed there. `/opt/unbounded` itself belongs to the
+host, which may stage files there, so it alone never counts as an installation.
 
 The checksum covers the downloaded archive. Supplying a digest is strongly
 recommended, especially for signed URLs or mirrors.

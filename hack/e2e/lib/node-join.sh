@@ -47,7 +47,7 @@ set -euo pipefail
 # a host an older release installed, where activating the candidate links the
 # host root to it.
 managed_current=""
-for root in /opt/unbounded /usr/local; do
+for root in /opt/unbounded/agent /usr/local; do
   if [[ -e "${root}/lib/aks-flex-node/aks-flex-node-current" || -L "${root}/lib/aks-flex-node/aks-flex-node-current" ]]; then
     managed_current="${root}/lib/aks-flex-node/aks-flex-node-current"
     break
@@ -72,7 +72,7 @@ fi
 # install.sh puts the binary under the host root once the host has one, and in
 # /usr/local/bin before that where it is writable. The agent copies itself under
 # the host root when it starts.
-agent=/opt/unbounded/bin/aks-flex-node
+agent=/opt/unbounded/agent/bin/aks-flex-node
 [[ -x "${agent}" ]] || agent=/usr/local/bin/aks-flex-node
 sudo "${agent}" version
 
@@ -175,9 +175,9 @@ fi
 
 echo "aks-flex-node-agent.service is installed, enabled, and active"
 
-# On a host installed under a real /opt/unbounded, the agent removes the binary
+# On a host installed under a real /opt/unbounded/agent, the agent removes the binary
 # install.sh left in /usr/local/bin once it runs from the host root.
-if [[ -d /opt/unbounded && ! -L /opt/unbounded ]]; then
+if [[ -d /opt/unbounded/agent && ! -L /opt/unbounded/agent ]]; then
   for _ in $(seq 1 30); do
     [[ -f /usr/local/bin/aks-flex-node && ! -L /usr/local/bin/aks-flex-node ]] || break
     sleep 2
@@ -365,7 +365,7 @@ validate_no_localdns_state() {
 
   # Under both roots: reset does not depend on the host root having been migrated.
   for path in /etc/systemd/system/unbounded-localdns-network.service \
-    /opt/unbounded/libexec/unbounded-localdns-network \
+    /opt/unbounded/agent/libexec/unbounded-localdns-network \
     /usr/local/libexec/unbounded-localdns-network; do
     if [[ -e "${path}" ]]; then
       echo "reset cleanup LocalDNS file ${path} still exists"
@@ -389,9 +389,9 @@ validate_no_localdns_state() {
 validate_no_host_helpers() {
   local path
 
-  for path in /opt/unbounded/bin/unbounded-agent-nspawn-lifecycle \
+  for path in /opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle \
     /usr/local/bin/unbounded-agent-nspawn-lifecycle \
-    /opt/unbounded/lib/aks-flex-node/aks-flex-node-recovery.sh \
+    /opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-recovery.sh \
     /usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh \
     /etc/systemd/system/aks-flex-node-agent-recovery.service; do
     if [[ -e "${path}" ]]; then

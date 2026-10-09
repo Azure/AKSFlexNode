@@ -16,7 +16,9 @@ bash -n "$SCRIPT"
 
 # shellcheck source=scripts/uninstall.sh
 source "$SCRIPT"
-HOST_ROOT="$WORK_DIR/opt/unbounded"
+[[ "$HOST_ROOT" == /opt/unbounded/agent ]] || fail "HOST_ROOT is $HOST_ROOT, not the agent library's hostroot.Path"
+HOST_ROOT="$WORK_DIR/opt/unbounded/agent"
+HOST_ROOT_PARENT="$(dirname "$HOST_ROOT")"
 LEGACY_ROOT="$WORK_DIR/usr/local"
 
 # populate lays out a release's binaries under a root: the compatibility link, dangling as reset
@@ -42,12 +44,27 @@ find_install_dir
 [[ "$INSTALL_DIR" == "$LEGACY_ROOT/bin" ]] || fail "reset would not run the binary under the legacy root: $INSTALL_DIR"
 rm -rf "$LEGACY_ROOT"
 
-# A host installed under the host root: its binaries go, and the host root with them once empty.
+# A host installed under the host root: its binaries go, and the host root with them once empty. Its
+# parent belongs to the host and stays, even when empty.
 populate "$HOST_ROOT"
 mkdir -p "$HOST_ROOT/libexec"
 remove_binary >/dev/null
 assert_removed "$HOST_ROOT"
 [[ ! -e "$HOST_ROOT" ]] || fail "empty host root was left: $(find "$HOST_ROOT" | tr '\n' ' ')"
+[[ -d "$HOST_ROOT_PARENT" ]] || fail "the host root's parent was removed"
+
+# Files the host staged beside the host root, and the parent's mode, are left alone.
+populate "$HOST_ROOT"
+mkdir -p "$HOST_ROOT_PARENT/artifacts"
+touch "$HOST_ROOT_PARENT/artifacts/manifest.json"
+chmod 0750 "$HOST_ROOT_PARENT"
+remove_binary >/dev/null
+assert_removed "$HOST_ROOT"
+[[ ! -e "$HOST_ROOT" ]] || fail "empty host root was left beside the host's files"
+[[ -f "$HOST_ROOT_PARENT/artifacts/manifest.json" ]] || fail "a file the host staged beside the host root was removed"
+[[ $(stat -c '%a' "$HOST_ROOT_PARENT") == 750 ]] || fail "the mode of the host root's parent was changed"
+chmod 0755 "$HOST_ROOT_PARENT"
+rm -rf "$HOST_ROOT_PARENT/artifacts"
 
 # A move to the host root that was interrupted leaves its copy beside it and its marker in it, and
 # neither keeps the host root.
@@ -71,13 +88,14 @@ assert_removed "$LEGACY_ROOT"
 rm -rf "$HOST_ROOT"
 
 # On a migrated host the host root is a link to the legacy root. The files are removed through it,
-# and then the link.
+# and then the link, but not the parent the link is in.
 populate "$LEGACY_ROOT"
-mkdir -p "$(dirname "$HOST_ROOT")"
+mkdir -p "$HOST_ROOT_PARENT"
 ln -s "$LEGACY_ROOT" "$HOST_ROOT"
 remove_binary >/dev/null
 assert_removed "$LEGACY_ROOT"
 [[ ! -e "$HOST_ROOT" && ! -L "$HOST_ROOT" ]] || fail "the host root link was left"
+[[ -d "$HOST_ROOT_PARENT" ]] || fail "the parent of the host root link was removed"
 
 # A link to anywhere else is not the agent's.
 mkdir -p "$WORK_DIR/elsewhere"

@@ -7,7 +7,7 @@
 
 The VM is provisioned only by the Ignition config that `aks-flex-node ignition` renders, plus
 harness access (SSH user, hostname, static address). bootstrap.sh then installs the agent under
-/opt/unbounded, the host root, and joins the node with a bootstrap token. The agent's machine client talks to
+/opt/unbounded/agent, the host root, and joins the node with a bootstrap token. The agent's machine client talks to
 an in-cluster AKS Flex controller through the API server's service proxy, so no Azure resources
 are involved.
 
@@ -58,7 +58,9 @@ VM_CPUS = os.environ.get("ACL_VM_CPUS", "2")
 VM_MIN_DISK = 20 * 1024**3
 
 NODE_NAME = "acl-harness"
-HOST_ROOT = "/opt/unbounded"
+# Must match hostroot.Path in the agent library. Its parent belongs to the host.
+HOST_ROOT_PARENT = "/opt/unbounded"
+HOST_ROOT = f"{HOST_ROOT_PARENT}/agent"
 SSH_USER = "core"
 CONTROLLER_IMAGE = "localhost/aks-flex-controller:acl-harness"
 PROXY_PATH = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
@@ -787,6 +789,8 @@ def check_first_boot(checks: Checks) -> None:
     checks.expect(installed, f"the agent is installed under {HOST_ROOT}")
     root_is_dir = ssh(f"sudo test -d {HOST_ROOT} -a ! -L {HOST_ROOT}", check=False).returncode == 0
     checks.expect(root_is_dir, f"{HOST_ROOT} is a directory, not a link to the read-only /usr/local")
+    parent = ssh_out(f"sudo stat -c '%a %U' {HOST_ROOT_PARENT}")
+    checks.expect(parent == "755 root", f"{HOST_ROOT_PARENT} was created 0755 root", f"got {parent!r}")
     checks.paths_absent("nothing was installed under the read-only /usr/local",
                         ["/usr/local/bin/aks-flex-node", "/usr/local/lib/aks-flex-node"])
     probe = ssh_out("sudo jq -r .aclHarness.quoting /etc/aks-flex-node/config.json")
@@ -881,6 +885,8 @@ def check_reset(checks: Checks, bootstrap_was_active: bool) -> None:
     for what, paths in RESET_REMOVES.items():
         checks.paths_absent(f"reset removed {what}", paths)
     checks.expect(not localdns_table_exists(), "reset removed the LocalDNS nft table")
+    parent_kept = ssh(f"sudo test -d {HOST_ROOT_PARENT}", check=False).returncode == 0
+    checks.expect(parent_kept, f"reset left {HOST_ROOT_PARENT}, which belongs to the host")
     for machine in ("kube1", "kube2"):
         checks.expect(not machine_exists(machine), f"reset removed the {machine} machine")
 

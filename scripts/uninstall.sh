@@ -13,8 +13,10 @@ NC='\033[0m' # No Color
 
 # Configuration (should match install.sh)
 # The binaries are under the host root, or under the legacy root on a host installed by a release
-# before the host root. There the host root may be a link to the legacy root. Both are swept.
-HOST_ROOT="/opt/unbounded"
+# before the host root. There the host root may be a link to the legacy root. Both are swept. The
+# host root must match hostroot.Path in the agent library. Its parent, /opt/unbounded, belongs to the
+# host, which may stage files there, and is never removed.
+HOST_ROOT="/opt/unbounded/agent"
 LEGACY_ROOT="/usr/local"
 # The directory reset runs the binary from; see find_install_dir.
 INSTALL_DIR="$HOST_ROOT/bin"
@@ -159,7 +161,8 @@ remove_binary() {
 }
 
 # remove_host_root removes the host root once nothing is left in it, or the link to the legacy root
-# on a host installed by an older release. A link somewhere else is not the agent's.
+# on a host installed by an older release. A link somewhere else is not the agent's, and neither is
+# the host root's parent, which stays whatever is in it.
 remove_host_root() {
     local dir
 
@@ -203,7 +206,8 @@ show_completion_message() {
     echo ""
     echo -e "${GREEN}Complete uninstallation finished!${NC}"
     echo ""
-    echo "The system has been returned to its pre-installation state."
+    echo "The system has been returned to its pre-installation state. Anything the host staged under"
+    echo "$(dirname "$HOST_ROOT") was left there."
 }
 
 main() {

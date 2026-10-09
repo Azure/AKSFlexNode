@@ -16,8 +16,9 @@ umask 077
 
 readonly DEFAULT_REPOSITORY="Azure/AKSFlexNode"
 # Where the agent keeps its files, and where releases before it did; see
-# resolve_install_dir.
-readonly HOST_ROOT="/opt/unbounded"
+# resolve_install_dir. Must match hostroot.Path in the agent library. The rest
+# of /opt/unbounded belongs to the host, which may stage files there.
+readonly HOST_ROOT="/opt/unbounded/agent"
 readonly LEGACY_ROOT="/usr/local"
 readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"

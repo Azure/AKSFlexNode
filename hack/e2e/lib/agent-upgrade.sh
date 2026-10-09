@@ -107,7 +107,7 @@ _agent_upgrade_snapshot() {
   local vm_ip="$1"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
-current="$(sudo readlink -f /opt/unbounded/lib/aks-flex-node/aks-flex-node-current)"
+current="$(sudo readlink -f /opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current)"
 machine="$(sudo python3 - <<'PY'
 import json
 with open('/etc/aks-flex-node/daemon-state.json', encoding='utf-8') as stream:
@@ -169,10 +169,10 @@ _agent_upgrade_direct_activation() {
 set -euo pipefail
 work=/opt/aks-flex-node-e2e-upgrade
 candidate="${work}/aks-flex-node-direct-candidate"
-current_link=/opt/unbounded/lib/aks-flex-node/aks-flex-node-current
-last_good_link=/opt/unbounded/lib/aks-flex-node/aks-flex-node-last-good
+current_link=/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current
+last_good_link=/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-last-good
 # The unit names the link under the resolved host root.
-unit_current="$(readlink -m /opt/unbounded/lib/aks-flex-node)/aks-flex-node-current"
+unit_current="$(readlink -m /opt/unbounded/agent/lib/aks-flex-node)/aks-flex-node-current"
 service=/etc/systemd/system/aks-flex-node-agent.service
 
 sudo cp "${work}/aks-flex-node-linux-amd64" "${candidate}"
@@ -190,7 +190,7 @@ sudo "${candidate}" agent-upgrade | tee /tmp/direct-agent-upgrade.log
 current_after="$(sudo readlink -f "${current_link}")"
 [[ "${current_after}" != "${current_before}" ]]
 [[ "$(sudo readlink -f "${last_good_link}")" == "${current_before}" ]]
-[[ "$(sudo readlink -f /opt/unbounded/bin/aks-flex-node)" == "${current_after}" ]]
+[[ "$(sudo readlink -f /opt/unbounded/agent/bin/aks-flex-node)" == "${current_after}" ]]
 [[ "$(sudo sha256sum "${candidate}" | awk '{print $1}')" == "$(sudo sha256sum "${current_after}" | awk '{print $1}')" ]]
 sudo grep -Fq "ExecStart=${unit_current} agent" "${service}"
 sudo systemctl is-active --quiet aks-flex-node-agent.service
@@ -295,7 +295,7 @@ _host_root_migration_uninstall() {
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 sudo bash /tmp/aks-flex-node-uninstall.sh --force
-for path in /opt/unbounded /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node /etc/aks-flex-node; do
+for path in /opt/unbounded/agent /opt/unbounded/agent.staging /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node /etc/aks-flex-node; do
   if [[ -e "${path}" || -L "${path}" ]]; then
     echo "uninstall left ${path}" >&2
     exit 1
@@ -305,9 +305,10 @@ REMOTE
 }
 
 # _host_root_migration_assert checks the host root. "legacy" is a host the older
-# release installed, with nothing at /opt/unbounded. "migrated" is the same host
-# once this build has run: /opt/unbounded links to /usr/local, and the unit and
-# links the older release wrote are unchanged, so it could still be returned to.
+# release installed, with nothing at /opt/unbounded/agent. "migrated" is the same
+# host once this build has run: /opt/unbounded/agent links to /usr/local, inside an
+# /opt/unbounded the agent created 0755, and the unit and links the older release
+# wrote are unchanged, so it could still be returned to.
 _host_root_migration_assert() {
   local vm_ip="$1" state="$2"
   remote_exec "${vm_ip}" "STATE=${state} bash -s" <<'REMOTE'
@@ -315,14 +316,18 @@ set -euo pipefail
 service=/etc/systemd/system/aks-flex-node-agent.service
 case "${STATE}" in
   legacy)
-    if [[ -e /opt/unbounded || -L /opt/unbounded ]]; then
-      echo "a release before the host root created /opt/unbounded" >&2
+    if [[ -e /opt/unbounded/agent || -L /opt/unbounded/agent ]]; then
+      echo "a release before the host root created /opt/unbounded/agent" >&2
       exit 1
     fi
     ;;
   migrated)
-    if [[ ! -L /opt/unbounded || "$(readlink /opt/unbounded)" != /usr/local ]]; then
-      echo "/opt/unbounded is not a link to /usr/local: $(ls -ld /opt/unbounded 2>&1)" >&2
+    if [[ ! -L /opt/unbounded/agent || "$(readlink /opt/unbounded/agent)" != /usr/local ]]; then
+      echo "/opt/unbounded/agent is not a link to /usr/local: $(ls -ld /opt/unbounded/agent 2>&1)" >&2
+      exit 1
+    fi
+    if [[ "$(stat -c '%a %U' /opt/unbounded)" != "755 root" ]]; then
+      echo "/opt/unbounded is not 0755 root: $(ls -ld /opt/unbounded 2>&1)" >&2
       exit 1
     fi
     ;;
@@ -336,40 +341,42 @@ REMOTE
 }
 
 # _host_root_migration_wait_moved waits for the daemon to move a linked host into
-# a real /opt/unbounded, then checks nothing is left of the older layout and the
-# units and the running daemon follow the new one.
+# a real /opt/unbounded/agent, then checks nothing is left of the older layout and
+# the units and the running daemon follow the new one. The move takes two daemon
+# starts: the first copies the files, points the units at them and restarts, and
+# the restarted daemon removes the older layout, so the root is "moving" between.
 _host_root_migration_wait_moved() {
   local vm_ip="$1"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 moved() {
-  [[ -d /opt/unbounded && ! -L /opt/unbounded && ! -e /opt/unbounded/.moving ]] || return 1
+  [[ -d /opt/unbounded/agent && ! -L /opt/unbounded/agent && ! -e /opt/unbounded/agent/.moving ]] || return 1
   pid="$(systemctl show --property MainPID --value aks-flex-node-agent.service)"
-  [[ "${pid:-0}" -gt 0 && "$(sudo readlink -f "/proc/${pid}/exe")" == /opt/unbounded/lib/aks-flex-node/* ]]
+  [[ "${pid:-0}" -gt 0 && "$(sudo readlink -f "/proc/${pid}/exe")" == /opt/unbounded/agent/lib/aks-flex-node/* ]]
 }
 for _ in $(seq 1 60); do
   moved && break
   sleep 5
 done
 if ! moved; then
-  echo "the host was not moved to /opt/unbounded: $(ls -ld /opt/unbounded 2>&1)" >&2
+  echo "the host was not moved to /opt/unbounded/agent: $(ls -ld /opt/unbounded/agent 2>&1)" >&2
   sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager >&2 || true
   exit 1
 fi
-for path in /opt/unbounded.staging /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node \
+for path in /opt/unbounded/agent.staging /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node \
   /usr/local/bin/unbounded-agent-nspawn-lifecycle /etc/aks-flex-node/host-root-agents; do
   if [[ -e "${path}" || -L "${path}" ]]; then
     echo "${path} is left after the move" >&2
     exit 1
   fi
 done
-sudo grep -Fq "ExecStart=/opt/unbounded/lib/aks-flex-node/aks-flex-node-current agent" \
+sudo grep -Fq "ExecStart=/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current agent" \
   /etc/systemd/system/aks-flex-node-agent.service ||
   { echo "agent unit does not run the moved current link" >&2; exit 1; }
 hooks="$(sudo sh -c 'grep -h nspawn-lifecycle /etc/systemd/system/systemd-nspawn@*.service.d/override.conf \
   /etc/systemd/system/unbounded-agent-regenerate-config@*.service 2>/dev/null' || true)"
 [[ -n "${hooks}" ]] || { echo "found no nspawn lifecycle hooks" >&2; exit 1; }
-if grep -v -F /opt/unbounded/bin/unbounded-agent-nspawn-lifecycle <<<"${hooks}"; then
+if grep -v -F /opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle <<<"${hooks}"; then
   echo "nspawn lifecycle hooks do not all run the moved helper" >&2
   exit 1
 fi
@@ -415,7 +422,7 @@ host_root_migration_e2e() {
   _agent_upgrade_validate_kubelet_auth "${vm_name}" "${vm_ip}"
 
   # The next upgrade pushes the older release out of last-good, and the daemon
-  # it starts moves the host into a real /opt/unbounded.
+  # it starts moves the host into a real /opt/unbounded/agent.
   op="host-root-move-${suffix}"
   _agent_upgrade_apply "${op}" "${vm_name}" success.tar.gz "${success_digest}" "move-${suffix}"
   _agent_upgrade_wait_phase "${op}" Complete

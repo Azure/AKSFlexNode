@@ -106,7 +106,7 @@ The default `all` command runs:
 | `smoke` | Run smoke workloads only. |
 | `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
 | `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
-| `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local` and then the move into `/opt/unbounded`. |
+| `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local` and then the move into `/opt/unbounded/agent`. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -223,9 +223,9 @@ Run it against an already joined environment:
 
 The `host-root-migration` command reinstalls the bootstrap-token VM with an earlier release, `E2E_LEGACY_RELEASE` (default `v0.2.0`), which installs under `/usr/local`:
 
-1. Upgrade it to the build under test, and verify `/opt/unbounded` links to `/usr/local` and the unit still runs the earlier layout, which last-good still needs.
-2. Upgrade again, which pushes the earlier release out of last-good, and wait for the daemon to move the files into a real `/opt/unbounded`.
-3. Verify nothing is left under `/usr/local`, the agent unit and nspawn hooks run the moved files, the daemon runs from `/opt/unbounded`, kubelet still authenticates, and a workload runs.
+1. Upgrade it to the build under test, and verify `/opt/unbounded/agent` links to `/usr/local`, `/opt/unbounded` is `0755` root, and the unit still runs the earlier layout, which last-good still needs.
+2. Upgrade again, which pushes the earlier release out of last-good. Wait for the daemon to copy the files into a real `/opt/unbounded/agent`, point the units at them and restart from there, and for the restarted daemon to remove the earlier layout.
+3. Verify nothing is left under `/usr/local`, the agent unit and nspawn hooks run the moved files, the daemon runs from `/opt/unbounded/agent`, kubelet still authenticates, and a workload runs.
 
 ```bash
 ./hack/e2e/run.sh host-root-migration
@@ -236,7 +236,7 @@ The `host-root-migration` command reinstalls the bootstrap-token VM with an earl
 The `nspawn-lifecycle` command validates the host integration exported by the shared Unbounded lifecycle library:
 
 1. Read each node's persisted active machine and require it to be `kube1` or `kube2`.
-2. Verify `/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
+2. Verify `/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
 3. Verify the generated pre-start and post-start systemd hooks invoke that helper with the active machine.
 4. Add a marker to the token node's generated `.nspawn` config and invoke `pre-start`, proving the AKS Flex persisted-config loader regenerates the file.
 5. Invoke `reconcile`, verify the active machine receives a new leader PID, wait for the Kubernetes node to return Ready, and run a smoke workload.

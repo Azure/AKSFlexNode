@@ -518,11 +518,11 @@ func TestAgentUpgradePathsUnder(t *testing.T) {
 	}{
 		{
 			name:         "host root",
-			root:         "/opt/unbounded",
-			wantBinary:   "/opt/unbounded/bin/aks-flex-node",
-			wantBlue:     "/opt/unbounded/lib/aks-flex-node/aks-flex-node-blue",
-			wantCurrent:  "/opt/unbounded/lib/aks-flex-node/aks-flex-node-current",
-			wantLastGood: "/opt/unbounded/lib/aks-flex-node/aks-flex-node-last-good",
+			root:         "/opt/unbounded/agent",
+			wantBinary:   "/opt/unbounded/agent/bin/aks-flex-node",
+			wantBlue:     "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-blue",
+			wantCurrent:  "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current",
+			wantLastGood: "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-last-good",
 		},
 		{
 			name:         "legacy root keeps the released layout",

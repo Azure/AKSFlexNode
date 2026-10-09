@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/spf13/cobra"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -76,8 +77,8 @@ unit that runs bootstrap.sh with BOOTSTRAP_ARGS once the network is up. The unit
 agent is installed and does not run after that. The script, which carries the base config, is
 removed once bootstrap succeeds.
 
-The agent is installed under /opt/unbounded, which is writable on these hosts. The output contains
-the base config and credentials, so treat it as a secret.`,
+The agent is installed under ` + hostroot.Path + `, which is writable on these hosts. The output
+contains the base config and credentials, so treat it as a secret.`,
 		Example: `  aks-flex-node ignition --base-config base.json -o node.ign -- \
     --auth msi --agent-version v0.1.0 --fetch-bootstrap-data`,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -48,9 +48,9 @@ func TestHostHelperPaths(t *testing.T) {
 	}{
 		{
 			name:     "host root also sweeps the legacy root",
-			resolved: goalstates.HostPaths{Root: "/opt/unbounded", NSpawnLifecycleBinary: "/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle"},
+			resolved: goalstates.HostPaths{Root: "/opt/unbounded/agent", NSpawnLifecycleBinary: "/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle"},
 			want: []string{
-				"/opt/unbounded/bin/unbounded-agent-nspawn-lifecycle",
+				"/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle",
 				"/usr/local/bin/unbounded-agent-nspawn-lifecycle",
 				"/usr/local/libexec/unbounded-localdns-network",
 			},

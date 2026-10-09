@@ -4,8 +4,9 @@
 #
 # Scope: initial installation and reinstall after reset. While the agent service is installed,
 # <host root>/bin/aks-flex-node is a symlink into the managed blue/green layout and must be updated
-# through the agent upgrade flow. The host root is /opt/unbounded, or /usr/local on a host installed
-# by a release before it; see resolve_install_dir.
+# through the agent upgrade flow. The host root is /opt/unbounded/agent, or /usr/local on a host
+# installed by a release before it; see resolve_install_dir. The rest of /opt/unbounded belongs to
+# the host, which may stage files there, and is never changed.
 
 set -euo pipefail
 
@@ -22,8 +23,8 @@ SERVICE_NAME="aks-flex-node"
 SERVICE_UNIT="aks-flex-node-agent.service"
 SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 # Where the agent keeps its files, and where releases before it did. resolve_install_dir picks the
-# install directories from them.
-HOST_ROOT="/opt/unbounded"
+# install directories from them. Must match hostroot.Path in the agent library.
+HOST_ROOT="/opt/unbounded/agent"
 LEGACY_ROOT="/usr/local"
 INSTALL_DIR="$LEGACY_ROOT/bin"
 MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"

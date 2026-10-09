@@ -6,7 +6,7 @@ if [[ $EUID -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
 fi
 
-# Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded. Run in a private
+# Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded/agent. Run in a private
 # mount namespace so both can be overlaid below, and no case can replace a real binary on the host.
 if [[ -z "${BOOTSTRAP_TEST_ISOLATED:-}" ]]; then
     command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
@@ -54,6 +54,8 @@ rm -rf /opt/unbounded /usr/local/bin/aks-flex-node
 
 command -v jq >/dev/null || fail "jq is required"
 bash -n "$SCRIPT"
+grep -qx 'readonly HOST_ROOT="/opt/unbounded/agent"' "$SCRIPT" ||
+    fail "HOST_ROOT in bootstrap.sh is not the agent library's hostroot.Path"
 
 case "$(uname -m)" in
     x86_64) ARCH=amd64 ;;
@@ -491,6 +493,19 @@ grep -q BOOTSTRAP_TEST_CALLS "$USR_LOCAL_WRITES/bin/aks-flex-node" ||
     fail "the agent was not installed at /usr/local/bin"
 [[ ! -e /opt/unbounded ]] || fail "bootstrap created /opt/unbounded on a host with a writable /usr/local"
 
+# /opt/unbounded belongs to the host, which may stage files there, such as offline artifacts. On its
+# own it is not an installation, so a writable /usr/local is still used, and it is left alone.
+mkdir -p /opt/unbounded/artifacts
+chmod 0750 /opt/unbounded
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/staged-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/staged-etc/config.json" >/dev/null
+assert_ran_from "$WORK_DIR/staged-calls" /usr/local/bin/aks-flex-node
+[[ ! -e /opt/unbounded/agent ]] || fail "bootstrap created /opt/unbounded/agent on a host with a writable /usr/local"
+[[ $(stat -c '%a' /opt/unbounded) == 750 && -d /opt/unbounded/artifacts ]] ||
+    fail "bootstrap changed the host's /opt/unbounded"
+
 # /usr/local/bin belongs to the image, so its mode is left as the image set it.
 legacy_bin_mode=$(stat -c '%a' /usr/local/bin)
 chmod 0750 /usr/local/bin
@@ -514,13 +529,27 @@ umount "$WORK_DIR/noexec-tmp"
 assert_ran_from "$WORK_DIR/noexec-calls" /usr/local/bin/aks-flex-node
 
 # A host linked to /usr/local by an earlier release keeps its files there.
-ln -s /usr/local /opt/unbounded
+ln -s /usr/local /opt/unbounded/agent
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/linked-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/linked-etc/config.json" >/dev/null
 assert_ran_from "$WORK_DIR/linked-calls" /usr/local/bin/aks-flex-node
-rm /opt/unbounded
+rm /opt/unbounded/agent
+
+# With a read-only /usr/local the binary goes under the host root, inside the host's /opt/unbounded,
+# whose mode and files are left as they are.
+{ mount --bind /usr/local /usr/local && mount -o remount,bind,ro /usr/local; } || fail "could not make /usr/local read-only"
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/readonly-staged-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/readonly-staged-etc/config.json" >/dev/null ||
+    fail "bootstrap failed with a read-only /usr/local beside staged files"
+umount /usr/local || fail "could not make /usr/local writable again"
+assert_ran_from "$WORK_DIR/readonly-staged-calls" /opt/unbounded/agent/bin/aks-flex-node
+[[ $(stat -c '%a' /opt/unbounded) == 750 && -d /opt/unbounded/artifacts ]] ||
+    fail "bootstrap changed the host's /opt/unbounded"
+rm -rf /opt/unbounded
 
 # Where /usr/local is read-only, as on Azure Container Linux, the binary goes under the host root, in
 # directories created 0755 even under the script's umask, so systemd and the agent can reach it. A
@@ -532,8 +561,8 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/readonly-etc/config.json" >/dev/null ||
     fail "bootstrap failed with a read-only /usr/local"
 umount /usr/local || fail "could not make /usr/local writable again"
-assert_ran_from "$WORK_DIR/readonly-calls" /opt/unbounded/bin/aks-flex-node
-for dir in /opt/unbounded /opt/unbounded/bin; do
+assert_ran_from "$WORK_DIR/readonly-calls" /opt/unbounded/agent/bin/aks-flex-node
+for dir in /opt/unbounded /opt/unbounded/agent /opt/unbounded/agent/bin; do
     [[ $(stat -c '%a' "$dir") == 755 ]] || fail "new directory $dir is not 0755"
 done
 
@@ -543,7 +572,7 @@ BOOTSTRAP_TEST_CALLS="$WORK_DIR/installed-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/installed-etc/config.json" >/dev/null
-assert_ran_from "$WORK_DIR/installed-calls" /opt/unbounded/bin/aks-flex-node
+assert_ran_from "$WORK_DIR/installed-calls" /opt/unbounded/agent/bin/aks-flex-node
 
 # --install-dir is deprecated. It is accepted only when it matches the directory the installer
 # picks.
@@ -551,7 +580,7 @@ BOOTSTRAP_TEST_CALLS="$WORK_DIR/matching-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc \
-        --install-dir /opt/unbounded/bin/ \
+        --install-dir /opt/unbounded/agent/bin/ \
         --config-path "$WORK_DIR/matching-etc/config.json" >"$WORK_DIR/matching.log" 2>&1 ||
     fail "a matching --install-dir was rejected"
 grep -q "deprecated" "$WORK_DIR/matching.log" || fail "--install-dir did not warn that it is deprecated"
