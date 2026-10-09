@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
@@ -181,7 +182,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 	if err != nil {
 		return fmt.Errorf("resolve machine nspawn config: %w", err)
 	}
-	if err := rootfs.EnsureNSpawnConfig(log, rootFS).Do(ctx); err != nil {
+	if err := phases.Serial(log, nspawnLifecycleTasks(log, rootFS)...).Do(ctx); err != nil {
 		return err
 	}
 
@@ -209,7 +210,28 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		systemdSystemDir,
 		filepath.Dir(rootFS.ServiceOverrideFile),
 		filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())),
+		filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary),
 	)
+}
+
+// nspawnLifecycleTasks returns what rewriting the units does for the nspawn
+// machine, in order.
+//
+// The helper is installed first, from the running binary, before the units
+// name it. The move copies the helper the earlier release installed, and that
+// helper is a copy of the earlier release's binary: its pre-start, which runs
+// at every machine start, regenerates the units with the helper path that
+// release knows, under /usr/local, which the move then removes. Left in place,
+// it would point the machine's units at a missing helper at its next start,
+// and the machine would not start again. Each call installs it under the
+// host root as it resolves then, so under the copy while moving, and back
+// under /usr/local when a move is undone, where this release's helper keeps
+// the units on /usr/local.
+func nspawnLifecycleTasks(log *slog.Logger, rootFS *goalstates.RootFS) []phases.Task {
+	return []phases.Task{
+		rootfs.EnsureNSpawnLifecycleHelper(),
+		rootfs.EnsureNSpawnConfig(log, rootFS),
+	}
 }
 
 // syncDirs makes the entries in each directory durable: the files renamed into
