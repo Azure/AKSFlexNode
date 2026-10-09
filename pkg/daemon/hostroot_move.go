@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
@@ -105,6 +106,7 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 		RewriteUnits: func(ctx context.Context) error {
 			return rewriteHostRootUnits(ctx, log, cfg, state)
 		},
+		Verify:  verifyMovedAgent,
 		Restart: upgrades.Restart,
 	})
 	if err != nil {
@@ -112,6 +114,13 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 	}
 
 	return restarted
+}
+
+// verifyMovedAgent runs the current agent binary from a copy of the layout
+// under root, before any unit names it. A move whose copy fails this is undone,
+// and the host stays linked to /usr/local.
+func verifyMovedAgent(ctx context.Context, root string) error {
+	return agentbinary.Verify(ctx, agentUpgradePathsUnder(root).CurrentPath)
 }
 
 // holdForHostRoot reports why this process may not take work after reconciling

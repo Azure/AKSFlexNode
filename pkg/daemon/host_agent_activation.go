@@ -45,6 +45,9 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := MigrateHostRoot(log); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
+	if err := guardLegacySeed(log, hostroot.LegacyReleased, legacySeedPath); err != nil {
+		return agentbinary.ActivationResult{}, err
+	}
 	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve())
 	if err != nil {
 		return agentbinary.ActivationResult{}, err

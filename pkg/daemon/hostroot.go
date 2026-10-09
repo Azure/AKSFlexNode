@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -68,17 +69,27 @@ var legacySeedPath = filepath.Join(hostroot.LegacyPath, "bin", binaryName)
 // InstallHostBinary copies the running binary to <host root>/bin/aks-flex-node
 // when no usable binary is there, as on a fresh host where an install script put
 // it in /usr/local/bin, or one an earlier release installed directly there
-// without the blue/green layout. That copy seeds the layout.
+// without the blue/green layout. That copy seeds the layout. It fails, and
+// leaves no copy, when the copy cannot run.
 func InstallHostBinary(ctx context.Context, log *slog.Logger) error {
 	return installHostBinary(
+		ctx,
 		log,
 		agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath,
 		func() error { return PrepareHostRoot(ctx, log) },
 		runningAgentExecutable,
+		agentbinary.Verify,
 	)
 }
 
-func installHostBinary(log *slog.Logger, target string, prepare func() error, executable func() (string, error)) error {
+func installHostBinary(
+	ctx context.Context,
+	log *slog.Logger,
+	target string,
+	prepare func() error,
+	executable func() (string, error),
+	verify func(context.Context, string) error,
+) error {
 	if utilio.IsExecutable(target) {
 		return nil
 	}
@@ -98,24 +109,38 @@ func installHostBinary(log *slog.Logger, target string, prepare func() error, ex
 		return fmt.Errorf("install the agent binary at %s: %w", target, err)
 	}
 
+	// The agent unit is Type=simple, so systemctl start reports success
+	// whether or not the binary can run. Where it cannot, such as under /opt
+	// mounted noexec, this is the last point that can say so. The copy goes,
+	// so the next attempt makes a new one rather than seeding the layout from
+	// it.
+	if err := verify(ctx, target); err != nil {
+		if removeErr := os.Remove(target); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove %s: %w", target, removeErr))
+		}
+
+		return fmt.Errorf("the agent cannot run from %s; the filesystem that holds it must allow running programs, so it must not be mounted noexec: %w",
+			filepath.Dir(target), err)
+	}
+
 	return nil
 }
 
-// RemoveLegacySeed removes the binary install scripts left in /usr/local/bin on
-// a host installed under a real host root, where nothing runs it. Only a regular
+// RemoveLegacySeed removes the binary install scripts left in /usr/local/bin
+// once nothing the agent runs is under /usr/local: the host is installed under
+// a real host root, or one an operator linked somewhere else. Only a regular
 // file is removed: a link there is an earlier release's compatibility link, or
 // an operator's.
 //
-// The host has to be fully installed there, not partway through a move from
-// /usr/local: until the move has restarted the daemon from the host root, the
-// daemon may still be running from the files under /usr/local, and the move
-// removes none of them until then.
+// Not partway through a move from /usr/local: until the move has restarted the
+// daemon from the host root, the daemon may still be running from the files
+// under /usr/local, and the move removes none of them until then.
 func RemoveLegacySeed(log *slog.Logger) error {
-	return removeLegacySeed(log, hostroot.Installed, legacySeedPath)
+	return removeLegacySeed(log, hostroot.LegacyReleased, legacySeedPath)
 }
 
-func removeLegacySeed(log *slog.Logger, installed func() (bool, error), seed string) error {
-	if done, err := installed(); err != nil {
+func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed string) error {
+	if done, err := released(); err != nil {
 		return fmt.Errorf("inspect the host root: %w", err)
 	} else if !done {
 		return nil
@@ -141,6 +166,48 @@ func removeLegacySeed(log *slog.Logger, installed func() (bool, error), seed str
 	}
 
 	return nil
+}
+
+// guardLegacySeed runs before an AgentUpgrade or a direct activation switches
+// the agent binary. It removes the binary install scripts left in
+// /usr/local/bin, and refuses the switch while something there would still be
+// taken for one, on a host that no longer runs anything from /usr/local.
+//
+// A release before the host root takes an executable at /usr/local/bin/
+// aks-flex-node as its own binary when it starts, and builds its blue/green
+// layout under /usr/local from it. After an upgrade to such a release, the
+// host would then have an installation under both roots, which this release
+// refuses to run on, so a rollback to it would not start. With nothing there,
+// such a release fails to start and the agent rolls back to last-good, as for
+// any upgrade whose daemon cannot start. The release cannot be told from the
+// archive before it is staged, so every switch is guarded.
+func guardLegacySeed(log *slog.Logger, released func() (bool, error), seed string) error {
+	if err := removeLegacySeed(log, released, seed); err != nil {
+		return err
+	}
+
+	if done, err := released(); err != nil {
+		return fmt.Errorf("inspect the host root: %w", err)
+	} else if !done {
+		return nil
+	}
+
+	if adoptableByEarlierRelease(seed) {
+		return fmt.Errorf("%s leads to an executable, which a release before %s would take as its own binary after an upgrade to it; "+
+			"remove it, or link the agent from /usr/local/sbin instead, then retry", seed, hostroot.Path)
+	}
+
+	return nil
+}
+
+// adoptableByEarlierRelease reports whether a release before the host root
+// would take the file at path as its binary: a regular executable file, links
+// followed. That is the check those releases make before seeding their
+// layout from it.
+func adoptableByEarlierRelease(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 // agentUpgradePathsUnder builds the upgrade layout under a resolved host root.

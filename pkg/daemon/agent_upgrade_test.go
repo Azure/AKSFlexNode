@@ -101,6 +101,32 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst: a host that would
+// hand a release before the host root a binary under /usr/local is refused
+// before anything is staged, so the operation fails with nothing to roll back.
+func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	guardErr := errors.New("/usr/local/bin/aks-flex-node leads to an executable")
+	executor := &hostAgentUpgradeExecutor{
+		log:             slog.New(slog.DiscardHandler),
+		paths:           paths,
+		signals:         agentUpgradeSignalStore{path: paths.SignalPath},
+		guardLegacySeed: func() error { return guardErr },
+	}
+
+	err := executor.Stage(t.Context(), agentUpgradeRequest{downloadURL: "https://example.test/agent.tar.gz"})
+	if !errors.Is(err, guardErr) {
+		t.Fatalf("Stage() error = %v, want %v", err, guardErr)
+	}
+	for _, path := range []string{paths.CurrentPath, paths.LastGoodPath, paths.BluePath, paths.GreenPath} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Stage() changed %s before the guard passed: %v", path, err)
+		}
+	}
+}
+
 func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
 	t.Parallel()
 
