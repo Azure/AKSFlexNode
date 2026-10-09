@@ -432,11 +432,13 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RELEASE_VERSION}/scripts/install.sh | sudo bash
           \`\`\`
 
-          **Manual installation:**
+          **Manual installation, on a new host:**
           1. Download the appropriate binary for your platform
           2. Extract the archive: \`tar -xzf aks-flex-node-*.tar.gz\`
           3. Install the binary where the agent looks for it: \`sudo install -D -m 0755 aks-flex-node-linux-amd64 /opt/unbounded/agent/bin/aks-flex-node\`, or \`aks-flex-node-linux-arm64\` on ARM64
           4. Run it as \`/opt/unbounded/agent/bin/aks-flex-node\`, or add \`/opt/unbounded/agent/bin\` to your PATH
+
+          On a host that already runs an earlier release, use an AgentUpgrade instead. That release keeps its files under \`/usr/local\` until the agent moves them, and the agent refuses to run with a copy installed by hand in \`/opt/unbounded/agent\` beside them.
 
           ### Where the agent is installed
 
