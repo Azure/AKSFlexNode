@@ -3,7 +3,10 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -76,6 +79,77 @@ func TestNspawnLifecycleTasksInstallTheHelperFirst(t *testing.T) {
 	if want := []string{"ensure-nspawn-lifecycle-helper", "ensure-nspawn-config"}; !slices.Equal(names, want) {
 		t.Fatalf("nspawnLifecycleTasks() = %v, want %v", names, want)
 	}
+}
+
+// TestRestartFromHostRoot: the move's planned restart must not be refused for
+// the unit's start limit, so the limit is cleared first, on this unit alone,
+// and a denied reset does not stop the restart.
+func TestRestartFromHostRoot(t *testing.T) {
+	t.Parallel()
+
+	// fakeSystemctl records its arguments, one per line, and exits with code.
+	fakeSystemctl := func(t *testing.T, code int) (func(context.Context) *exec.Cmd, string) {
+		t.Helper()
+
+		dir := t.TempDir()
+		calls := filepath.Join(dir, "calls")
+		script := filepath.Join(dir, "systemctl")
+		content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" >> %q\nexit %d\n", calls, code)
+		if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		return func(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, script) }, calls
+	}
+	log := slog.New(slog.DiscardHandler)
+
+	t.Run("clears this unit's start limit before restarting", func(t *testing.T) {
+		t.Parallel()
+
+		systemctl, calls := fakeSystemctl(t, 0)
+		var atRestart []byte
+		err := restartFromHostRoot(t.Context(), log, systemctl, func(context.Context) error {
+			var err error
+			atRestart, err = os.ReadFile(calls)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Named, so systemd resets this unit and not every unit on the host.
+		if want := "reset-failed\n" + ServiceUnitName + "\n"; string(atRestart) != want {
+			t.Fatalf("systemctl ran with %q before the restart, want %q", atRestart, want)
+		}
+	})
+
+	t.Run("restarts when the reset is denied", func(t *testing.T) {
+		t.Parallel()
+
+		systemctl, calls := fakeSystemctl(t, 1)
+		restarted := false
+		err := restartFromHostRoot(t.Context(), log, systemctl, func(context.Context) error {
+			restarted = true
+			return nil
+		})
+		if err != nil || !restarted {
+			t.Fatalf("restartFromHostRoot() = %v, restarted %v; want nil, true", err, restarted)
+		}
+		if _, err := os.Stat(calls); err != nil {
+			t.Fatalf("the reset was not attempted: %v", err)
+		}
+	})
+
+	t.Run("reports a failed restart", func(t *testing.T) {
+		t.Parallel()
+
+		systemctl, _ := fakeSystemctl(t, 0)
+		restartErr := errors.New("systemd-run failed")
+		if err := restartFromHostRoot(t.Context(), log, systemctl, func(context.Context) error {
+			return restartErr
+		}); !errors.Is(err, restartErr) {
+			t.Fatalf("restartFromHostRoot() = %v, want %v", err, restartErr)
+		}
+	})
 }
 
 func TestSyncDirs(t *testing.T) {

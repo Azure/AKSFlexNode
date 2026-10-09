@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -107,14 +108,49 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 		RewriteUnits: func(ctx context.Context) error {
 			return rewriteHostRootUnits(ctx, log, cfg, state)
 		},
-		Verify:  verifyMovedAgent,
-		Restart: upgrades.Restart,
+		Verify: verifyMovedAgent,
+		Restart: func(ctx context.Context) error {
+			return restartFromHostRoot(ctx, log, utilexec.Systemctl(), upgrades.Restart)
+		},
 	})
 	if err != nil {
 		log.Warn("could not move the agent's files to the host root; the next daemon start retries", "error", err)
 	}
 
 	return restarted
+}
+
+// restartFromHostRoot clears the agent unit's start limit, then schedules its
+// restart from the rewritten units.
+//
+// The move's restart is planned, but systemd counts it against the unit's
+// StartLimitBurst like any other start. Right after a burst of starts, such as
+// AgentUpgrades in quick succession, it can be the one that exceeds the limit.
+// systemd then refuses it and the agent stays stopped: Restart= does not apply
+// to a unit that hit its start limit, and the recovery script that OnFailure
+// runs does nothing without a pending AgentUpgrade. The agent is down until
+// someone starts it or the host reboots.
+//
+// systemctl reset-failed on this unit zeroes its start counter and leaves every
+// other unit alone, as the recovery script does before its own restart. It must
+// name the unit: with no name it resets every unit on the host. Before systemd
+// v255 the daemon-reload that rewriting the units runs zeroes the counter too,
+// but from v255 the counter survives a reload.
+//
+// It is best-effort: SELinux can deny it, and the restart is worth trying
+// either way.
+func restartFromHostRoot(
+	ctx context.Context,
+	log *slog.Logger,
+	systemctl func(context.Context) *exec.Cmd,
+	restart func(context.Context) error,
+) error {
+	if err := utilexec.RunCmd(ctx, log, systemctl, "reset-failed", ServiceUnitName); err != nil {
+		log.Warn("could not clear the agent unit's start limit; restarting it from the host root anyway",
+			"unit", ServiceUnitName, "error", err)
+	}
+
+	return restart(ctx)
 }
 
 // verifyMovedAgent runs the current agent binary from a copy of the layout
