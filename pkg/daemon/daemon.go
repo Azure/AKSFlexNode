@@ -198,7 +198,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 }
 
 func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, func(), error) {
-	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg)
+	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg, config.HostBinaryPath())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -236,6 +236,9 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 	}
 }
 
-func bootstrapCredentialRESTConfig(cfg *config.Config) (*rest.Config, error) {
-	return kubeauth.BootstrapRESTConfig(cfg)
+// bootstrapCredentialRESTConfig builds the client the daemon uses until its own
+// certificate is issued. An exec credential runs plugin, the host's
+// aks-flex-node.
+func bootstrapCredentialRESTConfig(cfg *config.Config, plugin string) (*rest.Config, error) {
+	return kubeauth.BootstrapRESTConfigWithPlugin(cfg, plugin)
 }
