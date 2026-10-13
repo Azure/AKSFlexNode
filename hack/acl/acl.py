@@ -13,7 +13,9 @@ an in-cluster AKS Flex controller through the API server's service proxy, so no 
 are involved.
 
 The bridge networking, VM launch, and UKI patching are adapted from the unbounded repository's
-hack/agent/e2e-kind harness. ukiboot.py is copied from it unchanged.
+hack/agent/e2e-kind harness. ukiboot.py is copied from it unchanged: it adds the harness's
+first-boot kernel arguments to the image's first-boot addon, which ignition-quench deletes after
+the first boot.
 """
 
 from __future__ import annotations
@@ -525,7 +527,9 @@ def add_harness_access(doc: dict, ssh_public_key: str) -> dict:
     A user Ignition config displaces the image's own systemd section, so the waagent mask that
     config carries is restated. The core user is given in full, because a bare name leaves it on
     /sbin/nologin. The static network unit matches on MAC, since interface names depend on the
-    machine type.
+    machine type; the ip= argument only configures the initramfs, and only on the first boot.
+    The hostname is written because the image leaves it as "localhost": the metadata hostname
+    service is masked, by the generic build or by first_boot_kargs.
     """
     doc.setdefault("passwd", {}).setdefault("users", []).append({
         "name": SSH_USER,
@@ -557,6 +561,21 @@ def initramfs_ip_karg() -> str:
     """Static address for Ignition's fetch in the initramfs. The interface is named because an
     empty device field matches lo first, and every fetch is refused."""
     return f"ip={VM_IP}::{GATEWAY}:24:{NODE_NAME}:eth0:none:8.8.8.8:8.8.4.4"
+
+
+# On the Azure platform the initramfs fetches the hostname from Azure's metadata endpoint on the
+# first boot, and retries it with no limit; under QEMU nothing answers. The generic build of the
+# image masks it already, the Azure build does not. The harness writes /etc/hostname through
+# Ignition instead; see add_harness_access.
+METADATA_HOSTNAME_MASK = "rd.systemd.mask=flatcar-metadata-hostname.service"
+
+
+def first_boot_kargs(config_url: str) -> str:
+    """Return what the harness adds to the first boot's command line: where Ignition fetches its
+    config, the initramfs address it fetches it over, and the metadata hostname mask. None of it
+    is needed on a later boot, which runs on the image's own command line and the network unit
+    and hostname Ignition wrote."""
+    return f"ignition.config.url={config_url} {initramfs_ip_karg()} {METADATA_HOSTNAME_MASK}"
 
 
 class FileServer:
@@ -622,10 +641,11 @@ def launch_vm(image: Path, config_url: str) -> None:
     run(["qemu-img", "create", "-q", "-f", "qcow2", "-b", str(image.resolve()), "-F",
          info["format"], str(disk), str(size)])
 
-    # systemd-boot only marks a first boot while the image's firstboot addon exists, and
-    # ignition-quench deletes it afterwards. Adding the Ignition URL to another addon, rather
-    # than booting the kernel directly, keeps later boots from running Ignition again.
-    patched = ukiboot.patch_uki_cmdline_addon(disk, f"ignition.config.url={config_url} {initramfs_ip_karg()}")
+    # systemd-boot only marks a first boot while the image's first-boot addon exists, and
+    # ignition-quench deletes it afterwards. Adding the harness's arguments to that addon, rather
+    # than booting the kernel directly, keeps later boots from running Ignition again, and they
+    # go with it. The overlay is new, so the addon is still there.
+    patched = ukiboot.patch_firstboot_cmdline(disk, first_boot_kargs(config_url))
     log(f"patched {patched.addon} ({patched.used}/{patched.capacity} bytes)")
 
     code, variables_template = ovmf_firmware()

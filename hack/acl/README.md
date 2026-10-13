@@ -87,5 +87,7 @@ The VM's serial console is logged to `.vm/acl/serial.log`. On the VM,
 
 The bridge networking, VM launch, and UKI patching are adapted from the
 unbounded repository's `hack/agent/e2e-kind` harness. `ukiboot.py` is copied
-from it unchanged; it adds the Ignition URL to a UKI command line addon, so that
-Ignition runs only on the first boot.
+from it unchanged. It adds the Ignition config URL, the initramfs address, and
+a mask for the Azure build's metadata hostname service to the image's
+first-boot addon. `ignition-quench` deletes that addon after the first boot, so
+Ignition runs only once and later boots use the image's own command line.

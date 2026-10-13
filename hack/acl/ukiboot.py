@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Add kernel command line arguments to a Unified Kernel Image disk.
+"""Add first-boot kernel command line arguments to a Unified Kernel Image disk.
 
 Azure Container Linux is a Flatcar-derived image: an EFI system partition holds
 a UKI that shim and systemd-boot load, /usr is a dm-verity btrfs image mounted
@@ -13,15 +13,23 @@ The image's own boot chain has to be left intact, because Ignition's
 once-only behavior depends on it. systemd-stub assembles the command line from
 the UKI's .cmdline section plus every addon in its .extra.d directory, and
 ignition-quench.service deletes firstboot.addon.efi after a successful first
-boot so that systemd-boot stops appending flatcar.first_boot. Booting the
-kernel and initrd directly with -append bypasses that, which makes every boot
-look like a first boot: Ignition re-runs, re-fetches, and the boot fails.
+boot, which is what stops flatcar.first_boot being passed. Booting the kernel
+and initrd directly with -append bypasses that, which makes every boot look
+like a first boot: Ignition re-runs, re-fetches, and the boot fails.
 
-So instead of replacing the boot chain, this appends to it. The .cmdline
-sections of the shipped addons are padded well beyond their contents, so an
-addon can be extended in place: no cluster allocation, no directory entry
-changes, just bytes rewritten inside an existing file and the section header's
-VirtualSize adjusted to match.
+So instead of replacing the boot chain, this appends to the first-boot addon.
+Everything the harness adds is needed on the first boot only: Ignition reads
+its config URL then, and the initramfs address only serves that fetch, after
+which the network unit Ignition wrote takes over. The additions go when
+ignition-quench deletes the addon, and later boots run on the image's own
+command line, as a production host does. The other addon would not do for every
+image: the Azure build of the image uses 483 of the 512 bytes in it, which
+leaves no room for even the config URL.
+
+The addon's .cmdline section is padded well beyond its contents, so it can be
+extended in place, within its raw size and short of the next section in memory:
+no cluster allocation, no directory entry changes, just bytes rewritten inside
+an existing file and the section header's VirtualSize adjusted to match.
 
 Writes go through qemu-nbd over a unix socket, so no loop device, no nbd kernel
 module and no privileges are involved. Point this at a qcow2 overlay and the
@@ -350,6 +358,11 @@ class PatchedAddon:
     capacity: int
 
 
+# The addon systemd-boot passes only until ignition-quench deletes it after a
+# successful first boot. It carries flatcar.first_boot.
+FIRSTBOOT_ADDON = "firstboot.addon.efi"
+
+
 def single_uki(names: list[str], image: Path) -> str:
     """Return the one UKI under /EFI/Linux.
 
@@ -373,14 +386,35 @@ def fit_cmdline(current: str, extra: str, raw_size: int) -> bytes | None:
     return encoded
 
 
-def patch_uki_cmdline_addon(image: Path, extra_args: str,
-                            image_format: str = "qcow2") -> PatchedAddon:
-    """Append kernel command line arguments to a UKI addon on the image's ESP.
+def extend_cmdline(header: bytes, current: str, extra: str) -> tuple[bytes | None, int]:
+    """Return the command line current extended by extra, encoded, or None if
+    it does not fit the addon whose PE header is header, and the room the
+    .cmdline section has. The room is cmdline_room's, not the raw size: a
+    longer VirtualSize must not reach the next section."""
+    room = cmdline_room(header)
+    return fit_cmdline(current, extra, room), room
 
-    Chooses the largest .cmdline addon that can hold the addition, appends to
-    its existing contents, and updates the section's VirtualSize so
-    systemd-stub reads the longer string. firstboot.addon.efi is never chosen,
-    because the addition has to survive ignition-quench deleting it.
+
+def find_firstboot_addon(names: list[str], addon_dir: str) -> str:
+    """Return the first-boot addon's name as the directory spells it. FAT
+    lookups ignore case, so this does too.
+
+    It is missing from a disk that has already booted once, because
+    ignition-quench deletes it, and then nothing appended anywhere would reach
+    Ignition.
+    """
+    found = next((n for n in names if n.lower() == FIRSTBOOT_ADDON), None)
+    if found is None:
+        raise RuntimeError(f"{addon_dir} has no {FIRSTBOOT_ADDON}; the disk has already "
+                           f"booted, or the image does not provision on first boot: {sorted(names)}")
+    return found
+
+
+def patch_firstboot_cmdline(image: Path, extra_args: str,
+                            image_format: str = "qcow2") -> PatchedAddon:
+    """Append kernel command line arguments to the first-boot addon on the
+    image's ESP, after the flatcar.first_boot it carries, and update the
+    section's VirtualSize so systemd-stub reads the longer string.
     """
     with NbdServer(str(image), image_format) as server:
         dev = NbdClient(server.sock_path)
@@ -389,29 +423,23 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
 
             uki = single_uki([name for name, _start, _size in fat.list_files("/EFI/Linux")], image)
             addon_dir = f"/EFI/Linux/{uki}.extra.d"
+            files = fat.list_files(addon_dir)
+            addon = find_firstboot_addon([name for name, _start, _size in files], addon_dir)
+            cluster, size = next((start, length) for name, start, length in files if name == addon)
 
-            best = None
-            for addon, cluster, size in sorted(fat.list_files(addon_dir)):
-                if not addon.lower().endswith(".efi") or addon == "firstboot.addon.efi":
-                    continue
-                header = fat.read_file(cluster, size, 0, 8192)
-                sections = pe_sections(header)
-                if ".cmdline" not in sections:
-                    continue
-                vsize, _vaddr, rsize, rptr, entry = sections[".cmdline"]
-                current = fat.read_file(cluster, size, rptr, min(vsize, rsize) if vsize else rsize)
-                current = current.split(b"\x00")[0].decode("utf-8", "replace").strip()
-                merged = fit_cmdline(current, extra_args, cmdline_room(header))
-                if merged is None:
-                    continue
-                if best is None or rsize > best[0]:
-                    best = (rsize, addon, cluster, size, entry, rptr, merged)
+            header = fat.read_file(cluster, size, 0, 8192)
+            sections = pe_sections(header)
+            if ".cmdline" not in sections:
+                raise RuntimeError(f"{addon_dir}/{addon} has no .cmdline section")
+            vsize, _vaddr, rsize, rptr, entry = sections[".cmdline"]
+            current = fat.read_file(cluster, size, rptr, min(vsize, rsize) if vsize else rsize)
+            current = current.split(b"\x00")[0].decode("utf-8", "replace").strip()
 
-            if best is None:
+            merged, room = extend_cmdline(header, current, extra_args)
+            if merged is None:
                 raise RuntimeError(
-                    f"no addon under {addon_dir} has room for {len(extra_args)} more bytes")
-
-            rsize, addon, cluster, size, entry, rptr, merged = best
+                    f"{addon_dir}/{addon} holds {room} bytes and has {len(current.encode())} in use; "
+                    f"{len(extra_args.encode())} more do not fit")
 
             # Rewrite the section body, NUL-padded to its full raw size so no
             # remnant of the previous contents is left behind.
@@ -434,6 +462,6 @@ def patch_uki_cmdline_addon(image: Path, extra_args: str,
                 raise RuntimeError(
                     f"verification failed for {addon}: read back {written!r}, wrote {merged!r}")
 
-            return PatchedAddon(addon=addon, cmdline=merged.decode(), used=len(merged), capacity=rsize)
+            return PatchedAddon(addon=addon, cmdline=merged.decode(), used=len(merged), capacity=room)
         finally:
             dev.sock.close()
