@@ -522,6 +522,7 @@
       "protectAnchors": true,
       "anchors": [
         "azure-container-linux-harness",
+        "image",
         "requirements",
         "settings",
         "troubleshooting",

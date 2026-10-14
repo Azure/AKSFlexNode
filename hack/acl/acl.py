@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
 """Boot Azure Container Linux from the documented Butane config and join it to a kind cluster.
 
-    hack/acl/acl.py up --image ACL.qcow2   build, create the cluster and network, boot the VM
+    hack/acl/acl.py up [--image ACL.qcow2] build, create the cluster and network, boot the VM
     hack/acl/acl.py test [--reset MODE]    check the node, reboot it, reset it, check cleanup
     hack/acl/acl.py down                   remove the VM, the network, and the cluster
 
 The VM is provisioned only by the Ignition config that scripts/aks-flex-node-bootstrap.bu renders,
 as getting-started documents, plus harness access (SSH user, hostname, static address). Butane
 runs from its container image. bootstrap.sh then installs the agent under
-/opt/unbounded/agent, the host root, and joins the node with a bootstrap token. The agent's machine client talks to
-an in-cluster AKS Flex controller through the API server's service proxy, so no Azure resources
-are involved.
+/opt/unbounded/agent, the host root, and joins the node with a bootstrap token. The agent's machine
+client talks to an in-cluster AKS Flex controller through the API server's service proxy, so the
+node uses no Azure resources.
 
-The bridge networking, VM launch, and UKI patching are adapted from the unbounded repository's
-hack/agent/e2e-kind harness. ukiboot.py is copied from it unchanged: it adds the harness's
-first-boot kernel arguments to the image's first-boot addon, which ignition-quench deletes after
-the first boot.
+Without --image, up boots the Azure build of the image, which it first exports from a shared
+compute gallery through a temporary managed disk; see export_gallery_image. That needs az and a
+resource group to make the disk in, and az names the gallery's latest version on every run unless
+ACL_IMAGE_VERSION pins one.
+
+The bridge networking, VM launch, UKI patching, and gallery export are adapted from the unbounded
+repository's hack/agent/e2e-kind harness. ukiboot.py is copied from it unchanged: it adds the
+harness's first-boot kernel arguments to the image's first-boot addon, which ignition-quench
+deletes after the first boot.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
+import datetime
 import hashlib
+import http.client
 import http.server
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -34,7 +43,12 @@ import tarfile
 import textwrap
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
+from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ukiboot  # noqa: E402
@@ -82,6 +96,39 @@ BUTANE_IMAGE = os.environ.get("ACL_BUTANE_IMAGE", "quay.io/coreos/butane:v0.29.0
 
 AGENT_ARCHIVE = "aks-flex-node-linux-amd64.tar.gz"
 IGNITION_NAME = "config.ign"
+
+# Without --image, `up` boots the Azure build of the image, published to a shared compute gallery,
+# and exports it here first; see export_gallery_image. It is outside STATE, so `down` keeps it.
+# The settings are the unbounded harness's.
+IMAGE_DIR = Path(os.environ.get("ACL_IMAGE_DIR", str(REPO / ".vm" / "acl-images")))
+GALLERY_IMAGE = os.environ.get(
+    "ACL_IMAGE_GALLERY_IMAGE",
+    "/SharedGalleries/b3e01d89-bd55-414f-bbb4-cdfeb2628caa-ACL/Images/acl-1es-eval",
+)
+# The image is replicated to one region, which is where the export's disk has to be made.
+GALLERY_LOCATION = os.environ.get("ACL_IMAGE_GALLERY_LOCATION", "westus2")
+# The gallery's latest version unless this pins one.
+GALLERY_VERSION = os.environ.get("ACL_IMAGE_VERSION", "")
+# Where the export's temporary disk is made, and the subscription to use if not az's default.
+EXPORT_RESOURCE_GROUP = os.environ.get("ACL_IMAGE_RESOURCE_GROUP", "")
+EXPORT_SUBSCRIPTION = os.environ.get("ACL_IMAGE_SUBSCRIPTION", "")
+GALLERY_IMAGE_PATTERN = re.compile(r"/SharedGalleries/([^/]+)/Images/([^/]+)")
+GALLERY_VERSION_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+# The export's temporary disks carry this tag, and only disks with it are ever swept. It is not
+# the unbounded harness's, so neither harness sweeps the other's disks in a shared group.
+EXPORT_DISK_TAG = "aks-flex-node-acl-harness"
+# A disk older than this was left by a run that is gone: an interrupted run may not delete it. It
+# is far longer than any export, so a running one is never touched.
+EXPORT_STALE_AFTER = 6 * 3600
+# The download takes under a minute on a fast link, and the SAS is revoked as soon as it ends;
+# this only bounds a SAS that outlives a dead run. It is longer than the unbounded harness's ten
+# minutes, which assume a CI runner's link: requests made after it expires are refused, and the
+# 850 MiB have to arrive within it.
+EXPORT_SAS_SECONDS = 1800
+EXPORT_CHUNK = 8 << 20
+EXPORT_WORKERS = 16
+VHD_FOOTER_SIZE = 512
+
 SSH_KEY = STATE / "ssh" / "id_ed25519"
 SSH_OPTS = [
     "-o", "StrictHostKeyChecking=no",
@@ -105,6 +152,17 @@ OVMF_CANDIDATES = [
 
 def log(message: str) -> None:
     print(f"[acl] {message}", flush=True)
+
+
+def warn(message: str) -> None:
+    """Report a problem that does not fail the run. The message may hold another program's
+    output. In GitHub Actions every line of the log is read for workflow commands, so it is
+    printed once, escaped, as a warning, where a line break in it cannot start a command."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::warning::{escaped}", flush=True)
+    else:
+        print(f"[acl] warning: {message}", flush=True)
 
 
 def die(message: str) -> None:
@@ -180,6 +238,354 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+# ---------------------------------------------------------------------------------------------
+# Image
+#
+# Exporting the gallery image is ported from the unbounded harness's e2e.py, Azure/unbounded#885.
+
+
+def gallery_image() -> Path:
+    """Return the gallery image as a qcow2 in IMAGE_DIR, exporting it unless an earlier run did.
+
+    The file is named for the version, so a newer one is exported without a change here and never
+    masked by an earlier export. It is made under another name and renamed only once complete, so
+    an interrupted export never sits under the name that is reused. A reused file is checked in
+    full, since a host that crashed after an export could have lost its tail.
+    """
+    version = gallery_version()
+    image = IMAGE_DIR / f"acl-gallery-{version}.qcow2"
+    if image.exists():
+        if run(["qemu-img", "check", "-q", "-f", "qcow2", str(image)], check=False).returncode != 0:
+            die(f"{image}, exported earlier, fails qemu-img check; remove it to export it again")
+        log(f"using {image}, exported earlier")
+        return image
+
+    IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    # What an export killed outright left behind, whatever its version: the sparse VHD alone can
+    # take most of a gigabyte.
+    for leftover in IMAGE_DIR.glob("acl-gallery-*.qcow2.part*"):
+        leftover.unlink(missing_ok=True)
+    partial = image.with_name(image.name + ".part")
+    export_gallery_image(f"{GALLERY_IMAGE}/Versions/{version}", partial)
+    partial.replace(image)
+    fsync_dir(IMAGE_DIR)
+    return image
+
+
+def fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def gallery_image_parts() -> tuple[str, str]:
+    """Return the gallery's unique name and the image definition."""
+    match = GALLERY_IMAGE_PATTERN.fullmatch(GALLERY_IMAGE)
+    if not match:
+        die(f"ACL_IMAGE_GALLERY_IMAGE={GALLERY_IMAGE!r} is not /SharedGalleries/<gallery>/Images/<image>")
+        raise AssertionError("unreachable")
+    return match.group(1), match.group(2)
+
+
+def gallery_version() -> str:
+    """Return the gallery image version to boot: ACL_IMAGE_VERSION, or the one "latest" names
+    now. It names the image file, so it has to be a plain name, and not "latest", which would
+    keep naming the first version exported under it."""
+    if GALLERY_VERSION == "latest":
+        die("ACL_IMAGE_VERSION=latest would reuse whichever version was exported first; "
+            "leave it unset for the gallery's latest version")
+    version = GALLERY_VERSION
+    if not version:
+        gallery, image = gallery_image_parts()
+        version = acl_az([
+            "sig", "image-version", "show-shared",
+            "--gallery-unique-name", gallery,
+            "--gallery-image-definition", image,
+            "--gallery-image-version", "latest",
+            "--location", GALLERY_LOCATION,
+            "--query", "name", "-o", "tsv",
+        ])
+        log(f"Azure Container Linux gallery version {version} is the latest of {GALLERY_IMAGE}")
+    if not GALLERY_VERSION_PATTERN.fullmatch(version):
+        source = "ACL_IMAGE_VERSION" if GALLERY_VERSION else "the gallery's latest version"
+        die(f"{source} {version!r} is not a version")
+    return version
+
+
+def az_command(args: list[str]) -> list[str]:
+    if shutil.which("az") is None:
+        die("az is needed to export the gallery image; install it, or pass --image")
+    subscription = ["--subscription", EXPORT_SUBSCRIPTION] if EXPORT_SUBSCRIPTION else []
+    return ["az", *args, *subscription, "--only-show-errors"]
+
+
+def acl_az(args: list[str]) -> str:
+    """Run az for the gallery image and return its output. A failure reports az's own error,
+    which never holds a SAS: only grant-access prints one, to stdout."""
+    result = run(az_command(args), check=False, capture=True)
+    if result.returncode != 0:
+        die(f"az {' '.join(args[:3])} failed (exit {result.returncode}): {result.stderr.strip()[-2000:]}")
+    return result.stdout.strip()
+
+
+def acl_az_best_effort(args: list[str], what: str) -> str | None:
+    """Run az for cleanup, which must not fail the run: whatever it leaves, the next export's
+    sweep removes."""
+    result = run(az_command(args), check=False, capture=True)
+    if result.returncode != 0:
+        warn(f"could not {what}: {result.stderr.strip()[-500:]}")
+        return None
+    return result.stdout.strip()
+
+
+def export_gallery_image(version_id: str, destination: Path) -> None:
+    """Write a shared gallery image version to destination as qcow2.
+
+    A gallery image cannot be downloaded as such. It is copied to a temporary managed disk in
+    ACL_IMAGE_RESOURCE_GROUP and read through a read-only SAS, and the disk is deleted whether or
+    not that worked. Only the pages the disk has written are fetched, about 850 MiB of a 32.5 GiB
+    disk, into a sparse fixed VHD, which is the raw disk followed by a footer.
+
+    The footer is cut off and the raw disk converted, rather than the VHD. qemu-img before 10.0
+    sizes a VHD Azure wrote from its CHS geometry, not its footer's size, and loses 640 KiB off
+    the end of this one, and with it the GPT's backup header; the guest then finds no partitions.
+    The qcow2 has to come out at the disk's exact size, whatever qemu-img the host has.
+
+    The gallery publishes no digest to check the result against. The transfer is TLS from Azure,
+    the VHD footer and the qcow2 are checked, and the qcow2's sha256 is logged.
+    """
+    if not EXPORT_RESOURCE_GROUP:
+        die("ACL_IMAGE_RESOURCE_GROUP must name the resource group, in "
+            f"{GALLERY_LOCATION}, where the gallery image is exported; or pass --image")
+
+    sweep_stale_export_disks()
+
+    run_label = os.environ.get("GITHUB_RUN_ID", "local")
+    disk = f"{EXPORT_DISK_TAG}-{run_label}-{secrets.token_hex(3)}"
+    vhd = destination.with_name(destination.name + ".vhd")
+    started = time.monotonic()
+    log(f"exporting {version_id} through disk {disk} in {EXPORT_RESOURCE_GROUP}")
+
+    try:
+        try:
+            acl_az(["disk", "create", "-g", EXPORT_RESOURCE_GROUP, "-n", disk,
+                    "--location", GALLERY_LOCATION, "--sku", "Standard_LRS",
+                    "--gallery-image-reference", version_id,
+                    "--tags", f"purpose={EXPORT_DISK_TAG}", f"run={run_label}",
+                    "--query", "id", "-o", "tsv"])
+            try:
+                download_page_blob(grant_export_sas(disk), vhd)
+            finally:
+                # Azure does not delete a disk while a SAS on it is active.
+                acl_az_best_effort(["disk", "revoke-access", "-g", EXPORT_RESOURCE_GROUP, "-n", disk],
+                                   f"revoke access to disk {disk}")
+        finally:
+            acl_az_best_effort(["disk", "delete", "-g", EXPORT_RESOURCE_GROUP, "-n", disk, "--yes"],
+                               f"delete disk {disk}")
+
+        log("converting the exported disk to qcow2")
+        disk_bytes = vhd.stat().st_size - VHD_FOOTER_SIZE
+        os.truncate(vhd, disk_bytes)
+        run(["qemu-img", "convert", "-f", "raw", "-O", "qcow2", str(vhd), str(destination)])
+        run(["qemu-img", "check", "-q", "-f", "qcow2", str(destination)])
+        info = json.loads(capture(["qemu-img", "info", "-f", "qcow2", "--output=json", str(destination)]))
+        if info.get("virtual-size") != disk_bytes:
+            raise RuntimeError(f"the qcow2 is {info.get('virtual-size')} bytes, the disk {disk_bytes}")
+        # qemu-img does not flush what it wrote, and the caller renames it to a name that is
+        # reused.
+        with destination.open("rb") as converted:
+            os.fsync(converted.fileno())
+    except RuntimeError as exc:
+        destination.unlink(missing_ok=True)
+        die(f"exporting {version_id} failed: {exc}")
+    except BaseException:
+        # die() raises SystemExit, and an interrupt raises KeyboardInterrupt.
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        vhd.unlink(missing_ok=True)
+
+    log(f"exported {version_id} in {time.monotonic() - started:.0f}s: {destination.stat().st_size} bytes, "
+        f"sha256 {sha256(destination)}")
+
+
+def grant_export_sas(disk: str) -> str:
+    """Return a read SAS on the disk. It goes nowhere but this process's own requests, and is
+    masked in GitHub's log in case anything prints it."""
+    granted = json.loads(acl_az([
+        "disk", "grant-access", "-g", EXPORT_RESOURCE_GROUP, "-n", disk,
+        "--access-level", "Read", "--duration-in-seconds", str(EXPORT_SAS_SECONDS), "-o", "json",
+    ]))
+    sas = granted.get("accessSas") or granted.get("accessSAS") or ""
+    if not sas.startswith("https://"):
+        die(f"grant-access on disk {disk} returned no SAS")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for secret in sas_secrets(sas):
+            print(f"::add-mask::{secret}", flush=True)
+    return sas
+
+
+def sas_secrets(sas: str) -> list[str]:
+    """Return what to mask for a SAS: the whole URL, and its signature on its own, both as the
+    URL carries it, percent-encoded, and decoded. Either form of the signature is all an error
+    that prints part of the URL, or the URL decoded, would need to leak; GitHub masks only exact
+    matches."""
+    query = urllib.parse.urlsplit(sas).query
+    encoded = [value for key, _, value in (part.partition("=") for part in query.split("&")) if key == "sig"]
+    decoded = urllib.parse.parse_qs(query).get("sig", [])
+    return list(dict.fromkeys(secret for secret in [sas, *encoded, *decoded] if secret))
+
+
+def sweep_stale_export_disks(now: float | None = None) -> None:
+    """Delete export disks that runs which are gone left behind."""
+    listed = acl_az_best_effort([
+        "disk", "list", "-g", EXPORT_RESOURCE_GROUP,
+        "--query", f"[?tags.purpose=='{EXPORT_DISK_TAG}'].{{name:name,created:timeCreated,state:diskState}}",
+        "-o", "json",
+    ], "list earlier export disks")
+    if listed is None:
+        return
+
+    cutoff = (time.time() if now is None else now) - EXPORT_STALE_AFTER
+    for disk in json.loads(listed or "[]"):
+        # A disk whose age is unknown is left alone: it could be a running export's. The sweep is
+        # cleanup, and must not fail the export.
+        try:
+            created = azure_timestamp(disk["created"])
+        except (KeyError, TypeError, ValueError):
+            warn(f"not sweeping export disk {disk.get('name')!r}: its creation time "
+                 f"{disk.get('created')!r} cannot be read")
+            continue
+        if created > cutoff:
+            continue
+        log(f"deleting export disk {disk['name']}, created {disk['created']} by an earlier run")
+        if disk.get("state") == "ActiveSAS":
+            acl_az_best_effort(["disk", "revoke-access", "-g", EXPORT_RESOURCE_GROUP, "-n", disk["name"]],
+                               f"revoke access to disk {disk['name']}")
+        acl_az_best_effort(["disk", "delete", "-g", EXPORT_RESOURCE_GROUP, "-n", disk["name"], "--yes"],
+                           f"delete disk {disk['name']}")
+
+
+def azure_timestamp(text: str) -> float:
+    """Parse an ARM timestamp, which can carry seven fractional digits."""
+    text = re.sub(r"(\.\d{6})\d+", r"\1", text).replace("Z", "+00:00")
+    return datetime.datetime.fromisoformat(text).timestamp()
+
+
+BlobFetch = Callable[[str, dict[str, str]], tuple[bytes, dict[str, str]]]
+
+
+def download_page_blob(sas: str, destination: Path, fetch: BlobFetch | None = None) -> None:
+    """Download the written pages of a page blob, such as a managed disk read through its SAS,
+    into a sparse file of the blob's size.
+
+    The SAS never leaves this process: it is on no command line, and no error raised here names
+    it.
+    """
+    fetch = fetch or blob_request
+    ranges: list[tuple[int, int]] = []
+    marker = ""
+    size = 0
+    while True:
+        query = "&comp=pagelist" + (f"&marker={urllib.parse.quote(marker)}" if marker else "")
+        body, headers = fetch(sas + query, {})
+        size = int(headers.get("x-ms-blob-content-length", "0"))
+        root = ElementTree.fromstring(body)
+        ranges += [(int(r.findtext("Start") or 0), int(r.findtext("End") or 0)) for r in root.findall("PageRange")]
+        marker = root.findtext("NextMarker") or ""
+        if not marker:
+            break
+
+    if size < VHD_FOOTER_SIZE:
+        raise RuntimeError(f"the exported disk reports a size of {size} bytes")
+    chunks = page_chunks(ranges)
+    total = sum(stop - start + 1 for start, stop in chunks)
+    log(f"downloading {total >> 20} MiB written in a {size >> 20} MiB disk")
+
+    started = time.monotonic()
+    lock = threading.Lock()
+    fetched = [0, 0]
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.ftruncate(fd, size)
+
+        def fetch_chunk(chunk: tuple[int, int]) -> None:
+            start, stop = chunk
+            data, _headers = fetch(sas, {"Range": f"bytes={start}-{stop}"})
+            if len(data) != stop - start + 1:
+                raise RuntimeError(f"read {len(data)} bytes at offset {start}, expected {stop - start + 1}")
+            # The file is sparse, so a zero chunk is already there.
+            if data.count(0) != len(data):
+                os.pwrite(fd, data, start)
+            with lock:
+                fetched[0] += len(data)
+                step = total // 10 or 1
+                if fetched[0] // step != fetched[1]:
+                    fetched[1] = fetched[0] // step
+                    log(f"  {fetched[0] >> 20} of {total >> 20} MiB")
+
+        with concurrent.futures.ThreadPoolExecutor(EXPORT_WORKERS) as pool:
+            futures = [pool.submit(fetch_chunk, chunk) for chunk in chunks]
+            try:
+                for future in concurrent.futures.as_completed(futures):
+                    future.result()
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+    elapsed = time.monotonic() - started
+    log(f"downloaded {total >> 20} MiB in {elapsed:.0f}s ({total / max(elapsed, 0.001) / (1 << 20):.0f} MiB/s)")
+    check_fixed_vhd(destination, size)
+
+
+def page_chunks(ranges: list[tuple[int, int]], chunk: int = EXPORT_CHUNK) -> list[tuple[int, int]]:
+    """Split inclusive page ranges into inclusive ranges of at most chunk bytes."""
+    out = []
+    for start, end in ranges:
+        while start <= end:
+            stop = min(end, start + chunk - 1)
+            out.append((start, stop))
+            start = stop + 1
+    return out
+
+
+def check_fixed_vhd(path: Path, size: int) -> None:
+    """Fail unless path ends in the footer of a fixed VHD of its size, which is what a managed
+    disk is and what qemu-img's vpc driver reads."""
+    with path.open("rb") as handle:
+        handle.seek(size - VHD_FOOTER_SIZE)
+        footer = handle.read(VHD_FOOTER_SIZE)
+    cookie, current, kind = footer[:8], int.from_bytes(footer[48:56], "big"), int.from_bytes(footer[60:64], "big")
+    if cookie != b"conectix" or kind != 2 or current != size - VHD_FOOTER_SIZE:
+        raise RuntimeError(f"the exported disk is not a fixed VHD of {size} bytes "
+                           f"(cookie {cookie!r}, type {kind}, size {current})")
+
+
+def blob_request(url: str, headers: dict[str, str]) -> tuple[bytes, dict[str, str]]:
+    """GET from blob storage, retrying what may pass. Errors name the status or the failure,
+    never the URL, which carries the SAS."""
+    request = urllib.request.Request(url, headers={"x-ms-version": "2021-12-02", **headers})
+    attempts = 5
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return response.read(), {k.lower(): v for k, v in response.headers.items()}
+        except urllib.error.HTTPError as exc:
+            if (exc.code < 500 and exc.code != 429) or attempt == attempts:
+                raise RuntimeError(f"blob storage answered HTTP {exc.code} {exc.reason}") from None
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+            if attempt == attempts:
+                raise RuntimeError(f"blob storage request failed: {type(exc).__name__}") from None
+        time.sleep(2 * attempt)
+    raise AssertionError("unreachable")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -958,10 +1364,12 @@ def check_prerequisites() -> None:
 
 
 def cmd_up(args: argparse.Namespace) -> None:
-    image = Path(args.image).expanduser()
-    if not image.is_file():
-        die(f"image not found: {image}")
+    local = Path(args.image).expanduser() if args.image else None
+    if local and not local.is_file():
+        die(f"image not found: {local}")
     check_prerequisites()
+    # Before anything else is set up, so that an export that cannot run fails first.
+    image = local or gallery_image()
     stop_vm()
     _, controller = build_binaries()
     public_key = ensure_ssh_key()
@@ -1012,6 +1420,8 @@ def cmd_down(_: argparse.Namespace) -> None:
         run(["kind", "delete", "cluster", "--name", CLUSTER])
     shutil.rmtree(STATE, ignore_errors=True)
     log("removed the VM, network, cluster, and state")
+    if IMAGE_DIR.is_dir() and any(IMAGE_DIR.glob("acl-gallery-*.qcow2")):
+        log(f"kept the exported images in {IMAGE_DIR}; remove it to reclaim the space")
 
 
 def cmd_ssh(args: argparse.Namespace) -> None:
@@ -1023,8 +1433,9 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
 
     up = commands.add_parser("up", help="build, create the cluster and network, and boot the VM")
-    up.add_argument("--image", default=os.environ.get("ACL_IMAGE", ""), required="ACL_IMAGE" not in os.environ,
-                    help="Azure Container Linux qcow2 image (or ACL_IMAGE)")
+    up.add_argument("--image", default=os.environ.get("ACL_IMAGE", ""),
+                    help="Azure Container Linux qcow2 image (or ACL_IMAGE); without one, the "
+                         "gallery image is exported to ACL_IMAGE_DIR and booted")
     up.add_argument("--node-image", default=os.environ.get("ACL_KIND_NODE_IMAGE", ""),
                     help="kind node image, for another Kubernetes version")
     up.set_defaults(func=cmd_up)
