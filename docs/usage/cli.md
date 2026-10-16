@@ -2,6 +2,8 @@
 
 The `aks-flex-node` binary provides operator commands and commands used internally by systemd or Kubernetes authentication. Run operator commands as root on the flex node host unless a procedure says otherwise.
 
+On an installed host the binary is `/opt/unbounded/agent/bin/aks-flex-node`, which is not on the default `PATH`. Earlier releases left it in `/usr/local/bin`. Run it by its full path, or see [Where the agent is installed](operations.md#where-the-agent-is-installed) for putting it on `PATH`. The synopses below use the bare name.
+
 ```bash
 aks-flex-node --help
 aks-flex-node <command> --help

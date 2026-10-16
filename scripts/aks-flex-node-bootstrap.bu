@@ -1,0 +1,94 @@
+# Butane config that bootstraps AKS Flex Node on a host provisioned by Ignition,
+# such as Azure Container Linux. See "Hosts provisioned by Ignition" in
+# docs/usage/getting-started.md.
+#
+# Render it with Butane, from a directory holding the three files it names:
+#
+#   butane --strict --files-dir . aks-flex-node-bootstrap.bu > node.ign
+#
+#   bootstrap.sh      scripts/bootstrap.sh from the AKS Flex Node release the
+#                     host installs, unchanged
+#   bootstrap.env     bootstrap.sh's AKS_FLEX_NODE_* settings, one per line
+#   base-config.json  the base config, or {} with bootstrap data fetched from AKS
+#
+# node.ign carries the base config and settings, which may include a bootstrap
+# token, so keep it as private as they are.
+#
+# Reset and the uninstall script stop, disable and remove the unit by its name,
+# aks-flex-node-bootstrap.service, so keep that name.
+variant: flatcar
+version: 1.1.0
+storage:
+  directories:
+    # Everything here is removed once bootstrap succeeds.
+    - path: /etc/aks-flex-node/first-boot
+      mode: 0700
+    # For a service principal credential; see below.
+    # - path: /etc/aks-flex-node/credentials
+    #   mode: 0700
+  files:
+    - path: /etc/aks-flex-node/first-boot/bootstrap.sh
+      mode: 0700
+      overwrite: true
+      contents:
+        local: bootstrap.sh
+    - path: /etc/aks-flex-node/first-boot/bootstrap.env
+      mode: 0600
+      overwrite: true
+      contents:
+        local: bootstrap.env
+    - path: /etc/aks-flex-node/first-boot/base-config.json
+      mode: 0600
+      overwrite: true
+      contents:
+        local: base-config.json
+    # For --auth service-principal, uncomment this and the directory above, and
+    # set AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE in bootstrap.env to its path. Use
+    # sp-client-certificate and AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE for a
+    # certificate, with a .pfx suffix for PKCS#12. The agent reads it from there
+    # after bootstrap, so it stays.
+    # - path: /etc/aks-flex-node/credentials/sp-client-secret
+    #   mode: 0600
+    #   overwrite: true
+    #   contents:
+    #     local: sp-client-secret
+systemd:
+  units:
+    - name: aks-flex-node-bootstrap.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Bootstrap AKS Flex Node
+        Wants=network-online.target
+        After=network-online.target nss-lookup.target
+        # Once the agent unit exists the agent runs the node, and bootstrap.sh
+        # would fail its preflight check for an existing deployment. Skipping
+        # on that, rather than on a marker of its own, also means a failure
+        # after the agent is installed is not retried.
+        ConditionPathExists=!/etc/systemd/system/aks-flex-node-agent.service
+        # An assertion rather than a condition: a missing script is a
+        # provisioning error, and fails the unit where it can be seen.
+        AssertPathExists=/etc/aks-flex-node/first-boot/bootstrap.sh
+        # Retry for as long as it takes; the backoff below bounds the rate.
+        StartLimitIntervalSec=0
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        # Early boot failures, such as DNS not answering yet when
+        # network-online.target is reached, are retried. The delay grows from
+        # 10s to 5min; systemd older than 254 keeps the fixed delay.
+        Restart=on-failure
+        RestartSec=10s
+        RestartSteps=10
+        RestartMaxDelaySec=300
+        Environment=AKS_FLEX_NODE_BASE_CONFIG_FILE=/etc/aks-flex-node/first-boot/base-config.json
+        EnvironmentFile=/etc/aks-flex-node/first-boot/bootstrap.env
+        ExecStart=/bin/bash /etc/aks-flex-node/first-boot/bootstrap.sh
+        # The script's inputs can carry a bootstrap token and a signed agent
+        # URL. The installed config has what the agent needs, so they go once
+        # bootstrap succeeds.
+        ExecStartPost=/bin/rm -rf /etc/aks-flex-node/first-boot
+
+        [Install]
+        WantedBy=multi-user.target

@@ -106,6 +106,7 @@ The default `all` command runs:
 | `smoke` | Run smoke workloads only. |
 | `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
 | `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
+| `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local`, that a noexec `/opt` keeps it linked, the move into `/opt/unbounded/agent`, that the nspawn machine restarts after the move, and that an AgentUpgrade back to the earlier release cannot install it under `/usr/local`. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
@@ -218,12 +219,27 @@ Run it against an already joined environment:
 ./hack/e2e/run.sh agent-upgrade
 ```
 
+## Host Root Migration Validation
+
+The `host-root-migration` command installs the MachineOperation API first: the earlier daemon only discovers it when it starts, and restarting the daemon instead would add a start that counts against the unit's start limit beside the move's own restart. It then reinstalls the bootstrap-token VM with an earlier release, `E2E_LEGACY_RELEASE` (default `v0.2.0`), which installs under `/usr/local`:
+
+1. Upgrade it to the build under test, and verify `/opt/unbounded/agent` links to `/usr/local`, `/opt/unbounded` is `0755` root, and the unit still runs the earlier layout, which last-good still needs.
+2. Mount `/opt` noexec and upgrade again, which pushes the earlier release out of last-good. Verify the daemon reports that it cannot move to a noexec `/opt` and keeps the host linked, with nothing copied and the units unchanged. Then restore `/opt`.
+3. Restart the daemon, and wait for it to copy the files into a real `/opt/unbounded/agent`, point the units at them and restart from there, and for the restarted daemon to remove the earlier layout.
+4. Verify nothing is left under `/usr/local`, the agent unit and nspawn hooks run the moved files, the nspawn lifecycle helper is the running agent's binary rather than the earlier release's, the daemon runs from `/opt/unbounded/agent`, and kubelet still authenticates.
+5. Restart the nspawn machine through the lifecycle helper, as a host reboot would, and verify it comes back, the node rejoins and runs a workload, and the hooks still run the moved helper. The earlier release's helper would point them back at `/usr/local`, which the move removed.
+6. Put an executable at `/usr/local/bin/aks-flex-node`, which the earlier release would take as its own binary, make it immutable, and apply an AgentUpgrade to the earlier release: it fails before anything is switched. Make it removable and apply it again: the upgrade removes it, the earlier release cannot start, and the agent rolls back to last-good with nothing installed under `/usr/local`. Then run a workload.
+
+```bash
+./hack/e2e/run.sh host-root-migration
+```
+
 ## Nspawn Lifecycle Validation
 
 The `nspawn-lifecycle` command validates the host integration exported by the shared Unbounded lifecycle library:
 
 1. Read each node's persisted active machine and require it to be `kube1` or `kube2`.
-2. Verify `/usr/local/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
+2. Verify `/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle` is executable and accepts the generated CLI shape.
 3. Verify the generated pre-start and post-start systemd hooks invoke that helper with the active machine.
 4. Add a marker to the token node's generated `.nspawn` config and invoke `pre-start`, proving the AKS Flex persisted-config loader regenerates the file.
 5. Invoke `reconcile`, verify the active machine receives a new leader PID, wait for the Kubernetes node to return Ready, and run a smoke workload.
