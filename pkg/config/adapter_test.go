@@ -116,6 +116,7 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 		t.Fatalf("Kubelet.Auth.ExecCredential should be nil for bootstrap token auth")
 	}
 	wantLabels := map[string]string{
+		MachineNodeLabel:      "test-node",
 		"env":                 "test",
 		managedNodeLabel:      "false",
 		agentPoolNodeLabel:    "flexnode-edge",

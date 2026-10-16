@@ -64,24 +64,26 @@ func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest
 }
 
 type agentUpgradeSignal struct {
-	OperationName            string `json:"operationName"`
-	ActiveMachine            string `json:"activeMachine,omitempty"`
-	CandidatePath            string `json:"candidatePath,omitempty"`
-	InitiatingDaemonInstance string `json:"initiatingDaemonInstance,omitempty"`
-	SwitchCommitted          bool   `json:"switchCommitted,omitempty"`
-	RecoveryRequired         bool   `json:"recoveryRequired,omitempty"`
-	Failure                  string `json:"failure,omitempty"`
+	ObservedMachineGeneration int64  `json:"observedMachineGeneration,omitempty"`
+	OperationName             string `json:"operationName"`
+	ActiveMachine             string `json:"activeMachine,omitempty"`
+	CandidatePath             string `json:"candidatePath,omitempty"`
+	InitiatingDaemonInstance  string `json:"initiatingDaemonInstance,omitempty"`
+	SwitchCommitted           bool   `json:"switchCommitted,omitempty"`
+	RecoveryRequired          bool   `json:"recoveryRequired,omitempty"`
+	Failure                   string `json:"failure,omitempty"`
 }
 
 type agentUpgradeSignalStore struct {
 	path string
 }
 
-func (s agentUpgradeSignalStore) recordPending(operationName, activeMachine, daemonInstance string) error {
+func (s agentUpgradeSignalStore) recordPending(operationName, activeMachine, daemonInstance string, generation int64) error {
 	return s.write(agentUpgradeSignal{
-		OperationName:            operationName,
-		ActiveMachine:            activeMachine,
-		InitiatingDaemonInstance: daemonInstance,
+		ObservedMachineGeneration: generation,
+		OperationName:             operationName,
+		ActiveMachine:             activeMachine,
+		InitiatingDaemonInstance:  daemonInstance,
 	})
 }
 
@@ -171,7 +173,7 @@ func (s agentUpgradeSignalStore) clear() error {
 
 type agentUpgradeExecutor interface {
 	Acquire() (io.Closer, error)
-	RecordPending(context.Context, string) error
+	RecordPending(context.Context, string) (int64, error)
 	RetryRecovery(context.Context) error
 	RecordFailure(string) error
 	Stage(context.Context, agentUpgradeRequest) error
@@ -184,6 +186,8 @@ type agentUpgradeStateLoader interface {
 }
 
 type hostAgentUpgradeExecutor struct {
+	machineReader          client.Reader
+	machineName            string
 	log                    *slog.Logger
 	paths                  agentUpgradePaths
 	state                  agentUpgradeStateLoader
@@ -228,28 +232,32 @@ func (e *hostAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 	return agentbinary.AcquireHostActivationLock(agentUpgradeLockPath)
 }
 
-func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {
+func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) (int64, error) {
 	existing, err := e.signals.read()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if existing != nil {
 		if existing.OperationName == operationName {
-			return errAgentUpgradeAlreadyPending
+			return existing.ObservedMachineGeneration, errAgentUpgradeAlreadyPending
 		}
-		return fmt.Errorf("another AgentUpgrade operation %q is pending", existing.OperationName)
+		return 0, fmt.Errorf("another AgentUpgrade operation %q is pending", existing.OperationName)
+	}
+	generation, err := observedMachineGeneration(ctx, e.machineReader, e.machineName)
+	if err != nil {
+		return 0, err
 	}
 	state, err := e.state.LoadState(ctx)
 	if err != nil {
-		return fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
+		return 0, fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
 	}
 	if state == nil || !validNspawnMachine(state.ActiveMachine) {
-		return fmt.Errorf("no valid active nspawn machine for AgentUpgrade")
+		return 0, fmt.Errorf("no valid active nspawn machine for AgentUpgrade")
 	}
-	if err := e.signals.recordPending(operationName, state.ActiveMachine, e.instanceID); err != nil {
-		return err
+	if err := e.signals.recordPending(operationName, state.ActiveMachine, e.instanceID, generation); err != nil {
+		return 0, err
 	}
-	return nil
+	return generation, nil
 }
 
 func (e *hostAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error {
@@ -437,9 +445,10 @@ func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c 
 	}
 
 	result := agentdaemon.MachineOperationResult[int64]{
-		Phase:   machinav1alpha3.OperationPhaseComplete,
-		Reason:  "Succeeded",
-		Message: "AgentUpgrade completed",
+		ObservedMachineGeneration: signal.ObservedMachineGeneration,
+		Phase:                     machinav1alpha3.OperationPhaseComplete,
+		Reason:                    "Succeeded",
+		Message:                   "AgentUpgrade completed",
 	}
 	if signal.Failure != "" {
 		result.Phase = machinav1alpha3.OperationPhaseFailed

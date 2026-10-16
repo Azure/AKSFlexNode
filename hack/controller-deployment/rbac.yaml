@@ -115,6 +115,11 @@ rules:
   - apiGroups: ["unbounded-cloud.io"]
     resources: ["machineoperations/status"]
     verbs: ["get", "patch", "update"]
+  # Optional projected Machines are read directly at operation start; no
+  # Machine informer or spec/status write permission is needed.
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["machines"]
+    verbs: ["get"]
   # The shared MachineOperation selector implementation evaluates labels on the
   # local Node when an operation uses machineSelector.
   - apiGroups: [""]
