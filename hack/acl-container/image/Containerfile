@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+#
+# Prototype image that runs the AKS Flex Node agent as a privileged containerd
+# container on Azure Container Linux; see hack/acl-container/DESIGN.md. Build it
+# from the repository root:
+#
+#   podman build -f hack/acl-container/image/Containerfile -t aks-flex-node-agent:proto .
+
+ARG GO_IMAGE_VERSION=1.26.6-1
+
+FROM mcr.microsoft.com/oss/go/microsoft/golang:${GO_IMAGE_VERSION}-bookworm AS build
+
+WORKDIR /src
+
+ARG VERSION=proto
+ARG GIT_COMMIT=unknown
+ARG CRANE_VERSION=v0.22.1
+
+# Microsoft Go defaults to systemcrypto, which requires cgo on Go 1.26 Linux.
+# Its cgo-less OpenSSL backend keeps the binaries static, as the release build does.
+ENV CGO_ENABLED=0 \
+    GOEXPERIMENT=ms_nocgo_opensslcrypto
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Only what the agent is built from: the repository root can also hold .vm,
+# with the harness's VM disks.
+COPY cmd ./cmd
+COPY pkg ./pkg
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath \
+      -ldflags "-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -w -s" \
+      -o /out/aks-flex-node \
+      ./cmd/aks-flex-node
+
+# flex-machine unpacks machine rootfs images with crane.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOBIN=/out go install github.com/google/go-containerregistry/cmd/crane@${CRANE_VERSION}
+
+FROM mcr.microsoft.com/azurelinux/base/core:3.0
+
+LABEL org.opencontainers.image.title="aks-flex-node-agent" \
+      org.opencontainers.image.description="Prototype: the AKS Flex Node agent as a privileged container on Azure Container Linux"
+
+# ca-certificates: the base image's ca-certificates-base lacks roots that public
+# registries chain to, such as ghcr.io's.
+RUN tdnf install -y ca-certificates tar util-linux procps-ng jq less \
+    && tdnf clean all
+
+COPY --from=build /out/aks-flex-node /out/crane /usr/local/bin/
+COPY hack/acl-container/image/bin/ /usr/local/bin/
+# These names run the host's binaries against the host root; see host-exec.
+RUN for tool in machinectl systemctl systemd-run journalctl; do \
+      ln -s host-exec /usr/local/bin/$tool; \
+    done
+
+ENTRYPOINT ["/usr/local/bin/flex-agent-entrypoint"]
