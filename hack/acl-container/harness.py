@@ -497,15 +497,16 @@ def kubernetes_version() -> str:
     return version.removeprefix("v").split("+", 1)[0]
 
 
-def register_machine(version: str) -> None:
-    """Add the node to the controller's machine store, a ConfigMap of ARM machine JSON by name.
-    Its Kubernetes version has to match the agent config's."""
+def register_machine(version: str, settings_version: str = "1") -> None:
+    """Add or update the node in the controller's machine store, a ConfigMap of ARM machine JSON
+    by name. Its Kubernetes version has to match the agent config's. Its eTag is the goal's
+    settings version, which a repave changes."""
     machine = {
         "id": f"{FAKE_CLUSTER_ID}/agentPools/{AGENT_POOL}/machines/{HOSTNAME}",
         "name": HOSTNAME,
         "type": "Microsoft.ContainerService/managedClusters/agentPools/machines",
         "properties": {
-            "eTag": "1",
+            "eTag": settings_version,
             "provisioningState": "Succeeded",
             "kubernetes": {"orchestratorVersion": version, "nodeLabels": {}, "nodeTaints": []},
         },
@@ -977,13 +978,29 @@ def check_container(checks: Checks) -> None:
     checks.expect(unmounted, "umount in the container unmounts on the host",
                   (unmount.stdout + unmount.stderr).strip())
 
-def check_cluster(checks: Checks) -> None:
-    """The node the agent in the container joined: Ready, running a pod, and reachable from the
-    API server for its logs."""
-    checks.expect(node_ready(), f"node {HOSTNAME} is Ready")
-    kube1 = ssh("machinectl show kube1 -p State --value", check=False)
-    checks.expect(kube1.stdout.strip() == "running", "the agent's kube1 machine runs on the host",
-                  (kube1.stdout + kube1.stderr).strip())
+
+def daemon_state() -> dict:
+    """The agent's daemon state on the host: its active machine and applied settings."""
+    result = ssh("sudo cat /etc/aks-flex-node/daemon-state.json", check=False)
+    try:
+        return json.loads(result.stdout) if result.returncode == 0 else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def node_uid() -> str:
+    result = kubectl("get", "node", HOSTNAME, "-o", "jsonpath={.metadata.uid}", check=False,
+                     quiet=True)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def check_cluster(checks: Checks, after: str = "") -> None:
+    """The node the agent in the container joined: Ready, on the machine the agent made active,
+    running a pod, and reachable from the API server for its logs."""
+    checks.expect(node_ready(), f"node {HOSTNAME} is Ready{after}")
+    active = daemon_state().get("activeMachine", "")
+    checks.expect(bool(active) and machine_state(active) == "running",
+                  f"the agent's active machine, {active or 'none'}, runs on the host")
     pod = {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -1000,11 +1017,53 @@ def check_cluster(checks: Checks) -> None:
     kubectl("apply", "-f", "-", input=json.dumps(pod), quiet=True)
     ready = kubectl("wait", "pod/aclc-probe", "--for=condition=Ready", "--timeout=300s",
                     check=False, quiet=True)
-    checks.expect(ready.returncode == 0, "a pod runs on the node", ready.stderr.strip())
+    checks.expect(ready.returncode == 0, f"a pod runs on the node{after}", ready.stderr.strip())
     logs = kubectl("logs", "aclc-probe", check=False, quiet=True)
-    checks.expect("aclc-probe-ok" in logs.stdout, "kubectl logs reaches the node's kubelet",
+    checks.expect("aclc-probe-ok" in logs.stdout, f"kubectl logs reaches the node's kubelet{after}",
                   logs.stderr.strip())
     kubectl("delete", "pod", "aclc-probe", "--ignore-not-found", "--wait=false", quiet=True)
+
+
+def check_repave(checks: Checks) -> None:
+    """Repave as main's e2e does: change the machine's settings version and delete the Node. The
+    daemon then starts the other machine, kube1 or kube2, with the new settings, and removes the
+    old one, its bpffs mount on the host included."""
+    before = daemon_state().get("activeMachine", "")
+    old_uid = node_uid()
+    settings_version = f"repave-{int(time.time())}"
+    log(f"repaving {HOSTNAME}, on {before or 'no machine'}, to settings version {settings_version}")
+    register_machine(kubernetes_version(), settings_version)
+    kubectl("delete", "node", HOSTNAME, "--wait=false", quiet=True)
+
+    def repaved() -> bool:
+        state = daemon_state()
+        active = state.get("activeMachine", "")
+        return (active not in ("", before) and state.get("appliedSettingsVersion") == settings_version
+                and machine_state(active) == "running" and node_uid() not in ("", old_uid)
+                and node_ready())
+
+    deadline = time.monotonic() + 900
+    while not (done := repaved()) and time.monotonic() < deadline:
+        time.sleep(10)
+    after = daemon_state().get("activeMachine", "")
+    checks.expect(done, f"the repave replaced {before} with {after}, and the new Node is Ready",
+                  "" if done else ssh("sudo tail -n 20 /var/log/aks-flex-node/aks-flex-node.log",
+                                      check=False).stdout)
+    if not done:
+        return
+
+    # The daemon removes the old machine once the new one has started.
+    def removed() -> bool:
+        return ssh(f"machinectl show-image {before} || test -e /run/bpffs/{before}",
+                   check=False).returncode != 0
+
+    deadline = time.monotonic() + 120
+    while not (gone := removed()) and time.monotonic() < deadline:
+        time.sleep(5)
+    left = ssh(f"machinectl list-images --no-legend; findmnt -rn -o TARGET /run/bpffs/{before}",
+               check=False).stdout.strip()
+    checks.expect(gone, f"the old machine, {before}, is removed, with its bpffs mount", left)
+    check_cluster(checks, after=" after the repave")
 
 
 def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
@@ -1163,6 +1222,7 @@ def cmd_check(args: argparse.Namespace) -> None:
     check_container(checks)
     if cluster_enabled():
         check_cluster(checks)
+        check_repave(checks)
     check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
     if cluster_enabled() and args.reboot:
         wait_for_node_ready()
