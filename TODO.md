@@ -36,11 +36,11 @@ Separately, not needed by Flex: ACL is considering
 ## Parity with `main`
 
 The agent in a container must do what `main`'s agent does on an Ubuntu host,
-with the same config and commands. `start` and the daemon's reconciliation of
-the Machine goal state work: `harness.py up --cluster` joins the VM to a kind
-cluster through `main`'s in-cluster controller, and `check` runs a pod on it.
+with the same config and commands. `start`, the daemon's reconciliation of the
+Machine goal state, and repave work: `harness.py up --cluster` joins the VM to a
+kind cluster through `main`'s in-cluster controller, and `check` runs a pod on
+it, repaves it from kube1 to kube2 as `main`'s e2e does, and reboots it.
 
-- [ ] Repave, alternating kube1 and kube2
 - [ ] `NodeReboot` and `AgentReset` MachineOperations
 - [ ] `reset`
 - [ ] `AgentUpgrade`, which becomes a new image (see below)
@@ -73,9 +73,7 @@ host.
       deliver the config in their Butane, and how it's fetched from the AKS
       RP, as `main`'s `scripts/bootstrap.sh` does with bootstrap data.
 - [ ] Reset and uninstall: remove the container's unit and image instead of
-      the agent's units and binaries. The container's mounts of host paths
-      are slaves, so a mount or unmount the agent makes from the container,
-      such as of a machine's bpffs during reset, doesn't reach the host.
+      the agent's units and binaries.
 - [ ] Preflight: in a container, `host-packages` checks the image's package
       database, and `containerd-active` warns that bootstrap will disable
       containerd, which Flex never does (on `main` either). Drop or reword
@@ -108,6 +106,8 @@ host.
 - [ ] `hack/acl-container/README.md` and `DESIGN.md` still describe the
       workaround inline in the agent's unit, and still refer to PR #323,
       including `DESIGN.md` pointing to its host-root work as a starting
-      point. Update them when the docs are next revised.
+      point. `DESIGN.md` also says `host-exec` always uses `chroot /host`;
+      `mount`, `umount`, and `mountpoint` now run in the host's mount
+      namespace instead. Update them when the docs are next revised.
 - [ ] Consider CI for `hack/acl-container`: ShellCheck, Python compile, and
       Butane `--strict` rendering.
