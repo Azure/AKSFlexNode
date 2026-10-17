@@ -1,0 +1,57 @@
+# SELinux workaround for the agent container. Development only: delete this
+# file once ACL ships `allow spc_t kernel_t:dbus send_msg;` (see SELINUX.md).
+#
+# Executing files from a containerd snapshot, labeled container_var_lib_t, moves
+# the agent to spc_t, which ACL's policy doesn't let send D-Bus messages to the
+# host's services, all kernel_t. This runs the agent's containers from
+# containerd's native snapshotter with its directory relabeled usr_t, which has
+# no transition, so the agent stays kernel_t. harness.py up --selinux-workaround
+# merges it into the Ignition config rendered from agent-container.bu.
+#
+# The drop-ins apply to every unit that runs the agent's image: the bootstrap
+# and reset units, and the agent's own and its recovery unit, which start
+# writes later.
+variant: flatcar
+version: 1.1.0
+systemd:
+  units:
+    - name: aks-flex-node-selinux-workaround.service
+      contents: |
+        [Unit]
+        Description=Relabel containerd's native snapshotter for the AKS Flex Node agent container
+        After=containerd.service
+        Before=aks-flex-node-bootstrap.service aks-flex-node-agent.service aks-flex-node-reset.service aks-flex-node-agent-recovery.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/bin/mkdir -p /var/lib/containerd/io.containerd.snapshotter.v1.native/snapshots
+        ExecStart=/usr/bin/chcon -t usr_t /var/lib/containerd/io.containerd.snapshotter.v1.native /var/lib/containerd/io.containerd.snapshotter.v1.native/snapshots
+        # New snapshots inherit the label; this covers older ones. Best effort:
+        # a snapshot containerd is removing can vanish under chcon.
+        ExecStart=-/usr/bin/chcon -R -t usr_t /var/lib/containerd/io.containerd.snapshotter.v1.native/snapshots
+    - name: aks-flex-node-bootstrap.service
+      dropins:
+        - name: 50-selinux-workaround.conf
+          contents: &dropin |
+            [Unit]
+            Requires=aks-flex-node-selinux-workaround.service
+            After=aks-flex-node-selinux-workaround.service
+
+            [Service]
+            # --local unpacks in ctr: containerd's transfer service only
+            # unpacks to the snapshotters containerd's config names.
+            Environment="AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS=--local --snapshotter native"
+            Environment="AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=--snapshotter native"
+    - name: aks-flex-node-agent.service
+      dropins:
+        - name: 50-selinux-workaround.conf
+          contents: *dropin
+    - name: aks-flex-node-reset.service
+      dropins:
+        - name: 50-selinux-workaround.conf
+          contents: *dropin
+    - name: aks-flex-node-agent-recovery.service
+      dropins:
+        - name: 50-selinux-workaround.conf
+          contents: *dropin
