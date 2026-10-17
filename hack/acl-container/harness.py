@@ -968,6 +968,14 @@ def check_container(checks: Checks) -> None:
     checks.expect(agent_out("aks-flex-node version | head -1") == "AKS Flex Node Agent",
                   "the aks-flex-node binary is in the image")
 
+    # The agent unmounts the bpffs of each machine it removes, which host systemd mounted.
+    probe = "/run/aclc-umount-check"
+    ssh(f"sudo mkdir -p {probe} && sudo mount -t bpf bpf {probe}")
+    unmount = agent(f"umount {probe}", check=False)
+    unmounted = ssh(f"findmnt -rn {probe}", check=False).returncode != 0
+    ssh(f"sudo umount {probe} 2>/dev/null; sudo rmdir {probe}", check=False)
+    checks.expect(unmounted, "umount in the container unmounts on the host",
+                  (unmount.stdout + unmount.stderr).strip())
 
 def check_cluster(checks: Checks) -> None:
     """The node the agent in the container joined: Ready, running a pod, and reachable from the
