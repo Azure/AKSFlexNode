@@ -153,13 +153,19 @@ def sudo(*cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return run(["sudo", *cmd], check=check, capture=not check)
 
 
-def wait_until(description: str, timeout: float, probe, interval: float = 5) -> None:
+def eventually(probe, timeout: float, interval: float = 5) -> bool:
+    """Poll probe until it holds or timeout seconds pass, and return whether it held."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if probe():
-            return
+    while not probe():
+        if time.monotonic() >= deadline:
+            return False
         time.sleep(interval)
-    die(f"timed out after {int(timeout)}s waiting for {description}")
+    return True
+
+
+def wait_until(description: str, timeout: float, probe, interval: float = 5) -> None:
+    if not eventually(probe, timeout, interval):
+        die(f"timed out after {int(timeout)}s waiting for {description}")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -790,10 +796,11 @@ def stop_vm() -> None:
     pid_file.unlink(missing_ok=True)
 
 
-def ssh(command: str, *, check: bool = True, timeout: float = 120) -> subprocess.CompletedProcess[str]:
+def ssh(command: str, *, check: bool = True, timeout: float = 120,
+        input: str | None = None) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(["ssh", *SSH_OPTS, f"{SSH_USER}@{VM_IP}", command],
-                                capture_output=True, text=True, timeout=timeout)
+                                capture_output=True, text=True, timeout=timeout, input=input)
     except subprocess.TimeoutExpired:
         result = subprocess.CompletedProcess(["ssh"], 255, "", f"timed out: {command}")
     if check and result.returncode != 0:
@@ -1042,28 +1049,93 @@ def check_repave(checks: Checks) -> None:
                 and machine_state(active) == "running" and node_uid() not in ("", old_uid)
                 and node_ready())
 
-    deadline = time.monotonic() + 900
-    while not (done := repaved()) and time.monotonic() < deadline:
-        time.sleep(10)
+    done = eventually(repaved, 900, 10)
     after = daemon_state().get("activeMachine", "")
     checks.expect(done, f"the repave replaced {before} with {after}, and the new Node is Ready",
-                  "" if done else ssh("sudo tail -n 20 /var/log/aks-flex-node/aks-flex-node.log",
-                                      check=False).stdout)
+                  "" if done else agent_log_tail())
     if not done:
         return
 
     # The daemon removes the old machine once the new one has started.
-    def removed() -> bool:
-        return ssh(f"machinectl show-image {before} || test -e /run/bpffs/{before}",
-                   check=False).returncode != 0
-
-    deadline = time.monotonic() + 120
-    while not (gone := removed()) and time.monotonic() < deadline:
-        time.sleep(5)
+    gone = eventually(lambda: ssh(f"machinectl show-image {before} || test -e /run/bpffs/{before}",
+                                  check=False).returncode != 0, 120)
     left = ssh(f"machinectl list-images --no-legend; findmnt -rn -o TARGET /run/bpffs/{before}",
                check=False).stdout.strip()
     checks.expect(gone, f"the old machine, {before}, is removed, with its bpffs mount", left)
     check_cluster(checks, after=" after the repave")
+
+
+def agent_log_tail() -> str:
+    return ssh("sudo tail -n 20 /var/log/aks-flex-node/aks-flex-node.log", check=False).stdout
+
+
+def run_machine_operation(kind: str, timeout: float = 600) -> tuple[str, str]:
+    """Request a MachineOperation of the node, as main's demos and e2e do, and return its final
+    phase and message."""
+    name = f"aclc-{kind.lower()}-{int(time.time())}"
+    log(f"requesting {kind} MachineOperation {name}")
+    operation = {
+        "apiVersion": "unbounded-cloud.io/v1alpha3",
+        "kind": "MachineOperation",
+        "metadata": {"name": name},
+        "spec": {"machineRef": HOSTNAME, "operationKind": kind, "ttlSecondsAfterFinished": 3600},
+    }
+    kubectl("apply", "-f", "-", input=json.dumps(operation), quiet=True)
+    status = ["", ""]
+
+    def finished() -> bool:
+        result = kubectl("get", "machineoperation", name, "-o",
+                         "jsonpath={.status.phase}|{.status.message}", check=False, quiet=True)
+        status[:] = result.stdout.split("|", 1) if "|" in result.stdout else ["", ""]
+        return status[0] in ("Complete", "Failed")
+
+    eventually(finished, timeout, 3)
+    return status[0], status[1]
+
+
+def check_node_reboot(checks: Checks) -> None:
+    """NodeReboot restarts the active machine, as main's soft-reboot demo requests it."""
+    active = daemon_state().get("activeMachine", "")
+    leader = machine_leader(active)
+    phase, message = run_machine_operation("NodeReboot")
+    checks.expect(phase == "Complete", "a NodeReboot MachineOperation completes",
+                  f"{phase or 'no phase'}: {message}")
+    new_leader = machine_leader(active)
+    checks.expect(new_leader not in ("", leader) and machine_state(active) == "running",
+                  f"NodeReboot restarted {active}", f"leader {leader}, then {new_leader or 'none'}")
+    checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the NodeReboot")
+
+
+def check_agent_reset(checks: Checks) -> None:
+    """AgentReset removes the node's runtime and stops the agent, which on main also removes the
+    agent's unit; in a container the agent disables the container's unit. Then the harness joins
+    the VM again, as bootstrapping it again would: a new config, and the unit enabled."""
+    phase, message = run_machine_operation("AgentReset")
+    checks.expect(phase == "Complete", "an AgentReset MachineOperation completes",
+                  f"{phase or 'no phase'}: {message}")
+
+    def unit(prop: str) -> str:
+        return ssh(f"systemctl show {AGENT_UNIT} -p {prop} --value", check=False).stdout.strip()
+
+    stopped = eventually(lambda: unit("ActiveState") == "inactive", 120, 3)
+    checks.expect(stopped and unit("UnitFileState") == "disabled",
+                  f"AgentReset stopped and disabled {AGENT_UNIT}",
+                  f"{unit('ActiveState')}, {unit('UnitFileState')}")
+    left = ssh("machinectl list-images --no-legend; ls /run/bpffs; sudo ls -A /etc/aks-flex-node",
+               check=False).stdout.strip()
+    checks.expect(left == "", "AgentReset removed the machines, their bpffs mounts, and the "
+                  "agent's config and state", left)
+    checks.expect(ssh("test -f /etc/sysconfig/aks-flex-node-container", check=False).returncode == 0,
+                  "the agent container's own config survives AgentReset")
+
+    # As AKS does once the agent stops.
+    kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
+    log(f"bootstrapping {HOSTNAME} again")
+    config = agent_config(create_bootstrap_token(), kubernetes_version())
+    ssh(f"sudo install -m 0600 /dev/stdin {AGENT_CONFIG}", input=json.dumps(config, indent=2) + "\n")
+    ssh(f"sudo systemctl enable --now {AGENT_UNIT}")
+    checks.expect(eventually(node_ready, 1200, 10), f"node {HOSTNAME} joins again once bootstrapped",
+                  "" if node_ready() else agent_log_tail())
 
 
 def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
@@ -1223,10 +1295,13 @@ def cmd_check(args: argparse.Namespace) -> None:
     if cluster_enabled():
         check_cluster(checks)
         check_repave(checks)
+        check_node_reboot(checks)
     check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
     if cluster_enabled() and args.reboot:
         wait_for_node_ready()
         checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
+    if cluster_enabled():
+        check_agent_reset(checks)
     checks.done()
 
 
