@@ -1,0 +1,33 @@
+#!/bin/bash
+# Entrypoint of the prototype agent container.
+#
+# It checks what the agent relies on, the host root at /host and the host's
+# machinectl answering over D-Bus, logs it, and idles. The agent does not run
+# yet; see hack/acl-container/DESIGN.md. A failed check exits, so systemd
+# restarts the container and the failure shows in its unit's log.
+set -uo pipefail
+
+log() { echo "flex-agent: $*"; }
+
+trap 'log "stopping"; exit 0' TERM INT
+
+log "$(aks-flex-node version | paste -sd ' ')"
+if [[ ! -e /host/etc/os-release ]]; then
+    log "error: the host root is not mounted at /host"
+    exit 1
+fi
+# shellcheck source=/dev/null
+log "host: $(. /host/etc/os-release && echo "$PRETTY_NAME")"
+log "SELinux context: $(tr -d '\0' </proc/self/attr/current 2>/dev/null || echo none)"
+log "PID namespace: $(readlink /proc/self/ns/pid), host $(readlink /proc/1/ns/pid)"
+if ! machines=$(machinectl list --no-legend --no-pager 2>&1); then
+    log "error: the host's machinectl failed: $machines"
+    exit 1
+fi
+log "host $(machinectl --version | head -1); $(grep -c . <<<"$machines") machine(s) running"
+log "agent container ready"
+
+while :; do
+    sleep infinity &
+    wait $!
+done
