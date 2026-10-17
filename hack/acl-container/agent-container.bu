@@ -10,6 +10,10 @@
 #                        `ctr image pull`, such as --plain-http for a registry
 #                        without TLS
 #
+# AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS and AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS,
+# unset by default, pass a snapshotter to `ctr image pull` and `ctr run`;
+# selinux-workaround.bu sets them.
+#
 # The container joins the host's network and PID namespaces and gets the host's
 # root at /host, so it has the host's systemd, machinectl, and nspawn machines,
 # but its own root filesystem.
@@ -41,8 +45,8 @@ systemd:
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
         # The progress bars go nowhere; errors still reach the journal.
-        ExecStartPre=/bin/sh -c 'exec /usr/bin/ctr --namespace aks-flex image pull $$AKS_FLEX_NODE_PULL_ARGS "$$AKS_FLEX_NODE_IMAGE" >/dev/null'
-        ExecStart=/usr/bin/ctr --namespace aks-flex run --rm \
+        ExecStartPre=/bin/sh -c 'exec /usr/bin/ctr --namespace aks-flex image pull $$AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $$AKS_FLEX_NODE_PULL_ARGS "$$AKS_FLEX_NODE_IMAGE" >/dev/null'
+        ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node
