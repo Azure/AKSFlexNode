@@ -37,11 +37,12 @@ Separately, not needed by Flex: ACL is considering
 
 The agent in a container must do what `main`'s agent does on an Ubuntu host,
 with the same config and commands. `start`, the daemon's reconciliation of the
-Machine goal state, and repave work: `harness.py up --cluster` joins the VM to a
-kind cluster through `main`'s in-cluster controller, and `check` runs a pod on
-it, repaves it from kube1 to kube2 as `main`'s e2e does, and reboots it.
+Machine goal state, repave, and the `NodeReboot` and `AgentReset`
+MachineOperations work: `harness.py up --cluster` joins the VM to a kind cluster
+through `main`'s in-cluster controller, and `check` runs a pod on it, repaves it
+from kube1 to kube2 as `main`'s e2e does, restarts its machine, reboots it,
+resets it, and bootstraps it again.
 
-- [ ] `NodeReboot` and `AgentReset` MachineOperations
 - [ ] `reset`
 - [ ] `AgentUpgrade`, which becomes a new image (see below)
 
@@ -72,8 +73,14 @@ host.
       Ignition config, and the entrypoint runs `start`. Decide how operators
       deliver the config in their Butane, and how it's fetched from the AKS
       RP, as `main`'s `scripts/bootstrap.sh` does with bootstrap data.
-- [ ] Reset and uninstall: remove the container's unit and image instead of
-      the agent's units and binaries.
+- [ ] Reset and uninstall: in a container, stopping the agent disables and
+      stops the container's unit, as `AgentReset` does, and the agent's
+      directories, mounts in the container, are emptied rather than removed.
+      `aks-flex-node reset` stops the agent first, so in a container it can't
+      run in the agent's own: give operators a way to run it in a container
+      of its own, with the same mounts. Uninstall would also remove the
+      container's unit and image, as `main`'s removes the agent's units and
+      binaries.
 - [ ] Preflight: in a container, `host-packages` checks the image's package
       database, and `containerd-active` warns that bootstrap will disable
       containerd, which Flex never does (on `main` either). Drop or reword
@@ -108,6 +115,9 @@ host.
       including `DESIGN.md` pointing to its host-root work as a starting
       point. `DESIGN.md` also says `host-exec` always uses `chroot /host`;
       `mount`, `umount`, and `mountpoint` now run in the host's mount
-      namespace instead. Update them when the docs are next revised.
+      namespace instead. `README.md` puts the container's image reference in
+      `/etc/aks-flex-node/agent-container.env`, now
+      `/etc/sysconfig/aks-flex-node-container`, out of reset's reach. Update
+      them when the docs are next revised.
 - [ ] Consider CI for `hack/acl-container`: ShellCheck, Python compile, and
       Butane `--strict` rendering.
