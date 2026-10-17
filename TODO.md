@@ -48,42 +48,38 @@ with the same config and commands:
 
 ## Run the real agent in the container
 
-The image carries `aks-flex-node` from `main`, but the entrypoint only checks
-its access to the host and idles.
+The image carries `aks-flex-node` from `main`. `aks-flex-node start` already
+works from the container: it sets up the host, provisions and starts kube1, and
+installs the nspawn lifecycle helper, which host systemd runs. The container
+gets the host's paths at their own paths and runs the host's tools through
+`host-exec`, and `/usr/local`, read-only on ACL, has a writable overlay. The
+entrypoint still only checks its access to the host and idles.
 
-- [ ] Host OS detection: in the container, `/etc/os-release` is the image's
-      (Azure Linux 3), not the host's. The agent has to read the host's,
-      through `/host`, or be told what it is.
-- [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection. Stay
-      on it unless a specific fix needs a newer one, and bump it in a commit
-      of its own.
-- [ ] Host paths: the agent writes `/etc/systemd/system`,
-      `/etc/systemd/nspawn`, `/var/lib/machines`, `/etc/aks-flex-node`,
-      `/var/log/aks-flex-node`, and its install directory as absolute paths.
-      Prefer bind-mounting each into the container at the same path, which
-      needs no change to the agent.
-- [ ] Host commands: the image needs the `ip`, `nft`, `sysctl` and `modprobe`
-      the agent runs, at versions that suit the host kernel. `systemctl`,
-      `machinectl`, `systemd-run` and `journalctl` already run the host's
-      copies through `host-exec`.
-- [ ] Self-installation: add a small switch that stops the agent copying
-      itself onto the host, writing `aks-flex-node-agent.service` and its
-      recovery unit, and doing blue/green binary upgrades. The image and
-      `aks-flex-node-container.service` replace them, and an upgrade is a new
-      image.
+- [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
+      needs none so far. Stay on it unless a specific fix needs a newer one,
+      and bump it in a commit of its own.
+- [ ] Daemon: run `aks-flex-node daemon` in the container, after `start`. In a
+      container `start` doesn't install the agent's binary and unit on the
+      host; check the daemon makes no assumptions about them, such as
+      repairing its own unit.
+- [ ] Upgrades: turn `AgentUpgrade`'s blue/green binary switching into an
+      image update.
 - [ ] Recovery: replace `aks-flex-node-recovery.sh`. Recovery triggered by the
       container's unit failing can't run in that container. Run it as a
       separate container, which works in `spc_t`. If it's a host script
       instead, it runs as `kernel_t` and can't `reset-failed`, so it needs to
       wait out the unit's start limit and retry.
-- [ ] nspawn lifecycle hooks: host systemd runs the agent's lifecycle helper
-      around every machine start, from the host's filesystem. Either the
-      image installs it on the host or the hooks move into the agent.
 - [ ] Bootstrap: provide what `main`'s `scripts/bootstrap.sh` does,
       `/etc/aks-flex-node/config.json` and `aks-flex-node start`, from
       Ignition and the container instead of a script run on the host.
 - [ ] Reset and uninstall: remove the container's unit and image instead of
-      the agent's units and binaries.
+      the agent's units and binaries. The container's mounts of host paths
+      are slaves, so a mount or unmount the agent makes from the container,
+      such as of a machine's bpffs during reset, doesn't reach the host.
+- [ ] Preflight: in a container, `host-packages` checks the image's package
+      database, and `containerd-active` warns that bootstrap will disable
+      containerd, which Flex never does (on `main` either). Drop or reword
+      both in a container.
 - [ ] End-to-end: join a cluster from the container and run a pod. `main`'s
       e2e joins Ubuntu VMs to AKS in Azure; decide whether to add ACL VMs to
       it, or a local cluster to the harness. Under SELinux, machines created

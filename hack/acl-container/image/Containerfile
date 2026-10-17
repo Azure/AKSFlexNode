@@ -51,11 +51,19 @@ LABEL org.opencontainers.image.title="aks-flex-node-agent" \
 RUN tdnf install -y ca-certificates tar util-linux procps-ng jq less \
     && tdnf clean all
 
-COPY --from=build /out/aks-flex-node /out/crane /usr/local/bin/
-COPY hack/acl-container/image/bin/ /usr/local/bin/
+# The container mounts the host's /usr/local, where the agent installs its host
+# helpers, so the image's own programs live in /opt/aks-flex-node/bin.
+COPY --from=build /out/aks-flex-node /out/crane /opt/aks-flex-node/bin/
+COPY hack/acl-container/image/bin/ /opt/aks-flex-node/bin/
 # These names run the host's binaries against the host root; see host-exec.
-RUN for tool in machinectl systemctl systemd-run journalctl; do \
-      ln -s host-exec /usr/local/bin/$tool; \
+# The agent runs them by name, and the host's copies match its systemd and
+# kernel.
+RUN for tool in machinectl systemctl systemd-run systemd-nspawn journalctl \
+        ip nft sysctl modprobe swapoff udevadm; do \
+      ln -s host-exec /opt/aks-flex-node/bin/$tool; \
     done
 
-ENTRYPOINT ["/usr/local/bin/flex-agent-entrypoint"]
+ENV PATH=/opt/aks-flex-node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    AKS_FLEX_NODE_CONTAINERIZED=true
+
+ENTRYPOINT ["/opt/aks-flex-node/bin/flex-agent-entrypoint"]

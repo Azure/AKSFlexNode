@@ -641,7 +641,7 @@ def check_container(checks: Checks) -> None:
     checks.expect(agent_out("machinectl --version | head -1") == version,
                   f"machinectl in the container is the host's ({version})")
     checks.expect(agent_out("command -v machinectl; readlink -f $(command -v machinectl)")
-                  .splitlines()[-1] == "/usr/local/bin/host-exec",
+                  .splitlines()[-1] == "/opt/aks-flex-node/bin/host-exec",
                   "machinectl in the container is the host-exec shim, not a copy")
     checks.expect(agent_out("aks-flex-node version | head -1") == "AKS Flex Node Agent",
                   "the aks-flex-node binary is in the image")
