@@ -37,6 +37,16 @@ func TestContainerized(t *testing.T) {
 	}
 }
 
+func TestEnsureHostInstallDoesNothingInAContainer(t *testing.T) {
+	t.Parallel()
+
+	// A nil config would fail any attempt to converge the host install, and the host install
+	// itself writes under /usr/local and /etc/systemd, which a test must not touch.
+	if err := ensureHostInstall(t.Context(), discardLogger(), nil, true); err != nil {
+		t.Fatalf("ensureHostInstall(containerized=true) = %v, want nil", err)
+	}
+}
+
 func TestSetupHostInstallsPackagesOnlyOnTheHost(t *testing.T) {
 	t.Parallel()
 
