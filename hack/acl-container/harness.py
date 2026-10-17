@@ -2,6 +2,7 @@
 """Prototype: run the AKS Flex Node agent as a privileged containerd container on Azure Container Linux.
 
     hack/acl-container/harness.py up [--image ACL.qcow2]   build and push the agent image, boot the VM
+        [--selinux-workaround]                             (current ACL images need the workaround)
     hack/acl-container/harness.py push                     rebuild and push the image, restart the container
     hack/acl-container/harness.py check                    run the feasibility checks
     hack/acl-container/harness.py status                   show the VM, agent container, and machines
@@ -68,6 +69,10 @@ LOCAL_AGENT_IMAGE = f"localhost/{AGENT_REPOSITORY}:{AGENT_TAG}"
 VM_AGENT_IMAGE = f"{GATEWAY}:{REGISTRY_PORT}/{AGENT_REPOSITORY}:{AGENT_TAG}"
 BUTANE_TEMPLATE = HERE / "agent-container.bu"
 BUTANE_IMAGE = os.environ.get("ACLC_BUTANE_IMAGE", "quay.io/coreos/butane:v0.29.0")
+# Development only, until ACL's SELinux policy lets the agent container reach the host's D-Bus;
+# see selinux-workaround.bu. up records whether it applied it, so push and check match it.
+SELINUX_WORKAROUND_BUTANE = HERE / "selinux-workaround.bu"
+SELINUX_WORKAROUND_MARKER = STATE / "selinux-workaround"
 
 # Must match agent-container.bu.
 AGENT_UNIT = "aks-flex-node-container.service"
@@ -140,13 +145,20 @@ def wait_until(description: str, timeout: float, probe, interval: float = 5) -> 
 # Agent image and registry
 
 
-def build_agent_image() -> None:
+def build_agent_image(squash: bool) -> None:
     commit = capture(["git", "rev-parse", "--short", "HEAD"], cwd=REPO) if (REPO / ".git").exists() else "unknown"
     dirty = run(["git", "diff", "--quiet", "HEAD"], check=False, cwd=REPO).returncode != 0
     log(f"building {LOCAL_AGENT_IMAGE} with {ENGINE}")
-    run([ENGINE, "build", "-f", str(HERE / "image" / "Containerfile"),
+    # With the SELinux workaround, the VM unpacks the image with containerd's native snapshotter,
+    # which keeps a full copy of the filesystem at every layer. One layer keeps that to one copy.
+    squash_args = ["--squash-all"] if squash and ENGINE == "podman" else []
+    run([ENGINE, "build", *squash_args, "-f", str(HERE / "image" / "Containerfile"),
          "--build-arg", f"GIT_COMMIT={commit}{'-dirty' if dirty else ''}",
          "-t", LOCAL_AGENT_IMAGE, str(REPO)])
+
+
+def selinux_workaround_enabled() -> bool:
+    return SELINUX_WORKAROUND_MARKER.exists()
 
 
 def registry_running() -> bool:
@@ -268,9 +280,10 @@ def butane(template: Path, files: Path) -> dict:
     return json.loads(rendered)
 
 
-def render_ignition(with_agent: bool) -> dict:
-    """Render agent-container.bu, from the one file it names. Without the agent, the VM gets only
-    the harness's access."""
+def render_ignition(with_agent: bool, selinux_workaround: bool) -> dict:
+    """Render agent-container.bu, from the one file it names. With the SELinux workaround,
+    selinux-workaround.bu is merged in through Ignition's own config merge, which adds its drop-in
+    to the agent's unit. Without the agent, the VM gets only the harness's access."""
     if not with_agent:
         return {"ignition": {"version": "3.4.0"}}
     files = STATE / "butane-files"
@@ -280,7 +293,12 @@ def render_ignition(with_agent: bool) -> dict:
         AKS_FLEX_NODE_IMAGE={VM_AGENT_IMAGE}
         AKS_FLEX_NODE_PULL_ARGS=--plain-http
     """))
-    return butane(BUTANE_TEMPLATE, files)
+    doc = butane(BUTANE_TEMPLATE, files)
+    if selinux_workaround:
+        workaround = butane(SELINUX_WORKAROUND_BUTANE, files)
+        doc["ignition"].setdefault("config", {}).setdefault("merge", []).append(
+            {"source": data_url(json.dumps(workaround))})
+    return doc
 
 
 def data_url(content: str) -> str:
@@ -508,9 +526,23 @@ def wait_for_agent(timeout: float = 600) -> None:
         if agent_task_status() == "RUNNING":
             # The entrypoint logs its checks, then idles. Only this start of the unit counts: the
             # journal keeps the lines of the ones before it.
-            return "agent container ready" in ssh(
-                f"id=$(systemctl show {AGENT_UNIT} -p InvocationID --value) && [ -n \"$id\" ] && "
-                f"journalctl -b --no-pager -o cat _SYSTEMD_INVOCATION_ID=$id", check=False).stdout
+            if "agent container ready" in ssh(
+                    f"id=$(systemctl show {AGENT_UNIT} -p InvocationID --value) && [ -n \"$id\" ] && "
+                    f"journalctl -b --no-pager -o cat _SYSTEMD_INVOCATION_ID=$id", check=False).stdout:
+                return True
+        # The entrypoint exits when the host's machinectl fails, and systemd restarts it, so a
+        # denial would otherwise only show as a timeout.
+        failure = ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -o cat | grep -m1 'machinectl failed'",
+                      check=False).stdout.strip()
+        if "Access denied" in failure:
+            if selinux_workaround_enabled():
+                hint = ("This is with the SELinux workaround; look for denials with "
+                        "`sudo journalctl -b | grep 'avc:  denied'` on the VM.")
+            else:
+                hint = ("ACL's SELinux policy denies it until it allows "
+                        "`allow spc_t kernel_t:dbus send_msg;` (see SELINUX.md). Until then, run "
+                        "`up --selinux-workaround`.")
+            die(f"the agent container cannot reach the host's systemd over D-Bus: {failure}\n{hint}")
         state = ssh(f"systemctl show {AGENT_UNIT} -p ActiveState --value", check=False).stdout.strip()
         if state == "failed":
             print(ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -n 40", check=False).stdout)
@@ -585,6 +617,12 @@ def check_container(checks: Checks) -> None:
     checks.expect(ssh(f"systemctl is-active {AGENT_UNIT}", check=False).stdout.strip() == "active",
                   f"{AGENT_UNIT} is active")
     checks.expect(agent_task_status() == "RUNNING", "the agent task runs in containerd")
+
+    expected = "kernel_t" if selinux_workaround_enabled() else "spc_t"
+    context = agent_out("tr -d '\\0' </proc/self/attr/current")
+    checks.expect(f":{expected}:" in context,
+                  f"the agent container runs as {expected}, "
+                  f"{'with' if expected == 'kernel_t' else 'without'} the SELinux workaround", context)
 
     host_root = ssh_out("sudo stat -c %d:%i /")
     checks.expect(agent_out("stat -c %d:%i /host") == host_root,
@@ -701,13 +739,19 @@ def cmd_up(args: argparse.Namespace) -> None:
     stop_vm()
     STATE.mkdir(parents=True, exist_ok=True)
     public_key = ensure_ssh_key()
+    workaround = args.agent and args.selinux_workaround
+    if workaround:
+        SELINUX_WORKAROUND_MARKER.touch()
+    else:
+        SELINUX_WORKAROUND_MARKER.unlink(missing_ok=True)
 
     create_network()
     if args.agent:
-        build_agent_image()
+        log(f"SELinux workaround: {'on' if workaround else 'off'}")
+        build_agent_image(squash=workaround)
         push_agent_image()
 
-    doc = add_harness_access(render_ignition(args.agent), public_key)
+    doc = add_harness_access(render_ignition(args.agent, workaround), public_key)
     ignition = STATE / IGNITION_NAME
     ignition.write_text(json.dumps(doc, indent=2) + "\n")
     ignition.chmod(0o600)
@@ -723,7 +767,7 @@ def cmd_up(args: argparse.Namespace) -> None:
 
 def cmd_push(_: argparse.Namespace) -> None:
     require_vm()
-    build_agent_image()
+    build_agent_image(squash=selinux_workaround_enabled())
     push_agent_image()
     log(f"restarting {AGENT_UNIT}, which pulls the new image")
     ssh(f"sudo systemctl restart {AGENT_UNIT}")
@@ -742,7 +786,8 @@ def cmd_status(_: argparse.Namespace) -> None:
     if not vm_running():
         log("the VM is not running")
         return
-    log(f"VM {HOSTNAME} at {VM_IP} is running")
+    log(f"VM {HOSTNAME} at {VM_IP} is running; SELinux workaround "
+        f"{'on' if selinux_workaround_enabled() else 'off'}")
     print(ssh(f"systemctl status {AGENT_UNIT} --no-pager -n 0 | head -5; echo; "
               f"sudo {CTR} task ls; echo; machinectl list --all; echo; machinectl list-images",
               check=False).stdout)
@@ -795,6 +840,11 @@ def main() -> None:
                          "gallery image is exported to ACL_IMAGE_DIR and booted")
     up.add_argument("--no-agent", dest="agent", action="store_false",
                     help="boot plain Azure Container Linux, without the agent container")
+    up.add_argument("--selinux-workaround", action="store_true",
+                    default=os.environ.get("ACLC_SELINUX_WORKAROUND", "") in ("1", "true", "yes"),
+                    help="run the agent container through selinux-workaround.bu, which ACL images "
+                         "need until their policy allows the container's D-Bus messages (or "
+                         "ACLC_SELINUX_WORKAROUND=1)")
     up.set_defaults(func=cmd_up)
 
     push = commands.add_parser("push", help="rebuild and push the agent image, and restart the container")
