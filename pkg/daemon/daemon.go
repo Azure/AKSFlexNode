@@ -48,10 +48,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup,
 	// except while an AgentUpgrade is pending; see ensureDaemonServiceAssets.
-	if err := InstallHostBinary(ctx, log); err != nil {
-		return err
+	if !Containerized() {
+		if err := InstallHostBinary(ctx, log); err != nil {
+			return err
+		}
 	}
-	heldServiceAssets, err := ensureDaemonServiceAssets(ctx, log, cfg)
+	heldServiceAssets, err := ensureHostInstall(ctx, log, cfg, Containerized())
 	if err != nil {
 		return err
 	}
