@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,6 +47,96 @@ func TestEnsureHostInstallDoesNothingInAContainer(t *testing.T) {
 	// itself writes under /usr/local and /etc/systemd, which a test must not touch.
 	if err := ensureHostInstall(t.Context(), discardLogger(), nil, true); err != nil {
 		t.Fatalf("ensureHostInstall(containerized=true) = %v, want nil", err)
+	}
+}
+
+func TestUninstallServiceStopsTheContainerInAContainer(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		containerized bool
+		want          string
+	}{
+		"on the host":    {containerized: false, want: "uninstall-service"},
+		"in a container": {containerized: true, want: "stop-agent-container"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := uninstallService(discardLogger(), tc.containerized).Name(); got != tc.want {
+				t.Errorf("uninstallService(containerized=%v) = %q, want %q", tc.containerized, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStopContainerService(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		failOn         string
+		stopEndsCaller bool
+		wantCalls      []string
+		wantErr        bool
+	}{
+		"disables then stops the unit": {
+			wantCalls: []string{
+				"disable " + ContainerServiceUnitName,
+				"stop " + ContainerServiceUnitName,
+			},
+		},
+		// Stopping a unit that would come back at the next boot leaves the agent half stopped.
+		"doesn't stop the unit when disabling fails": {
+			failOn:    "disable",
+			wantCalls: []string{"disable " + ContainerServiceUnitName},
+			wantErr:   true,
+		},
+		"reports a failed stop": {
+			failOn: "stop",
+			wantCalls: []string{
+				"disable " + ContainerServiceUnitName,
+				"stop " + ContainerServiceUnitName,
+			},
+			wantErr: true,
+		},
+		// As when the daemon stops its own container: the stop's SIGTERM cancels its context,
+		// which kills systemctl.
+		"a stop that ends the caller isn't a failure": {
+			failOn:         "stop",
+			stopEndsCaller: true,
+			wantCalls: []string{
+				"disable " + ContainerServiceUnitName,
+				"stop " + ContainerServiceUnitName,
+			},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var calls []string
+			task := newStopContainerServiceTask(discardLogger())
+			task.systemctl = func(_ context.Context, args ...string) error {
+				calls = append(calls, strings.Join(args, " "))
+				if args[0] == "stop" && tc.stopEndsCaller {
+					cancel()
+				}
+				if args[0] == tc.failOn {
+					return errors.New("systemctl failed")
+				}
+				return nil
+			}
+			err := task.Do(ctx)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Do() error = %v, want error %v", err, tc.wantErr)
+			}
+			if !slices.Equal(calls, tc.wantCalls) {
+				t.Errorf("systemctl calls = %q, want %q", calls, tc.wantCalls)
+			}
+		})
 	}
 }
 

@@ -182,7 +182,15 @@ type uninstallServiceTask struct {
 }
 
 // UninstallService returns a task that stops, disables, removes, and reloads the systemd unit.
+// In the agent's container, it disables and stops the container's unit instead.
 func UninstallService(log *slog.Logger) phases.Task {
+	return uninstallService(log, Containerized())
+}
+
+func uninstallService(log *slog.Logger, containerized bool) phases.Task {
+	if containerized {
+		return newStopContainerServiceTask(log)
+	}
 	return &uninstallServiceTask{log: log}
 }
 
