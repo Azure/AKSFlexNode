@@ -59,7 +59,7 @@ COPY hack/acl-container/image/bin/ /opt/aks-flex-node/bin/
 # The agent runs them by name, and the host's copies match its systemd and
 # kernel.
 RUN for tool in machinectl systemctl systemd-run systemd-nspawn journalctl \
-        ip nft sysctl modprobe swapoff udevadm; do \
+        ip nft sysctl modprobe swapoff udevadm mount umount mountpoint; do \
       ln -s host-exec /opt/aks-flex-node/bin/$tool; \
     done
 

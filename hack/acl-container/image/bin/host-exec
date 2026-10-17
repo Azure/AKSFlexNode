@@ -2,12 +2,12 @@
 # Run one of the host's tools against the host root, which the agent container
 # mounts at /host.
 #
-# The image links machinectl, systemctl, systemd-run, and journalctl to this
-# script, so those names run the host's binaries, with the host's libraries and
-# configuration, rather than copies in the image that could disagree with the
-# host's systemd. /host is a recursive bind of the host's /, so under chroot
-# /run, with the D-Bus socket, is the host's, and so is /proc, since the
-# container shares the host's PID namespace.
+# The image links the host tools the agent runs, such as machinectl and
+# systemctl, to this script (see its Containerfile), so those names run the
+# host's binaries, with the host's libraries and configuration, rather than
+# copies in the image that could disagree with the host. /host is a recursive
+# bind of the host's /, so under chroot /run, with the D-Bus socket, is the
+# host's, and so is /proc, since the container shares the host's PID namespace.
 #
 #   host-exec COMMAND [ARGS...]   run any host command
 set -euo pipefail
@@ -27,4 +27,13 @@ if [[ ! -x $host_root/usr/bin/env ]]; then
     echo "host-exec: the host root is not mounted at $host_root" >&2
     exit 1
 fi
-exec chroot "$host_root" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin "$name" "$@"
+host_path=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+case $name in
+    # The container's mounts of host paths are slaves of the host's, so a
+    # mount or unmount made in the container's mount namespace, chroot or not,
+    # never reaches the host. These run in the host's, PID 1's, instead.
+    mount | umount | mountpoint)
+        exec nsenter --mount=/proc/1/ns/mnt -- /usr/bin/env "$host_path" "$name" "$@"
+        ;;
+esac
+exec chroot "$host_root" /usr/bin/env "$host_path" "$name" "$@"
