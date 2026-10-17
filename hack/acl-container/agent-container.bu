@@ -16,10 +16,24 @@
 #
 # The container joins the host's network and PID namespaces and gets the host's
 # root at /host, so it has the host's systemd, machinectl, and nspawn machines,
-# but its own root filesystem.
+# but its own root filesystem. The host paths the agent writes are also mounted
+# at their own paths, so the agent, unchanged, writes the host's.
 variant: flatcar
 version: 1.1.0
 storage:
+  directories:
+    - path: /etc/aks-flex-node
+      mode: 0755
+    - path: /etc/unbounded
+      mode: 0755
+    - path: /var/lib/unbounded
+      mode: 0755
+    - path: /var/log/aks-flex-node
+      mode: 0755
+    - path: /var/lib/aks-flex-node/usr-local/upper
+      mode: 0755
+    - path: /var/lib/aks-flex-node/usr-local/work
+      mode: 0755
   files:
     - path: /etc/aks-flex-node/agent-container.env
       mode: 0644
@@ -28,14 +42,33 @@ storage:
         local: agent-container.env
 systemd:
   units:
+    # The agent installs its host helpers under /usr/local, as on main, and
+    # host systemd runs them, such as the nspawn lifecycle helper at every
+    # machine start. ACL's /usr, and /usr/local with it, is read-only, so an
+    # overlay gives /usr/local a writable layer in /var.
+    - name: usr-local.mount
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Writable /usr/local for the AKS Flex Node agent
+        Before=aks-flex-node-container.service
+
+        [Mount]
+        What=overlay
+        Where=/usr/local
+        Type=overlay
+        Options=lowerdir=/usr/local,upperdir=/var/lib/aks-flex-node/usr-local/upper,workdir=/var/lib/aks-flex-node/usr-local/work
+
+        [Install]
+        WantedBy=local-fs.target
     - name: aks-flex-node-container.service
       enabled: true
       contents: |
         [Unit]
         Description=AKS Flex Node agent container
         Wants=network-online.target
-        After=network-online.target containerd.service
-        Requires=containerd.service
+        After=network-online.target containerd.service usr-local.mount
+        Requires=containerd.service usr-local.mount
 
         [Service]
         EnvironmentFile=/etc/aks-flex-node/agent-container.env
@@ -49,6 +82,17 @@ systemd:
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+          --mount type=bind,src=/etc/os-release,dst=/etc/os-release,options=rbind:ro \
+          --mount type=bind,src=/etc/systemd,dst=/etc/systemd,options=rbind:rslave \
+          --mount type=bind,src=/etc/sysctl.d,dst=/etc/sysctl.d,options=rbind:rslave \
+          --mount type=bind,src=/etc/modules-load.d,dst=/etc/modules-load.d,options=rbind:rslave \
+          --mount type=bind,src=/etc/aks-flex-node,dst=/etc/aks-flex-node,options=rbind:rslave \
+          --mount type=bind,src=/etc/unbounded,dst=/etc/unbounded,options=rbind:rslave \
+          --mount type=bind,src=/var/lib/machines,dst=/var/lib/machines,options=rbind:rslave \
+          --mount type=bind,src=/var/lib/unbounded,dst=/var/lib/unbounded,options=rbind:rslave \
+          --mount type=bind,src=/var/log/aks-flex-node,dst=/var/log/aks-flex-node,options=rbind:rslave \
+          --mount type=bind,src=/run,dst=/run,options=rbind:rslave \
+          --mount type=bind,src=/usr/local,dst=/usr/local,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node
         ExecStop=/usr/bin/ctr --namespace aks-flex task kill --signal SIGTERM aks-flex-node
         Restart=always
