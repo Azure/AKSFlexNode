@@ -82,6 +82,26 @@ CTR = f"ctr --namespace {CTR_NAMESPACE}"
 
 CHECK_MACHINE = "aclc-check"
 IGNITION_NAME = "config.ign"
+AGENT_CONFIG = "/etc/aks-flex-node/config.json"
+
+# The kind cluster up --cluster creates for the agent to join, on root Podman. Its node joins the
+# VM's bridge at KIND_BRIDGE_IP, where the VM reaches the API server.
+CLUSTER = os.environ.get("ACLC_KIND_CLUSTER", "aclc")
+KIND_NODE = f"{CLUSTER}-control-plane"
+KIND_NODE_IMAGE = os.environ.get("ACLC_KIND_NODE_IMAGE", "")
+KIND_BRIDGE_IP = f"{SUBNET}.2"
+API_SERVER = f"{KIND_BRIDGE_IP}:6443"
+VETH_HOST = "veth-aclc-kind"
+VETH_KIND = "eth-aclc"
+KUBECONFIG = STATE / "kubeconfig"
+CLUSTER_MARKER = STATE / "cluster"
+CONTROLLER_IMAGE = "localhost/aks-flex-controller:aclc"
+# main's in-cluster machine endpoint, through the API server's service proxy.
+PROXY_PATH = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
+BOOTSTRAP_GROUP = "system:bootstrappers:aks-flex-node"
+AGENT_POOL = "aclc"
+FAKE_CLUSTER_ID = ("/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/aclc"
+                   "/providers/Microsoft.ContainerService/managedClusters/aclc")
 
 SSH_KEY = STATE / "ssh" / "id_ed25519"
 SSH_OPTS = [
@@ -114,8 +134,9 @@ def die(message: str) -> None:
 
 
 def run(cmd: list[str], *, check: bool = True, capture: bool = False, input: str | None = None,
-        cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(cmd, check=False, text=True, input=input, cwd=cwd,
+                            env={**os.environ, **env} if env else None,
                             stdout=subprocess.PIPE if capture else None,
                             stderr=subprocess.PIPE if capture else None)
     if check and result.returncode != 0:
@@ -243,7 +264,7 @@ def docker_uses_nft() -> bool:
 
 
 def delete_network() -> None:
-    for iface in (TAP, BRIDGE):
+    for iface in (TAP, VETH_HOST, BRIDGE):
         sudo("ip", "link", "delete", iface, check=False)
     for chain_opt in ("-i", "-o"):
         while sudo("iptables", "-D", "FORWARD", chain_opt, BRIDGE, "-j", "ACCEPT",
@@ -267,6 +288,307 @@ def restore_forwarding() -> None:
         log(f"restoring IPv4 forwarding to {value}")
         sudo("sysctl", "-q", "-w", f"net.ipv4.ip_forward={value}", check=False)
         saved.unlink()
+
+
+# ---------------------------------------------------------------------------------------------
+# Cluster
+#
+# A kind cluster for the agent to join, with main's in-cluster controller as its machine
+# endpoint and a bootstrap token for the node, so no Azure resources are involved. kind runs on
+# root Podman, since attaching its node to the VM's bridge needs root anyway.
+
+
+def kind(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    binary = shutil.which("kind")
+    if binary is None:
+        die("kind is needed for --cluster")
+        raise AssertionError
+    return run(["sudo", "env", "KIND_EXPERIMENTAL_PROVIDER=podman", binary, *args],
+               check=check, capture=not check)
+
+
+def kubectl(*args: str, check: bool = True, input: str | None = None,
+            quiet: bool = False) -> subprocess.CompletedProcess[str]:
+    return run(["kubectl", "--kubeconfig", str(KUBECONFIG), *args], check=check, input=input,
+               capture=quiet)
+
+
+def kubectl_out(*args: str) -> str:
+    return capture(["kubectl", "--kubeconfig", str(KUBECONFIG), *args])
+
+
+def cluster_exists() -> bool:
+    return CLUSTER in kind("get", "clusters", check=False).stdout.split()
+
+
+def cluster_enabled() -> bool:
+    return CLUSTER_MARKER.exists()
+
+
+def create_cluster() -> None:
+    if cluster_exists():
+        log(f"deleting kind cluster {CLUSTER}, left from an earlier run")
+        kind("delete", "cluster", "--name", CLUSTER)
+    # Patches replace lists, so the certificate keeps kind's own names too.
+    config = STATE / "kind.yaml"
+    config.write_text(textwrap.dedent(f"""\
+        kind: Cluster
+        apiVersion: kind.x-k8s.io/v1alpha4
+        kubeadmConfigPatches:
+          - |
+            kind: ClusterConfiguration
+            apiServer:
+              certSANs: ["localhost", "127.0.0.1", "{KIND_BRIDGE_IP}"]
+    """))
+    log(f"creating kind cluster {CLUSTER} on root Podman")
+    cmd = ["create", "cluster", "--name", CLUSTER, "--config", str(config),
+           "--kubeconfig", str(KUBECONFIG), "--wait", "180s"]
+    if KIND_NODE_IMAGE:
+        cmd += ["--image", KIND_NODE_IMAGE]
+    kind(*cmd)
+    sudo("chown", f"{os.getuid()}:{os.getgid()}", str(KUBECONFIG))
+    attach_kind_to_bridge()
+    advertise_bridge_address()
+    point_cluster_at_bridge()
+
+
+def attach_kind_to_bridge() -> None:
+    """Give the kind node an address on the VM's bridge, where the VM reaches the API server and
+    the API server reaches the node's kubelet."""
+    log(f"attaching {KIND_NODE} to {BRIDGE} as {KIND_BRIDGE_IP}")
+    pid = capture(["sudo", "podman", "inspect", KIND_NODE, "--format", "{{.State.Pid}}"])
+    sudo("ip", "link", "delete", VETH_HOST, check=False)
+    sudo("ip", "link", "add", VETH_HOST, "type", "veth", "peer", "name", VETH_KIND)
+    sudo("ip", "link", "set", VETH_HOST, "master", BRIDGE)
+    sudo("ip", "link", "set", VETH_HOST, "up")
+    sudo("ip", "link", "set", VETH_KIND, "netns", pid)
+    sudo("nsenter", "-t", pid, "-n", "ip", "addr", "add", f"{KIND_BRIDGE_IP}/24", "dev", VETH_KIND)
+    sudo("nsenter", "-t", pid, "-n", "ip", "link", "set", VETH_KIND, "up")
+
+
+def advertise_bridge_address() -> None:
+    """Make the control plane's node advertise its bridge address. kindnet on the agent's node
+    routes the control plane's pod CIDR through it, and the VM can't reach the node's Podman
+    address."""
+    script = textwrap.dedent(f"""\
+        set -eu
+        . /var/lib/kubelet/kubeadm-flags.env
+        set -- $KUBELET_KUBEADM_ARGS
+        args=""
+        for arg do
+          case "$arg" in
+            --node-ip=*) ;;
+            *) args="$args $arg" ;;
+          esac
+        done
+        printf 'KUBELET_KUBEADM_ARGS="%s --node-ip={KIND_BRIDGE_IP}"\\n' "${{args# }}" \\
+          >/var/lib/kubelet/kubeadm-flags.env
+        systemctl restart kubelet
+    """)
+    run(["sudo", "podman", "exec", KIND_NODE, "sh", "-c", script])
+
+    def advertised() -> bool:
+        result = kubectl("get", "node", KIND_NODE, "-o",
+                         "jsonpath={.status.addresses[?(@.type=='InternalIP')].address}",
+                         check=False, quiet=True)
+        return result.returncode == 0 and result.stdout.split() == [KIND_BRIDGE_IP]
+
+    wait_until(f"{KIND_NODE} to advertise {KIND_BRIDGE_IP}", 120, advertised, 3)
+
+
+def point_cluster_at_bridge() -> None:
+    """kindnet and kube-proxy on the agent's node would otherwise reach the API server through the
+    control plane's container hostname, which the VM can't resolve."""
+    patch = {"spec": {"template": {"spec": {"containers": [
+        {"name": "kindnet-cni", "env": [{"name": "CONTROL_PLANE_ENDPOINT", "value": API_SERVER}]}]}}}}
+    kubectl("-n", "kube-system", "patch", "daemonset", "kindnet", "--type=strategic",
+            "-p", json.dumps(patch))
+    kubeconfig = kubectl_out("-n", "kube-system", "get", "configmap", "kube-proxy", "-o",
+                             "jsonpath={.data.kubeconfig\\.conf}")
+    lines = []
+    for line in kubeconfig.splitlines():
+        if line.strip().startswith("server:"):
+            line = f"{line[:len(line) - len(line.lstrip())]}server: https://{API_SERVER}"
+        lines.append(line)
+    kubectl("-n", "kube-system", "patch", "configmap", "kube-proxy", "--type=merge",
+            "-p", json.dumps({"data": {"kubeconfig.conf": "\n".join(lines) + "\n"}}))
+    kubectl("-n", "kube-system", "rollout", "restart", "daemonset/kube-proxy")
+    kubectl("-n", "kube-system", "delete", "pod", "-l", "app=kindnet", "--wait=false")
+    kubectl("-n", "kube-system", "rollout", "status", "daemonset/kindnet", "--timeout=180s")
+    kubectl("-n", "kube-system", "rollout", "status", "daemonset/kube-proxy", "--timeout=180s")
+
+
+# The bindings scripts/aks-flex-config applies for bootstrap-token nodes.
+NODE_RBAC = f"""
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-bootstrapper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node-bootstrapper
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: {BOOTSTRAP_GROUP}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aks-flex-node-auto-approve-csr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:certificates.k8s.io:certificatesigningrequests:nodeclient
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: {BOOTSTRAP_GROUP}
+"""
+
+
+def install_controller() -> None:
+    """Deploy main's aks-flex-controller from hack/controller-deployment, with a locally built
+    image, and the MachineOperation CRDs the daemon watches."""
+    log("deploying aks-flex-controller")
+    context = STATE / "controller"
+    context.mkdir(exist_ok=True)
+    run(["go", "build", "-o", str(context / "aks-flex-controller"), "./cmd/aks-flex-controller"],
+        cwd=REPO, env={"CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": "amd64"})
+    (context / "Containerfile").write_text(textwrap.dedent("""\
+        FROM scratch
+        COPY aks-flex-controller /usr/local/bin/aks-flex-controller
+        USER 65532:65532
+        ENTRYPOINT ["/usr/local/bin/aks-flex-controller"]
+    """))
+    run([ENGINE, "build", "-q", "-t", CONTROLLER_IMAGE, str(context)], capture=True)
+    archive = context / "aks-flex-controller.tar"
+    archive.unlink(missing_ok=True)
+    run([ENGINE, "save", "-o", str(archive), CONTROLLER_IMAGE], capture=True)
+    kind("load", "image-archive", str(archive), "--name", CLUSTER)
+
+    unbounded = capture(["go", "list", "-m", "-f", "{{.Dir}}", "github.com/Azure/unbounded"], cwd=REPO)
+    for crd in ("unbounded-cloud.io_machineoperations.yaml",
+                "unbounded-cloud.io_machineoperationcredentials.yaml"):
+        kubectl("apply", "-f", f"{unbounded}/deploy/machina/crd/{crd}")
+    kubectl("apply", "-f", "-", input=NODE_RBAC)
+    kubectl("apply", "-k", str(REPO / "hack" / "controller-deployment"))
+    patch = [
+        {"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": CONTROLLER_IMAGE},
+        {"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "Never"},
+        {"op": "replace", "path": "/spec/template/spec/containers/0/args", "value": [
+            "--listen-address=:8080",
+            "--machine-configmap-namespace=kube-system",
+            "--machine-configmap-name=aks-flex-machines",
+            # Without the approver the daemon's client certificate is never issued.
+            "--enable-csr-approver=true",
+        ]},
+    ]
+    kubectl("-n", "kube-system", "patch", "deployment", "aks-flex-controller", "--type=json",
+            "-p", json.dumps(patch))
+    kubectl("-n", "kube-system", "rollout", "status", "deployment/aks-flex-controller",
+            "--timeout=180s")
+    kubectl("get", "--raw", f"{PROXY_PATH}/healthz", quiet=True)
+
+
+def kubernetes_version() -> str:
+    version = json.loads(kubectl_out("version", "-o", "json"))["serverVersion"]["gitVersion"]
+    return version.removeprefix("v").split("+", 1)[0]
+
+
+def register_machine(version: str) -> None:
+    """Add the node to the controller's machine store, a ConfigMap of ARM machine JSON by name.
+    Its Kubernetes version has to match the agent config's."""
+    machine = {
+        "id": f"{FAKE_CLUSTER_ID}/agentPools/{AGENT_POOL}/machines/{HOSTNAME}",
+        "name": HOSTNAME,
+        "type": "Microsoft.ContainerService/managedClusters/agentPools/machines",
+        "properties": {
+            "eTag": "1",
+            "provisioningState": "Succeeded",
+            "kubernetes": {"orchestratorVersion": version, "nodeLabels": {}, "nodeTaints": []},
+        },
+    }
+    kubectl("-n", "kube-system", "patch", "configmap", "aks-flex-machines", "--type=merge",
+            "-p", json.dumps({"data": {f"{HOSTNAME}.json": json.dumps(machine)}}))
+
+
+def create_bootstrap_token() -> str:
+    token_id, token_secret = secrets.token_hex(3), secrets.token_hex(8)
+    expiration = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 24 * 3600))
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "type": "bootstrap.kubernetes.io/token",
+        "metadata": {"name": f"bootstrap-token-{token_id}", "namespace": "kube-system"},
+        "stringData": {
+            "token-id": token_id,
+            "token-secret": token_secret,
+            "expiration": expiration,
+            "usage-bootstrap-authentication": "true",
+            "usage-bootstrap-signing": "true",
+            "auth-extra-groups": BOOTSTRAP_GROUP,
+        },
+    }
+    kubectl("apply", "-f", "-", input=json.dumps(secret), quiet=True)
+    return f"{token_id}.{token_secret}"
+
+
+def agent_config(token: str, version: str) -> dict:
+    """The agent's config, in main's format, for a bootstrap-token node that reads its machine from
+    the in-cluster controller."""
+    ca = kubectl_out("config", "view", "--minify", "--raw", "-o",
+                     "jsonpath={.clusters[0].cluster.certificate-authority-data}")
+    dns_ip = kubectl_out("-n", "kube-system", "get", "service", "kube-dns", "-o",
+                         "jsonpath={.spec.clusterIP}")
+    return {
+        "azure": {
+            "subscriptionId": "00000000-0000-0000-0000-000000000000",
+            "tenantId": "00000000-0000-0000-0000-000000000000",
+            "resourceManagerEndpoint": "https://management.azure.com",
+            "targetAgentPoolName": AGENT_POOL,
+            "bootstrapToken": {"token": token},
+            "arc": {"enabled": False},
+            "targetCluster": {"resourceId": FAKE_CLUSTER_ID, "location": "local"},
+        },
+        "agent": {
+            "logLevel": "info",
+            "logDir": "/var/log/aks-flex-node",
+            "nodeName": HOSTNAME,
+            "machineClient": {"mode": "in-cluster", "endpointUrl": PROXY_PATH},
+            "requireMachineRegistration": True,
+        },
+        "components": {"kubernetes": version},
+        "networking": {"dnsServiceIP": dns_ip},
+        "node": {"kubelet": {"clusterFQDN": API_SERVER, "caCertData": ca}},
+    }
+
+
+def node_ready() -> bool:
+    result = kubectl("get", "node", HOSTNAME, "-o",
+                     "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+                     check=False, quiet=True)
+    return result.returncode == 0 and result.stdout.strip() == "True"
+
+
+def wait_for_node_ready(timeout: float = 1200) -> None:
+    log(f"waiting for node {HOSTNAME} to be Ready")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if node_ready():
+            log(f"node {HOSTNAME} is Ready")
+            return
+        if ssh(f"systemctl show {AGENT_UNIT} -p ActiveState --value", check=False).stdout.strip() == "failed":
+            break
+        time.sleep(10)
+    print(ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -n 60", check=False).stdout)
+    die(f"node {HOSTNAME} did not become Ready")
+
+
+def delete_cluster() -> None:
+    if shutil.which("kind") and cluster_exists():
+        kind("delete", "cluster", "--name", CLUSTER)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -647,6 +969,36 @@ def check_container(checks: Checks) -> None:
                   "the aks-flex-node binary is in the image")
 
 
+def check_cluster(checks: Checks) -> None:
+    """The node the agent in the container joined: Ready, running a pod, and reachable from the
+    API server for its logs."""
+    checks.expect(node_ready(), f"node {HOSTNAME} is Ready")
+    kube1 = ssh("machinectl show kube1 -p State --value", check=False)
+    checks.expect(kube1.stdout.strip() == "running", "the agent's kube1 machine runs on the host",
+                  (kube1.stdout + kube1.stderr).strip())
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": "aclc-probe", "namespace": "default"},
+        "spec": {
+            "nodeName": HOSTNAME,
+            "restartPolicy": "Never",
+            "tolerations": [{"operator": "Exists"}],
+            "containers": [{"name": "probe", "image": "mcr.microsoft.com/azurelinux/busybox:1.36",
+                            "command": ["sh", "-c", "echo aclc-probe-ok && sleep 3600"]}],
+        },
+    }
+    kubectl("delete", "pod", "aclc-probe", "--ignore-not-found", "--wait=true", quiet=True)
+    kubectl("apply", "-f", "-", input=json.dumps(pod), quiet=True)
+    ready = kubectl("wait", "pod/aclc-probe", "--for=condition=Ready", "--timeout=300s",
+                    check=False, quiet=True)
+    checks.expect(ready.returncode == 0, "a pod runs on the node", ready.stderr.strip())
+    logs = kubectl("logs", "aclc-probe", check=False, quiet=True)
+    checks.expect("aclc-probe-ok" in logs.stdout, "kubectl logs reaches the node's kubelet",
+                  logs.stderr.strip())
+    kubectl("delete", "pod", "aclc-probe", "--ignore-not-found", "--wait=false", quiet=True)
+
+
 def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
     machine = CHECK_MACHINE
     agent(f"flex-machine remove {machine} >/dev/null 2>&1 || true", check=False)
@@ -715,11 +1067,13 @@ def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
 # Commands
 
 
-def check_prerequisites(with_agent: bool) -> None:
+def check_prerequisites(with_agent: bool, with_cluster: bool) -> None:
     tools = ["qemu-system-x86_64", "qemu-img", "qemu-nbd", "ssh", "ssh-keygen", "ip", "iptables",
              "setsid", "sysctl"]
     if with_agent:
         tools.append(ENGINE)
+    if with_cluster:
+        tools += ["kind", "kubectl", "go"]
     missing = [tool for tool in tools if shutil.which(tool) is None]
     if missing:
         die("missing tools: " + ", ".join(missing))
@@ -734,7 +1088,9 @@ def cmd_up(args: argparse.Namespace) -> None:
     local = Path(args.image).expanduser() if args.image else None
     if local and not local.is_file():
         die(f"image not found: {local}")
-    check_prerequisites(args.agent)
+    if args.cluster and not args.agent:
+        die("--cluster needs the agent container; drop --no-agent")
+    check_prerequisites(args.agent, args.cluster)
     image = local or aclimage.gallery_image(IMAGE_DIR)
     stop_vm()
     STATE.mkdir(parents=True, exist_ok=True)
@@ -746,6 +1102,18 @@ def cmd_up(args: argparse.Namespace) -> None:
         SELINUX_WORKAROUND_MARKER.unlink(missing_ok=True)
 
     create_network()
+    config = None
+    if args.cluster:
+        CLUSTER_MARKER.touch()
+        create_cluster()
+        install_controller()
+        version = kubernetes_version()
+        register_machine(version)
+        token = create_bootstrap_token()
+        kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
+        config = agent_config(token, version)
+    else:
+        CLUSTER_MARKER.unlink(missing_ok=True)
     if args.agent:
         log(f"SELinux workaround: {'on' if workaround else 'off'}")
         build_agent_image(squash=workaround)
@@ -753,6 +1121,11 @@ def cmd_up(args: argparse.Namespace) -> None:
 
     doc = add_harness_access(render_ignition(args.agent, workaround), public_key)
     ignition = STATE / IGNITION_NAME
+    if config is not None:
+        # The container's entrypoint starts the agent once this is there.
+        doc["storage"]["files"].append({
+            "path": AGENT_CONFIG, "mode": 0o600, "overwrite": True,
+            "contents": {"source": data_url(json.dumps(config, indent=2) + "\n")}})
     ignition.write_text(json.dumps(doc, indent=2) + "\n")
     ignition.chmod(0o600)
 
@@ -762,6 +1135,8 @@ def cmd_up(args: argparse.Namespace) -> None:
         wait_for_ssh()
     if args.agent:
         wait_for_agent()
+    if args.cluster:
+        wait_for_node_ready()
     log(f"VM {HOSTNAME} is up at {VM_IP}; try `{Path(sys.argv[0]).name} status`")
 
 
@@ -778,7 +1153,12 @@ def cmd_check(args: argparse.Namespace) -> None:
     require_vm()
     checks = Checks()
     check_container(checks)
+    if cluster_enabled():
+        check_cluster(checks)
     check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
+    if cluster_enabled() and args.reboot:
+        wait_for_node_ready()
+        checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
     checks.done()
 
 
@@ -791,6 +1171,8 @@ def cmd_status(_: argparse.Namespace) -> None:
     print(ssh(f"systemctl status {AGENT_UNIT} --no-pager -n 0 | head -5; echo; "
               f"sudo {CTR} task ls; echo; machinectl list --all; echo; machinectl list-images",
               check=False).stdout)
+    if cluster_enabled():
+        kubectl("get", "nodes", "-o", "wide", check=False)
 
 
 def cmd_ssh(args: argparse.Namespace) -> None:
@@ -820,11 +1202,12 @@ def cmd_console(_: argparse.Namespace) -> None:
 
 def cmd_down(_: argparse.Namespace) -> None:
     stop_vm()
+    delete_cluster()
     delete_network()
     restore_forwarding()
     stop_registry()
     shutil.rmtree(STATE, ignore_errors=True)
-    log("removed the VM, network, registry, and state")
+    log("removed the VM, cluster, network, registry, and state")
     if IMAGE_DIR.is_dir() and any(IMAGE_DIR.glob("acl-gallery-*.qcow2")):
         log(f"kept the exported images in {IMAGE_DIR}; remove it to reclaim the space")
 
@@ -838,6 +1221,9 @@ def main() -> None:
     up.add_argument("--image", default=os.environ.get("ACL_IMAGE", ""),
                     help="Azure Container Linux qcow2 image (or ACL_IMAGE); without one, the "
                          "gallery image is exported to ACL_IMAGE_DIR and booted")
+    up.add_argument("--cluster", action="store_true",
+                    help="create a kind cluster, with main's in-cluster controller, and have the "
+                         "agent in the container join the VM to it")
     up.add_argument("--no-agent", dest="agent", action="store_false",
                     help="boot plain Azure Container Linux, without the agent container")
     up.add_argument("--selinux-workaround", action="store_true",

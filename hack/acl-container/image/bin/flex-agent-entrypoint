@@ -1,15 +1,30 @@
 #!/bin/bash
-# Entrypoint of the prototype agent container.
+# Entrypoint of the agent container.
 #
 # It checks what the agent relies on, the host root at /host and the host's
-# machinectl answering over D-Bus, logs it, and idles. The agent does not run
-# yet; see hack/acl-container/DESIGN.md. A failed check exits, so systemd
+# machinectl answering over D-Bus, and logs it. A failed check exits, so systemd
 # restarts the container and the failure shows in its unit's log.
+#
+# With a config at /etc/aks-flex-node/config.json, it then does what a host set
+# up by main's bootstrap does: aks-flex-node start, once, then the daemon, which
+# the agent's own unit runs on such a host. start saves the daemon state when it
+# completes, so later starts of the container, as after a reboot, go straight
+# to the daemon. Without a config it idles.
 set -uo pipefail
+
+config=/etc/aks-flex-node/config.json
+state=/etc/aks-flex-node/daemon-state.json
 
 log() { echo "flex-agent: $*"; }
 
 trap 'log "stopping"; exit 0' TERM INT
+
+idle() {
+    while :; do
+        sleep infinity &
+        wait $!
+    done
+}
 
 log "$(aks-flex-node version | paste -sd ' ')"
 if [[ ! -e /host/etc/os-release ]]; then
@@ -27,7 +42,16 @@ fi
 log "host $(machinectl --version | head -1); $(grep -c . <<<"$machines") machine(s) running"
 log "agent container ready"
 
-while :; do
-    sleep infinity &
-    wait $!
-done
+if [[ ! -f $config ]]; then
+    log "no $config; idling"
+    idle
+fi
+if [[ ! -f $state ]]; then
+    log "running aks-flex-node start"
+    if ! aks-flex-node start --config "$config"; then
+        log "error: aks-flex-node start failed"
+        exit 1
+    fi
+fi
+log "running aks-flex-node daemon"
+exec aks-flex-node daemon --config "$config"
