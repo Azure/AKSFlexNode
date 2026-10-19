@@ -100,11 +100,6 @@ image.
       operators deliver those inputs in their Butane, and try
       `--fetch-bootstrap-data`, which fetches bootstrap data from the AKS RP
       with the VM's identity, from the container.
-- [ ] `main`: when the daemon stops its own unit, for `AgentReset` or the
-      deletion signal, `systemctl stop` ended it partway through
-      `UninstallService`, which left a dangling `.wants` link. PR #371 fixes it
-      on `main`, and this branch carries the same commit; drop it here once
-      #371 merges and this branch is rebased.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
       cluster, so far only with the SELinux workaround, where machines run as
