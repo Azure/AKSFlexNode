@@ -1,7 +1,10 @@
 [Unit]
 Description=AKS Flex Node Agent
 Wants=network-online.target
-After=network-online.target containerd.service
+# A restart after a failure waits for a recovery the failure started, so it runs
+# the image recovery restores rather than the one that failed: recovery starts a
+# container, which takes longer than RestartSec.
+After=network-online.target containerd.service aks-flex-node-agent-recovery.service
 Requires=containerd.service
 # As on a host: when an upgraded agent fails, its recovery unit restores the
 # last-good image. systemd 254 and later run OnFailure= at every failure, and
