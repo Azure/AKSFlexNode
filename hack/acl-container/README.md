@@ -1,20 +1,20 @@
-# Agent container prototype on Azure Container Linux
+# Azure Container Linux harness: the agent in a container
 
-This harness proves out running the AKS Flex Node agent as a privileged
-containerd container on Azure Container Linux (ACL), instead of installing it on
-the host as [PR #323](https://github.com/Azure/AKSFlexNode/pull/323) does. It
-boots ACL in a local VM from an Ignition config rendered from
-[`agent-container.bu`](agent-container.bu). That config starts the agent
-image with the host's containerd, with the host's root mounted at `/host`.
-From inside that container, the host's `machinectl` creates, starts, stops,
-and opens shells in the systemd-nspawn machines the agent runs Kubernetes in.
+This harness runs the AKS Flex Node agent from this repository on Azure
+Container Linux (ACL), as privileged containerd containers of its own image,
+and joins the VM to a Kubernetes cluster. It boots ACL in a local VM under
+QEMU/KVM, provisioned only by the Ignition config rendered from
+[`agent-container.bu`](agent-container.bu). It creates a local kind cluster
+running `main`'s in-cluster controller, and the VM bootstraps itself into it,
+with no Azure resources involved.
 
-[DESIGN.md](DESIGN.md) explains how it works, what it proved, and what is
-left before the real agent can run this way. This file is how to use it.
+[DESIGN.md](DESIGN.md) explains how the agent runs on ACL and what differs from
+a host install. [SELINUX.md](SELINUX.md) is the SELinux finding for the ACL
+team. This file is how to use the harness.
 
-The agent binary is in the image, but it does not run yet: the container's
-entrypoint checks its access to the host and idles, and `flex-machine` stands
-in for the agent's machine management. No Kubernetes cluster is involved.
+Current ACL images need `up --selinux-workaround`: their SELinux policy doesn't
+yet let a privileged container talk to the host's systemd over D-Bus. See
+[SELinux](DESIGN.md#selinux).
 
 ## Requirements
 
@@ -23,54 +23,187 @@ in for the agent's machine management. No Kubernetes cluster is involved.
   `edk2-ovmf` package)
 - `podman`, or `docker` with `ACLC_CONTAINER_ENGINE=docker`, to build the agent
   image and run the registry and Butane
+- `kind`, `kubectl`, and `go`, for the cluster and the controller's image. kind
+  runs on root Podman, through `sudo`.
 - `ip`, `iptables`, `sysctl`, `ssh`, `ssh-keygen`, `setsid`
-- `sudo` without a password prompt, for the bridge, TAP device, forwarding, and
-  firewall rules. Run `sudo -v` first if your sudo caches credentials.
+- `sudo` without a password prompt, for kind, the bridge, TAP device,
+  forwarding, and firewall rules. Run `sudo -v` first if your sudo caches
+  credentials.
 - An ACL image: a local qcow2, or `az`, logged in, to export the gallery image;
   see [The ACL image](#the-acl-image)
 
 ## Quick start
 
 ```bash
-export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group   # only for the first export
-hack/acl-container/harness.py up       # build and push the image, boot the VM
-hack/acl-container/harness.py status   # the VM, the agent container, the machines
-hack/acl-container/harness.py check    # the feasibility checks, about 2 minutes, with a VM reboot
-hack/acl-container/harness.py down     # remove the VM, network, registry, and state
+export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group      # only for the first export
+hack/acl-container/harness.py up --selinux-workaround # cluster, image, VM, bootstrap
+hack/acl-container/harness.py status                  # the VM, the agent, machines, nodes
+hack/acl-container/harness.py check                   # 70 checks, about 19 minutes
+hack/acl-container/harness.py down                    # remove the VM, cluster, network, and state
 ```
 
-`up` takes about three minutes once the ACL image is exported and the image
-build is cached; the first build compiles the agent from scratch and takes
-several more. It:
+`up` takes about five minutes once the ACL image is exported and the image
+build is cached. It:
 
-1. builds `image/Containerfile` from this repository with the agent and
-   `crane` in it, and pushes it to a registry it runs on the bridge,
-   `192.168.112.1:5099`
-2. creates the bridge `virbr-aclc` on `192.168.112.0/24`, with NAT, and turns
-   IPv4 forwarding on if it is off (`down` turns it off again)
-3. renders `agent-container.bu` with Butane, adds an SSH user, a hostname, and a
-   static address, and boots the VM at `192.168.112.10`
-4. waits for `aks-flex-node-container.service` on the VM to pull the image and
-   for the container to report `agent container ready`
+1. creates the bridge `virbr-aclc` on `192.168.112.0/24`, with NAT, and turns
+   IPv4 forwarding on if it's off (`down` restores it)
+2. creates the kind cluster `aclc` on root Podman, and attaches its node to the
+   bridge at `192.168.112.2`, where the VM reaches the API server
+3. builds `main`'s `aks-flex-controller` and deploys it from
+   `hack/controller-deployment`, with its CSR approver, the MachineOperation
+   CRDs, and the bootstrap-token RBAC `scripts/aks-flex-config` applies
+4. registers the VM as a machine in the controller's ConfigMap, and creates a
+   bootstrap token
+5. builds [`image/Containerfile`](image/Containerfile), the agent image, and
+   pushes it to a registry it runs on the bridge, `192.168.112.1:5099`
+6. renders `agent-container.bu` with Butane, adds bootstrap's inputs, an SSH
+   user, a hostname, and a static address, and boots the VM at `192.168.112.10`
+7. waits for the bootstrap unit to bootstrap the node, for the agent's container
+   to run, and for the node to be Ready
 
-`up --no-agent` boots plain ACL, without the agent container, to explore the
-OS. `up` again replaces the VM with a fresh one.
+`up --no-agent` boots plain ACL, without the agent or a cluster, to explore the
+OS. `up` again replaces the VM and the cluster.
 
-## Working with machines
+### What `check` covers
 
-Machines can be managed from three places. All three use the same host
-`machinectl` and see the same machines.
+- The agent's container: its SELinux context, the host's root and PID
+  namespace, the host paths its entrypoint mounts, that `machinectl` and
+  `umount` are the host's, and that the agent has no binary of its own on the
+  host
+- The node: Ready, its machine running, a pod on it, and `kubectl logs`
+- Repave from kube1 to kube2, as `main`'s e2e does
+- A `NodeReboot` MachineOperation
+- `AgentUpgrade`: to a good candidate image, to a broken one, which rolls back,
+  and back to the agent's own image
+- Machines the container creates with `flex-machine`, kept running across a
+  restart of the agent's container, and a VM reboot
+- `AgentReset`, `aks-flex-node reset`, and the deletion signal, each followed by
+  bootstrapping the node again
 
-### From your machine
+`check --no-reboot` skips the reboot, and `--keep` keeps the `aclc-check`
+machine.
 
-`harness.py machine` runs `flex-machine` in the agent container:
+## Working with the node
+
+The cluster's kubeconfig is in the harness's state directory:
+
+```bash
+export KUBECONFIG=.vm/acl-container/kubeconfig
+kubectl get nodes -o wide
+```
+
+Request MachineOperations as `main`'s demos and e2e do:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: unbounded-cloud.io/v1alpha3
+kind: MachineOperation
+metadata:
+  name: reboot-1
+spec:
+  machineRef: acl-flex-proto
+  operationKind: NodeReboot     # or AgentReset
+EOF
+kubectl get machineoperation reboot-1 -w
+```
+
+An `AgentUpgrade` takes an image rather than an archive, fully qualified, with
+a tag or digest:
+
+```yaml
+spec:
+  machineRef: acl-flex-proto
+  operationKind: AgentUpgrade
+  parameters:
+    image: 192.168.112.1:5099/aks-flex-node-agent@sha256:...
+```
+
+To reset the node by hand, and bootstrap it again:
+
+```bash
+hack/acl-container/harness.py ssh sudo systemctl start aks-flex-node-reset
+kubectl delete node acl-flex-proto           # as AKS does once the agent stops
+# Write /etc/aks-flex-node/bootstrap.env and its base config on the VM, and
+# optionally /etc/aks-flex-node/agent-image.env to join with another image, then:
+hack/acl-container/harness.py ssh sudo systemctl start aks-flex-node-bootstrap
+```
+
+`check` does the same through `bootstrap_again` in `harness.py`.
+
+## On the VM
+
+| Unit | |
+|---|---|
+| `aks-flex-node-bootstrap.service` | Pulls the image and runs `main`'s `bootstrap.sh` in a short-lived container, at boot, once bootstrap's inputs are there and until the agent is installed |
+| `aks-flex-node-agent.service` | Runs the daemon in the container `aks-flex-node`. `start` installs it, and reset removes it. |
+| `aks-flex-node-agent-recovery.service` | Restores the last good image when an upgraded agent fails. `start` installs it with the agent's unit. |
+| `aks-flex-node-reset.service` | Runs `aks-flex-node reset` in a short-lived container |
+| `usr-local.mount` | A writable overlay on `/usr/local`, for the nspawn lifecycle helper |
+
+| File | |
+|---|---|
+| `/etc/sysconfig/aks-flex-node-container` | The install's settings: the image, and pull flags. Ignition writes it. |
+| `/etc/aks-flex-node/bootstrap.env`, `base-config.json` | Bootstrap's inputs, `AKS_FLEX_NODE_*` variables and the base config they name, with the bootstrap token |
+| `/etc/aks-flex-node/agent-image.env` | Another image for the agent than the install's: one `AgentUpgrade` selected, or one bootstrap was given |
+| `/etc/aks-flex-node/config.json`, `daemon-state.json` | The agent's config, which bootstrap renders, and its state |
+
+Reset removes everything in `/etc/aks-flex-node` and leaves the settings and
+the bootstrap and reset units.
+
+```bash
+systemctl status aks-flex-node-agent
+journalctl -u aks-flex-node-bootstrap -b      # bootstrap.sh, preflight, and start
+journalctl -u aks-flex-node-agent -b          # the entrypoint's checks and the daemon
+sudo ctr --namespace aks-flex task ls         # the agent's containers
+sudo ctr --namespace aks-flex images ls -q    # its images
+```
+
+Under the SELinux workaround, each start of a container takes about 30 seconds
+before its entrypoint runs: the units run it on containerd's native
+snapshotter, which copies the image for every start. See
+[SELinux](DESIGN.md#selinux).
+
+To change what's in the image, edit it and push it:
+
+```bash
+hack/acl-container/harness.py push   # rebuild, push, pull on the VM, restart the agent
+```
+
+`push` removes an `AgentUpgrade`'s image selection, so the rebuilt image runs.
+Machines keep running across it: they belong to the host's systemd, not to the
+container.
+
+## Inside the agent's container
+
+```bash
+hack/acl-container/harness.py agent          # a shell in the container
+hack/acl-container/harness.py agent CMD...   # or one command
+```
+
+The container gets the host's root at `/host`, and its entrypoint mounts the
+host paths the agent uses at their own paths. The host's own tools run through
+`host-exec`: `machinectl`, `systemctl`, `systemd-run`, `ctr`, and the others the
+image links to it run under `chroot /host`, and `mount`, `umount`, and
+`mountpoint` run in the host's mount namespace. Any other host command runs as
+`host-exec COMMAND`:
+
+```bash
+machinectl list
+systemctl status systemd-nspawn@kube1
+systemd-run --machine=kube1 --pipe --wait -- uname -a
+host-exec ip -br addr
+```
+
+### Machines of your own
+
+`harness.py machine` runs `flex-machine`, which manages nspawn machines the way
+the agent does, for experiments next to the agent's:
 
 ```bash
 hack/acl-container/harness.py machine create demo --start   # pull the rootfs, boot it
 hack/acl-container/harness.py machine list
 hack/acl-container/harness.py machine shell demo            # root shell in the machine
 hack/acl-container/harness.py machine exec demo cat /etc/os-release
-hack/acl-container/harness.py machine stop demo
 hack/acl-container/harness.py machine remove demo
 ```
 
@@ -78,93 +211,22 @@ hack/acl-container/harness.py machine remove demo
 |---|---|
 | `list` | `machinectl list` and `machinectl list-images` |
 | `create NAME [--image REF] [--start]` | Unpacks an OCI rootfs image into `/var/lib/machines/NAME` and writes `/etc/systemd/nspawn/NAME.nspawn`. The default image, `ghcr.io/azure/agent-azlinux3:v20260619`, is the one the agent uses on ACL. |
-| `start NAME` | `machinectl start`, then waits for it to run |
-| `stop NAME` | `machinectl poweroff`, then waits for it to stop |
-| `restart NAME` | `machinectl reboot` |
-| `terminate NAME` | `machinectl terminate`: stops it at once |
-| `status NAME` | `machinectl status` |
+| `start NAME`, `stop NAME`, `restart NAME`, `terminate NAME` | `machinectl start`, `poweroff`, `reboot`, `terminate` |
+| `status NAME`, `logs NAME [-f]` | `machinectl status`, and the host's log for `systemd-nspawn@NAME.service` |
 | `shell NAME [CMD...]` | `machinectl shell`: a root shell, or `CMD`, with an absolute path |
 | `exec NAME CMD...` | `systemd-run --machine --pipe --wait`, as the agent runs commands in its machines |
-| `logs NAME [-f]` | The host's log for `systemd-nspawn@NAME.service` |
-| `enable NAME`, `disable NAME` | `machinectl enable` or `disable`: start it at boot, or not |
+| `enable NAME`, `disable NAME` | Start it at boot, or not |
 | `remove NAME` | Stops it, and deletes its directory and `.nspawn` file |
-
-`FLEX_MACHINE_IMAGE` in the container changes the default image.
-
-### From inside the agent container
-
-```bash
-hack/acl-container/harness.py agent          # a shell in the container
-```
-
-In the container, `machinectl`, `systemctl`, `systemd-run`, and `journalctl` run
-the host's binaries through `host-exec`, which runs them under `chroot /host`.
-Any other host command runs as `host-exec COMMAND`:
-
-```bash
-machinectl list
-machinectl shell demo
-systemctl status systemd-nspawn@demo
-systemd-run --machine=demo --pipe --wait -- uname -a
-host-exec ip -br addr
-ls /host/var/lib/machines
-```
-
-`harness.py agent COMMAND...` runs one command there instead.
-
-### From the VM host
-
-```bash
-hack/acl-container/harness.py ssh            # core@192.168.112.10
-sudo machinectl list
-sudo machinectl shell demo
-sudo systemctl status systemd-nspawn@demo
-```
-
-A shell in a running machine is also available without machined:
-
-```bash
-sudo nsenter --target "$(machinectl show demo -p Leader --value)" --all /bin/bash
-```
-
-## The agent container
-
-On the VM, the container is `aks-flex-node` in containerd's `aks-flex`
-namespace, run by `aks-flex-node-container.service`:
-
-```bash
-systemctl status aks-flex-node-container
-journalctl -u aks-flex-node-container -b        # the entrypoint's checks
-sudo ctr --namespace aks-flex task ls
-sudo systemctl restart aks-flex-node-container  # pulls the image again first
-```
-
-The image reference is in `/etc/aks-flex-node/agent-container.env`, written by
-Ignition.
-
-Each start of the container takes about 20 seconds before its entrypoint runs:
-the unit runs it on containerd's native snapshotter, which copies the image for
-every start, to keep it out of an SELinux domain that can't reach systemd. See
-[SELinux](DESIGN.md#selinux).
-
-To change what is in the image, edit it and push it:
-
-```bash
-hack/acl-container/harness.py push   # rebuild, push, restart the container
-```
-
-Machines keep running across `push`: they belong to the host's systemd, not to
-the container.
 
 ## The ACL image
 
 Without `--image` or `ACL_IMAGE`, `up` boots the Azure build of ACL from the
 shared gallery image `ACL_IMAGE_GALLERY_IMAGE`, which it exports to
 `.vm/acl-images/acl-gallery-<version>.qcow2` the first time. The export copies
-the image to a temporary managed disk in
-`ACL_IMAGE_RESOURCE_GROUP`, which has to be in `westus2`, where the image is
-replicated, downloads the disk's 850 MiB of written pages, and deletes the disk.
-It takes about 90 seconds on a fast link.
+the image to a temporary managed disk in `ACL_IMAGE_RESOURCE_GROUP`, which has
+to be in `westus2`, where the image is replicated, downloads the disk's 850 MiB
+of written pages, and deletes the disk. It takes about 90 seconds on a fast
+link.
 
 The identity `az` is logged in as needs, on the resource group,
 `Microsoft.Compute/disks/read`, `write`, `delete`, `beginGetAccess/action` and
@@ -172,8 +234,9 @@ The identity `az` is logged in as needs, on the resource group,
 gallery's images and versions. Its tenant has to be one the gallery is shared
 with.
 
-The gallery's latest version is asked of `az` on each `up`. Set
-`ACL_IMAGE_VERSION` to boot an exported image without `az`, or pass `--image`.
+The gallery's latest version is asked of `az` on each `up`. Once an image is
+exported, pass it with `--image`, or set `ACL_IMAGE_VERSION`, to boot it
+without `az`.
 
 ## Settings
 
@@ -185,30 +248,40 @@ The gallery's latest version is asked of `az` on each `up`. Set
 | `ACL_IMAGE_VERSION` | the gallery's latest | Gallery image version |
 | `ACL_IMAGE_GALLERY_IMAGE` | `/SharedGalleries/b3e01d89-bd55-414f-bbb4-cdfeb2628caa-ACL/Images/acl-1es-eval` | Gallery image |
 | `ACL_IMAGE_DIR` | `.vm/acl-images` | Where exported images are kept; `down` keeps them |
-| `ACLC_STATE_DIR` | `.vm/acl-container` | VM disk, logs, SSH key, rendered Ignition |
-| `ACLC_CONTAINER_ENGINE` | `podman` if installed, else `docker` | Builds the image, runs the registry and Butane |
+| `ACLC_STATE_DIR` | `.vm/acl-container` | VM disk, logs, SSH key, kubeconfig, rendered Ignition |
+| `ACLC_SELINUX_WORKAROUND` | | `1` for `up --selinux-workaround` |
+| `ACLC_CONTAINER_ENGINE` | `podman` if installed, else `docker` | Builds the images, runs the registry and Butane |
+| `ACLC_KIND_CLUSTER` | `aclc` | The kind cluster's name |
+| `ACLC_KIND_NODE_IMAGE` | kind's default | The kind node image |
 | `ACLC_SUBNET` | `192.168.112` | First three octets of the bridge subnet |
 | `ACLC_DNS` | `8.8.8.8 8.8.4.4` | The VM's DNS servers |
+| `ACLC_REGISTRY_IMAGE` | `docker.io/library/registry:2` | The registry's image |
 | `ACLC_REGISTRY_PORT` | `5099` | Registry port on the bridge and on loopback |
 | `ACLC_SERVE_PORT` | `8298` | Port the Ignition config is served on during `up` |
 | `ACLC_VM_MEMORY`, `ACLC_VM_CPUS` | `4096`, `4` | VM size |
 | `ACLC_AGENT_TAG` | `proto` | Agent image tag |
 | `ACLC_BUTANE_IMAGE` | `quay.io/coreos/butane:v0.29.0` | Butane image |
 
-The subnet, interface names, and ports differ from PR #323's harness and the
-unbounded one, so they can run alongside this one.
+The subnet, interface names, and ports differ from the other harnesses in
+`hack`, so they can run alongside this one.
 
 ## Troubleshooting
 
-- **The VM does not come up.** `harness.py console` follows its serial console,
+- **The VM doesn't come up.** `harness.py console` follows its serial console,
   also in `.vm/acl-container/serial.log`.
-- **The container does not start.** `journalctl -u aks-flex-node-container -b`
-  on the VM shows the pull and the entrypoint's checks. A failed check exits the
-  container, and systemd retries it every five seconds.
-- **`machinectl` says `Access denied`.** That is SELinux. List denials with
+- **Bootstrap fails.** `journalctl -u aks-flex-node-bootstrap -b` on the VM
+  shows the pull, `bootstrap.sh`, preflight, and `start`. The unit retries a few
+  times, then fails, and `up` prints its log.
+- **The agent's container doesn't start.** `journalctl -u aks-flex-node-agent -b`
+  on the VM shows the entrypoint's checks. A failed check exits the container,
+  and systemd retries it.
+- **`machinectl` says `Access denied`.** That's SELinux: run `up` with
+  `--selinux-workaround`. List denials with
   `sudo journalctl -b | grep 'avc:  denied'` on the VM, and see
   [SELinux](DESIGN.md#selinux).
-- **The VM cannot pull images.** The VM reaches the internet through NAT on
+- **`up` fails asking `az` for the gallery's version.** Its sign-in has
+  expired: run `az login`, or pass the exported image with `--image`.
+- **The VM can't pull images.** The VM reaches the internet through NAT on
   this host, which needs IPv4 forwarding on; `up` turns it on.
 
 ## Files
@@ -216,11 +289,14 @@ unbounded one, so they can run alongside this one.
 | File | |
 |---|---|
 | `harness.py` | The harness |
-| `agent-container.bu` | Butane config for the agent container unit |
+| `agent-container.bu` | Butane config that installs the agent: the settings, the bootstrap and reset units, and the `/usr/local` overlay |
+| `selinux-workaround.bu` | The development-only SELinux workaround, merged in by `up --selinux-workaround` |
 | `image/Containerfile` | The agent image |
-| `image/bin/flex-agent-entrypoint` | The container's entrypoint |
-| `image/bin/host-exec` | Runs host binaries under `chroot /host` |
-| `image/bin/flex-machine` | Machine management |
+| `image/bin/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
+| `image/bin/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
+| `image/bin/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
+| `image/bin/flex-machine` | Machine management for experiments |
+| `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
 | `aclimage.py` | Gallery image export |
 | `ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon |
 | `SELINUX.md` | The SELinux finding, written up for the ACL team |

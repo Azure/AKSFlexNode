@@ -1,36 +1,39 @@
-# Design: the AKS Flex Node agent as a privileged container on Azure Container Linux
+# Design: the AKS Flex Node agent in a container on Azure Container Linux
 
 > [!NOTE]
-> **Status:** prototype. It proves that a privileged containerd container on
-> Azure Container Linux (ACL) can manage the host's systemd-nspawn machines
-> with the host's `machinectl`. The agent binary is in the image, but it does
-> not run yet; see [Running the real agent](#running-the-real-agent).
-> [README.md](README.md) is how to use the harness.
+> **Status:** development. `main`'s agent runs on Azure Container Linux (ACL)
+> as privileged containerd containers of its own image, and `harness.py check`
+> verifies `main`'s lifecycle against a local cluster. It needs one SELinux rule
+> from ACL before it can merge; until then, a development-only workaround
+> stands in. [README.md](README.md) is how to use the harness, and
+> [TODO.md](../../TODO.md) is the remaining work.
 
 ## Result
 
 On ACL 3.0.20261005, from the Azure gallery image `acl-1es-eval` version
-3.20261007.1021, `harness.py check` verifies all of the following:
+3.20261007.1021, joined to a local kind cluster running `main`'s controller,
+`harness.py check` verifies 70 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
-  starts the agent image with the host's containerd, on first boot and every boot
-  after it. Nothing is installed on the host.
-- In the container, `/host` is the host's root, and the container shares the
-  host's PID namespace, but has its own root filesystem.
-- `machinectl`, `systemctl`, `systemd-run`, and `journalctl` in the container
-  are the host's binaries, run through `chroot /host`.
-- From the container, a machine can be created from an OCI rootfs image,
-  started, stopped, restarted, enabled at boot, and removed.
-- From the container, `systemd-run --machine --pipe --wait`, the way the agent
-  runs commands in its machines, and `machinectl shell` both reach the machine.
-- Machines run in the host's `machine.slice`, not in the container. Restarting
-  the agent container leaves a running machine running, with the same leader
-  process.
-- After a VM reboot, the agent container and an enabled machine both come back.
+  installs the agent with only systemd units and settings. Its bootstrap unit
+  runs `main`'s `scripts/bootstrap.sh` in a container of the agent's image,
+  which joins the node: it's Ready, runs pods, and serves `kubectl logs`.
+- The agent's daemon runs in a container of its image, from
+  `aks-flex-node-agent.service`, `main`'s unit name, which `start` installs. No
+  binary of the agent is in `/usr/local/bin` or `/usr/local/lib/aks-flex-node`,
+  where `main` installs it.
+- Repave, `NodeReboot`, and `AgentUpgrade` work as on a host. An `AgentUpgrade`
+  names an image: a good one is selected, a broken one rolls back to the last
+  good image, and images the agent won't run again are removed.
+- `AgentReset`, `aks-flex-node reset`, and the deletion signal each end as on a
+  host: the agent's unit is gone, and nothing of the agent runs. What installed
+  it stays, so bootstrapping again joins the node, with the install's image or
+  one bootstrap is given.
+- Machines run in the host's `machine.slice`, not in the container. They keep
+  running while the agent's container restarts, and come back after a reboot.
 
-One finding needs the ACL team: as shipped, ACL's SELinux policy stops a
-privileged container from talking to systemd over D-Bus. The prototype works
-around it; see [SELinux](#selinux).
+It needs one rule from ACL, `allow spc_t kernel_t:dbus send_msg;`; until ACL
+ships it, the harness runs with a workaround. See [SELinux](#selinux).
 
 ## What ACL provides
 
@@ -44,39 +47,85 @@ around it; see [SELinux](#selinux).
 | Filesystems | `/usr` read-only btrfs on dm-verity and **unlabeled**; `/etc` an overlay, writable; `/` and `/var` ext4, writable |
 | `/var/lib/machines` | Exists, mode 0700. `/etc/systemd/nspawn` does not, until written. |
 
+## Principles
+
+- **Nothing of the agent on the host.** The host gets only configuration:
+  units, settings, and the agent's data. Everything the agent does runs in a
+  container of its image. The one exception left is the nspawn lifecycle
+  helper; see [Machines belong to the host](#machines-belong-to-the-host).
+- **`main`'s code and behavior.** The agent keeps `main`'s config, commands,
+  unit name, MachineOperations, and reset. Where a container needs something
+  different, `pkg/daemon` switches on `AKS_FLEX_NODE_CONTAINERIZED`, which only
+  the image sets; see [What changes in the agent](#what-changes-in-the-agent).
+- **Host paths at their own paths.** Each container gets only the host's root,
+  at `/host`. Its entrypoint mounts the host paths the agent uses at their own
+  paths, so the agent's absolute paths need no prefix.
+- **The host's own tools.** `systemctl`, `machinectl`, `ctr`, and the other
+  host tools the agent runs are the host's binaries, so they can't drift from
+  the host's systemd and kernel.
+
 ## Architecture
 
 ```mermaid
 flowchart TB
     subgraph host["Azure Container Linux host"]
-        ign["Ignition, first boot"] -->|writes| unit["aks-flex-node-container.service"]
-        unit -->|ctr run| containerd["containerd"]
-        containerd --> agent
-        subgraph agent["agent container: privileged, host network and PID namespaces"]
-            tools["machinectl, systemctl, systemd-run, journalctl<br/>= host-exec: chroot /host"]
-            fm["flex-machine, aks-flex-node, crane"]
-        end
-        tools -->|D-Bus| machined["systemd-machined"]
-        tools -->|D-Bus| pid1["systemd (PID 1)"]
+        ign["Ignition, first boot"] -->|writes| install["settings file<br/>bootstrap and reset units"]
+        install --> bunit["aks-flex-node-bootstrap.service"]
+        bunit -->|ctr run| boot["bootstrap container<br/>bootstrap.sh: config, preflight, start"]
+        boot -->|writes, enables, starts| aunit["aks-flex-node-agent.service<br/>and its recovery unit"]
+        aunit -->|ctr run| agent["agent container<br/>aks-flex-node agent"]
+        agent -->|"host tools, through host-exec"| pid1["systemd (PID 1), machined"]
         pid1 --> nspawn["systemd-nspawn@NAME.service<br/>in machine.slice"]
-        machined --- nspawn
-        fm -->|"/host/var/lib/machines/NAME<br/>/host/etc/systemd/nspawn/NAME.nspawn"| files[("host filesystem")]
-        nspawn --> machine["machine NAME: its own systemd"]
+        nspawn --> machine["machine NAME: kubelet and containerd"]
     end
+    api["Kubernetes API: the Machine and its MachineOperations"] <--> agent
+    machine --> api
 ```
 
-### The container
+### Lifecycle on Ubuntu and on ACL
 
-[`agent-container.bu`](agent-container.bu) writes one unit,
-`aks-flex-node-container.service`, and an environment file naming the image.
-The unit:
+| | `main` on Ubuntu | ACL |
+|---|---|---|
+| Install | `bootstrap.sh` downloads a release archive and installs the agent in `/usr/local/bin` | Ignition writes the settings file naming the image, and the bootstrap and reset units |
+| Bootstrap's inputs | `bootstrap.sh`'s flags and `AKS_FLEX_NODE_*` variables | The same variables, in `/etc/aks-flex-node/bootstrap.env`, and optionally an image in `/etc/aks-flex-node/agent-image.env` |
+| Bootstrap | `bootstrap.sh` renders the config, runs preflight, and runs `start` | The bootstrap unit runs the same `bootstrap.sh` in a container, with the agent in the image |
+| `start` | Sets up the host, then installs and starts `aks-flex-node-agent.service` and its recovery unit | The same, except installing packages; the units run containers |
+| Daemon start | Converges its binary layout and units | Rewrites its units from its image, copies its binary into the active machine, and removes old images |
+| Repave, `NodeReboot` | The daemon replaces or restarts the active machine | The same code |
+| `AgentUpgrade` | Takes `downloadURL` and `sha256`, and switches blue/green binaries | Takes `image`, and selects it in `agent-image.env` |
+| Upgrade recovery | The recovery unit's script restores the last good binary | The recovery unit runs the last good image, which restores it |
+| `AgentReset`, deletion signal | The daemon resets the node and removes its unit | The same code |
+| `aks-flex-node reset` | Run by hand | `aks-flex-node-reset.service` runs it in a container |
+| Join again | Run `bootstrap.sh` again | Write new inputs, and start the bootstrap unit |
+| Uninstall | Remove the binary | Reprovision without the agent's Butane config |
 
-1. waits for containerd to answer, since `containerd.service` on ACL reports
-   started before its socket exists
-2. removes a task and container a killed `ctr` may have left
-3. relabels the native snapshotter's directory; see [SELinux](#selinux)
-4. pulls the image, with `--local --snapshotter native`
-5. runs it in the foreground with `ctr run --rm`, and restarts it whenever it exits
+## The containers
+
+### The units
+
+Four units run containers of the agent's image, each in containerd namespace
+`aks-flex`, apart from any other containerd user:
+
+| Unit | Container | Runs | Written by |
+|---|---|---|---|
+| `aks-flex-node-bootstrap.service` | `aks-flex-node-bootstrap` | `bootstrap.sh`, through the image's `aks-flex-node-bootstrap` | Ignition |
+| `aks-flex-node-agent.service` | `aks-flex-node` | `aks-flex-node agent` | `start`, and the daemon at every start |
+| `aks-flex-node-agent-recovery.service` | `aks-flex-node-recovery` | `aks-flex-node recover-agent-upgrade`, from the last good image | `start`, and the daemon at every start |
+| `aks-flex-node-reset.service` | `aks-flex-node-reset` | `aks-flex-node reset` | Ignition |
+
+`AgentUpgrade` also runs `aks-flex-node version` in a short-lived
+`aks-flex-node-upgrade-check-N` container of the candidate image.
+
+The agent's two units are embedded in the agent, in
+[`pkg/daemon/assets`](../../pkg/daemon/assets), so they change with its image.
+The bootstrap and reset units are the install's, since they run before the
+agent is installed and after it's removed.
+
+Each unit reads the install's settings, `/etc/sysconfig/aks-flex-node-container`,
+then `/etc/aks-flex-node/agent-image.env` if it's there; see
+[Which image](#which-image). It clears a task and container that a killed `ctr`
+may have left, since both outlive it, then runs the container in the
+foreground with `ctr run --rm`:
 
 | `ctr run` flag | Why |
 |---|---|
@@ -84,220 +133,310 @@ The unit:
 | `--net-host` | The host's network. The machines share it too (`VirtualEthernet=no`), and `ctr` then also bind-mounts the host's `resolv.conf` and `hosts`. |
 | `--with-ns pid:/proc/1/ns/pid` | The host's PID namespace. `systemd-run --machine` and `systemctl --machine` enter a machine's namespaces through its leader's `/proc/PID/ns`, and a process can only enter a PID namespace below its own. It also makes `/proc` under `/host` agree with the container's. |
 | `--mount type=bind,src=/,dst=/host,options=rbind:rslave` | The host's root, recursively, so `/usr`, `/etc`, `/run`, `/proc`, and `/sys` under it are the host's. `rslave` lets later host mounts appear in the container, and keeps the container's mounts out of the host. |
-| `--snapshotter native` | See [SELinux](#selinux). |
+| `--env` (the agent's unit) | The image the agent runs, and the flags for pulling and running images, for `AgentUpgrade` |
+| `$AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS` | Empty, unless the SELinux workaround sets a snapshotter |
 
-The container is `aks-flex-node` in containerd namespace `aks-flex`, apart from
-any other containerd user. The image is built from
-[`image/Containerfile`](image/Containerfile): Azure Linux 3.0 core, the agent
-built with Microsoft Go as the release is, `crane`, and the scripts in
-`image/bin`. It is pushed as a single layer, about 200 MB.
+The agent's unit restarts on failure, and runs its recovery unit through
+`OnFailure=`. The bootstrap unit runs at boot only while bootstrap's inputs are
+there and the agent's unit isn't, so it does nothing once the agent is
+installed. After a reset, new inputs and a start of the unit join the node
+again. Both retry on failure, since `containerd.service` on ACL reports started
+before containerd answers.
+
+### The image
+
+[`image/Containerfile`](image/Containerfile) builds Azure Linux 3.0 core with:
+
+- the agent, built with Microsoft Go as the release is: static, with its
+  cgo-less OpenSSL backend
+- `crane`, for `flex-machine`
+- `main`'s `scripts/bootstrap.sh`
+- the scripts in [`image/bin`](image/bin)
+
+They're in `/opt/aks-flex-node/bin`, since the container mounts the host's
+`/usr/local`. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. The harness
+pushes it as a single layer, about 200 MB; see [SELinux](#selinux) for why one
+layer.
+
+### The entrypoint
+
+Every container runs [`flex-agent-entrypoint`](image/bin/flex-agent-entrypoint)
+`COMMAND`. Before it runs the command, it:
+
+1. mounts the host's `os-release` over the container's, read-only, for the
+   agent's OS detection
+2. mounts the host directories the agent uses at their own paths, recursively,
+   and as slaves, so mounts the host makes under them later reach the
+   container: `/etc/systemd`, `/etc/sysctl.d`, `/etc/modules-load.d`,
+   `/etc/aks-flex-node`, `/etc/unbounded`, `/var/lib/machines`,
+   `/var/lib/unbounded`, `/var/log/aks-flex-node`, `/run`, and `/usr/local`
+3. mounts the install's settings read-only at their own path, for the image the
+   install names
+4. logs the agent's version, the host, its SELinux context, and its PID
+   namespace, and checks that the host's `machinectl` answers over D-Bus
+
+A failed step exits, so the failure shows in the unit's log. The list of paths
+is in the image, so it changes with the agent rather than with the host's
+provisioning.
 
 ### Using the host's tools
 
-The container's `machinectl`, `systemctl`, `systemd-run`, and `journalctl` are
-links to [`host-exec`](image/bin/host-exec), which runs
-`chroot /host /usr/bin/env PATH=... TOOL ARGS`. So:
+The image links `machinectl`, `systemctl`, `systemd-run`, `systemd-nspawn`,
+`journalctl`, `ip`, `nft`, `sysctl`, `modprobe`, `swapoff`, `udevadm`, `mount`,
+`umount`, `mountpoint`, and `ctr` to [`host-exec`](image/bin/host-exec), and
+the agent runs them by name. `host-exec` runs most of them as
+`chroot /host /usr/bin/env PATH=... TOOL ARGS`:
 
-- the host's binary runs with the host's libraries and configuration, and can't
-  drift from the host's systemd, as a copy in the image could
-- `/run/dbus/system_bus_socket` is the host's, so D-Bus calls reach the host's
-  systemd and machined
-- the process stays in the container's mount namespace and cgroup; only its root
-  changes
+- The host's binary runs with the host's libraries and configuration, and
+  can't drift from the host's systemd or kernel, as a copy in the image could.
+- `/run/dbus/system_bus_socket` and containerd's socket are the host's, so
+  calls reach the host's systemd, machined, and containerd.
+- The process stays in the container's cgroup; only its root changes.
 
-`nsenter --target 1 --mount` would also work, given the host PID namespace, and
-would leave no trace of the container's filesystem. `chroot /host` was chosen
-because the agent needs both views: its own files, and the host's at `/host`.
+`mount`, `umount`, and `mountpoint` run in the host's mount namespace instead,
+through `nsenter --mount=/proc/1/ns/mnt`. The container's mounts of host paths
+are slaves of the host's, so a mount or unmount made in the container's
+namespace never reaches the host: an unmount of a machine's `bpffs` at reset,
+for one, would leave it mounted. The entrypoint's own mounts use
+`/usr/bin/mount`, the image's.
 
 `machinectl shell` gets its terminal from machined over D-Bus, as a file
 descriptor, so it works from the container with or without a terminal of its
 own.
 
-### Machines belong to the host
+## What changes in the agent
 
-[`flex-machine create`](image/bin/flex-machine) unpacks a rootfs image with
-`crane export` into `/host/var/lib/machines/NAME`, and writes
-`/host/etc/systemd/nspawn/NAME.nspawn` with the core settings the agent uses
-(`Capability=all`, `PrivateUsers=no`, `VirtualEthernet=no`, the system call
-filter, and `/lib/modules`). The default image,
-`ghcr.io/azure/agent-azlinux3:v20260619`, is the one the unbounded library picks
-on ACL: 141 MB compressed, 356 MB unpacked.
+`daemon.Containerized()` reads `AKS_FLEX_NODE_CONTAINERIZED`. On a host, where
+nothing sets it, every switch takes `main`'s path:
+
+| Where | On a host | In the container |
+|---|---|---|
+| `setupHost`, in `start` | Installs packages, then configures the OS | Configures the OS. The package manager on `PATH` is the image's, and would install into the container; the host's provisioning provides its packages. |
+| `InstallService`, in `start` | Installs the unit that runs the binary, its recovery unit and script | Writes the container units, then enables and starts the agent's |
+| `daemon.Run` | Converges the binary layout and units; upgrades by binary | Converges the units, the binary in the active machine, and the images; upgrades by image |
+| `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
+| `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
+| An `AgentUpgrade`'s parameters | `image` is invalid | `downloadURL` is invalid |
+
+These changes apply everywhere, and leave a host's behavior as it was:
+
+- `RemoveRuntimeDirs`, which reset uses, empties a directory it can't remove
+  because it's a mount point, as the agent's directories are in its container.
+  A host's never are.
+- `bootstrap.sh --use-installed-agent` runs the agent already in
+  `--install-dir` instead of downloading one. It's off by default.
+- The handoff between an upgrading daemon and its successor goes through an
+  interface, with the host's executor as one implementation and the container's
+  as the other. The host's behaves as before.
+- The MachineOperation reconciler validates an `AgentUpgrade`'s parameters
+  before acting on it. On a host, an `image` fails it as `InvalidParameters`.
+- `UninstallService` stops the agent's unit last, so the daemon can remove its
+  own unit; see [Reset](#reset). [PR #371](https://github.com/Azure/AKSFlexNode/pull/371)
+  makes the same fix on `main`.
+
+## Bootstrap
+
+The bootstrap unit pulls the image, and runs the image's
+[`aks-flex-node-bootstrap`](image/bin/aks-flex-node-bootstrap). That reads
+`/etc/aks-flex-node/bootstrap.env`, one `AKS_FLEX_NODE_*=value` a line, not
+evaluated as shell, and runs `bootstrap.sh --use-installed-agent` with them.
+Secrets, such as a bootstrap token, go in a base config of their own, named by
+`AKS_FLEX_NODE_BASE_CONFIG_FILE`. `bootstrap.sh` renders
+`/etc/aks-flex-node/config.json`, runs preflight, and runs `start`, as on a
+host.
+
+The harness writes bootstrap's inputs through Ignition. How operators deliver
+them is open; see [TODO.md](../../TODO.md).
+
+### Which image
+
+The install's settings name the image as `AKS_FLEX_NODE_IMAGE`. When
+`/etc/aks-flex-node/agent-image.env` names another, the units run that one
+instead. The bootstrap, reset, and agent's units all read it:
+
+- `AgentUpgrade` writes it, with the last good image as
+  `AKS_FLEX_NODE_LAST_GOOD_IMAGE`.
+- Whatever provisions bootstrap's inputs may write it, to join with another
+  image, as `bootstrap.sh`'s inputs name the agent it downloads. The agent's
+  unit then keeps running it.
+- Reset removes it, with the rest of `/etc/aks-flex-node`, so a join without one
+  runs the install's image.
+
+## AgentUpgrade by image
+
+An `AgentUpgrade` in the container takes an `image`: a fully qualified
+reference with a tag or a digest. A digest pins the image; a tag is trusted to
+name the intended one. The parameter's name is this branch's choice, to agree
+with AKS.
+
+The upgrade follows the host's, with images for binaries:
+
+1. The agent records the pending upgrade in its durable signal,
+   `/etc/aks-flex-node/agent-upgrade-signal.json`, with the candidate image and
+   the one it runs.
+2. It pulls the candidate, and runs `aks-flex-node version` in it, as the host
+   runs the candidate binary before switching.
+3. It selects the candidate in `agent-image.env`, with the image it runs as the
+   last good one, and restarts its unit from a transient unit.
+4. The new daemon converges: it rewrites the agent's units from its image, and
+   copies its binary into the active machine, where kubelet runs it as its
+   credential plugin. It then judges the upgrade, as on a host: the selection
+   names the candidate, it runs the candidate, and the machine's binary is its
+   own. It publishes the result to the MachineOperation.
+5. If the new daemon fails, systemd restarts it, and `OnFailure=` starts the
+   recovery unit. That runs `recover-agent-upgrade` from the last good image,
+   which records the failure, selects the last good image again, and restarts
+   the agent's unit. The last good daemon then reports the failure.
+
+The recovery unit runs only while an upgrade's signal and a selection exist,
+so an ordinary failure of the agent's unit changes nothing, as on a host.
+systemd 254 and later, ACL's included, run `OnFailure=` at every failure, not
+only once the unit hits its start limit, so recovery can find the unit still
+restarting; it then restarts onto the restored image by itself.
+
+At every start, the daemon also removes the agent's images it won't run again:
+all but the selected one, the last good one, the install's, which bootstrap
+runs after a reset, even offline, and the one it runs. It's best effort: a
+failed removal is only logged, and not knowing which to keep removes none.
+
+## Reset
+
+There are three ways in, all `main`'s code:
+
+- An `AgentReset` MachineOperation, which the daemon carries out
+- The deletion signal, when the node's Machine is deleted
+- `aks-flex-node reset`, which `aks-flex-node-reset.service` runs in a
+  container
+
+Each resets the node: it removes the machines, their `bpffs` mounts, and the
+agent's config, state, bootstrap inputs, and image selection. Then
+`UninstallService` removes the agent's unit and its recovery unit. When the
+daemon does that itself, stopping its unit stops it, so `UninstallService`
+disables the unit, removes its files, and reloads systemd before it stops the
+unit. On `main`, the stop came first, and left a dangling
+`multi-user.target.wants` link.
+
+Afterwards, nothing of the agent runs, as on a host. The settings, the
+bootstrap and reset units, and the `/usr/local` overlay stay, so new inputs
+and a start of the bootstrap unit join the node again.
+
+## Machines belong to the host
 
 `machinectl start` asks the host's systemd to start
-`systemd-nspawn@NAME.service`, so the machine runs in the host's cgroup tree:
+`systemd-nspawn@NAME.service`, so each machine runs in the host's cgroup tree,
+not the container's:
 
 | | cgroup |
 |---|---|
-| The unit | `/system.slice/aks-flex-node-container.service` (only `ctr`) |
-| The agent container | `/aks-flex/aks-flex-node` |
-| A machine | `/machine.slice/systemd-nspawn@NAME.service/payload` |
+| The agent's unit | `/system.slice/aks-flex-node-agent.service` (only `ctr`) |
+| The agent's container | `/aks-flex/aks-flex-node` |
+| A machine | `/machine.slice/systemd-nspawn@NAME.service` |
 
-So stopping, restarting, or replacing the agent container doesn't touch the
-machines, and the check confirms the machine's leader process is unchanged
-across a container restart. An upgrade of the agent is a new image and a
-restart of the unit, with the machines left running.
+So stopping, restarting, upgrading, or replacing the agent's container doesn't
+touch the machines, and the check confirms that a machine's leader process is
+unchanged across a restart of the container.
+
+Each machine's unit runs the nspawn lifecycle helper,
+`/usr/local/bin/unbounded-agent-nspawn-lifecycle`, from the host's systemd at
+every start of the machine. The unbounded library installs it there as a copy
+of the agent's binary, so it's the one binary of the agent left on the host.
+ACL's `/usr/local` is read-only, so the install mounts a writable overlay on
+it, backed by `/var/lib/aks-flex-node/usr-local`. Running the hooks in
+containers of the image needs a change to unbounded; see
+[TODO.md](../../TODO.md).
 
 ## SELinux
 
-### The problem
+[SELINUX.md](SELINUX.md) is the full finding, written up for the ACL team.
+In short:
 
-Run with `ctr run --privileged`, the container's processes are `spc_t`, the
-"super privileged container" domain. Its first D-Bus call is refused:
-
-```text
-avc:  denied  { send_msg } for msgtype=method_call interface=org.freedesktop.DBus member=Hello
-  dest=org.freedesktop.DBus scontext=system_u:system_r:spc_t:s0
-  tcontext=system_u:system_r:kernel_t:s0 tclass=dbus permissive=0
-```
-
-and `machinectl` fails with `Access denied`.
-
-### Why
-
-- ACL's `/usr` is unlabeled (`unlabeled_t`), so nothing on the host changes
-  domain at exec. systemd, dbus-daemon, machined, sshd, containerd: every
-  process is `kernel_t`.
-- The policy is the usual container-selinux one. `spc_t` is meant to be
-  unconfined, and may send D-Bus messages to `system_dbusd_t`, `init_t`, and
-  `systemd_machined_t`, the domains those daemons run in on a labeled system.
-  No rule lets it send to `kernel_t`; only `kernel_t`, `init_t`, and
-  `systemd_logind_t` may.
-- `kernel_t` moves to `spc_t` when it executes a file labeled
-  `container_file_t`, `container_ro_file_t`, or `container_var_lib_t`. Files in
-  containerd's snapshots are `container_var_lib_t`, because the policy gives
-  `container_var_lib_t` to any directory `kernel_t` makes in a `var_lib_t` one.
-
-So any container whose files containerd unpacked lands in `spc_t`, and can't
-reach systemd. On a labeled host the same container would work.
-
-### What did not work
-
-| Attempt | Why not |
-|---|---|
-| `runcon` or `nsenter -Z` to `kernel_t`, from the container | `nnp_transition` denied: `ctr` sets NoNewPrivileges. With `--allow-new-privs`, `entrypoint` denied: `kernel_t` can't be entered from an `unlabeled_t` binary. |
-| `process.selinuxLabel` of `kernel_t` in the OCI spec | `ctr run --config` takes a spec, but then no image: it needs an unpacked rootfs. And entering `kernel_t` from `container_var_lib_t` is not allowed either. |
-| A policy module | ACL has no policy store, so `semodule` can't install one. |
-| A boolean | None of the policy's booleans covers D-Bus to `kernel_t`. |
+- ACL's `/usr` is unlabeled, so every host process is `kernel_t`: systemd,
+  dbus-daemon, machined, and containerd.
+- A privileged container runs as `spc_t`, because containerd's snapshots are
+  `container_var_lib_t`. The policy lets `spc_t` send D-Bus messages to the
+  domains those daemons run in on a labeled host, but not to `kernel_t`. So the
+  container's first D-Bus message is denied, and `machinectl` and `systemctl`
+  fail with `Access denied`.
+- The agent needs one rule, `allow spc_t kernel_t:dbus send_msg;`. With it,
+  every host operation the agent performs works from `spc_t`, with no denials,
+  on a policy built from ACL's own. `ctr` reaches containerd's socket from
+  `spc_t` without a new rule.
 
 ### The workaround
 
-If the container's files are labeled with a type that has no transition, its
-processes stay `kernel_t`, the domain everything else on the host already runs
-in. The unit:
-
-- uses containerd's native snapshotter, which nothing else on ACL uses, so the
-  overlayfs snapshotter and any other containers are left as they are
-- relabels its directory `usr_t` before each pull: `kernel_t` has no
-  file-creation transition in `usr_t` directories, so new snapshots inherit it
-
-The container then reports `system_u:system_r:kernel_t:s0`, and the whole check
-runs with no SELinux denials.
+Until ACL ships the rule, `harness.py up --selinux-workaround` merges
+[`selinux-workaround.bu`](selinux-workaround.bu) into the install. It adds
+drop-ins to all four units that run the agent's containers, so they run on
+containerd's native snapshotter, whose directory it relabels `usr_t`. Files
+there have no transition, so the containers stay `kernel_t`, like everything
+else on the host. It's development-only, and isolated in one commit, "Add an
+opt-in SELinux workaround for the agent container", so reverting that commit
+removes it.
 
 What it costs:
 
-- The native snapshotter copies instead of overlaying. Every container start
-  copies the image into a fresh writable snapshot: about 20 seconds between the
-  unit starting and the entrypoint's first line. Disk use is about twice the
-  image, 390 MB, for a single-layer image. A layered image costs a full copy per
-  layer: 1.2 GB for the same image in 7 layers, with a 97-second unpack. The
-  harness squashes the image to one layer for that reason.
-- The agent is as unconfined as the rest of the host. That is what a privileged
-  agent with the host's root is anyway, and what the agent installed on the host,
-  as PR #323 does, already is.
-- It depends on today's policy and labels: `chcon` on `/var` lasts, but a
-  relabel of the host, or a policy change to `usr_t`, would undo it.
+- **Start time and disk.** The native snapshotter copies instead of
+  overlaying: every container start copies the image into a fresh writable
+  snapshot, about 30 seconds before the entrypoint runs, and a layered image
+  costs a full copy per layer. The harness squashes the image to one layer for
+  that reason.
+- **Confinement.** The agent is as unconfined as the rest of the host. That's
+  what a privileged agent with the host's root is anyway.
+- **`reset-failed`.** As `kernel_t`, `systemctl reset-failed` is denied, so
+  upgrade recovery can't clear a failed agent unit. It then schedules a
+  restart once the unit's start limit has passed, if the unit has failed.
+  `spc_t` may reset it.
+- **Durability.** It depends on today's policy and labels: a relabel of the
+  host, or a policy change to `usr_t`, would undo it.
 
-The machines' own processes are `spc_t`: their root directory under
-`/var/lib/machines` gets `container_var_lib_t` from the same rule, whoever
-creates it. That happens with the agent on the host too. It does no harm here:
-`kernel_t` may send to `spc_t`, which is what `systemd-run --machine` needs.
-
-### For the ACL team
-
-In order of preference:
-
-1. **Label `/usr` in the image.** With systemd as `init_t`, dbus-daemon as
-   `system_dbusd_t`, and machined as `systemd_machined_t`, the existing
-   container-selinux rules already let `spc_t` talk to them, and a standard
-   `ctr run --privileged`, on the default overlayfs snapshotter, would work. It
-   would also make SELinux on ACL confine anything.
-2. **Allow `spc_t` to send D-Bus messages to `kernel_t`**, at least
-   `allow spc_t kernel_t:dbus send_msg;`, if `/usr` stays unlabeled. The
-   prototype hasn't been run in `spc_t` with that rule, so there may be more.
-3. **Ship a policy store**, so a policy module for the agent can be installed
-   with the agent.
-
-## Running the real agent
-
-The image carries `aks-flex-node`, but its entrypoint only checks access and
-idles. The agent, through the unbounded library, assumes it runs on the host.
-Before it can run in this container:
-
-- **Host paths.** It writes to `/etc/systemd/system`, `/etc/systemd/nspawn`,
-  `/var/lib/machines`, `/etc/aks-flex-node`, `/var/log/aks-flex-node`,
-  `/opt/unbounded/agent`, `/etc/sysctl.d`, `/etc/modules-load.d`, and more, as
-  absolute paths. Either the unit bind-mounts each of them at the same path in
-  the container, or the library takes a host root prefix; PR #323's host root
-  work is a start.
-- **Host commands.** It runs `systemctl`, `machinectl`, `systemd-run`,
-  `systemd-nspawn`, and others by name. The `host-exec` links cover the first
-  three. `ip`, `nft`, `sysctl`, and `modprobe` act on the kernel, so the
-  container's own work on the host's network namespace, but the image has to
-  carry them, at versions that agree with the host's kernel.
-- **Self-installation.** `start` copies the agent to `/opt/unbounded/agent/bin`,
-  writes `aks-flex-node-agent.service` and its recovery unit, and upgrades
-  itself with blue/green binaries. In a container, the image and
-  `aks-flex-node-container.service` replace all of that: an upgrade is a new
-  image. These steps need turning off.
-- **The nspawn lifecycle hooks.** The drop-in the agent writes for
-  `systemd-nspawn@.service` runs `/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle`
-  before and after each machine starts, from the host's systemd, outside the
-  container. Either the image copies that helper to the host's `/opt` (writable
-  on ACL), or the hooks move into the agent.
-- **Configuration.** The bootstrap config, as PR #323's `bootstrap.env` and
-  base config do, written by Ignition under `/etc/aks-flex-node`, which the
-  container sees through `/host` or a bind mount.
-- **Reset and uninstall** remove the container unit and image, instead of the
-  agent's units and binaries.
+The domains swap under the workaround. With the rule, the containers are
+`spc_t` and the machines they create are `kernel_t`; with the workaround, the
+containers are `kernel_t` and their machines `spc_t`. The harness has only run
+pods in `spc_t` machines so far.
 
 ## Security
 
-- A privileged container with the host's PID namespace and a writable `/host` is
-  root on the host. It's no less trusted than the agent installed on the host.
-- The image becomes what that trust rests on. Pin it by digest in the Ignition
-  config, and sign and verify it. The prototype pulls a tag over plain HTTP from
+- A privileged container with the host's PID namespace and a writable `/host`
+  is root on the host, as is the agent installed on a host. So is access to
+  containerd's socket, which the agent has.
+- The image is what that trust rests on. Pin it by digest in the install's
+  settings, and sign and verify it. The harness pulls a tag over plain HTTP from
   a local registry.
+- Whoever can create MachineOperations for a machine can make it run an image
+  of their choosing, as root, through `AgentUpgrade`. On a host, `downloadURL`
+  and `sha256` grant the same, so treat the parameters as sensitive either way.
 - `ctr` keeps NoNewPrivileges on.
+- The harness writes bootstrap's inputs, with the bootstrap token, mode 0600,
+  and reset removes them.
 
-## Open questions and follow-ups
+## Open questions
 
-- **Cgroup placement.** `ctr` puts the container at `/aks-flex/aks-flex-node`,
-  outside its unit's cgroup, so systemd neither accounts for nor limits the
-  agent, and stopping the unit relies on `ExecStop` killing the task. A
-  launcher using the containerd client with the systemd cgroup driver, or
-  `ctr run --cgroup` with a slice, could place it under the unit.
-- **`ctr` as the launcher.** It is the only container tool on ACL, but it's a
-  debugging tool. A small purpose-built launcher, or an ACL-provided mechanism
-  for system containers, would be sturdier.
-- **Offline and first boot.** The container needs the registry at every start
-  until the image is pulled. An image delivered with the OS, through a system
-  extension or a `ctr image import` from Ignition, would remove the dependency.
-- **Private registries.** `ctr image pull` would need credentials or a
-  `hosts.toml`; MCR needs none.
-- **Start time.** About 20 seconds per container start with the native
-  snapshotter; near zero with overlayfs once SELinux allows it.
+[TODO.md](../../TODO.md) tracks them, among them:
+
+- the cgroup: `ctr` puts the container outside its unit's cgroup, so systemd
+  neither accounts for nor limits the agent
+- whether `ctr`, a debugging tool and the only container tool on ACL, stays
+  the launcher
+- image delivery: pinning, private registries, and an image shipped with the
+  OS for an offline first boot
+- how operators deliver bootstrap's inputs, and `--fetch-bootstrap-data` with
+  the VM's identity
+- the nspawn lifecycle helper
+- a run on an Azure VM, and ACL in `main`'s e2e
 
 ## Measurements
 
-On a 16-core Intel Xeon Platinum 8370C running WSL2, with a 4-CPU, 4 GB VM:
+On a 16-core Intel Xeon Platinum 8370C running WSL2, with a 4-CPU, 4 GB VM and
+the SELinux workaround:
 
 | | |
 |---|---|
 | Gallery image export (first `up` only) | 90 s, 842 MiB downloaded |
-| `up`, image and build cache present | about 2 min 50 s |
+| `up`, image and build cache present | about 5 min, with the kind cluster and the controller |
 | ACL boot to SSH | about 16 s (systemd: 3.5 s kernel, 8 s initrd, 4 s userspace) |
-| Agent container start, unit start to entrypoint | about 20 s |
-| `check`, with a reboot | about 1 min 45 s |
+| First bootstrap, unit start to agent installed | about 90 s, with the image and the machine's rootfs pulled |
+| Container start, unit start to entrypoint | about 30 s, on the native snapshotter |
+| `check`, with a reboot | 70 checks, about 19 min |
 | Agent image | about 200 MB, one layer |
-| Native snapshotter use on the VM | about 390 MB |
+| Native snapshotter on the VM | about 390 MB |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
