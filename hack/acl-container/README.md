@@ -38,11 +38,11 @@ yet let a privileged container talk to the host's systemd over D-Bus. See
 export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group      # only for the first export
 hack/acl-container/harness.py up --selinux-workaround # cluster, image, VM, bootstrap
 hack/acl-container/harness.py status                  # the VM, the agent, machines, nodes
-hack/acl-container/harness.py check                   # 70 checks, about 19 minutes
+hack/acl-container/harness.py check                   # 72 checks, about 13 minutes
 hack/acl-container/harness.py down                    # remove the VM, cluster, network, and state
 ```
 
-`up` takes about five minutes once the ACL image is exported and the image
+`up` takes under five minutes once the ACL image is exported and the image
 build is cached. It:
 
 1. creates the bridge `virbr-aclc` on `192.168.112.0/24`, with NAT, and turns
@@ -164,9 +164,10 @@ sudo ctr --namespace aks-flex task ls         # the agent's containers
 sudo ctr --namespace aks-flex images ls -q    # its images
 ```
 
-Under the SELinux workaround, each start of a container takes about 30 seconds
+Under the SELinux workaround, each start of a container takes about 12 seconds
 before its entrypoint runs: the units run it on containerd's native
-snapshotter, which copies the image for every start. See
+snapshotter, which copies the image for every start. The harness has the host
+cache the VM's disk writes (`cache=unsafe`), which more than halves that. See
 [SELinux](DESIGN.md#selinux).
 
 To change what's in the image, edit it and push it:

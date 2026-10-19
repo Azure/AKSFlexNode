@@ -12,7 +12,7 @@
 
 On ACL 3.0.20261005, from the Azure gallery image `acl-1es-eval` version
 3.20261007.1021, joined to a local kind cluster running `main`'s controller,
-`harness.py check` verifies 70 checks, including all of the following:
+`harness.py check` verifies 72 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -381,8 +381,9 @@ What it costs:
 
 - **Start time and disk.** The native snapshotter copies instead of
   overlaying: every container start copies the image into a fresh writable
-  snapshot, about 30 seconds before the entrypoint runs, and a layered image
-  costs a full copy per layer. The harness squashes the image to one layer for
+  snapshot before the entrypoint runs: about 12 seconds in the harness's VM,
+  and 30 without the host caching its disk writes. A layered image costs a
+  full copy per layer. The harness squashes the image to one layer for
   that reason.
 - **Confinement.** The agent is as unconfined as the rest of the host. That's
   what a privileged agent with the host's root is anyway.
@@ -431,17 +432,18 @@ pods in `spc_t` machines so far.
 
 ## Measurements
 
-On a 16-core Intel Xeon Platinum 8370C running WSL2, with a 4-CPU, 4 GB VM and
-the SELinux workaround:
+On a 16-core Intel Xeon Platinum 8370C running WSL2, with a 4-CPU, 4 GB VM
+whose disk writes the host caches (`cache=unsafe`), and the SELinux
+workaround:
 
 | | |
 |---|---|
 | Gallery image export (first `up` only) | 90 s, 842 MiB downloaded |
-| `up`, image and build cache present | about 5 min, with the kind cluster and the controller |
+| `up`, image and build cache present | about 4.5 min, with the kind cluster and the controller |
 | ACL boot to SSH | about 16 s (systemd: 3.5 s kernel, 8 s initrd, 4 s userspace) |
-| First bootstrap, unit start to agent installed | about 90 s, with the image and the machine's rootfs pulled |
-| Container start, unit start to entrypoint | about 30 s, on the native snapshotter |
-| `check`, with a reboot | 70 checks, about 19 min |
+| First bootstrap, unit start to agent installed | about 45 s, with the image and the machine's rootfs pulled |
+| Container start, unit start to entrypoint | about 12 s on the native snapshotter; 30 s without the host caching the disk's writes |
+| `check`, with a reboot | 72 checks, about 13 min; `upgrade` is the longest group, at about 4.5 min |
 | Agent image | about 200 MB, one layer |
 | Native snapshotter on the VM | about 390 MB |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
