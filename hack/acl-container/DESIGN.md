@@ -299,6 +299,13 @@ restart waits for recovery, which starts a container and takes longer than
 `RestartSec=`, and runs the image recovery restored rather than the one that
 failed.
 
+Each upgrade restarts the agent's unit, and systemd counts that toward the
+unit's start limit, 5 starts in 5 minutes, as on a host, where `main`'s unit
+has the same limit. A restart past it fails the unit, which recovery takes for
+a failed upgrade: it restores the last good image, and the upgrade is reported
+failed. So an upgrade that would be the unit's sixth start in five minutes
+fails, on a host too.
+
 At every start, the daemon also removes the agent's images it won't run again:
 all but the selected one, the last good one, the install's, which bootstrap
 runs after a reset, even offline, and the one it runs. It's best effort: a

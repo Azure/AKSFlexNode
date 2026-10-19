@@ -88,6 +88,11 @@ machine. `check --only GROUP,...` runs some of its groups, in their usual order:
 leaves one, so any of them can run alone, such as `--only upgrade,agentreset`
 while working on upgrades. `check` ends with how long each group took.
 
+The agent's unit may start 5 times in 5 minutes, and systemd counts its
+restarts toward that, including the four `upgrade` causes. So `upgrade` and
+`machines` first wait, if they must, for earlier starts to age out; running
+`--only upgrade` again right away waits a few minutes.
+
 ## Working with the node
 
 The cluster's kubeconfig is in the harness's state directory:
