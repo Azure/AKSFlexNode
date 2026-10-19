@@ -26,6 +26,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -1321,6 +1322,37 @@ def machine_agent_digest() -> str:
     return out.stdout.split()[0] if out.returncode == 0 else ""
 
 
+SYSTEMD_TIMESPAN_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1, "min": 60, "h": 3600}
+
+
+def make_room_for_agent_starts(needed: int) -> None:
+    """Wait, if need be, until the agent's unit can start needed more times within its start
+    limit. The limit counts deliberate restarts, as AgentUpgrade's, as well as failures, and a
+    start past it fails the unit, which recovery takes for a failed upgrade. Under the SELinux
+    workaround nothing on the host may reset it, so a group of checks that restarts the agent
+    waits for earlier starts to age out instead."""
+    props = dict(line.split("=", 1) for line in ssh_out(
+        f"systemctl show {AGENT_UNIT} -p StartLimitBurst -p StartLimitIntervalUSec").splitlines() if "=" in line)
+    burst = int(props.get("StartLimitBurst", "0") or 0)
+    interval = sum(int(n) * SYSTEMD_TIMESPAN_UNITS[unit] for n, unit in
+                   re.findall(r"(\d+)(us|ms|min|s|h)\b", props.get("StartLimitIntervalUSec", "")))
+    if not burst or not interval:
+        return
+    now, *starts = ssh_out(
+        f"date +%s.%N; journalctl -b -u {AGENT_UNIT} --since -{int(interval)}s -o short-unix --no-pager "
+        f"| awk '/Starting {AGENT_UNIT}/ {{print $1}}'").split()
+    excess = len(starts) + needed - burst
+    if excess <= 0:
+        return
+    if needed > burst:
+        die(f"{needed} starts of {AGENT_UNIT} can't fit in its start limit, {burst} starts in {int(interval)}s")
+    wait = float(sorted(starts, key=float)[excess - 1]) + interval - float(now) + 1
+    if wait > 0:
+        log(f"waiting {int(wait)}s for {AGENT_UNIT}'s start limit, {burst} starts in {int(interval)}s, "
+            f"to allow {needed} more")
+        time.sleep(wait)
+
+
 def agent_image_by_digest() -> str:
     """The image the harness last pushed as the agent's, pinned by digest, as an AgentUpgrade has
     to name it."""
@@ -1334,6 +1366,8 @@ def check_agent_upgrade(checks: Checks) -> str:
     one naming an image by tag alone, which is rejected, as main rejects an archive without its
     SHA-256, then back to the agent's own image. Return the good candidate."""
     good, broken = build_candidate_images()
+    # The good candidate, the broken one and its rollback, and the agent's own image.
+    make_room_for_agent_starts(4)
     original = agent_image_by_digest()
     before = agent_binary_digest()
 
@@ -1480,6 +1514,7 @@ def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
                   (shell.stdout + shell.stderr).strip())
 
     leader = machine_leader(machine)
+    make_room_for_agent_starts(1)
     log(f"restarting {AGENT_UNIT} while {machine} runs (leader pid {leader})")
     ssh(f"sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
