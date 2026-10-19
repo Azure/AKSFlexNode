@@ -218,20 +218,27 @@ def stop_registry() -> None:
 
 def push_agent_image() -> str:
     """Push the agent image and return its digest."""
+    return push_image(LOCAL_AGENT_IMAGE, AGENT_TAG).rpartition("@")[2]
+
+
+def push_image(local: str, tag: str) -> str:
+    """Push a local image to the bridge's registry as AGENT_REPOSITORY:tag, and return the
+    reference the VM pulls it by, pinned by digest."""
     start_registry()
-    digest_file = STATE / "agent-image.digest"
+    vm_image = f"{GATEWAY}:{REGISTRY_PORT}/{AGENT_REPOSITORY}:{tag}"
+    digest_file = STATE / ("agent-image.digest" if tag == AGENT_TAG else f"{tag}.digest")
     if ENGINE == "podman":
         run(["podman", "push", "--quiet", "--tls-verify=false", "--digestfile", str(digest_file),
-             LOCAL_AGENT_IMAGE, VM_AGENT_IMAGE])
+             local, vm_image])
         digest = digest_file.read_text().strip()
     else:
-        loopback = f"127.0.0.1:{REGISTRY_PORT}/{AGENT_REPOSITORY}:{AGENT_TAG}"
-        run(["docker", "tag", LOCAL_AGENT_IMAGE, loopback])
+        loopback = f"127.0.0.1:{REGISTRY_PORT}/{AGENT_REPOSITORY}:{tag}"
+        run(["docker", "tag", local, loopback])
         run(["docker", "push", "--quiet", loopback])
         digest = capture(["docker", "inspect", "-f", "{{index .RepoDigests 0}}", loopback]).split("@")[-1]
         digest_file.write_text(digest + "\n")
-    log(f"pushed {VM_AGENT_IMAGE}@{digest}")
-    return digest
+    log(f"pushed {vm_image}@{digest}")
+    return f"{GATEWAY}:{REGISTRY_PORT}/{AGENT_REPOSITORY}@{digest}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1138,16 +1145,20 @@ def agent_log_tail() -> str:
     return ssh("sudo tail -n 20 /var/log/aks-flex-node/aks-flex-node.log", check=False).stdout
 
 
-def run_machine_operation(kind: str, timeout: float = 600) -> tuple[str, str]:
+def run_machine_operation(kind: str, timeout: float = 600,
+                          parameters: dict[str, str] | None = None) -> tuple[str, str]:
     """Request a MachineOperation of the node, as main's demos and e2e do, and return its final
     phase and message."""
     name = f"aclc-{kind.lower()}-{int(time.time())}"
     log(f"requesting {kind} MachineOperation {name}")
+    spec = {"machineRef": HOSTNAME, "operationKind": kind, "ttlSecondsAfterFinished": 3600}
+    if parameters:
+        spec["parameters"] = parameters
     operation = {
         "apiVersion": "unbounded-cloud.io/v1alpha3",
         "kind": "MachineOperation",
         "metadata": {"name": name},
-        "spec": {"machineRef": HOSTNAME, "operationKind": kind, "ttlSecondsAfterFinished": 3600},
+        "spec": spec,
     }
     kubectl("apply", "-f", "-", input=json.dumps(operation), quiet=True)
     status = ["", ""]
@@ -1173,6 +1184,95 @@ def check_node_reboot(checks: Checks) -> None:
     checks.expect(new_leader not in ("", leader) and machine_state(active) == "running",
                   f"NodeReboot restarted {active}", f"leader {leader}, then {new_leader or 'none'}")
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the NodeReboot")
+
+
+# A broken candidate's agent, as main's e2e builds one: it answers version, so the upgrade
+# switches to it, but its daemon fails.
+BROKEN_AGENT = """\
+#!/bin/bash
+if [[ ${1:-} == version ]]; then
+    exec /opt/aks-flex-node/bin/aks-flex-node-real "$@"
+fi
+echo "aks-flex-node: a broken candidate from harness.py check" >&2
+exit 1
+"""
+
+
+def build_candidate_images() -> tuple[str, str]:
+    """Build two candidates from the agent's image, as main's e2e builds its candidates from its
+    binary: a good one, whose agent binary differs but runs, and a broken one. Push them, and
+    return the references the VM pulls them by, pinned by digest."""
+    candidates = {
+        "upgrade-good": (["RUN printf '\\nAKS-FLEX-UPGRADE-CHECK\\n' >> /opt/aks-flex-node/bin/aks-flex-node"], {}),
+        "upgrade-broken": (["RUN mv /opt/aks-flex-node/bin/aks-flex-node /opt/aks-flex-node/bin/aks-flex-node-real",
+                            "COPY --chmod=0755 aks-flex-node /opt/aks-flex-node/bin/aks-flex-node"],
+                           {"aks-flex-node": BROKEN_AGENT}),
+    }
+    references = []
+    for tag, (steps, files) in candidates.items():
+        context = STATE / tag
+        shutil.rmtree(context, ignore_errors=True)
+        context.mkdir()
+        for name, content in files.items():
+            (context / name).write_text(content)
+        (context / "Containerfile").write_text("\n".join([f"FROM {LOCAL_AGENT_IMAGE}", *steps]) + "\n")
+        local = f"localhost/{AGENT_REPOSITORY}:{tag}"
+        log(f"building {local}")
+        # One layer, for the native snapshotter's sake, as build_agent_image does.
+        squash = ["--squash-all"] if ENGINE == "podman" else []
+        run([ENGINE, "build", "--quiet", *squash, "-t", local, str(context)], capture=True)
+        references.append(push_image(local, tag))
+    return references[0], references[1]
+
+
+def agent_image() -> str:
+    """The image the agent's container runs, which its unit passes in."""
+    return agent_out('printf "%s" "$AKS_FLEX_NODE_IMAGE"')
+
+
+def agent_binary_digest() -> str:
+    return agent_out("sha256sum /opt/aks-flex-node/bin/aks-flex-node").split()[0]
+
+
+def machine_agent_digest() -> str:
+    machine = daemon_state().get("activeMachine", "")
+    out = ssh(f"sudo sha256sum /var/lib/machines/{machine}/usr/local/bin/aks-flex-node", check=False)
+    return out.stdout.split()[0] if out.returncode == 0 else ""
+
+
+def check_agent_upgrade(checks: Checks) -> None:
+    """AgentUpgrade by image, as main's e2e upgrades by archive: to a candidate whose agent
+    binary differs, then to one whose daemon fails, which rolls back to the last good image, then
+    back to the agent's own image."""
+    good, broken = build_candidate_images()
+    original = agent_image()
+    before = agent_binary_digest()
+
+    phase, message = run_machine_operation("AgentUpgrade", parameters={"image": good})
+    checks.expect(phase == "Complete", "an AgentUpgrade to a candidate image completes",
+                  f"{phase or 'no phase'}: {message}")
+    upgraded = agent_binary_digest()
+    checks.expect(agent_image() == good and upgraded != before,
+                  "the agent runs the candidate image's agent", agent_image())
+    checks.expect(machine_agent_digest() == upgraded,
+                  "the active machine has the candidate's agent binary, for kubelet")
+    checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the upgrade")
+
+    log("the next candidate's daemon fails, and its recovery unit restores the last good image")
+    phase, message = run_machine_operation("AgentUpgrade", timeout=1800, parameters={"image": broken})
+    checks.expect(phase == "Failed", "an AgentUpgrade to an image whose daemon fails, fails",
+                  f"{phase or 'no phase'}: {message}")
+    wait_for_agent()
+    checks.expect(agent_image() == good and agent_binary_digest() == upgraded,
+                  "the agent is back on the last good image", agent_image())
+    checks.expect(machine_agent_digest() == upgraded,
+                  "the active machine has the last good agent binary again")
+    checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the rollback")
+
+    phase, message = run_machine_operation("AgentUpgrade", parameters={"image": original})
+    checks.expect(phase == "Complete" and agent_image() == original,
+                  "an AgentUpgrade back to the agent's own image completes",
+                  f"{phase or 'no phase'}: {message}")
 
 
 def check_reset(checks: Checks, how: str) -> None:
@@ -1389,11 +1489,12 @@ def cmd_push(_: argparse.Namespace) -> None:
     require_vm()
     build_agent_image(squash=selinux_workaround_enabled())
     push_agent_image()
-    # The agent's unit runs the image bootstrap pulled, so pull the new one as bootstrap does.
+    # The agent's unit runs the image bootstrap pulled, so pull the new one as bootstrap does. An
+    # AgentUpgrade's selection of another image would override it.
     log(f"pulling {VM_AGENT_IMAGE} on the VM and restarting {AGENT_UNIT}")
     ssh(f"sudo {CTR} image pull --plain-http {snapshotter_pull_args()} {VM_AGENT_IMAGE} >/dev/null",
         timeout=600)
-    ssh(f"sudo systemctl restart {AGENT_UNIT}")
+    ssh(f"sudo rm -f /etc/aks-flex-node/agent-image.env && sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
 
 
@@ -1405,6 +1506,7 @@ def cmd_check(args: argparse.Namespace) -> None:
         check_cluster(checks)
         check_repave(checks)
         check_node_reboot(checks)
+        check_agent_upgrade(checks)
     check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
     if cluster_enabled() and args.reboot:
         wait_for_node_ready()
