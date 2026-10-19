@@ -231,9 +231,6 @@ These changes apply everywhere, and leave a host's behavior as it was:
   as the other. The host's behaves as before.
 - The MachineOperation reconciler validates an `AgentUpgrade`'s parameters
   before acting on it. On a host, an `image` fails it as `InvalidParameters`.
-- `UninstallService` stops the agent's unit last, so the daemon can remove its
-  own unit; see [Reset](#reset). [PR #371](https://github.com/Azure/AKSFlexNode/pull/371)
-  makes the same fix on `main`.
 
 ## Bootstrap
 
@@ -318,8 +315,7 @@ agent's config, state, bootstrap inputs, and image selection. Then
 `UninstallService` removes the agent's unit and its recovery unit. When the
 daemon does that itself, stopping its unit stops it, so `UninstallService`
 disables the unit, removes its files, and reloads systemd before it stops the
-unit. On `main`, the stop came first, and left a dangling
-`multi-user.target.wants` link.
+unit.
 
 Afterwards, nothing of the agent runs, as on a host. The settings, the
 bootstrap and reset units, and the `/usr/local` overlay stay, so new inputs
