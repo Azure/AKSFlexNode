@@ -1,11 +1,105 @@
 package daemon
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
+
+func TestInstallServiceRunsTheImageInAContainer(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := installService(&config.Config{}, discardLogger(), true).(*installContainerServiceTask); !ok {
+		t.Error("installService(containerized=true) doesn't install the container's unit")
+	}
+	if _, ok := installService(&config.Config{}, discardLogger(), false).(*installServiceTask); !ok {
+		t.Error("installService(containerized=false) doesn't install the host's unit")
+	}
+}
+
+func TestContainerServiceUnitRunsTheDaemonFromTheImage(t *testing.T) {
+	t.Parallel()
+
+	unit := string(containerServiceUnitContent)
+	for _, want := range []string{
+		"EnvironmentFile=/etc/sysconfig/aks-flex-node-container",
+		"--mount type=bind,src=/,dst=/host,options=rbind:rslave",
+		"flex-agent-entrypoint aks-flex-node agent --config /etc/aks-flex-node/config.json",
+		"WantedBy=multi-user.target",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("the container's unit lacks %q", want)
+		}
+	}
+}
+
+func TestInstallContainerService(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		failOn    string
+		wantCalls []string
+		wantErr   bool
+	}{
+		"writes, enables, and starts the unit": {
+			wantCalls: []string{"daemon-reload", "enable " + ServiceUnitName, "start " + ServiceUnitName},
+		},
+		"doesn't start a unit it couldn't enable": {
+			failOn:    "enable",
+			wantCalls: []string{"daemon-reload", "enable " + ServiceUnitName},
+			wantErr:   true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls []string
+			task := newInstallContainerServiceTask(discardLogger())
+			task.unitPath = filepath.Join(t.TempDir(), "systemd", ServiceUnitName)
+			task.systemctl = func(_ context.Context, args ...string) error {
+				calls = append(calls, strings.Join(args, " "))
+				if args[0] == tc.failOn {
+					return errors.New("systemctl failed")
+				}
+				return nil
+			}
+
+			// Run twice: start can be run again on a host it already set up.
+			for run := 1; run <= 2; run++ {
+				calls = nil
+				err := task.Do(t.Context())
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("Do() run %d error = %v, want error %v", run, err, tc.wantErr)
+				}
+				if !slices.Equal(calls, tc.wantCalls) {
+					t.Errorf("run %d: systemctl calls = %q, want %q", run, calls, tc.wantCalls)
+				}
+			}
+			content, err := os.ReadFile(task.unitPath)
+			if err != nil {
+				t.Fatalf("read the unit: %v", err)
+			}
+			if !bytes.Equal(content, containerServiceUnitContent) {
+				t.Error("the unit written isn't the container's unit")
+			}
+			info, err := os.Stat(task.unitPath)
+			if err != nil {
+				t.Fatalf("stat the unit: %v", err)
+			}
+			if info.Mode().Perm() != 0o644 {
+				t.Errorf("the unit's mode = %v, want 0644", info.Mode().Perm())
+			}
+		})
+	}
+}
 
 func TestContainerized(t *testing.T) {
 	t.Parallel()

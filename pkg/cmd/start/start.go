@@ -95,16 +95,12 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
-	tasks := []phases.Task{
+	tasks := phases.Serial(logger,
 		daemon.SetupHost(cfg, logger),
 		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
-	}
-	// In its container, the agent runs from the image under the container's own unit, so it
-	// doesn't install its binary and unit on the host.
-	if !daemon.Containerized() {
-		tasks = append(tasks, daemon.InstallService(cfg, logger))
-	}
-	if err := phases.ExecuteTask(ctx, logger, phases.Serial(logger, tasks...)); err != nil {
+		daemon.InstallService(cfg, logger),
+	)
+	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
 	// The daemon removes it at startup too. Doing it here as well closes the
