@@ -74,18 +74,24 @@ BUTANE_IMAGE = os.environ.get("ACLC_BUTANE_IMAGE", "quay.io/coreos/butane:v0.29.
 SELINUX_WORKAROUND_BUTANE = HERE / "selinux-workaround.bu"
 SELINUX_WORKAROUND_MARKER = STATE / "selinux-workaround"
 
-# Must match agent-container.bu.
-AGENT_UNIT = "aks-flex-node-container.service"
+# Must match agent-container.bu, and the agent's unit, which start installs.
+AGENT_UNIT = "aks-flex-node-agent.service"
+BOOTSTRAP_UNIT = "aks-flex-node-bootstrap.service"
+RESET_UNIT = "aks-flex-node-reset.service"
 CTR_NAMESPACE = "aks-flex"
 CONTAINER_ID = "aks-flex-node"
 CTR = f"ctr --namespace {CTR_NAMESPACE}"
 
 CHECK_MACHINE = "aclc-check"
 IGNITION_NAME = "config.ign"
-AGENT_CONFIG = "/etc/aks-flex-node/config.json"
+# bootstrap's inputs, which the bootstrap unit waits for: the variables bootstrap.sh takes, and
+# the base config they name, which holds the bootstrap token.
+BOOTSTRAP_INPUTS = "/etc/aks-flex-node/bootstrap.env"
+BASE_CONFIG = "/etc/aks-flex-node/base-config.json"
+SETTINGS = "/etc/sysconfig/aks-flex-node-container"
 
-# The kind cluster up --cluster creates for the agent to join, on root Podman. Its node joins the
-# VM's bridge at KIND_BRIDGE_IP, where the VM reaches the API server.
+# The kind cluster up creates for the agent to join, on root Podman. Its node joins the VM's
+# bridge at KIND_BRIDGE_IP, where the VM reaches the API server.
 CLUSTER = os.environ.get("ACLC_KIND_CLUSTER", "aclc")
 KIND_NODE = f"{CLUSTER}-control-plane"
 KIND_NODE_IMAGE = os.environ.get("ACLC_KIND_NODE_IMAGE", "")
@@ -307,7 +313,7 @@ def restore_forwarding() -> None:
 def kind(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     binary = shutil.which("kind")
     if binary is None:
-        die("kind is needed for --cluster")
+        die("kind is needed for the cluster the agent joins")
         raise AssertionError
     return run(["sudo", "env", "KIND_EXPERIMENTAL_PROVIDER=podman", binary, *args],
                check=check, capture=not check)
@@ -544,7 +550,7 @@ def create_bootstrap_token() -> str:
 
 def agent_config(token: str, version: str) -> dict:
     """The agent's config, in main's format, for a bootstrap-token node that reads its machine from
-    the in-cluster controller."""
+    the in-cluster controller. bootstrap.sh starts from it."""
     ca = kubectl_out("config", "view", "--minify", "--raw", "-o",
                      "jsonpath={.clusters[0].cluster.certificate-authority-data}")
     dns_ip = kubectl_out("-n", "kube-system", "get", "service", "kube-dns", "-o",
@@ -569,6 +575,16 @@ def agent_config(token: str, version: str) -> dict:
         "components": {"kubernetes": version},
         "networking": {"dnsServiceIP": dns_ip},
         "node": {"kubelet": {"clusterFQDN": API_SERVER, "caCertData": ca}},
+    }
+
+
+def bootstrap_inputs() -> dict[str, str]:
+    """bootstrap's inputs, by path on the VM, for a bootstrap-token node: a base config with a new
+    token, from which bootstrap.sh renders the agent's config, and the variable naming it."""
+    config = agent_config(create_bootstrap_token(), kubernetes_version())
+    return {
+        BASE_CONFIG: json.dumps(config, indent=2) + "\n",
+        BOOTSTRAP_INPUTS: f"AKS_FLEX_NODE_BASE_CONFIG_FILE={BASE_CONFIG}\n",
     }
 
 
@@ -888,6 +904,44 @@ def wait_for_agent(timeout: float = 600) -> None:
     die(f"timed out after {int(timeout)}s waiting for the agent container")
 
 
+def unit_properties(unit: str, *names: str) -> dict[str, str]:
+    out = ssh(f"systemctl show {unit} " + " ".join(f"-p {name}" for name in names), check=False).stdout
+    return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+
+def agent_installed() -> bool:
+    return ssh(f"test -e /etc/systemd/system/{AGENT_UNIT}", check=False).returncode == 0
+
+
+def wait_for_bootstrap(timeout: float = 1800) -> None:
+    """Wait for the bootstrap unit to install the agent: it pulls the image and runs bootstrap.sh,
+    whose start installs and starts the agent's unit."""
+    log(f"waiting for {BOOTSTRAP_UNIT} to bootstrap the node")
+
+    def done() -> bool:
+        state = unit_properties(BOOTSTRAP_UNIT, "ActiveState", "Result")
+        if state.get("ActiveState") == "failed":
+            print(ssh(f"journalctl -u {BOOTSTRAP_UNIT} -b --no-pager -n 60", check=False).stdout)
+            die(f"{BOOTSTRAP_UNIT} failed")
+        return state.get("ActiveState") == "inactive" and state.get("Result") == "success" and agent_installed()
+
+    if not eventually(done, timeout, 10):
+        print(ssh(f"journalctl -u {BOOTSTRAP_UNIT} -b --no-pager -n 60", check=False).stdout)
+        die(f"timed out after {int(timeout)}s waiting for {BOOTSTRAP_UNIT}")
+    log(f"bootstrap installed {AGENT_UNIT}")
+
+
+def bootstrap_again() -> None:
+    """Join the VM again, as bootstrapping a host again does: new inputs, with a new token, and a
+    start of the bootstrap unit."""
+    log(f"bootstrapping {HOSTNAME} again")
+    for path, content in bootstrap_inputs().items():
+        ssh(f"sudo install -D -m 0600 /dev/stdin {path}", input=content)
+    ssh(f"sudo systemctl start --no-block {BOOTSTRAP_UNIT}")
+    wait_for_bootstrap()
+    wait_for_agent()
+
+
 def agent_command(args: list[str], tty: bool) -> str:
     """Return the VM command that runs args in the agent container. ctr exec does not pass the
     caller's environment, so TERM is set for interactive shells."""
@@ -984,6 +1038,21 @@ def check_container(checks: Checks) -> None:
     ssh(f"sudo umount {probe} 2>/dev/null; sudo rmdir {probe}", check=False)
     checks.expect(unmounted, "umount in the container unmounts on the host",
                   (unmount.stdout + unmount.stderr).strip())
+
+    # The units give the container only the host's root. Its entrypoint mounts the host paths the
+    # agent uses at their own paths.
+    paths = ("/etc/aks-flex-node", "/etc/systemd", "/var/lib/machines", "/run", "/usr/local")
+    container = agent_out("stat -c %d:%i " + " ".join(paths)).split()
+    host = ssh_out("sudo stat -c %d:%i " + " ".join(paths)).split()
+    differ = [path for path, mine, theirs in zip(paths, container, host) if mine != theirs]
+    checks.expect(len(container) == len(paths) and not differ,
+                  "the entrypoint mounted the host's paths at their own paths", ", ".join(differ))
+    exec_start = ssh_out(f"systemctl show {AGENT_UNIT} -p ExecStart --value")
+    checks.expect("/usr/bin/ctr" in exec_start and "aks-flex-node agent --config" in exec_start,
+                  f"{AGENT_UNIT}, which start installed, runs the agent's image", exec_start)
+    installed = ssh("ls -d /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node 2>/dev/null",
+                    check=False).stdout.strip()
+    checks.expect(installed == "", "the agent has no binary of its own on the host", installed)
 
 
 def daemon_state() -> dict:
@@ -1106,36 +1175,68 @@ def check_node_reboot(checks: Checks) -> None:
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the NodeReboot")
 
 
+def check_reset(checks: Checks, how: str) -> None:
+    """A reset ends as on main's hosts: the agent's unit is gone and nothing of the agent runs,
+    nor any machine. What installed the agent stays, so the node can be bootstrapped again."""
+
+    def stopped() -> bool:
+        return not agent_installed() and ssh(f"sudo {CTR} task ls -q", check=False).stdout.strip() == ""
+
+    checks.expect(eventually(stopped, 300, 5),
+                  f"{how} removed {AGENT_UNIT}, and no container of the agent runs",
+                  ssh(f"ls /etc/systemd/system/{AGENT_UNIT}; sudo {CTR} task ls", check=False).stdout)
+    left = ssh("machinectl list-images --no-legend; ls /run/bpffs; sudo ls -A /etc/aks-flex-node",
+               check=False).stdout.strip()
+    checks.expect(left == "", f"{how} removed the machines, their bpffs mounts, and the agent's "
+                  "config, state, and bootstrap inputs", left)
+    install = ssh(f"test -f {SETTINGS} && systemctl cat {BOOTSTRAP_UNIT} {RESET_UNIT} >/dev/null",
+                  check=False)
+    checks.expect(install.returncode == 0, f"what installed the agent survives {how}", install.stderr)
+
+
+def check_rejoin(checks: Checks, how: str) -> None:
+    # As AKS does once the agent stops.
+    kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
+    bootstrap_again()
+    checks.expect(eventually(node_ready, 1200, 10),
+                  f"node {HOSTNAME} joins again after {how}, once bootstrapped",
+                  "" if node_ready() else agent_log_tail())
+
+
 def check_agent_reset(checks: Checks) -> None:
-    """AgentReset removes the node's runtime and stops the agent, which on main also removes the
-    agent's unit; in a container the agent disables the container's unit. Then the harness joins
-    the VM again, as bootstrapping it again would: a new config, and the unit enabled."""
+    """AgentReset, which the daemon carries out: it resets the node, completes the operation, and
+    stops the agent by removing its unit."""
     phase, message = run_machine_operation("AgentReset")
     checks.expect(phase == "Complete", "an AgentReset MachineOperation completes",
                   f"{phase or 'no phase'}: {message}")
+    check_reset(checks, "AgentReset")
+    check_rejoin(checks, "AgentReset")
 
-    def unit(prop: str) -> str:
-        return ssh(f"systemctl show {AGENT_UNIT} -p {prop} --value", check=False).stdout.strip()
 
-    stopped = eventually(lambda: unit("ActiveState") == "inactive", 120, 3)
-    checks.expect(stopped and unit("UnitFileState") == "disabled",
-                  f"AgentReset stopped and disabled {AGENT_UNIT}",
-                  f"{unit('ActiveState')}, {unit('UnitFileState')}")
-    left = ssh("machinectl list-images --no-legend; ls /run/bpffs; sudo ls -A /etc/aks-flex-node",
-               check=False).stdout.strip()
-    checks.expect(left == "", "AgentReset removed the machines, their bpffs mounts, and the "
-                  "agent's config and state", left)
-    checks.expect(ssh("test -f /etc/sysconfig/aks-flex-node-container", check=False).returncode == 0,
-                  "the agent container's own config survives AgentReset")
+def check_local_reset(checks: Checks) -> None:
+    """aks-flex-node reset, which an operator runs through the reset unit, in a container of its
+    own: it stops and removes the agent's unit, then resets the node."""
+    log(f"resetting {HOSTNAME} through {RESET_UNIT}")
+    ssh(f"sudo systemctl start {RESET_UNIT}", check=False, timeout=900)
+    succeeded = unit_properties(RESET_UNIT, "Result").get("Result") == "success"
+    checks.expect(succeeded, f"aks-flex-node reset, through {RESET_UNIT}, succeeds",
+                  "" if succeeded else ssh(f"journalctl -u {RESET_UNIT} -b --no-pager -n 30",
+                                           check=False).stdout)
+    check_reset(checks, "reset")
+    check_rejoin(checks, "reset")
 
-    # As AKS does once the agent stops.
-    kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
-    log(f"bootstrapping {HOSTNAME} again")
-    config = agent_config(create_bootstrap_token(), kubernetes_version())
-    ssh(f"sudo install -m 0600 /dev/stdin {AGENT_CONFIG}", input=json.dumps(config, indent=2) + "\n")
-    ssh(f"sudo systemctl enable --now {AGENT_UNIT}")
-    checks.expect(eventually(node_ready, 1200, 10), f"node {HOSTNAME} joins again once bootstrapped",
-                  "" if node_ready() else agent_log_tail())
+
+def check_deletion_signal(checks: Checks) -> None:
+    """AKS deleting the node, as main's e2e does: its Machine gone, then its Node tainted. The
+    daemon resets the node and stops the agent, as for AgentReset."""
+    log(f"deleting {HOSTNAME}'s machine and tainting its Node")
+    kubectl("-n", "kube-system", "patch", "configmap", "aks-flex-machines", "--type=merge",
+            "-p", json.dumps({"data": {f"{HOSTNAME}.json": None}}), quiet=True)
+    kubectl("taint", "node", HOSTNAME, "kubernetes.azure.com/flex-node-deleting=true:NoSchedule",
+            "--overwrite", quiet=True)
+    check_reset(checks, "the deletion signal")
+    register_machine(kubernetes_version())
+    check_rejoin(checks, "the deletion signal")
 
 
 def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
@@ -1206,12 +1307,11 @@ def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
 # Commands
 
 
-def check_prerequisites(with_agent: bool, with_cluster: bool) -> None:
+def check_prerequisites(with_agent: bool) -> None:
     tools = ["qemu-system-x86_64", "qemu-img", "qemu-nbd", "ssh", "ssh-keygen", "ip", "iptables",
              "setsid", "sysctl"]
     if with_agent:
         tools.append(ENGINE)
-    if with_cluster:
         tools += ["kind", "kubectl", "go"]
     missing = [tool for tool in tools if shutil.which(tool) is None]
     if missing:
@@ -1227,9 +1327,7 @@ def cmd_up(args: argparse.Namespace) -> None:
     local = Path(args.image).expanduser() if args.image else None
     if local and not local.is_file():
         die(f"image not found: {local}")
-    if args.cluster and not args.agent:
-        die("--cluster needs the agent container; drop --no-agent")
-    check_prerequisites(args.agent, args.cluster)
+    check_prerequisites(args.agent)
     image = local or aclimage.gallery_image(IMAGE_DIR)
     stop_vm()
     STATE.mkdir(parents=True, exist_ok=True)
@@ -1241,16 +1339,15 @@ def cmd_up(args: argparse.Namespace) -> None:
         SELINUX_WORKAROUND_MARKER.unlink(missing_ok=True)
 
     create_network()
-    config = None
-    if args.cluster:
+    bootstrap = {}
+    # Nothing of the agent runs until it's bootstrapped, so the agent needs a cluster to join.
+    if args.agent:
         CLUSTER_MARKER.touch()
         create_cluster()
         install_controller()
-        version = kubernetes_version()
-        register_machine(version)
-        token = create_bootstrap_token()
+        register_machine(kubernetes_version())
         kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
-        config = agent_config(token, version)
+        bootstrap = bootstrap_inputs()
     else:
         CLUSTER_MARKER.unlink(missing_ok=True)
     if args.agent:
@@ -1260,11 +1357,10 @@ def cmd_up(args: argparse.Namespace) -> None:
 
     doc = add_harness_access(render_ignition(args.agent, workaround), public_key)
     ignition = STATE / IGNITION_NAME
-    if config is not None:
-        # The container's entrypoint starts the agent once this is there.
-        doc["storage"]["files"].append({
-            "path": AGENT_CONFIG, "mode": 0o600, "overwrite": True,
-            "contents": {"source": data_url(json.dumps(config, indent=2) + "\n")}})
+    # The bootstrap unit runs bootstrap at first boot because these are there.
+    for path, content in bootstrap.items():
+        doc["storage"]["files"].append({"path": path, "mode": 0o600, "overwrite": True,
+                                        "contents": {"source": data_url(content)}})
     ignition.write_text(json.dumps(doc, indent=2) + "\n")
     ignition.chmod(0o600)
 
@@ -1273,17 +1369,30 @@ def cmd_up(args: argparse.Namespace) -> None:
         launch_vm(image, f"http://{GATEWAY}:{SERVE_PORT}/{IGNITION_NAME}")
         wait_for_ssh()
     if args.agent:
+        wait_for_bootstrap()
         wait_for_agent()
-    if args.cluster:
         wait_for_node_ready()
     log(f"VM {HOSTNAME} is up at {VM_IP}; try `{Path(sys.argv[0]).name} status`")
+
+
+def snapshotter_pull_args() -> str:
+    """The snapshotter flags the bootstrap unit pulls the image with, from its environment."""
+    environment = ssh_out(f"systemctl show {BOOTSTRAP_UNIT} -p Environment --value")
+    for variable in shlex.split(environment):
+        name, _, value = variable.partition("=")
+        if name == "AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS":
+            return value
+    return ""
 
 
 def cmd_push(_: argparse.Namespace) -> None:
     require_vm()
     build_agent_image(squash=selinux_workaround_enabled())
     push_agent_image()
-    log(f"restarting {AGENT_UNIT}, which pulls the new image")
+    # The agent's unit runs the image bootstrap pulled, so pull the new one as bootstrap does.
+    log(f"pulling {VM_AGENT_IMAGE} on the VM and restarting {AGENT_UNIT}")
+    ssh(f"sudo {CTR} image pull --plain-http {snapshotter_pull_args()} {VM_AGENT_IMAGE} >/dev/null",
+        timeout=600)
     ssh(f"sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
 
@@ -1302,6 +1411,8 @@ def cmd_check(args: argparse.Namespace) -> None:
         checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
     if cluster_enabled():
         check_agent_reset(checks)
+        check_local_reset(checks)
+        check_deletion_signal(checks)
     checks.done()
 
 
@@ -1316,6 +1427,7 @@ def cmd_status(_: argparse.Namespace) -> None:
               check=False).stdout)
     if cluster_enabled():
         kubectl("get", "nodes", "-o", "wide", check=False)
+        print(ssh(f"systemctl status {BOOTSTRAP_UNIT} --no-pager -n 0 | head -3", check=False).stdout)
 
 
 def cmd_ssh(args: argparse.Namespace) -> None:
@@ -1360,13 +1472,11 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    up = commands.add_parser("up", help="build and push the agent image, and boot the VM")
+    up = commands.add_parser("up", help="create a kind cluster, build and push the agent image, "
+                                        "and boot the VM, which bootstraps the agent to join it")
     up.add_argument("--image", default=os.environ.get("ACL_IMAGE", ""),
                     help="Azure Container Linux qcow2 image (or ACL_IMAGE); without one, the "
                          "gallery image is exported to ACL_IMAGE_DIR and booted")
-    up.add_argument("--cluster", action="store_true",
-                    help="create a kind cluster, with main's in-cluster controller, and have the "
-                         "agent in the container join the VM to it")
     up.add_argument("--no-agent", dest="agent", action="store_false",
                     help="boot plain Azure Container Linux, without the agent container")
     up.add_argument("--selinux-workaround", action="store_true",

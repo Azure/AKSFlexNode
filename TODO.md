@@ -36,51 +36,69 @@ Separately, not needed by Flex: ACL is considering
 ## Parity with `main`
 
 The agent in a container must do what `main`'s agent does on an Ubuntu host,
-with the same config and commands. `start`, the daemon's reconciliation of the
-Machine goal state, repave, and the `NodeReboot` and `AgentReset`
-MachineOperations work: `harness.py up --cluster` joins the VM to a kind cluster
-through `main`'s in-cluster controller, and `check` runs a pod on it, repaves it
-from kube1 to kube2 as `main`'s e2e does, restarts its machine, reboots it,
-resets it, and bootstraps it again.
+with the same config and commands. Bootstrap, `start`, the daemon's
+reconciliation of the Machine goal state, repave, the `NodeReboot` and
+`AgentReset` MachineOperations, the deletion signal, and `reset` work:
+`harness.py up` bootstraps the VM into a kind cluster through `main`'s in-cluster
+controller, and `check` runs a pod on it, repaves it from kube1 to kube2 as
+`main`'s e2e does, restarts its machine, reboots it, and resets it in each of
+the three ways, bootstrapping it again after each.
 
-- [ ] `reset`
 - [ ] `AgentUpgrade`, which becomes a new image (see below)
 
 ## Run the real agent in the container
 
-The image carries `aks-flex-node` from `main`. Given a config, the container's
-entrypoint runs `aks-flex-node start` once, then `aks-flex-node daemon`, as
-`main`'s bootstrap and the agent's unit do on a host. The container gets the
-host's paths at their own paths and runs the host's tools through `host-exec`,
-and `/usr/local`, read-only on ACL, has a writable overlay. In a container
-neither `start` nor the daemon installs the agent's binaries or units on the
-host.
+Nothing of the agent runs on the host itself. The host's provisioning,
+`agent-container.bu`, installs units that run containers of the agent's image,
+and a settings file that names the image. `aks-flex-node-bootstrap.service`
+pulls the image and runs `main`'s `bootstrap.sh` from it, whose `start` installs
+`aks-flex-node-agent.service`, which runs the daemon in a container, as `start`
+installs it on a host. Reset removes that unit, after which nothing of the agent
+runs, and `aks-flex-node-reset.service` runs `aks-flex-node reset` in a container
+of its own. The units give each container only the host's root: its entrypoint
+mounts the host paths the agent uses at their own paths, and the host's tools
+run through `host-exec`.
 
+- [ ] nspawn lifecycle helper, the one binary of the agent left on the host.
+      Each machine's units run `/usr/local/bin/unbounded-agent-nspawn-lifecycle`
+      at every start of the machine: `pre-start` rewrites its `.nspawn` file and
+      `post-start` rewires NVIDIA devices. Unbounded copies the agent's binary
+      there when it provisions a machine, which is why `/usr/local`, read-only
+      on ACL, has a writable overlay; its newer releases only move the copy to
+      `/opt/unbounded/agent/bin`. Change unbounded so its caller can supply the
+      hooks' command and skip the copy, bump it in a commit of its own, and run
+      both hooks in short-lived containers of the agent's image through
+      `ctr run`, so machines still start without the daemon. Then remove the
+      overlay.
 - [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
-      needs none so far. Stay on it unless a specific fix needs a newer one,
-      and bump it in a commit of its own.
-- [ ] `start` ends by pointing at `systemctl status aks-flex-node-agent` and its
-      journal, which don't exist in a container. Point at the container's
-      unit instead.
+      needs none so far. Stay on it until the lifecycle helper, or another
+      specific fix, needs a newer one, and bump it in a commit of its own.
 - [ ] Upgrades: turn `AgentUpgrade`'s blue/green binary switching into an
-      image update.
+      image update, with rollback. On a host the daemon also rewrites its own
+      unit at every start; in a container it doesn't yet, so a newer image
+      can't change `aks-flex-node-agent.service` without a new bootstrap.
 - [ ] Recovery: replace `aks-flex-node-recovery.sh`. Recovery triggered by the
       container's unit failing can't run in that container. Run it as a
       separate container, which works in `spc_t`. If it's a host script
       instead, it runs as `kernel_t` and can't `reset-failed`, so it needs to
       wait out the unit's start limit and retry.
-- [ ] Bootstrap: the harness puts `/etc/aks-flex-node/config.json` in the
-      Ignition config, and the entrypoint runs `start`. Decide how operators
-      deliver the config in their Butane, and how it's fetched from the AKS
-      RP, as `main`'s `scripts/bootstrap.sh` does with bootstrap data.
-- [ ] Reset and uninstall: in a container, stopping the agent disables and
-      stops the container's unit, as `AgentReset` does, and the agent's
-      directories, mounts in the container, are emptied rather than removed.
-      `aks-flex-node reset` stops the agent first, so in a container it can't
-      run in the agent's own: give operators a way to run it in a container
-      of its own, with the same mounts. Uninstall would also remove the
-      container's unit and image, as `main`'s removes the agent's units and
-      binaries.
+- [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
+      `/etc/aks-flex-node/bootstrap.env`, which the harness writes through
+      Ignition, with a base config holding a bootstrap token. Decide how
+      operators deliver those inputs in their Butane, and try
+      `--fetch-bootstrap-data`, which fetches bootstrap data from the AKS RP
+      with the VM's identity, from the container.
+- [ ] Uninstall: on ACL the install is the Ignition config, which runs only
+      at first boot, so uninstalling means reprovisioning without the agent's
+      Butane config. Say so in the docs. In a container, reset empties the
+      agent's directories rather than removing them: they're mount points
+      there.
+- [ ] `main`: when the daemon stops its own unit, for `AgentReset` or the
+      deletion signal, `systemctl stop` ends it partway through
+      `UninstallService`. The unit file is removed, but disabling it and
+      reloading systemd fail, which leaves a dangling `.wants` link, on a host
+      as in a container. Raise it with `main`: disable, remove, and reload
+      before stopping.
 - [ ] Preflight: in a container, `host-packages` checks the image's package
       database, and `containerd-active` warns that bootstrap will disable
       containerd, which Flex never does (on `main` either). Drop or reword
@@ -110,12 +128,16 @@ host.
 - [ ] Run on an Azure VM from the gallery image, with Ignition as custom data.
       So far ACL has only run under QEMU.
 - [ ] Close PR #323: this branch builds on `main` instead.
-- [ ] `hack/acl-container/README.md` and `DESIGN.md` still describe the
-      workaround inline in the agent's unit, and still refer to PR #323,
+- [ ] `hack/acl-container/README.md` and `DESIGN.md` describe the prototype's
+      single container unit, which mounted the host's paths itself and idled.
+      Now bootstrap and reset units run the image, `start` installs the
+      agent's own unit, the entrypoint mounts the host's paths, and `up`
+      always bootstraps the VM into a kind cluster. They also still describe
+      the workaround inline in the agent's unit, and still refer to PR #323,
       including `DESIGN.md` pointing to its host-root work as a starting
       point. `DESIGN.md` also says `host-exec` always uses `chroot /host`;
-      `mount`, `umount`, and `mountpoint` now run in the host's mount
-      namespace instead. `README.md` puts the container's image reference in
+      `mount`, `umount`, and `mountpoint` run in the host's mount namespace
+      instead. `README.md` puts the image reference in
       `/etc/aks-flex-node/agent-container.env`, now
       `/etc/sysconfig/aks-flex-node-container`, out of reset's reach. Update
       them when the docs are next revised.
