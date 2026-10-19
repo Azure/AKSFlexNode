@@ -25,18 +25,18 @@ In CIL: `(allow spc_t kernel_t (dbus (send_msg)))`.
 
 With this one rule added to ACL's policy, and nothing else, every host
 operation the AKS Flex Node agent performs works from a privileged container in
-`spc_t`, with no SELinux denials: all 54 checks below. We verified it on ACL
+`spc_t`, with no SELinux denials: all 59 checks below. We verified it on ACL
 3.0.20261005 with [`selinux-verify.sh`](selinux-verify.sh):
 
 ```text
 PROBE                                    CONTEXT   NEW-MACHINE FAILED    DENIALS
-current policy                           spc_t     -           16/44     dbus:send_msg=23
-policy candidate-dbus.policy             spc_t     kernel_t    0/54      none
-workaround (native snapshotter, usr_t)   kernel_t  spc_t       1/54      service:reload=1
+current policy                           spc_t     -           16/49     dbus:send_msg=23
+policy candidate-dbus.policy             spc_t     kernel_t    0/59      none
+workaround (native snapshotter, usr_t)   kernel_t  spc_t       1/59      service:reload=1
 ```
 
 Under the current policy every failure is a D-Bus call; everything else
-already works from `spc_t`. (The current policy runs fewer checks, 44, because
+already works from `spc_t`. (The current policy runs fewer checks, 49, because
 the machine the container creates never starts.) The workaround row is our
 current workaround, described [below](#our-current-workaround); its one failure
 is [a separate gap](#a-separate-gap-systemctl-reset-failed-as-host-root).
@@ -63,6 +63,7 @@ uses, run from a privileged container through `chroot /host`:
 | Units it installs, through systemd's private socket | `systemctl daemon-reload`, `enable`, `is-enabled`, `start`, `restart`, `stop`, `reset-failed`, `disable`, `enable --now`, `disable --now`, on a unit the container writes into `/etc/systemd/system` |
 | Units it disables, such as swap | `systemctl mask --now` and `unmask` of a unit in `/usr` |
 | Self-upgrade restart | `systemd-run --collect --unit=… --on-active=1s …`, a transient timer on the host |
+| Its own images, as for an upgrade, through containerd's socket, `/run/containerd/containerd.sock` | `ctr version`, `namespaces list`, `image pull`, `run --rm` of a short-lived container, `image rm` |
 | Commands in a machine | `systemd-run --machine=NAME --pipe --wait …` |
 | Kernel and files | `modprobe`; `ip link` add and delete; `nft` add and delete table; `sysctl -w`; `mount` and `umount` of bpffs, and `mountpoint`; `udevadm info`; `swapoff -a`; `restorecon -R` |
 | Machines it creates | A machine whose root filesystem the container copies in without labels, as the agent unpacks one, then started, entered, enabled, disabled, powered off, terminated, and removed |
@@ -187,12 +188,13 @@ output.
 
 It puts back everything it changes:
 
-- It works in its own containerd namespace, `acl-selinux-repro`, and removes it.
+- It works in containerd namespaces of its own, `acl-selinux-repro` and
+  `acl-selinux-repro-ctr`, and removes them.
 - After every probe, it removes what the probe created: the test unit, the
   transient timer, the dummy interface, the nft table, the bpffs mount, the
-  test files, and the second machine. It unmasks the masked unit, unloads the
-  `dummy` module if it loaded it, and restores `MACHINE`'s enablement and
-  running state.
+  test files, the image and container the probe ran through containerd, and the
+  second machine. It unmasks the masked unit, unloads the `dummy` module if it
+  loaded it, and restores `MACHINE`'s enablement and running state.
 - `--policy` loads each file only for its probe, then puts back the original
   policy and reloads it.
 - `--workaround` relabels the containerd native snapshotter's two top
@@ -233,10 +235,11 @@ From a privileged container (`spc_t`), with ACL's policy as shipped:
 | Anything through dbus-daemon: every `machinectl` command, `busctl`, `loginctl`, `hostnamectl`, `resolvectl` | **Denied** | `spc_t` may not send to `kernel_t` on the bus |
 | `systemctl`, including `daemon-reload`, `enable`, `disable`, `mask`, `reset-failed`, and `--now`; host `systemd-run` | Works | As root, these talk to systemd on its private socket, `/run/systemd/private`, not through dbus-daemon, and systemd's own SELinux checks pass |
 | `systemd-run --machine=NAME` | Works | It finds the machine's leader in machined's state under `/run/systemd/machines`, and talks to the bus inside the machine |
+| `ctr`, through containerd's socket: pulling, running, and removing images | Works | containerd runs as `kernel_t` and its socket is `container_runtime_t`, which `spc_t` may connect to, and containerd makes no SELinux checks of its own, unlike dbus-daemon |
 | Kernel and file operations: modules, links, nft, sysctl, mounts, relabeling | Works | `spc_t` is unconfined at the kernel level |
 
-So a privileged container can manage units, but not machines, sessions, DNS, or
-anything else reached over the system bus.
+So a privileged container can manage units and its own images, but not
+machines, sessions, DNS, or anything else reached over the system bus.
 
 ## Root cause
 
@@ -424,8 +427,8 @@ sesearch -A -s kernel_t -t unlabeled_t -c service policy.33   # host root's unit
 
 ## Appendix: verification output
 
-`ACL_SSH=... MACHINE=demo ./selinux-verify.sh` against our test host, which has
-a running systemd-nspawn machine, `demo`:
+`ACL_SSH=... MACHINE=kube1 ./selinux-verify.sh` against our test host, where the
+agent runs its node in a systemd-nspawn machine, `kube1`:
 
 ```text
 == Copying the host's policy into /tmp/opencode/aclc/verify
@@ -458,6 +461,7 @@ FILE                                           EXPECTED                     ACTU
 /usr/lib/systemd/system/systemd-nspawn@.service systemd_unit_t               unlabeled_t
 /etc/systemd/system                            systemd_unit_t               unlabeled_t
 /var/lib/machines                              var_lib_t                    var_lib_t
+/run/containerd/containerd.sock                container_runtime_t          container_runtime_t
 
 == Host processes
 systemd            system_u:system_r:kernel_t:s0
@@ -466,7 +470,7 @@ systemd-machine    system_u:system_r:kernel_t:s0
 systemd-logind     system_u:system_r:kernel_t:s0
 systemd-resolve    system_u:system_r:kernel_t:s0
 containerd         system_u:system_r:kernel_t:s0
-machine demo       system_u:system_r:spc_t:s0
+machine kube1      system_u:system_r:spc_t:s0
 
 == Privileged container, default snapshotter (overlayfs), current policy
   container context: system_u:system_r:spc_t:s0
@@ -479,45 +483,51 @@ machine demo       system_u:system_r:spc_t:s0
   -- units
   systemctl is-system-running                                    exit 0  running
   acl-selinux-repro.service label: system_u:object_r:unlabeled_t:s0
-  systemctl daemon-reload                                        exit 0
+  systemctl daemon-reload                                        exit 0  
   systemctl enable acl-selinux-repro.service                     exit 0  Created symlink /etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service → /etc/systemd/system/acl-selinux-repro.service.
   systemctl is-enabled acl-selinux-repro.service                 exit 0  enabled
-  systemctl start acl-selinux-repro.service                      exit 0
-  systemctl restart acl-selinux-repro.service                    exit 0
-  systemctl stop acl-selinux-repro.service                       exit 0
-  systemctl reset-failed acl-selinux-repro.service               exit 0
+  systemctl start acl-selinux-repro.service                      exit 0  
+  systemctl restart acl-selinux-repro.service                    exit 0  
+  systemctl stop acl-selinux-repro.service                       exit 0  
+  systemctl reset-failed acl-selinux-repro.service               exit 0  
   systemctl disable acl-selinux-repro.service                    exit 0  Removed "/etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service".
   systemctl enable --now acl-selinux-repro.service               exit 0  Created symlink /etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service → /etc/systemd/system/acl-selinux-repro.service.
   systemctl disable --now acl-selinux-repro.service              exit 0  Removed "/etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service".
   systemctl mask --now systemd-pstore.service                    exit 0  Created symlink /etc/systemd/system/systemd-pstore.service → /dev/null.
   systemctl unmask systemd-pstore.service                        exit 0  Removed "/etc/systemd/system/systemd-pstore.service".
-  systemd-run --quiet --collect --unit=acl-selinux-repro-timer --on-active=1s /usr/bin/true exit 0
+  systemd-run --quiet --collect --unit=acl-selinux-repro-timer --on-active=1s /usr/bin/true exit 0  
+  -- containerd, through its socket
+  ctr version                                                    exit 0  Client:
+  ctr namespaces list                                            exit 0  NAME              LABELS 
+  ctr --namespace acl-selinux-repro-ctr image pull mcr.microsoft.com/azurelinux/busybox:1.36 exit 0  mcr.microsoft.com/azurelinux/busybox:1.3	fetching image content	
+  ctr --namespace acl-selinux-repro-ctr run --rm mcr.microsoft.com/azurelinux/busybox:1.36 acl-selinux-repro-run true exit 0  
+  ctr --namespace acl-selinux-repro-ctr image rm mcr.microsoft.com/azurelinux/busybox:1.36 exit 0  mcr.microsoft.com/azurelinux/busybox:1.36
   -- kernel and files
-  modprobe dummy                                                 exit 0
-  ip link add aclrepro0 type dummy                               exit 0
-  ip link del aclrepro0                                          exit 0
-  nft add table inet acl_selinux_repro                           exit 0
-  nft delete table inet acl_selinux_repro                        exit 0
-  sysctl -w net.ipv4.ip_forward=0                                exit 0  net.ipv4.ip_forward = 0
-  mount -t bpf bpf /run/acl-selinux-repro-bpf                    exit 0
+  modprobe dummy                                                 exit 0  
+  ip link add aclrepro0 type dummy                               exit 0  
+  ip link del aclrepro0                                          exit 0  
+  nft add table inet acl_selinux_repro                           exit 0  
+  nft delete table inet acl_selinux_repro                        exit 0  
+  sysctl -w net.ipv4.ip_forward=1                                exit 0  net.ipv4.ip_forward = 1
+  mount -t bpf bpf /run/acl-selinux-repro-bpf                    exit 0  
   mountpoint /run/acl-selinux-repro-bpf                          exit 0  /run/acl-selinux-repro-bpf is a mountpoint
-  umount /run/acl-selinux-repro-bpf                              exit 0
+  umount /run/acl-selinux-repro-bpf                              exit 0  
   udevadm info --query=property --name=/dev/vda                  exit 0  DEVPATH=/devices/pci0000:00/0000:00:03.0/virtio1/block/vda
-  swapoff -a                                                     exit 0
-  restorecon -R /opt/acl-selinux-repro                           exit 0
+  swapoff -a                                                     exit 0  
+  restorecon -R /opt/acl-selinux-repro                           exit 0  
   machinectl remove acl-selinux-repro-img                        exit 1  Could not remove image: Access denied
-  -- the existing machine demo
-  machinectl show demo -p State --value                          exit 1  Could not get path to machine: Access denied
-  machinectl --quiet shell demo /bin/sh -c echo shell-ok         exit 1  Failed to get shell PTY: Access denied
-  systemd-run --machine=demo --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
-  machinectl enable demo                                         exit 1  Failed to check whether image demo exists: Access denied
-  machinectl disable demo                                        exit 1  Failed to check whether image demo exists: Access denied
-  machinectl poweroff demo                                       exit 1  Could not kill machine: Access denied
-  machinectl start demo                                          exit 1  Failed to check whether image demo exists: Access denied
-  machinectl terminate demo                                      exit 1  Could not terminate machine: Access denied
-  machinectl start demo                                          exit 1  Failed to check whether image demo exists: Access denied
+  -- the existing machine kube1
+  machinectl show kube1 -p State --value                         exit 1  Could not get path to machine: Access denied
+  machinectl --quiet shell kube1 /bin/sh -c echo shell-ok        exit 1  Failed to get shell PTY: Access denied
+  systemd-run --machine=kube1 --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
+  machinectl enable kube1                                        exit 1  Failed to check whether image kube1 exists: Access denied
+  machinectl disable kube1                                       exit 1  Failed to check whether image kube1 exists: Access denied
+  machinectl poweroff kube1                                      exit 1  Could not kill machine: Access denied
+  machinectl start kube1                                         exit 1  Failed to check whether image kube1 exists: Access denied
+  machinectl terminate kube1                                     exit 1  Could not terminate machine: Access denied
+  machinectl start kube1                                         exit 1  Failed to check whether image kube1 exists: Access denied
   -- a machine this container creates, acl-selinux-repro-m
-  cp -dR --preserve=mode,ownership,timestamps,links /var/lib/machines/demo /var/lib/machines/acl-selinux-repro-m exit 0
+  cp -dR --preserve=mode,ownership,timestamps,links /var/lib/machines/kube1 /var/lib/machines/acl-selinux-repro-m exit 0  
   its init label: system_u:object_r:var_lib_t:s0
   machinectl start acl-selinux-repro-m                           exit 1  Failed to check whether image acl-selinux-repro-m exists: Access denied
   machinectl remove acl-selinux-repro-m                          exit 1  Could not remove image: Access denied
@@ -528,142 +538,154 @@ machine demo       system_u:system_r:spc_t:s0
   loaded /tmp/acl-selinux-verify/candidate-dbus.policy (69ca96bf5e28ec80)
   container context: system_u:system_r:spc_t:s0
   -- through dbus-daemon
-  machinectl list --no-pager --no-legend                         exit 0  demo container systemd-nspawn azurelinux 3.0 -
+  machinectl list --no-pager --no-legend                         exit 0  kube1 container systemd-nspawn azurelinux 3.0 -
   busctl --system --no-pager --no-legend list --acquired         exit 0  org.freedesktop.DBus        1 systemd         root            -    init.scope               - -
-  loginctl list-sessions --no-pager --no-legend                  exit 0  166 500 core - - active no -
+  loginctl list-sessions --no-pager --no-legend                  exit 0  144 500 core - - active no -
   hostnamectl --static                                           exit 0  acl-flex-proto
   resolvectl domain                                              exit 0  Global:
   -- units
   systemctl is-system-running                                    exit 0  running
   acl-selinux-repro.service label: system_u:object_r:unlabeled_t:s0
-  systemctl daemon-reload                                        exit 0
+  systemctl daemon-reload                                        exit 0  
   systemctl enable acl-selinux-repro.service                     exit 0  Created symlink /etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service → /etc/systemd/system/acl-selinux-repro.service.
   systemctl is-enabled acl-selinux-repro.service                 exit 0  enabled
-  systemctl start acl-selinux-repro.service                      exit 0
-  systemctl restart acl-selinux-repro.service                    exit 0
-  systemctl stop acl-selinux-repro.service                       exit 0
-  systemctl reset-failed acl-selinux-repro.service               exit 0
+  systemctl start acl-selinux-repro.service                      exit 0  
+  systemctl restart acl-selinux-repro.service                    exit 0  
+  systemctl stop acl-selinux-repro.service                       exit 0  
+  systemctl reset-failed acl-selinux-repro.service               exit 0  
   systemctl disable acl-selinux-repro.service                    exit 0  Removed "/etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service".
   systemctl enable --now acl-selinux-repro.service               exit 0  Created symlink /etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service → /etc/systemd/system/acl-selinux-repro.service.
   systemctl disable --now acl-selinux-repro.service              exit 0  Removed "/etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service".
   systemctl mask --now systemd-pstore.service                    exit 0  Created symlink /etc/systemd/system/systemd-pstore.service → /dev/null.
   systemctl unmask systemd-pstore.service                        exit 0  Removed "/etc/systemd/system/systemd-pstore.service".
-  systemd-run --quiet --collect --unit=acl-selinux-repro-timer --on-active=1s /usr/bin/true exit 0
+  systemd-run --quiet --collect --unit=acl-selinux-repro-timer --on-active=1s /usr/bin/true exit 0  
+  -- containerd, through its socket
+  ctr version                                                    exit 0  Client:
+  ctr namespaces list                                            exit 0  NAME                  LABELS 
+  ctr --namespace acl-selinux-repro-ctr image pull mcr.microsoft.com/azurelinux/busybox:1.36 exit 0  mcr.microsoft.com/azurelinux/busybox:1.3	fetching image content	
+  ctr --namespace acl-selinux-repro-ctr run --rm mcr.microsoft.com/azurelinux/busybox:1.36 acl-selinux-repro-run true exit 0  
+  ctr --namespace acl-selinux-repro-ctr image rm mcr.microsoft.com/azurelinux/busybox:1.36 exit 0  mcr.microsoft.com/azurelinux/busybox:1.36
   -- kernel and files
-  modprobe dummy                                                 exit 0
-  ip link add aclrepro0 type dummy                               exit 0
-  ip link del aclrepro0                                          exit 0
-  nft add table inet acl_selinux_repro                           exit 0
-  nft delete table inet acl_selinux_repro                        exit 0
-  sysctl -w net.ipv4.ip_forward=0                                exit 0  net.ipv4.ip_forward = 0
-  mount -t bpf bpf /run/acl-selinux-repro-bpf                    exit 0
+  modprobe dummy                                                 exit 0  
+  ip link add aclrepro0 type dummy                               exit 0  
+  ip link del aclrepro0                                          exit 0  
+  nft add table inet acl_selinux_repro                           exit 0  
+  nft delete table inet acl_selinux_repro                        exit 0  
+  sysctl -w net.ipv4.ip_forward=1                                exit 0  net.ipv4.ip_forward = 1
+  mount -t bpf bpf /run/acl-selinux-repro-bpf                    exit 0  
   mountpoint /run/acl-selinux-repro-bpf                          exit 0  /run/acl-selinux-repro-bpf is a mountpoint
-  umount /run/acl-selinux-repro-bpf                              exit 0
+  umount /run/acl-selinux-repro-bpf                              exit 0  
   udevadm info --query=property --name=/dev/vda                  exit 0  DEVPATH=/devices/pci0000:00/0000:00:03.0/virtio1/block/vda
-  swapoff -a                                                     exit 0
-  restorecon -R /opt/acl-selinux-repro                           exit 0
-  machinectl remove acl-selinux-repro-img                        exit 0
-  -- the existing machine demo
-  machinectl show demo -p State --value                          exit 0  running
-  machinectl --quiet shell demo /bin/sh -c echo shell-ok         exit 0  shell-ok
-  systemd-run --machine=demo --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
-  machinectl enable demo                                         exit 0  Created symlink /etc/systemd/system/machines.target.wants/systemd-nspawn@demo.service → /usr/lib/systemd/system/systemd-nspawn@.service.
-  machinectl disable demo                                        exit 0  Removed "/etc/systemd/system/machines.target.wants/systemd-nspawn@demo.service".
-  machinectl poweroff demo                                       exit 0
-  machinectl start demo                                          exit 0
-  machinectl terminate demo                                      exit 0
-  machinectl start demo                                          exit 0
+  swapoff -a                                                     exit 0  
+  restorecon -R /opt/acl-selinux-repro                           exit 0  
+  machinectl remove acl-selinux-repro-img                        exit 0  
+  -- the existing machine kube1
+  machinectl show kube1 -p State --value                         exit 0  running
+  machinectl --quiet shell kube1 /bin/sh -c echo shell-ok        exit 0  shell-ok
+  systemd-run --machine=kube1 --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
+  machinectl enable kube1                                        exit 0  
+  machinectl disable kube1                                       exit 0  Removed "/etc/systemd/system/machines.target.wants/systemd-nspawn@kube1.service".
+  machinectl poweroff kube1                                      exit 0  
+  machinectl start kube1                                         exit 0  
+  machinectl terminate kube1                                     exit 0  
+  machinectl start kube1                                         exit 0  
   -- a machine this container creates, acl-selinux-repro-m
-  cp -dR --preserve=mode,ownership,timestamps,links /var/lib/machines/demo /var/lib/machines/acl-selinux-repro-m exit 0
+  cp -dR --preserve=mode,ownership,timestamps,links /var/lib/machines/kube1 /var/lib/machines/acl-selinux-repro-m exit 0  
   its init label: system_u:object_r:var_lib_t:s0
-  machinectl start acl-selinux-repro-m                           exit 0
+  machinectl start acl-selinux-repro-m                           exit 0  
   new machine context: system_u:system_r:kernel_t:s0
   machinectl show acl-selinux-repro-m -p State --value           exit 0  running
   machinectl --quiet shell acl-selinux-repro-m /bin/sh -c echo shell-ok exit 0  shell-ok
   systemd-run --machine=acl-selinux-repro-m --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
   machinectl enable acl-selinux-repro-m                          exit 0  Created symlink /etc/systemd/system/machines.target.wants/systemd-nspawn@acl-selinux-repro-m.service → /usr/lib/systemd/system/systemd-nspawn@.service.
   machinectl disable acl-selinux-repro-m                         exit 0  Removed "/etc/systemd/system/machines.target.wants/systemd-nspawn@acl-selinux-repro-m.service".
-  machinectl poweroff acl-selinux-repro-m                        exit 0
-  machinectl start acl-selinux-repro-m                           exit 0
-  machinectl terminate acl-selinux-repro-m                       exit 0
-  machinectl start acl-selinux-repro-m                           exit 0
-  machinectl terminate acl-selinux-repro-m                       exit 0
-  machinectl remove acl-selinux-repro-m                          exit 0
+  machinectl poweroff acl-selinux-repro-m                        exit 0  
+  machinectl start acl-selinux-repro-m                           exit 0  
+  machinectl terminate acl-selinux-repro-m                       exit 0  
+  machinectl start acl-selinux-repro-m                           exit 0  
+  machinectl terminate acl-selinux-repro-m                       exit 0  
+  machinectl remove acl-selinux-repro-m                          exit 0  
   SELinux denials: none
   restored the original policy (f94ebb51f413eb98)
 
 == Workaround: native snapshotter, its directory relabeled usr_t
-  new snapshot /var/lib/containerd/io.containerd.snapshotter.v1.native/snapshots/27: system_u:object_r:usr_t:s0
+  new snapshot /var/lib/containerd/io.containerd.snapshotter.v1.native/snapshots/14: system_u:object_r:usr_t:s0
   container context: system_u:system_r:kernel_t:s0
   -- through dbus-daemon
-  machinectl list --no-pager --no-legend                         exit 0  demo container systemd-nspawn azurelinux 3.0 -
+  machinectl list --no-pager --no-legend                         exit 0  kube1 container systemd-nspawn azurelinux 3.0 -
   busctl --system --no-pager --no-legend list --acquired         exit 0  org.freedesktop.DBus        1 systemd         root            -    init.scope               - -
-  loginctl list-sessions --no-pager --no-legend                  exit 0  166 500 core - - active no -
+  loginctl list-sessions --no-pager --no-legend                  exit 0  144 500 core - - active no -
   hostnamectl --static                                           exit 0  acl-flex-proto
   resolvectl domain                                              exit 0  Global:
   -- units
   systemctl is-system-running                                    exit 0  running
   acl-selinux-repro.service label: system_u:object_r:unlabeled_t:s0
-  systemctl daemon-reload                                        exit 0
+  systemctl daemon-reload                                        exit 0  
   systemctl enable acl-selinux-repro.service                     exit 0  Created symlink /etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service → /etc/systemd/system/acl-selinux-repro.service.
   systemctl is-enabled acl-selinux-repro.service                 exit 0  enabled
-  systemctl start acl-selinux-repro.service                      exit 0
-  systemctl restart acl-selinux-repro.service                    exit 0
-  systemctl stop acl-selinux-repro.service                       exit 0
+  systemctl start acl-selinux-repro.service                      exit 0  
+  systemctl restart acl-selinux-repro.service                    exit 0  
+  systemctl stop acl-selinux-repro.service                       exit 0  
   systemctl reset-failed acl-selinux-repro.service               exit 1  Failed to reset failed state of unit acl-selinux-repro.service: Access denied
   systemctl disable acl-selinux-repro.service                    exit 0  Removed "/etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service".
   systemctl enable --now acl-selinux-repro.service               exit 0  Created symlink /etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service → /etc/systemd/system/acl-selinux-repro.service.
   systemctl disable --now acl-selinux-repro.service              exit 0  Removed "/etc/systemd/system/multi-user.target.wants/acl-selinux-repro.service".
   systemctl mask --now systemd-pstore.service                    exit 0  Created symlink /etc/systemd/system/systemd-pstore.service → /dev/null.
   systemctl unmask systemd-pstore.service                        exit 0  Removed "/etc/systemd/system/systemd-pstore.service".
-  systemd-run --quiet --collect --unit=acl-selinux-repro-timer --on-active=1s /usr/bin/true exit 0
+  systemd-run --quiet --collect --unit=acl-selinux-repro-timer --on-active=1s /usr/bin/true exit 0  
+  -- containerd, through its socket
+  ctr version                                                    exit 0  Client:
+  ctr namespaces list                                            exit 0  NAME                  LABELS 
+  ctr --namespace acl-selinux-repro-ctr image pull mcr.microsoft.com/azurelinux/busybox:1.36 exit 0  mcr.microsoft.com/azurelinux/busybox:1.3	fetching image content	
+  ctr --namespace acl-selinux-repro-ctr run --rm mcr.microsoft.com/azurelinux/busybox:1.36 acl-selinux-repro-run true exit 0  
+  ctr --namespace acl-selinux-repro-ctr image rm mcr.microsoft.com/azurelinux/busybox:1.36 exit 0  mcr.microsoft.com/azurelinux/busybox:1.36
   -- kernel and files
-  modprobe dummy                                                 exit 0
-  ip link add aclrepro0 type dummy                               exit 0
-  ip link del aclrepro0                                          exit 0
-  nft add table inet acl_selinux_repro                           exit 0
-  nft delete table inet acl_selinux_repro                        exit 0
-  sysctl -w net.ipv4.ip_forward=0                                exit 0  net.ipv4.ip_forward = 0
-  mount -t bpf bpf /run/acl-selinux-repro-bpf                    exit 0
+  modprobe dummy                                                 exit 0  
+  ip link add aclrepro0 type dummy                               exit 0  
+  ip link del aclrepro0                                          exit 0  
+  nft add table inet acl_selinux_repro                           exit 0  
+  nft delete table inet acl_selinux_repro                        exit 0  
+  sysctl -w net.ipv4.ip_forward=1                                exit 0  net.ipv4.ip_forward = 1
+  mount -t bpf bpf /run/acl-selinux-repro-bpf                    exit 0  
   mountpoint /run/acl-selinux-repro-bpf                          exit 0  /run/acl-selinux-repro-bpf is a mountpoint
-  umount /run/acl-selinux-repro-bpf                              exit 0
+  umount /run/acl-selinux-repro-bpf                              exit 0  
   udevadm info --query=property --name=/dev/vda                  exit 0  DEVPATH=/devices/pci0000:00/0000:00:03.0/virtio1/block/vda
-  swapoff -a                                                     exit 0
-  restorecon -R /opt/acl-selinux-repro                           exit 0
-  machinectl remove acl-selinux-repro-img                        exit 0
-  -- the existing machine demo
-  machinectl show demo -p State --value                          exit 0  running
-  machinectl --quiet shell demo /bin/sh -c echo shell-ok         exit 0  shell-ok
-  systemd-run --machine=demo --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
-  machinectl enable demo                                         exit 0  Created symlink /etc/systemd/system/machines.target.wants/systemd-nspawn@demo.service → /usr/lib/systemd/system/systemd-nspawn@.service.
-  machinectl disable demo                                        exit 0  Removed "/etc/systemd/system/machines.target.wants/systemd-nspawn@demo.service".
-  machinectl poweroff demo                                       exit 0
-  machinectl start demo                                          exit 0
-  machinectl terminate demo                                      exit 0
-  machinectl start demo                                          exit 0
+  swapoff -a                                                     exit 0  
+  restorecon -R /opt/acl-selinux-repro                           exit 0  
+  machinectl remove acl-selinux-repro-img                        exit 0  
+  -- the existing machine kube1
+  machinectl show kube1 -p State --value                         exit 0  running
+  machinectl --quiet shell kube1 /bin/sh -c echo shell-ok        exit 0  shell-ok
+  systemd-run --machine=kube1 --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
+  machinectl enable kube1                                        exit 0  
+  machinectl disable kube1                                       exit 0  Removed "/etc/systemd/system/machines.target.wants/systemd-nspawn@kube1.service".
+  machinectl poweroff kube1                                      exit 0  
+  machinectl start kube1                                         exit 0  
+  machinectl terminate kube1                                     exit 0  
+  machinectl start kube1                                         exit 0  
   -- a machine this container creates, acl-selinux-repro-m
-  cp -dR --preserve=mode,ownership,timestamps,links /var/lib/machines/demo /var/lib/machines/acl-selinux-repro-m exit 0
+  cp -dR --preserve=mode,ownership,timestamps,links /var/lib/machines/kube1 /var/lib/machines/acl-selinux-repro-m exit 0  
   its init label: system_u:object_r:container_var_lib_t:s0
-  machinectl start acl-selinux-repro-m                           exit 0
+  machinectl start acl-selinux-repro-m                           exit 0  
   new machine context: system_u:system_r:spc_t:s0
   machinectl show acl-selinux-repro-m -p State --value           exit 0  running
   machinectl --quiet shell acl-selinux-repro-m /bin/sh -c echo shell-ok exit 0  shell-ok
   systemd-run --machine=acl-selinux-repro-m --pipe --wait --quiet cat /etc/os-release exit 0  NAME="Microsoft Azure Linux"
   machinectl enable acl-selinux-repro-m                          exit 0  Created symlink /etc/systemd/system/machines.target.wants/systemd-nspawn@acl-selinux-repro-m.service → /usr/lib/systemd/system/systemd-nspawn@.service.
   machinectl disable acl-selinux-repro-m                         exit 0  Removed "/etc/systemd/system/machines.target.wants/systemd-nspawn@acl-selinux-repro-m.service".
-  machinectl poweroff acl-selinux-repro-m                        exit 0
-  machinectl start acl-selinux-repro-m                           exit 0
-  machinectl terminate acl-selinux-repro-m                       exit 0
-  machinectl start acl-selinux-repro-m                           exit 0
-  machinectl terminate acl-selinux-repro-m                       exit 0
-  machinectl remove acl-selinux-repro-m                          exit 0
+  machinectl poweroff acl-selinux-repro-m                        exit 0  
+  machinectl start acl-selinux-repro-m                           exit 0  
+  machinectl terminate acl-selinux-repro-m                       exit 0  
+  machinectl start acl-selinux-repro-m                           exit 0  
+  machinectl terminate acl-selinux-repro-m                       exit 0  
+  machinectl remove acl-selinux-repro-m                          exit 0  
   SELinux denials:       1 { reload } for auid=n/a gid=0 path="/etc/systemd/system/acl-selinux-repro.service" cmdline="" function="bus_unit_method_reset_failed" scontext=system_u:system_r:kernel_t:s0 tcontext=system_u:object_r:unlabeled_t:s0 tclass=service permissive=0
 
 == Summary
 PROBE                                    CONTEXT   NEW-MACHINE FAILED    DENIALS
-current policy                           spc_t     -           16/44     dbus:send_msg=23
-policy candidate-dbus.policy             spc_t     kernel_t    0/54      none
-workaround (native snapshotter, usr_t)   kernel_t  spc_t       1/54      service:reload=1
+current policy                           spc_t     -           16/49     dbus:send_msg=23
+policy candidate-dbus.policy             spc_t     kernel_t    0/59      none
+workaround (native snapshotter, usr_t)   kernel_t  spc_t       1/59      service:reload=1
 
 candidates and results: /tmp/opencode/aclc/verify
 ```
