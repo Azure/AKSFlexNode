@@ -3,9 +3,12 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -186,5 +189,93 @@ func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("recovery script does not contain %q", expected)
 		}
+	}
+}
+
+func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		stopErr      error
+		stopEndsTask bool
+		busyPath     bool
+		wantCalls    []string
+		wantErr      bool
+	}{
+		"disables, removes, and reloads before stopping": {
+			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "stop " + ServiceUnitName},
+		},
+		"a failed stop is a warning": {
+			stopErr:   errors.New("unit not loaded"),
+			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "stop " + ServiceUnitName},
+		},
+		// As when the daemon uninstalls its own unit: the stop's SIGTERM cancels its context,
+		// with everything else already done.
+		"a stop that ends the caller leaves nothing undone": {
+			stopErr:      context.Canceled,
+			stopEndsTask: true,
+			wantCalls:    []string{"disable " + ServiceUnitName, "daemon-reload", "stop " + ServiceUnitName},
+		},
+		"stops nothing when it can't remove a file": {
+			busyPath:  true,
+			wantCalls: []string{"disable " + ServiceUnitName},
+			wantErr:   true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			paths := []string{
+				filepath.Join(dir, ServiceUnitName),
+				filepath.Join(dir, recoveryServiceUnitName),
+				filepath.Join(dir, "recovery.sh"),
+				filepath.Join(dir, "missing-signal.json"),
+			}
+			for _, path := range paths[:3] {
+				if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.busyPath {
+				// A non-empty directory where a file belongs can't be removed.
+				if err := os.MkdirAll(filepath.Join(paths[3], "child"), 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var calls []string
+			task := &uninstallServiceTask{
+				log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+				paths: paths,
+				systemctl: func(_ context.Context, args ...string) error {
+					calls = append(calls, strings.Join(args, " "))
+					switch args[0] {
+					case "daemon-reload":
+						for _, path := range paths {
+							if _, err := os.Stat(path); err == nil {
+								t.Errorf("%s is still there when systemd reloads", path)
+							}
+						}
+					case "stop":
+						if tc.stopEndsTask {
+							cancel()
+						}
+						return tc.stopErr
+					}
+					return nil
+				},
+			}
+
+			err := task.Do(ctx)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Do() error = %v, want error %v", err, tc.wantErr)
+			}
+			if !slices.Equal(calls, tc.wantCalls) {
+				t.Errorf("systemctl calls = %q, want %q", calls, tc.wantCalls)
+			}
+		})
 	}
 }
