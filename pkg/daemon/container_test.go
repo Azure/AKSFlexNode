@@ -63,7 +63,7 @@ func TestInstallContainerService(t *testing.T) {
 
 			var calls []string
 			task := newInstallContainerServiceTask(discardLogger())
-			task.unitPath = filepath.Join(t.TempDir(), "systemd", ServiceUnitName)
+			task.unitDir = filepath.Join(t.TempDir(), "systemd")
 			task.systemctl = func(_ context.Context, args ...string) error {
 				calls = append(calls, strings.Join(args, " "))
 				if args[0] == tc.failOn {
@@ -83,19 +83,25 @@ func TestInstallContainerService(t *testing.T) {
 					t.Errorf("run %d: systemctl calls = %q, want %q", run, calls, tc.wantCalls)
 				}
 			}
-			content, err := os.ReadFile(task.unitPath)
-			if err != nil {
-				t.Fatalf("read the unit: %v", err)
-			}
-			if !bytes.Equal(content, containerServiceUnitContent) {
-				t.Error("the unit written isn't the container's unit")
-			}
-			info, err := os.Stat(task.unitPath)
-			if err != nil {
-				t.Fatalf("stat the unit: %v", err)
-			}
-			if info.Mode().Perm() != 0o644 {
-				t.Errorf("the unit's mode = %v, want 0644", info.Mode().Perm())
+			for unit, want := range map[string][]byte{
+				ServiceUnitName:         containerServiceUnitContent,
+				recoveryServiceUnitName: containerRecoveryUnitContent,
+			} {
+				path := filepath.Join(task.unitDir, unit)
+				content, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("read %s: %v", unit, err)
+				}
+				if !bytes.Equal(content, want) {
+					t.Errorf("%s isn't the container's", unit)
+				}
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatalf("stat %s: %v", unit, err)
+				}
+				if info.Mode().Perm() != 0o644 {
+					t.Errorf("%s's mode = %v, want 0644", unit, info.Mode().Perm())
+				}
 			}
 		})
 	}

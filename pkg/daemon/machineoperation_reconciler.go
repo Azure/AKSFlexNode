@@ -163,6 +163,9 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 	if err != nil {
 		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
 	}
+	if err := h.agentUpgrade.Validate(request); err != nil {
+		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
+	}
 	activationLock, err := h.agentUpgrade.Acquire()
 	if errors.Is(err, agentbinary.ErrActivationInProgress) {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil

@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 // ContainerizedEnv marks the agent as running in its container image, which sets it. There, the
@@ -20,10 +18,17 @@ import (
 const ContainerizedEnv = "AKS_FLEX_NODE_CONTAINERIZED"
 
 // containerServiceUnitContent is the agent's unit in its container: it runs the daemon in a
-// container of the agent's image, which the host's provisioning names.
+// container of the agent's image, which the host's provisioning names, or an AgentUpgrade
+// selected.
 //
 //go:embed assets/aks-flex-node-agent-container.service
 var containerServiceUnitContent []byte
+
+// containerRecoveryUnitContent is the agent's recovery unit in its container, which restores the
+// last-good image when an upgraded agent's unit keeps failing.
+//
+//go:embed assets/aks-flex-node-agent-recovery-container.service
+var containerRecoveryUnitContent []byte
 
 // Containerized reports whether the agent runs in its container image.
 func Containerized() bool {
@@ -37,7 +42,8 @@ func containerized(getenv func(string) string) bool {
 
 // ensureHostInstall converges the agent's binary layout and units on the host, and reports
 // whether it held them back while an AgentUpgrade is pending; see ensureDaemonServiceAssets. In
-// its container the agent has no binary layout: the image carries it.
+// its container the agent has no binary layout, the image carries it, and
+// containerAgentConvergence converges its units.
 func ensureHostInstall(ctx context.Context, log *slog.Logger, cfg *config.Config, containerized bool) (bool, error) {
 	if containerized {
 		return false, nil
@@ -46,18 +52,18 @@ func ensureHostInstall(ctx context.Context, log *slog.Logger, cfg *config.Config
 }
 
 // installContainerServiceTask installs, enables, and starts the agent's unit in its container,
-// as installServiceTask does on a host. The unit has the same name, so UninstallService removes
-// it in either case.
+// with its recovery unit, as installServiceTask does on a host. They have the same names, so
+// UninstallService removes them in either case.
 type installContainerServiceTask struct {
 	log       *slog.Logger
-	unitPath  string
+	unitDir   string
 	systemctl func(ctx context.Context, args ...string) error
 }
 
 func newInstallContainerServiceTask(log *slog.Logger) *installContainerServiceTask {
 	return &installContainerServiceTask{
-		log:      log,
-		unitPath: filepath.Join(systemdSystemDir, ServiceUnitName),
+		log:     log,
+		unitDir: systemdSystemDir,
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
@@ -67,8 +73,8 @@ func newInstallContainerServiceTask(log *slog.Logger) *installContainerServiceTa
 func (t *installContainerServiceTask) Name() string { return "install-service" }
 
 func (t *installContainerServiceTask) Do(ctx context.Context) error {
-	if err := utilio.WriteFile(t.unitPath, containerServiceUnitContent, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", t.unitPath, err)
+	if _, err := writeContainerUnits(t.unitDir); err != nil {
+		return err
 	}
 	for _, args := range [][]string{
 		{"daemon-reload"},

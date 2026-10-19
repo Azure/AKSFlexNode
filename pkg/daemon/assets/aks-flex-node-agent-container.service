@@ -3,19 +3,32 @@ Description=AKS Flex Node Agent
 Wants=network-online.target
 After=network-online.target containerd.service
 Requires=containerd.service
+# As on a host: when an upgraded agent fails, its recovery unit restores the
+# last-good image. systemd 254 and later run OnFailure= at every failure, and
+# earlier ones once the unit hits its start limit.
+OnFailure=aks-flex-node-agent-recovery.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
-# The agent's image, from the host's provisioning, which bootstrap pulled.
+# The agent's image, from the host's provisioning, which bootstrap pulled, or
+# the one an AgentUpgrade selected.
 EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+EnvironmentFile=-/etc/aks-flex-node/agent-image.env
 # The task and container outlive ctr if it is killed, so clear them.
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
 # The container gets the host's root at /host, and its entrypoint mounts the
-# host paths the agent uses at their own paths.
+# host paths the agent uses at their own paths. The agent learns its image, and
+# how to pull and run images, for AgentUpgrade.
 ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
   --privileged --net-host --with-ns pid:/proc/1/ns/pid \
   --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+  --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_IMAGE} \
+  --env=AKS_FLEX_NODE_PULL_ARGS=${AKS_FLEX_NODE_PULL_ARGS} \
+  --env=AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS=${AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS} \
+  --env=AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=${AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS} \
   ${AKS_FLEX_NODE_IMAGE} aks-flex-node \
   flex-agent-entrypoint aks-flex-node agent --config /etc/aks-flex-node/config.json
 ExecStop=/usr/bin/ctr --namespace aks-flex task kill --signal SIGTERM aks-flex-node
