@@ -1129,8 +1129,12 @@ def check_cluster(checks: Checks, after: str = "") -> None:
             "nodeName": HOSTNAME,
             "restartPolicy": "Never",
             "tolerations": [{"operator": "Exists"}],
+            # sh, as its container's PID 1, ignores SIGTERM without a trap, so the pod would take
+            # its grace period to stop, and a machine stopped meanwhile, as NodeReboot stops it,
+            # would wait for it until its own stop timed out.
             "containers": [{"name": "probe", "image": "mcr.microsoft.com/azurelinux/busybox:1.36",
-                            "command": ["sh", "-c", "echo aclc-probe-ok && sleep 3600"]}],
+                            "command": ["sh", "-c", "trap 'exit 0' TERM; echo aclc-probe-ok; "
+                                        "sleep 3600 & wait"]}],
         },
     }
     kubectl("delete", "pod", "aclc-probe", "--ignore-not-found", "--wait=true", quiet=True)
@@ -1141,7 +1145,9 @@ def check_cluster(checks: Checks, after: str = "") -> None:
     logs = kubectl("logs", "aclc-probe", check=False, quiet=True)
     checks.expect("aclc-probe-ok" in logs.stdout, f"kubectl logs reaches the node's kubelet{after}",
                   logs.stderr.strip())
-    kubectl("delete", "pod", "aclc-probe", "--ignore-not-found", "--wait=false", quiet=True)
+    # Gone before the next check, which may stop the machine.
+    kubectl("delete", "pod", "aclc-probe", "--ignore-not-found", "--wait=true", "--timeout=60s",
+            check=False, quiet=True)
 
 
 def check_repave(checks: Checks) -> None:
