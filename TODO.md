@@ -99,11 +99,6 @@ image.
       operators deliver those inputs in their Butane, and try
       `--fetch-bootstrap-data`, which fetches bootstrap data from the AKS RP
       with the VM's identity, from the container.
-- [ ] Uninstall: on ACL the install is the Ignition config, which runs only
-      at first boot, so uninstalling means reprovisioning without the agent's
-      Butane config. Say so in the docs. In a container, reset empties the
-      agent's directories rather than removing them: they're mount points
-      there.
 - [ ] `main`: when the daemon stops its own unit, for `AgentReset` or the
       deletion signal, `systemctl stop` ended it partway through
       `UninstallService`, which left a dangling `.wants` link. PR #371 fixes it
@@ -134,19 +129,6 @@ image.
 - [ ] Run on an Azure VM from the gallery image, with Ignition as custom data.
       So far ACL has only run under QEMU.
 - [ ] Close PR #323: this branch builds on `main` instead.
-- [ ] `hack/acl-container/README.md` and `DESIGN.md` describe the prototype's
-      single container unit, which mounted the host's paths itself and idled.
-      Now bootstrap and reset units run the image, `start` installs the
-      agent's own unit, the entrypoint mounts the host's paths, and `up`
-      always bootstraps the VM into a kind cluster. They also still describe
-      the workaround inline in the agent's unit, and still refer to PR #323,
-      including `DESIGN.md` pointing to its host-root work as a starting
-      point. `DESIGN.md` also says `host-exec` always uses `chroot /host`;
-      `mount`, `umount`, and `mountpoint` run in the host's mount namespace
-      instead. `README.md` puts the image reference in
-      `/etc/aks-flex-node/agent-container.env`, now
-      `/etc/sysconfig/aks-flex-node-container`, out of reset's reach. Update
-      them when the docs are next revised.
 - [ ] Consider CI for `hack/acl-container`: ShellCheck, Python compile, and
       Butane `--strict` rendering.
 
