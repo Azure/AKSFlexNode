@@ -586,17 +586,18 @@ func TestMachineOperationHandlersAgentResetStopFailure(t *testing.T) {
 }
 
 type fakeAgentUpgradeExecutor struct {
-	pending    bool
-	staged     bool
-	aborted    bool
-	restarted  bool
-	failure    string
-	recovering bool
-	acquireErr error
-	pendingErr error
-	stageErr   error
-	abortErr   error
-	restartErr error
+	pending     bool
+	staged      bool
+	aborted     bool
+	restarted   bool
+	failure     string
+	recovering  bool
+	acquireErr  error
+	pendingErr  error
+	stageErr    error
+	abortErr    error
+	restartErr  error
+	validateErr error
 }
 
 func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
@@ -604,6 +605,10 @@ func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 		return nil, f.acquireErr
 	}
 	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (f *fakeAgentUpgradeExecutor) Validate(agentUpgradeRequest) error {
+	return f.validateErr
 }
 
 func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error {

@@ -72,6 +72,34 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 			},
 			wantErr: "64 hexadecimal",
 		},
+		"image by digest": {
+			parameters: map[string]string{
+				agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node@sha256:" + strings.Repeat("a", 64),
+			},
+		},
+		"image by tag": {
+			parameters: map[string]string{agentUpgradeImageParameter: "registry.example:5000/aks-flex-node-agent:v2"},
+		},
+		"image without tag or digest": {
+			parameters: map[string]string{agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node"},
+			wantErr:    "no tag or digest",
+		},
+		// ctr pulls only fully qualified references.
+		"image not fully qualified": {
+			parameters: map[string]string{agentUpgradeImageParameter: "flex-node:v2"},
+			wantErr:    "invalid image reference",
+		},
+		"image that would read as a flag": {
+			parameters: map[string]string{agentUpgradeImageParameter: "--snapshotter=native"},
+			wantErr:    "invalid image reference",
+		},
+		"image and archive": {
+			parameters: map[string]string{
+				agentUpgradeImageParameter:       "mcr.microsoft.com/aks/flex-node:v2",
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+			},
+			wantErr: "excludes",
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

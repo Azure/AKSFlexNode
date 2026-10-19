@@ -101,7 +101,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	upgrades, err := newHostAgentUpgradeExecutor(log, operator)
+	var upgrades agentUpgrader
+	if Containerized() {
+		if err := newContainerAgentConvergence(log, operator).converge(ctx); err != nil {
+			return err
+		}
+		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
+	} else {
+		upgrades, err = newHostAgentUpgradeExecutor(log, operator)
+	}
 	if err != nil {
 		return err
 	}
@@ -164,7 +172,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			func(ctx context.Context) error {
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},
-			upgrades.signals.read,
+			upgrades.signalStore().read,
 			func(ctx context.Context) error {
 				if !heldServiceAssets {
 					return nil
@@ -175,19 +183,22 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			func() {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
-				// it waits for is gone.
-				restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades)
-				unfinished, err := hostRootMoveUnfinishedHere()
-				if err != nil {
-					log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
-					unfinished = true
-				}
-				if reason := holdForHostRoot(restarted, unfinished, upgrades.paths, defaultAgentUpgradePaths()); reason != "" {
-					// The gate stays closed; the next process opens it.
-					if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
-						stopManager(err)
+				// it waits for is gone. In its container the agent has no
+				// install on the host to move.
+				if hostUpgrades, ok := upgrades.(*hostAgentUpgradeExecutor); ok {
+					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades)
+					unfinished, err := hostRootMoveUnfinishedHere()
+					if err != nil {
+						log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
+						unfinished = true
 					}
-					return
+					if reason := holdForHostRoot(restarted, unfinished, hostUpgrades.paths, defaultAgentUpgradePaths()); reason != "" {
+						// The gate stays closed; the next process opens it.
+						if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
+							stopManager(err)
+						}
+						return
+					}
 				}
 				gate.open()
 			},
