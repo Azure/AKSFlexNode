@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import http.server
 import json
 import os
@@ -33,6 +34,7 @@ import sys
 import textwrap
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1214,7 +1216,7 @@ def machine_operation(kind: str, timeout: float = 600,
             status.update(zip(("phase", "reason", "message"), fields))
         return status["phase"] in ("Complete", "Failed")
 
-    eventually(finished, timeout, 3)
+    eventually(finished, timeout, 1)
     return status
 
 
@@ -1246,15 +1248,25 @@ exit 1
 def build_candidate_images() -> tuple[str, str]:
     """Build two candidates from the agent's image, as main's e2e builds its candidates from its
     binary: a good one, whose agent binary differs but runs, and a broken one. Push them, and
-    return the references the VM pulls them by, pinned by digest."""
+    return the references the VM pulls them by, pinned by digest. A candidate already pushed from
+    the same agent image, by the same recipe, is reused while the registry has it."""
     candidates = {
         "upgrade-good": (["RUN printf '\\nAKS-FLEX-UPGRADE-CHECK\\n' >> /opt/aks-flex-node/bin/aks-flex-node"], {}),
         "upgrade-broken": (["RUN mv /opt/aks-flex-node/bin/aks-flex-node /opt/aks-flex-node/bin/aks-flex-node-real",
                             "COPY --chmod=0755 aks-flex-node /opt/aks-flex-node/bin/aks-flex-node"],
                            {"aks-flex-node": BROKEN_AGENT}),
     }
+    base = capture([ENGINE, "image", "inspect", "-f", "{{.Id}}", LOCAL_AGENT_IMAGE]).strip()
     references = []
     for tag, (steps, files) in candidates.items():
+        recipe = json.dumps({"base": base, "steps": steps, "files": files}, sort_keys=True)
+        key = hashlib.sha256(recipe.encode()).hexdigest()
+        record = STATE / f"{tag}.pushed.json"
+        reference = pushed_candidate(record, key)
+        if reference:
+            log(f"reusing {tag}, pushed from the same agent image")
+            references.append(reference)
+            continue
         context = STATE / tag
         shutil.rmtree(context, ignore_errors=True)
         context.mkdir()
@@ -1266,8 +1278,32 @@ def build_candidate_images() -> tuple[str, str]:
         # One layer, for the native snapshotter's sake, as build_agent_image does.
         squash = ["--squash-all"] if ENGINE == "podman" else []
         run([ENGINE, "build", "--quiet", *squash, "-t", local, str(context)], capture=True)
-        references.append(push_image(local, tag))
+        reference = push_image(local, tag)
+        record.write_text(json.dumps({"key": key, "reference": reference}) + "\n")
+        references.append(reference)
     return references[0], references[1]
+
+
+def pushed_candidate(record: Path, key: str) -> str:
+    """The reference a candidate was pushed by, if the record says it was built as key describes
+    and the registry still has it, which up and down replace; or ""."""
+    try:
+        pushed = json.loads(record.read_text())
+    except (OSError, ValueError):
+        return ""
+    reference = pushed.get("reference", "")
+    if pushed.get("key") != key or "@" not in reference:
+        return ""
+    digest = reference.rpartition("@")[2]
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{REGISTRY_PORT}/v2/{AGENT_REPOSITORY}/manifests/{digest}", method="HEAD",
+        headers={"Accept": "application/vnd.oci.image.manifest.v1+json, "
+                           "application/vnd.docker.distribution.manifest.v2+json"})
+    try:
+        with urllib.request.urlopen(request, timeout=10):
+            return reference
+    except OSError:
+        return ""
 
 
 def agent_image() -> str:
