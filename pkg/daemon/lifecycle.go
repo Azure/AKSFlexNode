@@ -179,38 +179,49 @@ func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agent
 
 type uninstallServiceTask struct {
 	log *slog.Logger
+	// systemctl and paths are the host's; tests replace them.
+	systemctl func(ctx context.Context, args ...string) error
+	paths     []string
 }
 
-// UninstallService returns a task that stops, disables, removes, and reloads the systemd unit.
+// UninstallService returns a task that disables, removes, and stops the systemd unit.
 func UninstallService(log *slog.Logger) phases.Task {
-	return &uninstallServiceTask{log: log}
+	return &uninstallServiceTask{
+		log: log,
+		systemctl: func(ctx context.Context, args ...string) error {
+			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
+		},
+		paths: []string{
+			filepath.Join(systemdSystemDir, ServiceUnitName),
+			filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+			recoveryScriptPath,
+			defaultAgentUpgradePaths().SignalPath,
+		},
+	}
 }
 
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
-	if err := utilexec.StopService(ctx, t.log, ServiceUnitName); err != nil {
-		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
-	}
-	if err := utilexec.DisableService(ctx, t.log, ServiceUnitName); err != nil {
+	// Stopping comes last. When the daemon uninstalls its own unit, for AgentReset or a node's
+	// deletion, stopping the unit stops the daemon, and nothing after the stop would run: the
+	// unit would stay enabled, behind a dangling .wants link, with systemd not reloaded. systemd
+	// still stops a running unit whose file is gone.
+	if err := t.systemctl(ctx, "disable", ServiceUnitName); err != nil {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
-
-	for _, path := range []string{
-		filepath.Join(systemdSystemDir, ServiceUnitName),
-		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
-		recoveryScriptPath,
-		defaultAgentUpgradePaths().SignalPath,
-	} {
+	for _, path := range t.paths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
 	}
-
-	if err := utilexec.ReloadSystemd(ctx, t.log); err != nil {
+	if err := t.systemctl(ctx, "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
-
 	t.log.Info("systemd service uninstalled", "unit", ServiceUnitName)
+
+	if err := t.systemctl(ctx, "stop", ServiceUnitName); err != nil {
+		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
+	}
 	return nil
 }
