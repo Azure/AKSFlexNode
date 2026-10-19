@@ -91,7 +91,8 @@ image.
       for every state but active, 3 for inactive and 4 for no such unit,
       which the check takes for an error. Raise it with unbounded.
 - [ ] `AgentUpgrade`'s `image` parameter is this branch's choice. AKS sends
-      AgentUpgrades, so agree on it with them.
+      AgentUpgrades, so agree on it with them, including that it must be
+      pinned by digest, as `main` requires `sha256` for an archive since #369.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
       `/etc/aks-flex-node/agent-image.env`, which the harness writes through

@@ -74,7 +74,8 @@ OS. `up` again replaces the VM and the cluster.
 - Repave from kube1 to kube2, as `main`'s e2e does
 - A `NodeReboot` MachineOperation
 - `AgentUpgrade`: to a good candidate image, to a broken one, which rolls back,
-  and back to the agent's own image
+  to one named by tag alone, which is rejected, and back to the agent's own
+  image
 - Machines the container creates with `flex-machine`, kept running across a
   restart of the agent's container, and a VM reboot
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal, each followed by
@@ -107,8 +108,9 @@ EOF
 kubectl get machineoperation reboot-1 -w
 ```
 
-An `AgentUpgrade` takes an image rather than an archive, fully qualified, with
-a tag or digest:
+An `AgentUpgrade` takes an image rather than an archive: fully qualified, and
+pinned by digest, with or without a tag, as `main` requires an archive's
+SHA-256:
 
 ```yaml
 spec:
