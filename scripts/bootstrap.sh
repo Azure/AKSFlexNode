@@ -48,10 +48,13 @@ SP_CLIENT_CERTIFICATE_FILE="${AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE:-}"
 AGENT_URL="${AKS_FLEX_NODE_AGENT_URL:-}"
 AGENT_VERSION="${AKS_FLEX_NODE_AGENT_VERSION:-}"
 AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
+INSTALLED_AGENT="${AKS_FLEX_NODE_INSTALLED_AGENT:-}"
 # Deprecated: the installer chooses the install directory. Kept only to warn
 # that a different one is ignored.
 REQUESTED_INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-}"
 INSTALL_DIR=""
+# The agent bootstrap runs: the one it installed, or --installed-agent's.
+AGENT_BIN=""
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
@@ -116,6 +119,8 @@ Options:
   --agent-url URL                Exact agent tar.gz URL; may contain a SAS
   --agent-version VERSION        Version used with the default GitHub release URL
   --agent-sha256 SHA256          Expected SHA-256 of the downloaded tar.gz
+  --installed-agent PATH         Run the agent at PATH, an absolute path, instead
+                                 of installing one, as in the agent's image
   --fetch-bootstrap-data         Fetch and merge fresh AKS RP bootstrap data
   --bootstrap-data-api-version V API version for listBootstrapData
   --cluster-resource-id ID       Target AKS managed-cluster resource ID
@@ -142,6 +147,7 @@ Environment overrides:
   AKS_FLEX_NODE_AGENT_URL
   AKS_FLEX_NODE_AGENT_VERSION
   AKS_FLEX_NODE_AGENT_SHA256
+  AKS_FLEX_NODE_INSTALLED_AGENT
   AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
   AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
   AKS_FLEX_NODE_AUTHORITY_HOST
@@ -174,7 +180,7 @@ require_value() {
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--installed-agent|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -202,6 +208,7 @@ parse_args() {
                     --bootstrap-offline-artifacts-source) BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
                     --install-dir) REQUESTED_INSTALL_DIR="$2" ;;
+                    --installed-agent) INSTALLED_AGENT="$2" ;;
                     --config-path) CONFIG_PATH="$2" ;;
                 esac
                 shift 2
@@ -404,7 +411,7 @@ fetch_latest_bootstrap_data() {
     esac
 
     log "fetching fresh bootstrap data from AKS RP"
-    "$INSTALL_DIR/aks-flex-node" "${args[@]}" || fatal "failed to fetch AKS bootstrap data"
+    "$AGENT_BIN" "${args[@]}" || fatal "failed to fetch AKS bootstrap data"
     jq -s '.[0] * .[1]' "$current" "$response" > "$merged"
     mv -f "$merged" "$current"
 }
@@ -715,6 +722,7 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_AGENT_URL \
         AKS_FLEX_NODE_AGENT_VERSION \
         AKS_FLEX_NODE_AGENT_SHA256 \
+        AKS_FLEX_NODE_INSTALLED_AGENT \
         AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA \
         AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION \
         AKS_FLEX_NODE_AUTHORITY_HOST \
@@ -754,14 +762,22 @@ main() {
     local arch rendered_config
     arch=$(detect_architecture)
     rendered_config="$TEMP_DIR/config.json"
-    download_and_install_agent "$arch"
+    if [[ -n "$INSTALLED_AGENT" ]]; then
+        [[ "$INSTALLED_AGENT" == /* && -f "$INSTALLED_AGENT" && -x "$INSTALLED_AGENT" ]] ||
+            fatal_permanent "--installed-agent must be the absolute path of an executable file: $INSTALLED_AGENT"
+        AGENT_BIN="$INSTALLED_AGENT"
+        log "using the installed agent at $AGENT_BIN"
+    else
+        download_and_install_agent "$arch"
+        AGENT_BIN="$INSTALL_DIR/aks-flex-node"
+    fi
     render_config "$rendered_config"
     install_config "$rendered_config"
     clear_bootstrap_environment
 
     log "running preflight"
     local status=0
-    "$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output text || status=$?
+    "$AGENT_BIN" preflight --config "$CONFIG_PATH" --output text || status=$?
     if ((status != 0)); then
         # As a bootstrap after one whose start failed after changing the host finds it, such
         # as the first-boot unit's at the next boot.
@@ -772,7 +788,7 @@ main() {
     fi
     log "starting AKS Flex Node"
     umask 022
-    "$INSTALL_DIR/aks-flex-node" start --config "$CONFIG_PATH" || status=$?
+    "$AGENT_BIN" start --config "$CONFIG_PATH" || status=$?
     if ((status != 0)); then
         if deployment_on_host; then
             fatal_permanent "start failed after changing the host; reset the node with 'aks-flex-node reset' before bootstrapping it again"
@@ -786,7 +802,7 @@ main() {
 # left. A preflight that can't tell counts as no.
 deployment_on_host() {
     local report
-    report=$("$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output json 2>/dev/null) || true
+    report=$("$AGENT_BIN" preflight --config "$CONFIG_PATH" --output json 2>/dev/null) || true
     jq -e 'any(.checks[]?; .name == "existing-deployment" and .severity == "error")' <<<"$report" >/dev/null 2>&1
 }
 
