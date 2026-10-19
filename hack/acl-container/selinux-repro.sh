@@ -18,7 +18,8 @@
 # and creates a second one from a copy of its root filesystem, as the agent
 # creates machines, and drives that.
 #
-# Everything runs in its own containerd namespace, which is removed at the end.
+# Everything runs in containerd namespaces of its own, which are removed at the
+# end.
 # After each probe the host is put back: what the probe created is removed,
 # and the masked unit, the module, the machine's enablement, and its running
 # state are as before. --policy reloads the original policy after its probe;
@@ -31,6 +32,9 @@ MACHINE=${MACHINE:-}
 MASK_UNIT=${MASK_UNIT:-systemd-pstore.service}
 NS=acl-selinux-repro
 REPRO=acl-selinux-repro
+# The namespace the container pulls and runs IMAGE in through containerd's
+# socket, as the agent does its own images.
+CTR_NS=$REPRO-ctr
 # Interface names are limited to 15 characters.
 IFACE=aclrepro0
 UNIT=$REPRO.service
@@ -103,6 +107,9 @@ reset_host() {
     systemctl reset-failed "systemd-nspawn@$NEW_MACHINE.service" 2>/dev/null || true
     rm -rf "/var/lib/machines/$NEW_MACHINE"
     rm -f "/etc/systemd/nspawn/$NEW_MACHINE.nspawn"
+    ctr -n "$CTR_NS" tasks kill -s SIGKILL "$REPRO-run" 2>/dev/null || true
+    ctr -n "$CTR_NS" containers rm "$REPRO-run" 2>/dev/null || true
+    ctr -n "$CTR_NS" images rm "$IMAGE" 2>/dev/null || true
     if [[ -n $MACHINE ]]; then
         if [[ $machine_enabled == enabled ]]; then
             systemctl enable --quiet "systemd-nspawn@$MACHINE.service" || true
@@ -133,9 +140,12 @@ cleanup() {
     ctr -n "$NS" images rm "$IMAGE" >/dev/null 2>&1 || true
     # containerd removes the image's content and snapshots in the background,
     # and a namespace can only be removed once empty.
-    for _ in $(seq 30); do
-        ctr namespaces rm "$NS" >/dev/null 2>&1 && break
-        sleep 1
+    for ns in "$NS" "$CTR_NS"; do
+        ctr namespaces ls -q | grep -qx "$ns" || continue
+        for _ in $(seq 30); do
+            ctr namespaces rm "$ns" >/dev/null 2>&1 && break
+            sleep 1
+        done
     done
 }
 trap cleanup EXIT
@@ -210,6 +220,15 @@ if [ -n "$MASK_UNIT" ]; then
 fi
 run systemd-run --quiet --collect --unit="$REPRO-timer" --on-active=1s /usr/bin/true
 
+# containerd makes no SELinux checks of its own, unlike dbus-daemon, so this is
+# the socket alone. The agent pulls and runs its own images, as for an upgrade.
+echo "  -- containerd, through its socket"
+run ctr version
+run ctr namespaces list
+run ctr --namespace "$CTR_NS" image pull "$IMAGE"
+run ctr --namespace "$CTR_NS" run --rm "$IMAGE" "$REPRO-run" true
+run ctr --namespace "$CTR_NS" image rm "$IMAGE"
+
 echo "  -- kernel and files"
 run modprobe dummy
 run ip link add "$IFACE" type dummy
@@ -270,6 +289,7 @@ probe() {
         --mount type=bind,src=/,dst=/host,options=rbind:rslave \
         --env "MACHINE=$MACHINE" --env "REPRO=$REPRO" --env "IFACE=$IFACE" --env "UNIT=$UNIT" \
         --env "NEW_MACHINE=$NEW_MACHINE" --env "MASK_UNIT=$MASK_UNIT" --env "BLOCKDEV=$blockdev" \
+        --env "CTR_NS=$CTR_NS" --env "IMAGE=$IMAGE" \
         "$IMAGE" probe sh -c "$PROBE" </dev/null 2>&1 || true)
     printf '%s\n' "$out"
     sleep 3
@@ -310,7 +330,8 @@ section "Host binaries and unit files: label in file_contexts vs. actual label"
 printf '%-46s %-28s %s\n' FILE EXPECTED ACTUAL
 for f in /usr/lib/systemd/systemd /usr/bin/dbus-daemon /usr/lib/systemd/systemd-machined \
     /usr/lib/systemd/systemd-logind /usr/bin/containerd /usr/bin/runc /usr/bin/machinectl \
-    /usr/lib/systemd/system/systemd-nspawn@.service /etc/systemd/system /var/lib/machines; do
+    /usr/lib/systemd/system/systemd-nspawn@.service /etc/systemd/system /var/lib/machines \
+    /run/containerd/containerd.sock; do
     printf '%-46s %-28s %s\n' "$f" "$(type_of "$(matchpathcon -n "$f")")" "$(type_of "$(stat -c %C "$f")")"
 done
 
