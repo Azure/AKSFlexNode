@@ -394,18 +394,10 @@ type uninstallServiceTask struct {
 // UninstallService returns a task that removes the first-boot unit, then
 // disables, removes, and stops the agent's systemd unit, leaving the agent's
 // binary under the host root as a regular file, without its blue/green layout.
-// In the agent's container, it disables and stops the container's unit instead.
 //
 // The paths are resolved when the task is built. Nothing in reset changes the
 // host root, and ResetNode resolves the helper paths it removes the same way.
 func UninstallService(log *slog.Logger) phases.Task {
-	return uninstallService(log, Containerized())
-}
-
-func uninstallService(log *slog.Logger, containerized bool) phases.Task {
-	if containerized {
-		return newStopContainerServiceTask(log)
-	}
 	binaryPaths := agentUpgradePathsUnder(hostroot.Resolve())
 	return &uninstallServiceTask{
 		log: log,
