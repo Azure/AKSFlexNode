@@ -462,6 +462,14 @@ func TestContainerAgentConvergence(t *testing.T) {
 				reload:            func(context.Context) error { reloads++; return nil },
 				runningExecutable: func() (string, error) { return running, nil },
 				nspawnBinaryPath:  func(string) string { return machineBinary },
+				images:            agentImageSelection{path: filepath.Join(dir, "agent-image.env")},
+				install:           agentImageSelection{path: writeTestFile(t, filepath.Join(dir, "settings"), "AKS_FLEX_NODE_IMAGE="+testAgentImageV1+"\n")},
+				runningImage:      testAgentImageV1,
+				listImages:        func(context.Context) (string, error) { return testAgentImageV1 + "\n", nil },
+				ctr: func(_ context.Context, args ...string) error {
+					t.Errorf("unexpected ctr %q", args)
+					return nil
+				},
 			}
 			for run := 1; run <= 2; run++ {
 				if err := convergence.converge(t.Context()); err != nil {
@@ -486,6 +494,86 @@ func TestContainerAgentConvergence(t *testing.T) {
 				t.Errorf("the machine's agent binary exists: %v", err)
 			case tc.wantBinary != "" && string(content) != tc.wantBinary:
 				t.Errorf("the machine's agent binary = %q, %v; want %q", content, err, tc.wantBinary)
+			}
+		})
+	}
+}
+
+func TestContainerAgentRemovesOldImages(t *testing.T) {
+	t.Parallel()
+
+	const (
+		install = "registry.example/aks-flex-node-agent:v0"
+		old     = "registry.example/aks-flex-node-agent:v-old"
+		broken  = "registry.example/aks-flex-node-agent:broken"
+	)
+	listed := strings.Join([]string{install, testAgentImageV1, testAgentImageV2, old, broken}, "\n")
+	tests := map[string]struct {
+		selection    string
+		settings     string
+		runningImage string
+		listErr      error
+		failRemoval  string
+		wantRemoved  []string
+	}{
+		"keeps the selected, last good, install's, and running images": {
+			selection:    "AKS_FLEX_NODE_IMAGE=" + testAgentImageV2 + "\nAKS_FLEX_NODE_LAST_GOOD_IMAGE=" + testAgentImageV1 + "\n",
+			settings:     "AKS_FLEX_NODE_IMAGE=" + install + "\nAKS_FLEX_NODE_PULL_ARGS=--plain-http\n",
+			runningImage: testAgentImageV2,
+			wantRemoved:  []string{old, broken},
+		},
+		"without a selection, keeps the install's image, however it's quoted": {
+			settings:     `AKS_FLEX_NODE_IMAGE="` + install + `"` + "\n",
+			runningImage: install,
+			wantRemoved:  []string{testAgentImageV1, testAgentImageV2, old, broken},
+		},
+		"removes none when the install's image is unknown": {
+			runningImage: testAgentImageV2,
+		},
+		"removes none when it can't list the images": {
+			settings: "AKS_FLEX_NODE_IMAGE=" + install + "\n",
+			listErr:  os.ErrPermission,
+		},
+		"a failed removal doesn't stop the others": {
+			settings:     "AKS_FLEX_NODE_IMAGE=" + install + "\n",
+			runningImage: install,
+			failRemoval:  testAgentImageV1,
+			wantRemoved:  []string{testAgentImageV1, testAgentImageV2, old, broken},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			var removed []string
+			convergence := &containerAgentConvergence{
+				log:          discardLogger(),
+				images:       agentImageSelection{path: filepath.Join(dir, "agent-image.env")},
+				install:      agentImageSelection{path: filepath.Join(dir, "settings")},
+				runningImage: tc.runningImage,
+				listImages:   func(context.Context) (string, error) { return listed, tc.listErr },
+				ctr: func(_ context.Context, args ...string) error {
+					if !slices.Equal(args[:4], []string{"--namespace", "aks-flex", "images", "rm"}) {
+						t.Errorf("unexpected ctr %q", args)
+					}
+					removed = append(removed, args[4])
+					if args[4] == tc.failRemoval {
+						return os.ErrPermission
+					}
+					return nil
+				},
+			}
+			if tc.selection != "" {
+				writeTestFile(t, convergence.images.path, tc.selection)
+			}
+			if tc.settings != "" {
+				writeTestFile(t, convergence.install.path, tc.settings)
+			}
+
+			convergence.removeImages(t.Context())
+			if !slices.Equal(removed, tc.wantRemoved) {
+				t.Errorf("removed %q, want %q", removed, tc.wantRemoved)
 			}
 		})
 	}

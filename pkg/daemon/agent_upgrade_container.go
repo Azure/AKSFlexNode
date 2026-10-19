@@ -39,6 +39,9 @@ const (
 	agentSnapshotterPullArgsEnv = "AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS"
 	agentSnapshotterRunArgsEnv  = "AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS"
 	agentContainerdNamespace    = "aks-flex"
+	// agentInstallSettingsPath is the host's provisioning's settings, which name the install's
+	// image as AKS_FLEX_NODE_IMAGE. The entrypoint mounts them read-only.
+	agentInstallSettingsPath = "/etc/sysconfig/aks-flex-node-container"
 	// agentUnitStartLimitInterval is the StartLimitIntervalSec of the agent's unit in its container.
 	agentUnitStartLimitInterval = 5 * time.Minute
 )
@@ -60,6 +63,8 @@ func (s agentImageSelection) read() (current, lastGood string, err error) {
 		if !ok {
 			continue
 		}
+		// As systemd reads it, a value may be quoted.
+		value = strings.Trim(value, `"'`)
 		switch name {
 		case agentImageEnv:
 			current = value
@@ -353,6 +358,7 @@ func recoverContainerAgentUpgrade(
 // daemon on a host keeps its binary layout and units converged at every start: the agent's unit
 // and its recovery unit, which a newer image can change, and the agent's binary in the active
 // machine, which kubelet runs as its credential plugin and which an upgrade or rollback changes.
+// It also removes the agent's images that it won't run again.
 type containerAgentConvergence struct {
 	log               *slog.Logger
 	state             agentUpgradeStateLoader
@@ -360,6 +366,13 @@ type containerAgentConvergence struct {
 	reload            func(context.Context) error
 	runningExecutable func() (string, error)
 	nspawnBinaryPath  func(string) string
+	// For removing images: the agent's selection, the install's settings, the image this daemon
+	// runs, and containerd.
+	images       agentImageSelection
+	install      agentImageSelection
+	runningImage string
+	listImages   func(context.Context) (string, error)
+	ctr          func(context.Context, ...string) error
 }
 
 func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoader) *containerAgentConvergence {
@@ -372,6 +385,15 @@ func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoade
 		},
 		runningExecutable: runningAgentExecutable,
 		nspawnBinaryPath:  activeNspawnAgentBinaryPath,
+		images:            agentImageSelection{path: agentImageSelectionPath},
+		install:           agentImageSelection{path: agentInstallSettingsPath},
+		runningImage:      os.Getenv(agentImageEnv),
+		listImages: func(ctx context.Context) (string, error) {
+			return utilexec.OutputCmd(ctx, log, "ctr", "--namespace", agentContainerdNamespace, "images", "ls", "-q")
+		},
+		ctr: func(ctx context.Context, args ...string) error {
+			return utilexec.RunCmd(ctx, log, utilexec.Ctr(), args...)
+		},
 	}
 }
 
@@ -386,6 +408,7 @@ func (c *containerAgentConvergence) converge(ctx context.Context) error {
 		}
 		c.log.Info("updated the agent's units from its image")
 	}
+	c.removeImages(ctx)
 
 	state, err := c.state.LoadState(ctx)
 	if err != nil {
@@ -410,6 +433,39 @@ func (c *containerAgentConvergence) converge(ctx context.Context) error {
 	}
 	c.log.Info("synchronized the agent binary in the active machine", "machine", state.ActiveMachine)
 	return nil
+}
+
+// removeImages removes the agent's images it won't run again, as each AgentUpgrade pulls one: all
+// but the selected and last good ones, the install's, which bootstrap runs after a reset, even
+// offline, and the one this daemon runs. Failing to remove one is only logged, and failing to
+// learn which to keep removes none.
+func (c *containerAgentConvergence) removeImages(ctx context.Context) {
+	current, lastGood, err := c.images.read()
+	if err != nil {
+		c.log.Warn("not removing old agent images", "error", err)
+		return
+	}
+	install, _, err := c.install.read()
+	if err != nil || install == "" {
+		c.log.Warn("not removing old agent images: the install's image is unknown", "error", err)
+		return
+	}
+	keep := map[string]bool{current: true, lastGood: true, install: true, c.runningImage: true}
+	listed, err := c.listImages(ctx)
+	if err != nil {
+		c.log.Warn("not removing old agent images", "error", err)
+		return
+	}
+	for _, image := range strings.Fields(listed) {
+		if keep[image] {
+			continue
+		}
+		if err := c.ctr(ctx, "--namespace", agentContainerdNamespace, "images", "rm", image); err != nil {
+			c.log.Warn("failed to remove an old agent image", "image", image, "error", err)
+			continue
+		}
+		c.log.Info("removed an old agent image", "image", image)
+	}
 }
 
 // writeContainerUnits writes the agent's units in its container where they differ, and reports
