@@ -54,8 +54,16 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 				agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 			},
 		},
-		"optional digest omitted": {
+		"missing digest": {
 			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz"},
+			wantErr:    agentUpgradeSHA256Parameter,
+		},
+		"blank digest": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+				agentUpgradeSHA256Parameter:      " \t\n",
+			},
+			wantErr: agentUpgradeSHA256Parameter,
 		},
 		"invalid digest": {
 			parameters: map[string]string{

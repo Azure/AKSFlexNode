@@ -321,18 +321,56 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 	t.Parallel()
 
-	upgrader := &fakeAgentUpgradeExecutor{}
-	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	tests := map[string]struct {
+		parameters map[string]string
+		wantErr    string
+	}{
+		"missing URL": {
+			wantErr: "downloadURL",
+		},
+		"missing digest": {
+			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret"},
+			wantErr:    "sha256",
+		},
+		"blank digest": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentUpgradeSHA256Parameter:      " \t\n",
+			},
+			wantErr: "sha256",
+		},
+		"invalid digest": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentUpgradeSHA256Parameter:      "bad",
+			},
+			wantErr: "64 hexadecimal",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := target.reconcileAgentUpgrade(t.Context(), store, daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade}); err != nil {
-		t.Fatalf("reconcileAgentUpgrade: %v", err)
-	}
-	if store.result.Phase != machinav1alpha3.OperationPhaseFailed || store.result.Reason != "InvalidParameters" {
-		t.Fatalf("result = %#v, want InvalidParameters failure", store.result)
-	}
-	if upgrader.pending || upgrader.staged || upgrader.restarted {
-		t.Fatal("executor called for invalid parameters")
+			upgrader := &fakeAgentUpgradeExecutor{acquireErr: errors.New("activation lock must not be acquired")}
+			store := &fakeMachineOperationStore{}
+			target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+			op := daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade, Parameters: tt.parameters}
+
+			for range 2 {
+				if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
+					t.Fatalf("reconcileAgentUpgrade: %v", err)
+				}
+				if store.result.Phase != machinav1alpha3.OperationPhaseFailed || store.result.Reason != "InvalidParameters" || !strings.Contains(store.result.Message, tt.wantErr) {
+					t.Fatalf("result = %#v, want InvalidParameters failure containing %q", store.result, tt.wantErr)
+				}
+				if strings.Contains(store.result.Message, "secret") {
+					t.Fatalf("result exposes URL credentials: %#v", store.result)
+				}
+				if store.inProgress || upgrader.pending || upgrader.staged || upgrader.restarted || upgrader.aborted {
+					t.Fatal("invalid parameters mutated the operation or called the executor")
+				}
+			}
+		})
 	}
 }
 
@@ -388,6 +426,7 @@ func TestMachineOperationHandlersAgentUpgradeMarkFailureClearsPendingSignal(t *t
 	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	_, err := target.reconcileAgentUpgrade(t.Context(), store, op)
@@ -460,6 +499,7 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	_, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op)
