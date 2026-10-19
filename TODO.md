@@ -37,14 +37,13 @@ Separately, not needed by Flex: ACL is considering
 
 The agent in a container must do what `main`'s agent does on an Ubuntu host,
 with the same config and commands. Bootstrap, `start`, the daemon's
-reconciliation of the Machine goal state, repave, the `NodeReboot` and
-`AgentReset` MachineOperations, the deletion signal, and `reset` work:
-`harness.py up` bootstraps the VM into a kind cluster through `main`'s in-cluster
-controller, and `check` runs a pod on it, repaves it from kube1 to kube2 as
-`main`'s e2e does, restarts its machine, reboots it, and resets it in each of
-the three ways, bootstrapping it again after each.
-
-- [ ] `AgentUpgrade`, which becomes a new image (see below)
+reconciliation of the Machine goal state, repave, the `NodeReboot`,
+`AgentUpgrade`, and `AgentReset` MachineOperations, the deletion signal, and
+`reset` work: `harness.py up` bootstraps the VM into a kind cluster through
+`main`'s in-cluster controller, and `check` runs a pod on it, repaves it from
+kube1 to kube2 as `main`'s e2e does, restarts its machine, upgrades its agent to
+another image, to a broken one, which rolls back, and back, reboots it, and
+resets it in each of the three ways, bootstrapping it again after each.
 
 ## Run the real agent in the container
 
@@ -58,6 +57,14 @@ runs, and `aks-flex-node-reset.service` runs `aks-flex-node reset` in a containe
 of its own. The units give each container only the host's root: its entrypoint
 mounts the host paths the agent uses at their own paths, and the host's tools
 run through `host-exec`.
+
+`AgentUpgrade` takes an `image` in a container, rather than a release archive:
+the agent pulls it, checks that its agent runs, and selects it in
+`/etc/aks-flex-node/agent-image.env`, which its unit reads, before restarting
+on it. As on a host, the restarted daemon judges the upgrade and publishes the
+result, and a recovery unit, here running the last good image, restores that
+image if the new one fails. At every start, the daemon also rewrites its units
+from its image and copies its binary into the active machine.
 
 - [ ] nspawn lifecycle helper, the one binary of the agent left on the host.
       Each machine's units run `/usr/local/bin/unbounded-agent-nspawn-lifecycle`
@@ -73,15 +80,15 @@ run through `host-exec`.
 - [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
       needs none so far. Stay on it until the lifecycle helper, or another
       specific fix, needs a newer one, and bump it in a commit of its own.
-- [ ] Upgrades: turn `AgentUpgrade`'s blue/green binary switching into an
-      image update, with rollback. On a host the daemon also rewrites its own
-      unit at every start; in a container it doesn't yet, so a newer image
-      can't change `aks-flex-node-agent.service` without a new bootstrap.
-- [ ] Recovery: replace `aks-flex-node-recovery.sh`. Recovery triggered by the
-      container's unit failing can't run in that container. Run it as a
-      separate container, which works in `spc_t`. If it's a host script
-      instead, it runs as `kernel_t` and can't `reset-failed`, so it needs to
-      wait out the unit's start limit and retry.
+- [ ] `AgentUpgrade`'s `image` parameter is this branch's choice. AKS sends
+      AgentUpgrades, so agree on it with them.
+- [ ] Image cleanup: each `AgentUpgrade` pulls an image into containerd's
+      `aks-flex` namespace, and nothing removes old ones. Keep the selected and
+      last good images, and remove others once an upgrade completes.
+- [ ] Direct activation: `main`'s `agent-upgrade` command lets a provisioning
+      system activate a binary it staged, without a MachineOperation. Decide
+      whether the container needs an equivalent, such as selecting an image
+      through a unit like the reset unit.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, which the harness writes through
       Ignition, with a base config holding a bootstrap token. Decide how
