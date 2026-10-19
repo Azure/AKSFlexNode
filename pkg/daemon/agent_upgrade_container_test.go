@@ -307,7 +307,8 @@ func TestPublishContainerAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSi
 	if signal, err := executor.signals.read(); err != nil || signal == nil || !signal.RecoveryRequired {
 		t.Fatalf("signal before the last-good daemon starts = %#v, %v", signal, err)
 	}
-	if len(*calls) != 1 || !strings.Contains((*calls)[0], "--on-active=1s /usr/bin/systemctl restart "+ServiceUnitName) {
+	if len(*calls) != 1 || !strings.Contains((*calls)[0], "--on-active=1s ") ||
+		!strings.HasSuffix((*calls)[0], "/usr/bin/systemctl restart "+ServiceUnitName) {
 		t.Fatalf("calls = %q, want one scheduled restart", *calls)
 	}
 	if len(*phases) != 0 {
