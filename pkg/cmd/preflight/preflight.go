@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -82,13 +83,13 @@ func (h *handler) execute(ctx context.Context) error {
 		}
 	}
 
-	checks := preflight.Flatten(
+	checks := daemon.PreflightChecks(preflight.Flatten(
 		arc.Preflight(cfg, log),
 		host.Preflight(log, *agentCfg, gs),
 		nodeChecks,
 		rootfs.Preflight(log, *agentCfg, gs),
 		npd.Preflight(cfg),
-	)
+	))
 
 	report := preflight.Run(ctx, checks, preflight.Options{
 		IgnoreErrors:   h.ignorePreflightErrors,

@@ -11,6 +11,9 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/phases/host"
+	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
 func TestInstallServiceRunsTheImageInAContainer(t *testing.T) {
@@ -170,5 +173,58 @@ func TestSetupHostInstallsPackagesOnlyOnTheHost(t *testing.T) {
 				t.Errorf("setupHost(containerized=%v) does not configure the OS (tasks: %s)", tc.containerized, task.Name())
 			}
 		})
+	}
+}
+
+type namedCheck string
+
+func (c namedCheck) Name() string                           { return string(c) }
+func (namedCheck) Check(context.Context) []preflight.Result { return nil }
+
+func TestPreflightChecksInAContainer(t *testing.T) {
+	t.Parallel()
+
+	all := []string{"privileged-user", "host-packages", "containerd-active", "swap-active"}
+	tests := map[string]struct {
+		containerized bool
+		want          []string
+	}{
+		"on the host, every check":            {containerized: false, want: all},
+		"in a container, the ones that apply": {containerized: true, want: []string{"privileged-user", "swap-active"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var checks []preflight.Checker
+			for _, name := range all {
+				checks = append(checks, namedCheck(name))
+			}
+			var got []string
+			for _, check := range preflightChecks(checks, tc.containerized) {
+				got = append(got, check.Name())
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("checks = %q, want %q", got, tc.want)
+			}
+			if len(checks) != len(all) || checks[1].Name() != "host-packages" {
+				t.Errorf("preflightChecks changed its argument: %v", checks)
+			}
+		})
+	}
+}
+
+// The checks a container leaves out are unbounded's; this notices if they're renamed.
+func TestContainerSkippedPreflightChecksExist(t *testing.T) {
+	t.Parallel()
+
+	var names []string
+	for _, check := range host.Preflight(discardLogger(), agentconfig.AgentConfig{}, nil) {
+		names = append(names, check.Name())
+	}
+	for _, skipped := range containerSkippedPreflightChecks {
+		if !slices.Contains(names, skipped) {
+			t.Errorf("unbounded's host preflight has no %q check (has %q)", skipped, names)
+		}
 	}
 }
