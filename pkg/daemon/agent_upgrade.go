@@ -75,17 +75,17 @@ func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest
 	return request, nil
 }
 
-// validateAgentImage accepts a fully qualified image reference with a tag or digest, as ctr
-// pulls it. A digest pins the image; a tag is trusted to name the intended one.
+// validateAgentImage accepts a fully qualified image reference pinned by digest, with or without
+// a tag, as ctr pulls it. As an archive needs its SHA-256, an image needs its digest: ctr verifies
+// the content it pulls against it, so the agent never runs an unverified candidate, not even to
+// check its version.
 func validateAgentImage(image string) error {
 	named, err := reference.ParseNamed(image)
 	if err != nil {
 		return fmt.Errorf("parameter %q: invalid image reference: %w", agentUpgradeImageParameter, err)
 	}
-	_, tagged := named.(reference.Tagged)
-	_, digested := named.(reference.Digested)
-	if !tagged && !digested {
-		return fmt.Errorf("parameter %q: image reference %q has no tag or digest", agentUpgradeImageParameter, image)
+	if _, digested := named.(reference.Digested); !digested {
+		return fmt.Errorf("parameter %q: image reference %q has no digest", agentUpgradeImageParameter, image)
 	}
 	return nil
 }

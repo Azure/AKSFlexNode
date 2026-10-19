@@ -23,8 +23,9 @@ On ACL 3.0.20261005, from the Azure gallery image `acl-1es-eval` version
   binary of the agent is in `/usr/local/bin` or `/usr/local/lib/aks-flex-node`,
   where `main` installs it.
 - Repave, `NodeReboot`, and `AgentUpgrade` work as on a host. An `AgentUpgrade`
-  names an image: a good one is selected, a broken one rolls back to the last
-  good image, and images the agent won't run again are removed.
+  names an image by digest: a good one is selected, a broken one rolls back to
+  the last good image, one named by tag alone is rejected, and images the agent
+  won't run again are removed.
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal each end as on a
   host: the agent's unit is gone, and nothing of the agent runs. What installed
   it stays, so bootstrapping again joins the node, with the install's image or
@@ -265,17 +266,21 @@ instead. The bootstrap, reset, and agent's units all read it:
 ## AgentUpgrade by image
 
 An `AgentUpgrade` in the container takes an `image`: a fully qualified
-reference with a tag or a digest. A digest pins the image; a tag is trusted to
-name the intended one. The parameter's name is this branch's choice, to agree
-with AKS.
+reference pinned by digest, with or without a tag. `main` requires an archive's
+SHA-256, so that the agent never runs an unverified candidate, not even to
+check its version. The digest is the image's equivalent: `ctr` verifies the
+content it pulls against it. An image named by tag alone fails as
+`InvalidParameters`, as an archive without its SHA-256 does. The parameter's
+name is this branch's choice, to agree with AKS.
 
 The upgrade follows the host's, with images for binaries:
 
 1. The agent records the pending upgrade in its durable signal,
    `/etc/aks-flex-node/agent-upgrade-signal.json`, with the candidate image and
    the one it runs.
-2. It pulls the candidate, and runs `aks-flex-node version` in it, as the host
-   runs the candidate binary before switching.
+2. It pulls the candidate, which `ctr` verifies against its digest, and runs
+   `aks-flex-node version` in it, as the host verifies the archive's SHA-256
+   and runs the candidate binary before switching.
 3. It selects the candidate in `agent-image.env`, with the image it runs as the
    last good one, and restarts its unit from a transient unit.
 4. The new daemon converges: it rewrites the agent's units from its image, and
@@ -399,9 +404,10 @@ pods in `spc_t` machines so far.
 - A privileged container with the host's PID namespace and a writable `/host`
   is root on the host, as is the agent installed on a host. So is access to
   containerd's socket, which the agent has.
-- The image is what that trust rests on. Pin it by digest in the install's
-  settings, and sign and verify it. The harness pulls a tag over plain HTTP from
-  a local registry.
+- The image is what that trust rests on. An `AgentUpgrade`'s image is pinned
+  by digest; pin the install's by digest too, in its settings, and sign and
+  verify both. The harness's install names a tag, pulled over plain HTTP from a
+  local registry.
 - Whoever can create MachineOperations for a machine can make it run an image
   of their choosing, as root, through `AgentUpgrade`. On a host, `downloadURL`
   and `sha256` grant the same, so treat the parameters as sensitive either way.

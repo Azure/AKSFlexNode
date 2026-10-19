@@ -77,12 +77,23 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 				agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node@sha256:" + strings.Repeat("a", 64),
 			},
 		},
-		"image by tag": {
+		"image by tag and digest": {
+			parameters: map[string]string{
+				agentUpgradeImageParameter: "registry.example:5000/aks-flex-node-agent:v2@sha256:" + strings.Repeat("a", 64),
+			},
+		},
+		// As an archive needs its SHA-256.
+		"image by tag alone": {
 			parameters: map[string]string{agentUpgradeImageParameter: "registry.example:5000/aks-flex-node-agent:v2"},
+			wantErr:    "no digest",
 		},
 		"image without tag or digest": {
 			parameters: map[string]string{agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node"},
-			wantErr:    "no tag or digest",
+			wantErr:    "no digest",
+		},
+		"image with a malformed digest": {
+			parameters: map[string]string{agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node@sha256:bad"},
+			wantErr:    "invalid image reference",
 		},
 		// ctr pulls only fully qualified references.
 		"image not fully qualified": {

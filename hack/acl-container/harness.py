@@ -91,6 +91,8 @@ BASE_CONFIG = "/etc/aks-flex-node/base-config.json"
 # The image the agent's units run, when not the install's: AgentUpgrade selects it, and bootstrap
 # can be given one.
 AGENT_IMAGE_SELECTION = "/etc/aks-flex-node/agent-image.env"
+# An AgentUpgrade's durable record, from its request until the restarted daemon publishes it.
+AGENT_UPGRADE_SIGNAL = "/etc/aks-flex-node/agent-upgrade-signal.json"
 SETTINGS = "/etc/sysconfig/aks-flex-node-container"
 
 # The kind cluster up creates for the agent to join, on root Podman. Its node joins the VM's
@@ -1156,6 +1158,14 @@ def run_machine_operation(kind: str, timeout: float = 600,
                           parameters: dict[str, str] | None = None) -> tuple[str, str]:
     """Request a MachineOperation of the node, as main's demos and e2e do, and return its final
     phase and message."""
+    result = machine_operation(kind, timeout, parameters)
+    return result["phase"], result["message"]
+
+
+def machine_operation(kind: str, timeout: float = 600,
+                      parameters: dict[str, str] | None = None) -> dict[str, str]:
+    """Request a MachineOperation of the node, and return its final phase, its message, and the
+    reason of its Completed condition, which main's e2e checks for a rejected request."""
     name = f"aclc-{kind.lower()}-{int(time.time())}"
     log(f"requesting {kind} MachineOperation {name}")
     spec = {"machineRef": HOSTNAME, "operationKind": kind, "ttlSecondsAfterFinished": 3600}
@@ -1168,16 +1178,19 @@ def run_machine_operation(kind: str, timeout: float = 600,
         "spec": spec,
     }
     kubectl("apply", "-f", "-", input=json.dumps(operation), quiet=True)
-    status = ["", ""]
+    status = {"phase": "", "reason": "", "message": ""}
 
     def finished() -> bool:
         result = kubectl("get", "machineoperation", name, "-o",
-                         "jsonpath={.status.phase}|{.status.message}", check=False, quiet=True)
-        status[:] = result.stdout.split("|", 1) if "|" in result.stdout else ["", ""]
-        return status[0] in ("Complete", "Failed")
+                         "jsonpath={.status.phase}|{.status.conditions[?(@.type==\"Completed\")].reason}"
+                         "|{.status.message}", check=False, quiet=True)
+        fields = result.stdout.split("|", 2)
+        if len(fields) == 3:
+            status.update(zip(("phase", "reason", "message"), fields))
+        return status["phase"] in ("Complete", "Failed")
 
     eventually(finished, timeout, 3)
-    return status[0], status[1]
+    return status
 
 
 def check_node_reboot(checks: Checks) -> None:
@@ -1247,12 +1260,20 @@ def machine_agent_digest() -> str:
     return out.stdout.split()[0] if out.returncode == 0 else ""
 
 
+def agent_image_by_digest() -> str:
+    """The image the harness last pushed as the agent's, pinned by digest, as an AgentUpgrade has
+    to name it."""
+    digest = (STATE / "agent-image.digest").read_text().strip()
+    return f"{GATEWAY}:{REGISTRY_PORT}/{AGENT_REPOSITORY}@{digest}"
+
+
 def check_agent_upgrade(checks: Checks) -> str:
     """AgentUpgrade by image, as main's e2e upgrades by archive: to a candidate whose agent
     binary differs, then to one whose daemon fails, which rolls back to the last good image, then
-    back to the agent's own image. Return the good candidate."""
+    one naming an image by tag alone, which is rejected, as main rejects an archive without its
+    SHA-256, then back to the agent's own image. Return the good candidate."""
     good, broken = build_candidate_images()
-    original = agent_image()
+    original = agent_image_by_digest()
     before = agent_binary_digest()
 
     phase, message = run_machine_operation("AgentUpgrade", parameters={"image": good})
@@ -1276,8 +1297,19 @@ def check_agent_upgrade(checks: Checks) -> str:
                   "the active machine has the last good agent binary again")
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the rollback")
 
+    selection = ssh_out(f"sudo cat {AGENT_IMAGE_SELECTION}")
+    result = machine_operation("AgentUpgrade", parameters={"image": VM_AGENT_IMAGE})
+    checks.expect(result["phase"] == "Failed" and result["reason"] == "InvalidParameters",
+                  "an AgentUpgrade naming an image by tag alone fails as InvalidParameters",
+                  f"{result['phase'] or 'no phase'} ({result['reason'] or 'no reason'}): {result['message']}")
+    untouched = (agent_image() == good and agent_binary_digest() == upgraded
+                 and ssh_out(f"sudo cat {AGENT_IMAGE_SELECTION}") == selection
+                 and ssh(f"sudo test ! -e {AGENT_UPGRADE_SIGNAL}", check=False).returncode == 0)
+    checks.expect(untouched, "the rejected AgentUpgrade left the agent, its image selection, and "
+                  "the upgrade signal as they were")
+
     phase, message = run_machine_operation("AgentUpgrade", parameters={"image": original})
-    checks.expect(phase == "Complete" and agent_image() == original,
+    checks.expect(phase == "Complete" and agent_image() == original and agent_binary_digest() == before,
                   "an AgentUpgrade back to the agent's own image completes",
                   f"{phase or 'no phase'}: {message}")
     images = ssh_out(f"sudo {CTR} images ls -q").split()
