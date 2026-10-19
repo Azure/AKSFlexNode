@@ -82,7 +82,11 @@ OS. `up` again replaces the VM and the cluster.
   bootstrapping the node again
 
 `check --no-reboot` skips the reboot, and `--keep` keeps the `aclc-check`
-machine.
+machine. `check --only GROUP,...` runs some of its groups, in their usual order:
+`container`, `cluster`, `repave`, `nodereboot`, `upgrade`, `machines`,
+`agentreset`, `reset`, and `deletion`. Each starts from a joined node and
+leaves one, so any of them can run alone, such as `--only upgrade,agentreset`
+while working on upgrades. `check` ends with how long each group took.
 
 ## Working with the node
 

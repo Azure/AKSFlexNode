@@ -21,6 +21,7 @@ containerd pulls from. See README.md for usage and DESIGN.md for what this prove
 from __future__ import annotations
 
 import argparse
+import contextlib
 import http.server
 import json
 import os
@@ -984,6 +985,8 @@ def agent_out(script: str) -> str:
 class Checks:
     def __init__(self) -> None:
         self.failures: list[str] = []
+        self.started = time.monotonic()
+        self.durations: list[tuple[str, float]] = []
 
     def expect(self, ok: bool, description: str, detail: str = "") -> None:
         if ok:
@@ -992,10 +995,28 @@ class Checks:
             self.failures.append(description)
             log(f"FAIL: {description}{': ' + detail if detail else ''}")
 
+    @contextlib.contextmanager
+    def group(self, name: str):
+        """Time a group of checks, for done's summary of where check spends its time."""
+        log(f"checking {name}")
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.durations.append((name, time.monotonic() - started))
+
     def done(self) -> None:
+        if self.durations:
+            log(f"took {duration(time.monotonic() - self.started)}: "
+                + ", ".join(f"{name} {duration(seconds)}" for name, seconds in self.durations))
         if self.failures:
             die(f"{len(self.failures)} check(s) failed: " + "; ".join(self.failures))
         log("all checks passed")
+
+
+def duration(seconds: float) -> str:
+    minutes, seconds = divmod(round(seconds), 60)
+    return f"{minutes}m{seconds:02d}s" if minutes else f"{seconds}s"
 
 
 def machine_state(machine: str) -> str:
@@ -1548,24 +1569,58 @@ def cmd_push(_: argparse.Namespace) -> None:
     wait_for_agent()
 
 
+# check's groups, in the order they run. Each starts from a joined node and leaves one, so any of
+# them can run alone; agentreset joins again with the good candidate's image when upgrade ran.
+CHECK_GROUPS = ("container", "cluster", "repave", "nodereboot", "upgrade", "machines",
+                "agentreset", "reset", "deletion")
+# The groups that need the cluster, which up --no-agent doesn't create.
+CLUSTER_CHECK_GROUPS = set(CHECK_GROUPS) - {"container", "machines"}
+
+
+def check_groups(value: str) -> tuple[str, ...]:
+    """Parse check --only: groups separated by commas, run in CHECK_GROUPS's order."""
+    names = {name.strip() for name in value.split(",") if name.strip()}
+    unknown = names - set(CHECK_GROUPS)
+    if unknown or not names:
+        raise argparse.ArgumentTypeError(
+            f"unknown group(s) {', '.join(sorted(unknown)) or '(none given)'}; "
+            f"choose from {', '.join(CHECK_GROUPS)}")
+    return tuple(name for name in CHECK_GROUPS if name in names)
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     require_vm()
     checks = Checks()
-    check_container(checks)
+    cluster = cluster_enabled()
     good_image = ""
-    if cluster_enabled():
-        check_cluster(checks)
-        check_repave(checks)
-        check_node_reboot(checks)
+
+    def upgrade() -> None:
+        nonlocal good_image
         good_image = check_agent_upgrade(checks)
-    check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
-    if cluster_enabled() and args.reboot:
-        wait_for_node_ready()
-        checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
-    if cluster_enabled():
-        check_agent_reset(checks, rejoin_image=good_image)
-        check_local_reset(checks)
-        check_deletion_signal(checks)
+
+    def machines() -> None:
+        check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
+        if cluster and args.reboot:
+            wait_for_node_ready()
+            checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
+
+    groups = {
+        "container": lambda: check_container(checks),
+        "cluster": lambda: check_cluster(checks),
+        "repave": lambda: check_repave(checks),
+        "nodereboot": lambda: check_node_reboot(checks),
+        "upgrade": upgrade,
+        "machines": machines,
+        "agentreset": lambda: check_agent_reset(checks, rejoin_image=good_image),
+        "reset": lambda: check_local_reset(checks),
+        "deletion": lambda: check_deletion_signal(checks),
+    }
+    for name in args.only:
+        if name in CLUSTER_CHECK_GROUPS and not cluster:
+            log(f"skipping {name}: the VM was brought up without the agent or a cluster")
+            continue
+        with checks.group(name):
+            groups[name]()
     checks.done()
 
 
@@ -1646,6 +1701,9 @@ def main() -> None:
     check.add_argument("--no-reboot", dest="reboot", action="store_false",
                        help="skip the VM reboot")
     check.add_argument("--keep", action="store_true", help=f"keep the {CHECK_MACHINE} machine")
+    check.add_argument("--only", type=check_groups, default=CHECK_GROUPS, metavar="GROUP[,GROUP...]",
+                       help="run only these groups of checks, in their usual order: "
+                            f"{', '.join(CHECK_GROUPS)}")
     check.set_defaults(func=cmd_check)
 
     status = commands.add_parser("status", help="show the VM, agent container, and machines")
