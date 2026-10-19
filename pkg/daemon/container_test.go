@@ -228,3 +228,47 @@ func TestContainerSkippedPreflightChecksExist(t *testing.T) {
 		}
 	}
 }
+
+// unitDirectives returns a unit file's values for key in section, split into words, as systemd
+// accumulates list settings such as After=.
+func unitDirectives(content []byte, section, key string) []string {
+	var values []string
+	current := ""
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			current = strings.Trim(line, "[]")
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if ok && current == section && name == key {
+			values = append(values, strings.Fields(value)...)
+		}
+	}
+	return values
+}
+
+// A failure starts the recovery unit and, RestartSec later, a restart. Recovery starts a
+// container, which takes longer, so the restart has to wait for it, or it runs the image that
+// failed again.
+func TestContainerAgentUnitRestartsAfterRecovery(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		key  string
+		want string
+	}{
+		"a failure starts recovery":         {key: "OnFailure", want: recoveryServiceUnitName},
+		"a restart waits for that recovery": {key: "After", want: recoveryServiceUnitName},
+		"it starts once containerd has":     {key: "After", want: "containerd.service"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := unitDirectives(containerServiceUnitContent, "Unit", tc.key); !slices.Contains(got, tc.want) {
+				t.Errorf("%s= is %q, want it to include %s", tc.key, got, tc.want)
+			}
+		})
+	}
+}

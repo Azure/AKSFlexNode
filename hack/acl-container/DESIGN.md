@@ -294,7 +294,10 @@ The recovery unit runs only while an upgrade's signal and a selection exist,
 so an ordinary failure of the agent's unit changes nothing, as on a host.
 systemd 254 and later, ACL's included, run `OnFailure=` at every failure, not
 only once the unit hits its start limit, so recovery can find the unit still
-restarting; it then restarts onto the restored image by itself.
+restarting. The agent's unit is ordered after its recovery unit, so that
+restart waits for recovery, which starts a container and takes longer than
+`RestartSec=`, and runs the image recovery restored rather than the one that
+failed.
 
 At every start, the daemon also removes the agent's images it won't run again:
 all but the selected one, the last good one, the install's, which bootstrap
