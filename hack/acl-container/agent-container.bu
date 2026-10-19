@@ -24,6 +24,12 @@
 # which removes the agent's unit and the node and leaves this, so new inputs
 # and a start of the bootstrap unit join the node again.
 #
+# The units run the image agent-container.env names, unless
+# /etc/aks-flex-node/agent-image.env names another, as AKS_FLEX_NODE_IMAGE.
+# AgentUpgrade writes that file. Whatever provisions bootstrap's inputs may too,
+# to bootstrap with another image, as bootstrap.sh's inputs name the agent it
+# downloads. Reset removes it with the rest of /etc/aks-flex-node.
+#
 # Each container joins the host's network and PID namespaces and gets the
 # host's root at /host. Its entrypoint mounts the host paths the agent uses at
 # their own paths, so the agent, unchanged, uses the host's.
@@ -80,6 +86,7 @@ systemd:
         [Service]
         Type=oneshot
         EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+        EnvironmentFile=-/etc/aks-flex-node/agent-image.env
         # The task and container outlive ctr if it is killed, so clear them.
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-bootstrap
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
@@ -106,6 +113,7 @@ systemd:
         [Service]
         Type=oneshot
         EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+        EnvironmentFile=-/etc/aks-flex-node/agent-image.env
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-reset
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-reset
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
