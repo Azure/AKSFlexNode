@@ -47,13 +47,15 @@ LABEL org.opencontainers.image.title="aks-flex-node-agent" \
       org.opencontainers.image.description="Prototype: the AKS Flex Node agent as a privileged container on Azure Container Linux"
 
 # ca-certificates: the base image's ca-certificates-base lacks roots that public
-# registries chain to, such as ghcr.io's.
-RUN tdnf install -y ca-certificates tar util-linux procps-ng jq less \
+# registries chain to, such as ghcr.io's. hostname: bootstrap.sh names the node
+# after the host.
+RUN tdnf install -y ca-certificates tar util-linux procps-ng jq less hostname \
     && tdnf clean all
 
 # The container mounts the host's /usr/local, where the agent installs its host
 # helpers, so the image's own programs live in /opt/aks-flex-node/bin.
 COPY --from=build /out/aks-flex-node /out/crane /opt/aks-flex-node/bin/
+COPY --chmod=0755 scripts/bootstrap.sh /opt/aks-flex-node/bin/
 COPY hack/acl-container/image/bin/ /opt/aks-flex-node/bin/
 # These names run the host's binaries against the host root; see host-exec.
 # The agent runs them by name, and the host's copies match its systemd and

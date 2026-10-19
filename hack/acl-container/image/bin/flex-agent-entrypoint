@@ -1,38 +1,57 @@
 #!/bin/bash
-# Entrypoint of the agent container.
+# Entrypoint of the agent container: flex-agent-entrypoint COMMAND [ARG...]
 #
-# It checks what the agent relies on, the host root at /host and the host's
-# machinectl answering over D-Bus, and logs it. A failed check exits, so systemd
-# restarts the container and the failure shows in its unit's log.
-#
-# With a config at /etc/aks-flex-node/config.json, it then does what a host set
-# up by main's bootstrap does: aks-flex-node start, once, then the daemon, which
-# the agent's own unit runs on such a host. start saves the daemon state when it
-# completes, so later starts of the container, as after a reboot, go straight
-# to the daemon. Without a config it idles.
-set -uo pipefail
+# The units that start the container give it only the host's root, at /host.
+# This mounts the host paths the agent uses at their own paths, so the agent,
+# unchanged, uses the host's. The list is here, in the image, so it changes with
+# the agent rather than with the host's provisioning. It then checks what the
+# agent relies on, the host's machinectl answering over D-Bus, logs it, and runs
+# COMMAND. A failed check exits, so the failure shows in the unit's log.
+set -euo pipefail
 
-config=/etc/aks-flex-node/config.json
-state=/etc/aks-flex-node/daemon-state.json
+host=/host
+# mount on PATH runs in the host's mount namespace; see host-exec.
+mount=/usr/bin/mount
+# Host directories the agent uses. Mounts the host makes under them later
+# reach the container, but not the other way: those go through host-exec.
+host_dirs=(
+    /etc/systemd
+    /etc/sysctl.d
+    /etc/modules-load.d
+    /etc/aks-flex-node
+    /etc/unbounded
+    /var/lib/machines
+    /var/lib/unbounded
+    /var/log/aks-flex-node
+    /run
+    /usr/local
+)
 
 log() { echo "flex-agent: $*"; }
 
-trap 'log "stopping"; exit 0' TERM INT
-
-idle() {
-    while :; do
-        sleep infinity &
-        wait $!
-    done
-}
-
-log "$(aks-flex-node version | paste -sd ' ')"
-if [[ ! -e /host/etc/os-release ]]; then
-    log "error: the host root is not mounted at /host"
+if (($# == 0)); then
+    echo "usage: flex-agent-entrypoint COMMAND [ARG...]" >&2
+    exit 2
+fi
+if [[ ! -e $host/etc/os-release ]]; then
+    log "error: the host root is not mounted at $host"
     exit 1
 fi
+
+# The host's OS identity, for the agent's OS detection. Both sides' os-release
+# are symlinks, so each is resolved within its own root.
+os_release=$(readlink -f /etc/os-release)
+$mount --bind "$host$(chroot "$host" readlink -f /etc/os-release)" "$os_release"
+$mount -o remount,bind,ro "$os_release"
+for dir in "${host_dirs[@]}"; do
+    mkdir -p "$host$dir" "$dir"
+    $mount --rbind "$host$dir" "$dir"
+    $mount --make-rslave "$dir"
+done
+
+log "$(aks-flex-node version | paste -sd ' ')"
 # shellcheck source=/dev/null
-log "host: $(. /host/etc/os-release && echo "$PRETTY_NAME")"
+log "host: $(. /etc/os-release && echo "$PRETTY_NAME")"
 log "SELinux context: $(tr -d '\0' </proc/self/attr/current 2>/dev/null || echo none)"
 log "PID namespace: $(readlink /proc/self/ns/pid), host $(readlink /proc/1/ns/pid)"
 if ! machines=$(machinectl list --no-legend --no-pager 2>&1); then
@@ -40,18 +59,5 @@ if ! machines=$(machinectl list --no-legend --no-pager 2>&1); then
     exit 1
 fi
 log "host $(machinectl --version | head -1); $(grep -c . <<<"$machines") machine(s) running"
-log "agent container ready"
-
-if [[ ! -f $config ]]; then
-    log "no $config; idling"
-    idle
-fi
-if [[ ! -f $state ]]; then
-    log "running aks-flex-node start"
-    if ! aks-flex-node start --config "$config"; then
-        log "error: aks-flex-node start failed"
-        exit 1
-    fi
-fi
-log "running aks-flex-node daemon"
-exec aks-flex-node daemon --config "$config"
+log "agent container ready; running $*"
+exec "$@"
