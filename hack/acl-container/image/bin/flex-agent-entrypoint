@@ -48,6 +48,14 @@ for dir in "${host_dirs[@]}"; do
     $mount --rbind "$host$dir" "$dir"
     $mount --make-rslave "$dir"
 done
+# The install's settings, read-only, for the image the host's provisioning names.
+settings=/etc/sysconfig/aks-flex-node-container
+if [[ -f $host$settings ]]; then
+    mkdir -p "$(dirname "$settings")"
+    touch "$settings"
+    $mount --bind "$host$settings" "$settings"
+    $mount -o remount,bind,ro "$settings"
+fi
 
 log "$(aks-flex-node version | paste -sd ' ')"
 # shellcheck source=/dev/null
