@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
+	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
 // ContainerizedEnv marks the agent as running in its container image, which sets it. There, the
@@ -38,6 +40,26 @@ func Containerized() bool {
 func containerized(getenv func(string) string) bool {
 	on, err := strconv.ParseBool(getenv(ContainerizedEnv))
 	return err == nil && on
+}
+
+// containerSkippedPreflightChecks are host checks that don't apply to the agent in its
+// container. host-packages checks the image's package database, not the host's, whose packages
+// its provisioning provides. containerd-active warns that bootstrap will disable containerd,
+// which Flex never does; there, containerd runs the agent.
+var containerSkippedPreflightChecks = []string{"host-packages", "containerd-active"}
+
+// PreflightChecks leaves out, in the agent's container, the checks that don't apply there.
+func PreflightChecks(checks []preflight.Checker) []preflight.Checker {
+	return preflightChecks(checks, Containerized())
+}
+
+func preflightChecks(checks []preflight.Checker, containerized bool) []preflight.Checker {
+	if !containerized {
+		return checks
+	}
+	return slices.DeleteFunc(slices.Clone(checks), func(check preflight.Checker) bool {
+		return slices.Contains(containerSkippedPreflightChecks, check.Name())
+	})
 }
 
 // ensureHostInstall converges the agent's binary layout and units on the host, and reports
