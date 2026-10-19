@@ -88,6 +88,9 @@ IGNITION_NAME = "config.ign"
 # the base config they name, which holds the bootstrap token.
 BOOTSTRAP_INPUTS = "/etc/aks-flex-node/bootstrap.env"
 BASE_CONFIG = "/etc/aks-flex-node/base-config.json"
+# The image the agent's units run, when not the install's: AgentUpgrade selects it, and bootstrap
+# can be given one.
+AGENT_IMAGE_SELECTION = "/etc/aks-flex-node/agent-image.env"
 SETTINGS = "/etc/sysconfig/aks-flex-node-container"
 
 # The kind cluster up creates for the agent to join, on root Podman. Its node joins the VM's
@@ -938,11 +941,15 @@ def wait_for_bootstrap(timeout: float = 1800) -> None:
     log(f"bootstrap installed {AGENT_UNIT}")
 
 
-def bootstrap_again() -> None:
+def bootstrap_again(image: str = "") -> None:
     """Join the VM again, as bootstrapping a host again does: new inputs, with a new token, and a
-    start of the bootstrap unit."""
-    log(f"bootstrapping {HOSTNAME} again")
-    for path, content in bootstrap_inputs().items():
+    start of the bootstrap unit. With an image, the inputs select it, as bootstrap.sh's inputs
+    name the agent it downloads; without one, bootstrap runs the install's."""
+    log(f"bootstrapping {HOSTNAME} again" + (f" with {image}" if image else ""))
+    inputs = bootstrap_inputs()
+    if image:
+        inputs[AGENT_IMAGE_SELECTION] = f"AKS_FLEX_NODE_IMAGE={image}\n"
+    for path, content in inputs.items():
         ssh(f"sudo install -D -m 0600 /dev/stdin {path}", input=content)
     ssh(f"sudo systemctl start --no-block {BOOTSTRAP_UNIT}")
     wait_for_bootstrap()
@@ -1240,10 +1247,10 @@ def machine_agent_digest() -> str:
     return out.stdout.split()[0] if out.returncode == 0 else ""
 
 
-def check_agent_upgrade(checks: Checks) -> None:
+def check_agent_upgrade(checks: Checks) -> str:
     """AgentUpgrade by image, as main's e2e upgrades by archive: to a candidate whose agent
     binary differs, then to one whose daemon fails, which rolls back to the last good image, then
-    back to the agent's own image."""
+    back to the agent's own image. Return the good candidate."""
     good, broken = build_candidate_images()
     original = agent_image()
     before = agent_binary_digest()
@@ -1273,6 +1280,11 @@ def check_agent_upgrade(checks: Checks) -> None:
     checks.expect(phase == "Complete" and agent_image() == original,
                   "an AgentUpgrade back to the agent's own image completes",
                   f"{phase or 'no phase'}: {message}")
+    images = ssh_out(f"sudo {CTR} images ls -q").split()
+    checks.expect(broken not in images and good in images,
+                  "the agent removed the broken candidate's image, and kept the last good one",
+                  " ".join(images))
+    return good
 
 
 def check_reset(checks: Checks, how: str) -> None:
@@ -1285,32 +1297,38 @@ def check_reset(checks: Checks, how: str) -> None:
     checks.expect(eventually(stopped, 300, 5),
                   f"{how} removed {AGENT_UNIT}, and no container of the agent runs",
                   ssh(f"ls /etc/systemd/system/{AGENT_UNIT}; sudo {CTR} task ls", check=False).stdout)
+    wants = f"/etc/systemd/system/multi-user.target.wants/{AGENT_UNIT}"
+    checks.expect(ssh(f"test ! -L {wants}", check=False).returncode == 0,
+                  f"{how} left no link enabling {AGENT_UNIT}")
     left = ssh("machinectl list-images --no-legend; ls /run/bpffs; sudo ls -A /etc/aks-flex-node",
                check=False).stdout.strip()
     checks.expect(left == "", f"{how} removed the machines, their bpffs mounts, and the agent's "
-                  "config, state, and bootstrap inputs", left)
+                  "config, state, bootstrap inputs, and image selection", left)
     install = ssh(f"test -f {SETTINGS} && systemctl cat {BOOTSTRAP_UNIT} {RESET_UNIT} >/dev/null",
                   check=False)
     checks.expect(install.returncode == 0, f"what installed the agent survives {how}", install.stderr)
 
 
-def check_rejoin(checks: Checks, how: str) -> None:
+def check_rejoin(checks: Checks, how: str, image: str = "") -> None:
     # As AKS does once the agent stops.
     kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
-    bootstrap_again()
+    bootstrap_again(image)
     checks.expect(eventually(node_ready, 1200, 10),
                   f"node {HOSTNAME} joins again after {how}, once bootstrapped",
                   "" if node_ready() else agent_log_tail())
+    running = agent_image()
+    what = "the image bootstrap was given" if image else "the install's image"
+    checks.expect(running == (image or VM_AGENT_IMAGE), f"the agent runs {what}", running)
 
 
-def check_agent_reset(checks: Checks) -> None:
+def check_agent_reset(checks: Checks, rejoin_image: str) -> None:
     """AgentReset, which the daemon carries out: it resets the node, completes the operation, and
-    stops the agent by removing its unit."""
+    stops the agent by removing its unit. The node joins again with another image."""
     phase, message = run_machine_operation("AgentReset")
     checks.expect(phase == "Complete", "an AgentReset MachineOperation completes",
                   f"{phase or 'no phase'}: {message}")
     check_reset(checks, "AgentReset")
-    check_rejoin(checks, "AgentReset")
+    check_rejoin(checks, "AgentReset", rejoin_image)
 
 
 def check_local_reset(checks: Checks) -> None:
@@ -1494,7 +1512,7 @@ def cmd_push(_: argparse.Namespace) -> None:
     log(f"pulling {VM_AGENT_IMAGE} on the VM and restarting {AGENT_UNIT}")
     ssh(f"sudo {CTR} image pull --plain-http {snapshotter_pull_args()} {VM_AGENT_IMAGE} >/dev/null",
         timeout=600)
-    ssh(f"sudo rm -f /etc/aks-flex-node/agent-image.env && sudo systemctl restart {AGENT_UNIT}")
+    ssh(f"sudo rm -f {AGENT_IMAGE_SELECTION} && sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
 
 
@@ -1502,17 +1520,18 @@ def cmd_check(args: argparse.Namespace) -> None:
     require_vm()
     checks = Checks()
     check_container(checks)
+    good_image = ""
     if cluster_enabled():
         check_cluster(checks)
         check_repave(checks)
         check_node_reboot(checks)
-        check_agent_upgrade(checks)
+        good_image = check_agent_upgrade(checks)
     check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
     if cluster_enabled() and args.reboot:
         wait_for_node_ready()
         checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
     if cluster_enabled():
-        check_agent_reset(checks)
+        check_agent_reset(checks, rejoin_image=good_image)
         check_local_reset(checks)
         check_deletion_signal(checks)
     checks.done()

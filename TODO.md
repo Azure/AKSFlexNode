@@ -64,7 +64,12 @@ the agent pulls it, checks that its agent runs, and selects it in
 on it. As on a host, the restarted daemon judges the upgrade and publishes the
 result, and a recovery unit, here running the last good image, restores that
 image if the new one fails. At every start, the daemon also rewrites its units
-from its image and copies its binary into the active machine.
+from its image, copies its binary into the active machine, and removes images
+it won't run again. The bootstrap and reset units read the same selection, so
+whatever provisions bootstrap's inputs can name the image to join with, as
+`bootstrap.sh`'s inputs name the agent it downloads; reset removes it with the
+rest of `/etc/aks-flex-node`, so without it, bootstrap runs the install's
+image.
 
 - [ ] nspawn lifecycle helper, the one binary of the agent left on the host.
       Each machine's units run `/usr/local/bin/unbounded-agent-nspawn-lifecycle`
@@ -80,17 +85,16 @@ from its image and copies its binary into the active machine.
 - [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
       needs none so far. Stay on it until the lifecycle helper, or another
       specific fix, needs a newer one, and bump it in a commit of its own.
+- [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
+      the service's "state could not be determined" on any host where it
+      isn't running, Ubuntu included. `systemctl is-active` exits non-zero
+      for every state but active, 3 for inactive and 4 for no such unit,
+      which the check takes for an error. Raise it with unbounded.
 - [ ] `AgentUpgrade`'s `image` parameter is this branch's choice. AKS sends
       AgentUpgrades, so agree on it with them.
-- [ ] Image cleanup: each `AgentUpgrade` pulls an image into containerd's
-      `aks-flex` namespace, and nothing removes old ones. Keep the selected and
-      last good images, and remove others once an upgrade completes.
-- [ ] Direct activation: `main`'s `agent-upgrade` command lets a provisioning
-      system activate a binary it staged, without a MachineOperation. Decide
-      whether the container needs an equivalent, such as selecting an image
-      through a unit like the reset unit.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
-      `/etc/aks-flex-node/bootstrap.env`, which the harness writes through
+      `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
+      `/etc/aks-flex-node/agent-image.env`, which the harness writes through
       Ignition, with a base config holding a bootstrap token. Decide how
       operators deliver those inputs in their Butane, and try
       `--fetch-bootstrap-data`, which fetches bootstrap data from the AKS RP
@@ -101,15 +105,10 @@ from its image and copies its binary into the active machine.
       agent's directories rather than removing them: they're mount points
       there.
 - [ ] `main`: when the daemon stops its own unit, for `AgentReset` or the
-      deletion signal, `systemctl stop` ends it partway through
-      `UninstallService`. The unit file is removed, but disabling it and
-      reloading systemd fail, which leaves a dangling `.wants` link, on a host
-      as in a container. Raise it with `main`: disable, remove, and reload
-      before stopping.
-- [ ] Preflight: in a container, `host-packages` checks the image's package
-      database, and `containerd-active` warns that bootstrap will disable
-      containerd, which Flex never does (on `main` either). Drop or reword
-      both in a container.
+      deletion signal, `systemctl stop` ended it partway through
+      `UninstallService`, which left a dangling `.wants` link. PR #371 fixes it
+      on `main`, and this branch carries the same commit; drop it here once
+      #371 merges and this branch is rebased.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
       cluster, so far only with the SELinux workaround, where machines run as
@@ -150,3 +149,15 @@ from its image and copies its binary into the active machine.
       them when the docs are next revised.
 - [ ] Consider CI for `hack/acl-container`: ShellCheck, Python compile, and
       Butane `--strict` rendering.
+
+## Deferred, until everything else is done
+
+- [ ] Direct activation: `main`'s `agent-upgrade` command lets a provisioning
+      system activate a binary it staged, without a MachineOperation: to join
+      a node again with a newer agent, or to upgrade a running one out of band.
+      The first is covered: bootstrap's inputs can name the image. For the
+      second, a one-shot unit like the reset unit could run `agent-upgrade`
+      with an image, read from a file, in a container of its own: pull and
+      check it, select it, restart the agent's unit, and roll back if the new
+      daemon doesn't come up. Build it only once someone needs it; AKS's own
+      flows use MachineOperations.
