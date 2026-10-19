@@ -72,8 +72,16 @@ type installServiceTask struct {
 	log *slog.Logger
 }
 
-// InstallService returns a task that installs, enables, and starts the systemd unit.
+// InstallService returns a task that installs, enables, and starts the systemd unit. In the
+// agent's container, the unit runs the agent's image instead of a binary on the host.
 func InstallService(cfg *config.Config, log *slog.Logger) phases.Task {
+	return installService(cfg, log, Containerized())
+}
+
+func installService(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
+	if containerized {
+		return newInstallContainerServiceTask(log)
+	}
 	return &installServiceTask{cfg: cfg, log: log}
 }
 

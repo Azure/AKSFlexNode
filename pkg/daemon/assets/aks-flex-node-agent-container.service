@@ -1,0 +1,31 @@
+[Unit]
+Description=AKS Flex Node Agent
+Wants=network-online.target
+After=network-online.target containerd.service
+Requires=containerd.service
+
+[Service]
+Type=simple
+# The agent's image, from the host's provisioning, which bootstrap pulled.
+EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+# The task and container outlive ctr if it is killed, so clear them.
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
+# The container gets the host's root at /host, and its entrypoint mounts the
+# host paths the agent uses at their own paths.
+ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+  --privileged --net-host --with-ns pid:/proc/1/ns/pid \
+  --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+  ${AKS_FLEX_NODE_IMAGE} aks-flex-node \
+  flex-agent-entrypoint aks-flex-node agent --config /etc/aks-flex-node/config.json
+ExecStop=/usr/bin/ctr --namespace aks-flex task kill --signal SIGTERM aks-flex-node
+TimeoutStartSec=300
+TimeoutStopSec=60
+# containerd.service can report started before containerd answers.
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
