@@ -241,6 +241,8 @@ func TestHostAgentUpgradeExecutorSchedulesRestartOutsideService(t *testing.T) {
 			for _, expected := range []string{
 				"--collect",
 				"--on-active=1s",
+				// Without it, systemd fires the timer up to a minute late.
+				"--timer-property=AccuracySec=100ms",
 				"--unit=aks-flex-node-agent-upgrade-restart-",
 				"/usr/bin/systemctl restart " + ServiceUnitName,
 			} {

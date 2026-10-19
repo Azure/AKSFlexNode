@@ -480,6 +480,8 @@ func scheduleAgentRestart(ctx context.Context, runSystemdRun func(context.Contex
 	// A direct self-restart can terminate the systemctl child before the
 	// handler records a successful handoff. Schedule the restart in a separate
 	// transient unit so this process returns while its durable signal is intact.
+	// A timer's AccuracySec= defaults to a minute, within which systemd may fire
+	// it as late as it likes, so a restart due in a second took up to a minute.
 	unit := fmt.Sprintf("aks-flex-node-agent-upgrade-restart-%d", time.Now().UnixNano())
 	return runSystemdRun(
 		ctx,
@@ -487,11 +489,15 @@ func scheduleAgentRestart(ctx context.Context, runSystemdRun func(context.Contex
 		"--collect",
 		"--unit="+unit,
 		fmt.Sprintf("--on-active=%ds", int(delay.Seconds())),
+		"--timer-property=AccuracySec="+agentRestartTimerAccuracy,
 		"/usr/bin/systemctl",
 		"restart",
 		ServiceUnitName,
 	)
 }
+
+// agentRestartTimerAccuracy bounds how late systemd may fire the timer that restarts the agent.
+const agentRestartTimerAccuracy = "100ms"
 
 func validNspawnMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
