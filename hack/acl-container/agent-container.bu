@@ -1,5 +1,6 @@
-# Butane config that runs the AKS Flex Node agent as a privileged containerd
-# container on Azure Container Linux. Prototype; see DESIGN.md next to it.
+# Butane config that installs the AKS Flex Node agent on Azure Container Linux,
+# where it runs as privileged containerd containers of its image. Prototype; see
+# DESIGN.md next to it.
 #
 # Render it with Butane, from a directory holding the file it names:
 #
@@ -11,25 +12,25 @@
 #                        without TLS
 #
 # AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS and AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS,
-# unset by default, pass a snapshotter to `ctr image pull` and `ctr run`;
-# selinux-workaround.bu sets them.
+# unset by default, pass a snapshotter to `ctr image pull` and `ctr run`.
 #
-# The container joins the host's network and PID namespaces and gets the host's
-# root at /host, so it has the host's systemd, machinectl, and nspawn machines,
-# but its own root filesystem. The host paths the agent writes are also mounted
-# at their own paths, so the agent, unchanged, writes the host's.
+# This is the agent's install, which nothing of the agent runs from: the units
+# only run containers of its image. aks-flex-node-bootstrap.service does what
+# main's scripts/bootstrap.sh does on a host: it pulls the image and runs
+# bootstrap, which renders the agent's config and runs start, which installs
+# and starts the agent's own unit, aks-flex-node-agent.service. It runs at boot
+# once /etc/aks-flex-node/bootstrap.env, bootstrap's inputs, is there, until the
+# agent is installed. aks-flex-node-reset.service runs `aks-flex-node reset`,
+# which removes the agent's unit and the node and leaves this, so new inputs
+# and a start of the bootstrap unit join the node again.
+#
+# Each container joins the host's network and PID namespaces and gets the
+# host's root at /host. Its entrypoint mounts the host paths the agent uses at
+# their own paths, so the agent, unchanged, uses the host's.
 variant: flatcar
 version: 1.1.0
 storage:
   directories:
-    - path: /etc/aks-flex-node
-      mode: 0755
-    - path: /etc/unbounded
-      mode: 0755
-    - path: /var/lib/unbounded
-      mode: 0755
-    - path: /var/log/aks-flex-node
-      mode: 0755
     - path: /var/lib/aks-flex-node/usr-local/upper
       mode: 0755
     - path: /var/lib/aks-flex-node/usr-local/work
@@ -43,16 +44,17 @@ storage:
         local: agent-container.env
 systemd:
   units:
-    # The agent installs its host helpers under /usr/local, as on main, and
-    # host systemd runs them, such as the nspawn lifecycle helper at every
-    # machine start. ACL's /usr, and /usr/local with it, is read-only, so an
-    # overlay gives /usr/local a writable layer in /var.
+    # The agent installs the nspawn lifecycle helper under /usr/local, as on
+    # main, and host systemd runs it at every machine start. ACL's /usr, and
+    # /usr/local with it, is read-only, so an overlay gives /usr/local a
+    # writable layer in /var. Until the helper runs in a container too, it is
+    # the one binary of the agent on the host; see TODO.md.
     - name: usr-local.mount
       enabled: true
       contents: |
         [Unit]
         Description=Writable /usr/local for the AKS Flex Node agent
-        Before=aks-flex-node-container.service
+        Before=aks-flex-node-bootstrap.service aks-flex-node-agent.service aks-flex-node-reset.service
 
         [Mount]
         What=overlay
@@ -62,43 +64,53 @@ systemd:
 
         [Install]
         WantedBy=local-fs.target
-    - name: aks-flex-node-container.service
+    - name: aks-flex-node-bootstrap.service
       enabled: true
       contents: |
         [Unit]
-        Description=AKS Flex Node agent container
+        Description=Bootstrap the AKS Flex Node agent
         Wants=network-online.target
-        After=network-online.target containerd.service usr-local.mount
-        Requires=containerd.service usr-local.mount
+        After=network-online.target containerd.service
+        Requires=containerd.service
+        ConditionPathExists=/etc/aks-flex-node/bootstrap.env
+        ConditionPathExists=!/etc/systemd/system/aks-flex-node-agent.service
+        StartLimitIntervalSec=10min
+        StartLimitBurst=5
 
         [Service]
+        Type=oneshot
         EnvironmentFile=/etc/sysconfig/aks-flex-node-container
-        # containerd.service reports started before containerd answers.
-        ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
         # The task and container outlive ctr if it is killed, so clear them.
-        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node
-        ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
-        # The progress bars go nowhere; errors still reach the journal.
-        ExecStartPre=/bin/sh -c 'exec /usr/bin/ctr --namespace aks-flex image pull $$AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $$AKS_FLEX_NODE_PULL_ARGS "$$AKS_FLEX_NODE_IMAGE" >/dev/null'
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-bootstrap
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
+        ExecStartPre=/usr/bin/ctr --namespace aks-flex image pull $AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $AKS_FLEX_NODE_PULL_ARGS ${AKS_FLEX_NODE_IMAGE}
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
-          --mount type=bind,src=/etc/os-release,dst=/etc/os-release,options=rbind:ro \
-          --mount type=bind,src=/etc/systemd,dst=/etc/systemd,options=rbind:rslave \
-          --mount type=bind,src=/etc/sysctl.d,dst=/etc/sysctl.d,options=rbind:rslave \
-          --mount type=bind,src=/etc/modules-load.d,dst=/etc/modules-load.d,options=rbind:rslave \
-          --mount type=bind,src=/etc/aks-flex-node,dst=/etc/aks-flex-node,options=rbind:rslave \
-          --mount type=bind,src=/etc/unbounded,dst=/etc/unbounded,options=rbind:rslave \
-          --mount type=bind,src=/var/lib/machines,dst=/var/lib/machines,options=rbind:rslave \
-          --mount type=bind,src=/var/lib/unbounded,dst=/var/lib/unbounded,options=rbind:rslave \
-          --mount type=bind,src=/var/log/aks-flex-node,dst=/var/log/aks-flex-node,options=rbind:rslave \
-          --mount type=bind,src=/run,dst=/run,options=rbind:rslave \
-          --mount type=bind,src=/usr/local,dst=/usr/local,options=rbind:rslave \
-          ${AKS_FLEX_NODE_IMAGE} aks-flex-node
-        ExecStop=/usr/bin/ctr --namespace aks-flex task kill --signal SIGTERM aks-flex-node
-        Restart=always
-        RestartSec=5s
-        TimeoutStartSec=15min
+          ${AKS_FLEX_NODE_IMAGE} aks-flex-node-bootstrap \
+          flex-agent-entrypoint aks-flex-node-bootstrap
+        # containerd.service can report started before containerd answers.
+        Restart=on-failure
+        RestartSec=10s
+        TimeoutStartSec=30min
 
         [Install]
         WantedBy=multi-user.target
+    - name: aks-flex-node-reset.service
+      contents: |
+        [Unit]
+        Description=Reset the AKS Flex Node agent and its node
+        After=containerd.service
+        Requires=containerd.service
+
+        [Service]
+        Type=oneshot
+        EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-reset
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-reset
+        ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+          --privileged --net-host --with-ns pid:/proc/1/ns/pid \
+          --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+          ${AKS_FLEX_NODE_IMAGE} aks-flex-node-reset \
+          flex-agent-entrypoint aks-flex-node reset
+        TimeoutStartSec=10min
