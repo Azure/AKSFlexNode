@@ -784,12 +784,16 @@ def launch_vm(image: Path, config_url: str) -> None:
 
     pid_file, serial_log = STATE / "qemu.pid", STATE / "serial.log"
     serial_log.unlink(missing_ok=True)
+    # cache=unsafe lets the host cache the guest's writes and ignores its flushes. The guest writes
+    # whole images, as every container start under the SELinux workaround copies its image. It
+    # risks only a disk QEMU dies holding, and this one is created for this VM and dropped with
+    # it, by up again or down.
     run(["setsid", "qemu-system-x86_64",
          "-machine", "q35", "-cpu", "host", "-accel", "kvm",
          "-m", VM_MEMORY, "-smp", VM_CPUS,
          "-drive", f"if=pflash,format=raw,readonly=on,file={code}",
          "-drive", f"if=pflash,format=raw,file={variables}",
-         "-drive", f"file={disk},format=qcow2,if=virtio",
+         "-drive", f"file={disk},format=qcow2,if=virtio,cache=unsafe",
          "-netdev", f"tap,id=net0,ifname={TAP},script=no,downscript=no",
          "-device", f"virtio-net-pci,netdev=net0,mac={mac_address()}",
          "-daemonize", "-pidfile", str(pid_file),
