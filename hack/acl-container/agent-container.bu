@@ -94,7 +94,9 @@ systemd:
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-bootstrap
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
         ExecStartPre=/usr/bin/ctr --namespace aks-flex image pull $AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $AKS_FLEX_NODE_PULL_ARGS ${AKS_FLEX_NODE_IMAGE}
+        # In a scope systemd tracks, as the agent's unit runs its container.
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+          --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:bootstrap \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node-bootstrap \
@@ -123,6 +125,7 @@ systemd:
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-reset
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-reset
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+          --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:reset \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node-reset \

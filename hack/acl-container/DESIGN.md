@@ -12,7 +12,7 @@
 On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
 `main`'s controller,
-`harness.py check` verifies 66 checks, including all of the following:
+`harness.py check` verifies 67 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -137,6 +137,7 @@ foreground with `ctr run --rm`:
 | `--net-host` | The host's network. The machines share it too (`VirtualEthernet=no`), and `ctr` then also bind-mounts the host's `resolv.conf` and `hosts`. |
 | `--with-ns pid:/proc/1/ns/pid` | The host's PID namespace. `systemd-run --machine` and `systemctl --machine` enter a machine's namespaces through its leader's `/proc/PID/ns`, and a process can only enter a PID namespace below its own. It also makes `/proc` under `/host` agree with the container's. |
 | `--mount type=bind,src=/,dst=/host,options=rbind:rslave` | The host's root, recursively, so `/usr`, `/etc`, `/run`, `/proc`, and `/sys` under it are the host's. `rslave` lets later host mounts appear in the container, and keeps the container's mounts out of the host. |
+| `--runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:NAME` | runc asks systemd for a scope, `aks-flex-NAME.scope` in `system-aksflex.slice`, so systemd tracks and accounts for the container, and limits can go on the slice. Without it, `ctr` puts the container in a cgroup of its own, outside any unit. The scope is a unit of its own, so stopping a service still ends its container through `ExecStop`. |
 | `--env` (the agent's unit) | The image the agent runs, and the flags for pulling and running images, for `AgentUpgrade` |
 | `$AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS` | Empty: containerd's default snapshotter. An install can name another. |
 
@@ -144,8 +145,9 @@ The agent's unit restarts on failure, and runs its recovery unit through
 `OnFailure=`. The bootstrap unit runs at boot only while bootstrap's inputs are
 there and the agent's unit isn't, so it does nothing once the agent is
 installed. After a reset, new inputs and a start of the unit join the node
-again. Both retry on failure, since `containerd.service` on ACL reports started
-before containerd answers.
+again, and it retries a pull or bootstrap that fails, such as while the network
+comes up. Each unit first waits for containerd to answer, since
+`containerd.service` on ACL reports started a moment before it does.
 
 ### The image
 
@@ -342,7 +344,8 @@ not the container's:
 | | cgroup |
 |---|---|
 | The agent's unit | `/system.slice/aks-flex-node-agent.service` (only `ctr`) |
-| The agent's container | `/aks-flex/aks-flex-node` |
+| The agent's container | `/system.slice/system-aksflex.slice/aks-flex-agent.scope` |
+| Its other containers | Scopes beside it: `aks-flex-bootstrap`, `aks-flex-reset`, `aks-flex-recovery`, and `aks-flex-upgrade-check-N` |
 | A machine | `/machine.slice/systemd-nspawn@NAME.service` |
 
 So stopping, restarting, upgrading, or replacing the agent's container doesn't
@@ -448,7 +451,7 @@ whose disk writes the host caches (`cache=unsafe`):
 | ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
-| `check`, with a reboot | 66 checks, about 7 min; no group takes much over a minute |
+| `check`, with a reboot | 67 checks, 7 to 8 min; no group takes much over a minute and a half |
 | Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
