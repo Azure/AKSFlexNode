@@ -478,9 +478,13 @@ Azure Container Linux and other hosts provisioned by Ignition have a read-only `
 - `base-config.json`, the base config: `{}` when bootstrap data is fetched from AKS, as here.
 - `bootstrap.env`, the script's settings: one `AKS_FLEX_NODE_*` variable per line, as `bootstrap.sh --help` lists them.
 
-In your Bash environment, with `AKS_RESOURCE_ID`, `FLEX_POOL_NAME`, and `AKS_FLEX_NODE_VERSION` set as in the previous step, and for an `amd64` host (use `arm64` in the archive name for an `arm64` host):
+These hosts need a release that installs the agent under `/opt/unbounded/agent` and ships `scripts/aks-flex-node-bootstrap.bu`, the first after `v0.2.0`. The `v0.2.0` used in the previous step has neither: its agent looks for its files under the read-only `/usr/local`, and the template doesn't exist at that tag.
+
+In your Bash environment, with `AKS_RESOURCE_ID` and `FLEX_POOL_NAME` set as in the previous step, and for an `amd64` host (use `arm64` in the archive name for an `arm64` host):
 
 ```bash
+export AKS_FLEX_NODE_VERSION="<release with Azure Container Linux support>"
+
 mkdir -m 0700 node-ignition && cd node-ignition
 
 for file in bootstrap.sh aks-flex-node-bootstrap.bu; do
