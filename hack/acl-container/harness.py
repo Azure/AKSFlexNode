@@ -1046,6 +1046,10 @@ def check_container(checks: Checks) -> None:
     checks.expect(ssh(f"systemctl is-active {AGENT_UNIT}", check=False).stdout.strip() == "active",
                   f"{AGENT_UNIT} is active")
     checks.expect(agent_task_status() == "RUNNING", "the agent task runs in containerd")
+    pid = ssh_out(f"sudo {CTR} task ls | awk '$1 == \"{CONTAINER_ID}\" {{print $2}}'")
+    cgroup = ssh_out(f"cat /proc/{pid}/cgroup") if pid else ""
+    checks.expect(cgroup == "0::/system.slice/system-aksflex.slice/aks-flex-agent.scope",
+                  "the agent's container runs in aks-flex-agent.scope, where systemd tracks it", cgroup)
 
     # The agent's containers run as spc_t, as executing a file of containerd's snapshots, labeled
     # for containers, moves them to it. Where containerd's files are unlabeled, as ACL 3.0.20261019

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -97,7 +98,7 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 	t.Parallel()
 
 	pull := "ctr --namespace aks-flex image pull --plain-http " + testAgentImageV2
-	check := "ctr --namespace aks-flex run --rm --snapshotter native " + testAgentImageV2 + " aks-flex-node-upgrade-check-"
+	check := "ctr --namespace aks-flex run --rm --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:upgrade-check-"
 	tests := map[string]struct {
 		runningImage   string
 		selected       string
@@ -178,6 +179,15 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 			}
 			if len(*calls) == 2 && !strings.HasSuffix((*calls)[1], " aks-flex-node version") {
 				t.Errorf("the check runs %q, not the candidate's aks-flex-node version", (*calls)[1])
+			}
+			// The check's container runs in a scope of the agent's slice, named as it is.
+			checkCall := regexp.MustCompile(`^ctr --namespace aks-flex run --rm --runc-systemd-cgroup ` +
+				`--cgroup system-aksflex\.slice:aks-flex:upgrade-check-(\d+) --snapshotter native ` +
+				regexp.QuoteMeta(testAgentImageV2) + ` aks-flex-node-upgrade-check-(\d+) aks-flex-node version$`)
+			if len(*calls) == 2 {
+				if m := checkCall.FindStringSubmatch((*calls)[1]); m == nil || m[1] != m[2] {
+					t.Errorf("the check runs %q, want its container in a scope of its own name", (*calls)[1])
+				}
 			}
 			signal, err := executor.signals.read()
 			if err != nil || signal == nil {

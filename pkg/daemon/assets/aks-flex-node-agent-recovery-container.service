@@ -17,6 +17,7 @@ ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-r
 # Runs the last-good image's agent, which restores that image and restarts the
 # agent's unit.
 ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+  --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:recovery \
   --privileged --net-host --with-ns pid:/proc/1/ns/pid \
   --mount type=bind,src=/,dst=/host,options=rbind:rslave \
   --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_LAST_GOOD_IMAGE} \
