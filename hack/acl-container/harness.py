@@ -1517,6 +1517,13 @@ def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
     checks.expect(os_release.returncode == 0 and "ID=" in os_release.stdout,
                   f"systemd-run --machine from the agent's container runs a command in {machine}",
                   os_release.stderr.strip())
+    # The agent copies its binary into the machine, where kubelet runs it as its credential
+    # plugin, which a node joined with a bootstrap token doesn't exercise.
+    in_machine = ssh(f"sudo systemd-run --machine={machine} --pipe --wait --quiet "
+                     "/usr/local/bin/aks-flex-node version", check=False)
+    checks.expect(in_machine.returncode == 0 and "AKS Flex Node Agent" in in_machine.stdout,
+                  f"the agent's binary, which kubelet runs as its credential plugin, runs in {machine}",
+                  (in_machine.stdout + in_machine.stderr).strip()[-500:])
     shell = agent(f"machinectl shell {machine} /bin/sh -c 'echo shell-ok' </dev/null", check=False)
     checks.expect("shell-ok" in shell.stdout,
                   f"machinectl shell from the agent's container reaches {machine}",

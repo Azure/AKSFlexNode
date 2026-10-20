@@ -7,19 +7,20 @@
 #
 #   podman build -f hack/acl-container/image/Containerfile -t aks-flex-node-agent:proto .
 
-ARG GO_IMAGE_VERSION=1.26.6-1
-
-FROM mcr.microsoft.com/oss/go/microsoft/golang:${GO_IMAGE_VERSION}-bookworm AS build
+# Base images are pinned by digest: the published image is built from them. The
+# Go one is go.mod's version, upstream, as the release builds the agent with.
+FROM docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
 
 WORKDIR /src
 
 ARG VERSION=proto
 ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
 
-# Microsoft Go defaults to systemcrypto, which requires cgo on Go 1.26 Linux.
-# Its cgo-less OpenSSL backend keeps the binaries static, as the release build does.
-ENV CGO_ENABLED=0 \
-    GOEXPERIMENT=ms_nocgo_opensslcrypto
+# Static, unlike the release's native build: the binary runs in the container,
+# and is copied into the machines, for kubelet, and onto the host, as the nspawn
+# lifecycle helper, each with libraries of its own.
+ENV CGO_ENABLED=0
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -32,11 +33,11 @@ COPY pkg ./pkg
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath \
-      -ldflags "-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -w -s" \
+      -ldflags "-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_TIME} -w -s" \
       -o /out/aks-flex-node \
       ./cmd/aks-flex-node
 
-FROM mcr.microsoft.com/azurelinux/base/core:3.0
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:af39b0587a0fd132e574faabf9aaf56833d69908b9ff227131d519ee219759e7
 
 LABEL org.opencontainers.image.title="aks-flex-node-agent" \
       org.opencontainers.image.description="Preview: the AKS Flex Node agent as privileged containers on Azure Container Linux"
@@ -64,7 +65,9 @@ RUN for tool in machinectl systemctl systemd-run systemd-nspawn journalctl \
       ln -s host-exec /opt/aks-flex-node/bin/$tool; \
     done
 
-ENV PATH=/opt/aks-flex-node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+# /usr/local is the host's, which the entrypoint mounts, so it stays off PATH: what
+# the host puts there mustn't shadow the image's tools.
+ENV PATH=/opt/aks-flex-node/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     AKS_FLEX_NODE_CONTAINERIZED=true
 
 ENTRYPOINT ["/opt/aks-flex-node/bin/flex-agent-entrypoint"]
