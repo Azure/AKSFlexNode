@@ -44,7 +44,7 @@ storage:
   files:
     # Not in /etc/aks-flex-node: the agent's reset removes what's in it.
     - path: /etc/sysconfig/aks-flex-node-container
-      mode: 0644
+      mode: 0600
       overwrite: true
       contents:
         local: agent-container.env
@@ -79,9 +79,12 @@ systemd:
         After=network-online.target containerd.service
         Requires=containerd.service
         ConditionPathExists=/etc/aks-flex-node/bootstrap.env
-        ConditionPathExists=!/etc/systemd/system/aks-flex-node-agent.service
-        StartLimitIntervalSec=10min
-        StartLimitBurst=5
+        # Until the agent's unit is enabled, which start does after writing it:
+        # a bootstrap that fails after the write is retried. Conditions are
+        # checked at every start, automatic restarts included.
+        ConditionPathExists=!/etc/systemd/system/multi-user.target.wants/aks-flex-node-agent.service
+        # It retries, backing off, for as long as it takes; see Restart= below.
+        StartLimitIntervalSec=0
 
         [Service]
         Type=oneshot
@@ -90,8 +93,9 @@ systemd:
         EnvironmentFile=-/etc/aks-flex-node/agent-image.env
         # containerd.service reports started before containerd answers.
         ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
-        # The task and container outlive ctr if it is killed, so clear them.
-        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-bootstrap
+        # The task and container outlive ctr if it is killed, so clear them. task
+        # delete --force kills the task and waits for it.
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-bootstrap
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
         ExecStartPre=/usr/bin/ctr --namespace aks-flex image pull $AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $AKS_FLEX_NODE_PULL_ARGS ${AKS_FLEX_NODE_IMAGE}
         # In a scope systemd tracks, as the agent's unit runs its container.
@@ -101,9 +105,12 @@ systemd:
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node-bootstrap \
           flex-agent-entrypoint aks-flex-node-bootstrap
-        # A pull or bootstrap can fail for a while, such as while the network comes up.
+        # A pull or bootstrap can fail for a while, such as while the network comes
+        # up: retry, from 10 seconds apart to 5 minutes, in 5 steps.
         Restart=on-failure
         RestartSec=10s
+        RestartSteps=5
+        RestartMaxDelaySec=5min
         TimeoutStartSec=30min
 
         [Install]
@@ -122,7 +129,7 @@ systemd:
         EnvironmentFile=-/etc/aks-flex-node/agent-image.env
         # containerd.service reports started before containerd answers.
         ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
-        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-reset
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-reset
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-reset
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
           --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:reset \
