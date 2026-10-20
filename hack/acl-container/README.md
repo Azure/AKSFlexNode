@@ -38,7 +38,7 @@ yet let a privileged container talk to the host's systemd over D-Bus. See
 export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group      # only for the first export
 hack/acl-container/harness.py up --selinux-workaround # cluster, image, VM, bootstrap
 hack/acl-container/harness.py status                  # the VM, the agent, machines, nodes
-hack/acl-container/harness.py check                   # 72 checks, about 13 minutes
+hack/acl-container/harness.py check                   # 72 checks, about 11 minutes
 hack/acl-container/harness.py down                    # remove the VM, cluster, network, and state
 ```
 
