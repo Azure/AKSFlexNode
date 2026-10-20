@@ -450,7 +450,7 @@ workaround:
 | ACL boot to SSH | about 16 s (systemd: 3.5 s kernel, 8 s initrd, 4 s userspace) |
 | First bootstrap, unit start to agent installed | about 45 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 12 s on the native snapshotter; 30 s without the host caching the disk's writes |
-| `check`, with a reboot | 72 checks, about 13 min; `upgrade` is the longest group, at about 4.5 min |
+| `check`, with a reboot | 72 checks, about 11 min; `upgrade` is the longest group, at about 3 min |
 | Agent image | about 200 MB, one layer |
 | Native snapshotter on the VM | about 390 MB |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
