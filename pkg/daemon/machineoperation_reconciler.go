@@ -23,6 +23,7 @@ const machineOperationModeAuto = "auto"
 
 type machineOperationReconcilerOptions struct {
 	Client               client.Client
+	Reader               client.Reader // the API server, not the manager's cache
 	Log                  *slog.Logger
 	NodeName             string
 	AKSMachineName       string
@@ -86,8 +87,13 @@ func machineOperationReconciler(
 		operator:     opts.Operator,
 		agentUpgrade: opts.AgentUpgrade,
 	}
-	reconciler, err := daemon.NewMachinaMachineOperationReconciler(
+	// Whether an operation is still to run is read from the API server. A handler's own status
+	// update queues another reconcile, which runs as soon as the handler returns, and the cache
+	// can still have the operation in progress then, though the handler has just finished it:
+	// the handler would run again, rebooting the node a second time for one NodeReboot.
+	reconciler, err := daemon.NewMachinaMachineOperationReconcilerWithReader(
 		opts.Client,
+		opts.Reader,
 		opts.NodeName,
 		opts.AKSMachineName,
 		daemon.MachineOperationHandlers{
