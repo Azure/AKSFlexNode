@@ -896,6 +896,17 @@ def env_file_value(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def write_private(path: Path, content: str) -> None:
+    """Write a file that only its owner can read, from the moment it exists: the Ignition config
+    and the first-boot files that go into it, one of which holds the bootstrap token. A file left
+    by an earlier run is removed first, since opening it would keep its mode, and O_EXCL then
+    refuses anything made in its place, a link included."""
+    path.unlink(missing_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as file:
+        file.write(content)
+
+
 def render_ignition(config: dict, agent_url: str, agent_sha256: str) -> dict:
     """Render the documented Butane config from the three files it names, as an operator does."""
     files = STATE / "first-boot"
@@ -910,9 +921,7 @@ def render_ignition(config: dict, agent_url: str, agent_sha256: str) -> dict:
             "AKS_FLEX_NODE_CONFIG_OVERRIDES": json.dumps({"aclHarness": {"quoting": QUOTING_PROBE}}),
         }.items())),
     ):
-        path = files / name
-        path.write_text(content)
-        path.chmod(0o600)
+        write_private(files / name, content)
     rendered = capture(["docker", "run", "--rm", "-i", "-v", f"{files}:/files:ro,z", BUTANE_IMAGE,
                         "--strict", "--files-dir", "/files"], input=BUTANE_TEMPLATE.read_text())
     return json.loads(rendered)
@@ -1129,9 +1138,13 @@ def unit_property(unit: str, prop: str) -> str:
     return ssh_out(f"systemctl show {unit} -p {prop} --value")
 
 
-def wait_for_bootstrap(timeout: float = 1800) -> None:
+def wait_for_bootstrap(timeout: float = 2400) -> None:
     """Wait for the first-boot unit to finish. It retries on failure, so a failed attempt is
-    reported but not final."""
+    reported but not final; while it waits to retry, the unit is activating. The timeout outlasts
+    an attempt that runs into the unit's own start timeout, so that the retry shows.
+
+    A unit that ends failed is not retried: Restart= does not cover a failed assertion, such as
+    a missing bootstrap.sh. The wait stops there rather than running out its timeout."""
     log(f"waiting for {BOOTSTRAP_UNIT}")
     seen_restarts = 0
 
@@ -1140,6 +1153,10 @@ def wait_for_bootstrap(timeout: float = 1800) -> None:
         # One property per call: systemctl prints several in its own order, not the one asked for.
         active = ssh(f"systemctl show {BOOTSTRAP_UNIT} -p ActiveState --value", check=False).stdout.strip()
         restarts_out = ssh(f"systemctl show {BOOTSTRAP_UNIT} -p NRestarts --value", check=False).stdout.strip()
+        if active == "failed":
+            result = ssh(f"systemctl show {BOOTSTRAP_UNIT} -p Result --value", check=False).stdout.strip()
+            print(ssh(f"sudo journalctl -u {BOOTSTRAP_UNIT} -b --no-pager -n 50", check=False).stdout, flush=True)
+            die(f"{BOOTSTRAP_UNIT} failed (Result={result}) and is not retried")
         if not active or not restarts_out.isdigit():
             return False
         restarts = int(restarts_out)
@@ -1386,8 +1403,7 @@ def cmd_up(args: argparse.Namespace) -> None:
     doc = render_ignition(base_config(token, version), f"{serve_base}/{AGENT_ARCHIVE}",
                           sha256(STATE / AGENT_ARCHIVE))
     ignition = STATE / IGNITION_NAME
-    ignition.write_text(json.dumps(add_harness_access(doc, public_key), indent=2) + "\n")
-    ignition.chmod(0o600)
+    write_private(ignition, json.dumps(add_harness_access(doc, public_key), indent=2) + "\n")
 
     # The config server only runs while the VM provisions. Later boots must not need it.
     with FileServer({IGNITION_NAME: ignition, AGENT_ARCHIVE: STATE / AGENT_ARCHIVE}):
