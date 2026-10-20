@@ -23,6 +23,12 @@ borrow from it only where that's simpler than redoing the work.
 
       Either way, retire the preview package, and tell early adopters where
       the image moved, or that it's gone.
+- [ ] ACL's SELinux rule reaches the image AKS will use. ACL 3.0.20261019 has
+      it, but from a development gallery, and excluded from its latest. Then
+      move the harness's default to that image, and link ACL's tracking item.
+- [ ] Agree on `AgentUpgrade`'s `image` parameter with AKS, which sends
+      AgentUpgrades, including that it must be pinned by digest, as `main`
+      requires `sha256` for an archive since #369.
 
 ## ACL's SELinux fix
 
@@ -33,17 +39,19 @@ ACL 3.0.20261019 (build 1229918), gallery image
 without the workaround, whose commit is reverted. The harness boots that build
 by default. See `hack/acl-container/SELINUX.md`.
 
-- [ ] That build comes from a development gallery, and is excluded from its
-      latest. Move the harness's default to the image AKS will use once the
-      rule reaches it, and link ACL's tracking item.
-- [ ] Raise with ACL: 3.0.20261019 builds `/var/lib/containerd` into the
-      image, with an Arc agent image, and leaves it unlabeled, though its
-      `file_contexts` labels it `container_var_lib_t`. So every container
-      containerd starts stays `kernel_t`, and machines the agent creates run
-      as `spc_t`; once labeled, the agent's containers run as `spc_t` and its
-      machines as `kernel_t`. The agent passes `check` either way, but a
-      relabel, or a build that labels it, changes the domains under running
-      nodes. SELINUX.md's question 5.
+- [ ] Waiting on ACL's answer to our writeup, sent 2026-10-20: 3.0.20261019
+      builds `/var/lib/containerd` into the image, with an Arc agent image,
+      and leaves it unlabeled, though its `file_contexts` labels it
+      `container_var_lib_t`. So every container containerd starts stays
+      `kernel_t`, and machines the agent creates run as `spc_t`; once
+      labeled, the agent's containers run as `spc_t` and its machines as
+      `kernel_t`. The agent passes `check` either way (`up --label-containerd`
+      tests the labeled case), but a relabel, or a build that labels it,
+      changes the domains under running nodes. We asked whether `kernel_t` is
+      intended, whether production builds will label it, and which domain to
+      design for. SELINUX.md's question 5.
+- [ ] Early adopters need access to that build's gallery image, ACLDEVEL's
+      `acl-1es-eval-kvm`, which is shared with particular tenants.
 - [ ] Reprovision any development hosts set up with the workaround: Ignition
       runs once, so they keep it until reprovisioned.
 - [ ] If ACL labels `/usr` too, rerun `hack/acl-container/selinux-verify.sh`,
@@ -119,33 +127,27 @@ image.
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
       for every state but active, 3 for inactive and 4 for no such unit,
       which the check takes for an error. Raise it with unbounded.
-- [ ] `AgentUpgrade`'s `image` parameter is this branch's choice. AKS sends
-      AgentUpgrades, so agree on it with them, including that it must be
-      pinned by digest, as `main` requires `sha256` for an archive since #369.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
       `/etc/aks-flex-node/agent-image.env`, which the harness writes through
-      Ignition, with a base config holding a bootstrap token. Decide how
-      operators deliver those inputs in their Butane, and try
+      Ignition, with a base config holding a bootstrap token; README.md's "Try
+      a preview" documents that. Decide how operators deliver those inputs.
       `--fetch-bootstrap-data`, which fetches bootstrap data from the AKS RP
-      with the VM's identity, from the container.
+      with the machine's identity, is untested from the container: with a
+      managed identity it reaches Azure's metadata endpoint over the host's
+      network, and a service principal's credential files work under
+      `/etc/aks-flex-node` or `/run`, where `main`'s docs put them and the
+      containers see them at their own paths. Arc is deferred, below.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
       cluster, with pods in machines running as `spc_t` and as `kernel_t`.
 
 ## Container launch and image
 
-- [ ] Cgroup placement: `ctr` puts the container at `/aks-flex/aks-flex-node`,
-      outside its unit's cgroup, so systemd neither accounts for nor limits
-      it. Consider a small launcher using the containerd client with the
-      systemd cgroup driver, or `ctr run --cgroup` with a slice.
-- [ ] Decide whether `ctr`, a debugging tool and the only container tool on
-      ACL, stays the launcher.
-- [ ] Pin the image by digest in the Ignition config, and sign and verify it.
-- [ ] Private registries: pull credentials or a `hosts.toml`. MCR needs none.
-- [ ] Offline and first boot: deliver the image with the OS, as a system
-      extension or through `ctr image import` from Ignition, so the first
-      start doesn't need the registry.
+- [ ] Offline and first boot: the bootstrap unit pulls the image at first
+      boot, so a node can't join without the registry. Ask ACL to pre-seed
+      the agent's image in its images, as 3.0.20261019 does the Arc agent's,
+      and labeled.
 
 ## Validation and housekeeping
 
@@ -156,6 +158,21 @@ image.
       Butane `--strict` rendering.
 
 ## Deferred, until everything else is done
+
+- [ ] Arc: `--fetch-bootstrap-data`, and the agent's Arc support, with Arc
+      authentication, likely fail in the agent's containers. The Azure SDK
+      recognizes an Arc machine by `IDENTITY_ENDPOINT` and `IMDS_ENDPOINT`, or
+      by Arc's `/opt/azcmagent/bin/himds`, and the containers have neither.
+      Arc's identity service answers with a key file under
+      `/var/opt/azcmagent/tokens`, which they don't mount. The Arc preflight
+      runs `azcmagent`, which they don't have. And ACL 3.0.20261019 ships the
+      Arc agent as a preview container image, so Arc on ACL may differ from a
+      host install. Start by learning how Arc is delivered on ACL; then pass
+      the variables, mount the token directory, and give the containers
+      `azcmagent`, or adapt the preflight.
+- [ ] Private registries: `ctr` pulls anonymously, which MCR and the public
+      preview package need. A private registry needs credentials, which `ctr`
+      takes only as static ones (`--user`, or headers in a `hosts.toml`).
 
 - [ ] Direct activation: `main`'s `agent-upgrade` command lets a provisioning
       system activate a binary it staged, without a MachineOperation: to join
