@@ -418,12 +418,12 @@ func recoverContainerAgentUpgrade(
 	if err := rollbackImageSwitch(images, signal); err != nil {
 		return err
 	}
-	// As kernel_t, which the agent's containers run as where containerd's files are unlabeled, as
-	// ACL 3.0.20261019 ships them, reset-failed is denied. Then only a unit that systemd won't
-	// restart, having hit its start limit, needs a restart, once the limit has passed: one still
-	// restarting picks up the restored image on its own. On systemd 254 and later, OnFailure=
-	// runs recovery on every failure, not only at the limit. Not knowing the unit's state, it
-	// schedules the restart, which a running agent only repeats.
+	// A host's security policy may deny the agent's container reset-failed on its unit, as an
+	// immutable OS can: ACL does where its containers run as kernel_t, as on builds that leave
+	// containerd's files unlabeled. Then only a unit that systemd won't restart, having hit its
+	// start limit, needs starting, once the limit has passed: one still restarting picks up the
+	// restored image on its own. On systemd 254 and later, OnFailure= runs recovery at every
+	// failure, not only at the limit.
 	if err := systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
 		state, stateErr := unitActiveState(ctx)
 		if stateErr == nil && state != "failed" {
@@ -431,11 +431,21 @@ func recoverContainerAgentUpgrade(
 				"state", state, "error", err)
 			return nil
 		}
-		log.Warn("failed to reset the agent's unit; restarting it once its start limit has passed",
+		log.Warn("failed to reset the agent's unit; starting it once its start limit has passed",
 			"error", err, "state", state, "stateError", stateErr)
-		return scheduleAgentRestart(ctx, runSystemdRun, agentUnitStartLimitInterval)
+		return scheduleAgentStart(ctx, runSystemdRun, agentUnitStartLimitInterval)
 	}
 	return systemctl(ctx, "--no-block", "restart", ServiceUnitName)
+}
+
+// scheduleAgentStart starts the agent's unit from a transient timer, delay from now, for recovery
+// that couldn't reset the unit. A start, not a restart: by then the unit may be running again, on
+// its own or started by someone, and on the restored image, as the unit reads the selection at
+// every start, and its start waits for recovery's. A start leaves a running unit alone, joins a
+// restart in progress, and starts a failed one, so it's safe when recovery couldn't tell the
+// unit's state, and when more than one recovery scheduled it.
+func scheduleAgentStart(ctx context.Context, runSystemdRun func(context.Context, ...string) error, delay time.Duration) error {
+	return scheduleAgentUnitCommand(ctx, runSystemdRun, delay, "aks-flex-node-agent-recovery-start", "start")
 }
 
 // containerAgentConvergence keeps the host in step with the image the agent runs in, as the

@@ -436,7 +436,10 @@ before containerd first starts, and expects the domain the label implies.
 The machines' domain follows from the agent's: a directory `kernel_t` makes in
 `/var/lib/machines` is `container_var_lib_t`, whose files run as `spc_t`, while
 one `spc_t` makes stays `var_lib_t`. Where `reset-failed` is denied, upgrade
-recovery restarts a failed agent unit once its start limit has passed instead.
+recovery starts a failed agent unit once its start limit has passed instead. A
+start, not a restart: by then the unit may be running again, on the restored
+image, and a start leaves it alone. The agent keeps this for any host whose
+policy denies its container `reset-failed`, as another immutable OS's might.
 
 Until ACL shipped the rule, the harness had an opt-in workaround: it ran the
 agent's containers on containerd's native snapshotter, its directory relabeled
