@@ -60,7 +60,8 @@ systemd:
       contents: |
         [Unit]
         Description=Writable /usr/local for the AKS Flex Node agent
-        Before=aks-flex-node-bootstrap.service aks-flex-node-agent.service aks-flex-node-reset.service
+        # The units that need it require it, with RequiresMountsFor=/usr/local.
+        RequiresMountsFor=/var/lib/aks-flex-node/usr-local
 
         [Mount]
         What=overlay
@@ -78,6 +79,7 @@ systemd:
         Wants=network-online.target
         After=network-online.target containerd.service
         Requires=containerd.service
+        RequiresMountsFor=/usr/local
         ConditionPathExists=/etc/aks-flex-node/bootstrap.env
         # Until the agent's unit is enabled, which start does after writing it:
         # a bootstrap that fails after the write is retried. Conditions are
@@ -97,10 +99,19 @@ systemd:
         # delete --force kills the task and waits for it.
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-bootstrap
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
-        ExecStartPre=/usr/bin/ctr --namespace aks-flex image pull $AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $AKS_FLEX_NODE_PULL_ARGS ${AKS_FLEX_NODE_IMAGE}
-        # In a scope systemd tracks, as the agent's unit runs its container.
+        # Pulls at every bootstrap, so a tag names what it does now, as main's
+        # bootstrap downloads the agent its inputs name. When the pull fails, an
+        # image that's here already, such as the install's after a reset, runs as
+        # it is, offline too; without one, ctr run fails, and the unit retries.
+        ExecStartPre=-/usr/bin/ctr --namespace aks-flex image pull $AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $AKS_FLEX_NODE_PULL_ARGS ${AKS_FLEX_NODE_IMAGE}
+        # In a scope systemd tracks, set up as the agent's unit, in the agent's
+        # image, sets up its container's: bound to this unit, killed 30 s into a
+        # stop, and unloaded even when it fails.
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
           --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:bootstrap \
+          --annotation "org.systemd.property.BindsTo=['%n']" \
+          --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+          --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node-bootstrap \
@@ -121,6 +132,7 @@ systemd:
         Description=Reset the AKS Flex Node agent and its node
         After=containerd.service
         Requires=containerd.service
+        RequiresMountsFor=/usr/local
 
         [Service]
         Type=oneshot
@@ -131,8 +143,12 @@ systemd:
         ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-reset
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-reset
+        # In a scope set up as the bootstrap unit's.
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
           --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:reset \
+          --annotation "org.systemd.property.BindsTo=['%n']" \
+          --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+          --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
           --privileged --net-host --with-ns pid:/proc/1/ns/pid \
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node-reset \
