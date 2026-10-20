@@ -9,29 +9,34 @@ Approach: build on `main`, and make small, targeted changes so the agent in a
 container behaves the same as `main`'s agent on a host. Don't build on PR #323;
 borrow from it only where that's simpler than redoing the work.
 
-## Remove the SELinux workaround
+## ACL's SELinux fix
 
-Blocked on ACL. The workaround is the commit "Add an opt-in SELinux workaround
-for the agent container" (c1a4528 when written), and nothing else depends on it.
-See `hack/acl-container/SELINUX.md` for the finding.
+ACL 3.0.20261019 (build 1229918), gallery image
+`ACLDEVEL/acl-1es-eval-kvm` version 3.20261019.3, ships
+`allow spc_t kernel_t:dbus send_msg;`. On it, `selinux-repro.sh` with
+`MACHINE=` set reports 0 of 59 failures and no denials, and `check` passes
+without the workaround, whose commit is reverted. The harness boots that build
+by default. See `hack/acl-container/SELINUX.md`.
 
-- [ ] ACL ships `allow spc_t kernel_t:dbus send_msg;`. Record the ACL build and
-      gallery image version here, and link their tracking item.
-- [ ] Confirm the fix on that build: `hack/acl-container/selinux-repro.sh` with
-      `MACHINE=` set reports 0 failures and no denials for the current policy.
-- [ ] `hack/acl-container/harness.py up` without `--selinux-workaround`, then
-      `check`: the container runs as `spc_t` on the default snapshotter, with
-      every check passing.
-- [ ] Revert the workaround commit.
+- [ ] That build comes from a development gallery, and is excluded from its
+      latest. Move the harness's default to the image AKS will use once the
+      rule reaches it, and link ACL's tracking item.
+- [ ] Raise with ACL: 3.0.20261019 builds `/var/lib/containerd` into the
+      image, with an Arc agent image, and leaves it unlabeled, though its
+      `file_contexts` labels it `container_var_lib_t`. So every container
+      containerd starts stays `kernel_t`, and machines the agent creates run
+      as `spc_t`; once labeled, the agent's containers run as `spc_t` and its
+      machines as `kernel_t`. The agent passes `check` either way, but a
+      relabel, or a build that labels it, changes the domains under running
+      nodes. SELINUX.md's question 5.
 - [ ] Reprovision any development hosts set up with the workaround: Ignition
       runs once, so they keep it until reprovisioned.
-- [ ] If ACL labels `/usr` instead of, or as well as, adding the rule, rerun
-      `hack/acl-container/selinux-verify.sh`, since host processes then leave
-      `kernel_t`.
+- [ ] If ACL labels `/usr` too, rerun `hack/acl-container/selinux-verify.sh`,
+      since host processes then leave `kernel_t`.
 
-Separately, not needed by Flex: ACL is considering
-`allow kernel_t unlabeled_t:service reload;`, so host root can run
-`systemctl reset-failed`. Note their decision here.
+Separately, not needed by Flex: ACL considered
+`allow kernel_t unlabeled_t:service reload;`, so host root could run
+`systemctl reset-failed`; 3.0.20261019 doesn't add it.
 
 ## Parity with `main`
 
@@ -97,8 +102,8 @@ image.
       AKS doesn't send, but `check --only upgrade` run twice did. The daemon
       could reset its unit's failed state, which clears the count, before it
       schedules the restart: on a host it may, and in a container `spc_t` may,
-      once ACL ships its rule, though `kernel_t`, under the workaround, may
-      not. Raise it with `main`.
+      though `kernel_t`, as the agent's containers run where containerd's
+      files are unlabeled, may not. Raise it with `main`.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
@@ -116,9 +121,7 @@ image.
       with the VM's identity, from the container.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
-      cluster, so far only with the SELinux workaround, where machines run as
-      `spc_t`. Without it, machines created by the container run as
-      `kernel_t`; pods in them are untested until ACL ships its fix.
+      cluster, with pods in machines running as `spc_t` and as `kernel_t`.
 
 ## Container launch and image
 

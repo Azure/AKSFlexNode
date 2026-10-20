@@ -1,5 +1,31 @@
 # Azure Container Linux: privileged containers can't use the host's D-Bus under SELinux
 
+## Status: fixed in ACL 3.0.20261019
+
+ACL 3.0.20261019 (build 1229918), gallery image
+`ACLDEVEL/acl-1es-eval-kvm` version 3.20261019.3, adds
+`allow spc_t kernel_t:dbus send_msg;`. On it:
+
+- `selinux-repro.sh`, with `MACHINE=` set and its container in `spc_t`, reports
+  0 of 59 failures and no denials, as the candidate policy below did.
+- The AKS Flex Node agent's containers, with our workaround removed, pass all
+  72 of the harness's checks, with no denials, whether they run as `spc_t` or
+  as `kernel_t`.
+- `kernel_t` still has only `{ start status stop }` on `unlabeled_t:service`,
+  so host root still can't run `systemctl reset-failed`; see
+  [below](#a-separate-gap-systemctl-reset-failed-as-host-root).
+
+One more observation on that build: it builds `/var/lib/containerd` into the
+image, with an Arc agent image, and leaves it `unlabeled_t`, though its
+`file_contexts` labels it `container_var_lib_t`, and the `snapshots`
+directories under it `container_ro_file_t`. The files containerd adds later
+inherit `unlabeled_t`, so no container containerd starts leaves `kernel_t`:
+none runs as `spc_t`, and the new rule is exercised only once something, such
+as `restorecon -R /var/lib/containerd`, labels the directory. See
+[Questions](#questions).
+
+The rest of this document describes the gap as it was before that build.
+
 ## Summary
 
 On Azure Container Linux (ACL), SELinux is enforcing, but the files in `/usr`
@@ -38,8 +64,9 @@ workaround (native snapshotter, usr_t)   kernel_t  spc_t       1/59      service
 Under the current policy every failure is a D-Bus call; everything else
 already works from `spc_t`. (The current policy runs fewer checks, 49, because
 the machine the container creates never starts.) The workaround row is our
-current workaround, described [below](#our-current-workaround); its one failure
-is [a separate gap](#a-separate-gap-systemctl-reset-failed-as-host-root).
+workaround before the fix, described [below](#our-workaround-before-the-fix);
+its one failure is
+[a separate gap](#a-separate-gap-systemctl-reset-failed-as-host-root).
 
 No other rule is needed. We also tested
 `allow spc_t unlabeled_t:service { enable disable };`, which we had expected to
@@ -171,7 +198,7 @@ another image with `sh` and `chroot`), and run it as root:
 sudo bash selinux-repro.sh                         # the environment, and the failure
 sudo bash selinux-repro.sh --policy FILE           # also under a candidate binary policy;
                                                    # repeat --policy to compare several
-sudo bash selinux-repro.sh --workaround            # also our current workaround
+sudo bash selinux-repro.sh --workaround            # also our workaround, before the fix
 sudo MACHINE=NAME bash selinux-repro.sh ...        # also the machine checks
 ```
 
@@ -357,11 +384,11 @@ In order of preference:
    consumers carry their own rules, at the cost of hosts whose policy differs
    from the image's.
 
-## Our current workaround
+## Our workaround, before the fix
 
-Until one of those lands, we keep our container in `kernel_t`, the domain every
-other host process runs in. We do that by giving its files a type the policy
-has no transition for. The container runs on containerd's native snapshotter,
+Until the rule landed, we kept our container in `kernel_t`, the domain every
+other host process runs in, and we've removed the workaround since. We did that
+by giving its files a type the policy has no transition for. The container runs on containerd's native snapshotter,
 which nothing else on ACL uses, with that snapshotter's directory relabeled
 `usr_t`. `kernel_t` has no file-creation transition in `usr_t` directories, so
 new snapshots inherit the type:
@@ -405,11 +432,16 @@ costs we would like to drop:
 1. Is the unlabeled `/usr` intentional, and is labeling it at build time
    planned?
 2. Can `allow spc_t kernel_t:dbus send_msg;` land in an upcoming ACL build, and
-   which one?
+   which one? *Answered: ACL 3.0.20261019 has it.*
 3. Should `kernel_t` have `reload` on `unlabeled_t` units, so host root can run
    `systemctl reset-failed`?
 4. Which domain should systemd-nspawn machines under `/var/lib/machines` run
    in?
+5. Should `/var/lib/containerd` be labeled when the image is built, as
+   `file_contexts` has it? Unlabeled, as in 3.0.20261019, every container
+   containerd starts stays `kernel_t`, whatever its image. A later relabel
+   would move them all to `spc_t`, and so move the machines an agent in a
+   container creates from `spc_t` to `kernel_t`.
 
 ## Appendix: checking the policy
 

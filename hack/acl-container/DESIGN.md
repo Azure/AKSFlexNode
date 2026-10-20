@@ -3,15 +3,15 @@
 > [!NOTE]
 > **Status:** development. `main`'s agent runs on Azure Container Linux (ACL)
 > as privileged containerd containers of its own image, and `harness.py check`
-> verifies `main`'s lifecycle against a local cluster. It needs one SELinux rule
-> from ACL before it can merge; until then, a development-only workaround
-> stands in. [README.md](README.md) is how to use the harness, and
-> [TODO.md](../../TODO.md) is the remaining work.
+> verifies `main`'s lifecycle against a local cluster, on ACL 3.0.20261019, the
+> first build with the SELinux rule the agent needs. [README.md](README.md) is
+> how to use the harness, and [TODO.md](../../TODO.md) is the remaining work.
 
 ## Result
 
-On ACL 3.0.20261005, from the Azure gallery image `acl-1es-eval` version
-3.20261007.1021, joined to a local kind cluster running `main`'s controller,
+On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
+`acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
+`main`'s controller,
 `harness.py check` verifies 72 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
@@ -33,20 +33,23 @@ On ACL 3.0.20261005, from the Azure gallery image `acl-1es-eval` version
 - Machines run in the host's `machine.slice`, not in the container. They keep
   running while the agent's container restarts, and come back after a reboot.
 
-It needs one rule from ACL, `allow spc_t kernel_t:dbus send_msg;`; until ACL
-ships it, the harness runs with a workaround. See [SELinux](#selinux).
+The agent's containers need one SELinux rule, `allow spc_t kernel_t:dbus
+send_msg;`, which ACL 3.0.20261019 is the first to have. They run as `spc_t`, or
+as `kernel_t` on that build as it ships, and every check passes either way. See
+[SELinux](#selinux).
 
 ## What ACL provides
 
 | | |
 |---|---|
-| OS | Microsoft Azure Container Linux 3.0.20261005 (`ID=azurelinux`, `VARIANT_ID=azurecontainerlinux`, `ID_LIKE=flatcar`) |
-| Kernel | 6.6.157.1-1.azl3 |
+| OS | Microsoft Azure Container Linux 3.0.20261019, build 1229918 (`ID=azurelinux`, `VARIANT_ID=azurecontainerlinux`, `ID_LIKE=flatcar`) |
+| Kernel | 6.6.158.1-1.azl3 |
 | systemd | 255 (255-34.azl3), with `machinectl`, `systemd-nspawn`, `systemd-run`, machined, and importd; `machines.target` is enabled |
-| Container runtime | containerd 2.3.4, `ctr` 2.3.4, runc 1.4.3, all in `/usr`. `containerd.service` is enabled and running. No docker, nerdctl, or podman. |
-| SELinux | `targeted`, **enforcing**, compiled policy only (`/etc/selinux/targeted/policy/policy.33`); no policy store, so no `semodule` |
+| Container runtime | containerd 2.3.6, `ctr` 2.3.6, runc 1.4.3, all in `/usr`. `containerd.service` is enabled and running. No docker, nerdctl, or podman. |
+| SELinux | `targeted`, **enforcing**, compiled policy only (`/etc/selinux/targeted/policy/policy.33`); no policy store, so no `semodule`, but `file_contexts`, `restorecon`, and `setfiles` |
 | Filesystems | `/usr` read-only btrfs on dm-verity and **unlabeled**; `/etc` an overlay, writable; `/` and `/var` ext4, writable |
 | `/var/lib/machines` | Exists, mode 0700. `/etc/systemd/nspawn` does not, until written. |
+| `/var/lib/containerd` | Built into the image, with an Arc agent image in a containerd namespace of its own, and **unlabeled**, though `file_contexts` labels it `container_var_lib_t` |
 
 ## Principles
 
@@ -135,7 +138,7 @@ foreground with `ctr run --rm`:
 | `--with-ns pid:/proc/1/ns/pid` | The host's PID namespace. `systemd-run --machine` and `systemctl --machine` enter a machine's namespaces through its leader's `/proc/PID/ns`, and a process can only enter a PID namespace below its own. It also makes `/proc` under `/host` agree with the container's. |
 | `--mount type=bind,src=/,dst=/host,options=rbind:rslave` | The host's root, recursively, so `/usr`, `/etc`, `/run`, `/proc`, and `/sys` under it are the host's. `rslave` lets later host mounts appear in the container, and keeps the container's mounts out of the host. |
 | `--env` (the agent's unit) | The image the agent runs, and the flags for pulling and running images, for `AgentUpgrade` |
-| `$AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS` | Empty, unless the SELinux workaround sets a snapshotter |
+| `$AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS` | Empty: containerd's default snapshotter. An install can name another. |
 
 The agent's unit restarts on failure, and runs its recovery unit through
 `OnFailure=`. The bootstrap unit runs at boot only while bootstrap's inputs are
@@ -155,9 +158,8 @@ before containerd answers.
 - the scripts in [`image/bin`](image/bin)
 
 They're in `/opt/aks-flex-node/bin`, since the container mounts the host's
-`/usr/local`. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. The harness
-pushes it as a single layer, about 200 MB; see [SELinux](#selinux) for why one
-layer.
+`/usr/local`. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It's about
+200 MB, in six layers.
 
 ### The entrypoint
 
@@ -363,48 +365,44 @@ In short:
 
 - ACL's `/usr` is unlabeled, so every host process is `kernel_t`: systemd,
   dbus-daemon, machined, and containerd.
-- A privileged container runs as `spc_t`, because containerd's snapshots are
-  `container_var_lib_t`. The policy lets `spc_t` send D-Bus messages to the
-  domains those daemons run in on a labeled host, but not to `kernel_t`. So the
-  container's first D-Bus message is denied, and `machinectl` and `systemctl`
-  fail with `Access denied`.
-- The agent needs one rule, `allow spc_t kernel_t:dbus send_msg;`. With it,
-  every host operation the agent performs works from `spc_t`, with no denials,
-  on a policy built from ACL's own. `ctr` reaches containerd's socket from
-  `spc_t` without a new rule.
+- A privileged container runs as `spc_t`, because executing a file of
+  containerd's snapshots, labeled `container_var_lib_t` or
+  `container_ro_file_t`, moves it there. Until ACL 3.0.20261019, the policy let
+  `spc_t` send D-Bus messages only to the domains those daemons run in on a
+  labeled host, not to `kernel_t`. So the container's first D-Bus message was
+  denied, and `machinectl` and `systemctl` failed with `Access denied`.
+- ACL 3.0.20261019 adds the one rule the agent needs,
+  `allow spc_t kernel_t:dbus send_msg;`. With it, every host operation the
+  agent performs works from `spc_t`, with no denials: `selinux-repro.sh`
+  reports 0 of 59 failures, and `check` passes. `ctr` reaches containerd's
+  socket from `spc_t` without a rule of its own.
 
-### The workaround
+### Two domains, from containerd's labels
 
-Until ACL ships the rule, `harness.py up --selinux-workaround` merges
-[`selinux-workaround.bu`](selinux-workaround.bu) into the install. It adds
-drop-ins to all four units that run the agent's containers, so they run on
-containerd's native snapshotter, whose directory it relabels `usr_t`. Files
-there have no transition, so the containers stay `kernel_t`, like everything
-else on the host. It's development-only, and isolated in one commit, "Add an
-opt-in SELinux workaround for the agent container", so reverting that commit
-removes it.
+ACL 3.0.20261019 builds `/var/lib/containerd` into the image, with an Arc agent
+image, and the build leaves it unlabeled, though ACL's `file_contexts` labels
+it `container_var_lib_t`. The files containerd adds later inherit `unlabeled_t`,
+so nothing moves a container out of `kernel_t`, and the agent's containers run
+as `kernel_t`, as every host process does. Where containerd makes the directory
+itself, or `restorecon` labels it, they run as `spc_t`. The agent works either
+way: `check` passes on the build as it ships, and with `/var/lib/containerd`
+relabeled as `restorecon` would, and expects the domain the label implies.
 
-What it costs:
+| containerd's files | The agent's containers | The machines they create | `reset-failed` in recovery |
+|---|---|---|---|
+| Labeled, as `file_contexts` has them | `spc_t` | `kernel_t` | Allowed |
+| Unlabeled, as ACL 3.0.20261019 ships them | `kernel_t` | `spc_t` | Denied |
 
-- **Start time and disk.** The native snapshotter copies instead of
-  overlaying: every container start copies the image into a fresh writable
-  snapshot before the entrypoint runs: about 12 seconds in the harness's VM,
-  and 30 without the host caching its disk writes. A layered image costs a
-  full copy per layer. The harness squashes the image to one layer for
-  that reason.
-- **Confinement.** The agent is as unconfined as the rest of the host. That's
-  what a privileged agent with the host's root is anyway.
-- **`reset-failed`.** As `kernel_t`, `systemctl reset-failed` is denied, so
-  upgrade recovery can't clear a failed agent unit. It then schedules a
-  restart once the unit's start limit has passed, if the unit has failed.
-  `spc_t` may reset it.
-- **Durability.** It depends on today's policy and labels: a relabel of the
-  host, or a policy change to `usr_t`, would undo it.
+The machines' domain follows from the agent's: a directory `kernel_t` makes in
+`/var/lib/machines` is `container_var_lib_t`, whose files run as `spc_t`, while
+one `spc_t` makes stays `var_lib_t`. Where `reset-failed` is denied, upgrade
+recovery restarts a failed agent unit once its start limit has passed instead.
 
-The domains swap under the workaround. With the rule, the containers are
-`spc_t` and the machines they create are `kernel_t`; with the workaround, the
-containers are `kernel_t` and their machines `spc_t`. The harness has only run
-pods in `spc_t` machines so far.
+Until ACL shipped the rule, the harness had an opt-in workaround: it ran the
+agent's containers on containerd's native snapshotter, its directory relabeled
+`usr_t`, so they stayed `kernel_t`. It cost a copy of the image at every
+container start, about 12 seconds, and is gone. [SELINUX.md](SELINUX.md)
+describes it.
 
 ## Security
 
@@ -440,17 +438,16 @@ pods in `spc_t` machines so far.
 ## Measurements
 
 On a 16-core Intel Xeon Platinum 8370C running WSL2, with a 4-CPU, 4 GB VM
-whose disk writes the host caches (`cache=unsafe`), and the SELinux
-workaround:
+whose disk writes the host caches (`cache=unsafe`):
 
 | | |
 |---|---|
-| Gallery image export (first `up` only) | 90 s, 842 MiB downloaded |
-| `up`, image and build cache present | about 4.5 min, with the kind cluster and the controller |
-| ACL boot to SSH | about 16 s (systemd: 3.5 s kernel, 8 s initrd, 4 s userspace) |
-| First bootstrap, unit start to agent installed | about 45 s, with the image and the machine's rootfs pulled |
-| Container start, unit start to entrypoint | about 12 s on the native snapshotter; 30 s without the host caching the disk's writes |
-| `check`, with a reboot | 72 checks, about 11 min; `upgrade` is the longest group, at about 3 min |
-| Agent image | about 200 MB, one layer |
-| Native snapshotter on the VM | about 390 MB |
+| Gallery image export (first `up` only) | 70 s, 910 MiB downloaded |
+| `up`, image and build cache present | about 5 min, with the kind cluster and the controller |
+| ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
+| First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
+| Container start, unit start to entrypoint | about 1.2 s |
+| `check`, with a reboot | 72 checks, about 8 min; `upgrade` is the longest group, at about 1.5 min |
+| Agent image | about 200 MB, six layers |
+| containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
