@@ -29,7 +29,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 MACHINE=${MACHINE:-}
 FEDORA_IMAGE=${FEDORA_IMAGE:-registry.fedoraproject.org/fedora:44}
 work=${WORK:-$(mktemp -d /tmp/acl-selinux-verify.XXXXXX)}
-remote=/tmp/acl-selinux-verify
+# A directory of its own on the host, made by mktemp below, from which root runs
+# selinux-repro.sh: a fixed path in /tmp could be another user's.
+remote=
 
 # name|CIL rules, one candidate per line, each on top of the host's policy. Add
 # lines to compare other rule sets. Against ACL 3.0.20261005, adding
@@ -41,7 +43,7 @@ CANDIDATES=(
 
 read -ra ssh_cmd <<<"$ACL_SSH"
 host() { "${ssh_cmd[@]}" "$1"; }
-trap 'host "rm -rf $remote" >/dev/null 2>&1 || true' EXIT
+trap '[[ -z $remote ]] || host "rm -rf $remote" >/dev/null 2>&1 || true' EXIT
 
 echo "== Copying the host's policy into $work"
 mkdir -p "$work"
@@ -113,7 +115,7 @@ EOF
 
 echo
 echo "== Running selinux-repro.sh on the host"
-host "rm -rf $remote && mkdir -p $remote"
+remote=$(host "mktemp -d /tmp/acl-selinux-verify.XXXXXX")
 host "cat >$remote/selinux-repro.sh" <"$here/selinux-repro.sh"
 args=()
 for name in "${names[@]}"; do
