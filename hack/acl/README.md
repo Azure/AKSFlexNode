@@ -88,7 +88,10 @@ the items of the upgrade test plan they cover:
   and the agent unit runs B from its slot.
 - **U10**: the SELinux mode is logged, and no AVC denial in the boot's audit
   log names `/opt/unbounded`, `aks-flex-node`, or `unbounded-agent`. Each boot
-  is scanned, the one before U7's reboot and the one after.
+  is scanned, the one before U7's reboot and the one after. Known denials are
+  printed with the issue that tracks them, and don't fail the step: the image's
+  policy denies root `systemctl reset-failed`, which the recovery script runs
+  ([#385](https://github.com/Azure/AKSFlexNode/issues/385)).
 
 U2 and U7 also log, without checking, whether the nspawn lifecycle helper is
 the running agent's binary. After an upgrade it isn't, until the helper is

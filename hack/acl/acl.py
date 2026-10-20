@@ -1420,6 +1420,14 @@ LIFECYCLE_HELPER = f"{HOST_ROOT}/bin/unbounded-agent-nspawn-lifecycle"
 # An AVC denial that concerns the agent names its files, its binary, or the agent library's.
 AGENT_SUBJECTS = ("/opt/unbounded", "aks-flex-node", "unbounded-agent")
 AVC_DENIED = re.compile(r"avc:\s+denied")
+# Denials that are known and tracked, with the issue that tracks each. They are printed and
+# counted, but don't fail U10, so that it fails on anything new.
+KNOWN_DENIALS = (
+    # The image's policy denies root `systemctl reset-failed` on every unit, and the recovery
+    # script runs it before it restarts the agent onto last-good.
+    (re.compile(r'function="bus_unit_method_reset_failed"'),
+     "https://github.com/Azure/AKSFlexNode/issues/385"),
+)
 SELINUX_MODE = textwrap.dedent("""\
     if command -v getenforce >/dev/null; then
       getenforce
@@ -1700,18 +1708,24 @@ def check_upgrade_after_reboot(checks: Checks, upgraded: AgentSnapshot, b_digest
 
 
 def check_selinux(checks: Checks, step: str) -> None:
-    """U10: log the SELinux mode, and check that no AVC denial in this boot names the agent. A
-    permissive policy stops nothing, so its denials are what show the agent would be stopped by
-    an enforcing one. journalctl -b reads one boot, so a reboot needs a scan on either side."""
+    """U10: log the SELinux mode, and check that no AVC denial in this boot names the agent, other
+    than the known ones in KNOWN_DENIALS, which are logged with their issue. A permissive policy
+    stops nothing, so its denials are what show the agent would be stopped by an enforcing one.
+    journalctl -b reads one boot, so a reboot needs a scan on either side."""
     mode = ssh(SELINUX_MODE, check=False).stdout.strip() or "unknown"
     log(f"{step}: SELinux mode: {mode}")
     denials = avc_denials()
     ours = [line for line in denials if any(subject in line for subject in AGENT_SUBJECTS)]
-    log(f"{step}: {len(denials)} AVC denial(s) in this boot, {len(ours)} naming the agent")
+    unknown = []
     for line in ours:
-        print(line, flush=True)
-    checks.expect(not ours, f"{step}: no AVC denial in this boot names {', '.join(AGENT_SUBJECTS)}",
-                  f"{len(ours)} do")
+        issue = next((issue for pattern, issue in KNOWN_DENIALS if pattern.search(line)), "")
+        log(f"{step}: {'known, ' + issue if issue else 'new'}: {line}")
+        if not issue:
+            unknown.append(line)
+    log(f"{step}: {len(denials)} AVC denial(s) in this boot, {len(ours)} naming the agent, "
+        f"{len(ours) - len(unknown)} of them known")
+    checks.expect(not unknown, f"{step}: no AVC denial in this boot names {', '.join(AGENT_SUBJECTS)}, "
+                  "other than known ones", f"{len(unknown)} do")
 
 
 # ---------------------------------------------------------------------------------------------
