@@ -474,15 +474,26 @@ func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
 
 // scheduleAgentRestart restarts the agent's unit after the delay, from a transient unit.
 func scheduleAgentRestart(ctx context.Context, runSystemdRun func(context.Context, ...string) error, delay time.Duration) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	// A direct self-restart can terminate the systemctl child before the
 	// handler records a successful handoff. Schedule the restart in a separate
 	// transient unit so this process returns while its durable signal is intact.
+	return scheduleAgentUnitCommand(ctx, runSystemdRun, delay, "aks-flex-node-agent-upgrade-restart", "restart")
+}
+
+// scheduleAgentUnitCommand runs systemctl's command on the agent's unit from a transient timer,
+// delay from now, in a transient unit named for the purpose.
+func scheduleAgentUnitCommand(
+	ctx context.Context,
+	runSystemdRun func(context.Context, ...string) error,
+	delay time.Duration,
+	purpose, command string,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A timer's AccuracySec= defaults to a minute, within which systemd may fire
 	// it as late as it likes, so a restart due in a second took up to a minute.
-	unit := fmt.Sprintf("aks-flex-node-agent-upgrade-restart-%d", time.Now().UnixNano())
+	unit := fmt.Sprintf("%s-%d", purpose, time.Now().UnixNano())
 	return runSystemdRun(
 		ctx,
 		"--quiet",
@@ -491,7 +502,7 @@ func scheduleAgentRestart(ctx context.Context, runSystemdRun func(context.Contex
 		fmt.Sprintf("--on-active=%dms", delay.Milliseconds()),
 		"--timer-property=AccuracySec="+agentRestartTimerAccuracy,
 		"/usr/bin/systemctl",
-		"restart",
+		command,
 		ServiceUnitName,
 	)
 }

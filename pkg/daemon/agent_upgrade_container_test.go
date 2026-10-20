@@ -467,9 +467,21 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 					t.Errorf("call %d = %q, want it to start with %q", i, (*calls)[i], want)
 				}
 			}
-			if n := len(*calls); n > 0 && strings.HasPrefix((*calls)[n-1], "systemd-run ") &&
-				!strings.Contains((*calls)[n-1], "--on-active=300000ms") {
-				t.Errorf("restart %q isn't scheduled after the start limit", (*calls)[n-1])
+			// A start, after the start limit: by then the unit may be running on the restored image,
+			// which a restart would cut off.
+			if n := len(*calls); n > 0 && strings.HasPrefix((*calls)[n-1], "systemd-run ") {
+				for _, want := range []string{
+					"--unit=aks-flex-node-agent-recovery-start-",
+					"--on-active=300000ms",
+					"--timer-property=AccuracySec=100ms",
+				} {
+					if !strings.Contains((*calls)[n-1], want) {
+						t.Errorf("the scheduled start %q lacks %s", (*calls)[n-1], want)
+					}
+				}
+				if !strings.HasSuffix((*calls)[n-1], " /usr/bin/systemctl start "+ServiceUnitName) {
+					t.Errorf("recovery schedules %q, want a start of the agent's unit", (*calls)[n-1])
+				}
 			}
 			current, _, err := executor.images.read()
 			if err != nil || current != tc.wantSelected {
