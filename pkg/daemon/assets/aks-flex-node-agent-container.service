@@ -30,8 +30,11 @@ ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-f
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
 # The container gets the host's root at /host, and its entrypoint mounts the
 # host paths the agent uses at their own paths. The agent learns its image, and
-# how to pull and run images, for AgentUpgrade.
+# how to pull and run images, for AgentUpgrade. runc asks systemd for a scope
+# for it, aks-flex-agent.scope in system-aksflex.slice, so systemd tracks and
+# accounts for it; ctr would otherwise put it in a cgroup outside any unit.
 ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+  --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:agent \
   --privileged --net-host --with-ns pid:/proc/1/ns/pid \
   --mount type=bind,src=/,dst=/host,options=rbind:rslave \
   --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_IMAGE} \

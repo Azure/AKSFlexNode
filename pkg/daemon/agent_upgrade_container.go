@@ -39,6 +39,10 @@ const (
 	agentSnapshotterPullArgsEnv = "AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS"
 	agentSnapshotterRunArgsEnv  = "AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS"
 	agentContainerdNamespace    = "aks-flex"
+	// agentContainerSlice holds the scopes systemd makes for the agent's containers, as their
+	// units' ctr run asks runc to, so systemd tracks and accounts for them; ctr would otherwise
+	// put them in cgroups of its own, outside any unit.
+	agentContainerSlice = "system-aksflex.slice"
 	// agentInstallSettingsPath is the host's provisioning's settings, which name the install's
 	// image as AKS_FLEX_NODE_IMAGE. The entrypoint mounts them read-only.
 	agentInstallSettingsPath = "/etc/sysconfig/aks-flex-node-container"
@@ -167,8 +171,11 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 		return fmt.Errorf("pull %s: %w", request.image, err)
 	}
 	// As on a host, the candidate's agent must run before the agent switches to it.
-	check := append([]string{"--namespace", agentContainerdNamespace, "run", "--rm"}, e.runArgs...)
-	check = append(check, request.image, fmt.Sprintf("aks-flex-node-upgrade-check-%d", time.Now().UnixNano()),
+	id := time.Now().UnixNano()
+	check := append([]string{"--namespace", agentContainerdNamespace, "run", "--rm",
+		"--runc-systemd-cgroup", "--cgroup", fmt.Sprintf("%s:aks-flex:upgrade-check-%d", agentContainerSlice, id)},
+		e.runArgs...)
+	check = append(check, request.image, fmt.Sprintf("aks-flex-node-upgrade-check-%d", id),
 		"aks-flex-node", "version")
 	if err := e.ctr(ctx, check...); err != nil {
 		return fmt.Errorf("run the agent in %s: %w", request.image, err)
