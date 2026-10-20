@@ -158,10 +158,12 @@ image.
 
 ## Container launch and image
 
-- [ ] Offline and first boot: the bootstrap unit pulls the image at first
-      boot, so a node can't join without the registry. Ask ACL to pre-seed
-      the agent's image in its images, as 3.0.20261019 does the Arc agent's,
-      and labeled.
+- [ ] Offline and first boot: the bootstrap unit pulls the image at every
+      bootstrap, and when the pull fails runs the image if it's there, as the
+      install's is after a reset. A first boot has none, so a node can't join
+      without the registry. Ask ACL to pre-seed the agent's image in its
+      images, as 3.0.20261019 does the Arc agent's, and labeled; it would then
+      join offline.
 
 ## Validation and housekeeping
 
