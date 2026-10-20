@@ -122,6 +122,11 @@ image.
       schedules the restart: on a host it may, and in a container `spc_t` may,
       though `kernel_t`, as the agent's containers run where containerd's
       files are unlabeled, may not. Raise it with `main`.
+- [ ] An upgraded daemon rewrites its recovery unit from its own image as it
+      starts, before it judges the upgrade, as `main`'s rewrites its recovery
+      unit and script from its own binary on a host. So a candidate with a
+      broken recovery unit breaks the recovery that would roll it back. Raised
+      in review of PR #370; same as `main`, so raise it with `main`.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
