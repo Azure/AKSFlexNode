@@ -1,10 +1,10 @@
 #!/bin/bash
 # AKS Flex Node first-boot script.
 #
-# Requirements: bash, curl, tar, and jq. sha256sum is required only when an
-# artifact checksum is configured. Authentication and bootstrap-data retrieval
-# are delegated to the downloaded aks-flex-node binary. This script does not
-# install dependencies.
+# Requirements: bash, curl, tar, jq, and flock (util-linux). sha256sum is
+# required only when an artifact checksum is configured. Authentication and
+# bootstrap-data retrieval are delegated to the downloaded aks-flex-node binary.
+# This script does not install dependencies.
 #
 # A publisher can replace the marker in write_embedded_base_config with a
 # cluster/pool-specific partial config. When --fetch-bootstrap-data is used with
@@ -24,6 +24,11 @@ readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
 readonly DEFAULT_AUTHORITY_HOST="https://login.microsoftonline.com"
 readonly DEFAULT_IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"
+# Not readonly: bootstrap_test.sh points them at its own files, as install_test.sh
+# does for install.sh.
+SERVICE_UNIT="aks-flex-node-agent.service"
+SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
+AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 
 # Publisher-managed cluster/pool config. Keep this block near the top so the
 # script generation path only needs to replace the single marker below.
@@ -71,6 +76,7 @@ unset \
     AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
     AKS_FLEX_NODE_CONFIG_OVERRIDES || true
 TEMP_DIR=""
+MANAGED_BINARY_DIR=""
 
 log() {
     printf 'bootstrap: %s\n' "$*" >&2
@@ -140,8 +146,8 @@ Environment overrides:
 
 A CLI credential-file flag overrides credential values inherited from the
 environment. When invoking through sudo, explicitly preserve the required
-environment variables. The script requires preinstalled bash, curl, tar, and jq. The
-aks-flex-node binary owns MSI, secret, and certificate authentication.
+environment variables. The script requires preinstalled bash, curl, tar, jq, and
+flock. The aks-flex-node binary owns MSI, secret, and certificate authentication.
 EOF
 }
 
@@ -216,7 +222,7 @@ require_command() {
 
 check_prerequisites() {
     local command
-    for command in curl tar jq mktemp install find; do
+    for command in curl tar jq mktemp install find flock; do
         require_command "$command"
     done
     if [[ -n "$AGENT_SHA256" ]]; then
@@ -567,19 +573,20 @@ validate_archive_paths() {
 # layout; in /usr/local/bin where that is writable, as earlier releases were, so
 # one of them finds itself there, while a newer agent copies itself under the
 # host root when it starts; and under the host root otherwise, as on Azure
-# Container Linux, where /usr/local is read-only.
+# Container Linux, where /usr/local is read-only. The agent keeps its blue/green
+# layout under the same root, which is where reset leaves it.
 resolve_install_dir() {
-    local probe
+    local root="$HOST_ROOT" probe
 
-    if [[ -d "$HOST_ROOT" && ! -L "$HOST_ROOT" ]]; then
-        INSTALL_DIR="$HOST_ROOT/bin"
-    elif { [[ -d "$LEGACY_ROOT/bin" ]] || install -d -o root -g root -m 0755 "$LEGACY_ROOT/bin" 2>/dev/null; } &&
+    if [[ ! -d "$HOST_ROOT" || -L "$HOST_ROOT" ]] &&
+        { [[ -d "$LEGACY_ROOT/bin" ]] || install -d -o root -g root -m 0755 "$LEGACY_ROOT/bin" 2>/dev/null; } &&
         probe=$(mktemp "$LEGACY_ROOT/bin/.aks-flex-node.XXXXXX" 2>/dev/null); then
         rm -f "$probe"
-        INSTALL_DIR="$LEGACY_ROOT/bin"
-    else
-        INSTALL_DIR="$HOST_ROOT/bin"
+        root="$LEGACY_ROOT"
     fi
+
+    INSTALL_DIR="$root/bin"
+    MANAGED_BINARY_DIR="$root/lib/aks-flex-node"
 
     # Ignored rather than refused: callers that pass the old default,
     # /usr/local/bin, would otherwise fail on every host installed under the
@@ -593,9 +600,74 @@ resolve_install_dir() {
     fi
 }
 
+is_managed_binary_link() {
+    local target_path="$1"
+    local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
+    local link_target resolved_target
+
+    link_target=$(readlink -- "$target_path") || return 1
+    [[ "$link_target" == "$current_path" ]] || return 1
+    resolved_target=$(readlink -e -- "$target_path") || return 1
+    [[ "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ||
+       "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-green" ]] &&
+        [[ -f "$resolved_target" && -x "$resolved_target" ]]
+}
+
+install_agent_binary() {
+    local candidate="$1"
+    local target="$INSTALL_DIR/aks-flex-node"
+
+    # Created only when missing: an existing directory belongs to the image.
+    { [[ -d "$INSTALL_DIR" ]] || install -d -o root -g root -m 0755 "$INSTALL_DIR"; } ||
+        fatal "cannot write to $INSTALL_DIR"
+
+    # errexit does not apply inside a subshell on the left of ||, so every
+    # step checks its own status.
+    (
+        staged=""
+        trap '[[ -z "$staged" ]] || rm -f -- "$staged"' EXIT
+
+        # Agent upgrades hold this lock while switching the blue/green layout.
+        # Holding it through the rename keeps this install out of an active upgrade.
+        if ! mkdir -p "$(dirname "$AGENT_UPGRADE_LOCK_PATH")" ||
+            ! exec 9>>"$AGENT_UPGRADE_LOCK_PATH" ||
+            ! flock -n 9; then
+            fatal "agent binary activation is in progress; retry"
+        fi
+
+        if [[ -L "$target" ]]; then
+            # Once the agent has started, this path links into the managed
+            # blue/green layout. Replacing it here would bypass the upgrade
+            # flow's activation locking and rollback.
+            is_managed_binary_link "$target" ||
+                fatal "refusing to replace the unexpected symbolic link at $target; inspect and remove the link before rerunning, and do not execute it as AKS Flex Node"
+            if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
+                systemctl is-active --quiet "$SERVICE_UNIT"; then
+                fatal "refusing to replace the managed symbolic link at $target while the agent service is installed or active; use the agent upgrade flow, or run '$target reset' before rerunning this script"
+            fi
+
+            # Reset removes the service but keeps this layout, and on start the
+            # agent would point $target back at the retained binary. Remove the
+            # layout so start seeds it again from the downloaded binary.
+            log "removing the managed binary layout retained after reset"
+            rm -f -- "$target" || fatal "failed to remove $target"
+            rm -rf -- "$MANAGED_BINARY_DIR" || fatal "failed to remove $MANAGED_BINARY_DIR"
+        fi
+
+        staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||
+            fatal "failed to stage agent binary in $INSTALL_DIR"
+        install -o root -g root -m 0755 "$candidate" "$staged" ||
+            fatal "failed to stage agent binary in $INSTALL_DIR"
+        # -T makes a directory at the target fail rather than receive the staged file.
+        mv -fT "$staged" "$target" || fatal "failed to install agent binary at $target"
+        staged=""
+    ) || exit 1
+    log "installed agent at $target"
+}
+
 download_and_install_agent() {
     local arch="$1"
-    local url archive extract_dir expected candidate staged
+    local url archive extract_dir expected candidate
     url=$(resolve_agent_url "$arch")
     archive="$TEMP_DIR/agent.tar.gz"
     extract_dir="$TEMP_DIR/agent"
@@ -620,14 +692,7 @@ download_and_install_agent() {
     [[ -n "$candidate" ]] || fatal "agent binary not found in archive"
 
     resolve_install_dir
-    # Created only when missing: an existing directory belongs to the image.
-    if ! { [[ -d "$INSTALL_DIR" ]] || install -d -o root -g root -m 0755 "$INSTALL_DIR"; } ||
-        ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX" 2>/dev/null); then
-        fatal "cannot write to $INSTALL_DIR"
-    fi
-    install -o root -g root -m 0755 "$candidate" "$staged"
-    mv -f "$staged" "$INSTALL_DIR/aks-flex-node"
-    log "installed agent at $INSTALL_DIR/aks-flex-node"
+    install_agent_binary "$candidate"
 }
 
 clear_bootstrap_environment() {

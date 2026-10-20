@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Uninstall the agent service only after disabling it, removing its unit files, and reloading systemd, preventing self-uninstall from leaving stale systemd state ([#371](https://github.com/Azure/AKSFlexNode/pull/371)).
+- Re-running `bootstrap.sh` on a host that was reset now installs the downloaded agent instead of leaving the service on the previous binary. Like `install.sh`, it removes the binary layout reset keeps, and refuses while the agent service is installed or active ([#376](https://github.com/Azure/AKSFlexNode/pull/376)).
 - Reset now removes LocalDNS state and the nspawn lifecycle helper ([#323](https://github.com/Azure/AKSFlexNode/pull/323)).
 
 ## [0.2.0] - 2026-09-21
