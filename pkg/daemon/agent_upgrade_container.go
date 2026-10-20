@@ -43,6 +43,15 @@ const (
 	// units' ctr run asks runc to, so systemd tracks and accounts for them; ctr would otherwise
 	// put them in cgroups of its own, outside any unit.
 	agentContainerSlice = "system-aksflex.slice"
+	// An AgentUpgrade's pull of its candidate, and its check that the candidate's agent runs, are
+	// limited as a host's download and version check are, the check allowing for starting a
+	// container.
+	agentImagePullTimeout  = 10 * time.Minute
+	agentImageCheckTimeout = time.Minute
+	// agentUpgradeImageLabel marks the images an AgentUpgrade pulls, the only ones the agent
+	// removes once it won't run them again, and not an image staged, or built into the OS, for a
+	// join.
+	agentUpgradeImageLabel = "aks-flex-node.agent-upgrade"
 	// agentInstallSettingsPath is the host's provisioning's settings, which name the install's
 	// image as AKS_FLEX_NODE_IMAGE. The entrypoint mounts them read-only.
 	agentInstallSettingsPath = "/etc/sysconfig/aks-flex-node-container"
@@ -50,11 +59,13 @@ const (
 	agentUnitStartLimitInterval = 5 * time.Minute
 )
 
-type agentImageSelection struct {
+// agentImageEnvFile is a systemd environment file that names images: the agent's selection, its
+// image and last good one, or the install's settings, its image.
+type agentImageEnvFile struct {
 	path string
 }
 
-func (s agentImageSelection) read() (current, lastGood string, err error) {
+func (s agentImageEnvFile) read() (current, lastGood string, err error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", "", nil
@@ -80,7 +91,7 @@ func (s agentImageSelection) read() (current, lastGood string, err error) {
 }
 
 // write selects the agent's image. Both are validated image references, which need no quoting.
-func (s agentImageSelection) write(current, lastGood string) error {
+func (s agentImageEnvFile) write(current, lastGood string) error {
 	content := fmt.Sprintf("%s=%s\n%s=%s\n", agentImageEnv, current, agentLastGoodImageEnv, lastGood)
 	if err := utilio.WriteFile(s.path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write the agent's image selection: %w", err)
@@ -92,7 +103,7 @@ type containerAgentUpgradeExecutor struct {
 	log     *slog.Logger
 	state   agentUpgradeStateLoader
 	signals agentUpgradeSignalStore
-	images  agentImageSelection
+	images  agentImageEnvFile
 	// runningImage is the image this daemon runs, which its unit passes in.
 	runningImage           string
 	pullArgs               []string
@@ -114,7 +125,7 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 		log:          log,
 		state:        state,
 		signals:      agentUpgradeSignalStore{path: defaultAgentUpgradePaths().SignalPath},
-		images:       agentImageSelection{path: agentImageSelectionPath},
+		images:       agentImageEnvFile{path: agentImageSelectionPath},
 		runningImage: os.Getenv(agentImageEnv),
 		pullArgs: append(strings.Fields(os.Getenv(agentSnapshotterPullArgsEnv)),
 			strings.Fields(os.Getenv(agentPullArgsEnv))...),
@@ -166,19 +177,19 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 	if err := e.signals.recordCandidateImage(request.image, previous); err != nil {
 		return err
 	}
+	pullCtx, cancelPull := context.WithTimeout(ctx, agentImagePullTimeout)
+	defer cancelPull()
 	pull := append([]string{"--namespace", agentContainerdNamespace, "image", "pull"}, e.pullArgs...)
-	if err := e.ctr(ctx, append(pull, request.image)...); err != nil {
+	if err := e.ctr(pullCtx, append(pull, request.image)...); err != nil {
 		return fmt.Errorf("pull %s: %w", request.image, err)
 	}
-	// As on a host, the candidate's agent must run before the agent switches to it.
-	id := time.Now().UnixNano()
-	check := append([]string{"--namespace", agentContainerdNamespace, "run", "--rm",
-		"--runc-systemd-cgroup", "--cgroup", fmt.Sprintf("%s:aks-flex:upgrade-check-%d", agentContainerSlice, id)},
-		e.runArgs...)
-	check = append(check, request.image, fmt.Sprintf("aks-flex-node-upgrade-check-%d", id),
-		"aks-flex-node", "version")
-	if err := e.ctr(ctx, check...); err != nil {
-		return fmt.Errorf("run the agent in %s: %w", request.image, err)
+	if err := e.ctr(ctx, "--namespace", agentContainerdNamespace, "images", "label", request.image,
+		agentUpgradeImageLabel+"=pulled"); err != nil {
+		e.log.Warn("failed to label the candidate image, which the agent then won't remove",
+			"image", request.image, "error", err)
+	}
+	if err := e.checkCandidate(ctx, request.image); err != nil {
+		return err
 	}
 	if err := e.images.write(request.image, previous); err != nil {
 		return e.rollbackAfterStage(ctx, err)
@@ -188,6 +199,30 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 	}
 	e.log.Info("selected the agent's upgraded image", "image", request.image, "previous", previous)
 	return nil
+}
+
+// checkCandidate runs the candidate's agent, as a host runs its candidate binary before switching
+// to it. ctr run --rm removes the container after it, but not when ctr is killed, as a timeout or
+// a cancellation kills it, so a failed check removes it here.
+func (e *containerAgentUpgradeExecutor) checkCandidate(ctx context.Context, image string) error {
+	id := time.Now().UnixNano()
+	name := fmt.Sprintf("aks-flex-node-upgrade-check-%d", id)
+	checkCtx, cancel := context.WithTimeout(ctx, agentImageCheckTimeout)
+	defer cancel()
+	check := append([]string{"--namespace", agentContainerdNamespace, "run", "--rm",
+		"--runc-systemd-cgroup", "--cgroup", fmt.Sprintf("%s:aks-flex:upgrade-check-%d", agentContainerSlice, id)},
+		e.runArgs...)
+	check = append(check, image, name, "aks-flex-node", "version")
+	err := e.ctr(checkCtx, check...)
+	if err == nil {
+		return nil
+	}
+	cleanupCtx, cancelCleanup := agentUpgradeCleanupContext(ctx)
+	defer cancelCleanup()
+	// Either may find nothing left to remove.
+	_ = e.ctr(cleanupCtx, "--namespace", agentContainerdNamespace, "task", "delete", "--force", name)
+	_ = e.ctr(cleanupCtx, "--namespace", agentContainerdNamespace, "container", "delete", name)
+	return fmt.Errorf("run the agent in %s: %w", image, err)
 }
 
 // currentImage is the image the agent's unit runs: the selected one, or the one the host's
@@ -277,10 +312,15 @@ func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSign
 }
 
 func (e *containerAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSignal) (bool, error) {
+	return candidateImageActive(e.images, signal)
+}
+
+// candidateImageActive reports whether the agent's selection names the upgrade's candidate.
+func candidateImageActive(images agentImageEnvFile, signal *agentUpgradeSignal) (bool, error) {
 	if signal == nil || signal.CandidateImage == "" {
 		return false, nil
 	}
-	current, _, err := e.images.read()
+	current, _, err := images.read()
 	if err != nil {
 		return false, err
 	}
@@ -288,10 +328,16 @@ func (e *containerAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSign
 }
 
 func (e *containerAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSignal) error {
+	return rollbackImageSwitch(e.images, signal)
+}
+
+// rollbackImageSwitch selects the upgrade's previous image again, if the upgrade switched to its
+// candidate, or may have.
+func rollbackImageSwitch(images agentImageEnvFile, signal *agentUpgradeSignal) error {
 	if signal == nil {
 		return nil
 	}
-	active, err := e.candidateActive(signal)
+	active, err := candidateImageActive(images, signal)
 	if err != nil {
 		return err
 	}
@@ -301,7 +347,7 @@ func (e *containerAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSigna
 	if signal.PreviousImage == "" {
 		return fmt.Errorf("AgentUpgrade signal has no previous image to restore")
 	}
-	return e.images.write(signal.PreviousImage, signal.PreviousImage)
+	return images.write(signal.PreviousImage, signal.PreviousImage)
 }
 
 func (e *containerAgentUpgradeExecutor) runningLastGood(signal *agentUpgradeSignal) (bool, error) {
@@ -327,8 +373,9 @@ func recoverContainerAgentUpgrade(
 	log *slog.Logger,
 	message string,
 	signals agentUpgradeSignalStore,
-	images agentImageSelection,
+	images agentImageEnvFile,
 	systemctl func(context.Context, ...string) error,
+	unitActiveState func(context.Context) (string, error),
 	runSystemdRun func(context.Context, ...string) error,
 ) error {
 	if err := signals.recordFailure(message); err != nil {
@@ -342,21 +389,24 @@ func recoverContainerAgentUpgrade(
 		// An ordinary failure of the agent's unit changes nothing.
 		return nil
 	}
-	executor := &containerAgentUpgradeExecutor{signals: signals, images: images}
-	if err := executor.rollbackSwitch(signal); err != nil {
+	if err := rollbackImageSwitch(images, signal); err != nil {
 		return err
 	}
 	// As kernel_t, which the agent's containers run as where containerd's files are unlabeled, as
 	// ACL 3.0.20261019 ships them, reset-failed is denied. Then only a unit that systemd won't
 	// restart, having hit its start limit, needs a restart, once the limit has passed: one still
 	// restarting picks up the restored image on its own. On systemd 254 and later, OnFailure=
-	// runs recovery on every failure, not only at the limit.
+	// runs recovery on every failure, not only at the limit. Not knowing the unit's state, it
+	// schedules the restart, which a running agent only repeats.
 	if err := systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
-		if failedErr := systemctl(ctx, "is-failed", "--quiet", ServiceUnitName); failedErr != nil {
-			log.Info("the agent's unit is restarting on its own, onto the last-good image", "error", err)
+		state, stateErr := unitActiveState(ctx)
+		if stateErr == nil && state != "failed" {
+			log.Info("the agent's unit is restarting on its own, onto the last-good image",
+				"state", state, "error", err)
 			return nil
 		}
-		log.Warn("failed to reset the agent's unit; restarting it once its start limit has passed", "error", err)
+		log.Warn("failed to reset the agent's unit; restarting it once its start limit has passed",
+			"error", err, "state", state, "stateError", stateErr)
 		return scheduleAgentRestart(ctx, runSystemdRun, agentUnitStartLimitInterval)
 	}
 	return systemctl(ctx, "--no-block", "restart", ServiceUnitName)
@@ -376,8 +426,8 @@ type containerAgentConvergence struct {
 	nspawnBinaryPath  func(string) string
 	// For removing images: the agent's selection, the install's settings, the image this daemon
 	// runs, and containerd.
-	images       agentImageSelection
-	install      agentImageSelection
+	images       agentImageEnvFile
+	install      agentImageEnvFile
 	runningImage string
 	listImages   func(context.Context) (string, error)
 	ctr          func(context.Context, ...string) error
@@ -393,11 +443,12 @@ func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoade
 		},
 		runningExecutable: runningAgentExecutable,
 		nspawnBinaryPath:  activeNspawnAgentBinaryPath,
-		images:            agentImageSelection{path: agentImageSelectionPath},
-		install:           agentImageSelection{path: agentInstallSettingsPath},
+		images:            agentImageEnvFile{path: agentImageSelectionPath},
+		install:           agentImageEnvFile{path: agentInstallSettingsPath},
 		runningImage:      os.Getenv(agentImageEnv),
 		listImages: func(ctx context.Context) (string, error) {
-			return utilexec.OutputCmd(ctx, log, "ctr", "--namespace", agentContainerdNamespace, "images", "ls", "-q")
+			return utilexec.OutputCmd(ctx, log, "ctr", "--namespace", agentContainerdNamespace, "images", "ls", "-q",
+				fmt.Sprintf("labels.%q==pulled", agentUpgradeImageLabel))
 		},
 		ctr: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Ctr(), args...)
@@ -443,10 +494,11 @@ func (c *containerAgentConvergence) converge(ctx context.Context) error {
 	return nil
 }
 
-// removeImages removes the agent's images it won't run again, as each AgentUpgrade pulls one: all
-// but the selected and last good ones, the install's, which bootstrap runs after a reset, even
-// offline, and the one this daemon runs. Failing to remove one is only logged, and failing to
-// learn which to keep removes none.
+// removeImages removes the images AgentUpgrades pulled, which carry agentUpgradeImageLabel, that
+// the agent won't run again: all but the selected and last good ones, the install's, which
+// bootstrap runs after a reset, even offline, and the one this daemon runs. Images it didn't pull
+// for an upgrade, such as one staged for a join, stay. Failing to remove one is only logged, and
+// failing to learn which to keep removes none.
 func (c *containerAgentConvergence) removeImages(ctx context.Context) {
 	current, lastGood, err := c.images.read()
 	if err != nil {
@@ -480,10 +532,16 @@ func (c *containerAgentConvergence) removeImages(ctx context.Context) {
 // whether any did.
 func writeContainerUnits(unitDir string) (bool, error) {
 	changed := false
-	for name, content := range map[string][]byte{
-		ServiceUnitName:         containerServiceUnitContent,
-		recoveryServiceUnitName: containerRecoveryUnitContent,
+	// The recovery unit first, as on a host, so an interrupted write never leaves the agent's unit
+	// pointing at a recovery unit that isn't there.
+	for _, unit := range []struct {
+		name    string
+		content []byte
+	}{
+		{recoveryServiceUnitName, containerRecoveryUnitContent},
+		{ServiceUnitName, containerServiceUnitContent},
 	} {
+		name, content := unit.name, unit.content
 		path := filepath.Join(unitDir, name)
 		current, err := os.ReadFile(path) //nolint:gosec // the agent's fixed unit paths
 		if err == nil && bytes.Equal(current, content) {
