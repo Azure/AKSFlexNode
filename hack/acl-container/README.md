@@ -64,6 +64,12 @@ build is cached. It:
 `up --no-agent` boots plain ACL, without the agent or a cluster, to explore the
 OS. `up` again replaces the VM and the cluster.
 
+ACL 3.0.20261019 ships `/var/lib/containerd` unlabeled, so the agent's
+containers run as `kernel_t`. `up --label-containerd` labels it before
+containerd first starts, as ACL's `file_contexts` has it, so they run as
+`spc_t`, as on a build that labels it. `check` expects whichever applies; see
+[SELinux](DESIGN.md#selinux).
+
 ### What `check` covers
 
 - The agent's container: its SELinux context, the host's root and PID
@@ -259,6 +265,7 @@ for its latest instead. Once a version is exported, `up` boots it again without
 | `ACL_IMAGE_GALLERY_IMAGE` | `/SharedGalleries/035db282-f1c8-4ce7-b78f-2a7265d5398c-ACLDEVEL/Images/acl-1es-eval-kvm` | Gallery image |
 | `ACL_IMAGE_DIR` | `.vm/acl-images` | Where exported images are kept; `down` keeps them |
 | `ACLC_STATE_DIR` | `.vm/acl-container` | VM disk, logs, SSH key, kubeconfig, rendered Ignition |
+| `ACLC_LABEL_CONTAINERD` | | `1` for `up --label-containerd` |
 | `ACLC_CONTAINER_ENGINE` | `podman` if installed, else `docker` | Builds the images, runs the registry and Butane |
 | `ACLC_KIND_CLUSTER` | `aclc` | The kind cluster's name |
 | `ACLC_KIND_NODE_IMAGE` | kind's default | The kind node image |
