@@ -8,9 +8,12 @@ fi
 
 # Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded/agent. Run in a private
 # mount namespace so both can be overlaid below, and no case can replace a real binary on the host.
-if [[ -z "${BOOTSTRAP_TEST_ISOLATED:-}" ]]; then
+# Whether this is one is read from the namespace itself rather than from a variable a shell could
+# have inherited: in the host's, the overlays would be visible host-wide, and the cleanup would
+# unmount the host's /usr/local and /opt.
+if [[ "$(readlink /proc/self/ns/mnt)" == "$(readlink /proc/1/ns/mnt)" ]]; then
     command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
-    exec env BOOTSTRAP_TEST_ISOLATED=1 unshare --mount --propagation private bash "$0" "$@"
+    exec unshare --mount --propagation private bash "$0" "$@"
 fi
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
