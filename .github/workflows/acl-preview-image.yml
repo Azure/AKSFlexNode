@@ -1,0 +1,173 @@
+# Temporary: builds the AKS Flex Node agent's image for Azure Container Linux on every push to
+# this branch, and publishes it to ghcr.io/azure/aks-flex-node-agent-acl-preview for early
+# adopters. Before the branch merges, it's either formalized, to build the image from main as
+# part of the release with the release's version tags, like the agent's other artifacts, or
+# removed; see TODO.md, "Before merging".
+#
+# Each image is pushed by digest, attested, and only then tagged sha-<commit> and latest, so a
+# tag only ever names an attested image: its build provenance ties its digest to this workflow run
+# and its commit. The run's summary gives the reference to use, pinned by digest, and the
+# AgentUpgrade parameters that name it.
+name: ACL Preview Agent Image
+
+on:
+  push:
+    branches:
+      - phlombar/acl-container
+
+permissions:
+  contents: read
+
+# A newer push supersedes a build in progress, so latest ends on the newest commit. One stopped
+# before its tags moved leaves only an untagged image.
+concurrency:
+  group: acl-preview-image
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/azure/aks-flex-node-agent-acl-preview
+
+jobs:
+  test:
+    name: Test
+    if: github.repository == 'Azure/AKSFlexNode'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          go build ./...
+          go test ./...
+          make test-install
+
+  publish:
+    name: Build and publish the image
+    needs: test
+    if: github.repository == 'Azure/AKSFlexNode'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure Docker Buildx
+        run: |
+          set -euo pipefail
+          docker buildx create --name aks-flex-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Login to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build and push
+        id: build
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          version="acl-preview-${short_sha}"
+          # The agent's build time, as the release sets it, and the image's.
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # One plain manifest, without buildx's own attestations, which containerd pulls by
+          # digest as is; the provenance step below attests it. It's pushed by digest only: the
+          # tags move once it's attested.
+          docker buildx build \
+            --file hack/acl-container/image/Containerfile \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            --build-arg "VERSION=${version}" \
+            --build-arg "GIT_COMMIT=${short_sha}" \
+            --build-arg "BUILD_TIME=${build_time}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.created=${build_time}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --label "org.opencontainers.image.description=Preview, unsupported: the AKS Flex Node agent as privileged containers on Azure Container Linux" \
+            --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file metadata.json \
+            .
+          digest="$(jq -r '."containerimage.digest"' metadata.json)"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unexpected image digest: ${digest}" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          # The attestation is what adopters verify. A storage record, for the organization's
+          # inventory of where artifacts are stored, would need artifact-metadata: write too.
+          create-storage-record: false
+
+      - name: Tag the attested image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          # A copy of the attested manifest under each tag, not an index around it, which would
+          # have a digest of its own.
+          docker buildx imagetools create --prefer-index=false \
+            --tag "${IMAGE}:sha-${short_sha}" \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@${DIGEST}"
+          for tag in "sha-${short_sha}" latest; do
+            resolved="$(docker buildx imagetools inspect "${IMAGE}:${tag}" | awk '$1 == "Digest:" {print $2; exit}')"
+            if [[ "${resolved}" != "${DIGEST}" ]]; then
+              echo "${IMAGE}:${tag} resolves to ${resolved:-nothing}, not the attested ${DIGEST}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Summarize
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## AKS Flex Node agent for ACL, preview"
+            echo
+            echo "Name the image pinned by digest in the install's settings, \`AKS_FLEX_NODE_IMAGE\`:"
+            echo
+            echo '```'
+            echo "${IMAGE}@${DIGEST}"
+            echo '```'
+            echo
+            echo "Upgrade a node's agent to it with an \`AgentUpgrade\` MachineOperation's parameters:"
+            echo
+            echo '```yaml'
+            echo "downloadURL: oci://${IMAGE}"
+            echo "sha256: ${DIGEST#sha256:}"
+            echo '```'
+            echo
+            echo "- Version: \`${VERSION}\`, commit \`${GITHUB_SHA}\`"
+            echo "- Tags: \`sha-${GITHUB_SHA:0:12}\`, \`latest\`"
+            echo "- Verify its provenance: \`gh attestation verify oci://${IMAGE}@${DIGEST} --owner Azure\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

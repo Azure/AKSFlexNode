@@ -230,6 +230,45 @@ its latest, so set `ACL_IMAGE_VERSION=` (empty) to have `az` ask the gallery
 for its latest instead. Once a version is exported, `up` boots it again without
 `az`.
 
+## Try a preview
+
+Every push to this branch builds the agent's image and publishes it to
+`ghcr.io/azure/aks-flex-node-agent-acl-preview`, for early adopters. It's a
+preview: unsupported, and temporary until it's formalized or removed (see
+[TODO.md](../../TODO.md), "Before merging").
+
+- **The image.** Tags are `sha-<commit>`, one for each commit, and `latest`,
+  the newest. Use the image pinned by digest, which each run of the
+  [workflow](../../.github/workflows/acl-preview-image.yml) gives in its
+  summary. Its provenance ties the digest to that run and its commit:
+
+  ```bash
+  gh attestation verify oci://ghcr.io/azure/aks-flex-node-agent-acl-preview@sha256:... --owner Azure
+  ```
+
+- **The host.** ACL 3.0.20261026 or later, which has the SELinux rule the agent
+  needs and labels containerd's files; see [The ACL image](#the-acl-image).
+- **The install.** Render [`agent-container.bu`](agent-container.bu), from the
+  same commit as the image, with an `agent-container.env` naming the image:
+
+  ```bash
+  AKS_FLEX_NODE_IMAGE=ghcr.io/azure/aks-flex-node-agent-acl-preview@sha256:...
+  ```
+
+- **Joining.** Add bootstrap's inputs to the Ignition config as files, mode
+  0600: `/etc/aks-flex-node/bootstrap.env`, with `bootstrap.sh`'s options as
+  its `AKS_FLEX_NODE_*` variables, one a line (`scripts/bootstrap.sh --help`
+  lists them), and any file they name, such as a base config. The bootstrap
+  unit joins the node at first boot. For the options an AKS cluster needs, see
+  [Joining nodes](../../docs/usage/joining-nodes.md); `bootstrap_inputs` in
+  `harness.py` is a working example for a bootstrap token. Put credential
+  files, such as a service principal's, under `/etc/aks-flex-node` or `/run`,
+  as those docs do: the agent's containers see those at their own paths, and
+  the rest of the host only under `/host`.
+- **Upgrading.** An `AgentUpgrade` MachineOperation whose `downloadURL` is
+  `oci://` and the image's repository, and whose `sha256` is its digest, as the
+  run's summary gives them; see [Working with the node](#working-with-the-node).
+
 ## Settings
 
 | Variable | Default | |
