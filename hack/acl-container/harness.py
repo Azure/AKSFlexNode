@@ -7,7 +7,6 @@
     hack/acl-container/harness.py status                   show the VM, agent container, and machines
     hack/acl-container/harness.py ssh [COMMAND]            shell on the VM, or run a command there
     hack/acl-container/harness.py agent [COMMAND]          shell in the agent container, or run a command there
-    hack/acl-container/harness.py machine ARGS             run flex-machine in the agent container
     hack/acl-container/harness.py console                  follow the VM's serial console
     hack/acl-container/harness.py down                     stop the VM, remove the network, registry, and state
 
@@ -81,7 +80,6 @@ CTR_NAMESPACE = "aks-flex"
 CONTAINER_ID = "aks-flex-node"
 CTR = f"ctr --namespace {CTR_NAMESPACE}"
 
-CHECK_MACHINE = "aclc-check"
 IGNITION_NAME = "config.ign"
 # bootstrap's inputs, which the bootstrap unit waits for: the variables bootstrap.sh takes, and
 # the base config they name, which holds the bootstrap token.
@@ -1496,33 +1494,28 @@ def check_deletion_signal(checks: Checks) -> None:
     check_rejoin(checks, "the deletion signal")
 
 
-def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
-    machine = CHECK_MACHINE
-    agent(f"flex-machine remove {machine} >/dev/null 2>&1 || true", check=False)
-
-    log(f"creating machine {machine} from the container (pulls the rootfs image)")
-    created = agent(f"flex-machine create {machine} --start", check=False, timeout=900)
-    checks.expect(created.returncode == 0, f"flex-machine create {machine} --start",
-                  (created.stdout + created.stderr).strip()[-2000:])
-    if created.returncode != 0:
+def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
+    """The agent's active machine belongs to the host, not to the agent's container: it runs in
+    the host's machine.slice, the container reaches it with the host's systemd-run and
+    machinectl, it keeps running while the container restarts, and it comes back after a reboot.
+    The agent creates and removes machines itself, which repave and the resets check."""
+    machine = daemon_state().get("activeMachine", "")
+    if not machine or machine_state(machine) != "running":
+        checks.expect(False, "the agent's active machine runs", machine or "no active machine")
         return
-    wait_machine(machine, "running")
-    checks.expect(machine in ssh_out("machinectl list --no-legend"),
-                  "the machine the container started is in the host's machinectl list")
 
     unit_cgroup = ssh_out(f"systemctl show systemd-nspawn@{machine}.service -p ControlGroup --value")
     checks.expect(unit_cgroup.startswith("/machine.slice/"),
-                  "the machine runs under the host's machine.slice, outside the container",
+                  f"{machine} runs under the host's machine.slice, outside the agent's container",
                   unit_cgroup)
-
-    wait_until(f"systemd in {machine} to accept commands", 120,
-               lambda: agent(f"flex-machine exec {machine} true", check=False).returncode == 0, 3)
-    os_release = agent(f"flex-machine exec {machine} cat /etc/os-release", check=False)
+    os_release = agent(f"systemd-run --machine={machine} --pipe --wait --quiet cat /etc/os-release",
+                       check=False)
     checks.expect(os_release.returncode == 0 and "ID=" in os_release.stdout,
-                  "systemd-run --machine from the container runs a command in the machine",
+                  f"systemd-run --machine from the agent's container runs a command in {machine}",
                   os_release.stderr.strip())
     shell = agent(f"machinectl shell {machine} /bin/sh -c 'echo shell-ok' </dev/null", check=False)
-    checks.expect("shell-ok" in shell.stdout, "machinectl shell from the container reaches the machine",
+    checks.expect("shell-ok" in shell.stdout,
+                  f"machinectl shell from the agent's container reaches {machine}",
                   (shell.stdout + shell.stderr).strip())
 
     leader = machine_leader(machine)
@@ -1531,34 +1524,17 @@ def check_machine_lifecycle(checks: Checks, reboot: bool, keep: bool) -> None:
     ssh(f"sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
     checks.expect(machine_state(machine) == "running" and machine_leader(machine) == leader,
-                  "the machine kept running, with the same leader, while the agent container restarted")
-
-    agent(f"flex-machine stop {machine}")
-    checks.expect(machine_state(machine) == "", "flex-machine stop powered the machine off")
-    agent(f"flex-machine start {machine}")
-    wait_machine(machine, "running")
-    checks.expect(True, "flex-machine start started it again")
+                  f"{machine} kept running, with the same leader, while the agent's container restarted")
 
     if reboot:
-        agent(f"flex-machine enable {machine}")
         log("rebooting the VM")
         ssh("sudo systemctl reboot", check=False, timeout=15)
         wait_until("the VM to go down", 120, lambda: ssh("true", check=False, timeout=5).returncode != 0, 3)
         wait_for_ssh()
         wait_for_agent()
         checks.expect(True, "the agent container came back after a reboot")
-        wait_machine(machine, "running")
-        checks.expect(True, "the enabled machine started at boot")
-        agent(f"flex-machine disable {machine}")
-
-    if keep:
-        log(f"keeping machine {machine}")
-        return
-    agent(f"flex-machine remove {machine}")
-    checks.expect(machine_state(machine) == "", "flex-machine remove stopped the machine")
-    gone = ssh(f"sudo test ! -e /var/lib/machines/{machine} -a ! -e /etc/systemd/nspawn/{machine}.nspawn",
-               check=False).returncode == 0
-    checks.expect(gone, "flex-machine remove deleted the machine's directory and .nspawn file")
+        wait_machine(machine, "running", timeout=300)
+        checks.expect(True, f"{machine} runs again after the reboot")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1660,7 +1636,7 @@ def cmd_push(_: argparse.Namespace) -> None:
 CHECK_GROUPS = ("container", "cluster", "repave", "nodereboot", "machines", "upgrade",
                 "agentreset", "reset", "deletion")
 # The groups that need the cluster, which up --no-agent doesn't create.
-CLUSTER_CHECK_GROUPS = set(CHECK_GROUPS) - {"container", "machines"}
+CLUSTER_CHECK_GROUPS = set(CHECK_GROUPS) - {"container"}
 
 
 def check_groups(value: str) -> tuple[str, ...]:
@@ -1685,7 +1661,7 @@ def cmd_check(args: argparse.Namespace) -> None:
         good_image = check_agent_upgrade(checks)
 
     def machines() -> None:
-        check_machine_lifecycle(checks, reboot=args.reboot, keep=args.keep)
+        check_machine_lifecycle(checks, reboot=args.reboot)
         if cluster and args.reboot:
             wait_for_node_ready()
             checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
@@ -1740,10 +1716,6 @@ def cmd_agent(args: argparse.Namespace) -> None:
     exec_in_agent(args.command)
 
 
-def cmd_machine(args: argparse.Namespace) -> None:
-    exec_in_agent(["flex-machine", *args.args])
-
-
 def cmd_console(_: argparse.Namespace) -> None:
     os.execvp("tail", ["tail", "-n", "+1", "-f", str(STATE / "serial.log")])
 
@@ -1785,7 +1757,6 @@ def main() -> None:
     check = commands.add_parser("check", help="run the feasibility checks")
     check.add_argument("--no-reboot", dest="reboot", action="store_false",
                        help="skip the VM reboot")
-    check.add_argument("--keep", action="store_true", help=f"keep the {CHECK_MACHINE} machine")
     check.add_argument("--only", type=check_groups, default=CHECK_GROUPS, metavar="GROUP[,GROUP...]",
                        help="run only these groups of checks, in their usual order: "
                             f"{', '.join(CHECK_GROUPS)}")
@@ -1801,11 +1772,6 @@ def main() -> None:
     agent_cmd = commands.add_parser("agent", help="open a shell in the agent container, or run a command there")
     agent_cmd.add_argument("command", nargs=argparse.REMAINDER)
     agent_cmd.set_defaults(func=cmd_agent)
-
-    machine = commands.add_parser("machine", help="run flex-machine in the agent container",
-                                  add_help=False)
-    machine.add_argument("args", nargs=argparse.REMAINDER)
-    machine.set_defaults(func=cmd_machine)
 
     console = commands.add_parser("console", help="follow the VM's serial console")
     console.set_defaults(func=cmd_console)

@@ -79,16 +79,16 @@ containerd first starts, as ACL's `file_contexts` has it, so they run as
 - The node: Ready, its machine running, a pod on it, and `kubectl logs`
 - Repave from kube1 to kube2, as `main`'s e2e does
 - A `NodeReboot` MachineOperation
-- Machines the container creates with `flex-machine`, kept running across a
-  restart of the agent's container, and a VM reboot
+- The agent's machine: in the host's `machine.slice`, reached from the agent's
+  container with `systemd-run --machine` and `machinectl shell`, kept running
+  across a restart of the agent's container, and back after a VM reboot
 - `AgentUpgrade`: to a good candidate image, to a broken one, which rolls back,
   to one named by tag alone, which is rejected, and back to the agent's own
   image
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal, each followed by
   bootstrapping the node again
 
-`check --no-reboot` skips the reboot, and `--keep` keeps the `aclc-check`
-machine. `check --only GROUP,...` runs some of its groups, in their usual order:
+`check --no-reboot` skips the reboot. `check --only GROUP,...` runs some of its groups, in their usual order:
 `container`, `cluster`, `repave`, `nodereboot`, `machines`, `upgrade`,
 `agentreset`, `reset`, and `deletion`. Each starts from a joined node and
 leaves one, so any of them can run alone, such as `--only upgrade,agentreset`
@@ -208,30 +208,6 @@ systemd-run --machine=kube1 --pipe --wait -- uname -a
 host-exec ip -br addr
 ```
 
-### Machines of your own
-
-`harness.py machine` runs `flex-machine`, which manages nspawn machines the way
-the agent does, for experiments next to the agent's:
-
-```bash
-hack/acl-container/harness.py machine create demo --start   # pull the rootfs, boot it
-hack/acl-container/harness.py machine list
-hack/acl-container/harness.py machine shell demo            # root shell in the machine
-hack/acl-container/harness.py machine exec demo cat /etc/os-release
-hack/acl-container/harness.py machine remove demo
-```
-
-| Command | What it does |
-|---|---|
-| `list` | `machinectl list` and `machinectl list-images` |
-| `create NAME [--image REF] [--start]` | Unpacks an OCI rootfs image into `/var/lib/machines/NAME` and writes `/etc/systemd/nspawn/NAME.nspawn`. The default image, `ghcr.io/azure/agent-azlinux3:v20260619`, is the one the agent uses on ACL. |
-| `start NAME`, `stop NAME`, `restart NAME`, `terminate NAME` | `machinectl start`, `poweroff`, `reboot`, `terminate` |
-| `status NAME`, `logs NAME [-f]` | `machinectl status`, and the host's log for `systemd-nspawn@NAME.service` |
-| `shell NAME [CMD...]` | `machinectl shell`: a root shell, or `CMD`, with an absolute path |
-| `exec NAME CMD...` | `systemd-run --machine --pipe --wait`, as the agent runs commands in its machines |
-| `enable NAME`, `disable NAME` | Start it at boot, or not |
-| `remove NAME` | Stops it, and deletes its directory and `.nspawn` file |
-
 ## The ACL image
 
 Without `--image` or `ACL_IMAGE`, `up` boots the Azure build of ACL from the
@@ -311,7 +287,6 @@ The subnet, interface names, and ports differ from the other harnesses in
 | `image/bin/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
 | `image/bin/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
 | `image/bin/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
-| `image/bin/flex-machine` | Machine management for experiments |
 | `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
 | `aclimage.py` | Gallery image export |
 | `ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon |

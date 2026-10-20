@@ -153,13 +153,13 @@ before containerd answers.
 
 - the agent, built with Microsoft Go as the release is: static, with its
   cgo-less OpenSSL backend
-- `crane`, for `flex-machine`
-- `main`'s `scripts/bootstrap.sh`
+- `main`'s `scripts/bootstrap.sh`, and the tools it requires
 - the scripts in [`image/bin`](image/bin)
 
 They're in `/opt/aks-flex-node/bin`, since the container mounts the host's
-`/usr/local`. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It's about
-200 MB, in six layers.
+`/usr/local`. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It holds no
+development tools: only what the agent's containers run. It's about 180 MB,
+in six layers.
 
 ### The entrypoint
 
@@ -449,6 +449,6 @@ whose disk writes the host caches (`cache=unsafe`):
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
 | `check`, with a reboot | 72 checks, about 8 min; `upgrade` is the longest group, at about 1.5 min |
-| Agent image | about 200 MB, six layers |
+| Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
