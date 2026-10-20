@@ -6,6 +6,9 @@ Wants=network-online.target
 # container, which takes longer than RestartSec.
 After=network-online.target containerd.service aks-flex-node-agent-recovery.service
 Requires=containerd.service
+# The agent installs the nspawn lifecycle helper under /usr/local, which the
+# install makes writable with a mount.
+RequiresMountsFor=/usr/local
 # As on a host: when an upgraded agent fails, its recovery unit restores the
 # last-good image. systemd 254 and later run OnFailure= at every failure, and
 # earlier ones once the unit hits its start limit.
@@ -30,13 +33,29 @@ ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1;
 # then finds it stopped.
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
+# This start waits for recovery's, and a recovery that timed out may still run
+# in its container, so no recovery runs beside the agent.
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-recovery
 # The container gets the host's root at /host, and its entrypoint mounts the
 # host paths the agent uses at their own paths. The agent learns its image, and
 # how to pull and run images, for AgentUpgrade. runc asks systemd for a scope
 # for it, aks-flex-agent.scope in system-aksflex.slice, so systemd tracks and
-# accounts for it; ctr would otherwise put it in a cgroup outside any unit.
+# accounts for it; ctr would otherwise put it in a cgroup outside any unit. The
+# scope:
+# - is bound to this unit, so stopping the unit stops the container, even when
+#   systemd has to kill ctr, which leaves the task running, or the unit's file
+#   is gone, as when the agent uninstalls its own unit
+# - kills what's left of the container after 30 s, within this unit's
+#   TimeoutStopSec and ACL's default of 45 s, which a unit whose file is gone
+#   has, so a stop of the unit ends only once its container has
+# - is unloaded even when it fails, as when it's killed: a failed scope keeps
+#   the next container from its name, and on ACL nothing may reset it
+# The other units, and AgentUpgrade's check, set up their scopes the same way.
 ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
   --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:agent \
+  --annotation "org.systemd.property.BindsTo=['%n']" \
+  --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+  --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
   --privileged --net-host --with-ns pid:/proc/1/ns/pid \
   --mount type=bind,src=/,dst=/host,options=rbind:rslave \
   --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_IMAGE} \

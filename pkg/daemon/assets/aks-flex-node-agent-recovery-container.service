@@ -18,9 +18,12 @@ ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1;
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-recovery
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-recovery
 # Runs the last-good image's agent, which restores that image and restarts the
-# agent's unit.
+# agent's unit, in a scope set up as the agent's unit sets up its container's.
 ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
   --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:recovery \
+  --annotation "org.systemd.property.BindsTo=['%n']" \
+  --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+  --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
   --privileged --net-host --with-ns pid:/proc/1/ns/pid \
   --mount type=bind,src=/,dst=/host,options=rbind:rslave \
   --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_LAST_GOOD_IMAGE} \

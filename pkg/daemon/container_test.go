@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -297,5 +299,53 @@ func TestContainerUnitsWaitForContainerd(t *testing.T) {
 				t.Errorf("the unit's first command is %q, want a wait for containerd to answer", first)
 			}
 		})
+	}
+}
+
+// Recovery that can't reset the agent's failed unit restarts it once the unit's start limit has
+// passed, by agentUnitStartLimitInterval, so the two have to agree.
+func TestContainerAgentUnitStartLimitMatchesRecovery(t *testing.T) {
+	t.Parallel()
+
+	got := unitDirectives(containerServiceUnitContent, "Unit", "StartLimitIntervalSec")
+	want := strconv.Itoa(int(agentUnitStartLimitInterval.Seconds()))
+	if !slices.Equal(got, []string{want}) {
+		t.Errorf("StartLimitIntervalSec= is %q, want %s, agentUnitStartLimitInterval in seconds", got, want)
+	}
+}
+
+// Each unit's container runs in a scope set up as AgentUpgrade's check sets up its own: bound to
+// the unit, killed within the unit's stop timeout, and unloaded when it fails.
+func TestContainerUnitsSetUpTheirScopes(t *testing.T) {
+	t.Parallel()
+
+	annotations := agentScopeAnnotations("%n")
+	for name, content := range map[string][]byte{
+		ServiceUnitName:         containerServiceUnitContent,
+		recoveryServiceUnitName: containerRecoveryUnitContent,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			for i := 0; i < len(annotations); i += 2 {
+				want := fmt.Sprintf("%s %q", annotations[i], annotations[i+1])
+				if !strings.Contains(string(content), want) {
+					t.Errorf("the unit's ctr run lacks %s", want)
+				}
+			}
+		})
+	}
+}
+
+func TestContainerAgentUnitClearsRecoveryAndNeedsUsrLocal(t *testing.T) {
+	t.Parallel()
+
+	// Its start waits for recovery's, so a recovery that outlived its unit can't run beside it.
+	clearRecovery := "-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-recovery"
+	if got := unitDirectives(containerServiceUnitContent, "Service", "ExecStartPre"); !strings.Contains(strings.Join(got, " "), clearRecovery) {
+		t.Errorf("ExecStartPre= is %q, want it to include %s", got, clearRecovery)
+	}
+	if got := unitDirectives(containerServiceUnitContent, "Unit", "RequiresMountsFor"); !slices.Contains(got, "/usr/local") {
+		t.Errorf("RequiresMountsFor= is %q, want it to include /usr/local", got)
 	}
 }
