@@ -348,7 +348,7 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 			wantCalls:    []string{resetFailed, "systemctl --no-block restart " + ServiceUnitName},
 			wantSelected: testAgentImageV1,
 		},
-		// As kernel_t, under the development SELinux workaround.
+		// As kernel_t, where containerd's files are unlabeled.
 		"waits out the start limit when it can't reset a failed unit": {
 			pending:      true,
 			resetFails:   true,
