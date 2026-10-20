@@ -22,7 +22,11 @@ borrow from it only where that's simpler than redoing the work.
       - Remove it: revert its commit.
 
       Either way, retire the preview package, and tell early adopters where
-      the image moved, or that it's gone.
+      the image moved, or that it's gone. A formalized image may also want to
+      be reproducible, which the preview isn't, though its base images are
+      pinned: `tdnf` installs whatever the repositories hold at build time, so
+      every rebuild of a commit has a new digest. That would take pinning the
+      packages, and a fixed time for the build, its files, and its labels.
 - [ ] ACL's SELinux rule reaches the image AKS will use. ACL 3.0.20261019 has
       it, but from a development gallery, and excluded from its latest. Then
       move the harness's default to that image, and link ACL's tracking item.
