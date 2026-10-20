@@ -144,7 +144,9 @@ image.
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
       for every state but active, 3 for inactive and 4 for no such unit,
-      which the check takes for an error. Raise it with unbounded.
+      which the check takes for an error. Raised with unbounded as
+      Azure/unbounded#962, which reads `systemctl show` instead; it comes with
+      the next bump of unbounded.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
       `/etc/aks-flex-node/agent-image.env`, which the harness writes through
