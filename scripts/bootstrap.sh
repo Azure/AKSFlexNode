@@ -43,8 +43,8 @@ SP_CLIENT_CERTIFICATE_FILE="${AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE:-}"
 AGENT_URL="${AKS_FLEX_NODE_AGENT_URL:-}"
 AGENT_VERSION="${AKS_FLEX_NODE_AGENT_VERSION:-}"
 AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
-# Deprecated: the installer chooses the install directory. Kept only to reject
-# a different one.
+# Deprecated: the installer chooses the install directory. Kept only to warn
+# that a different one is ignored.
 REQUESTED_INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-}"
 INSTALL_DIR=""
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
@@ -111,7 +111,7 @@ Options:
                                  Override bootstrap.offlineArtifacts.source
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
-  --install-dir PATH             Deprecated; the installer chooses it
+  --install-dir PATH             Deprecated and ignored; the installer chooses it
   --config-path PATH             Rendered config destination
   -h, --help                     Show this help
 
@@ -581,10 +581,15 @@ resolve_install_dir() {
         INSTALL_DIR="$HOST_ROOT/bin"
     fi
 
+    # Ignored rather than refused: callers that pass the old default,
+    # /usr/local/bin, would otherwise fail on every host installed under the
+    # host root, including any rejoin after a reset.
     if [[ -n "$REQUESTED_INSTALL_DIR" ]]; then
-        [[ "${REQUESTED_INSTALL_DIR%/}" == "$INSTALL_DIR" ]] ||
-            fatal "--install-dir $REQUESTED_INSTALL_DIR is not $INSTALL_DIR, where this host keeps the agent"
-        log "warning: --install-dir is deprecated; the installer chooses the install directory"
+        if [[ "${REQUESTED_INSTALL_DIR%/}" == "$INSTALL_DIR" ]]; then
+            log "warning: --install-dir is deprecated; the installer chooses the install directory"
+        else
+            log "warning: --install-dir is deprecated and ignored; installing in $INSTALL_DIR, where this host keeps the agent, not $REQUESTED_INSTALL_DIR"
+        fi
     fi
 }
 

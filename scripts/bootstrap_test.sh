@@ -574,8 +574,8 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/installed-etc/config.json" >/dev/null
 assert_ran_from "$WORK_DIR/installed-calls" /opt/unbounded/agent/bin/aks-flex-node
 
-# --install-dir is deprecated. It is accepted only when it matches the directory the installer
-# picks.
+# --install-dir is deprecated. A matching one is accepted with a warning, and any other is ignored
+# with one, so callers that pass the old default keep working on hosts installed under the host root.
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/matching-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
@@ -585,16 +585,16 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     fail "a matching --install-dir was rejected"
 grep -q "deprecated" "$WORK_DIR/matching.log" || fail "--install-dir did not warn that it is deprecated"
 
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/mismatch-calls" \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --auth arc \
-            --install-dir "$WORK_DIR/elsewhere" \
-            --config-path "$WORK_DIR/mismatch-etc/config.json" >"$WORK_DIR/mismatch.log" 2>&1; then
-    fail "an --install-dir that disagrees with the installer was accepted"
-fi
-grep -q "where this host keeps the agent" "$WORK_DIR/mismatch.log" || fail "mismatch was not explained"
-[[ ! -e "$WORK_DIR/elsewhere/aks-flex-node" ]] || fail "a binary was installed despite the mismatch"
-[[ ! -s "$WORK_DIR/mismatch-calls" ]] || fail "the agent was run despite the mismatch"
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/mismatch-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+AKS_FLEX_NODE_INSTALL_DIR="$WORK_DIR/elsewhere" \
+    bash "$SCRIPT" --auth arc \
+        --config-path "$WORK_DIR/mismatch-etc/config.json" >"$WORK_DIR/mismatch.log" 2>&1 ||
+    fail "an --install-dir that disagrees with the installer was refused"
+grep -q "deprecated and ignored; installing in /opt/unbounded/agent/bin" "$WORK_DIR/mismatch.log" ||
+    fail "ignoring a mismatched --install-dir was not explained"
+[[ ! -e "$WORK_DIR/elsewhere" ]] || fail "the ignored --install-dir was created"
+assert_ran_from "$WORK_DIR/mismatch-calls" /opt/unbounded/agent/bin/aks-flex-node
 
 echo "bootstrap script tests passed"

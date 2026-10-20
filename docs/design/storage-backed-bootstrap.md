@@ -427,9 +427,9 @@ AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
 ```
 
-`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated. The script
-chooses the binary directory, and a value that names any other directory is
-rejected.
+`AKS_FLEX_NODE_INSTALL_DIR` and `--install-dir` are deprecated and ignored. The
+script chooses the binary directory, and logs a warning when a value names any
+other directory.
 
 The equivalent non-secret values have CLI flags. A service-principal client
 secret has no CLI value because command arguments are process-visible. Use a
