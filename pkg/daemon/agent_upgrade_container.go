@@ -339,10 +339,11 @@ func recoverContainerAgentUpgrade(
 	if err := executor.rollbackSwitch(signal); err != nil {
 		return err
 	}
-	// As kernel_t, under the development SELinux workaround, reset-failed is denied. Then only a
-	// unit that systemd won't restart, having hit its start limit, needs a restart, once the
-	// limit has passed: one still restarting picks up the restored image on its own. On
-	// systemd 254 and later, OnFailure= runs recovery on every failure, not only at the limit.
+	// As kernel_t, which the agent's containers run as where containerd's files are unlabeled, as
+	// ACL 3.0.20261019 ships them, reset-failed is denied. Then only a unit that systemd won't
+	// restart, having hit its start limit, needs a restart, once the limit has passed: one still
+	// restarting picks up the restored image on its own. On systemd 254 and later, OnFailure=
+	// runs recovery on every failure, not only at the limit.
 	if err := systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
 		if failedErr := systemctl(ctx, "is-failed", "--quiet", ServiceUnitName); failedErr != nil {
 			log.Info("the agent's unit is restarting on its own, onto the last-good image", "error", err)

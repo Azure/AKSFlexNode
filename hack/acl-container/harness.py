@@ -770,7 +770,7 @@ def launch_vm(image: Path, config_url: str) -> None:
     pid_file, serial_log = STATE / "qemu.pid", STATE / "serial.log"
     serial_log.unlink(missing_ok=True)
     # cache=unsafe lets the host cache the guest's writes and ignores its flushes. The guest writes
-    # whole images, as every container start under the SELinux workaround copies its image. It
+    # whole images, as containerd pulls and unpacks the agent's and machines' images. It
     # risks only a disk QEMU dies holding, and this one is created for this VM and dropped with
     # it, by up again or down.
     run(["setsid", "qemu-system-x86_64",
@@ -880,6 +880,15 @@ def wait_for_agent(timeout: float = 600) -> None:
         state = ssh(f"systemctl show {AGENT_UNIT} -p ActiveState --value", check=False).stdout.strip()
         if state == "failed":
             print(ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -n 40", check=False).stdout)
+        # The entrypoint exits when the host's machinectl fails, and systemd restarts it, so a
+        # denial would otherwise only show as a timeout.
+        failure = ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -o cat | grep -m1 'machinectl failed'",
+                      check=False).stdout.strip()
+        if "Access denied" in failure:
+            die(f"the agent container cannot reach the host's systemd over D-Bus: {failure}\n"
+                "ACL's SELinux policy needs `allow spc_t kernel_t:dbus send_msg;`, which ACL "
+                "3.0.20261019 and later have (see SELINUX.md). Look for denials with "
+                "`sudo journalctl -b | grep 'avc:  denied'` on the VM.")
         return False
 
     deadline = time.monotonic() + timeout
@@ -1013,6 +1022,17 @@ def check_container(checks: Checks) -> None:
     checks.expect(ssh(f"systemctl is-active {AGENT_UNIT}", check=False).stdout.strip() == "active",
                   f"{AGENT_UNIT} is active")
     checks.expect(agent_task_status() == "RUNNING", "the agent task runs in containerd")
+
+    # The agent's containers run as spc_t, as executing a file of containerd's snapshots, labeled
+    # for containers, moves them to it. Where containerd's files are unlabeled, as ACL 3.0.20261019
+    # ships them, nothing moves them, and they stay kernel_t, as every host process is on ACL.
+    snapshots = ssh_out("sudo stat -c %C /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots")
+    snapshot_type = (snapshots.split(":") + ["", "", ""])[2]
+    expected = "kernel_t" if snapshot_type == "unlabeled_t" else "spc_t"
+    context = agent_out("tr -d '\\0' </proc/self/attr/current")
+    checks.expect(f":{expected}:" in context,
+                  f"the agent container runs as {expected}, as containerd's snapshots are "
+                  f"{snapshot_type or 'unknown'}", context)
 
     host_root = ssh_out("sudo stat -c %d:%i /")
     checks.expect(agent_out("stat -c %d:%i /host") == host_root,
@@ -1244,9 +1264,7 @@ def build_candidate_images() -> tuple[str, str]:
         (context / "Containerfile").write_text("\n".join([f"FROM {LOCAL_AGENT_IMAGE}", *steps]) + "\n")
         local = f"localhost/{AGENT_REPOSITORY}:{tag}"
         log(f"building {local}")
-        # One layer, for the native snapshotter's sake, as build_agent_image does.
-        squash = ["--squash-all"] if ENGINE == "podman" else []
-        run([ENGINE, "build", "--quiet", *squash, "-t", local, str(context)], capture=True)
+        run([ENGINE, "build", "--quiet", "-t", local, str(context)], capture=True)
         reference = push_image(local, tag)
         record.write_text(json.dumps({"key": key, "reference": reference}) + "\n")
         references.append(reference)
@@ -1296,9 +1314,9 @@ SYSTEMD_TIMESPAN_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1, "min": 60, "h": 3600}
 def make_room_for_agent_starts(needed: int) -> None:
     """Wait, if need be, until the agent's unit can start needed more times within its start
     limit. The limit counts deliberate restarts, as AgentUpgrade's, as well as failures, and a
-    start past it fails the unit, which recovery takes for a failed upgrade. Under the SELinux
-    workaround nothing on the host may reset it, so a group of checks that restarts the agent
-    waits for earlier starts to age out instead."""
+    start past it fails the unit, which recovery takes for a failed upgrade. Host root, kernel_t on
+    ACL, may not reset it, so a group of checks that restarts the agent waits for earlier starts
+    to age out instead."""
     props = dict(line.split("=", 1) for line in ssh_out(
         f"systemctl show {AGENT_UNIT} -p StartLimitBurst -p StartLimitIntervalUSec").splitlines() if "=" in line)
     burst = int(props.get("StartLimitBurst", "0") or 0)
