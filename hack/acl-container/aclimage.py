@@ -33,11 +33,13 @@ from xml.etree import ElementTree
 
 GALLERY_IMAGE = os.environ.get(
     "ACL_IMAGE_GALLERY_IMAGE",
-    "/SharedGalleries/b3e01d89-bd55-414f-bbb4-cdfeb2628caa-ACL/Images/acl-1es-eval",
+    "/SharedGalleries/035db282-f1c8-4ce7-b78f-2a7265d5398c-ACLDEVEL/Images/acl-1es-eval-kvm",
 )
-# The image is replicated to one region, which is where the export's disk has to be made.
+# Where the export's disk is made, which the image has to be replicated to.
 GALLERY_LOCATION = os.environ.get("ACL_IMAGE_GALLERY_LOCATION", "westus2")
-GALLERY_VERSION = os.environ.get("ACL_IMAGE_VERSION", "")
+# The first build with the SELinux rule the agent's container needs. It's excluded from the
+# gallery's latest, so it's named; an empty ACL_IMAGE_VERSION asks the gallery for its latest.
+GALLERY_VERSION = os.environ.get("ACL_IMAGE_VERSION", "3.20261019.3")
 EXPORT_RESOURCE_GROUP = os.environ.get("ACL_IMAGE_RESOURCE_GROUP", "")
 EXPORT_SUBSCRIPTION = os.environ.get("ACL_IMAGE_SUBSCRIPTION", "")
 GALLERY_IMAGE_PATTERN = re.compile(r"/SharedGalleries/([^/]+)/Images/([^/]+)")
