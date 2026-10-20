@@ -221,9 +221,12 @@ It puts back everything it changes:
   transient timer, the dummy interface, the nft table, the bpffs mount, the
   test files, the image and container the probe ran through containerd, and the
   second machine. It unmasks the masked unit, unloads the `dummy` module if it
-  loaded it, and restores `MACHINE`'s enablement and running state.
-- `--policy` loads each file only for its probe, then puts back the original
-  policy and reloads it.
+  loaded it, turns swap that was on back on, and restores `MACHINE`'s
+  enablement and running state.
+- `--policy` loads each file only for its probe, from a private mount
+  namespace where the file is bound over the host's policy file, so the policy
+  on disk never changes, even if the run is interrupted. It then reloads the
+  policy on disk.
 - `--workaround` relabels the containerd native snapshotter's two top
   directories, and puts their labels back.
 

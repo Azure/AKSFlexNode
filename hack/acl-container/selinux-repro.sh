@@ -21,9 +21,10 @@
 # Everything runs in containerd namespaces of its own, which are removed at the
 # end.
 # After each probe the host is put back: what the probe created is removed,
-# and the masked unit, the module, the machine's enablement, and its running
-# state are as before. --policy reloads the original policy after its probe;
-# --workaround puts back the labels it changes.
+# and the masked unit, the module, swap, the machine's enablement, and its
+# running state are as before. --policy loads its policy without writing it to
+# disk, and reloads the original after its probe; --workaround puts back the
+# labels it changes.
 set -euo pipefail
 
 IMAGE=${IMAGE:-mcr.microsoft.com/azurelinux/busybox:1.36}
@@ -66,7 +67,7 @@ type_of() { cut -d: -f3 <<<"$1"; }
 policy_dir=/etc/selinux/$(. /etc/selinux/config && echo "$SELINUXTYPE")/policy
 policy_files=("$policy_dir"/policy.*)
 policy_file=${policy_files[-1]}
-policy_backup=
+candidate_loaded=
 native_labels=()
 summary=()
 
@@ -75,6 +76,7 @@ blockdev=$(find /sys/block -mindepth 1 -maxdepth 1 -printf '%f\n' | grep -vE '^(
 mask_unit_state=$(systemctl is-enabled "$MASK_UNIT" 2>/dev/null || true)
 [[ -n $mask_unit_state && $mask_unit_state != not-found ]] || MASK_UNIT=
 dummy_loaded=$([[ -d /sys/module/dummy ]] && echo yes || echo no)
+mapfile -t active_swaps < <(swapon --show=NAME --noheadings 2>/dev/null || true)
 machine_enabled=
 if [[ -n $MACHINE ]]; then
     machine_enabled=$(systemctl is-enabled "systemd-nspawn@$MACHINE.service" 2>/dev/null || true)
@@ -93,6 +95,9 @@ reset_host() {
     ip link del "$IFACE" 2>/dev/null || true
     [[ $dummy_loaded == no ]] && modprobe -r dummy 2>/dev/null || true
     nft delete table inet acl_selinux_repro 2>/dev/null || true
+    for swap in "${active_swaps[@]}"; do
+        swapon "$swap" 2>/dev/null || true
+    done
     umount "/run/$REPRO-bpf" 2>/dev/null || true
     rmdir "/run/$REPRO-bpf" 2>/dev/null || true
     rm -rf "/opt/$REPRO" "/var/lib/machines/$REPRO-img"
@@ -122,14 +127,30 @@ reset_host() {
     fi
 }
 
+# Loads a candidate policy without touching the policy on disk: load_policy
+# reads the policy file, which a private mount namespace binds the candidate
+# over, and what it loads is the kernel's, for every namespace. A plain
+# load_policy then loads the policy on disk again, so nothing a probe does, nor
+# an interrupted run, leaves a candidate, or a partial file, for the next boot.
+load_candidate_policy() {
+    # The inner shell expands its own arguments.
+    # shellcheck disable=SC2016
+    unshare --mount --propagation private sh -c 'mount --bind "$1" "$2" && load_policy' sh "$1" "$policy_file"
+}
+
 restore_policy() {
-    cp "$policy_backup" "$policy_file" && load_policy && rm -f "$policy_backup"
-    policy_backup=
+    if ! load_policy; then
+        echo "  error: failed to reload the policy on disk; run load_policy" >&2
+        return 1
+    fi
+    candidate_loaded=
     echo "  restored the original policy ($(sha256sum <"$policy_file" | cut -c1-16))"
 }
 
 cleanup() {
-    [[ -n $policy_backup ]] && restore_policy
+    if [[ -n $candidate_loaded ]]; then
+        restore_policy || true
+    fi
     reset_host >/dev/null 2>&1 || true
     if (( ${#native_labels[@]} > 0 )); then
         chcon "${native_labels[0]}" "$NATIVE" || true
@@ -354,11 +375,9 @@ probe "current policy"
 
 for candidate in "${candidate_policies[@]}"; do
     section "Privileged container, default snapshotter, policy $candidate"
-    policy_backup=$(mktemp /root/policy.orig.XXXXXX)
-    cp "$policy_file" "$policy_backup"
-    cp "$candidate" "$policy_file"
-    load_policy
-    echo "  loaded $candidate ($(sha256sum <"$policy_file" | cut -c1-16))"
+    candidate_loaded=$candidate
+    load_candidate_policy "$candidate"
+    echo "  loaded $candidate ($(sha256sum <"$candidate" | cut -c1-16))"
     probe "policy $(basename "$candidate")"
     restore_policy
 done
