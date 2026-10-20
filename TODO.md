@@ -39,17 +39,22 @@ ACL 3.0.20261019 (build 1229918), gallery image
 without the workaround, whose commit is reverted. The harness boots that build
 by default. See `hack/acl-container/SELINUX.md`.
 
-- [ ] Waiting on ACL's answer to our writeup, sent 2026-10-20: 3.0.20261019
-      builds `/var/lib/containerd` into the image, with an Arc agent image,
-      and leaves it unlabeled, though its `file_contexts` labels it
-      `container_var_lib_t`. So every container containerd starts stays
-      `kernel_t`, and machines the agent creates run as `spc_t`; once
-      labeled, the agent's containers run as `spc_t` and its machines as
-      `kernel_t`. The agent passes `check` either way (`up --label-containerd`
-      tests the labeled case), but a relabel, or a build that labels it,
-      changes the domains under running nodes. We asked whether `kernel_t` is
-      intended, whether production builds will label it, and which domain to
-      design for. SELINUX.md's question 5.
+- [ ] ACL's next nightly labels `/var/lib/containerd`, which they said
+      after our writeup of 2026-10-20 (SELINUX.md's question 5): 3.0.20261019
+      builds it into the image, with an Arc agent image, and leaves it
+      unlabeled, so every container containerd starts stays `kernel_t`, and
+      the machines the agent creates run as `spc_t`. Labeled, the agent's
+      containers run as `spc_t` and its machines as `kernel_t`. When the
+      nightly is out:
+      - Boot it in the harness as it ships, and run `check`: the agent's
+        containers should run as `spc_t` without `up --label-containerd`.
+      - Make it the harness's default, pinned in `aclimage.py`.
+      - Keep 3.0.20261019 bootable, with `ACL_IMAGE_VERSION=3.20261019.3`,
+        to run `check` where the agent's containers are `kernel_t` and may
+        not `reset-failed` their unit. Upgrade recovery's fallback for that,
+        starting the unit once its start limit has passed, stays, for any
+        host whose policy denies it.
+      - Then decide whether `--label-containerd` still earns its place.
 - [ ] Early adopters need access to that build's gallery image, ACLDEVEL's
       `acl-1es-eval-kvm`, which is shared with particular tenants.
 - [ ] Reprovision any development hosts set up with the workaround: Ignition
