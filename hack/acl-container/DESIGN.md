@@ -12,7 +12,7 @@
 On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
 `main`'s controller,
-`harness.py check` verifies 68 checks, including all of the following:
+`harness.py check` verifies 72 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -29,9 +29,12 @@ On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal each end as on a
   host: the agent's unit is gone, and nothing of the agent runs. What installed
   it stays, so bootstrapping again joins the node, with the install's image or
-  one bootstrap is given.
+  one bootstrap is given, and with the install's when the agent's registry is
+  unreachable.
 - Machines run in the host's `machine.slice`, not in the container. They keep
   running while the agent's container restarts, and come back after a reboot.
+  A container that won't stop on `SIGTERM` still stops with its unit, which
+  then starts again.
   The agent's binary, which kubelet runs as its credential plugin, runs in them.
 
 The agent's containers need one SELinux rule, `allow spc_t kernel_t:dbus
@@ -119,7 +122,7 @@ Four units run containers of the agent's image, each in containerd namespace
 | `aks-flex-node-reset.service` | `aks-flex-node-reset` | `aks-flex-node reset` | Ignition |
 
 `AgentUpgrade` also runs `aks-flex-node version` in a short-lived
-`aks-flex-node-upgrade-check-N` container of the candidate image.
+`aks-flex-node-upgrade-check` container of the candidate image.
 
 The agent's two units are embedded in the agent, in
 [`pkg/daemon/assets`](../../pkg/daemon/assets), so they change with its image.
@@ -130,7 +133,9 @@ Each unit reads the install's settings, `/etc/sysconfig/aks-flex-node-container`
 then `/etc/aks-flex-node/agent-image.env` if it's there; see
 [Which image](#which-image). It clears a task and container that a killed `ctr`
 may have left, since both outlive it, then runs the container in the
-foreground with `ctr run --rm`:
+foreground with `ctr run --rm`. The agent's unit also clears a recovery
+container that outlived its unit, which timed out, since the agent's start
+waits for recovery's:
 
 | `ctr run` flag | Why |
 |---|---|
@@ -138,7 +143,8 @@ foreground with `ctr run --rm`:
 | `--net-host` | The host's network. The machines share it too (`VirtualEthernet=no`), and `ctr` then also bind-mounts the host's `resolv.conf` and `hosts`. |
 | `--with-ns pid:/proc/1/ns/pid` | The host's PID namespace. `systemd-run --machine` and `systemctl --machine` enter a machine's namespaces through its leader's `/proc/PID/ns`, and a process can only enter a PID namespace below its own. It also makes `/proc` under `/host` agree with the container's. |
 | `--mount type=bind,src=/,dst=/host,options=rbind:rslave` | The host's root, recursively, so `/usr`, `/etc`, `/run`, `/proc`, and `/sys` under it are the host's. `rslave` lets later host mounts appear in the container, and keeps the container's mounts out of the host. |
-| `--runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:NAME` | runc asks systemd for a scope, `aks-flex-NAME.scope` in `system-aksflex.slice`, so systemd tracks and accounts for the container, and limits can go on the slice. Without it, `ctr` puts the container in a cgroup of its own, outside any unit. The scope is a unit of its own, so stopping a service still ends its container through `ExecStop`. |
+| `--runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:NAME` | runc asks systemd for a scope, `aks-flex-NAME.scope` in `system-aksflex.slice`, so systemd tracks and accounts for the container, and limits can go on the slice. Without it, `ctr` puts the container in a cgroup of its own, outside any unit. |
+| `--annotation org.systemd.property.…` | Properties runc gives the scope. `BindsTo=` the unit: systemd only kills `ctr` when a stop times out, which leaves the task running, so the scope stops with the unit instead, even when the unit's file is gone, as when the agent uninstalls its own unit. `TimeoutStopUSec=` 30 s: the scope kills what's left of the container within the units' stop timeouts, ACL's default of 45 s included, so a unit's stop ends only once its container has. `CollectMode=inactive-or-failed`: a killed scope fails, a failed scope keeps the next container from its name, and on ACL nothing may reset it, so systemd unloads it instead. |
 | `--env` (the agent's unit) | The image the agent runs, and the flags for pulling and running images, for `AgentUpgrade` |
 | `$AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS` | Empty: containerd's default snapshotter. An install can name another. |
 
@@ -147,8 +153,12 @@ The agent's unit restarts on failure, and runs its recovery unit through
 there and the agent's unit isn't enabled, so it does nothing once the agent is
 installed, and retries a bootstrap that failed after `start` wrote the agent's
 unit. After a reset, new inputs and a start of the unit join the node again. It
-retries a pull or bootstrap that fails, such as while the network comes up, for
-as long as it takes, backing off from 10 seconds to 5 minutes between tries.
+pulls the image at every bootstrap, so a tag names what it does now, as `main`'s
+bootstrap downloads the agent its inputs name. When the pull fails, an image
+already there, such as the install's after a reset, runs as it is, offline too.
+It retries a bootstrap that fails, or finds no image, such as while the network
+comes up, for as long as it takes, backing off from 10 seconds to 5 minutes
+between tries. The units that need `/usr/local` require its mount.
 Each unit first waits for containerd to answer, since
 `containerd.service` on ACL reports started a moment before it does.
 
@@ -288,13 +298,17 @@ The upgrade follows the host's, with images for binaries:
 
 1. The agent records the pending upgrade in its durable signal,
    `/etc/aks-flex-node/agent-upgrade-signal.json`, with the candidate image and
-   the one it runs.
+   the one it runs, which its unit passes in, and to which a failure rolls
+   back. If `agent-image.env` selects another image than the one it runs, as
+   something may have written since the agent started, the upgrade fails
+   rather than roll back to an image that never ran.
 2. It pulls the candidate, which `ctr` verifies against its digest, and runs
    `aks-flex-node version` in it, as the host verifies the archive's SHA-256
    and runs the candidate binary before switching. As on a host, each has a
    time limit: 10 minutes for the pull, and a minute for the check, which also
-   starts a container. A failed check removes its container, which
-   `ctr run --rm` leaves when it's killed.
+   starts a container. The check clears its container before it runs and after
+   it fails, as `ctr run --rm` leaves it when `ctr` is killed, and its scope is
+   bound to the agent's unit.
 3. It selects the candidate in `agent-image.env`, with the image it runs as the
    last good one, and restarts its unit from a transient unit.
 4. The new daemon converges: it rewrites the agent's units from its image, and
@@ -325,11 +339,14 @@ failed. So an upgrade that would be the unit's sixth start in five minutes
 fails, on a host too.
 
 At every start, the daemon also removes the images upgrades pulled that it won't
-run again. The agent labels each image it pulls for an upgrade, and removes only
-those, never one staged, or built into the OS, for a join. It keeps the
-selected one, the last good one, the install's, which bootstrap runs after a
-reset, even offline, and the one it runs. It's best effort: a failed removal is
-only logged, and not knowing which to keep removes none.
+run again. The agent labels each image as it pulls it for an upgrade, and
+removes only those, never one staged, or built into the OS, for a join. It
+keeps the selected one, the last good one, the install's, which bootstrap runs
+after a reset, even offline, and the one it runs. It's best effort: a failed
+removal is only logged, and not knowing which to keep removes none. Each call
+to containerd has a minute: the daemon does this before it reports an upgrade
+or reconciles, and its unit counts as started already, so a call that hung
+would hold it there.
 
 ## Reset
 
@@ -340,12 +357,15 @@ There are three ways in, all `main`'s code:
 - `aks-flex-node reset`, which `aks-flex-node-reset.service` runs in a
   container
 
-Each resets the node: it removes the machines, their `bpffs` mounts, and the
-agent's config, state, bootstrap inputs, and image selection. Then
-`UninstallService` removes the agent's unit and its recovery unit. When the
-daemon does that itself, stopping its unit stops it, so `UninstallService`
-disables the unit, removes its files, and reloads systemd before it stops the
-unit.
+Each resets the node, removing the machines, their `bpffs` mounts, and the
+agent's config, state, bootstrap inputs, and image selection, and runs
+`UninstallService`, which removes the agent's unit and its recovery unit. The
+daemon resets the node first, while `aks-flex-node reset` uninstalls first, as
+on a host. When the daemon uninstalls its own unit, stopping the unit stops it,
+so `UninstallService` disables the unit, removes its files, and reloads systemd
+before it stops the unit. Stopping the unit stops its container's scope too, as
+it's bound to the unit, so `aks-flex-node reset` resets the node only once the
+daemon has stopped, even one that doesn't stop on `SIGTERM`.
 
 Afterwards, nothing of the agent runs, as on a host. The settings, the
 bootstrap and reset units, and the `/usr/local` overlay stay, so new inputs
@@ -361,7 +381,7 @@ not the container's:
 |---|---|
 | The agent's unit | `/system.slice/aks-flex-node-agent.service` (only `ctr`) |
 | The agent's container | `/system.slice/system-aksflex.slice/aks-flex-agent.scope` |
-| Its other containers | Scopes beside it: `aks-flex-bootstrap`, `aks-flex-reset`, `aks-flex-recovery`, and `aks-flex-upgrade-check-N` |
+| Its other containers | Scopes beside it: `aks-flex-bootstrap`, `aks-flex-reset`, `aks-flex-recovery`, and `aks-flex-upgrade-check` |
 | A machine | `/machine.slice/systemd-nspawn@NAME.service` |
 
 So stopping, restarting, upgrading, or replacing the agent's container doesn't
@@ -467,7 +487,7 @@ whose disk writes the host caches (`cache=unsafe`):
 | ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
-| `check`, with a reboot | 68 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
+| `check`, with a reboot | 72 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
 | Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
