@@ -488,7 +488,7 @@ func scheduleAgentRestart(ctx context.Context, runSystemdRun func(context.Contex
 		"--quiet",
 		"--collect",
 		"--unit="+unit,
-		fmt.Sprintf("--on-active=%ds", int(delay.Seconds())),
+		fmt.Sprintf("--on-active=%dms", delay.Milliseconds()),
 		"--timer-property=AccuracySec="+agentRestartTimerAccuracy,
 		"/usr/bin/systemctl",
 		"restart",
@@ -526,15 +526,22 @@ func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
 func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	log := slog.Default()
 	if Containerized() {
-		return recoverContainerAgentUpgrade(ctx, log, message,
+		if err := recoverContainerAgentUpgrade(ctx, log, message,
 			agentUpgradeSignalStore{path: defaultAgentUpgradePaths().SignalPath},
-			agentImageSelection{path: agentImageSelectionPath},
+			agentImageEnvFile{path: agentImageSelectionPath},
 			func(ctx context.Context, args ...string) error {
 				return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 			},
+			func(ctx context.Context) (string, error) {
+				state, err := utilexec.OutputCmd(ctx, log, "systemctl", "show", "-p", "ActiveState", "--value", ServiceUnitName)
+				return strings.TrimSpace(state), err
+			},
 			func(ctx context.Context, args ...string) error {
 				return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
-			})
+			}); err != nil {
+			return err
+		}
+		return ctx.Err()
 	}
 	if err := MigrateHostRoot(log); err != nil {
 		log.Warn("recovering the agent without migrating the host root", "error", err)

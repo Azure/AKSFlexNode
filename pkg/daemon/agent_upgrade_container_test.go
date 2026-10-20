@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,7 +38,7 @@ func newTestContainerUpgrade(t *testing.T, runningImage string) (*containerAgent
 		log:           discardLogger(),
 		state:         &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
 		signals:       agentUpgradeSignalStore{path: filepath.Join(dir, "agent-upgrade-signal.json")},
-		images:        agentImageSelection{path: filepath.Join(dir, "agent-image.env")},
+		images:        agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
 		runningImage:  runningImage,
 		pullArgs:      []string{"--plain-http"},
 		runArgs:       []string{"--snapshotter", "native"},
@@ -57,7 +59,7 @@ func writeTestFile(t *testing.T, path, content string) string {
 	return path
 }
 
-func assertSelectedImages(t *testing.T, images agentImageSelection, wantCurrent, wantLastGood string) {
+func assertSelectedImages(t *testing.T, images agentImageEnvFile, wantCurrent, wantLastGood string) {
 	t.Helper()
 	current, lastGood, err := images.read()
 	if err != nil {
@@ -98,11 +100,15 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 	t.Parallel()
 
 	pull := "ctr --namespace aks-flex image pull --plain-http " + testAgentImageV2
+	label := "ctr --namespace aks-flex images label " + testAgentImageV2 + " aks-flex-node.agent-upgrade=pulled"
 	check := "ctr --namespace aks-flex run --rm --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:upgrade-check-"
+	removeTask := "ctr --namespace aks-flex task delete --force aks-flex-node-upgrade-check-"
+	removeContainer := "ctr --namespace aks-flex container delete aks-flex-node-upgrade-check-"
 	tests := map[string]struct {
 		runningImage   string
 		selected       string
 		failOn         string
+		cancelOnFail   bool
 		wantCalls      []string
 		wantErr        bool
 		wantPrevious   string
@@ -113,7 +119,7 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 	}{
 		"switches from the image the host's provisioning names": {
 			runningImage:  testAgentImageV1,
-			wantCalls:     []string{pull, check},
+			wantCalls:     []string{pull, label, check},
 			wantPrevious:  testAgentImageV1,
 			wantCommitted: true,
 			wantSelected:  testAgentImageV2,
@@ -121,7 +127,17 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 		},
 		"switches from the image an earlier upgrade selected": {
 			selected:      testAgentImageV1,
-			wantCalls:     []string{pull, check},
+			wantCalls:     []string{pull, label, check},
+			wantPrevious:  testAgentImageV1,
+			wantCommitted: true,
+			wantSelected:  testAgentImageV2,
+			wantLastGood:  testAgentImageV1,
+		},
+		// The image then stays when the agent no longer needs it, which only costs space.
+		"switches though it couldn't label the image": {
+			runningImage:  testAgentImageV1,
+			failOn:        "label",
+			wantCalls:     []string{pull, label, check},
 			wantPrevious:  testAgentImageV1,
 			wantCommitted: true,
 			wantSelected:  testAgentImageV2,
@@ -135,10 +151,20 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 			wantPrevious:   testAgentImageV1,
 			wantNoSelected: true,
 		},
-		"doesn't select an image whose agent doesn't run": {
+		"doesn't select an image whose agent doesn't run, and removes its container": {
 			runningImage:   testAgentImageV1,
 			failOn:         "run",
-			wantCalls:      []string{pull, check},
+			wantCalls:      []string{pull, label, check, removeTask, removeContainer},
+			wantErr:        true,
+			wantPrevious:   testAgentImageV1,
+			wantNoSelected: true,
+		},
+		// ctr, killed with its context, leaves the container; its removal outlives the context.
+		"removes the check's container when the upgrade is cancelled": {
+			runningImage:   testAgentImageV1,
+			failOn:         "run",
+			cancelOnFail:   true,
+			wantCalls:      []string{pull, label, check, removeTask, removeContainer},
 			wantErr:        true,
 			wantPrevious:   testAgentImageV1,
 			wantNoSelected: true,
@@ -148,10 +174,27 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var pullDeadline, checkDeadline time.Duration
+			liveCleanup := true
 			executor, calls := newTestContainerUpgrade(t, tc.runningImage)
-			executor.ctr = func(_ context.Context, args ...string) error {
+			executor.ctr = func(callCtx context.Context, args ...string) error {
 				*calls = append(*calls, "ctr "+strings.Join(args, " "))
+				deadline, ok := callCtx.Deadline()
+				switch {
+				case slices.Contains(args, "pull") && ok:
+					pullDeadline = time.Until(deadline)
+				case slices.Contains(args, "run") && ok:
+					checkDeadline = time.Until(deadline)
+				case slices.Contains(args, "delete"):
+					liveCleanup = liveCleanup && callCtx.Err() == nil
+				}
 				if slices.Contains(args, tc.failOn) {
+					if tc.cancelOnFail {
+						cancel()
+						return context.Canceled
+					}
 					return os.ErrPermission
 				}
 				return nil
@@ -161,11 +204,11 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
+			if err := executor.RecordPending(ctx, "upgrade"); err != nil {
 				t.Fatalf("RecordPending: %v", err)
 			}
 
-			err := executor.Stage(t.Context(), agentUpgradeRequest{image: testAgentImageV2})
+			err := executor.Stage(ctx, agentUpgradeRequest{image: testAgentImageV2})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Stage() error = %v, want error %v", err, tc.wantErr)
 			}
@@ -177,16 +220,30 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 					t.Errorf("call %d = %q, want it to start with %q", i, (*calls)[i], want)
 				}
 			}
-			if len(*calls) == 2 && !strings.HasSuffix((*calls)[1], " aks-flex-node version") {
-				t.Errorf("the check runs %q, not the candidate's aks-flex-node version", (*calls)[1])
+			// As a host limits its download and its candidate's version check.
+			if pullDeadline <= 0 || pullDeadline > agentImagePullTimeout {
+				t.Errorf("the pull's deadline is %v away, want within %v", pullDeadline, agentImagePullTimeout)
 			}
-			// The check's container runs in a scope of the agent's slice, named as it is.
+			if len(*calls) > 2 && (checkDeadline <= 0 || checkDeadline > agentImageCheckTimeout) {
+				t.Errorf("the check's deadline is %v away, want within %v", checkDeadline, agentImageCheckTimeout)
+			}
+			if !liveCleanup {
+				t.Error("the check's container was removed with a cancelled context")
+			}
+			// The check runs the candidate's agent in a scope of the agent's slice, named as its
+			// container is, and the cleanup removes that container.
 			checkCall := regexp.MustCompile(`^ctr --namespace aks-flex run --rm --runc-systemd-cgroup ` +
 				`--cgroup system-aksflex\.slice:aks-flex:upgrade-check-(\d+) --snapshotter native ` +
 				regexp.QuoteMeta(testAgentImageV2) + ` aks-flex-node-upgrade-check-(\d+) aks-flex-node version$`)
-			if len(*calls) == 2 {
-				if m := checkCall.FindStringSubmatch((*calls)[1]); m == nil || m[1] != m[2] {
-					t.Errorf("the check runs %q, want its container in a scope of its own name", (*calls)[1])
+			if len(*calls) > 2 {
+				m := checkCall.FindStringSubmatch((*calls)[2])
+				if m == nil || m[1] != m[2] {
+					t.Errorf("the check runs %q, want the candidate's agent in a scope of its own name", (*calls)[2])
+				}
+				for _, removal := range (*calls)[3:] {
+					if m != nil && !strings.HasSuffix(removal, " aks-flex-node-upgrade-check-"+m[2]) {
+						t.Errorf("cleanup %q isn't of the check's container", removal)
+					}
 				}
 			}
 			signal, err := executor.signals.read()
@@ -317,7 +374,7 @@ func TestPublishContainerAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSi
 	if signal, err := executor.signals.read(); err != nil || signal == nil || !signal.RecoveryRequired {
 		t.Fatalf("signal before the last-good daemon starts = %#v, %v", signal, err)
 	}
-	if len(*calls) != 1 || !strings.Contains((*calls)[0], "--on-active=1s ") ||
+	if len(*calls) != 1 || !strings.Contains((*calls)[0], "--on-active=1000ms ") ||
 		!strings.HasSuffix((*calls)[0], "/usr/bin/systemctl restart "+ServiceUnitName) {
 		t.Fatalf("calls = %q, want one scheduled restart", *calls)
 	}
@@ -342,11 +399,11 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 	t.Parallel()
 
 	resetFailed := "systemctl reset-failed " + ServiceUnitName
-	isFailed := "systemctl is-failed --quiet " + ServiceUnitName
 	tests := map[string]struct {
 		pending      bool
 		resetFails   bool
-		unitFailed   bool
+		state        string
+		stateErr     error
 		wantCalls    []string
 		wantSelected string
 	}{
@@ -362,14 +419,22 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 		"waits out the start limit when it can't reset a failed unit": {
 			pending:      true,
 			resetFails:   true,
-			unitFailed:   true,
-			wantCalls:    []string{resetFailed, isFailed, "systemd-run "},
+			state:        "failed",
+			wantCalls:    []string{resetFailed, "systemd-run "},
 			wantSelected: testAgentImageV1,
 		},
 		"leaves a restarting unit to restart onto the restored image": {
 			pending:      true,
 			resetFails:   true,
-			wantCalls:    []string{resetFailed, isFailed},
+			state:        "activating",
+			wantCalls:    []string{resetFailed},
+			wantSelected: testAgentImageV1,
+		},
+		"waits out the start limit when it can't tell the unit's state": {
+			pending:      true,
+			resetFails:   true,
+			stateErr:     os.ErrPermission,
+			wantCalls:    []string{resetFailed, "systemd-run "},
 			wantSelected: testAgentImageV1,
 		},
 	}
@@ -394,17 +459,15 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 			}
 			systemctl := func(_ context.Context, args ...string) error {
 				*calls = append(*calls, "systemctl "+strings.Join(args, " "))
-				switch {
-				case tc.resetFails && args[0] == "reset-failed":
+				if tc.resetFails && args[0] == "reset-failed" {
 					return os.ErrPermission
-				case args[0] == "is-failed" && !tc.unitFailed:
-					return os.ErrNotExist
 				}
 				return nil
 			}
+			unitActiveState := func(context.Context) (string, error) { return tc.state, tc.stateErr }
 
 			if err := recoverContainerAgentUpgrade(t.Context(), discardLogger(), "failed repeatedly",
-				executor.signals, executor.images, systemctl, executor.runSystemdRun); err != nil {
+				executor.signals, executor.images, systemctl, unitActiveState, executor.runSystemdRun); err != nil {
 				t.Fatalf("recover: %v", err)
 			}
 			if len(*calls) != len(tc.wantCalls) {
@@ -415,8 +478,9 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 					t.Errorf("call %d = %q, want it to start with %q", i, (*calls)[i], want)
 				}
 			}
-			if tc.unitFailed && !strings.Contains((*calls)[2], "--on-active=300s") {
-				t.Errorf("restart %q isn't scheduled after the start limit", (*calls)[2])
+			if n := len(*calls); n > 0 && strings.HasPrefix((*calls)[n-1], "systemd-run ") &&
+				!strings.Contains((*calls)[n-1], "--on-active=300000ms") {
+				t.Errorf("restart %q isn't scheduled after the start limit", (*calls)[n-1])
 			}
 			current, _, err := executor.images.read()
 			if err != nil || current != tc.wantSelected {
@@ -473,8 +537,8 @@ func TestContainerAgentConvergence(t *testing.T) {
 				reload:            func(context.Context) error { reloads++; return nil },
 				runningExecutable: func() (string, error) { return running, nil },
 				nspawnBinaryPath:  func(string) string { return machineBinary },
-				images:            agentImageSelection{path: filepath.Join(dir, "agent-image.env")},
-				install:           agentImageSelection{path: writeTestFile(t, filepath.Join(dir, "settings"), "AKS_FLEX_NODE_IMAGE="+testAgentImageV1+"\n")},
+				images:            agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
+				install:           agentImageEnvFile{path: writeTestFile(t, filepath.Join(dir, "settings"), "AKS_FLEX_NODE_IMAGE="+testAgentImageV1+"\n")},
 				runningImage:      testAgentImageV1,
 				listImages:        func(context.Context) (string, error) { return testAgentImageV1 + "\n", nil },
 				ctr: func(_ context.Context, args ...string) error {
@@ -560,8 +624,8 @@ func TestContainerAgentRemovesOldImages(t *testing.T) {
 			var removed []string
 			convergence := &containerAgentConvergence{
 				log:          discardLogger(),
-				images:       agentImageSelection{path: filepath.Join(dir, "agent-image.env")},
-				install:      agentImageSelection{path: filepath.Join(dir, "settings")},
+				images:       agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
+				install:      agentImageEnvFile{path: filepath.Join(dir, "settings")},
 				runningImage: tc.runningImage,
 				listImages:   func(context.Context) (string, error) { return listed, tc.listErr },
 				ctr: func(_ context.Context, args ...string) error {
@@ -587,5 +651,24 @@ func TestContainerAgentRemovesOldImages(t *testing.T) {
 				t.Errorf("removed %q, want %q", removed, tc.wantRemoved)
 			}
 		})
+	}
+}
+
+// The recovery unit comes first, as on a host, so a write that stops partway leaves the agent's
+// unit as it was, with its recovery unit in place.
+func TestWriteContainerUnitsWritesRecoveryFirst(t *testing.T) {
+	t.Parallel()
+
+	unitDir := t.TempDir()
+	// The agent's unit can't be written over a non-empty directory.
+	if err := os.MkdirAll(filepath.Join(unitDir, ServiceUnitName, "busy"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeContainerUnits(unitDir); err == nil {
+		t.Fatal("writeContainerUnits() wrote the agent's unit over a directory")
+	}
+	recovery, err := os.ReadFile(filepath.Join(unitDir, recoveryServiceUnitName))
+	if err != nil || !bytes.Equal(recovery, containerRecoveryUnitContent) {
+		t.Errorf("the recovery unit wasn't written before the agent's unit failed: %v", err)
 	}
 }
