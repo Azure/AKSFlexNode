@@ -9,6 +9,21 @@ Approach: build on `main`, and make small, targeted changes so the agent in a
 container behaves the same as `main`'s agent on a host. Don't build on PR #323;
 borrow from it only where that's simpler than redoing the work.
 
+## Before merging
+
+- [ ] The preview image workflow, `.github/workflows/acl-preview-image.yml`,
+      is temporary. It builds the agent's image on every push to this branch
+      and publishes it to `ghcr.io/azure/aks-flex-node-agent-acl-preview` for
+      early adopters. Before this branch merges, do one of these:
+      - Formalize it: build the agent's image from `main` as part of the
+        release, with the release's version tags, like the agent's other
+        artifacts (its archives, and the controller image, which `release.yml`
+        builds and publishes behind the `release` environment's approval).
+      - Remove it: revert its commit.
+
+      Either way, retire the preview package, and tell early adopters where
+      the image moved, or that it's gone.
+
 ## ACL's SELinux fix
 
 ACL 3.0.20261019 (build 1229918), gallery image
