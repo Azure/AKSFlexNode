@@ -12,7 +12,7 @@
 On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
 `main`'s controller,
-`harness.py check` verifies 67 checks, including all of the following:
+`harness.py check` verifies 68 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -32,6 +32,7 @@ On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
   one bootstrap is given.
 - Machines run in the host's `machine.slice`, not in the container. They keep
   running while the agent's container restarts, and come back after a reboot.
+  The agent's binary, which kubelet runs as its credential plugin, runs in them.
 
 The agent's containers need one SELinux rule, `allow spc_t kernel_t:dbus
 send_msg;`, which ACL 3.0.20261019 is the first to have. They run as `spc_t`, or
@@ -143,23 +144,28 @@ foreground with `ctr run --rm`:
 
 The agent's unit restarts on failure, and runs its recovery unit through
 `OnFailure=`. The bootstrap unit runs at boot only while bootstrap's inputs are
-there and the agent's unit isn't, so it does nothing once the agent is
-installed. After a reset, new inputs and a start of the unit join the node
-again, and it retries a pull or bootstrap that fails, such as while the network
-comes up. Each unit first waits for containerd to answer, since
+there and the agent's unit isn't enabled, so it does nothing once the agent is
+installed, and retries a bootstrap that failed after `start` wrote the agent's
+unit. After a reset, new inputs and a start of the unit join the node again. It
+retries a pull or bootstrap that fails, such as while the network comes up, for
+as long as it takes, backing off from 10 seconds to 5 minutes between tries.
+Each unit first waits for containerd to answer, since
 `containerd.service` on ACL reports started a moment before it does.
 
 ### The image
 
 [`image/Containerfile`](image/Containerfile) builds Azure Linux 3.0 core with:
 
-- the agent, built with Microsoft Go as the release is: static, with its
-  cgo-less OpenSSL backend
+- the agent, built with upstream Go, `go.mod`'s version, as the release is.
+  The build sets the version, commit, and build time it's given, as the
+  release's does. Unlike the release's, it's static, since the binary also runs
+  in the machines and on the host, each with libraries of its own.
 - `main`'s `scripts/bootstrap.sh`, and the tools it requires
 - the scripts in [`image/bin`](image/bin)
 
 They're in `/opt/aks-flex-node/bin`, since the container mounts the host's
-`/usr/local`. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It holds no
+`/usr/local`, which is off the image's `PATH`. Both base images are pinned by
+digest. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It holds no
 development tools: only what the agent's containers run. It's about 180 MB,
 in six layers.
 
@@ -180,9 +186,11 @@ Every container runs [`flex-agent-entrypoint`](image/bin/flex-agent-entrypoint)
 4. logs the agent's version, the host, its SELinux context, and its PID
    namespace, and checks that the host's `machinectl` answers over D-Bus
 
-A failed step exits, so the failure shows in the unit's log. The list of paths
-is in the image, so it changes with the agent rather than with the host's
-provisioning.
+Each host path resolves within the host's root, so a host symlink, such as
+`/var/lib/machines` moved to a data disk, names the host's target, not a path
+in the container. A failed step exits, so the failure shows in the unit's log.
+The list of paths is in the image, so it changes with the agent rather than
+with the host's provisioning.
 
 ### Using the host's tools
 
@@ -242,8 +250,10 @@ The bootstrap unit pulls the image, and runs the image's
 [`aks-flex-node-bootstrap`](image/bin/aks-flex-node-bootstrap). That reads
 `/etc/aks-flex-node/bootstrap.env`, one `AKS_FLEX_NODE_*=value` a line, not
 evaluated as shell, and runs `bootstrap.sh --use-installed-agent` with them.
-Secrets, such as a bootstrap token, go in a base config of their own, named by
-`AKS_FLEX_NODE_BASE_CONFIG_FILE`. `bootstrap.sh` renders
+It ignores, and logs by line number, the variables the image sets: whether the
+agent is containerized, where it and its config go, and which agent to
+download. Secrets, such as a bootstrap token, go in a base config of their own,
+named by `AKS_FLEX_NODE_BASE_CONFIG_FILE`. `bootstrap.sh` renders
 `/etc/aks-flex-node/config.json`, runs preflight, and runs `start`, as on a
 host.
 
@@ -281,7 +291,10 @@ The upgrade follows the host's, with images for binaries:
    the one it runs.
 2. It pulls the candidate, which `ctr` verifies against its digest, and runs
    `aks-flex-node version` in it, as the host verifies the archive's SHA-256
-   and runs the candidate binary before switching.
+   and runs the candidate binary before switching. As on a host, each has a
+   time limit: 10 minutes for the pull, and a minute for the check, which also
+   starts a container. A failed check removes its container, which
+   `ctr run --rm` leaves when it's killed.
 3. It selects the candidate in `agent-image.env`, with the image it runs as the
    last good one, and restarts its unit from a transient unit.
 4. The new daemon converges: it rewrites the agent's units from its image, and
@@ -294,8 +307,9 @@ The upgrade follows the host's, with images for binaries:
    which records the failure, selects the last good image again, and restarts
    the agent's unit. The last good daemon then reports the failure.
 
-The recovery unit runs only while an upgrade's signal and a selection exist,
-so an ordinary failure of the agent's unit changes nothing, as on a host.
+The recovery unit runs only while an upgrade's signal and a selection with a
+last good image exist, so an ordinary failure of the agent's unit changes
+nothing, as on a host.
 systemd 254 and later, ACL's included, run `OnFailure=` at every failure, not
 only once the unit hits its start limit, so recovery can find the unit still
 restarting. The agent's unit is ordered after its recovery unit, so that
@@ -310,10 +324,12 @@ a failed upgrade: it restores the last good image, and the upgrade is reported
 failed. So an upgrade that would be the unit's sixth start in five minutes
 fails, on a host too.
 
-At every start, the daemon also removes the agent's images it won't run again:
-all but the selected one, the last good one, the install's, which bootstrap
-runs after a reset, even offline, and the one it runs. It's best effort: a
-failed removal is only logged, and not knowing which to keep removes none.
+At every start, the daemon also removes the images upgrades pulled that it won't
+run again. The agent labels each image it pulls for an upgrade, and removes only
+those, never one staged, or built into the OS, for a join. It keeps the
+selected one, the last good one, the install's, which bootstrap runs after a
+reset, even offline, and the one it runs. It's best effort: a failed removal is
+only logged, and not knowing which to keep removes none.
 
 ## Reset
 
@@ -425,16 +441,13 @@ describes it.
   and `sha256` grant the same, so treat the parameters as sensitive either way.
 - `ctr` keeps NoNewPrivileges on.
 - The harness writes bootstrap's inputs, with the bootstrap token, mode 0600,
-  and reset removes them.
+  and reset removes them. The install's settings, which an install's pull flags
+  could put credentials in, are 0600 too.
 
 ## Open questions
 
 [TODO.md](../../TODO.md) tracks them, among them:
 
-- the cgroup: `ctr` puts the container outside its unit's cgroup, so systemd
-  neither accounts for nor limits the agent
-- whether `ctr`, a debugging tool and the only container tool on ACL, stays
-  the launcher
 - image delivery: pinning, private registries, and an image shipped with the
   OS for an offline first boot
 - how operators deliver bootstrap's inputs, and `--fetch-bootstrap-data` with
@@ -454,7 +467,7 @@ whose disk writes the host caches (`cache=unsafe`):
 | ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
-| `check`, with a reboot | 67 checks, 7 to 8 min; no group takes much over a minute and a half |
+| `check`, with a reboot | 68 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
 | Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
