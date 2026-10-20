@@ -212,7 +212,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		runningExecutable:      runningAgentExecutable,
 		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
 		guardLegacySeed: func() error {
-			return guardLegacySeed(log, hostroot.LegacyReleased, legacySeedPath)
+			return guardLegacySeed(log, hostroot.LegacyReleased, legacySeedPath, runningFrom)
 		},
 		instanceID: instanceID,
 	}, nil

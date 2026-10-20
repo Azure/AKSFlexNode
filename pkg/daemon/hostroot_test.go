@@ -172,14 +172,39 @@ func TestRemoveLegacySeed(t *testing.T) {
 		released    bool
 		releasedErr error
 		seed        string
-		wantKept    bool
-		wantErr     bool
+		// running stands in for runningFrom; nil is start, which does not check.
+		running  func(os.FileInfo) (bool, error)
+		wantKept bool
+		wantErr  bool
 	}{
 		{name: "installed under the host root, or linked elsewhere", released: true, seed: "file"},
 		{name: "not released: absent, linked, or moving", released: false, seed: "file", wantKept: true},
 		{name: "the host root cannot be inspected", releasedErr: errors.New("permission denied"), seed: "file", wantKept: true, wantErr: true},
 		{name: "a link is not a seed", released: true, seed: "link", wantKept: true},
 		{name: "no seed", released: true, seed: ""},
+		{
+			name:     "the daemon removes a seed it does not run from",
+			released: true,
+			seed:     "file",
+			running:  func(os.FileInfo) (bool, error) { return false, nil },
+		},
+		{
+			// A daemon a release before the blue/green layout started from
+			// /usr/local/bin, now running this release.
+			name:     "the daemon keeps the seed it runs from",
+			released: true,
+			seed:     "file",
+			running:  func(os.FileInfo) (bool, error) { return true, nil },
+			wantKept: true,
+		},
+		{
+			name:     "a seed that may be running is kept",
+			released: true,
+			seed:     "file",
+			running:  func(os.FileInfo) (bool, error) { return false, errors.New("no /proc") },
+			wantKept: true,
+			wantErr:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -201,7 +226,7 @@ func TestRemoveLegacySeed(t *testing.T) {
 			}
 
 			released := func() (bool, error) { return tt.released, tt.releasedErr }
-			err := removeLegacySeed(slog.New(slog.DiscardHandler), released, seed)
+			err := removeLegacySeed(slog.New(slog.DiscardHandler), released, seed, tt.running)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("removeLegacySeed() error = %v, want error %v", err, tt.wantErr)
 			}
@@ -228,8 +253,11 @@ func TestGuardLegacySeed(t *testing.T) {
 		name     string
 		released bool
 		// setup puts something at the seed path; dir is a scratch directory.
-		setup    func(t *testing.T, seed, dir string)
+		setup func(t *testing.T, seed, dir string)
+		// running stands in for runningFrom; nil reports nothing running.
+		running  func(os.FileInfo) (bool, error)
 		wantErr  bool
+		wantMsg  string
 		wantKept bool
 	}{
 		{name: "nothing there", released: true, setup: func(*testing.T, string, string) {}},
@@ -249,6 +277,34 @@ func TestGuardLegacySeed(t *testing.T) {
 				}
 			},
 			wantErr:  true,
+			wantMsg:  "/usr/local/sbin",
+			wantKept: true,
+		},
+		{
+			// The seed is kept while this process runs from it, so the switch
+			// waits for the agent to run from the host root.
+			name:     "a seed this process runs from is refused",
+			released: true,
+			setup:    func(t *testing.T, seed, _ string) { writeExecutable(t, seed, "seed") },
+			running:  func(os.FileInfo) (bool, error) { return true, nil },
+			wantErr:  true,
+			wantMsg:  "restart " + ServiceUnitName,
+			wantKept: true,
+		},
+		{
+			// An operator's link to the running agent is not the seed.
+			name:     "a link to the running binary is refused as a link",
+			released: true,
+			setup: func(t *testing.T, seed, dir string) {
+				target := filepath.Join(dir, "agent")
+				writeExecutable(t, target, "agent")
+				if err := os.Symlink(target, seed); err != nil {
+					t.Fatal(err)
+				}
+			},
+			running:  func(os.FileInfo) (bool, error) { return true, nil },
+			wantErr:  true,
+			wantMsg:  "/usr/local/sbin",
 			wantKept: true,
 		},
 		{
@@ -297,12 +353,16 @@ func TestGuardLegacySeed(t *testing.T) {
 			}
 			tt.setup(t, seed, dir)
 
-			err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return tt.released, nil }, seed)
+			running := tt.running
+			if running == nil {
+				running = func(os.FileInfo) (bool, error) { return false, nil }
+			}
+			err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return tt.released, nil }, seed, running)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("guardLegacySeed() error = %v, want error %v", err, tt.wantErr)
 			}
-			if err != nil && !strings.Contains(err.Error(), "/usr/local/sbin") {
-				t.Fatalf("the refusal does not say how to keep the agent on PATH: %v", err)
+			if err != nil && !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Fatalf("the refusal does not say what to do (%q): %v", tt.wantMsg, err)
 			}
 
 			_, err = os.Lstat(seed)
@@ -313,8 +373,48 @@ func TestGuardLegacySeed(t *testing.T) {
 	}
 
 	if err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return false, errors.New("permission denied") },
-		filepath.Join(t.TempDir(), binaryName)); err == nil {
+		filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
 		t.Fatal("guardLegacySeed() allowed a switch on a host root it could not inspect")
+	}
+}
+
+// TestRunningFrom compares files, not paths: the test binary is found through
+// its own path, and a copy of it is not the running file.
+func TestRunningFrom(t *testing.T) {
+	t.Parallel()
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := filepath.Join(t.TempDir(), "copy")
+	if err := copyExecutable(self, copied); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "the running executable", path: self, want: true},
+		{name: "a copy of it", path: copied, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			info, err := os.Lstat(tt.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := runningFrom(info)
+			if err != nil {
+				t.Fatalf("runningFrom() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("runningFrom(%s) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 

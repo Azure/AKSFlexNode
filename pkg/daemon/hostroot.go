@@ -135,11 +135,32 @@ func installHostBinary(
 // Not partway through a move from /usr/local: until the move has restarted the
 // daemon from the host root, the daemon may still be running from the files
 // under /usr/local, and the move removes none of them until then.
+//
+// It is for start, which runs from that binary on a host whose /usr/local/bin is
+// writable, and removes it as its last step, once it has copied itself
+// everywhere it is needed and is about to exit. The daemon keeps it while it
+// runs from it; see removeDaemonLegacySeed.
 func RemoveLegacySeed(log *slog.Logger) error {
-	return removeLegacySeed(log, hostroot.LegacyReleased, legacySeedPath)
+	return removeLegacySeed(log, hostroot.LegacyReleased, legacySeedPath, nil)
 }
 
-func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed string) error {
+// removeDaemonLegacySeed is RemoveLegacySeed for the daemon, which keeps the
+// binary while it runs from it.
+//
+// On a host a release before the blue/green layout installed directly in
+// /usr/local/bin, the unit runs the daemon from that binary. Once this release
+// has copied it under the host root and rewritten the units, it is no longer
+// needed, but the running daemon's os.Executable still names it, and nothing
+// restarts the daemon. Removed, every later copy of the running binary, such as
+// the one a repave installs in the machine, fails until the daemon restarts. The
+// next start runs from the host root, and removes it then.
+func removeDaemonLegacySeed(log *slog.Logger) error {
+	return removeLegacySeed(log, hostroot.LegacyReleased, legacySeedPath, runningFrom)
+}
+
+// removeLegacySeed removes seed as RemoveLegacySeed describes. When running is
+// set, a seed it reports this process runs from is kept.
+func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed string, running func(os.FileInfo) (bool, error)) error {
 	if done, err := released(); err != nil {
 		return fmt.Errorf("inspect the host root: %w", err)
 	} else if !done {
@@ -159,6 +180,20 @@ func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed stri
 		return nil
 	}
 
+	if running != nil {
+		self, err := running(info)
+		if err != nil {
+			return err
+		}
+
+		if self {
+			log.Info("keeping the agent binary an install script left for earlier releases while this process runs from it; "+
+				"the next start removes it", "path", seed)
+
+			return nil
+		}
+	}
+
 	log.Info("removing the agent binary an install script left for earlier releases", "path", seed)
 
 	if err := os.Remove(seed); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -166,6 +201,18 @@ func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed stri
 	}
 
 	return nil
+}
+
+// runningFrom reports whether this process runs the file info describes. It
+// compares the files themselves, through /proc/self/exe, so it does not depend
+// on the path the process was started by.
+func runningFrom(info os.FileInfo) (bool, error) {
+	self, err := os.Stat("/proc/self/exe")
+	if err != nil {
+		return false, fmt.Errorf("inspect the running executable: %w", err)
+	}
+
+	return os.SameFile(self, info), nil
 }
 
 // guardLegacySeed runs before an AgentUpgrade or a direct activation switches
@@ -181,8 +228,11 @@ func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed stri
 // such a release fails to start and the agent rolls back to last-good, as for
 // any upgrade whose daemon cannot start. The release cannot be told from the
 // archive before it is staged, so every switch is guarded.
-func guardLegacySeed(log *slog.Logger, released func() (bool, error), seed string) error {
-	if err := removeLegacySeed(log, released, seed); err != nil {
+//
+// A seed this process runs from is kept, as removeDaemonLegacySeed explains, so
+// the switch is refused until the process runs from somewhere else.
+func guardLegacySeed(log *slog.Logger, released func() (bool, error), seed string, running func(os.FileInfo) (bool, error)) error {
+	if err := removeLegacySeed(log, released, seed, running); err != nil {
 		return err
 	}
 
@@ -192,12 +242,20 @@ func guardLegacySeed(log *slog.Logger, released func() (bool, error), seed strin
 		return nil
 	}
 
-	if adoptableByEarlierRelease(seed) {
-		return fmt.Errorf("%s leads to an executable, which a release before %s would take as its own binary after an upgrade to it; "+
-			"remove it, or link the agent from /usr/local/sbin instead, then retry", seed, hostroot.Path)
+	if !adoptableByEarlierRelease(seed) {
+		return nil
 	}
 
-	return nil
+	if info, err := os.Lstat(seed); err == nil && info.Mode().IsRegular() && running != nil {
+		if self, err := running(info); err == nil && self {
+			return fmt.Errorf("%s is the binary this process runs from, and a release before %s would take it as its own binary after an upgrade to it; "+
+				"if it is the agent service's, restart %s so that the agent runs from %s, otherwise run the new binary from another path, then retry",
+				seed, hostroot.Path, ServiceUnitName, hostroot.Path)
+		}
+	}
+
+	return fmt.Errorf("%s leads to an executable, which a release before %s would take as its own binary after an upgrade to it; "+
+		"remove it, or link the agent from /usr/local/sbin instead, then retry", seed, hostroot.Path)
 }
 
 // adoptableByEarlierRelease reports whether a release before the host root

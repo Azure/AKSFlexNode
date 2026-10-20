@@ -54,7 +54,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	// After the units are rewritten, so nothing names the copy it removes.
-	if err := RemoveLegacySeed(log); err != nil {
+	if err := removeDaemonLegacySeed(log); err != nil {
 		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
