@@ -1655,7 +1655,9 @@ def cmd_push(_: argparse.Namespace) -> None:
 
 # check's groups, in the order they run. Each starts from a joined node and leaves one, so any of
 # them can run alone; agentreset joins again with the good candidate's image when upgrade ran.
-CHECK_GROUPS = ("container", "cluster", "repave", "nodereboot", "upgrade", "machines",
+# machines restarts the agent once and reboots, which resets its unit's start limit, so it runs
+# before upgrade's four restarts rather than waiting for them to age out.
+CHECK_GROUPS = ("container", "cluster", "repave", "nodereboot", "machines", "upgrade",
                 "agentreset", "reset", "deletion")
 # The groups that need the cluster, which up --no-agent doesn't create.
 CLUSTER_CHECK_GROUPS = set(CHECK_GROUPS) - {"container", "machines"}
