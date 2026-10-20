@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -31,25 +32,23 @@ const hostRootAgentsPath = "/etc/aks-flex-node/host-root-agents"
 // agent library installs there. Moving a linked host copies these from the
 // legacy root.
 func hostLayout() []string {
-	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
+	// Built under an empty root, so each path comes out relative to the host
+	// root.
+	own := agentUpgradePathsUnder("")
 	library := goalstates.LegacyHostPaths()
 
-	var files []string
-	for _, path := range []string{
-		legacy.BinaryPath,
-		legacy.BluePath,
-		legacy.GreenPath,
-		legacy.CurrentPath,
-		legacy.LastGoodPath,
-		recoveryScriptPathUnder(hostroot.LegacyPath),
-		library.NSpawnLifecycleBinary,
-		library.LocalDNSNetworkHelper,
-	} {
-		rel, err := filepath.Rel(hostroot.LegacyPath, path)
-		if err != nil {
-			panic(err) // Every path above is built under the legacy root.
-		}
-		files = append(files, rel)
+	files := []string{
+		own.BinaryPath,
+		own.BluePath,
+		own.GreenPath,
+		own.CurrentPath,
+		own.LastGoodPath,
+		recoveryScriptPathUnder(""),
+	}
+	// The library builds its paths only under a root it resolves itself, so
+	// its legacy root is trimmed. TestHostLayout checks the result.
+	for _, path := range []string{library.NSpawnLifecycleBinary, library.LocalDNSNetworkHelper} {
+		files = append(files, strings.TrimPrefix(path, library.Root+string(filepath.Separator)))
 	}
 
 	return files

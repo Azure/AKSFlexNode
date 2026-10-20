@@ -449,7 +449,8 @@ The script processes JSON in this order:
 
 1. Write the embedded base config into a mode `0700` temporary workspace.
 2. Validate that it is a JSON object.
-3. Download the agent and install it where it reports, as described in
+3. Download the agent and install it in the directory the script chooses, as
+   described in
    [Agent download and installation](#agent-download-and-installation). This
    happens before rendering because fetching bootstrap data runs the installed
    binary.

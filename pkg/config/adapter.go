@@ -20,8 +20,8 @@ const (
 	// starting the kubelet so that exec credential plugins can invoke it.
 	flexNodeBinaryPath = "/usr/local/bin/aks-flex-node"
 
-	// hostBinaryRelativePath is the aks-flex-node compatibility link on the
-	// host, relative to the host root; see HostBinaryPath.
+	// hostBinaryRelativePath is the host's aks-flex-node, relative to the host
+	// root; see HostBinaryPath.
 	hostBinaryRelativePath = "bin/aks-flex-node"
 
 	// aksAADServerID is the Azure AD server application ID for AKS.
@@ -209,9 +209,11 @@ func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config,
 	return agentCfg, gs, containerImageArchives, nil
 }
 
-// HostBinaryPath returns the aks-flex-node compatibility link on the host,
-// under the resolved host root. Clients that run on the host, rather than the
-// kubelet inside the machine, invoke the exec credential plugin through it.
+// HostBinaryPath returns the host's aks-flex-node, under the resolved host
+// root: on an installed host, the managed link to aks-flex-node-current, and
+// before the binary layout exists, the plain copy start makes. Clients that run
+// on the host, rather than the kubelet inside the machine, invoke the exec
+// credential plugin through it.
 func HostBinaryPath() string {
 	return filepath.Join(hostroot.Resolve(), hostBinaryRelativePath)
 }
