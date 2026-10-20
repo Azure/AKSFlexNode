@@ -173,8 +173,11 @@ remove_binary() {
 remove_host_root() {
     local dir
 
-    # A move to the host root that was interrupted leaves its copy beside the host root.
-    if [[ -e "$HOST_ROOT.staging" ]]; then
+    # A move to the host root that was interrupted leaves its copy beside the host root. The
+    # .staging suffix and the .moving marker below are the agent library's (stagingSuffix and
+    # movingMarker in github.com/Azure/unbounded/internal/hostroot), which doesn't export them;
+    # keep them in step if it renames them.
+    if [[ -e "$HOST_ROOT.staging" || -L "$HOST_ROOT.staging" ]]; then
         rm -rf -- "$HOST_ROOT.staging"
         log_success "Removed directory: $HOST_ROOT.staging"
     fi

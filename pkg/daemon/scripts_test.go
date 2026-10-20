@@ -18,15 +18,14 @@ import (
 // has to agree with but which do not compile into it.
 const scriptsDir = "../../scripts"
 
-// TestScriptsInstallUnderTheAgentHostRoot keeps the scripts' HOST_ROOT in step
-// with the agent library. The scripts choose where the binary goes and what
-// uninstall removes, and the agent resolves every path from hostroot.Path; if
-// the two disagree, a host is installed where the agent never looks, or
-// uninstall removes a directory that is not the agent's.
+// TestScriptsInstallUnderTheAgentHostRoot keeps the scripts' HOST_ROOT and
+// LEGACY_ROOT in step with the agent library. The scripts choose where the
+// binary goes and what uninstall removes, and the agent resolves every path
+// from hostroot.Path, or hostroot.LegacyPath on a host an earlier release
+// installed; if the two disagree, a host is installed where the agent never
+// looks, or uninstall removes a directory that is not the agent's.
 func TestScriptsInstallUnderTheAgentHostRoot(t *testing.T) {
 	t.Parallel()
-
-	hostRoot := regexp.MustCompile(`(?m)^(?:readonly )?HOST_ROOT="([^"]*)"$`)
 
 	for _, name := range []string{"bootstrap.sh", "install.sh", "uninstall.sh"} {
 		t.Run(name, func(t *testing.T) {
@@ -37,12 +36,18 @@ func TestScriptsInstallUnderTheAgentHostRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			matches := hostRoot.FindAllStringSubmatch(string(script), -1)
-			if len(matches) != 1 {
-				t.Fatalf("want exactly one HOST_ROOT assignment, got %d", len(matches))
-			}
-			if got := matches[0][1]; got != hostroot.Path {
-				t.Errorf("HOST_ROOT = %q, want hostroot.Path %q", got, hostroot.Path)
+			for variable, want := range map[string]string{
+				"HOST_ROOT":   hostroot.Path,
+				"LEGACY_ROOT": hostroot.LegacyPath,
+			} {
+				assignment := regexp.MustCompile(`(?m)^(?:readonly )?` + variable + `="([^"]*)"$`)
+				matches := assignment.FindAllStringSubmatch(string(script), -1)
+				if len(matches) != 1 {
+					t.Fatalf("want exactly one %s assignment, got %d", variable, len(matches))
+				}
+				if got := matches[0][1]; got != want {
+					t.Errorf("%s = %q, want %q", variable, got, want)
+				}
 			}
 		})
 	}
@@ -144,7 +149,15 @@ func TestBootstrapButaneTemplate(t *testing.T) {
 		"EnvironmentFile=" + files["bootstrap.env"],
 		"ExecStart=/bin/bash " + files["bootstrap.sh"],
 		"ExecStartPost=/bin/rm -rf " + firstBootDir,
+		// removeFirstBootUnit stops the unit with disable --now because it
+		// stays active after it has run.
+		"Type=oneshot",
+		"RemainAfterExit=yes",
+		// A oneshot has no start timeout by default, and a hang is never
+		// retried; the retries themselves are never given up.
+		"TimeoutStartSec=30min",
 		"Restart=on-failure",
+		"StartLimitIntervalSec=0",
 		"WantedBy=multi-user.target",
 	} {
 		if !slices.Contains(lines, want) {

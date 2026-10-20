@@ -602,7 +602,10 @@ download_and_install_agent() {
     expected="aks-flex-node-linux-${arch}"
 
     log "downloading AKS Flex Node agent (URL redacted)"
-    curl -fsSL --retry 3 --retry-delay 2 -o "$archive" "$url" || fatal "failed to download AKS Flex Node agent"
+    # Bounded, so a stalled connection fails and is retried instead of hanging the
+    # first boot.
+    curl -fsSL --connect-timeout 30 --max-time 600 --retry 3 --retry-delay 2 -o "$archive" "$url" ||
+        fatal "failed to download AKS Flex Node agent"
 
     if [[ -n "$AGENT_SHA256" ]]; then
         local actual

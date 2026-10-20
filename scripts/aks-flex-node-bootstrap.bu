@@ -75,9 +75,15 @@ systemd:
         [Service]
         Type=oneshot
         RemainAfterExit=yes
+        # A oneshot unit has no start timeout unless one is set, so a download
+        # or a join that hangs would never fail, and so never be retried.
+        # Generous: it covers downloading the agent, the node's artifacts and
+        # its rootfs, and joining.
+        TimeoutStartSec=30min
         # Early boot failures, such as DNS not answering yet when
-        # network-online.target is reached, are retried. The delay grows from
-        # 10s to 5min; systemd older than 254 keeps the fixed delay.
+        # network-online.target is reached, are retried, as is a timeout.
+        # Restart= on a oneshot unit needs systemd 244 or later. The delay
+        # grows from 10s to 5min; systemd older than 254 keeps the fixed delay.
         Restart=on-failure
         RestartSec=10s
         RestartSteps=10
