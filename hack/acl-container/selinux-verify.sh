@@ -49,9 +49,14 @@ echo "== Copying the host's policy into $work"
 mkdir -p "$work"
 # These expand on the host.
 # shellcheck disable=SC2016
-policy_name=$(host 'sudo sh -c ". /etc/selinux/config && basename /etc/selinux/\$SELINUXTYPE/policy/policy.*"')
+policy_name=$(host 'sudo sh -c ". /etc/selinux/config && cd /etc/selinux/\$SELINUXTYPE/policy && echo policy.*"')
+# One name, or the check below refuses it, as selinux-repro.sh does; see there.
+if [[ ! $policy_name =~ ^policy\.[0-9]+$ ]]; then
+    echo "expected one policy file on the host, found: $policy_name" >&2
+    exit 1
+fi
 # shellcheck disable=SC2016
-host 'sudo sh -c ". /etc/selinux/config && cat /etc/selinux/\$SELINUXTYPE/policy/policy.*"' >"$work/$policy_name"
+host 'sudo sh -c ". /etc/selinux/config && cat /etc/selinux/\$SELINUXTYPE/policy/'"$policy_name"'"' >"$work/$policy_name"
 version=${policy_name#policy.}
 echo "$policy_name, $(sha256sum <"$work/$policy_name" | cut -c1-16)"
 

@@ -66,7 +66,14 @@ type_of() { cut -d: -f3 <<<"$1"; }
 # shellcheck source=/dev/null
 policy_dir=/etc/selinux/$(. /etc/selinux/config && echo "$SELINUXTYPE")/policy
 policy_files=("$policy_dir"/policy.*)
-policy_file=${policy_files[-1]}
+# load_policy reads the newest version the kernel supports, which --policy binds
+# its candidate over. ACL has one; with more, which one it reads would be a
+# guess, and a candidate bound over another would go untested.
+if (( ${#policy_files[@]} != 1 )) || [[ ! -f ${policy_files[0]} ]]; then
+    echo "expected one policy file in $policy_dir, found: ${policy_files[*]}" >&2
+    exit 1
+fi
+policy_file=${policy_files[0]}
 candidate_loaded=
 native_labels=()
 summary=()
