@@ -22,6 +22,7 @@ import argparse
 import contextlib
 import hashlib
 import http.server
+import itertools
 import json
 import os
 import re
@@ -1177,7 +1178,7 @@ def check_repave(checks: Checks) -> None:
         checks.expect(False, "the agent has an active machine to repave from")
         return
     old_uid = node_uid()
-    settings_version = f"repave-{int(time.time())}"
+    settings_version = unique_name("repave")
     log(f"repaving {HOSTNAME}, on {before}, to settings version {settings_version}")
     register_machine(kubernetes_version(), settings_version)
     kubectl("delete", "node", HOSTNAME, "--wait=false", quiet=True)
@@ -1217,11 +1218,54 @@ def run_machine_operation(kind: str, timeout: float = 600,
     return result["phase"], result["message"]
 
 
+# Run on the VM with a PID, it makes that process ignore SIGTERM, as a stuck daemon would: it traces
+# all its threads, and drops SIGTERM while passing every other signal on. SIGKILL still kills the
+# process, and its exit, which the tracer collects first, still reaches its parent.
+IGNORE_SIGTERM = textwrap.dedent("""\
+    import ctypes, os, signal, sys
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.ptrace.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]
+    PTRACE_CONT, PTRACE_SEIZE, PTRACE_O_TRACECLONE, WALL = 7, 0x4206, 0x8, 0x40000000
+    pid, traced = int(sys.argv[1]), set()
+    while True:
+        new = {int(t) for t in os.listdir(f"/proc/{pid}/task")} - traced
+        if not new:
+            break
+        for tid in new:
+            if libc.ptrace(PTRACE_SEIZE, tid, None, PTRACE_O_TRACECLONE) != 0:
+                sys.exit(f"ptrace {tid}: {os.strerror(ctypes.get_errno())}")
+            traced.add(tid)
+    print("held", len(traced), "threads", flush=True)
+    dropped = 0
+    while True:
+        try:
+            tid, status = os.waitpid(-1, WALL)
+        except ChildProcessError:
+            break
+        if os.WIFSTOPPED(status):
+            sig, event = os.WSTOPSIG(status), status >> 16
+            if not event and sig == signal.SIGTERM:
+                dropped += 1
+            if event or sig == signal.SIGTERM:
+                sig = 0
+            libc.ptrace(PTRACE_CONT, tid, None, sig)
+    print("process gone; dropped", dropped, "SIGTERM", flush=True)
+    """)
+
+# Names the harness makes from the clock, numbered too: two made in one second would otherwise be
+# one, and applying the second would update the first, finished one.
+_NAME_SEQUENCE = itertools.count(1)
+
+
+def unique_name(prefix: str) -> str:
+    return f"{prefix}-{int(time.time())}-{next(_NAME_SEQUENCE)}"
+
+
 def machine_operation(kind: str, timeout: float = 600,
                       parameters: dict[str, str] | None = None) -> dict[str, str]:
     """Request a MachineOperation of the node, and return its final phase, its message, and the
     reason of its Completed condition, which main's e2e checks for a rejected request."""
-    name = f"aclc-{kind.lower()}-{int(time.time())}"
+    name = unique_name(f"aclc-{kind.lower()}")
     log(f"requesting {kind} MachineOperation {name}")
     spec = {"machineRef": HOSTNAME, "operationKind": kind, "ttlSecondsAfterFinished": 3600}
     if parameters:
@@ -1461,12 +1505,30 @@ def check_reset(checks: Checks, how: str) -> None:
     checks.expect(install.returncode == 0, f"what installed the agent survives {how}", install.stderr)
 
 
-def check_rejoin(checks: Checks, how: str, image: str = "") -> None:
+def check_rejoin(checks: Checks, how: str, image: str = "", registry_unreachable: bool = False) -> None:
+    """Bootstrap the node again. With registry_unreachable, the VM can't reach the agent's
+    registry, so bootstrap's pull fails, and bootstrap runs the image already there."""
     # As AKS does once the agent stops.
     kubectl("delete", "node", HOSTNAME, "--ignore-not-found", quiet=True)
-    bootstrap_again(image)
+    since = ssh_out("date +%s")
+    if registry_unreachable:
+        log(f"rejecting the VM's connections to the agent's registry, {GATEWAY}:{REGISTRY_PORT}")
+        ssh("sudo nft add table inet aclc_registry && "
+            "sudo nft add chain inet aclc_registry out '{ type filter hook output priority 0; }' && "
+            f"sudo nft add rule inet aclc_registry out ip daddr {GATEWAY} tcp dport {REGISTRY_PORT} "
+            "reject with tcp reset")
+    try:
+        bootstrap_again(image)
+    finally:
+        if registry_unreachable:
+            ssh("sudo nft delete table inet aclc_registry", check=False)
+    if registry_unreachable:
+        pull = ssh(f"journalctl -u {BOOTSTRAP_UNIT} -b --since @{since} -o cat --no-pager | "
+                   "grep -c -i -E 'connection refused|connection reset'", check=False).stdout.strip()
+        checks.expect(pull not in ("", "0"), "bootstrap's pull failed, with the agent's registry unreachable")
+    unreachable = ", with the agent's registry unreachable" if registry_unreachable else ""
     checks.expect(eventually(node_ready, 1200, 10),
-                  f"node {HOSTNAME} joins again after {how}, once bootstrapped",
+                  f"node {HOSTNAME} joins again after {how}, once bootstrapped{unreachable}",
                   "" if node_ready() else agent_log_tail())
     running = agent_image()
     what = "the image bootstrap was given" if image else "the install's image"
@@ -1493,7 +1555,8 @@ def check_local_reset(checks: Checks) -> None:
                   "" if succeeded else ssh(f"journalctl -u {RESET_UNIT} -b --no-pager -n 30",
                                            check=False).stdout)
     check_reset(checks, "reset")
-    check_rejoin(checks, "reset")
+    # The install's image is still here, so bootstrap runs it, offline as it would be.
+    check_rejoin(checks, "reset", registry_unreachable=True)
 
 
 def check_deletion_signal(checks: Checks) -> None:
@@ -1512,8 +1575,9 @@ def check_deletion_signal(checks: Checks) -> None:
 def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
     """The agent's active machine belongs to the host, not to the agent's container: it runs in
     the host's machine.slice, the container reaches it with the host's systemd-run and
-    machinectl, it keeps running while the container restarts, and it comes back after a reboot.
-    The agent creates and removes machines itself, which repave and the resets check."""
+    machinectl, it keeps running while the container restarts, or is killed because it won't stop,
+    and it comes back after a reboot. The agent creates and removes machines itself, which repave
+    and the resets check."""
     machine = daemon_state().get("activeMachine", "")
     if not machine or machine_state(machine) != "running":
         checks.expect(False, "the agent's active machine runs", machine or "no active machine")
@@ -1547,6 +1611,37 @@ def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
     wait_for_agent()
     checks.expect(machine_state(machine) == "running" and machine_leader(machine) == leader,
                   f"{machine} kept running, with the same leader, while the agent's container restarted")
+
+    # A container that won't stop still stops with its unit, though systemd only kills ctr: its
+    # scope, bound to the unit, kills it 30 s into the stop, before the unit's own timeout, and is
+    # unloaded though it failed, so the next container gets its name.
+    pid = ssh_out(f"sudo {CTR} task ls | awk '$1 == \"{CONTAINER_ID}\" {{print $2}}'")
+    make_room_for_agent_starts(1)
+    log(f"stopping {AGENT_UNIT} with its daemon ignoring SIGTERM")
+    out = ssh("sudo bash -s", timeout=300, check=False, input=textwrap.dedent(f"""\
+        python3 -c {shlex.quote(IGNORE_SIGTERM)} {shlex.quote(pid)} </dev/null >/tmp/aclc-sigterm 2>&1 &
+        tracer=$!
+        for _ in $(seq 1 40); do grep -q held /tmp/aclc-sigterm && break; sleep 0.5; done
+        start=$(date +%s%N)
+        systemctl stop {AGENT_UNIT} </dev/null
+        echo "took $(( ($(date +%s%N) - start) / 1000000 )) ms"
+        sleep 1; kill -9 "$tracer" 2>/dev/null; wait "$tracer" 2>/dev/null
+        cat /tmp/aclc-sigterm; rm -f /tmp/aclc-sigterm
+        """)).stdout
+    took_match = re.search(r"took (\d+) ms", out)
+    took = int(took_match.group(1)) / 1000 if took_match else 0.0
+    dropped_match = re.search(r"dropped (\d+) SIGTERM", out)
+    dropped = int(dropped_match.group(1)) if dropped_match else 0
+    checks.expect(dropped > 0 and 25 <= took <= 45 and agent_task_status() in ("", "STOPPED"),
+                  f"stopping {AGENT_UNIT} ended its container, which ignored SIGTERM, in {took:.0f} s, "
+                  "as its scope killed it, before the unit's own timeout", out.strip())
+    scope = ssh_out("systemctl show aks-flex-agent.scope -p LoadState --value")
+    checks.expect(scope == "not-found", "the agent's scope, killed, was unloaded rather than left failed",
+                  scope)
+    ssh(f"sudo systemctl start {AGENT_UNIT}")
+    wait_for_agent()
+    checks.expect(machine_state(machine) == "running" and machine_leader(machine) == leader,
+                  f"the agent's container started again in its scope, and {machine} kept running")
 
     if reboot:
         log("rebooting the VM")
@@ -1657,7 +1752,7 @@ def cmd_push(_: argparse.Namespace) -> None:
 
 # check's groups, in the order they run. Each starts from a joined node and leaves one, so any of
 # them can run alone; agentreset joins again with the good candidate's image when upgrade ran.
-# machines restarts the agent once and reboots, which resets its unit's start limit, so it runs
+# machines starts the agent twice and reboots, which resets its unit's start limit, so it runs
 # before upgrade's four restarts rather than waiting for them to age out.
 CHECK_GROUPS = ("container", "cluster", "repave", "nodereboot", "machines", "upgrade",
                 "agentreset", "reset", "deletion")
