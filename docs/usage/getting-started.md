@@ -478,7 +478,7 @@ Azure Container Linux and other hosts provisioned by Ignition have a read-only `
 - `base-config.json`, the base config: `{}` when bootstrap data is fetched from AKS, as here.
 - `bootstrap.env`, the script's settings: one `AKS_FLEX_NODE_*` variable per line, as `bootstrap.sh --help` lists them.
 
-In your Bash environment, with `AKS_RESOURCE_ID`, `FLEX_POOL_NAME`, and `AKS_FLEX_NODE_VERSION` set as in the previous step:
+In your Bash environment, with `AKS_RESOURCE_ID`, `FLEX_POOL_NAME`, and `AKS_FLEX_NODE_VERSION` set as in the previous step, and for an `amd64` host (use `arm64` in the archive name for an `arm64` host):
 
 ```bash
 mkdir -m 0700 node-ignition && cd node-ignition
@@ -486,6 +486,11 @@ mkdir -m 0700 node-ignition && cd node-ignition
 for file in bootstrap.sh aks-flex-node-bootstrap.bu; do
   curl -fsSLO "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/${file}"
 done
+
+# The digest of the release archive the host downloads, from the release's checksums.txt.
+AKS_FLEX_NODE_AGENT_SHA256=$(curl -fsSL "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt" |
+  awk '$2 == "aks-flex-node-linux-amd64.tar.gz" { print $1 }')
+[[ -n "$AKS_FLEX_NODE_AGENT_SHA256" ]] || echo "No digest for the archive in checksums.txt" >&2
 
 echo '{}' > base-config.json
 
@@ -496,6 +501,7 @@ AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA=true
 AKS_FLEX_NODE_CLUSTER_RESOURCE_ID=${AKS_RESOURCE_ID}
 AKS_FLEX_NODE_AGENT_POOL_NAME=${FLEX_POOL_NAME}
 AKS_FLEX_NODE_AGENT_VERSION=${AKS_FLEX_NODE_VERSION}
+AKS_FLEX_NODE_AGENT_SHA256=${AKS_FLEX_NODE_AGENT_SHA256}
 SETTINGS
 
 butane --strict --files-dir . aks-flex-node-bootstrap.bu > node.ign
@@ -517,9 +523,21 @@ Use `node.ign` as the host's Ignition config; on Azure, that's the VM's custom d
 - Don't set `AKS_FLEX_NODE_CONFIG_PATH` or `AKS_FLEX_NODE_INSTALL_DIR`: the agent unit reads the default config path, and the installer chooses its directory. The unit sets `AKS_FLEX_NODE_BASE_CONFIG_FILE` itself.
 - For a service principal, uncomment the credential entries in the template, put the secret or certificate file next to it, and set `AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE` or `AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE` to its path under `/etc/aks-flex-node/credentials/`. Don't put the secret itself in `bootstrap.env`.
 
-On first boot, Ignition writes the three files to `/etc/aks-flex-node/first-boot/`, which only root can read, and enables `aks-flex-node-bootstrap.service`. Once the network is online, the unit runs the script with those settings, and the agent is installed under `/opt/unbounded/agent`, which is writable on these hosts. The unit retries failures with a delay that grows to five minutes, until `aks-flex-node-agent.service` is installed, and is skipped on later boots. Once bootstrap succeeds, it removes `/etc/aks-flex-node/first-boot/`, whose files can carry a bootstrap token and a signed agent URL. `aks-flex-node reset` and the uninstall script disable and remove the unit by its name, so keep that name. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
+On first boot, Ignition writes the three files to `/etc/aks-flex-node/first-boot/`, which only root can read, and enables `aks-flex-node-bootstrap.service`. Once the network is online, the unit runs the script with those settings, and the agent is installed under `/opt/unbounded/agent`, which is writable on these hosts. An attempt that hasn't finished after 30 minutes fails. The unit retries failures with a delay that grows to five minutes, until `aks-flex-node-agent.service` is installed, and is skipped on later boots. Once bootstrap succeeds, it removes `/etc/aks-flex-node/first-boot/`, whose files can carry a bootstrap token and a signed agent URL. `aks-flex-node reset` and the uninstall script disable and remove the unit by its name, so keep that name. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
 
 `node.ign` and the files it's rendered from carry the base config and settings, so keep them as private as those are.
+
+#### Agent version
+
+The agent version in `bootstrap.env` applies only when the host is provisioned: Ignition runs on a host's first boot only, and the unit removes `bootstrap.env` once bootstrap succeeds. After AgentUpgrades, the rest of the pool runs a newer version, but a VM provisioned or reimaged from the same `node.ign` still installs the version it pins. Once such a host joins, upgrade it to the pool's version with an [AgentUpgrade](operations.md#managed-agent-upgrade), or render `node.ign` again with the new version and digest before you provision more hosts.
+
+Pin `AKS_FLEX_NODE_AGENT_VERSION` with `AKS_FLEX_NODE_AGENT_SHA256`, as above, rather than a short-lived signed `AKS_FLEX_NODE_AGENT_URL`. `node.ign` is used again whenever the VM is reimaged, and once a signed URL has expired, the download fails and the unit retries it every five minutes, never joining. If you have to use a signed URL, render `node.ign` again with a new one before each host is provisioned from it. Where a VM's Ignition config can't be changed after it's created, as with the custom data of an Azure VM, that means creating the VM again rather than reimaging it.
+
+#### Rejoining after a reset
+
+`aks-flex-node reset`, an AgentReset, and the uninstall script remove the first-boot unit, and its files are already gone, so nothing joins the host again on its own. To rejoin it, provision it again from its Ignition config: reimage the VM, or create it again, with `node.ign` rendered again first if its agent URL or version is out of date, as above. Ignition runs again on the new OS disk, and the host bootstraps as it did the first time. This is the supported path.
+
+Alternatively, copy `bootstrap.sh` from the release to install and the base config to the host, and run the script as root with the settings from `bootstrap.env`, as in the [previous step](#5-download-and-run-the-bootstrap-script). It installs under `/opt/unbounded/agent`, in place of the binaries reset keeps there.
 
 <a id="7-verify-the-joined-node"></a>
 <a id="8-verify-the-joined-node"></a>
