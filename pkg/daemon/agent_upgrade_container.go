@@ -201,6 +201,19 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 	return nil
 }
 
+// agentScopeAnnotations has runc set up a container's scope as the agent's units set up theirs,
+// for unit, a unit name or %n in a unit: bound to the unit, so stopping it stops the container;
+// killed 30 s into a stop, within the units' stop timeouts, so their stops end only once their
+// containers have; and unloaded even when it fails, as a failed scope keeps the next container
+// from its name, and on ACL nothing may reset it.
+func agentScopeAnnotations(unit string) []string {
+	return []string{
+		"--annotation", fmt.Sprintf("org.systemd.property.BindsTo=['%s']", unit),
+		"--annotation", "org.systemd.property.TimeoutStopUSec=uint64 30000000",
+		"--annotation", "org.systemd.property.CollectMode='inactive-or-failed'",
+	}
+}
+
 // checkCandidate runs the candidate's agent, as a host runs its candidate binary before switching
 // to it. ctr run --rm removes the container after it, but not when ctr is killed, as a timeout or
 // a cancellation kills it, so a failed check removes it here.
