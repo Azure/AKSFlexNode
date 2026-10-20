@@ -158,8 +158,10 @@ bootstrap downloads the agent its inputs name. When the pull fails, an image
 already there, such as the install's after a reset, runs as it is, offline too.
 It retries a bootstrap that fails, or finds no image, such as while the network
 comes up, for as long as it takes, backing off from 10 seconds to 5 minutes
-between tries. The units that need `/usr/local` require its mount.
-Each unit first waits for containerd to answer, since
+between tries. A reset first stops the bootstrap unit, ending a bootstrap in
+progress or waiting to retry, and a bootstrap started during a reset waits for
+it, so the two never run at once. The units that need `/usr/local` require its
+mount. Each unit first waits for containerd to answer, since
 `containerd.service` on ACL reports started a moment before it does.
 
 ### The image
