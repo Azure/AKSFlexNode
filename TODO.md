@@ -85,6 +85,11 @@ image.
 - [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
       needs none so far. Stay on it until the lifecycle helper, or another
       specific fix, needs a newer one, and bump it in a commit of its own.
+- [ ] `main`: a MachineOperation could run twice, as the daemon read it
+      through the manager's cache, which could still have it in progress just
+      after it finished: one `NodeReboot` rebooted the node twice. PR #374
+      reads it from the API server instead, and this branch carries the same
+      commit; drop it here once #374 merges and this branch is rebased.
 - [ ] `AgentUpgrade`'s restart counts toward the agent unit's start limit, 5
       starts in 300 s, on `main`'s hosts too. An upgrade past it is refused by
       systemd, rolled back by recovery, and reported failed, though the
