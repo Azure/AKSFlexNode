@@ -84,12 +84,8 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if !opts.ExactMember {
 		t.Fatal("ExactMember = false")
 	}
-	withoutDigest, err := secureAgentInstallOptions("https://example.com/agent.tar.gz", "")
-	if err != nil {
-		t.Fatalf("secureAgentInstallOptions without digest: %v", err)
-	}
-	if withoutDigest.ExpectedSHA256 != "" {
-		t.Fatalf("ExpectedSHA256 = %q, want empty", withoutDigest.ExpectedSHA256)
+	if opts.ExpectedSHA256 != digest {
+		t.Fatalf("ExpectedSHA256 = %q, want %q", opts.ExpectedSHA256, digest)
 	}
 	if _, err := secureAgentInstallOptions("http://127.0.0.1/agent.tar.gz", digest); err != nil {
 		t.Fatalf("secureAgentInstallOptions with HTTP: %v", err)
@@ -107,9 +103,28 @@ func TestSecureAgentInstallOptionsRejectsInvalidInputs(t *testing.T) {
 			url:    "ftp://example.com/agent.tar.gz",
 			digest: strings.Repeat("a", 64),
 		},
+		"missing digest": {
+			url: "https://example.com/agent.tar.gz",
+		},
+		"blank digest": {
+			url:    "https://example.com/agent.tar.gz",
+			digest: " \t\n",
+		},
+		"prefix without digest": {
+			url:    "https://example.com/agent.tar.gz",
+			digest: "sha256:",
+		},
 		"invalid digest": {
 			url:    "https://example.com/agent.tar.gz",
 			digest: "bad",
+		},
+		"non-hex digest": {
+			url:    "https://example.com/agent.tar.gz",
+			digest: strings.Repeat("g", 64),
+		},
+		"long digest": {
+			url:    "https://example.com/agent.tar.gz",
+			digest: strings.Repeat("a", 66),
 		},
 	}
 	for name, tt := range tests {

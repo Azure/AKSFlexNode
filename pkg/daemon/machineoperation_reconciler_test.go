@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -321,18 +324,56 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 	t.Parallel()
 
-	upgrader := &fakeAgentUpgradeExecutor{}
-	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	tests := map[string]struct {
+		parameters map[string]string
+		wantErr    string
+	}{
+		"missing URL": {
+			wantErr: "downloadURL",
+		},
+		"missing digest": {
+			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret"},
+			wantErr:    "sha256",
+		},
+		"blank digest": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentUpgradeSHA256Parameter:      " \t\n",
+			},
+			wantErr: "sha256",
+		},
+		"invalid digest": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentUpgradeSHA256Parameter:      "bad",
+			},
+			wantErr: "64 hexadecimal",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := target.reconcileAgentUpgrade(t.Context(), store, daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade}); err != nil {
-		t.Fatalf("reconcileAgentUpgrade: %v", err)
-	}
-	if store.result.Phase != machinav1alpha3.OperationPhaseFailed || store.result.Reason != "InvalidParameters" {
-		t.Fatalf("result = %#v, want InvalidParameters failure", store.result)
-	}
-	if upgrader.pending || upgrader.staged || upgrader.restarted {
-		t.Fatal("executor called for invalid parameters")
+			upgrader := &fakeAgentUpgradeExecutor{acquireErr: errors.New("activation lock must not be acquired")}
+			store := &fakeMachineOperationStore{}
+			target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+			op := daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade, Parameters: tt.parameters}
+
+			for range 2 {
+				if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
+					t.Fatalf("reconcileAgentUpgrade: %v", err)
+				}
+				if store.result.Phase != machinav1alpha3.OperationPhaseFailed || store.result.Reason != "InvalidParameters" || !strings.Contains(store.result.Message, tt.wantErr) {
+					t.Fatalf("result = %#v, want InvalidParameters failure containing %q", store.result, tt.wantErr)
+				}
+				if strings.Contains(store.result.Message, "secret") {
+					t.Fatalf("result exposes URL credentials: %#v", store.result)
+				}
+				if store.inProgress || upgrader.pending || upgrader.staged || upgrader.restarted || upgrader.aborted {
+					t.Fatal("invalid parameters mutated the operation or called the executor")
+				}
+			}
+		})
 	}
 }
 
@@ -388,6 +429,7 @@ func TestMachineOperationHandlersAgentUpgradeMarkFailureClearsPendingSignal(t *t
 	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	_, err := target.reconcileAgentUpgrade(t.Context(), store, op)
@@ -460,6 +502,7 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	_, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op)
@@ -620,3 +663,72 @@ func (f *fakeMachineOperationStore) Finish(_ context.Context, op daemon.MachineO
 }
 
 var _ daemon.MachineOperationStore[int64] = (*fakeMachineOperationStore)(nil)
+
+func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cached     machinav1alpha3.OperationPhase
+		apiServer  machinav1alpha3.OperationPhase
+		wantReboot bool
+	}{
+		"a pending NodeReboot reboots the node": {
+			cached:     machinav1alpha3.OperationPhasePending,
+			apiServer:  machinav1alpha3.OperationPhasePending,
+			wantReboot: true,
+		},
+		// The reconcile that marking it in progress queued, which runs as soon as the handler
+		// returns, before the cache has the operation's end.
+		"a finished NodeReboot the cache still has in progress doesn't reboot it again": {
+			cached:    machinav1alpha3.OperationPhaseInProgress,
+			apiServer: machinav1alpha3.OperationPhaseComplete,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			if err := machinav1alpha3.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			withOperation := func(phase machinav1alpha3.OperationPhase) client.Client {
+				operation := &machinav1alpha3.MachineOperation{
+					ObjectMeta: metav1.ObjectMeta{Name: "reboot-1"},
+					Spec: machinav1alpha3.MachineOperationSpec{
+						MachineRef:    "machine1",
+						OperationKind: machinav1alpha3.OperationNodeReboot,
+					},
+					Status: machinav1alpha3.MachineOperationStatus{Phase: phase},
+				}
+				return fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithRESTMapper(machineOperationRESTMapper()).
+					WithObjects(operation).
+					WithStatusSubresource(operation).
+					Build()
+			}
+			cache, apiServer := withOperation(tc.cached), withOperation(tc.apiServer)
+			operator := &fakeNodeOperator{}
+			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+				Client:         cache,
+				Reader:         apiServer,
+				Log:            discardLogger(),
+				NodeName:       "node1",
+				AKSMachineName: "machine1",
+				Operator:       operator,
+				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
+			})
+			if err != nil {
+				t.Fatalf("machineOperationReconciler: %v", err)
+			}
+
+			if _, err := reconciler.ReconcileMachineOperation(t.Context(), "reboot-1"); err != nil {
+				t.Fatalf("ReconcileMachineOperation: %v", err)
+			}
+			if operator.restarted != tc.wantReboot {
+				t.Errorf("rebooted = %v, want %v", operator.restarted, tc.wantReboot)
+			}
+		})
+	}
+}

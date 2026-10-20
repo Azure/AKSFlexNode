@@ -116,6 +116,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
 		Log:                  log,
 		NodeName:             nodeName,
 		AKSMachineName:       aksMachineName,

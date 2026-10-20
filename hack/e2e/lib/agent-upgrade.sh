@@ -232,6 +232,35 @@ agent_upgrade_e2e() {
   before_slot="$(cut -d'|' -f1 <<<"${before}")"
   log_info "Pre-upgrade agent snapshot: ${before}"
 
+  local rejection rejection_digest rejection_reason rejection_op actual_reason rejection_snapshot
+  for rejection in missing-digest mismatched-digest; do
+    rejection_digest=""
+    rejection_reason="InvalidParameters"
+    if [[ "${rejection}" == "mismatched-digest" ]]; then
+      rejection_digest="${failure_digest}"
+      rejection_reason="ExecutionFailed"
+    fi
+    rejection_op="agent-upgrade-${rejection}-${suffix}"
+    _agent_upgrade_apply "${rejection_op}" "${vm_name}" success.tar.gz "${rejection_digest}" "${rejection}-${suffix}"
+    _agent_upgrade_wait_phase "${rejection_op}" Failed
+    actual_reason="$(kubectl get machineoperation "${rejection_op}" -o jsonpath='{.status.conditions[?(@.type=="Completed")].reason}')"
+    if [[ "${actual_reason}" != "${rejection_reason}" ]]; then
+      log_error "AgentUpgrade ${rejection_op} failed with ${actual_reason}, expected ${rejection_reason}"
+      return 1
+    fi
+    rejection_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
+    if [[ "${rejection_snapshot}" != "${before}" ]]; then
+      log_error "Rejected AgentUpgrade changed the active binaries: before=${before} after=${rejection_snapshot}"
+      return 1
+    fi
+    if kubectl get machineoperation "${rejection_op}" -o jsonpath='{.status.message}' | grep -q "${rejection}-${suffix}"; then
+      log_error "Rejected AgentUpgrade status leaked sensitive URL query data"
+      return 1
+    fi
+    remote_exec "${vm_ip}" 'sudo systemctl is-active --quiet aks-flex-node-agent.service && sudo test ! -e /etc/aks-flex-node/agent-upgrade-signal.json'
+    log_success "AgentUpgrade rejected ${rejection} without changing the active binaries"
+  done
+
   local success_op="agent-upgrade-success-${suffix}"
   _agent_upgrade_apply "${success_op}" "${vm_name}" success.tar.gz "${success_digest}" "success-${suffix}"
   _agent_upgrade_wait_phase "${success_op}" Complete
@@ -266,9 +295,7 @@ agent_upgrade_e2e() {
   validate_node_joined "${vm_name}"
 
   local retry_op="agent-upgrade-retry-${suffix}"
-  # The digest is optional when the VM-local source and loopback transport
-  # provide the trust boundary.
-  _agent_upgrade_apply "${retry_op}" "${vm_name}" success.tar.gz "" "retry-${suffix}"
+  _agent_upgrade_apply "${retry_op}" "${vm_name}" success.tar.gz "${success_digest}" "retry-${suffix}"
   _agent_upgrade_wait_phase "${retry_op}" Complete
   retry_snapshot="$(_agent_upgrade_snapshot "${vm_ip}")"
   IFS='|' read -r _ _ retry_binary_digest _ <<<"${retry_snapshot}"

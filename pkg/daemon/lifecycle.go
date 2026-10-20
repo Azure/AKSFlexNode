@@ -211,12 +211,26 @@ func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agent
 
 type uninstallServiceTask struct {
 	log *slog.Logger
+	// systemctl, unitDir and paths are the host's; tests replace them.
+	systemctl func(ctx context.Context, args ...string) error
+	unitDir   string
+	paths     []string
 }
 
-// UninstallService returns a task that stops, disables, removes, and reloads
-// the systemd unit.
+// UninstallService returns a task that removes the first-boot unit, then
+// disables, removes, and stops the agent's systemd unit.
+//
+// The paths are resolved when the task is built. Nothing in reset changes the
+// host root, and ResetNode resolves the helper paths it removes the same way.
 func UninstallService(log *slog.Logger) phases.Task {
-	return &uninstallServiceTask{log: log}
+	return &uninstallServiceTask{
+		log: log,
+		systemctl: func(ctx context.Context, args ...string) error {
+			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
+		},
+		unitDir: systemdSystemDir,
+		paths:   uninstallPaths(),
+	}
 }
 
 // uninstallPaths returns the files UninstallService removes. The recovery
@@ -263,34 +277,30 @@ func removeIfPresentWith(path string, lstat func(string) (os.FileInfo, error), r
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
-	// Before the agent is stopped: in the daemon's reset paths, stopping the
-	// agent ends the process running this task.
-	if err := removeFirstBootUnit(ctx, t.log, systemdSystemDir, runSystemctl); err != nil {
+	if err := removeFirstBootUnit(ctx, t.log, t.unitDir, t.systemctl); err != nil {
 		return err
 	}
-	if err := utilexec.StopService(ctx, t.log, ServiceUnitName); err != nil {
-		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
-	}
-	if err := utilexec.DisableService(ctx, t.log, ServiceUnitName); err != nil {
+	// Stopping comes last. When the daemon uninstalls its own unit, for AgentReset or a node's
+	// deletion, stopping the unit stops the daemon, and nothing after the stop would run: the
+	// unit would stay enabled, behind a dangling .wants link, with systemd not reloaded. systemd
+	// still stops a running unit whose file is gone.
+	if err := t.systemctl(ctx, "disable", ServiceUnitName); err != nil {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
-
-	for _, path := range uninstallPaths() {
+	for _, path := range t.paths {
 		if err := removeIfPresent(path); err != nil {
 			return err
 		}
 	}
-
-	if err := utilexec.ReloadSystemd(ctx, t.log); err != nil {
+	if err := t.systemctl(ctx, "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
-
 	t.log.Info("systemd service uninstalled", "unit", ServiceUnitName)
-	return nil
-}
 
-func runSystemctl(ctx context.Context, log *slog.Logger, args ...string) error {
-	return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
+	if err := t.systemctl(ctx, "stop", ServiceUnitName); err != nil {
+		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
+	}
+	return nil
 }
 
 // removeFirstBootUnit disables, stops, and removes the first-boot bootstrap
@@ -304,7 +314,7 @@ func removeFirstBootUnit(
 	ctx context.Context,
 	log *slog.Logger,
 	unitDir string,
-	systemctl func(context.Context, *slog.Logger, ...string) error,
+	systemctl func(context.Context, ...string) error,
 ) error {
 	unitPath := filepath.Join(unitDir, FirstBootUnitName)
 	if _, err := os.Lstat(unitPath); errors.Is(err, os.ErrNotExist) {
@@ -312,7 +322,7 @@ func removeFirstBootUnit(
 	}
 
 	log.Info("removing first-boot bootstrap unit", "unit", FirstBootUnitName)
-	if err := systemctl(ctx, log, "disable", "--now", FirstBootUnitName); err != nil {
+	if err := systemctl(ctx, "disable", "--now", FirstBootUnitName); err != nil {
 		return fmt.Errorf("systemctl disable --now %s: %w", FirstBootUnitName, err)
 	}
 

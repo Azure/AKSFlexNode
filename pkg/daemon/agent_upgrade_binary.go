@@ -186,22 +186,20 @@ func replaceSymlink(linkPath, targetPath string) error {
 	return os.Rename(tempPath, linkPath)
 }
 
-// secureAgentInstallOptions intentionally follows the merged Unbounded
-// MachineOperation contract: HTTP transport and an omitted digest are allowed
-// when the control plane trusts the archive source and transport path. Flex
-// still bounds the archive, requires one exact member, and verifies the
-// candidate executable. Production callers should supply HTTPS and SHA-256.
+// The shared installer permits omitted digests; require one here so its version
+// probe cannot execute an unverified candidate.
 func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTP or HTTPS, include a host, omit user information, and omit fragments")
 	}
-	digest := strings.TrimPrefix(strings.TrimSpace(expectedDigest), "sha256:")
-	if digest != "" {
-		decodedDigest, decodeErr := hex.DecodeString(digest)
-		if decodeErr != nil || len(decodedDigest) != sha256.Size {
-			return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
-		}
+	digest := strings.TrimSpace(expectedDigest)
+	if digest == "" {
+		return agentbinary.InstallOptions{}, fmt.Errorf("missing required parameter %q", agentUpgradeSHA256Parameter)
+	}
+	decodedDigest, decodeErr := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+	if decodeErr != nil || len(decodedDigest) != sha256.Size {
+		return agentbinary.InstallOptions{}, fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
 	}
 	member, err := config.AgentBinaryArchiveMember(runtime.GOOS, runtime.GOARCH)
 	if err != nil {

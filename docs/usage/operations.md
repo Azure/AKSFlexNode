@@ -96,7 +96,7 @@ journalctl -u aks-flex-node-agent -f
 
 ## Managed agent upgrade
 
-When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and, when available, the SHA-256 of the compressed archive:
+When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and the required SHA-256 of the compressed archive:
 
 ```yaml
 apiVersion: unbounded-cloud.io/v1alpha3
@@ -111,7 +111,11 @@ spec:
     sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-The archive must contain exactly the architecture-specific release member used by AKS Flex Node (`aks-flex-node-linux-amd64` or `aks-flex-node-linux-arm64`). The `sha256` parameter is optional; when supplied, the daemon verifies the compressed archive digest. Prefer HTTPS and a digest for production downloads. Plain HTTP is intended for explicitly trusted networks such as a VM-local loopback server; omit the digest only when both the archive source and transport path are trusted. The daemon always verifies the candidate `version` command before switching its blue/green binary links. It also atomically updates the binary in the active nspawn rootfs so kubelet exec authentication uses the same version.
+The archive must contain exactly the architecture-specific release member used by AKS Flex Node (`aks-flex-node-linux-amd64` or `aks-flex-node-linux-arm64`). The `sha256` parameter is required: use 64 hexadecimal characters, optionally prefixed with `sha256:`. Obtain the digest for the target version and architecture from the release's `checksums.txt` at `https://github.com/Azure/AKSFlexNode/releases/download/<version>/checksums.txt`. For templated URLs or multi-version deployments, the request producer must resolve the archive URL and supply its corresponding digest.
+
+Missing, blank, or malformed digests fail with `InvalidParameters` before downloading. A mismatched digest fails with `ExecutionFailed` before extraction or candidate execution, leaving the active and last-good binaries unchanged. Verification is mandatory for both HTTP and HTTPS; prefer HTTPS for production downloads. After digest verification, the daemon executes the candidate's `version` command before switching its blue/green binary links. It also atomically updates the binary in the active nspawn rootfs so kubelet exec authentication uses the same version.
+
+**Breaking change:** URL-only upgrade requests are no longer accepted. Update controllers and scripts to include `sha256` before deploying agents that enforce it. Older target versions remain supported with a matching digest; there is no version-order check. Downgrading or rolling back to an agent that permits omitted digests also restores that older verification policy.
 
 The restarted daemon marks the operation `Complete`. If the candidate cannot remain running, systemd restores the last-known-good host and nspawn binaries and marks the operation `Failed`. URL query strings, which may contain SAS credentials, are omitted from logs and operation status.
 

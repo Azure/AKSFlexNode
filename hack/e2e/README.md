@@ -205,13 +205,14 @@ Each join path uploads the locally built binary and renders a config file. Fresh
 The `agent-upgrade` command uses the bootstrap-token VM to exercise the complete managed binary lifecycle:
 
 1. Serve architecture-specific release archives over VM-local loopback HTTP to validate HTTP transport support.
-2. Submit an `AgentUpgrade` with an archive SHA-256 and a query credential.
-3. Verify successful daemon restart, operation completion, binary replacement, and host/nspawn binary equality.
-4. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.
-5. Upgrade to a candidate that passes `version` but fails daemon startup, then verify automatic rollback and a failed operation.
-6. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot without the optional archive digest.
-7. Stage a distinct candidate and validate direct host activation preflight, inactive-slot switch, service health, shared layout, and active-nspawn synchronization without creating a `MachineOperation` signal.
-8. Restart kubelet through the directly activated nspawn credential binary, require Lease renewal and Node readiness, then run a workload before the subsequent repave test.
+2. Verify missing and mismatched archive digests fail with `InvalidParameters` and `ExecutionFailed`, respectively, without changing the active host/nspawn binaries, leaving a pending signal, or exposing query credentials in status.
+3. Submit an `AgentUpgrade` with an archive SHA-256 and a query credential.
+4. Verify successful daemon restart, operation completion, binary replacement, and host/nspawn binary equality.
+5. Restart kubelet to exercise the synchronized nspawn exec-credential binary and require the Node to remain Ready.
+6. Upgrade to a candidate that passes `version` but fails daemon startup, then verify automatic rollback and a failed operation.
+7. Confirm status does not expose the sensitive URL query and retry successfully into the inactive slot with the required archive digest.
+8. Stage a distinct candidate and validate direct host activation preflight, inactive-slot switch, service health, shared layout, and active-nspawn synchronization without creating a `MachineOperation` signal.
+9. Restart kubelet through the directly activated nspawn credential binary, require Lease renewal and Node readiness, then run a workload before the subsequent repave test.
 
 Run it against an already joined environment:
 
