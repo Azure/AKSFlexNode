@@ -33,7 +33,7 @@ case $name in
     # mount or unmount made in the container's mount namespace, chroot or not,
     # never reaches the host. These run in the host's, PID 1's, instead.
     mount | umount | mountpoint)
-        exec nsenter --mount=/proc/1/ns/mnt -- /usr/bin/env "$host_path" "$name" "$@"
+        exec /usr/bin/nsenter --mount=/proc/1/ns/mnt -- /usr/bin/env "$host_path" "$name" "$@"
         ;;
 esac
-exec chroot "$host_root" /usr/bin/env "$host_path" "$name" "$@"
+exec /usr/sbin/chroot "$host_root" /usr/bin/env "$host_path" "$name" "$@"

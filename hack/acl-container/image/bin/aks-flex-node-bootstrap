@@ -17,11 +17,26 @@ if [[ ! -f $inputs ]]; then
     echo "aks-flex-node-bootstrap: no $inputs" >&2
     exit 1
 fi
+# What the image sets, which bootstrap's inputs mustn't change: they'd have start
+# install the agent as on a host, or its config where the agent's unit doesn't
+# look, or download an agent rather than run the image's.
+reserved=" AKS_FLEX_NODE_CONTAINERIZED AKS_FLEX_NODE_CONFIG_PATH AKS_FLEX_NODE_INSTALL_DIR"
+reserved+=" AKS_FLEX_NODE_USE_INSTALLED_AGENT AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_AGENT_VERSION"
+reserved+=" AKS_FLEX_NODE_AGENT_SHA256 "
+number=0
 while IFS= read -r line || [[ -n $line ]]; do
-    if [[ $line =~ ^AKS_FLEX_NODE_[A-Z0-9_]+= ]]; then
+    number=$((number + 1))
+    line=${line%$'\r'}
+    if [[ $line =~ ^(AKS_FLEX_NODE_[A-Z0-9_]+)= ]]; then
+        name=${BASH_REMATCH[1]}
+        if [[ $reserved == *" $name "* ]]; then
+            echo "aks-flex-node-bootstrap: ignoring $name, line $number of $inputs: the image sets it" >&2
+            continue
+        fi
         export "${line?}"
     elif [[ -n ${line//[[:space:]]/} && $line != \#* ]]; then
-        echo "aks-flex-node-bootstrap: ignoring a line of $inputs: ${line%%=*}" >&2
+        # Only its number: the line could be part of a secret.
+        echo "aks-flex-node-bootstrap: ignoring line $number of $inputs, which isn't AKS_FLEX_NODE_NAME=value" >&2
     fi
 done <"$inputs"
 exec /opt/aks-flex-node/bin/bootstrap.sh --use-installed-agent --install-dir /opt/aks-flex-node/bin "$@"
