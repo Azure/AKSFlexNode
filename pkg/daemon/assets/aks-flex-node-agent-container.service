@@ -25,8 +25,10 @@ EnvironmentFile=-/etc/aks-flex-node/agent-image.env
 # that runs ctr then fails: it counts toward the start limit, and starts the
 # recovery unit. So wait for it, within TimeoutStartSec.
 ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
-# The task and container outlive ctr if it is killed, so clear them.
-ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node
+# The task and container outlive ctr if it is killed, so clear them. task
+# delete --force kills the task and waits for it, so the container's delete
+# then finds it stopped.
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
 # The container gets the host's root at /host, and its entrypoint mounts the
 # host paths the agent uses at their own paths. The agent learns its image, and
