@@ -42,7 +42,11 @@ import ukiboot  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-STATE = Path(os.environ.get("ACLC_STATE_DIR", str(REPO / ".vm" / "acl-container")))
+DEFAULT_STATE = REPO / ".vm" / "acl-container"
+STATE = Path(os.environ.get("ACLC_STATE_DIR", str(DEFAULT_STATE)))
+# up marks the state directory it makes, which down removes only if it's the default or marked:
+# ACLC_STATE_DIR could name any directory.
+STATE_MARKER = STATE / ".aclc-state"
 IMAGE_DIR = Path(os.environ.get("ACL_IMAGE_DIR", str(REPO / ".vm" / "acl-images")))
 
 # The subnet and interface names are this harness's own, so other local VM harnesses can run
@@ -810,28 +814,32 @@ def launch_vm(image: Path, config_url: str) -> None:
     log(f"VM started (pid {pid_file.read_text().strip()}, serial log {serial_log})")
 
 
-def vm_running() -> bool:
-    pid_file = STATE / "qemu.pid"
-    if not pid_file.exists():
-        return False
+def vm_pid() -> int | None:
+    """The VM's QEMU process, from its PID file, while it runs. A PID can be reused, so the
+    process has to be QEMU's."""
     try:
-        os.kill(int(pid_file.read_text().strip()), 0)
+        pid = int((STATE / "qemu.pid").read_text().strip())
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
     except (OSError, ValueError):
-        return False
-    return True
+        return None
+    return pid if b"qemu-system" in cmdline else None
+
+
+def vm_running() -> bool:
+    return vm_pid() is not None
 
 
 def stop_vm() -> None:
     pid_file = STATE / "qemu.pid"
-    if not vm_running():
+    pid = vm_pid()
+    if pid is None:
         pid_file.unlink(missing_ok=True)
         return
-    pid = int(pid_file.read_text().strip())
     log(f"stopping VM (pid {pid})")
     os.kill(pid, 15)
     for _ in range(10):
         time.sleep(1)
-        if not vm_running():
+        if vm_pid() is None:
             break
     else:
         os.kill(pid, 9)
@@ -1030,11 +1038,11 @@ def duration(seconds: float) -> str:
 def machine_state(machine: str) -> str:
     """Return the machine's machined state, such as running, or "" if machined has no such
     machine."""
-    return ssh(f"machinectl show {machine} -p State --value", check=False).stdout.strip()
+    return ssh(f"machinectl show {shlex.quote(machine)} -p State --value", check=False).stdout.strip()
 
 
 def machine_leader(machine: str) -> str:
-    return ssh(f"machinectl show {machine} -p Leader --value", check=False).stdout.strip()
+    return ssh(f"machinectl show {shlex.quote(machine)} -p Leader --value", check=False).stdout.strip()
 
 
 def wait_machine(machine: str, want: str, timeout: float = 180) -> None:
@@ -1165,9 +1173,12 @@ def check_repave(checks: Checks) -> None:
     daemon then starts the other machine, kube1 or kube2, with the new settings, and removes the
     old one, its bpffs mount on the host included."""
     before = daemon_state().get("activeMachine", "")
+    if not before:
+        checks.expect(False, "the agent has an active machine to repave from")
+        return
     old_uid = node_uid()
     settings_version = f"repave-{int(time.time())}"
-    log(f"repaving {HOSTNAME}, on {before or 'no machine'}, to settings version {settings_version}")
+    log(f"repaving {HOSTNAME}, on {before}, to settings version {settings_version}")
     register_machine(kubernetes_version(), settings_version)
     kubectl("delete", "node", HOSTNAME, "--wait=false", quiet=True)
 
@@ -1186,9 +1197,9 @@ def check_repave(checks: Checks) -> None:
         return
 
     # The daemon removes the old machine once the new one has started.
-    gone = eventually(lambda: ssh(f"machinectl show-image {before} || test -e /run/bpffs/{before}",
+    gone = eventually(lambda: ssh(f"machinectl show-image {shlex.quote(before)} || test -e /run/bpffs/{shlex.quote(before)}",
                                   check=False).returncode != 0, 120)
-    left = ssh(f"machinectl list-images --no-legend; findmnt -rn -o TARGET /run/bpffs/{before}",
+    left = ssh(f"machinectl list-images --no-legend; findmnt -rn -o TARGET /run/bpffs/{shlex.quote(before)}",
                check=False).stdout.strip()
     checks.expect(gone, f"the old machine, {before}, is removed, with its bpffs mount", left)
     check_cluster(checks, after=" after the repave")
@@ -1332,7 +1343,7 @@ def agent_binary_digest() -> str:
 
 def machine_agent_digest() -> str:
     machine = daemon_state().get("activeMachine", "")
-    out = ssh(f"sudo sha256sum /var/lib/machines/{machine}/usr/local/bin/aks-flex-node", check=False)
+    out = ssh(f"sudo sha256sum /var/lib/machines/{shlex.quote(machine)}/usr/local/bin/aks-flex-node", check=False)
     return out.stdout.split()[0] if out.returncode == 0 else ""
 
 
@@ -1508,23 +1519,23 @@ def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
         checks.expect(False, "the agent's active machine runs", machine or "no active machine")
         return
 
-    unit_cgroup = ssh_out(f"systemctl show systemd-nspawn@{machine}.service -p ControlGroup --value")
+    unit_cgroup = ssh_out(f"systemctl show systemd-nspawn@{shlex.quote(machine)}.service -p ControlGroup --value")
     checks.expect(unit_cgroup.startswith("/machine.slice/"),
                   f"{machine} runs under the host's machine.slice, outside the agent's container",
                   unit_cgroup)
-    os_release = agent(f"systemd-run --machine={machine} --pipe --wait --quiet cat /etc/os-release",
+    os_release = agent(f"systemd-run --machine={shlex.quote(machine)} --pipe --wait --quiet cat /etc/os-release",
                        check=False)
     checks.expect(os_release.returncode == 0 and "ID=" in os_release.stdout,
                   f"systemd-run --machine from the agent's container runs a command in {machine}",
                   os_release.stderr.strip())
     # The agent copies its binary into the machine, where kubelet runs it as its credential
     # plugin, which a node joined with a bootstrap token doesn't exercise.
-    in_machine = ssh(f"sudo systemd-run --machine={machine} --pipe --wait --quiet "
+    in_machine = ssh(f"sudo systemd-run --machine={shlex.quote(machine)} --pipe --wait --quiet "
                      "/usr/local/bin/aks-flex-node version", check=False)
     checks.expect(in_machine.returncode == 0 and "AKS Flex Node Agent" in in_machine.stdout,
                   f"the agent's binary, which kubelet runs as its credential plugin, runs in {machine}",
                   (in_machine.stdout + in_machine.stderr).strip()[-500:])
-    shell = agent(f"machinectl shell {machine} /bin/sh -c 'echo shell-ok' </dev/null", check=False)
+    shell = agent(f"machinectl shell {shlex.quote(machine)} /bin/sh -c 'echo shell-ok' </dev/null", check=False)
     checks.expect("shell-ok" in shell.stdout,
                   f"machinectl shell from the agent's container reaches {machine}",
                   (shell.stdout + shell.stderr).strip())
@@ -1576,6 +1587,8 @@ def cmd_up(args: argparse.Namespace) -> None:
     image = local or aclimage.gallery_image(IMAGE_DIR)
     stop_vm()
     STATE.mkdir(parents=True, exist_ok=True)
+    STATE.chmod(0o700)
+    STATE_MARKER.touch()
     public_key = ensure_ssh_key()
 
     create_network()
@@ -1603,8 +1616,10 @@ def cmd_up(args: argparse.Namespace) -> None:
     for path, content in bootstrap.items():
         doc["storage"]["files"].append({"path": path, "mode": 0o600, "overwrite": True,
                                         "contents": {"source": data_url(content)}})
-    ignition.write_text(json.dumps(doc, indent=2) + "\n")
-    ignition.chmod(0o600)
+    # It holds the bootstrap token, so it's private from the start.
+    ignition.unlink(missing_ok=True)
+    with os.fdopen(os.open(ignition, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as out:
+        out.write(json.dumps(doc, indent=2) + "\n")
 
     # The config server only runs while the VM provisions. Later boots must not need it.
     with FileServer({IGNITION_NAME: ignition}):
@@ -1737,8 +1752,11 @@ def cmd_down(_: argparse.Namespace) -> None:
     delete_network()
     restore_forwarding()
     stop_registry()
-    shutil.rmtree(STATE, ignore_errors=True)
-    log("removed the VM, cluster, network, registry, and state")
+    if STATE.resolve() == DEFAULT_STATE.resolve() or STATE_MARKER.exists():
+        shutil.rmtree(STATE, ignore_errors=True)
+        log("removed the VM, cluster, network, registry, and state")
+    else:
+        log(f"removed the VM, cluster, network, and registry; not {STATE}, which up didn't make")
     if IMAGE_DIR.is_dir() and any(IMAGE_DIR.glob("acl-gallery-*.qcow2")):
         log(f"kept the exported images in {IMAGE_DIR}; remove it to reclaim the space")
 
