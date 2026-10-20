@@ -131,10 +131,16 @@ _agent_upgrade_assert_synchronized() {
   log_info "Agent binary synchronized: slot=${current} machine=${machine} digest=${host_digest}"
 }
 
+# _agent_upgrade_validate_kubelet_auth restarts the kubelet in the active machine,
+# and requires the node's Lease to be renewed after the restart, with the node
+# Ready. The old kubelet renews about every 10s, so only a renewal stamped after
+# the restart returned counts; both times come from the VM's clock. The token VM
+# authenticates with the client certificate it was issued through TLS bootstrap,
+# not through the agent as an exec credential plugin, so this shows the upgraded
+# node's kubelet can restart and authenticate, not that the plugin works.
 _agent_upgrade_validate_kubelet_auth() {
-  local vm_name="$1" vm_ip="$2" before_renew elapsed=0
-  before_renew="$(kubectl get lease "${vm_name}" -n kube-node-lease -o jsonpath='{.spec.renewTime}')"
-  remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
+  local vm_name="$1" vm_ip="$2" restarted_at elapsed=0
+  restarted_at="$(remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 machine="$(sudo python3 - <<'PY'
 import json
@@ -143,20 +149,28 @@ with open('/etc/aks-flex-node/daemon-state.json', encoding='utf-8') as stream:
 PY
 )"
 sudo systemd-run --machine="${machine}" --quiet --pipe systemctl restart kubelet.service
+date +%s.%N
 REMOTE
+)"
+  restarted_at="$(tail -n 1 <<<"${restarted_at}")"
+  if [[ ! "${restarted_at}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    log_error "Could not read when the kubelet was restarted: ${restarted_at}"
+    return 1
+  fi
 
   while (( elapsed < 120 )); do
-    local renew ready
+    local renew renewed_at ready
     renew="$(kubectl get lease "${vm_name}" -n kube-node-lease -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
     ready="$(kubectl get node "${vm_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
-    if [[ -n "${renew}" && "${renew}" != "${before_renew}" && "${ready}" == "True" ]]; then
-      log_success "Kubelet renewed its lease after restart using the synchronized exec credential binary"
+    if [[ -n "${renew}" && "${ready}" == "True" ]] && renewed_at="$(date -d "${renew}" +%s.%N 2>/dev/null)" &&
+      awk -v renewed="${renewed_at}" -v restarted="${restarted_at}" 'BEGIN { exit !(renewed > restarted) }'; then
+      log_success "The restarted kubelet renewed its Lease at ${renew} and the node is Ready"
       return 0
     fi
     sleep 5
     elapsed=$((elapsed + 5))
   done
-  log_error "Kubelet did not renew its lease after AgentUpgrade"
+  log_error "The restarted kubelet did not renew its Lease after AgentUpgrade"
   return 1
 }
 
@@ -273,8 +287,8 @@ agent_upgrade_e2e() {
     return 1
   fi
 
-  # Restart kubelet and require a fresh Lease renewal so this proves the
-  # synchronized nspawn exec-credential binary can still authenticate.
+  # Restart kubelet and require a Lease renewal by the restarted kubelet, so the
+  # upgraded node can still authenticate.
   _agent_upgrade_validate_kubelet_auth "${vm_name}" "${vm_ip}"
 
   local failure_op="agent-upgrade-rollback-${suffix}"
@@ -447,11 +461,24 @@ REMOTE
 # a bind mount over it that covers only the window in which the agent would move
 # its files there. The upgrade server started before the mount keeps serving from
 # the /opt underneath.
+#
+# "off" unmounts only a noexec mount at /opt, so it is safe to run whether or not
+# "on" got that far, and never takes down a real /opt mount.
 _host_root_migration_noexec() {
   local vm_ip="$1" mode="$2"
   case "${mode}" in
     on) remote_exec "${vm_ip}" 'sudo mount --bind /opt /opt && sudo mount -o remount,bind,noexec /opt' ;;
-    off) remote_exec "${vm_ip}" 'sudo umount /opt || sudo umount -l /opt' ;;
+    off) remote_exec "${vm_ip}" 'bash -s' <<'REMOTE' ;;
+set -euo pipefail
+# Only the noexec bind comes off: whatever is mounted at /opt underneath stays.
+if findmnt -no OPTIONS --target /opt | tr ',' '\n' | grep -qx noexec; then
+  sudo umount /opt || sudo umount -l /opt
+fi
+if findmnt -no OPTIONS --target /opt | tr ',' '\n' | grep -qx noexec; then
+  echo "/opt is still mounted noexec: $(findmnt --target /opt 2>&1)" >&2
+  exit 1
+fi
+REMOTE
   esac
 }
 
@@ -606,14 +633,19 @@ host_root_migration_e2e() {
   # The next upgrade pushes the older release out of last-good, so the daemon it
   # starts would move the host into a real /opt/unbounded/agent. With /opt mounted
   # noexec it cannot run from there, so it keeps the host linked.
-  _host_root_migration_noexec "${vm_ip}" on
-  since="$(remote_exec "${vm_ip}" "date '+%Y-%m-%d %H:%M:%S'")"
+  # Every later join needs /opt to allow running programs, so the mount comes off
+  # however this step ends. A subshell's EXIT trap also runs when set -e ends it.
   op="host-root-noexec-${suffix}"
-  _agent_upgrade_apply "${op}" "${vm_name}" success.tar.gz "${success_digest}" "noexec-${suffix}"
-  if ! _agent_upgrade_wait_phase "${op}" Complete || ! _host_root_migration_assert_kept_linked "${vm_ip}" "${since}"; then
-    _host_root_migration_noexec "${vm_ip}" off || true
-    return 1
-  fi
+  (
+    trap '_host_root_migration_noexec "${vm_ip}" off || true' EXIT
+    _host_root_migration_noexec "${vm_ip}" on
+    since="$(remote_exec "${vm_ip}" "date '+%Y-%m-%d %H:%M:%S'")"
+    _agent_upgrade_apply "${op}" "${vm_name}" success.tar.gz "${success_digest}" "noexec-${suffix}"
+    _agent_upgrade_wait_phase "${op}" Complete
+    _host_root_migration_assert_kept_linked "${vm_ip}" "${since}"
+  )
+  # The trap's own call ignores a failure; this one fails the test if /opt is
+  # still noexec.
   _host_root_migration_noexec "${vm_ip}" off
 
   # The next daemon start tries again, and moves it. The test makes this start,
