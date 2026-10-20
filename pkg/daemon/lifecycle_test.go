@@ -33,7 +33,7 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 	}
 	recoveryPath := filepath.Join(t.TempDir(), "aks-flex-node-recovery.sh")
 	reloaded := false
-	if err := ensureAgentUpgradeServiceAssetsAt(
+	if _, err := ensureAgentUpgradeServiceAssetsAt(
 		t.Context(),
 		slog.Default(),
 		paths,
@@ -44,6 +44,7 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 			reloaded = true
 			return nil
 		},
+		false,
 	); err != nil {
 		t.Fatalf("ensureAgentUpgradeServiceAssetsAt: %v", err)
 	}
@@ -76,6 +77,92 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 	}
 	if info.Mode().Perm() != 0o750 {
 		t.Fatalf("recovery script mode = %o, want 750", info.Mode().Perm())
+	}
+}
+
+// While an AgentUpgrade is pending, the daemon may be its candidate, not yet judged, and the
+// service assets on disk are the last-good version's, which recovery runs through.
+func TestEnsureDaemonServiceAssetsKeepsTheLastGoodAssetsWhileAnUpgradeIsPending(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		pending      bool
+		missing      string
+		wantHeld     bool
+		wantRewrites []string
+	}{
+		"keeps the last-good version's assets": {
+			pending:  true,
+			wantHeld: true,
+		},
+		"writes a missing one": {
+			pending:      true,
+			missing:      recoveryServiceUnitName,
+			wantHeld:     true,
+			wantRewrites: []string{recoveryServiceUnitName},
+		},
+		"converges them without a pending upgrade": {
+			wantRewrites: []string{"recovery script", recoveryServiceUnitName, ServiceUnitName},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := testAgentUpgradePaths(t)
+			if err := os.MkdirAll(filepath.Dir(paths.BinaryPath), 0o750); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			if err := os.WriteFile(paths.BinaryPath, []byte("last good"), 0o755); err != nil {
+				t.Fatalf("write binary: %v", err)
+			}
+			systemdDir := filepath.Join(t.TempDir(), "systemd")
+			recoveryPath := filepath.Join(t.TempDir(), "aks-flex-node-recovery.sh")
+			assets := map[string]string{
+				"recovery script":       recoveryPath,
+				recoveryServiceUnitName: filepath.Join(systemdDir, recoveryServiceUnitName),
+				ServiceUnitName:         filepath.Join(systemdDir, ServiceUnitName),
+			}
+			lastGood := "the last-good version's\n"
+			for name, path := range assets {
+				if name == tc.missing {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+					t.Fatalf("MkdirAll: %v", err)
+				}
+				if err := os.WriteFile(path, []byte(lastGood), 0o644); err != nil {
+					t.Fatalf("write %s: %v", name, err)
+				}
+			}
+			if tc.pending {
+				if err := os.MkdirAll(filepath.Dir(paths.SignalPath), 0o750); err != nil {
+					t.Fatalf("MkdirAll: %v", err)
+				}
+				if err := os.WriteFile(paths.SignalPath, []byte("{}"), 0o600); err != nil {
+					t.Fatalf("write signal: %v", err)
+				}
+			}
+
+			held, err := ensureAgentUpgradeServiceAssetsAt(t.Context(), slog.Default(), paths, agentServiceOptions{},
+				systemdDir, recoveryPath, func(context.Context, *slog.Logger) error { return nil }, true)
+			if err != nil {
+				t.Fatalf("ensureAgentUpgradeServiceAssetsAt: %v", err)
+			}
+			if held != tc.wantHeld {
+				t.Errorf("held = %v, want %v", held, tc.wantHeld)
+			}
+			for name, path := range assets {
+				content, err := os.ReadFile(path)
+				if err != nil {
+					t.Errorf("read %s: %v", name, err)
+					continue
+				}
+				if rewritten := string(content) != lastGood; rewritten != slices.Contains(tc.wantRewrites, name) {
+					t.Errorf("%s rewritten = %v, want %v", name, rewritten, !rewritten)
+				}
+			}
+		})
 	}
 }
 
