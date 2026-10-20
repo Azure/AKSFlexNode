@@ -183,20 +183,41 @@ fi
 grep -q 'client-secret file must not be a symlink' "$WORK_DIR/sp-link.log" || \
     fail "symlink client-secret rejection was not reported"
 
+# The cases about the layout reset keeps run bootstrap.sh with the agent unit and the upgrade lock
+# pointed at the test's own files, so they don't depend on whether this host runs the agent.
+TEST_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-bootstrap-test.service"
+mkdir -p "$(dirname "$TEST_UNIT_PATH")"
+run_with_test_unit() {
+    BOOTSTRAP_TEST_UNIT_PATH="$TEST_UNIT_PATH" \
+    BOOTSTRAP_TEST_LOCK_PATH="$WORK_DIR/run/agent-upgrade.lock" \
+        bash -c 'source "$1"; shift
+            SERVICE_UNIT="$(basename "$BOOTSTRAP_TEST_UNIT_PATH")"
+            SERVICE_UNIT_PATH="$BOOTSTRAP_TEST_UNIT_PATH"
+            AGENT_UPGRADE_LOCK_PATH="$BOOTSTRAP_TEST_LOCK_PATH"
+            main "$@"' bootstrap.sh "$SCRIPT" "$@"
+}
+
+# make_retained_layout ROOT lays out what reset keeps: the bin link into the blue/green layout,
+# whose current and last-good slots are an earlier binary.
+make_retained_layout() {
+    local root="$1"
+    mkdir -p "$root/bin" "$root/lib/aks-flex-node"
+    printf '#!/bin/sh\nexit 0\n# retained after reset\n' > "$root/lib/aks-flex-node/aks-flex-node-blue"
+    chmod 0755 "$root/lib/aks-flex-node/aks-flex-node-blue"
+    ln -s "$root/lib/aks-flex-node/aks-flex-node-blue" "$root/lib/aks-flex-node/aks-flex-node-current"
+    ln -s "$root/lib/aks-flex-node/aks-flex-node-blue" "$root/lib/aks-flex-node/aks-flex-node-last-good"
+    ln -s "$root/lib/aks-flex-node/aks-flex-node-current" "$root/bin/aks-flex-node"
+}
+
 # Reset removes the agent service but keeps the managed blue/green layout. A
 # rerun must install the downloaded agent instead of leaving the retained slot
 # for start to link back into place.
 RESET_ROOT="$WORK_DIR/reset-root"
-mkdir -p "$RESET_ROOT/bin" "$RESET_ROOT/lib/aks-flex-node"
-printf '#!/bin/sh\nexit 0\n# retained after reset\n' > "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue"
-chmod 0755 "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue"
-ln -s "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue" "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-current"
-ln -s "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue" "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-last-good"
-ln -s "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-current" "$RESET_ROOT/bin/aks-flex-node"
+make_retained_layout "$RESET_ROOT"
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/reset-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    bash "$SCRIPT" --auth msi \
+    run_with_test_unit --auth msi \
         --install-dir "$RESET_ROOT/bin" \
         --config-path "$WORK_DIR/reset-etc/config.json" >/dev/null
 [[ -f "$RESET_ROOT/bin/aks-flex-node" && ! -L "$RESET_ROOT/bin/aks-flex-node" ]] || \
@@ -211,6 +232,28 @@ grep -Fx "preflight --config $WORK_DIR/reset-etc/config.json --output text" "$WO
 grep -Fx "start --config $WORK_DIR/reset-etc/config.json" "$WORK_DIR/reset-calls" >/dev/null || \
     fail "rerun after reset did not start the downloaded agent"
 
+# While the agent unit is installed, the layout belongs to the upgrade flow, so a rerun on a live
+# node leaves it alone and runs nothing.
+LIVE_ROOT="$WORK_DIR/live-root"
+make_retained_layout "$LIVE_ROOT"
+printf '[Unit]\n' > "$TEST_UNIT_PATH"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/live-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        run_with_test_unit --auth msi \
+            --install-dir "$LIVE_ROOT/bin" \
+            --config-path "$WORK_DIR/live-etc/config.json" \
+            >"$WORK_DIR/live.log" 2>&1; then
+    fail "the managed link was replaced while the agent unit is installed"
+fi
+rm -f "$TEST_UNIT_PATH"
+grep -q 'while the agent service is installed or active' "$WORK_DIR/live.log" || \
+    fail "refusing to replace the managed link of an installed agent was not reported"
+[[ "$(readlink "$LIVE_ROOT/bin/aks-flex-node")" == "$LIVE_ROOT/lib/aks-flex-node/aks-flex-node-current" &&
+   -x "$LIVE_ROOT/lib/aks-flex-node/aks-flex-node-blue" ]] || \
+    fail "the managed layout of an installed agent changed"
+[[ ! -s "$WORK_DIR/live-calls" ]] || fail "the agent was run on a node whose agent unit is installed"
+
 # Any other link at the binary path is not the agent's layout; leave it for the
 # operator to inspect.
 mkdir -p "$WORK_DIR/odd-root/bin"
@@ -220,7 +263,7 @@ ln -s "$WORK_DIR/odd-target" "$WORK_DIR/odd-root/bin/aks-flex-node"
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        bash "$SCRIPT" --auth msi \
+        run_with_test_unit --auth msi \
             --install-dir "$WORK_DIR/odd-root/bin" \
             --config-path "$WORK_DIR/odd-etc/config.json" \
             >"$WORK_DIR/odd.log" 2>&1; then

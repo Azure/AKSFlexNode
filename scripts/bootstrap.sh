@@ -20,9 +20,11 @@ readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
 readonly DEFAULT_AUTHORITY_HOST="https://login.microsoftonline.com"
 readonly DEFAULT_IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"
-readonly SERVICE_UNIT="aks-flex-node-agent.service"
-readonly SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
-readonly AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
+# Not readonly: bootstrap_test.sh points them at its own files, as install_test.sh
+# does for install.sh.
+SERVICE_UNIT="aks-flex-node-agent.service"
+SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
+AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 
 # Publisher-managed cluster/pool config. Keep this block near the top so the
 # script generation path only needs to replace the single marker below.
