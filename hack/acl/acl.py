@@ -3,6 +3,7 @@
 
     hack/acl/acl.py up [--image ACL.qcow2] build, create the cluster and network, boot the VM
     hack/acl/acl.py test [--reset MODE]    check the node, reboot it, reset it, check cleanup
+    hack/acl/acl.py upgrade [--no-reboot]  upgrade the agent, roll a failed upgrade back, reboot
     hack/acl/acl.py down                   remove the VM, the network, and the cluster
 
 The VM is provisioned only by the Ignition config that scripts/aks-flex-node-bootstrap.bu renders,
@@ -11,6 +12,11 @@ runs from its container image. bootstrap.sh then installs the agent under
 /opt/unbounded/agent, the host root, and joins the node with a bootstrap token. The agent's machine
 client talks to an in-cluster AKS Flex controller through the API server's service proxy, so the
 node uses no Azure resources.
+
+upgrade runs the agent's blue/green upgrade and its rollback through AgentUpgrade
+MachineOperations, as the Azure E2E does on Ubuntu, and serves the candidates from this host while
+it runs. test checks that the first-boot unit ran in this boot, so upgrade --no-reboot comes before
+it when both run on one VM.
 
 Without --image, up boots the Azure build of the image, which it first exports from a shared
 compute gallery through a temporary managed disk; see export_gallery_image. That needs az and a
@@ -28,6 +34,7 @@ from __future__ import annotations
 import argparse
 import base64
 import concurrent.futures
+import dataclasses
 import datetime
 import hashlib
 import http.client
@@ -95,6 +102,8 @@ BUTANE_TEMPLATE = REPO / "scripts" / "aks-flex-node-bootstrap.bu"
 BUTANE_IMAGE = os.environ.get("ACL_BUTANE_IMAGE", "quay.io/coreos/butane:v0.29.0")
 
 AGENT_ARCHIVE = "aks-flex-node-linux-amd64.tar.gz"
+# The one member an agent archive may hold; AgentUpgrade refuses any other name.
+AGENT_BINARY = "aks-flex-node-linux-amd64"
 IGNITION_NAME = "config.ign"
 
 # Without --image, `up` boots the Azure build of the image, published to a shared compute gallery,
@@ -202,34 +211,46 @@ def kubectl_out(*args: str) -> str:
     return capture(["kubectl", "--context", KUBE_CONTEXT, *args])
 
 
-def wait_until(description: str, timeout: float, probe, interval: float = 5) -> None:
+def poll(timeout: float, probe: Callable[[], bool], interval: float = 5) -> bool:
+    """Return whether probe returned true within the timeout."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while True:
         if probe():
-            return
+            return True
+        if time.monotonic() >= deadline:
+            return False
         time.sleep(interval)
-    die(f"timed out after {int(timeout)}s waiting for {description}")
+
+
+def wait_until(description: str, timeout: float, probe, interval: float = 5) -> None:
+    if not poll(timeout, probe, interval):
+        die(f"timed out after {int(timeout)}s waiting for {description}")
 
 
 # ---------------------------------------------------------------------------------------------
 # Build
 
+# The agent runs on the ACL host, whose glibc may be older than the build host's, so cgo is off.
+GO_ENV = {"GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"}
+
 
 def build_binaries() -> tuple[Path, Path]:
-    """Build a static linux/amd64 agent and controller. The agent runs on the ACL host, whose glibc
-    may be older than the build host's, so cgo is off."""
+    """Build a static linux/amd64 agent and controller."""
     STATE.mkdir(parents=True, exist_ok=True)
-    env = {"GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"}
-    agent = STATE / "aks-flex-node-linux-amd64"
+    agent = STATE / AGENT_BINARY
     controller = STATE / "controller" / "aks-flex-controller"
     controller.parent.mkdir(exist_ok=True)
     log("building aks-flex-node and aks-flex-controller")
-    run(["go", "build", "-o", str(agent), "./cmd/aks-flex-node"], env=env, cwd=REPO)
-    run(["go", "build", "-o", str(controller), "./cmd/aks-flex-controller"], env=env, cwd=REPO)
+    run(["go", "build", "-o", str(agent), "./cmd/aks-flex-node"], env=GO_ENV, cwd=REPO)
+    run(["go", "build", "-o", str(controller), "./cmd/aks-flex-controller"], env=GO_ENV, cwd=REPO)
 
-    with tarfile.open(STATE / AGENT_ARCHIVE, "w:gz") as archive:
-        archive.add(agent, arcname=agent.name)
+    package_agent(agent, STATE / AGENT_ARCHIVE)
     return agent, controller
+
+
+def package_agent(binary: Path, archive: Path) -> None:
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(binary, arcname=AGENT_BINARY)
 
 
 def sha256(path: Path) -> str:
@@ -1170,16 +1191,16 @@ def wait_for_bootstrap(timeout: float = 2400) -> None:
     log(f"{BOOTSTRAP_UNIT} completed")
 
 
+def node_ready() -> bool:
+    result = kubectl("get", "node", NODE_NAME, "-o",
+                     "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+                     check=False, quiet=True)
+    return result.returncode == 0 and result.stdout.strip() == "True"
+
+
 def wait_for_node_ready(timeout: float = 900) -> None:
     log(f"waiting for node {NODE_NAME} to be Ready")
-
-    def ready() -> bool:
-        result = kubectl("get", "node", NODE_NAME, "-o",
-                         "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-                         check=False, quiet=True)
-        return result.returncode == 0 and result.stdout.strip() == "True"
-
-    wait_until(f"node {NODE_NAME} to be Ready", timeout, ready, 10)
+    wait_until(f"node {NODE_NAME} to be Ready", timeout, node_ready, 10)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1364,6 +1385,336 @@ def check_reset(checks: Checks, bootstrap_was_active: bool) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# Upgrade
+#
+# Ported from agent_upgrade_e2e in hack/e2e/lib/agent-upgrade.sh, the Azure E2E, which runs the
+# agent's upgrade and rollback on Ubuntu only. The steps are named for the items of the upgrade
+# test plan they cover, so that a run's output maps onto it.
+
+UPGRADE_DIR = STATE / "upgrade"
+# Stamped into build B, so that its digest differs from the installed build A's.
+UPGRADE_VERSION = "acl-harness-b"
+VERSION_VARIABLE = "github.com/Azure/AKSFlexNode/pkg/cmd/version.Version"
+UPGRADE_ARCHIVE = "upgrade-b.tar.gz"
+FAILURE_ARCHIVE = "upgrade-failure.tar.gz"
+# The candidate the Azure E2E packs as failure.tar.gz. It answers `version`, which is all the
+# agent runs before it switches to a candidate, and fails anything else, so the switch is made
+# and the agent unit then fails until recovery restores last-good.
+FAILING_AGENT = textwrap.dedent("""\
+    #!/bin/sh
+    if [ "${1:-}" = "version" ]; then
+      echo "Version: acl-harness-failure"
+      exit 0
+    fi
+    exit 42
+""")
+OPERATION_TIMEOUT = 600
+TERMINAL_PHASES = ("Complete", "Failed")
+NSPAWN_MACHINES = ("kube1", "kube2")
+MANAGED_BINARY_DIR = f"{HOST_ROOT}/lib/aks-flex-node"
+LEGACY_BINARY_DIR = "/usr/local/lib/aks-flex-node"
+RECOVERY_UNIT = "aks-flex-node-agent-recovery.service"
+RECOVERY_SCRIPT = f"{MANAGED_BINARY_DIR}/aks-flex-node-recovery.sh"
+UPGRADE_SIGNAL = "/etc/aks-flex-node/agent-upgrade-signal.json"
+LIFECYCLE_HELPER = f"{HOST_ROOT}/bin/unbounded-agent-nspawn-lifecycle"
+# An AVC denial that concerns the agent names its files, its binary, or the agent library's.
+AGENT_SUBJECTS = ("/opt/unbounded", "aks-flex-node", "unbounded-agent")
+AVC_DENIED = re.compile(r"avc:\s+denied")
+SELINUX_MODE = textwrap.dedent("""\
+    if command -v getenforce >/dev/null; then
+      getenforce
+    elif [ -r /sys/fs/selinux/enforce ]; then
+      if [ "$(cat /sys/fs/selinux/enforce)" = 1 ]; then echo Enforcing; else echo Permissive; fi
+    else
+      echo "no SELinux"
+    fi
+""")
+
+
+@dataclasses.dataclass(frozen=True)
+class AgentSnapshot:
+    """Where the agent runs from on the VM, and the digests of its copies. What cannot be read is
+    empty."""
+    current: str
+    current_sha256: str
+    last_good: str
+    last_good_sha256: str
+    machine: str
+    machine_sha256: str
+    running: str
+    running_sha256: str
+    helper_sha256: str
+
+
+def agent_snapshot() -> AgentSnapshot:
+    """Read the agent's current and last-good slots, the active machine's copy of the agent, the
+    binary the agent unit runs, and the nspawn lifecycle helper, in one round trip. The image has
+    jq but no python."""
+    script = textwrap.dedent(f"""\
+        digest() {{ sudo sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }}
+        current=$(sudo readlink -f {MANAGED_BINARY_DIR}/aks-flex-node-current)
+        last_good=$(sudo readlink -f {MANAGED_BINARY_DIR}/aks-flex-node-last-good)
+        machine=$(sudo jq -r .activeMachine /etc/aks-flex-node/daemon-state.json)
+        pid=$(sudo systemctl show {AGENT_UNIT} -p MainPID --value)
+        running=$(sudo readlink -f "/proc/$pid/exe" 2>/dev/null)
+        echo "current=$current"
+        echo "current_sha256=$(digest "$current")"
+        echo "last_good=$last_good"
+        echo "last_good_sha256=$(digest "$last_good")"
+        echo "machine=$machine"
+        echo "machine_sha256=$(digest "/var/lib/machines/$machine/usr/local/bin/aks-flex-node")"
+        echo "running=$running"
+        echo "running_sha256=$(digest "$running")"
+        echo "helper_sha256=$(digest {LIFECYCLE_HELPER})"
+    """)
+    values = dict(line.split("=", 1) for line in ssh_out(script).splitlines() if "=" in line)
+    return AgentSnapshot(**{field.name: values.get(field.name, "") for field in dataclasses.fields(AgentSnapshot)})
+
+
+def short(digest: str) -> str:
+    return digest[:12] if digest else "none"
+
+
+def log_snapshot(step: str, when: str, snapshot: AgentSnapshot) -> None:
+    log(f"{step}: {when}: current {snapshot.current} ({short(snapshot.current_sha256)}), "
+        f"last-good {snapshot.last_good} ({short(snapshot.last_good_sha256)}), "
+        f"{snapshot.machine} has {short(snapshot.machine_sha256)}, "
+        f"{AGENT_UNIT} runs {snapshot.running or 'nothing'}")
+
+
+def build_upgrade_candidates() -> tuple[Path, Path, Path]:
+    """Build B and the failing candidate, and pack each as the agent's release archive is.
+    Returns B's binary, its archive, and the failing candidate's archive."""
+    UPGRADE_DIR.mkdir(parents=True, exist_ok=True)
+    binary = UPGRADE_DIR / AGENT_BINARY
+    log(f"building aks-flex-node {UPGRADE_VERSION}, build B")
+    run(["go", "build", "-ldflags", f"-X {VERSION_VARIABLE}={UPGRADE_VERSION}", "-o", str(binary),
+         "./cmd/aks-flex-node"], env=GO_ENV, cwd=REPO)
+    failing = UPGRADE_DIR / "failing" / AGENT_BINARY
+    failing.parent.mkdir(exist_ok=True)
+    failing.write_text(FAILING_AGENT)
+    failing.chmod(0o755)
+
+    archive, failure = UPGRADE_DIR / UPGRADE_ARCHIVE, UPGRADE_DIR / FAILURE_ARCHIVE
+    package_agent(binary, archive)
+    package_agent(failing, failure)
+    return binary, archive, failure
+
+
+def apply_agent_upgrade(name: str, url: str, digest: str) -> None:
+    """Ask the agent to upgrade itself from an archive, whose digest it checks."""
+    operation = {
+        "apiVersion": "unbounded-cloud.io/v1alpha3",
+        "kind": "MachineOperation",
+        "metadata": {"name": name},
+        "spec": {
+            "machineRef": NODE_NAME,
+            "operationKind": "AgentUpgrade",
+            "parameters": {"downloadURL": url, "sha256": digest},
+            "ttlSecondsAfterFinished": 3600,
+        },
+    }
+    kubectl("apply", "-f", "-", input=json.dumps(operation))
+
+
+def wait_for_operation(name: str, timeout: float = OPERATION_TIMEOUT) -> tuple[str, str, float]:
+    """Wait for a MachineOperation to end, and return its phase, its message, and the seconds it
+    took. Either terminal phase ends the wait: kubectl wait waits for one, and sits out its whole
+    timeout when the operation ends in the other."""
+    started = time.monotonic()
+    phase = message = ""
+
+    def ended() -> bool:
+        nonlocal phase, message
+        result = kubectl("get", "machineoperation", name, "-o", "json", check=False, quiet=True)
+        if result.returncode != 0:
+            return False
+        status = json.loads(result.stdout).get("status") or {}
+        phase, message = status.get("phase", ""), status.get("message", "")
+        return phase in TERMINAL_PHASES
+
+    poll(timeout, ended, 5)
+    return phase, message, time.monotonic() - started
+
+
+def finish_operation(checks: Checks, step: str, name: str, expected: str) -> str:
+    """Wait for an operation, check it ended in the expected phase, and return its message. The
+    steps after it build on that phase, so any other ends the run, with what the operation and the
+    agent's units said."""
+    phase, message, elapsed = wait_for_operation(name)
+    if phase in TERMINAL_PHASES:
+        log(f"{step}: {name} reached {phase} in {elapsed:.0f}s")
+    else:
+        log(f"{step}: {name} did not end within {elapsed:.0f}s; its phase is {phase or 'unset'}")
+    checks.expect(phase == expected, f"{step}: {name} ended {expected}", f"phase {phase or 'unset'}: {message}")
+    if phase != expected:
+        kubectl("get", "machineoperation", name, "-o", "yaml", check=False)
+        print(ssh(f"sudo journalctl -u {AGENT_UNIT} -u {RECOVERY_UNIT} -b --no-pager -n 80",
+                  check=False).stdout, flush=True)
+        checks.done()
+    return message
+
+
+def check_kubelet_auth(checks: Checks, step: str, machine: str) -> None:
+    """Restart the kubelet in the active machine, and require it to renew the node's Lease and the
+    node to be Ready, as the Azure E2E's _agent_upgrade_validate_kubelet_auth does. The kubelet
+    renews every ten seconds, so only a renewal stamped after the restart returned counts; both
+    times are the VM's clock.
+
+    This node joins with a bootstrap token, so its kubelet authenticates with the client
+    certificate it was issued, not through the agent as an exec credential plugin, as a service
+    principal or managed identity node's does. This shows the upgrade left the kubelet able to
+    start and authenticate, not that the plugin works."""
+    description = f"{step}: the kubelet, restarted in {machine}, renewed the node's Lease and the node is Ready"
+    if machine not in NSPAWN_MACHINES:
+        checks.expect(False, description, f"the active machine is {machine!r}")
+        return
+    restarted = ssh(f"sudo systemd-run --machine={machine} --quiet --pipe systemctl restart kubelet.service"
+                    " && date +%s.%N", check=False)
+    if restarted.returncode != 0:
+        checks.expect(False, description, f"the restart exited {restarted.returncode}: {restarted.stderr.strip()}")
+        return
+    restarted_at = float(restarted.stdout.split()[-1])
+
+    def renewed() -> bool:
+        lease = kubectl("-n", "kube-node-lease", "get", "lease", NODE_NAME, "-o",
+                        "jsonpath={.spec.renewTime}", check=False, quiet=True)
+        renew_time = lease.stdout.strip()
+        if lease.returncode != 0 or not renew_time:
+            return False
+        renewed_at = datetime.datetime.fromisoformat(renew_time.replace("Z", "+00:00")).timestamp()
+        return renewed_at > restarted_at and node_ready()
+
+    checks.expect(poll(120, renewed, 5), description)
+
+
+def record_lifecycle_helper(step: str, snapshot: AgentSnapshot) -> None:
+    """Log, without checking, whether the nspawn lifecycle helper is the running agent's binary.
+    The helper is a copy of the agent that last ran the machine's lifecycle tasks, and is not yet
+    refreshed on every daemon start (review item F6), so after an upgrade it is expected to
+    differ."""
+    same = bool(snapshot.helper_sha256) and snapshot.helper_sha256 == snapshot.running_sha256
+    log(f"{step}: recorded, not checked: {LIFECYCLE_HELPER} ({short(snapshot.helper_sha256)}) "
+        f"{'is' if same else 'is not'} the running agent's binary ({short(snapshot.running_sha256)}); "
+        "it is expected to differ until the helper is refreshed on every daemon start (F6)")
+
+
+def check_recovery_assets(checks: Checks, step: str) -> None:
+    """Check that the recovery script and its unit name the host root. The daemon renders both from
+    embedded copies that name /usr/local/lib/aks-flex-node, putting in the paths under the
+    resolved host root (renderRecoveryScript and desiredAgentServiceAssets in
+    pkg/daemon/lifecycle.go): the script runs last-good from there, and the unit runs the script
+    from there. Left as embedded, they find nothing on this host, and a failed upgrade is not
+    rolled back."""
+    roots = list(dict.fromkeys([HOST_ROOT, ssh_out(f"sudo readlink -f {HOST_ROOT}")]))
+    for path, wanted in (
+        (RECOVERY_SCRIPT, [f"{root}/lib/aks-flex-node/aks-flex-node-last-good" for root in roots]),
+        (f"/etc/systemd/system/{RECOVERY_UNIT}",
+         [f"ExecStart={root}/lib/aks-flex-node/aks-flex-node-recovery.sh" for root in roots]),
+    ):
+        content = ssh(f"sudo cat {path}", check=False).stdout
+        checks.expect(any(text in content for text in wanted), f"{step}: {path} names the host root",
+                      "it has none of " + ", ".join(wanted))
+        checks.expect(LEGACY_BINARY_DIR not in content, f"{step}: {path} does not name {LEGACY_BINARY_DIR}")
+
+
+def avc_denials() -> list[str]:
+    """Return this boot's AVC denials. journald keeps audit records under the audit transport when
+    it reads them; otherwise the kernel logs them. journalctl's exit status is not relied on, only
+    what it prints."""
+    for source in ("_TRANSPORT=audit", "-k"):
+        lines = ssh(f"sudo journalctl -b {source} --no-pager -q", check=False).stdout.splitlines()
+        if lines:
+            return [line for line in lines if AVC_DENIED.search(line)]
+    return []
+
+
+def check_upgrade(checks: Checks, url: str, archive_digest: str, b_digest: str, name: str) -> AgentSnapshot:
+    """U2: upgrade the installed build A to build B. B has to run from the other slot, with A kept
+    as last-good, and the node has to keep working. Returns where B runs from."""
+    before = agent_snapshot()
+    log_snapshot("U2", "before", before)
+    if before.current_sha256 == b_digest:
+        log("U2: the VM already runs this build B, from an earlier run, so its slots differ by path only")
+    apply_agent_upgrade(name, url, archive_digest)
+    finish_operation(checks, "U2", name, "Complete")
+
+    after = agent_snapshot()
+    log_snapshot("U2", "after", after)
+    checks.expect(bool(after.current) and after.current != before.current,
+                  "U2: current moved to the other slot", f"{before.current} -> {after.current}")
+    checks.expect(after.current_sha256 == b_digest, "U2: current holds build B", short(after.current_sha256))
+    checks.expect(bool(before.current_sha256) and after.last_good_sha256 == before.current_sha256,
+                  "U2: last-good holds build A, which was current",
+                  f"{short(after.last_good_sha256)}, A is {short(before.current_sha256)}")
+    checks.expect(after.machine_sha256 == b_digest, f"U2: the {after.machine} machine's agent is build B",
+                  short(after.machine_sha256))
+    checks.expect(bool(after.running) and after.running == after.current,
+                  f"U2: {AGENT_UNIT} runs the current slot", after.running or "it has no main process")
+    checks.paths_absent("U2: nothing is installed under /usr/local",
+                        ["/usr/local/bin/aks-flex-node", LEGACY_BINARY_DIR])
+    log("U2: running a workload on the upgraded node")
+    check_workload(checks)
+    check_kubelet_auth(checks, "U2", after.machine)
+    record_lifecycle_helper("U2", after)
+    return after
+
+
+def check_rollback(checks: Checks, url: str, archive_digest: str, upgraded: AgentSnapshot,
+                   b_digest: str, name: str) -> None:
+    """U3: upgrade to the failing candidate. Its daemon cannot start, so the agent unit fails and
+    systemd starts the recovery unit, which puts build B back and restarts the agent, and B reports
+    the operation Failed. The time to Failed is logged."""
+    apply_agent_upgrade(name, url, archive_digest)
+    message = finish_operation(checks, "U3", name, "Failed")
+    checks.expect("restored last-good binary" in message,
+                  "U3: the operation reports that the last-good binary was restored", f"message {message!r}")
+
+    after = agent_snapshot()
+    log_snapshot("U3", "after", after)
+    checks.expect(after.current == upgraded.current and after.current_sha256 == b_digest,
+                  "U3: current is build B in its slot again", f"{after.current} ({short(after.current_sha256)})")
+    checks.expect(after.machine_sha256 == b_digest, f"U3: the {after.machine} machine's agent is build B again",
+                  short(after.machine_sha256))
+    checks.expect(unit_property(AGENT_UNIT, "ActiveState") == "active", f"U3: {AGENT_UNIT} is active")
+    checks.expect(after.running == upgraded.current, f"U3: {AGENT_UNIT} runs build B's slot",
+                  after.running or "it has no main process")
+    # The agent clears the signal just after it publishes the result.
+    checks.expect(poll(30, lambda: not path_exists(UPGRADE_SIGNAL), 3), f"U3: {UPGRADE_SIGNAL} is removed")
+    check_recovery_assets(checks, "U3")
+    checks.expect(poll(300, node_ready, 10), f"U3: node {NODE_NAME} is Ready")
+
+
+def check_upgrade_after_reboot(checks: Checks, upgraded: AgentSnapshot, b_digest: str) -> None:
+    """U7: reboot after the upgrade and the rollback. The node has to come back as any rebooted
+    node does, running build B from its slot."""
+    log("U7: rebooting after the upgrade")
+    check_reboot(checks)
+    after = agent_snapshot()
+    log_snapshot("U7", "after the reboot", after)
+    checks.expect(after.running == upgraded.current, f"U7: {AGENT_UNIT} runs build B's slot after the reboot",
+                  after.running or "it has no main process")
+    checks.expect(after.machine_sha256 == b_digest, f"U7: the {after.machine} machine's agent is build B "
+                  "after the reboot", short(after.machine_sha256))
+    record_lifecycle_helper("U7", after)
+
+
+def check_selinux(checks: Checks, step: str) -> None:
+    """U10: log the SELinux mode, and check that no AVC denial in this boot names the agent. A
+    permissive policy stops nothing, so its denials are what show the agent would be stopped by
+    an enforcing one. journalctl -b reads one boot, so a reboot needs a scan on either side."""
+    mode = ssh(SELINUX_MODE, check=False).stdout.strip() or "unknown"
+    log(f"{step}: SELinux mode: {mode}")
+    denials = avc_denials()
+    ours = [line for line in denials if any(subject in line for subject in AGENT_SUBJECTS)]
+    log(f"{step}: {len(denials)} AVC denial(s) in this boot, {len(ours)} naming the agent")
+    for line in ours:
+        print(line, flush=True)
+    checks.expect(not ours, f"{step}: no AVC denial in this boot names {', '.join(AGENT_SUBJECTS)}",
+                  f"{len(ours)} do")
+
+
+# ---------------------------------------------------------------------------------------------
 # Commands
 
 
@@ -1429,6 +1780,28 @@ def cmd_test(args: argparse.Namespace) -> None:
     checks.done()
 
 
+def cmd_upgrade(args: argparse.Namespace) -> None:
+    if not vm_running():
+        die("the VM is not running; run `up` first")
+    b_binary, archive, failure = build_upgrade_candidates()
+    b_digest = sha256(b_binary)
+    serve_base = f"http://{GATEWAY}:{SERVE_PORT}"
+    suffix = int(time.time())
+    checks = Checks()
+    with FileServer({archive.name: archive, failure.name: failure}):
+        upgraded = check_upgrade(checks, f"{serve_base}/{archive.name}", sha256(archive), b_digest,
+                                 f"acl-harness-upgrade-{suffix}")
+        check_rollback(checks, f"{serve_base}/{failure.name}", sha256(failure), upgraded, b_digest,
+                       f"acl-harness-rollback-{suffix}")
+    if args.reboot:
+        check_selinux(checks, "U10, before the reboot")
+        check_upgrade_after_reboot(checks, upgraded, b_digest)
+        check_selinux(checks, "U10, after the reboot")
+    else:
+        check_selinux(checks, "U10")
+    checks.done()
+
+
 def cmd_down(_: argparse.Namespace) -> None:
     stop_vm()
     delete_network()
@@ -1462,6 +1835,12 @@ def main() -> None:
     test.add_argument("--no-reboot", dest="reboot", action="store_false",
                       help="skip the reboot, so that reset runs while the first-boot unit is active")
     test.set_defaults(func=cmd_test)
+
+    upgrade = commands.add_parser("upgrade", help="upgrade the agent, roll a failed upgrade back, "
+                                                  "reboot, and check for SELinux denials")
+    upgrade.add_argument("--no-reboot", dest="reboot", action="store_false",
+                         help="skip U7, the reboot, so that `test` can run next in the same boot")
+    upgrade.set_defaults(func=cmd_upgrade)
 
     down = commands.add_parser("down", help="remove the VM, network, cluster, and state")
     down.set_defaults(func=cmd_down)
