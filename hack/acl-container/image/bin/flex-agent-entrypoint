@@ -12,6 +12,7 @@ set -euo pipefail
 host=/host
 # mount on PATH runs in the host's mount namespace; see host-exec.
 mount=/usr/bin/mount
+chroot=/usr/sbin/chroot
 # Host directories the agent uses. Mounts the host makes under them later
 # reach the container, but not the other way: those go through host-exec.
 host_dirs=(
@@ -38,22 +39,31 @@ if [[ ! -e $host/etc/os-release ]]; then
     exit 1
 fi
 
+# Where a host path is under $host, resolved within the host's root: a symlink of
+# the host's, such as /var/lib/machines moved to a data disk, names a host path,
+# which resolved here would be one of this container's.
+host_path() {
+    echo "$host$($chroot "$host" /usr/bin/readlink -m "$1")"
+}
+
 # The host's OS identity, for the agent's OS detection. Both sides' os-release
 # are symlinks, so each is resolved within its own root.
 os_release=$(readlink -f /etc/os-release)
-$mount --bind "$host$(chroot "$host" readlink -f /etc/os-release)" "$os_release"
+$mount --bind "$(host_path /etc/os-release)" "$os_release"
 $mount -o remount,bind,ro "$os_release"
 for dir in "${host_dirs[@]}"; do
-    mkdir -p "$host$dir" "$dir"
-    $mount --rbind "$host$dir" "$dir"
+    source=$(host_path "$dir")
+    mkdir -p "$source" "$dir"
+    $mount --rbind "$source" "$dir"
     $mount --make-rslave "$dir"
 done
 # The install's settings, read-only, for the image the host's provisioning names.
 settings=/etc/sysconfig/aks-flex-node-container
-if [[ -f $host$settings ]]; then
+settings_source=$(host_path "$settings")
+if [[ -f $settings_source ]]; then
     mkdir -p "$(dirname "$settings")"
     touch "$settings"
-    $mount --bind "$host$settings" "$settings"
+    $mount --bind "$settings_source" "$settings"
     $mount -o remount,bind,ro "$settings"
 fi
 
