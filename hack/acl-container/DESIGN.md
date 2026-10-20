@@ -413,10 +413,13 @@ describes it.
 - A privileged container with the host's PID namespace and a writable `/host`
   is root on the host, as is the agent installed on a host. So is access to
   containerd's socket, which the agent has.
-- The image is what that trust rests on. An `AgentUpgrade`'s image is pinned
-  by digest; pin the install's by digest too, in its settings, and sign and
-  verify both. The harness's install names a tag, pulled over plain HTTP from a
-  local registry.
+- The image is what that trust rests on, and its digest identifies it:
+  containerd checks the content it pulls against it. An `AgentUpgrade`'s image
+  has to be pinned by digest, and an install's should be. The host trusts
+  whoever provides the digest, the install's provisioning or AKS, as `main`
+  trusts the SHA-256 an `AgentUpgrade` comes with, and verifies no signature.
+  Published preview images carry signed build provenance, for audits. The
+  harness's install names a tag, pulled over plain HTTP from a local registry.
 - Whoever can create MachineOperations for a machine can make it run an image
   of their choosing, as root, through `AgentUpgrade`. On a host, `downloadURL`
   and `sha256` grant the same, so treat the parameters as sensitive either way.
