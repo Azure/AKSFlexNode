@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
 func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
@@ -68,6 +71,52 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 	}
 	if _, err := service.Preflight(t.Context(), "/unused/current"); err == nil {
 		t.Fatal("Preflight accepted an unknown service state")
+	}
+}
+
+// TestFlexDaemonActivationPreflightRejectsAMovedHostRoot covers an activation
+// whose layout was built before a daemon moved the host to the host root.
+// Preflight runs under the activation lock, so it is the first point that sees
+// the root as the activation will switch it.
+func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		now     string
+		wantErr bool
+	}{
+		{name: "unchanged root", now: hostroot.LegacyPath},
+		{name: "root moved under the activation", now: hostroot.Path, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := testAgentUpgradePaths(t)
+			inspected := false
+			service := &flexDaemonActivationService{
+				log:            slog.Default(),
+				root:           hostroot.LegacyPath,
+				resolveRoot:    func() string { return tt.now },
+				paths:          paths,
+				systemdDir:     t.TempDir(),
+				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
+				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+					inspected = true
+					return false, nil
+				},
+			}
+
+			_, err := service.Preflight(t.Context(), paths.CurrentPath)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Preflight() error = %v, want error %v", err, tt.wantErr)
+			}
+			if tt.wantErr && (inspected || !strings.Contains(err.Error(), "retry")) {
+				t.Fatalf("Preflight() went on after the root moved, or did not say to retry: inspected = %v, error = %v", inspected, err)
+			}
+		})
 	}
 }
 

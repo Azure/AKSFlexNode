@@ -29,7 +29,7 @@ const (
 // It does not migrate the host root, so it plans against the root the host
 // will resolve once migrated.
 func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
-	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot())
+	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
@@ -48,7 +48,7 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := guardLegacySeed(log, hostroot.LegacyReleased, legacySeedPath, runningFrom); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve())
+	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve)
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
@@ -65,7 +65,11 @@ func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) a
 }
 
 type flexDaemonActivationService struct {
-	log              *slog.Logger
+	log *slog.Logger
+	// root is the host root paths were built under, and resolveRoot what
+	// resolved it; see Preflight. A nil resolveRoot skips the check.
+	root             string
+	resolveRoot      func() string
 	paths            agentUpgradePaths
 	state            stateStore
 	systemdDir       string
@@ -75,10 +79,11 @@ type flexDaemonActivationService struct {
 	serviceWasActive bool
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, root string) (*flexDaemonActivationService, agentUpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentUpgradePaths, error) {
 	if log == nil {
 		log = slog.Default()
 	}
+	root := resolveRoot()
 	state, err := NewFileStateStore()
 	if err != nil {
 		return nil, agentUpgradePaths{}, err
@@ -90,6 +95,8 @@ func newFlexDaemonActivationService(log *slog.Logger, root string) (*flexDaemonA
 	}
 	return &flexDaemonActivationService{
 		log:            log,
+		root:           root,
+		resolveRoot:    resolveRoot,
 		paths:          paths,
 		state:          state,
 		systemdDir:     systemdSystemDir,
@@ -99,7 +106,23 @@ func newFlexDaemonActivationService(log *slog.Logger, root string) (*flexDaemonA
 	}, paths, nil
 }
 
+// Preflight checks the service before an activation switches anything. In an
+// activation it runs under the activation lock.
+//
+// The layout was built from the host root before the lock was held. A daemon
+// that moves the host from /usr/local to the host root holds the same lock, and
+// may have moved it in between. An activation that went ahead would stage the
+// candidate under /usr/local and point the units back there, and the move, whose
+// copy still names the previous binary, would then point them at its copy and
+// remove /usr/local, leaving the host on the previous binary. Checking here,
+// under the lock, refuses it instead; a retry builds the layout from the root
+// as it is now.
 func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
+	if s.resolveRoot != nil {
+		if current := s.resolveRoot(); current != s.root {
+			return agentbinary.ServicePlan{}, fmt.Errorf("the agent's host root moved from %s to %s while the activation was prepared; retry", s.root, current)
+		}
+	}
 	inspectService := s.inspectService
 	if inspectService == nil {
 		inspectService = inspectAgentServiceActive
