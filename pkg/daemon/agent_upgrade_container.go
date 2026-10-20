@@ -48,10 +48,18 @@ const (
 	// container.
 	agentImagePullTimeout  = 10 * time.Minute
 	agentImageCheckTimeout = time.Minute
-	// agentUpgradeImageLabel marks the images an AgentUpgrade pulls, the only ones the agent
-	// removes once it won't run them again, and not an image staged, or built into the OS, for a
-	// join.
+	// agentImageCommandTimeout limits the agent's other calls to containerd about its images. The
+	// daemon removes old images as it starts, before it reports an upgrade's result or reconciles,
+	// and its unit counts as started already, so a call that hung would hold it there for good.
+	agentImageCommandTimeout = time.Minute
+	// agentUpgradeImageLabel marks the images an AgentUpgrade pulls, as it pulls them: the only
+	// ones the agent removes once it won't run them again, and not an image staged, or built into
+	// the OS, for a join.
 	agentUpgradeImageLabel = "aks-flex-node.agent-upgrade"
+	// agentUpgradeCheckContainer is the container in which an AgentUpgrade runs its candidate's
+	// agent. Upgrades run one at a time, so one name serves them all, and a check clears what an
+	// earlier one left, as the units clear their containers.
+	agentUpgradeCheckContainer = "aks-flex-node-upgrade-check"
 	// agentInstallSettingsPath is the host's provisioning's settings, which name the install's
 	// image as AKS_FLEX_NODE_IMAGE. The entrypoint mounts them read-only.
 	agentInstallSettingsPath = "/etc/sysconfig/aks-flex-node-container"
@@ -179,14 +187,10 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 	}
 	pullCtx, cancelPull := context.WithTimeout(ctx, agentImagePullTimeout)
 	defer cancelPull()
-	pull := append([]string{"--namespace", agentContainerdNamespace, "image", "pull"}, e.pullArgs...)
+	pull := append([]string{"--namespace", agentContainerdNamespace, "image", "pull",
+		"--label", agentUpgradeImageLabel + "=pulled"}, e.pullArgs...)
 	if err := e.ctr(pullCtx, append(pull, request.image)...); err != nil {
 		return fmt.Errorf("pull %s: %w", request.image, err)
-	}
-	if err := e.ctr(ctx, "--namespace", agentContainerdNamespace, "images", "label", request.image,
-		agentUpgradeImageLabel+"=pulled"); err != nil {
-		e.log.Warn("failed to label the candidate image, which the agent then won't remove",
-			"image", request.image, "error", err)
 	}
 	if err := e.checkCandidate(ctx, request.image); err != nil {
 		return err
@@ -215,41 +219,50 @@ func agentScopeAnnotations(unit string) []string {
 }
 
 // checkCandidate runs the candidate's agent, as a host runs its candidate binary before switching
-// to it. ctr run --rm removes the container after it, but not when ctr is killed, as a timeout or
-// a cancellation kills it, so a failed check removes it here.
+// to it. ctr run --rm removes the container after it, but not when ctr is killed, as a timeout, a
+// cancellation, or the daemon's own end kills it, so the check clears the container before it
+// runs, and after it fails. Its scope is bound to the agent's unit, so stopping the agent's unit
+// stops the check too.
 func (e *containerAgentUpgradeExecutor) checkCandidate(ctx context.Context, image string) error {
-	id := time.Now().UnixNano()
-	name := fmt.Sprintf("aks-flex-node-upgrade-check-%d", id)
+	e.removeCheckContainer(ctx)
 	checkCtx, cancel := context.WithTimeout(ctx, agentImageCheckTimeout)
 	defer cancel()
 	check := append([]string{"--namespace", agentContainerdNamespace, "run", "--rm",
-		"--runc-systemd-cgroup", "--cgroup", fmt.Sprintf("%s:aks-flex:upgrade-check-%d", agentContainerSlice, id)},
-		e.runArgs...)
-	check = append(check, image, name, "aks-flex-node", "version")
-	err := e.ctr(checkCtx, check...)
-	if err == nil {
-		return nil
+		"--runc-systemd-cgroup", "--cgroup", agentContainerSlice + ":aks-flex:upgrade-check"},
+		agentScopeAnnotations(ServiceUnitName)...)
+	check = append(check, e.runArgs...)
+	check = append(check, image, agentUpgradeCheckContainer, "aks-flex-node", "version")
+	if err := e.ctr(checkCtx, check...); err != nil {
+		e.removeCheckContainer(ctx)
+		return fmt.Errorf("run the agent in %s: %w", image, err)
 	}
-	cleanupCtx, cancelCleanup := agentUpgradeCleanupContext(ctx)
-	defer cancelCleanup()
-	// Either may find nothing left to remove.
-	_ = e.ctr(cleanupCtx, "--namespace", agentContainerdNamespace, "task", "delete", "--force", name)
-	_ = e.ctr(cleanupCtx, "--namespace", agentContainerdNamespace, "container", "delete", name)
-	return fmt.Errorf("run the agent in %s: %w", image, err)
+	return nil
 }
 
-// currentImage is the image the agent's unit runs: the selected one, or the one the host's
-// provisioning names, which the unit passes in.
+// removeCheckContainer removes the check's task and container, if there are any, on a context of
+// its own, which outlives a cancelled upgrade.
+func (e *containerAgentUpgradeExecutor) removeCheckContainer(ctx context.Context) {
+	cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+	defer cancel()
+	_ = e.ctr(cleanupCtx, "--namespace", agentContainerdNamespace, "task", "delete", "--force", agentUpgradeCheckContainer)
+	_ = e.ctr(cleanupCtx, "--namespace", agentContainerdNamespace, "container", "delete", agentUpgradeCheckContainer)
+}
+
+// currentImage is the image the agent runs, which its unit passed in, and which an upgrade rolls
+// back to. Its unit runs the selected image, so the two agree, unless something selected another
+// image since the agent started: the rollback would then restore an image that never ran here, so
+// the upgrade fails instead.
 func (e *containerAgentUpgradeExecutor) currentImage() (string, error) {
-	current, _, err := e.images.read()
+	if e.runningImage == "" {
+		return "", fmt.Errorf("the agent's unit passed in no %s", agentImageEnv)
+	}
+	selected, _, err := e.images.read()
 	if err != nil {
 		return "", err
 	}
-	if current != "" {
-		return current, nil
-	}
-	if e.runningImage == "" {
-		return "", fmt.Errorf("the agent's unit passed in no %s", agentImageEnv)
+	if selected != "" && selected != e.runningImage {
+		return "", fmt.Errorf("%s selects %s, but the agent runs %s: restart the agent to run the selected image",
+			e.images.path, selected, e.runningImage)
 	}
 	return e.runningImage, nil
 }
@@ -524,7 +537,9 @@ func (c *containerAgentConvergence) removeImages(ctx context.Context) {
 		return
 	}
 	keep := map[string]bool{current: true, lastGood: true, install: true, c.runningImage: true}
-	listed, err := c.listImages(ctx)
+	listCtx, cancelList := context.WithTimeout(ctx, agentImageCommandTimeout)
+	listed, err := c.listImages(listCtx)
+	cancelList()
 	if err != nil {
 		c.log.Warn("not removing old agent images", "error", err)
 		return
@@ -533,7 +548,10 @@ func (c *containerAgentConvergence) removeImages(ctx context.Context) {
 		if keep[image] {
 			continue
 		}
-		if err := c.ctr(ctx, "--namespace", agentContainerdNamespace, "images", "rm", image); err != nil {
+		removeCtx, cancelRemove := context.WithTimeout(ctx, agentImageCommandTimeout)
+		err := c.ctr(removeCtx, "--namespace", agentContainerdNamespace, "images", "rm", image)
+		cancelRemove()
+		if err != nil {
 			c.log.Warn("failed to remove an old agent image", "image", image, "error", err)
 			continue
 		}

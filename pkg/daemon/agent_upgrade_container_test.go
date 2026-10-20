@@ -5,7 +5,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -99,11 +98,15 @@ func TestAgentUpgradeExecutorsTakeTheirOwnKindOfRequest(t *testing.T) {
 func TestContainerAgentUpgradeStage(t *testing.T) {
 	t.Parallel()
 
-	pull := "ctr --namespace aks-flex image pull --plain-http " + testAgentImageV2
-	label := "ctr --namespace aks-flex images label " + testAgentImageV2 + " aks-flex-node.agent-upgrade=pulled"
-	check := "ctr --namespace aks-flex run --rm --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:upgrade-check-"
-	removeTask := "ctr --namespace aks-flex task delete --force aks-flex-node-upgrade-check-"
-	removeContainer := "ctr --namespace aks-flex container delete aks-flex-node-upgrade-check-"
+	pull := "ctr --namespace aks-flex image pull --label aks-flex-node.agent-upgrade=pulled --plain-http " + testAgentImageV2
+	removeTask := "ctr --namespace aks-flex task delete --force aks-flex-node-upgrade-check"
+	removeContainer := "ctr --namespace aks-flex container delete aks-flex-node-upgrade-check"
+	// The candidate's agent, in a scope of the agent's slice that stops with the agent's unit.
+	check := "ctr --namespace aks-flex run --rm --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:upgrade-check " +
+		"--annotation org.systemd.property.BindsTo=['aks-flex-node-agent.service'] " +
+		"--annotation org.systemd.property.TimeoutStopUSec=uint64 30000000 " +
+		"--annotation org.systemd.property.CollectMode='inactive-or-failed' --snapshotter native " +
+		testAgentImageV2 + " aks-flex-node-upgrade-check aks-flex-node version"
 	tests := map[string]struct {
 		runningImage   string
 		selected       string
@@ -111,6 +114,7 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 		cancelOnFail   bool
 		wantCalls      []string
 		wantErr        bool
+		wantSignal     bool
 		wantPrevious   string
 		wantCommitted  bool
 		wantSelected   string
@@ -119,43 +123,45 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 	}{
 		"switches from the image the host's provisioning names": {
 			runningImage:  testAgentImageV1,
-			wantCalls:     []string{pull, label, check},
+			wantCalls:     []string{pull, removeTask, removeContainer, check},
+			wantSignal:    true,
 			wantPrevious:  testAgentImageV1,
 			wantCommitted: true,
 			wantSelected:  testAgentImageV2,
 			wantLastGood:  testAgentImageV1,
 		},
 		"switches from the image an earlier upgrade selected": {
+			runningImage:  testAgentImageV1,
 			selected:      testAgentImageV1,
-			wantCalls:     []string{pull, label, check},
+			wantCalls:     []string{pull, removeTask, removeContainer, check},
+			wantSignal:    true,
 			wantPrevious:  testAgentImageV1,
 			wantCommitted: true,
 			wantSelected:  testAgentImageV2,
 			wantLastGood:  testAgentImageV1,
 		},
-		// The image then stays when the agent no longer needs it, which only costs space.
-		"switches though it couldn't label the image": {
-			runningImage:  testAgentImageV1,
-			failOn:        "label",
-			wantCalls:     []string{pull, label, check},
-			wantPrevious:  testAgentImageV1,
-			wantCommitted: true,
-			wantSelected:  testAgentImageV2,
-			wantLastGood:  testAgentImageV1,
+		// A rollback would restore an image that never ran here.
+		"refuses when another image was selected since the agent started": {
+			runningImage:   testAgentImageV1,
+			selected:       "registry.example/aks-flex-node-agent@sha256:" + strings.Repeat("c", 64),
+			wantErr:        true,
+			wantNoSelected: true,
 		},
 		"doesn't select an image it couldn't pull": {
 			runningImage:   testAgentImageV1,
 			failOn:         "pull",
 			wantCalls:      []string{pull},
 			wantErr:        true,
+			wantSignal:     true,
 			wantPrevious:   testAgentImageV1,
 			wantNoSelected: true,
 		},
 		"doesn't select an image whose agent doesn't run, and removes its container": {
 			runningImage:   testAgentImageV1,
 			failOn:         "run",
-			wantCalls:      []string{pull, label, check, removeTask, removeContainer},
+			wantCalls:      []string{pull, removeTask, removeContainer, check, removeTask, removeContainer},
 			wantErr:        true,
+			wantSignal:     true,
 			wantPrevious:   testAgentImageV1,
 			wantNoSelected: true,
 		},
@@ -164,8 +170,9 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 			runningImage:   testAgentImageV1,
 			failOn:         "run",
 			cancelOnFail:   true,
-			wantCalls:      []string{pull, label, check, removeTask, removeContainer},
+			wantCalls:      []string{pull, removeTask, removeContainer, check, removeTask, removeContainer},
 			wantErr:        true,
+			wantSignal:     true,
 			wantPrevious:   testAgentImageV1,
 			wantNoSelected: true,
 		},
@@ -212,47 +219,29 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Stage() error = %v, want error %v", err, tc.wantErr)
 			}
-			if len(*calls) != len(tc.wantCalls) {
-				t.Fatalf("calls = %q, want %q", *calls, tc.wantCalls)
-			}
-			for i, want := range tc.wantCalls {
-				if !strings.HasPrefix((*calls)[i], want) {
-					t.Errorf("call %d = %q, want it to start with %q", i, (*calls)[i], want)
-				}
+			if !slices.Equal(*calls, tc.wantCalls) {
+				t.Errorf("calls = %q, want %q", *calls, tc.wantCalls)
 			}
 			// As a host limits its download and its candidate's version check.
-			if pullDeadline <= 0 || pullDeadline > agentImagePullTimeout {
+			if len(*calls) > 0 && (pullDeadline <= 0 || pullDeadline > agentImagePullTimeout) {
 				t.Errorf("the pull's deadline is %v away, want within %v", pullDeadline, agentImagePullTimeout)
 			}
-			if len(*calls) > 2 && (checkDeadline <= 0 || checkDeadline > agentImageCheckTimeout) {
+			if len(*calls) > 3 && (checkDeadline <= 0 || checkDeadline > agentImageCheckTimeout) {
 				t.Errorf("the check's deadline is %v away, want within %v", checkDeadline, agentImageCheckTimeout)
 			}
 			if !liveCleanup {
 				t.Error("the check's container was removed with a cancelled context")
 			}
-			// The check runs the candidate's agent in a scope of the agent's slice, named as its
-			// container is, and the cleanup removes that container.
-			checkCall := regexp.MustCompile(`^ctr --namespace aks-flex run --rm --runc-systemd-cgroup ` +
-				`--cgroup system-aksflex\.slice:aks-flex:upgrade-check-(\d+) --snapshotter native ` +
-				regexp.QuoteMeta(testAgentImageV2) + ` aks-flex-node-upgrade-check-(\d+) aks-flex-node version$`)
-			if len(*calls) > 2 {
-				m := checkCall.FindStringSubmatch((*calls)[2])
-				if m == nil || m[1] != m[2] {
-					t.Errorf("the check runs %q, want the candidate's agent in a scope of its own name", (*calls)[2])
-				}
-				for _, removal := range (*calls)[3:] {
-					if m != nil && !strings.HasSuffix(removal, " aks-flex-node-upgrade-check-"+m[2]) {
-						t.Errorf("cleanup %q isn't of the check's container", removal)
-					}
-				}
-			}
 			signal, err := executor.signals.read()
 			if err != nil || signal == nil {
 				t.Fatalf("signal = %#v, %v", signal, err)
 			}
-			if signal.CandidateImage != testAgentImageV2 || signal.PreviousImage != tc.wantPrevious ||
-				signal.SwitchCommitted != tc.wantCommitted {
+			if tc.wantSignal && (signal.CandidateImage != testAgentImageV2 || signal.PreviousImage != tc.wantPrevious ||
+				signal.SwitchCommitted != tc.wantCommitted) {
 				t.Errorf("signal = %#v", signal)
+			}
+			if !tc.wantSignal && signal.CandidateImage != "" {
+				t.Errorf("signal = %#v, want no candidate recorded", signal)
 			}
 			if tc.wantNoSelected {
 				assertSelectedImages(t, executor.images, tc.selected, tc.selected)
@@ -622,13 +611,24 @@ func TestContainerAgentRemovesOldImages(t *testing.T) {
 
 			dir := t.TempDir()
 			var removed []string
+			// The daemon removes images as it starts, so a call that hung would hold it there.
+			bounded := func(ctx context.Context, call string) {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > agentImageCommandTimeout {
+					t.Errorf("%s has no deadline within %v", call, agentImageCommandTimeout)
+				}
+			}
 			convergence := &containerAgentConvergence{
 				log:          discardLogger(),
 				images:       agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
 				install:      agentImageEnvFile{path: filepath.Join(dir, "settings")},
 				runningImage: tc.runningImage,
-				listImages:   func(context.Context) (string, error) { return listed, tc.listErr },
-				ctr: func(_ context.Context, args ...string) error {
+				listImages: func(ctx context.Context) (string, error) {
+					bounded(ctx, "listing the images")
+					return listed, tc.listErr
+				},
+				ctr: func(ctx context.Context, args ...string) error {
+					bounded(ctx, "ctr "+strings.Join(args, " "))
 					if !slices.Equal(args[:4], []string{"--namespace", "aks-flex", "images", "rm"}) {
 						t.Errorf("unexpected ctr %q", args)
 					}
