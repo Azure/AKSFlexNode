@@ -385,8 +385,9 @@ it `container_var_lib_t`. The files containerd adds later inherit `unlabeled_t`,
 so nothing moves a container out of `kernel_t`, and the agent's containers run
 as `kernel_t`, as every host process does. Where containerd makes the directory
 itself, or `restorecon` labels it, they run as `spc_t`. The agent works either
-way: `check` passes on the build as it ships, and with `/var/lib/containerd`
-relabeled as `restorecon` would, and expects the domain the label implies.
+way: `check` passes on the build as it ships, and after
+`up --label-containerd`, which labels `/var/lib/containerd` with `restorecon`
+before containerd first starts, and expects the domain the label implies.
 
 | containerd's files | The agent's containers | The machines they create | `reset-failed` in recovery |
 |---|---|---|---|
