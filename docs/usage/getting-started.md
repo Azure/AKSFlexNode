@@ -490,7 +490,10 @@ done
 # The digest of the release archive the host downloads, from the release's checksums.txt.
 AKS_FLEX_NODE_AGENT_SHA256=$(curl -fsSL "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt" |
   awk '$2 == "aks-flex-node-linux-amd64.tar.gz" { print $1 }')
-[[ -n "$AKS_FLEX_NODE_AGENT_SHA256" ]] || echo "No digest for the archive in checksums.txt" >&2
+if [[ ! "$AKS_FLEX_NODE_AGENT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "No digest for the archive in the release's checksums.txt" >&2
+  exit 1
+fi
 
 echo '{}' > base-config.json
 
