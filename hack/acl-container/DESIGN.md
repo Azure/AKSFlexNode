@@ -12,7 +12,7 @@
 On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
 `main`'s controller,
-`harness.py check` verifies 72 checks, including all of the following:
+`harness.py check` verifies 66 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -448,7 +448,7 @@ whose disk writes the host caches (`cache=unsafe`):
 | ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
-| `check`, with a reboot | 72 checks, about 8 min; `upgrade` is the longest group, at about 1.5 min |
+| `check`, with a reboot | 66 checks, about 7 min; no group takes much over a minute |
 | Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
