@@ -85,8 +85,11 @@ systemd:
 
         [Service]
         Type=oneshot
+        Environment=AKS_FLEX_NODE_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=
         EnvironmentFile=/etc/sysconfig/aks-flex-node-container
         EnvironmentFile=-/etc/aks-flex-node/agent-image.env
+        # containerd.service reports started before containerd answers.
+        ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
         # The task and container outlive ctr if it is killed, so clear them.
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-bootstrap
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
@@ -96,7 +99,7 @@ systemd:
           --mount type=bind,src=/,dst=/host,options=rbind:rslave \
           ${AKS_FLEX_NODE_IMAGE} aks-flex-node-bootstrap \
           flex-agent-entrypoint aks-flex-node-bootstrap
-        # containerd.service can report started before containerd answers.
+        # A pull or bootstrap can fail for a while, such as while the network comes up.
         Restart=on-failure
         RestartSec=10s
         TimeoutStartSec=30min
@@ -112,8 +115,11 @@ systemd:
 
         [Service]
         Type=oneshot
+        Environment=AKS_FLEX_NODE_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=
         EnvironmentFile=/etc/sysconfig/aks-flex-node-container
         EnvironmentFile=-/etc/aks-flex-node/agent-image.env
+        # containerd.service reports started before containerd answers.
+        ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node-reset
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-reset
         ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \

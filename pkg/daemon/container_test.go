@@ -272,3 +272,30 @@ func TestContainerAgentUnitRestartsAfterRecovery(t *testing.T) {
 		})
 	}
 }
+
+// containerd.service reports started before containerd answers, and a start of a unit that runs
+// ctr then fails, which counts toward its start limit and, for the agent's unit, starts recovery.
+func TestContainerUnitsWaitForContainerd(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string][]byte{
+		ServiceUnitName:         containerServiceUnitContent,
+		recoveryServiceUnitName: containerRecoveryUnitContent,
+	}
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var first string
+			for _, line := range strings.Split(string(content), "\n") {
+				if strings.HasPrefix(line, "ExecStartPre=") || strings.HasPrefix(line, "ExecStart=") {
+					first = line
+					break
+				}
+			}
+			if !strings.HasPrefix(first, "ExecStartPre=") || !strings.Contains(first, "until /usr/bin/ctr version") {
+				t.Errorf("the unit's first command is %q, want a wait for containerd to answer", first)
+			}
+		})
+	}
+}

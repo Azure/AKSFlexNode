@@ -15,10 +15,16 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+# The settings' optional variables, empty unless they set them.
+Environment=AKS_FLEX_NODE_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=
 # The agent's image, from the host's provisioning, which bootstrap pulled, or
 # the one an AgentUpgrade selected.
 EnvironmentFile=/etc/sysconfig/aks-flex-node-container
 EnvironmentFile=-/etc/aks-flex-node/agent-image.env
+# containerd.service reports started before containerd answers, and a start
+# that runs ctr then fails: it counts toward the start limit, and starts the
+# recovery unit. So wait for it, within TimeoutStartSec.
+ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
 # The task and container outlive ctr if it is killed, so clear them.
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex task kill --signal SIGKILL aks-flex-node
 ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
@@ -37,7 +43,6 @@ ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_
 ExecStop=/usr/bin/ctr --namespace aks-flex task kill --signal SIGTERM aks-flex-node
 TimeoutStartSec=300
 TimeoutStopSec=60
-# containerd.service can report started before containerd answers.
 Restart=on-failure
 RestartSec=10s
 StandardOutput=journal
