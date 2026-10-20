@@ -12,8 +12,8 @@ with no Azure resources involved.
 a host install. [SELINUX.md](SELINUX.md) is the SELinux finding for the ACL
 team. This file is how to use the harness.
 
-Current ACL images need `up --selinux-workaround`: their SELinux policy doesn't
-yet let a privileged container talk to the host's systemd over D-Bus. See
+The harness boots ACL 3.0.20261019, the first build whose SELinux policy lets
+the agent's privileged containers talk to the host's systemd over D-Bus. See
 [SELinux](DESIGN.md#selinux).
 
 ## Requirements
@@ -35,11 +35,11 @@ yet let a privileged container talk to the host's systemd over D-Bus. See
 ## Quick start
 
 ```bash
-export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group      # only for the first export
-hack/acl-container/harness.py up --selinux-workaround # cluster, image, VM, bootstrap
-hack/acl-container/harness.py status                  # the VM, the agent, machines, nodes
-hack/acl-container/harness.py check                   # 72 checks, about 11 minutes
-hack/acl-container/harness.py down                    # remove the VM, cluster, network, and state
+export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group   # only for the first export
+hack/acl-container/harness.py up                   # cluster, image, VM, bootstrap
+hack/acl-container/harness.py status               # the VM, the agent, machines, nodes
+hack/acl-container/harness.py check                # 72 checks, about 8 minutes
+hack/acl-container/harness.py down                 # remove the VM, cluster, network, and state
 ```
 
 `up` takes under five minutes once the ACL image is exported and the image
@@ -169,11 +169,7 @@ sudo ctr --namespace aks-flex task ls         # the agent's containers
 sudo ctr --namespace aks-flex images ls -q    # its images
 ```
 
-Under the SELinux workaround, each start of a container takes about 12 seconds
-before its entrypoint runs: the units run it on containerd's native
-snapshotter, which copies the image for every start. The harness has the host
-cache the VM's disk writes (`cache=unsafe`), which more than halves that. See
-[SELinux](DESIGN.md#selinux).
+Each start of a container takes a second or two before its entrypoint runs.
 
 To change what's in the image, edit it and push it:
 
@@ -236,8 +232,8 @@ Without `--image` or `ACL_IMAGE`, `up` boots the Azure build of ACL from the
 shared gallery image `ACL_IMAGE_GALLERY_IMAGE`, which it exports to
 `.vm/acl-images/acl-gallery-<version>.qcow2` the first time. The export copies
 the image to a temporary managed disk in `ACL_IMAGE_RESOURCE_GROUP`, which has
-to be in `westus2`, where the image is replicated, downloads the disk's 850 MiB
-of written pages, and deletes the disk. It takes about 90 seconds on a fast
+to be in `westus2`, where the image is replicated, downloads the disk's 910 MiB
+of written pages, and deletes the disk. It takes about 70 seconds on a fast
 link.
 
 The identity `az` is logged in as needs, on the resource group,
@@ -246,9 +242,11 @@ The identity `az` is logged in as needs, on the resource group,
 gallery's images and versions. Its tenant has to be one the gallery is shared
 with.
 
-The gallery's latest version is asked of `az` on each `up`. Once an image is
-exported, pass it with `--image`, or set `ACL_IMAGE_VERSION`, to boot it
-without `az`.
+`up` exports the version `ACL_IMAGE_VERSION` names, 3.20261019.3 by default,
+the first with the SELinux rule the agent needs. Its gallery excludes it from
+its latest, so set `ACL_IMAGE_VERSION=` (empty) to have `az` ask the gallery
+for its latest instead. Once a version is exported, `up` boots it again without
+`az`.
 
 ## Settings
 
@@ -257,11 +255,10 @@ without `az`.
 | `ACL_IMAGE` | | Local ACL qcow2, instead of `--image` |
 | `ACL_IMAGE_RESOURCE_GROUP` | | Resource group in `westus2` the gallery image is exported through |
 | `ACL_IMAGE_SUBSCRIPTION` | `az`'s default | Subscription of that resource group |
-| `ACL_IMAGE_VERSION` | the gallery's latest | Gallery image version |
-| `ACL_IMAGE_GALLERY_IMAGE` | `/SharedGalleries/b3e01d89-bd55-414f-bbb4-cdfeb2628caa-ACL/Images/acl-1es-eval` | Gallery image |
+| `ACL_IMAGE_VERSION` | `3.20261019.3` | Gallery image version; empty for the gallery's latest |
+| `ACL_IMAGE_GALLERY_IMAGE` | `/SharedGalleries/035db282-f1c8-4ce7-b78f-2a7265d5398c-ACLDEVEL/Images/acl-1es-eval-kvm` | Gallery image |
 | `ACL_IMAGE_DIR` | `.vm/acl-images` | Where exported images are kept; `down` keeps them |
 | `ACLC_STATE_DIR` | `.vm/acl-container` | VM disk, logs, SSH key, kubeconfig, rendered Ignition |
-| `ACLC_SELINUX_WORKAROUND` | | `1` for `up --selinux-workaround` |
 | `ACLC_CONTAINER_ENGINE` | `podman` if installed, else `docker` | Builds the images, runs the registry and Butane |
 | `ACLC_KIND_CLUSTER` | `aclc` | The kind cluster's name |
 | `ACLC_KIND_NODE_IMAGE` | kind's default | The kind node image |
@@ -287,12 +284,13 @@ The subnet, interface names, and ports differ from the other harnesses in
 - **The agent's container doesn't start.** `journalctl -u aks-flex-node-agent -b`
   on the VM shows the entrypoint's checks. A failed check exits the container,
   and systemd retries it.
-- **`machinectl` says `Access denied`.** That's SELinux: run `up` with
-  `--selinux-workaround`. List denials with
+- **`machinectl` says `Access denied`.** That's SELinux: the image's policy
+  lacks `allow spc_t kernel_t:dbus send_msg;`, which ACL 3.0.20261019 and
+  later have, and `up` stops with that hint. List denials with
   `sudo journalctl -b | grep 'avc:  denied'` on the VM, and see
   [SELinux](DESIGN.md#selinux).
-- **`up` fails asking `az` for the gallery's version.** Its sign-in has
-  expired: run `az login`, or pass the exported image with `--image`.
+- **`up` fails exporting the image.** `az`'s sign-in has expired: run
+  `az login`, or pass an exported image with `--image`.
 - **The VM can't pull images.** The VM reaches the internet through NAT on
   this host, which needs IPv4 forwarding on; `up` turns it on.
 
@@ -302,7 +300,6 @@ The subnet, interface names, and ports differ from the other harnesses in
 |---|---|
 | `harness.py` | The harness |
 | `agent-container.bu` | Butane config that installs the agent: the settings, the bootstrap and reset units, and the `/usr/local` overlay |
-| `selinux-workaround.bu` | The development-only SELinux workaround, merged in by `up --selinux-workaround` |
 | `image/Containerfile` | The agent image |
 | `image/bin/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
 | `image/bin/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
