@@ -43,6 +43,7 @@ The publisher and operator must call out these prerequisites:
 - curl
 - tar
 - jq
+- `flock`, from `util-linux`
 - standard Linux core utilities
 - `sha256sum` when an artifact checksum is supplied
 - the packages required by normal `aks-flex-node preflight`, such as
@@ -103,7 +104,7 @@ agent, not the initial script download.
 
 Before the image is captured, install the documented host dependencies:
 
-- Bash, curl, tar, jq, and standard core utilities;
+- Bash, curl, tar, jq, `flock`, and standard core utilities;
 - systemd and nspawn prerequisites;
 - nftables and other packages required by agent preflight;
 - optional organization-specific CA certificates and proxy configuration.
@@ -613,7 +614,17 @@ The script:
 4. Rejects absolute and parent-traversal tar paths.
 5. Extracts `aks-flex-node-linux-<arch>` or `aks-flex-node`.
 6. Chooses the binary directory, and atomically replaces `aks-flex-node` there
-   with mode `0755`.
+   with mode `0755`, holding the agent upgrade lock,
+   `/run/aks-flex-node-agent-upgrade.lock`, so it can't race an activation.
+
+Reset removes the agent's unit but keeps its blue/green layout, so on a host that
+was reset, `aks-flex-node` is a link into it. Replacing only the link would leave
+the service on the retained binary: at `start`, the agent points the link back
+at the layout's current slot. When the agent unit is neither installed nor
+active, the script removes the link and the layout, and `start` builds the
+layout again from the downloaded binary. While the unit is installed or active
+it refuses, since the layout then belongs to the upgrade flow, and it refuses
+any other symbolic link at that path.
 
 The directory is chosen from the host, without running the agent:
 `/opt/unbounded/agent/bin` on a host already installed under a real
