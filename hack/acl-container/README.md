@@ -79,17 +79,17 @@ containerd first starts, as ACL's `file_contexts` has it, so they run as
 - The node: Ready, its machine running, a pod on it, and `kubectl logs`
 - Repave from kube1 to kube2, as `main`'s e2e does
 - A `NodeReboot` MachineOperation
+- Machines the container creates with `flex-machine`, kept running across a
+  restart of the agent's container, and a VM reboot
 - `AgentUpgrade`: to a good candidate image, to a broken one, which rolls back,
   to one named by tag alone, which is rejected, and back to the agent's own
   image
-- Machines the container creates with `flex-machine`, kept running across a
-  restart of the agent's container, and a VM reboot
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal, each followed by
   bootstrapping the node again
 
 `check --no-reboot` skips the reboot, and `--keep` keeps the `aclc-check`
 machine. `check --only GROUP,...` runs some of its groups, in their usual order:
-`container`, `cluster`, `repave`, `nodereboot`, `upgrade`, `machines`,
+`container`, `cluster`, `repave`, `nodereboot`, `machines`, `upgrade`,
 `agentreset`, `reset`, and `deletion`. Each starts from a joined node and
 leaves one, so any of them can run alone, such as `--only upgrade,agentreset`
 while working on upgrades. `check` ends with how long each group took.
