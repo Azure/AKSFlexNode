@@ -183,6 +183,55 @@ fi
 grep -q 'client-secret file must not be a symlink' "$WORK_DIR/sp-link.log" || \
     fail "symlink client-secret rejection was not reported"
 
+# Reset removes the agent service but keeps the managed blue/green layout. A
+# rerun must install the downloaded agent instead of leaving the retained slot
+# for start to link back into place.
+RESET_ROOT="$WORK_DIR/reset-root"
+mkdir -p "$RESET_ROOT/bin" "$RESET_ROOT/lib/aks-flex-node"
+printf '#!/bin/sh\nexit 0\n# retained after reset\n' > "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue"
+chmod 0755 "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue"
+ln -s "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue" "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-current"
+ln -s "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-blue" "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-last-good"
+ln -s "$RESET_ROOT/lib/aks-flex-node/aks-flex-node-current" "$RESET_ROOT/bin/aks-flex-node"
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/reset-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth msi \
+        --install-dir "$RESET_ROOT/bin" \
+        --config-path "$WORK_DIR/reset-etc/config.json" >/dev/null
+[[ -f "$RESET_ROOT/bin/aks-flex-node" && ! -L "$RESET_ROOT/bin/aks-flex-node" ]] || \
+    fail "rerun after reset did not install a regular agent binary"
+installed_sha256=$(sha256sum "$RESET_ROOT/bin/aks-flex-node" | awk '{print $1}')
+downloaded_sha256=$(sha256sum "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" | awk '{print $1}')
+[[ "$installed_sha256" == "$downloaded_sha256" ]] || \
+    fail "rerun after reset did not install the downloaded agent"
+[[ ! -e "$RESET_ROOT/lib/aks-flex-node" ]] || fail "rerun after reset retained the managed binary layout"
+grep -Fx "preflight --config $WORK_DIR/reset-etc/config.json --output text" "$WORK_DIR/reset-calls" >/dev/null || \
+    fail "rerun after reset did not run preflight with the downloaded agent"
+grep -Fx "start --config $WORK_DIR/reset-etc/config.json" "$WORK_DIR/reset-calls" >/dev/null || \
+    fail "rerun after reset did not start the downloaded agent"
+
+# Any other link at the binary path is not the agent's layout; leave it for the
+# operator to inspect.
+mkdir -p "$WORK_DIR/odd-root/bin"
+printf '#!/bin/sh\nexit 0\n' > "$WORK_DIR/odd-target"
+chmod 0755 "$WORK_DIR/odd-target"
+ln -s "$WORK_DIR/odd-target" "$WORK_DIR/odd-root/bin/aks-flex-node"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        bash "$SCRIPT" --auth msi \
+            --install-dir "$WORK_DIR/odd-root/bin" \
+            --config-path "$WORK_DIR/odd-etc/config.json" \
+            >"$WORK_DIR/odd.log" 2>&1; then
+    fail "unexpected agent binary symlink was replaced"
+fi
+grep -q 'refusing to replace the unexpected symbolic link' "$WORK_DIR/odd.log" || \
+    fail "unexpected agent binary symlink rejection was not reported"
+[[ -L "$WORK_DIR/odd-root/bin/aks-flex-node" &&
+   $(readlink "$WORK_DIR/odd-root/bin/aks-flex-node") == "$WORK_DIR/odd-target" ]] || \
+    fail "unexpected agent binary symlink changed"
+
 command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
 cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'
 import base64
