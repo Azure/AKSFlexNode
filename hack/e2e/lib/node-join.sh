@@ -40,15 +40,17 @@ _deploy_and_start_agent() {
   remote_copy "${REPO_ROOT}/scripts/install.sh" "${vm_ip}" "/tmp/aks-flex-node-install.sh"
 
   log_info "Installing and starting flex node agent on ${vm_ip}..."
-  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} RELEASE=${release} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
+  local release_q
+  release_q="$(printf '%q' "${release}")"
+  remote_exec "${vm_ip}" "UNIT_NAME=${unit_name} RELEASE=${release_q} E2E_NODE_JOIN_TIMEOUT=${E2E_NODE_JOIN_TIMEOUT} E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION} bash -s" <<'REMOTE'
 set -euo pipefail
 
 # A layout an earlier join left is under the host root, or under /usr/local on
 # a host an older release installed, where activating the candidate links the
-# host root to it.
+# host root to it. sudo, as that release makes /usr/local/lib/aks-flex-node 0750.
 managed_current=""
 for root in /opt/unbounded/agent /usr/local; do
-  if [[ -e "${root}/lib/aks-flex-node/aks-flex-node-current" || -L "${root}/lib/aks-flex-node/aks-flex-node-current" ]]; then
+  if sudo test -e "${root}/lib/aks-flex-node/aks-flex-node-current" || sudo test -L "${root}/lib/aks-flex-node/aks-flex-node-current"; then
     managed_current="${root}/lib/aks-flex-node/aks-flex-node-current"
     break
   fi
@@ -364,10 +366,11 @@ validate_no_localdns_state() {
   local path
 
   # Under both roots: reset does not depend on the host root having been migrated.
+  # sudo, so a directory the SSH user cannot read does not hide a leftover.
   for path in /etc/systemd/system/unbounded-localdns-network.service \
     /opt/unbounded/agent/libexec/unbounded-localdns-network \
     /usr/local/libexec/unbounded-localdns-network; do
-    if [[ -e "${path}" ]]; then
+    if sudo test -e "${path}"; then
       echo "reset cleanup LocalDNS file ${path} still exists"
       exit 1
     fi
@@ -389,12 +392,14 @@ validate_no_localdns_state() {
 validate_no_host_helpers() {
   local path
 
+  # sudo: an older release makes /usr/local/lib/aks-flex-node 0750, which the
+  # SSH user cannot look inside.
   for path in /opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle \
     /usr/local/bin/unbounded-agent-nspawn-lifecycle \
     /opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-recovery.sh \
     /usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh \
     /etc/systemd/system/aks-flex-node-agent-recovery.service; do
-    if [[ -e "${path}" ]]; then
+    if sudo test -e "${path}"; then
       echo "reset cleanup helper ${path} still exists"
       exit 1
     fi

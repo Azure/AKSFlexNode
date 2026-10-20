@@ -9,7 +9,7 @@
 #   all           Run the full E2E flow (default): build, infra, CNI, controller,
 #                 ARM registration, join/validate/smoke, unjoin/absence,
 #                 rejoin/validate/smoke, nspawn lifecycle, agent upgrade,
-#                 upgrade drift, logs, and cleanup
+#                 host root migration, upgrade drift, logs, and cleanup
 #   infra         Deploy infrastructure, CNI, and controller (AKS + 5 VMs)
 #   arm-registration Validate MSI-based registration through the ARM Machine API
 #   join          Join all nodes to the cluster (requires prior infra)
@@ -65,6 +65,7 @@
 #   E2E_RUNC_VERSION        Runc version (default: 1.1.12)
 #   E2E_TARGET_AGENT_POOL_NAME Target AKS agent pool name (default: aksflexnodes)
 #   E2E_ARM_MACHINE_API_VERSION ARM API version for Machine verification
+#   E2E_LEGACY_RELEASE      Release host-root-migration installs first (default: v0.2.0)
 #   AZURE_SUBSCRIPTION_ID   Azure subscription (auto-detected if not set)
 #   AZURE_TENANT_ID         Azure tenant (auto-detected if not set)
 #

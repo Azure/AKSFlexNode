@@ -316,6 +316,12 @@ agent_upgrade_e2e() {
 # host_root_migration_e2e - Move a host installed by a release before the host
 # root to the build under test
 # ---------------------------------------------------------------------------
+# _host_root_migration_uninstall removes what the joins before it installed, and
+# /opt/unbounded too. uninstall.sh keeps /opt/unbounded, which belongs to the
+# host, but on the test VM only the agent uses it, and the "migrated" check has
+# to see the directory this build creates, not one an earlier join of it left.
+# The checks use sudo: the older release makes /usr/local/lib/aks-flex-node
+# 0750, which the SSH user cannot look inside.
 _host_root_migration_uninstall() {
   local vm_ip="$1"
   remote_copy "${REPO_ROOT}/scripts/uninstall.sh" "${vm_ip}" "/tmp/aks-flex-node-uninstall.sh"
@@ -323,17 +329,25 @@ _host_root_migration_uninstall() {
 set -euo pipefail
 sudo bash /tmp/aks-flex-node-uninstall.sh --force
 for path in /opt/unbounded/agent /opt/unbounded/agent.staging /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node /etc/aks-flex-node; do
-  if [[ -e "${path}" || -L "${path}" ]]; then
+  if sudo test -e "${path}" || sudo test -L "${path}"; then
     echo "uninstall left ${path}" >&2
     exit 1
   fi
 done
+if sudo test -e /opt/unbounded || sudo test -L /opt/unbounded; then
+  if ! sudo rmdir /opt/unbounded; then
+    echo "cannot remove /opt/unbounded, which only the agent uses on the test VM:" >&2
+    sudo ls -la /opt/unbounded >&2 || true
+    exit 1
+  fi
+fi
 REMOTE
 }
 
 # _host_root_migration_assert checks the host root. "legacy" is a host the older
-# release installed, with nothing at /opt/unbounded/agent. "migrated" is the same
-# host once this build has run: /opt/unbounded/agent links to /usr/local, inside an
+# release installed, with no /opt/unbounded: the uninstall before it removed that,
+# and the older release knows nothing of it. "migrated" is the same host once
+# this build has run: /opt/unbounded/agent links to /usr/local, inside an
 # /opt/unbounded the agent created 0755, and the unit and links the older release
 # wrote are unchanged, so it could still be returned to.
 _host_root_migration_assert() {
@@ -343,8 +357,8 @@ set -euo pipefail
 service=/etc/systemd/system/aks-flex-node-agent.service
 case "${STATE}" in
   legacy)
-    if [[ -e /opt/unbounded/agent || -L /opt/unbounded/agent ]]; then
-      echo "a release before the host root created /opt/unbounded/agent" >&2
+    if sudo test -e /opt/unbounded || sudo test -L /opt/unbounded; then
+      echo "/opt/unbounded exists before this build has run: $(ls -ld /opt/unbounded 2>&1)" >&2
       exit 1
     fi
     ;;
@@ -377,7 +391,8 @@ _host_root_migration_wait_moved() {
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 moved() {
-  [[ -d /opt/unbounded/agent && ! -L /opt/unbounded/agent && ! -e /opt/unbounded/agent/.moving ]] || return 1
+  [[ -d /opt/unbounded/agent && ! -L /opt/unbounded/agent ]] || return 1
+  sudo test ! -e /opt/unbounded/agent/.moving || return 1
   pid="$(systemctl show --property MainPID --value aks-flex-node-agent.service)"
   [[ "${pid:-0}" -gt 0 && "$(sudo readlink -f "/proc/${pid}/exe")" == /opt/unbounded/agent/lib/aks-flex-node/* ]]
 }
@@ -392,7 +407,7 @@ if ! moved; then
 fi
 for path in /opt/unbounded/agent.staging /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node \
   /usr/local/bin/unbounded-agent-nspawn-lifecycle /etc/aks-flex-node/host-root-agents; do
-  if [[ -e "${path}" || -L "${path}" ]]; then
+  if sudo test -e "${path}" || sudo test -L "${path}"; then
     echo "${path} is left after the move" >&2
     exit 1
   fi
@@ -461,7 +476,7 @@ if ! declined; then
 fi
 [[ -L /opt/unbounded/agent && "$(readlink /opt/unbounded/agent)" == /usr/local ]] ||
   { echo "/opt/unbounded/agent is no longer linked to /usr/local: $(ls -ld /opt/unbounded/agent 2>&1)" >&2; exit 1; }
-[[ ! -e /opt/unbounded/agent.staging ]] || { echo "the agent copied its files to a noexec /opt" >&2; exit 1; }
+sudo test ! -e /opt/unbounded/agent.staging || { echo "the agent copied its files to a noexec /opt" >&2; exit 1; }
 sudo grep -Fq "ExecStart=/usr/local/lib/aks-flex-node/aks-flex-node-current agent" /etc/systemd/system/aks-flex-node-agent.service ||
   { echo "the agent unit no longer runs the legacy current link" >&2; exit 1; }
 sudo systemctl is-active --quiet aks-flex-node-agent.service
@@ -476,31 +491,35 @@ REMOTE
 # removes it, that release finds nothing under /usr/local and cannot start, and the
 # agent rolls back to last-good, leaving no installation under /usr/local.
 _host_root_migration_downgrade() {
-  local vm_name="$1" vm_ip="$2" release="$3" suffix="$4" digest op message before after before_slot before_digest after_slot after_digest
-  remote_exec "${vm_ip}" "RELEASE=${release} bash -s" <<'REMOTE'
+  local vm_name="$1" vm_ip="$2" release="$3" suffix="$4" release_q digest op message before after before_slot before_digest after_slot after_digest
+  release_q="$(printf '%q' "${release}")"
+  remote_exec "${vm_ip}" "RELEASE=${release_q} bash -s" <<'REMOTE'
 set -euo pipefail
 work=/opt/aks-flex-node-e2e-upgrade
 sudo curl -fsSL -o "${work}/legacy.tar.gz" \
   "https://github.com/Azure/AKSFlexNode/releases/download/${RELEASE}/aks-flex-node-linux-amd64.tar.gz"
 sudo install -m 0755 "${work}/aks-flex-node-linux-amd64" /usr/local/bin/aks-flex-node
-sudo chattr +i /usr/local/bin/aks-flex-node
 REMOTE
   digest="$(_agent_upgrade_digest "${vm_ip}" legacy.tar.gz)"
   before="$(_agent_upgrade_snapshot "${vm_ip}")"
   IFS='|' read -r before_slot _ before_digest _ <<<"${before}"
 
+  # The file has to be removable again however this ends, or a rerun's
+  # uninstall.sh cannot remove it. A subshell's EXIT trap also runs when set -e
+  # ends it, which a RETURN trap would not.
   op="host-root-downgrade-refused-${suffix}"
-  _agent_upgrade_apply "${op}" "${vm_name}" legacy.tar.gz "${digest}" "refused-${suffix}"
-  if ! _agent_upgrade_wait_phase "${op}" Failed; then
-    remote_exec "${vm_ip}" 'sudo chattr -i /usr/local/bin/aks-flex-node' || true
-    return 1
-  fi
-  message="$(kubectl get machineoperation "${op}" -o jsonpath='{.status.message}')"
-  remote_exec "${vm_ip}" 'sudo chattr -i /usr/local/bin/aks-flex-node'
-  if [[ "${message}" != *"/usr/local/bin/aks-flex-node"* ]]; then
-    log_error "The refused downgrade did not name the binary in /usr/local/bin: ${message}"
-    return 1
-  fi
+  (
+    trap 'remote_exec "${vm_ip}" "sudo chattr -i /usr/local/bin/aks-flex-node" || true' EXIT
+    remote_exec "${vm_ip}" 'sudo chattr +i /usr/local/bin/aks-flex-node'
+    _agent_upgrade_apply "${op}" "${vm_name}" legacy.tar.gz "${digest}" "refused-${suffix}"
+    _agent_upgrade_wait_phase "${op}" Failed
+    message="$(kubectl get machineoperation "${op}" -o jsonpath='{.status.message}')"
+    if [[ "${message}" != *"/usr/local/bin/aks-flex-node"* ]]; then
+      log_error "The refused downgrade did not name the binary in /usr/local/bin: ${message}"
+      kubectl get machineoperation "${op}" -o yaml || true
+      exit 1
+    fi
+  )
   after="$(_agent_upgrade_snapshot "${vm_ip}")"
   if [[ "${after}" != "${before}" ]]; then
     log_error "The refused downgrade switched the agent: before=${before} after=${after}"
@@ -510,22 +529,34 @@ REMOTE
   op="host-root-downgrade-${suffix}"
   _agent_upgrade_apply "${op}" "${vm_name}" legacy.tar.gz "${digest}" "downgrade-${suffix}"
   _agent_upgrade_wait_phase "${op}" Failed
+  # Failed alone could be another refusal. The daemon and the recovery script
+  # word the start of a rollback's message differently, but not its end.
+  message="$(kubectl get machineoperation "${op}" -o jsonpath='{.status.message}')"
+  if [[ "${message}" != *"restored last-good binary"* ]]; then
+    log_error "The downgrade failed without a rollback to last-good: ${message}"
+    kubectl get machineoperation "${op}" -o yaml || true
+    return 1
+  fi
   after="$(_agent_upgrade_snapshot "${vm_ip}")"
   IFS='|' read -r after_slot _ after_digest _ <<<"${after}"
   if [[ "${after_slot}" != "${before_slot}" || "${after_digest}" != "${before_digest}" ]]; then
     log_error "The downgrade was not rolled back to last-good: before=${before} after=${after}"
     return 1
   fi
+  # sudo: the older release would make /usr/local/lib/aks-flex-node 0750, which
+  # the SSH user cannot look inside.
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 for path in /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node/aks-flex-node-blue \
   /usr/local/lib/aks-flex-node/aks-flex-node-green /usr/local/lib/aks-flex-node/aks-flex-node-current \
-  /usr/local/lib/aks-flex-node/aks-flex-node-last-good; do
-  if [[ -e "${path}" || -L "${path}" ]]; then
+  /usr/local/lib/aks-flex-node/aks-flex-node-last-good /usr/local/lib/aks-flex-node; do
+  if sudo test -e "${path}" || sudo test -L "${path}"; then
     echo "the downgrade left ${path}" >&2
     exit 1
   fi
 done
+sudo test ! -e /etc/aks-flex-node/agent-upgrade-signal.json ||
+  { echo "the rollback left the AgentUpgrade signal" >&2; exit 1; }
 sudo systemctl is-active --quiet aks-flex-node-agent.service
 pid="$(systemctl show --property MainPID --value aks-flex-node-agent.service)"
 [[ "$(sudo readlink -f "/proc/${pid}/exe")" == /opt/unbounded/agent/lib/aks-flex-node/* ]] ||
@@ -535,7 +566,7 @@ REMOTE
 }
 
 host_root_migration_e2e() {
-  local release="${E2E_LEGACY_RELEASE:-v0.2.0}"
+  local release="${E2E_LEGACY_RELEASE}"
   log_section "Host Root Migration from ${release}"
   local vm_name vm_ip suffix success_digest op snapshot slot since
   vm_name="$(state_get token_vm_name)"
@@ -585,8 +616,11 @@ host_root_migration_e2e() {
   fi
   _host_root_migration_noexec "${vm_ip}" off
 
-  # The next daemon start tries again, and moves it.
-  remote_exec "${vm_ip}" 'sudo systemctl restart aks-flex-node-agent.service'
+  # The next daemon start tries again, and moves it. The test makes this start,
+  # so it clears the unit's start counter first rather than spend the product's:
+  # the older release's bootstrap, the two upgrades and this restart can all fall
+  # in one StartLimitIntervalSec, against a StartLimitBurst of 5.
+  remote_exec "${vm_ip}" 'sudo systemctl reset-failed aks-flex-node-agent.service && sudo systemctl restart aks-flex-node-agent.service'
   _host_root_migration_wait_moved "${vm_ip}"
   _host_root_migration_assert_helper "${vm_ip}"
   validate_node_joined "${vm_name}"

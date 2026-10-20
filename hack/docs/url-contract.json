@@ -537,6 +537,7 @@
         "aks-flex-node-e2e-tests",
         "commands",
         "github-actions-policy",
+        "host-root-migration-validation",
         "iterative-development",
         "join-modes",
         "makefile-targets",
