@@ -36,7 +36,7 @@ func newARMProxyClient(cfg *config.Config, logger *slog.Logger) (MachineClient, 
 	client, err := armcontainerservice.NewMachinesClient(
 		machineID.SubscriptionID,
 		staticARMProxyCredential{},
-		armMachineClientOptions(policy.ClientOptions{Transport: transport}),
+		armMachineClientOptions(policy.ClientOptions{Transport: transport}, cfg.Agent.MachineClient.APIVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create proxied machines client: %w", err)

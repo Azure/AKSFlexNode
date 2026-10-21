@@ -17,6 +17,7 @@ umask 077
 readonly DEFAULT_REPOSITORY="Azure/AKSFlexNode"
 readonly DEFAULT_INSTALL_DIR="/usr/local/bin"
 readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
+# TODO: move to 2026-10-02-preview (returns disconnect-tolerance intent) once ARM accepts it.
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
 readonly DEFAULT_AUTHORITY_HOST="https://login.microsoftonline.com"
 readonly DEFAULT_IMDS_ENDPOINT="http://169.254.169.254/metadata/identity/oauth2/token"

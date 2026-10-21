@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8"
 
@@ -46,7 +47,7 @@ func newARMClient(cfg *config.Config, logger *slog.Logger) (MachineClient, error
 	if err != nil {
 		return nil, fmt.Errorf("resolve ARM credential: %w", err)
 	}
-	armOpts := armMachineClientOptions(clientOpts)
+	armOpts := armMachineClientOptions(clientOpts, cfg.Agent.MachineClient.APIVersion)
 	client, err := armcontainerservice.NewMachinesClient(machineID.SubscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create machines client: %w", err)
@@ -99,8 +100,10 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 	agentPoolID := c.machineID.Parent
 	clusterID := agentPoolID.Parent
+	// Capture the raw body: the typed SDK model drops disconnectTolerance.
+	var rawResponse *http.Response
 	resp, err := c.client.Get(
-		ctx,
+		policy.WithCaptureResponse(ctx, &rawResponse),
 		c.machineID.ResourceGroupName,
 		clusterID.Name,
 		agentPoolID.Name,
@@ -120,7 +123,27 @@ func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("validate get machine response: %w", err)
 	}
+	result.Goal.DisconnectToleranceEnabled = c.disconnectTolerance(rawResponse)
 	return result, nil
+}
+
+// disconnectTolerance decodes DT intent from a successful full GET. A decode
+// problem leaves intent unset (nil) rather than failing the read, so a bad DT
+// value cannot block unrelated upgrade or deletion handling.
+func (c *armMachineClient) disconnectTolerance(rawResponse *http.Response) *bool {
+	if rawResponse == nil {
+		c.logger.Warn("machine response unavailable; keeping current disconnect-tolerance state")
+		return nil
+	}
+	data, err := runtime.Payload(rawResponse)
+	if err == nil {
+		var enabled bool
+		if enabled, err = disconnectToleranceFromMachineJSON(data); err == nil {
+			return &enabled
+		}
+	}
+	c.logger.Warn("ignoring undecodable disconnect-tolerance intent; keeping current state", "error", err)
+	return nil
 }
 
 func (c *armMachineClient) PatchStatus(context.Context, Status) error {
@@ -171,7 +194,13 @@ func azureClientOptionsFromConfig(cfg *config.Config) azcore.ClientOptions {
 	return azclient.ClientOptionsFromConfig(cfg)
 }
 
-func armMachineClientOptions(clientOpts azcore.ClientOptions) *arm.ClientOptions {
+// armMachineClientOptions configures retries and, when apiVersion is non-empty,
+// overrides the SDK's default Machine API version.
+//
+// TODO: disconnect-tolerance intent is only returned from 2026-10-02-preview. Once ARM
+// accepts it, default to it (or upgrade to an SDK that does) along with bootstrapdata.
+func armMachineClientOptions(clientOpts azcore.ClientOptions, apiVersion string) *arm.ClientOptions {
+	clientOpts.APIVersion = apiVersion
 	// The SDK uses ARM's Retry-After, Retry-After-Ms, and x-ms-retry-after-ms
 	// response headers before falling back to this jittered exponential delay.
 	clientOpts.Retry = policy.RetryOptions{

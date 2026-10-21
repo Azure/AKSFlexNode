@@ -14,12 +14,13 @@ import (
 // Keep this type independent from the public Azure SDK shape; adapt the SDK
 // payload to this model when the ARM contract is finalized.
 type GoalState struct {
-	KubernetesVersion string            `json:"kubernetesVersion,omitempty"`
-	SettingsVersion   string            `json:"settingsVersion,omitempty"`
-	MaxPods           int               `json:"maxPods,omitempty"`
-	NodeLabels        map[string]string `json:"nodeLabels,omitempty"`
-	NodeTaints        []string          `json:"nodeTaints,omitempty"`
-	KubeletConfig     KubeletConfig     `json:"kubeletConfig"`
+	KubernetesVersion          string            `json:"kubernetesVersion,omitempty"`
+	SettingsVersion            string            `json:"settingsVersion,omitempty"`
+	MaxPods                    int               `json:"maxPods,omitempty"`
+	NodeLabels                 map[string]string `json:"nodeLabels,omitempty"`
+	NodeTaints                 []string          `json:"nodeTaints,omitempty"`
+	KubeletConfig              KubeletConfig     `json:"kubeletConfig"`
+	DisconnectToleranceEnabled *bool             `json:"-"`
 }
 
 type KubeletConfig struct {
