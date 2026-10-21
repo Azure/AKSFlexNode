@@ -91,6 +91,10 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create direct Kubernetes client: %w", err)
 	}
+	hub, err := newDaemonHubAdapter(cfg, log, restCfg)
+	if err != nil {
+		return err
+	}
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,
@@ -98,6 +102,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Operator:                 operator,
 		NodeName:                 nodeName,
 		MachineReconcileInterval: time.Duration(cfg.Agent.MachineReconcileInterval),
+		Hub:                      hub,
 	})
 	if err != nil {
 		return err
