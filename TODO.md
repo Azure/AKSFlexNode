@@ -156,12 +156,16 @@ image.
       ordered only after containerd, which on ACL is after `network.target`
       and before `multi-user.target`, so there's no cycle with the machines.
       They must not pull the image, and post-start must finish within the
-      machine unit's start timeout, ACL's default of 45 s, which also covers
-      the machine's boot. Remove the helper existing hosts have only once no
-      version that predates #967 can run there: a rollback or downgrade to
-      one would write hooks that run the missing helper, and its machine
-      would never start again. Versions with #967 reinstall a missing helper
-      themselves. Prototype it on a branch from #323 once #967's API is
+      machine unit's start timeout, ACL's default of 45 s. Remove the helper
+      existing hosts have only once no version that predates #967 can run
+      there: a rollback or downgrade to one would write hooks that run the
+      missing helper, and its machine would never start again. Versions with
+      #967 reinstall a missing helper themselves, from their own binary,
+      which is static, so it runs on the host. At the bump, #323's host-root
+      move, `nspawnLifecycleTasks`, must switch from
+      `EnsureNSpawnLifecycleHelper()` to `EnsureNSpawnLifecycleHelperFor`,
+      or it puts the helper back on hosts whose config supplies the
+      commands. Prototype it on a branch from #323 once #967's API is
       agreed.
 - [ ] GPU hosts in the container: the agent's containers see the host's
       `/dev`, `/sys`, and `/etc/os-release`, but the image's `/usr/bin` and
