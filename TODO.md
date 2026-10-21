@@ -140,14 +140,20 @@ image.
       `post-start` rewires NVIDIA devices. Unbounded copies the agent's binary
       there when it provisions a machine, which is why `/usr/local`, read-only
       on ACL, has a writable overlay. With #323's unbounded, the copy moves to
-      `/opt/unbounded/agent/bin`, and the overlay goes (above). Then change
-      unbounded so its caller can supply the hooks' commands and skip the copy,
-      and have the agent install template units,
-      `aks-flex-node-nspawn-{pre,post}-start@.service`, that run each hook in a
-      short-lived container of its image, which the machines' hooks start with
-      `systemctl start`, so machines still start without the daemon.
+      `/opt/unbounded/agent/bin`, and the overlay goes (above).
+      Azure/unbounded#967, a draft, lets the caller supply the hooks' commands,
+      as `AgentConfig.NSpawnLifecycle`, in which `%i` is the machine, and then
+      skips the copy. Once it's released and bumped, the agent installs
+      template units, `aks-flex-node-nspawn-{pre,post}-start@.service`, which
+      run `nspawn-lifecycle` for the machine `%i`: in a short-lived container
+      of its image in the container, and through the installed binary on a
+      host, Ubuntu included, so both work the same way and no host keeps the
+      helper, which makes #378 moot. The machines' hooks start them with
+      `systemctl start`, so machines still start without the daemon. Remove
+      the helper existing hosts have. Prototype it on a branch from #323 once
+      #967's API is agreed.
 - [ ] unbounded version: `main` pins v0.8.0, and #323 v0.13.0. Bump it again,
-      in a commit of its own, for #962 (below) and the hooks.
+      in a commit of its own, for #962 (below) and #967.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
@@ -182,10 +188,12 @@ image.
 ## Validation and housekeeping
 
 - [ ] Run on an Azure VM from the gallery image, with Ignition as custom data.
-      So far ACL has only run under QEMU. Join with a managed identity and
-      with a service principal there: the agent's own Kubernetes client then
-      runs the image's binary as its credential plugin, which only unit tests
-      cover, since the harness joins with a bootstrap token.
+      So far ACL has only run under QEMU. Join there with
+      `--fetch-bootstrap-data`, with a managed identity and with a service
+      principal, as `main`'s docs do. Those keep the fetched bootstrap token,
+      which takes precedence, so the agent's own client doesn't run its
+      credential plugin. Only a config with an identity and no token does,
+      which unit tests cover.
 - [ ] Once this branch lands, retire host mode on ACL, which #323 adds: its
       ACL docs, its Butane config, and `hack/acl`. A host-mode node moves to
       the container by reprovisioning.
