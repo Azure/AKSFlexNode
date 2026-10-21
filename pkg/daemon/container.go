@@ -62,16 +62,32 @@ func preflightChecks(checks []preflight.Checker, containerized bool) []preflight
 	})
 }
 
-// ensureHostInstall converges the agent's binary layout and units on the host, and reports
-// whether it held them back while an AgentUpgrade is pending; see ensureDaemonServiceAssets. In
-// its container the agent has no binary layout, the image carries it, and
-// containerAgentConvergence converges its units.
-func ensureHostInstall(ctx context.Context, log *slog.Logger, cfg *config.Config, containerized bool) (bool, error) {
+// ensureHostInstall converges the agent's binary layout and units on the host, as
+// ensureDaemonServiceAssets does, and returns what writes those it held back while an
+// AgentUpgrade was pending, for the daemon to run once the upgrade is judged. In its container
+// the agent has no binary layout, the image carries it, and containerAgentConvergence converges
+// its units, so it does nothing there.
+func ensureHostInstall(
+	ctx context.Context,
+	log *slog.Logger,
+	cfg *config.Config,
+	containerized bool,
+) (func(context.Context) error, error) {
 	if containerized {
-		return false, nil
+		return noHeldAssets, nil
 	}
-	return ensureDaemonServiceAssets(ctx, log, cfg)
+	held, err := ensureDaemonServiceAssets(ctx, log, cfg)
+	if err != nil || !held {
+		return noHeldAssets, err
+	}
+	return func(ctx context.Context) error {
+		_, err := ensureDaemonServiceAssets(ctx, log, cfg)
+		return err
+	}, nil
 }
+
+// noHeldAssets is what the daemon runs once an upgrade is judged when it held nothing back.
+func noHeldAssets(context.Context) error { return nil }
 
 // installContainerServiceTask installs, enables, and starts the agent's unit in its container,
 // with its recovery unit, as installServiceTask does on a host. They have the same names, so
@@ -95,7 +111,7 @@ func newInstallContainerServiceTask(log *slog.Logger) *installContainerServiceTa
 func (t *installContainerServiceTask) Name() string { return "install-service" }
 
 func (t *installContainerServiceTask) Do(ctx context.Context) error {
-	if _, err := writeContainerUnits(t.unitDir); err != nil {
+	if _, err := writeContainerUnits(t.unitDir, false); err != nil {
 		return err
 	}
 	for _, args := range [][]string{
