@@ -188,6 +188,14 @@ image.
       network, and a service principal's credential files work under
       `/etc/aks-flex-node` or `/run`, where `main`'s docs put them and the
       containers see them at their own paths. Arc is deferred, below.
+- [ ] Bootstrap retries: the bootstrap unit retries every failure, backing off
+      to 5 minutes, for as long as it takes, including failures a retry can't
+      fix, such as a bad `bootstrap.env`. On ACL that doesn't hold up the
+      boot: with a stand-in unit with the same settings that always fails, the
+      host reached `multi-user.target` and `running` while the unit kept
+      retrying. #383 asks `bootstrap.sh` for a distinct exit code for such
+      failures, for `RestartPreventExitStatus=` in #323's unit; once #323
+      lands, give this bootstrap unit the same.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
       cluster, with pods in machines running as `spc_t` and as `kernel_t`.
