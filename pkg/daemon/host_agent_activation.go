@@ -181,7 +181,7 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 }
 
 func (s *flexDaemonActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
-	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
+	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
 }
 
 func (s *flexDaemonActivationService) Reload(ctx context.Context) error {

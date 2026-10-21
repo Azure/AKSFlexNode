@@ -184,6 +184,7 @@ type hostAgentUpgradeExecutor struct {
 	paths                  agentUpgradePaths
 	state                  agentUpgradeStateLoader
 	signals                agentUpgradeSignalStore
+	systemctl              func(context.Context, ...string) error
 	runSystemdRun          func(context.Context, ...string) error
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 	runningExecutable      func() (string, error)
@@ -205,6 +206,9 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		paths:   paths,
 		state:   state,
 		signals: agentUpgradeSignalStore{path: paths.SignalPath},
+		systemctl: func(ctx context.Context, args ...string) error {
+			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
+		},
 		runSystemdRun: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
 		},
@@ -358,6 +362,15 @@ func (e *hostAgentUpgradeExecutor) rollback(ctx context.Context) error {
 func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	// systemd counts every start of the unit toward its start limit, deliberate restarts too, so
+	// a few upgrades in a row would have the next restart refused, failing the unit, which
+	// recovery takes for a failed upgrade, though the candidate never ran. reset-failed clears
+	// the count and leaves the running unit as it is; the starts that follow, a failing
+	// candidate's included, count from here. Without it, the restart is still worth trying.
+	if err := e.systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
+		e.log.Warn("failed to reset the agent unit's start limit before restarting it",
+			"unit", ServiceUnitName, "error", err)
 	}
 	// A direct self-restart can terminate the systemctl child before the
 	// handler records a successful handoff. Schedule the restart in a separate

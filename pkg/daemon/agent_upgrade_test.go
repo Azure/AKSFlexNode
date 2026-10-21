@@ -190,9 +190,15 @@ func TestAgentUpgradeSignalStoreRejectsInvalidMachine(t *testing.T) {
 func TestHostAgentUpgradeExecutorSchedulesRestartOutsideService(t *testing.T) {
 	t.Parallel()
 
+	var calls []string
 	executor := &hostAgentUpgradeExecutor{
+		systemctl: func(_ context.Context, args ...string) error {
+			calls = append(calls, "systemctl "+strings.Join(args, " "))
+			return nil
+		},
 		runSystemdRun: func(_ context.Context, args ...string) error {
 			joined := strings.Join(args, " ")
+			calls = append(calls, "systemd-run "+joined)
 			for _, expected := range []string{
 				"--collect",
 				"--on-active=1s",
@@ -209,6 +215,32 @@ func TestHostAgentUpgradeExecutorSchedulesRestartOutsideService(t *testing.T) {
 	if err := executor.Restart(t.Context()); err != nil {
 		t.Fatalf("Restart: %v", err)
 	}
+	// The restart doesn't count toward the unit's start limit: its count is reset first.
+	if len(calls) != 2 || calls[0] != "systemctl reset-failed "+ServiceUnitName ||
+		!strings.HasPrefix(calls[1], "systemd-run ") {
+		t.Fatalf("calls = %q, want reset-failed of %s, then the scheduled restart", calls, ServiceUnitName)
+	}
+}
+
+// A restart is still worth trying when the start limit can't be reset.
+func TestHostAgentUpgradeExecutorRestartsThoughItCantResetTheStartLimit(t *testing.T) {
+	t.Parallel()
+
+	scheduled := false
+	executor := &hostAgentUpgradeExecutor{
+		log:       discardLogger(),
+		systemctl: func(context.Context, ...string) error { return errors.New("access denied") },
+		runSystemdRun: func(context.Context, ...string) error {
+			scheduled = true
+			return nil
+		},
+	}
+	if err := executor.Restart(t.Context()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if !scheduled {
+		t.Fatal("the restart wasn't scheduled after reset-failed failed")
+	}
 }
 
 func TestHostAgentUpgradeExecutorRestartRejectsPreCanceledContext(t *testing.T) {
@@ -217,10 +249,16 @@ func TestHostAgentUpgradeExecutorRestartRejectsPreCanceledContext(t *testing.T) 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	called := false
-	executor := &hostAgentUpgradeExecutor{runSystemdRun: func(context.Context, ...string) error {
-		called = true
-		return nil
-	}}
+	executor := &hostAgentUpgradeExecutor{
+		systemctl: func(context.Context, ...string) error {
+			called = true
+			return nil
+		},
+		runSystemdRun: func(context.Context, ...string) error {
+			called = true
+			return nil
+		},
+	}
 	if err := executor.Restart(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Restart error = %v, want context.Canceled", err)
 	}
@@ -351,6 +389,7 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 		paths:      paths,
 		signals:    signals,
 		instanceID: "candidate-instance",
+		systemctl:  func(context.Context, ...string) error { return nil },
 		runSystemdRun: func(context.Context, ...string) error {
 			restarts++
 			return nil

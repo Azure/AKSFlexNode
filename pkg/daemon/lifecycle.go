@@ -79,6 +79,30 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 }
 
 func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
+	_, err := ensureServiceAssetsUnderHostRoot(ctx, log, cfg, false)
+
+	return err
+}
+
+// ensureDaemonServiceAssets converges the service assets as the daemon starts, as
+// ensureAgentUpgradeServiceAssets does, except while an AgentUpgrade's signal exists. Then the
+// daemon may be the upgrade's candidate, not yet judged, or recovery is under way, and the
+// assets on disk are the last-good version's: recovery, and the restart into the last-good
+// binary, run through them, so a candidate's broken assets would break its own rollback. It
+// keeps them, writing only missing ones, and reports that it held them back, for the daemon to
+// converge them once the upgrade is judged.
+func ensureDaemonServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) (bool, error) {
+	return ensureServiceAssetsUnderHostRoot(ctx, log, cfg, true)
+}
+
+// ensureServiceAssetsUnderHostRoot resolves the host root once, so the binary layout, the
+// units, and the recovery script they run are all written under the same root.
+func ensureServiceAssetsUnderHostRoot(
+	ctx context.Context,
+	log *slog.Logger,
+	cfg *config.Config,
+	holdDuringUpgrade bool,
+) (bool, error) {
 	root := hostroot.Resolve()
 
 	return ensureAgentUpgradeServiceAssetsAt(
@@ -89,6 +113,7 @@ func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg 
 		systemdSystemDir,
 		recoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
+		holdDuringUpgrade,
 	)
 }
 
@@ -99,17 +124,26 @@ func ensureAgentUpgradeServiceAssetsAt(
 	serviceOptions agentServiceOptions,
 	systemdDir, recoveryScript string,
 	reload func(context.Context, *slog.Logger) error,
-) error {
+	holdDuringUpgrade bool,
+) (bool, error) {
 	if err := ensureAgentUpgradeLayout(ctx, log, binaryPaths); err != nil {
-		return fmt.Errorf("initialize agent binary layout: %w", err)
+		return false, fmt.Errorf("initialize agent binary layout: %w", err)
 	}
-	if err := writeAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, binaryPaths.CurrentPath); err != nil {
-		return err
+	held := false
+	if holdDuringUpgrade {
+		if _, err := os.Stat(binaryPaths.SignalPath); err == nil {
+			held = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("check for a pending AgentUpgrade: %w", err)
+		}
+	}
+	if err := writeAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, binaryPaths.CurrentPath, held); err != nil {
+		return false, err
 	}
 	if err := reload(ctx, log); err != nil {
-		return fmt.Errorf("systemctl daemon-reload: %w", err)
+		return false, fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
-	return nil
+	return held, nil
 }
 
 type agentServiceOptions struct {
@@ -196,12 +230,21 @@ func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
 	return content
 }
 
-func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) error {
+// writeAgentServiceAssets writes the agent's service assets, but with keepExisting, only those
+// that are missing.
+func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
 	assets, err := desiredAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, currentBinaryPath)
 	if err != nil {
 		return err
 	}
 	for _, asset := range assets {
+		if keepExisting {
+			if _, err := os.Stat(asset.path); err == nil {
+				continue
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("check %s: %w", asset.path, err)
+			}
+		}
 		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
 			return fmt.Errorf("write %s: %w", asset.path, err)
 		}

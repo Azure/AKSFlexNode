@@ -46,14 +46,18 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	// Existing direct-file installations may predate the recovery units. Keep
-	// the binary layout and systemd rollback assets converged on every startup.
+	// the binary layout and systemd rollback assets converged on every startup,
+	// except while an AgentUpgrade is pending; see ensureDaemonServiceAssets.
 	if err := InstallHostBinary(ctx, log); err != nil {
 		return err
 	}
-	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
+	heldServiceAssets, err := ensureDaemonServiceAssets(ctx, log, cfg)
+	if err != nil {
 		return err
 	}
-	// After the units are rewritten, so nothing names the copy it removes.
+	// After the units are converged, so nothing names the copy it removes. While
+	// an AgentUpgrade is pending they are the last-good version's, which name it
+	// only on a host not yet moved off /usr/local, where nothing is removed.
 	if err := removeDaemonLegacySeed(log); err != nil {
 		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 	}
@@ -152,19 +156,21 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			return
 		case <-time.After(agentUpgradeStartupStability):
 		}
-		for {
-			publishErr := publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
-			pending, readErr := upgrades.signals.read()
-			switch {
-			case publishErr != nil:
-				log.Warn("failed to publish AgentUpgrade startup result; will retry", "error", publishErr)
-			case readErr != nil:
-				log.Warn("failed to confirm AgentUpgrade startup signal; will retry", "error", readErr)
-			case pending != nil:
-				// Recovery scheduled a restart. Keep reconciliation gated until the
-				// last-good process starts and consumes the retained signal.
-				return
-			default:
+		openGateAfterAgentUpgradeJudgment(
+			ctx,
+			log,
+			func(ctx context.Context) error {
+				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
+			},
+			upgrades.signals.read,
+			func(ctx context.Context) error {
+				if !heldServiceAssets {
+					return nil
+				}
+				_, err := ensureDaemonServiceAssets(ctx, log, cfg)
+				return err
+			},
+			func() {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
 				// it waits for is gone.
@@ -177,15 +183,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 					return
 				}
 				gate.open()
-				return
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(agentUpgradePublishRetry):
-			}
-		}
+			},
+			agentUpgradePublishRetry,
+		)
 	}()
 
 	err = mgr.Start(mgrCtx)
@@ -242,4 +242,49 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 // aks-flex-node.
 func bootstrapCredentialRESTConfig(cfg *config.Config, plugin string) (*rest.Config, error) {
 	return kubeauth.BootstrapRESTConfigWithPlugin(cfg, plugin)
+}
+
+// openGateAfterAgentUpgradeJudgment publishes the result of an AgentUpgrade the daemon started
+// for, retrying, and then runs proceed, which opens the startup gate, unless the daemon has to be
+// replaced first, as after it queued its restart from the host root. It runs nothing while the
+// upgrade's signal remains, as when recovery scheduled a restart into the last-good binary,
+// which opens the gate instead. Before proceed, it converges the service assets the daemon held
+// back at startup, now that the upgrade is judged; failing that is only logged, as the
+// last-good version's assets still work, and the next start converges them again.
+func openGateAfterAgentUpgradeJudgment(
+	ctx context.Context,
+	log *slog.Logger,
+	publish func(context.Context) error,
+	readSignal func() (*agentUpgradeSignal, error),
+	convergeHeldAssets func(context.Context) error,
+	proceed func(),
+	retry time.Duration,
+) {
+	for {
+		publishErr := publish(ctx)
+		pending, readErr := readSignal()
+		switch {
+		case publishErr != nil:
+			log.Warn("failed to publish AgentUpgrade startup result; will retry", "error", publishErr)
+		case readErr != nil:
+			log.Warn("failed to confirm AgentUpgrade startup signal; will retry", "error", readErr)
+		case pending != nil:
+			// Recovery scheduled a restart. Keep reconciliation gated until the
+			// last-good process starts and consumes the retained signal.
+			return
+		default:
+			if err := convergeHeldAssets(ctx); err != nil {
+				log.Warn("failed to update the agent's service assets after its upgrade; the last-good version's remain",
+					"error", err)
+			}
+			proceed()
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(retry):
+		}
+	}
 }
