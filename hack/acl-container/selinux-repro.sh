@@ -100,7 +100,9 @@ reset_host() {
     systemctl daemon-reload
     systemctl reset-failed "$UNIT" 2>/dev/null || true
     ip link del "$IFACE" 2>/dev/null || true
-    [[ $dummy_loaded == no ]] && modprobe -r dummy 2>/dev/null || true
+    if [[ $dummy_loaded == no ]]; then
+        modprobe -r dummy 2>/dev/null || true
+    fi
     nft delete table inet acl_selinux_repro 2>/dev/null || true
     for swap in "${active_swaps[@]}"; do
         swapon "$swap" 2>/dev/null || true
