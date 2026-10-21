@@ -122,24 +122,6 @@ image.
 - [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
       needs none so far. Stay on it until the lifecycle helper, or another
       specific fix, needs a newer one, and bump it in a commit of its own.
-- [ ] `AgentUpgrade`'s restart counts toward the agent unit's start limit, 5
-      starts in 300 s, on `main`'s hosts too. An upgrade past it is refused by
-      systemd, rolled back by recovery, and reported failed, though the
-      candidate never ran. It takes several upgrades in a few minutes, which
-      AKS doesn't send, but `check --only upgrade` run twice did. Raised with
-      `main` as #386: the daemon resets its unit's start count before it
-      schedules the restart. Once it merges, rebase onto it, and do the same
-      in the container's executor, best effort: `spc_t` may reset it, and
-      `kernel_t`, as the agent's containers run where containerd's files are
-      unlabeled, may not.
-- [ ] An upgraded daemon rewrites its recovery unit from its own image as it
-      starts, before it judges the upgrade, as `main`'s rewrites its recovery
-      unit and script from its own binary on a host. So a candidate with a
-      broken recovery unit breaks the recovery that would roll it back. Raised
-      in review of PR #370. Raised with `main` as #387: the daemon keeps the
-      last-good version's assets while an upgrade's signal exists, and writes
-      its own once the upgrade is judged. Once it merges, rebase onto it, and
-      have the container's convergence hold its units the same way.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
