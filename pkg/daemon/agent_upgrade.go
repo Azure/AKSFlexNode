@@ -452,6 +452,16 @@ func (e *hostAgentUpgradeExecutor) rollback(ctx context.Context) error {
 }
 
 func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
+	return restartAgentAfterUpgrade(ctx, e.log, e.systemctl, e.runSystemdRun)
+}
+
+// restartAgentAfterUpgrade restarts the agent's unit a second from now, from a transient unit, as
+// an AgentUpgrade's executor does, on a host and in the agent's container alike.
+func restartAgentAfterUpgrade(
+	ctx context.Context,
+	log *slog.Logger,
+	systemctl, runSystemdRun func(context.Context, ...string) error,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -465,19 +475,14 @@ func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
 	// running unit as it is; the starts that follow, a failing candidate's included, count from
 	// here. From systemd 255, the daemon-reload that rewriting the units runs no longer clears
 	// it. Without it, the restart is still worth trying.
-	if err := e.systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
-		e.log.Warn("failed to reset the agent unit's start limit before restarting it",
+	if err := systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
+		log.Warn("failed to reset the agent unit's start limit before restarting it",
 			"unit", ServiceUnitName, "error", err)
 	}
-	return scheduleAgentRestart(ctx, e.runSystemdRun, time.Second)
-}
-
-// scheduleAgentRestart restarts the agent's unit after the delay, from a transient unit.
-func scheduleAgentRestart(ctx context.Context, runSystemdRun func(context.Context, ...string) error, delay time.Duration) error {
 	// A direct self-restart can terminate the systemctl child before the
 	// handler records a successful handoff. Schedule the restart in a separate
 	// transient unit so this process returns while its durable signal is intact.
-	return scheduleAgentUnitCommand(ctx, runSystemdRun, delay, "aks-flex-node-agent-upgrade-restart", "restart")
+	return scheduleAgentUnitCommand(ctx, runSystemdRun, time.Second, "aks-flex-node-agent-upgrade-restart", "restart")
 }
 
 // scheduleAgentUnitCommand runs systemctl's command on the agent's unit from a transient timer,

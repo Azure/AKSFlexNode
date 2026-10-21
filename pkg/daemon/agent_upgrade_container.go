@@ -117,6 +117,7 @@ type containerAgentUpgradeExecutor struct {
 	pullArgs               []string
 	runArgs                []string
 	ctr                    func(context.Context, ...string) error
+	systemctl              func(context.Context, ...string) error
 	runSystemdRun          func(context.Context, ...string) error
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 	runningExecutable      func() (string, error)
@@ -140,6 +141,9 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 		runArgs: strings.Fields(os.Getenv(agentSnapshotterRunArgsEnv)),
 		ctr: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Ctr(), args...)
+		},
+		systemctl: func(ctx context.Context, args ...string) error {
+			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
 		runSystemdRun: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
@@ -297,8 +301,11 @@ func (e *containerAgentUpgradeExecutor) rollback(ctx context.Context) error {
 	return e.rollbackSwitch(signal)
 }
 
+// Restart resets the unit's start limit first, as on a host. Where the host's policy denies the
+// container that, as ACL's does while its containers run as kernel_t, the restart still goes
+// ahead, and counts toward the limit.
 func (e *containerAgentUpgradeExecutor) Restart(ctx context.Context) error {
-	return scheduleAgentRestart(ctx, e.runSystemdRun, time.Second)
+	return restartAgentAfterUpgrade(ctx, e.log, e.systemctl, e.runSystemdRun)
 }
 
 func (e *containerAgentUpgradeExecutor) signalStore() agentUpgradeSignalStore { return e.signals }
