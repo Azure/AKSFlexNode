@@ -6,8 +6,11 @@ living document: add items as they come up, and delete them once they're done;
 git history keeps the record.
 
 Approach: build on `main`, and make small, targeted changes so the agent in a
-container behaves the same as `main`'s agent on a host. Don't build on PR #323;
-borrow from it only where that's simpler than redoing the work.
+container behaves the same as `main`'s agent on a host. PR #323, which runs the
+agent on an ACL host, lands first: only it takes the agent past unbounded
+v0.8.0, through unbounded's move from `/usr/local` to `/opt/unbounded`. This
+branch then rebases onto it; see [On top of #323](#on-top-of-323). Host mode is
+interim, until this branch lands.
 
 ## Before merging
 
@@ -33,6 +36,29 @@ borrow from it only where that's simpler than redoing the work.
 - [ ] Agree on `AgentUpgrade`'s `image` parameter with AKS, which sends
       AgentUpgrades, including that it must be pinned by digest, as `main`
       requires `sha256` for an archive since #369.
+
+## On top of #323
+
+Once #323 merges, rebase onto it, and then:
+
+- [ ] Skip #323's host-side steps in the container: migrating, preparing, and
+      populating the host root, the move and its hold, and removing the old
+      copy.
+- [ ] Bootstrap: replace `--use-installed-agent` with `--installed-agent PATH`.
+      #323 chooses the install directory only when it installs the agent, and
+      ignores `--install-dir`; `bootstrap.sh` then runs the given binary
+      wherever it runs the agent.
+- [ ] Credential plugin: `daemon.CredentialPlugin` returns #323's
+      `HostBinaryPath()` on a host instead of empty, as #323's
+      `BootstrapRESTConfigWithPlugin` always replaces the kubelet's command.
+      `start` and the daemon already pass it.
+- [ ] Mounts: the entrypoint mounts the host's `/opt/unbounded` instead of its
+      `/usr/local`, so the lifecycle helper lands there, on ACL's writable
+      root. Remove `usr-local.mount` and the units'
+      `RequiresMountsFor=/usr/local`, and update the harness's checks.
+- [ ] Docs: one ACL page, presenting host mode as interim, until this branch
+      lands.
+- [ ] Run the full `check` with and without `up --label-containerd`.
 
 ## ACL's SELinux fix
 
@@ -113,22 +139,22 @@ image.
       at every start of the machine: `pre-start` rewrites its `.nspawn` file and
       `post-start` rewires NVIDIA devices. Unbounded copies the agent's binary
       there when it provisions a machine, which is why `/usr/local`, read-only
-      on ACL, has a writable overlay; its newer releases only move the copy to
-      `/opt/unbounded/agent/bin`. Change unbounded so its caller can supply the
-      hooks' command and skip the copy, bump it in a commit of its own, and run
-      both hooks in short-lived containers of the agent's image through
-      `ctr run`, so machines still start without the daemon. Then remove the
-      overlay.
-- [ ] unbounded version: `main` pins v0.8.0, which has no ACL detection but
-      needs none so far. Stay on it until the lifecycle helper, or another
-      specific fix, needs a newer one, and bump it in a commit of its own.
+      on ACL, has a writable overlay. With #323's unbounded, the copy moves to
+      `/opt/unbounded/agent/bin`, and the overlay goes (above). Then change
+      unbounded so its caller can supply the hooks' commands and skip the copy,
+      and have the agent install template units,
+      `aks-flex-node-nspawn-{pre,post}-start@.service`, that run each hook in a
+      short-lived container of its image, which the machines' hooks start with
+      `systemctl start`, so machines still start without the daemon.
+- [ ] unbounded version: `main` pins v0.8.0, and #323 v0.13.0. Bump it again,
+      in a commit of its own, for #962 (below) and the hooks.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
       for every state but active, 3 for inactive and 4 for no such unit,
       which the check takes for an error. Raised with unbounded as
-      Azure/unbounded#962, which reads `systemctl show` instead; it comes with
-      the next bump of unbounded.
+      Azure/unbounded#962, which reads `systemctl show` instead. It's merged,
+      but in no release yet; it comes with the first bump after one has it.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
       `/etc/aks-flex-node/agent-image.env`, which the harness writes through
@@ -156,8 +182,13 @@ image.
 ## Validation and housekeeping
 
 - [ ] Run on an Azure VM from the gallery image, with Ignition as custom data.
-      So far ACL has only run under QEMU.
-- [ ] Close PR #323: this branch builds on `main` instead.
+      So far ACL has only run under QEMU. Join with a managed identity and
+      with a service principal there: the agent's own Kubernetes client then
+      runs the image's binary as its credential plugin, which only unit tests
+      cover, since the harness joins with a bootstrap token.
+- [ ] Once this branch lands, retire host mode on ACL, which #323 adds: its
+      ACL docs, its Butane config, and `hack/acl`. A host-mode node moves to
+      the container by reprovisioning.
 - [ ] Consider CI for `hack/acl-container`: ShellCheck, Python compile, and
       Butane `--strict` rendering.
 
