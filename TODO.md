@@ -74,8 +74,10 @@ by default. See `hack/acl-container/SELINUX.md`.
       builds it into the image, with an Arc agent image, and leaves it
       unlabeled, so every container containerd starts stays `kernel_t`, and
       the machines the agent creates run as `spc_t`. Labeled, the agent's
-      containers run as `spc_t` and its machines as `kernel_t`. When the
-      nightly is out:
+      containers run as `spc_t` and its machines as `kernel_t`. 3.0.20261020
+      (build 1230898, gallery version 3.20261021.1) doesn't label it either,
+      and keeps the D-Bus rule: `check` passes on it as it ships and with
+      `up --label-containerd`. When the nightly is out:
       - Boot it in the harness as it ships, and run `check`: the agent's
         containers should run as `spc_t` without `up --label-containerd`.
       - Make it the harness's default, pinned in `aclimage.py`.
