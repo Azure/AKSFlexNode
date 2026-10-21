@@ -12,6 +12,10 @@ import (
 // persisted agent configuration.
 type MachineClientOptions struct {
 	KubernetesRESTConfig *rest.Config
+	// CredentialPlugin is the exec credential plugin bootstrap credentials run,
+	// with a managed identity or a service principal; empty runs the host's agent,
+	// config.HostBinaryPath.
+	CredentialPlugin string
 }
 
 // NewMachineClient creates the configured MachineClient. During start, an empty
@@ -24,7 +28,7 @@ func NewMachineClient(cfg *config.Config, logger *slog.Logger, options MachineCl
 		return newClusterEndpointClient(cfg, logger, options.KubernetesRESTConfig)
 	case cfg.Agent.MachineClient.Mode == config.MachineClientModeInCluster:
 		logger.Info("using Kubernetes service-proxy machine endpoint with bootstrap credentials", "endpointURL", cfg.Agent.MachineClient.EndpointURL)
-		return newClusterEndpointClientFromBootstrapConfig(cfg, logger)
+		return newClusterEndpointClientFromBootstrapConfig(cfg, logger, options.CredentialPlugin)
 	case cfg.Agent.MachineClient.EndpointURL != "":
 		// TODO: Deprecate and remove the ARM proxy client once the in-cluster endpoint is the default.
 		logger.Warn("using ARM proxy machine client for dev-test")

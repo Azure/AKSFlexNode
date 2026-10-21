@@ -42,6 +42,21 @@ func containerized(getenv func(string) string) bool {
 	return err == nil && on
 }
 
+// CredentialPlugin is the exec credential plugin the agent's own Kubernetes clients run with a
+// managed identity or a service principal and no bootstrap token, before the daemon has its
+// certificate: on a host, the host's agent, config.HostBinaryPath. In the container the host has
+// no agent, so they run the image's binary, which is running.
+func CredentialPlugin() (string, error) {
+	return credentialPlugin(Containerized(), runningAgentExecutable, config.HostBinaryPath)
+}
+
+func credentialPlugin(containerized bool, runningExecutable func() (string, error), hostBinary func() string) (string, error) {
+	if !containerized {
+		return hostBinary(), nil
+	}
+	return runningExecutable()
+}
+
 // containerSkippedPreflightChecks are host checks that don't apply to the agent in its
 // container. host-packages checks the image's package database, not the host's, whose packages
 // its provisioning provides. containerd-active warns that bootstrap will disable containerd,
