@@ -147,8 +147,13 @@ func TestEnsureHostInstallDoesNothingInAContainer(t *testing.T) {
 
 	// A nil config would fail any attempt to converge the host install, and the host install
 	// itself writes under /usr/local and /etc/systemd, which a test must not touch.
-	if held, err := ensureHostInstall(t.Context(), discardLogger(), nil, true); held || err != nil {
-		t.Fatalf("ensureHostInstall(containerized=true) = %v, %v; want nothing held, and nil", held, err)
+	convergeHeld, err := ensureHostInstall(t.Context(), discardLogger(), nil, true)
+	if err != nil {
+		t.Fatalf("ensureHostInstall(containerized=true) = %v, want nil", err)
+	}
+	// Nothing was held back, so nothing is written once an upgrade is judged either.
+	if err := convergeHeld(t.Context()); err != nil {
+		t.Fatalf("ensureHostInstall's step after an upgrade's judgment = %v, want nil", err)
 	}
 }
 

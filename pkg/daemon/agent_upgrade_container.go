@@ -464,6 +464,7 @@ type containerAgentConvergence struct {
 	log               *slog.Logger
 	state             agentUpgradeStateLoader
 	unitDir           string
+	signalPath        string
 	reload            func(context.Context) error
 	runningExecutable func() (string, error)
 	nspawnBinaryPath  func(string) string
@@ -478,9 +479,10 @@ type containerAgentConvergence struct {
 
 func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoader) *containerAgentConvergence {
 	return &containerAgentConvergence{
-		log:     log,
-		state:   state,
-		unitDir: systemdSystemDir,
+		log:        log,
+		state:      state,
+		unitDir:    systemdSystemDir,
+		signalPath: defaultAgentUpgradePaths().SignalPath,
 		reload: func(ctx context.Context) error {
 			return utilexec.ReloadSystemd(ctx, log)
 		},
@@ -499,42 +501,45 @@ func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoade
 	}
 }
 
-func (c *containerAgentConvergence) converge(ctx context.Context) error {
-	changed, err := writeContainerUnits(c.unitDir)
+// converge writes the agent's units from its image, removes its old images, and copies its binary
+// into the active machine. While an AgentUpgrade's signal exists, it keeps the units there, the
+// last-good version's, and writes only missing ones, as ensureDaemonServiceAssets does on a host:
+// the daemon may be the upgrade's candidate, not yet judged, and recovery runs through them. It
+// reports that it held them back, for the daemon to write them with writeUnits once the upgrade
+// is judged. The binary is still copied, as judging the upgrade needs the machine to run it.
+func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) {
+	held, err := agentUpgradePending(c.signalPath)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if changed {
-		if err := c.reload(ctx); err != nil {
-			return fmt.Errorf("systemctl daemon-reload: %w", err)
-		}
-		c.log.Info("updated the agent's units from its image")
+	if err := c.writeContainerUnits(ctx, held); err != nil {
+		return false, err
 	}
 	c.removeImages(ctx)
 
 	state, err := c.state.LoadState(ctx)
 	if err != nil {
-		return fmt.Errorf("load daemon state: %w", err)
+		return held, fmt.Errorf("load daemon state: %w", err)
 	}
 	if state == nil || !validNspawnMachine(state.ActiveMachine) {
-		return nil
+		return held, nil
 	}
 	destination := c.nspawnBinaryPath(state.ActiveMachine)
 	if _, err := os.Stat(filepath.Dir(destination)); errors.Is(err, os.ErrNotExist) {
-		return nil
+		return held, nil
 	}
 	running, err := c.runningExecutable()
 	if err != nil {
-		return err
+		return held, err
 	}
 	if equal, err := filesHaveEqualSHA256(running, destination); err == nil && equal {
-		return nil
+		return held, nil
 	}
 	if err := copyExecutable(running, destination); err != nil {
-		return fmt.Errorf("synchronize the agent binary in %s: %w", state.ActiveMachine, err)
+		return held, fmt.Errorf("synchronize the agent binary in %s: %w", state.ActiveMachine, err)
 	}
 	c.log.Info("synchronized the agent binary in the active machine", "machine", state.ActiveMachine)
-	return nil
+	return held, nil
 }
 
 // removeImages removes the images AgentUpgrades pulled, which carry agentUpgradeImageLabel, that
@@ -578,7 +583,29 @@ func (c *containerAgentConvergence) removeImages(ctx context.Context) {
 
 // writeContainerUnits writes the agent's units in its container where they differ, and reports
 // whether any did.
-func writeContainerUnits(unitDir string) (bool, error) {
+// writeUnits writes the agent's units from its image, those converge held back while an
+// AgentUpgrade was pending, once the upgrade is judged.
+func (c *containerAgentConvergence) writeUnits(ctx context.Context) error {
+	return c.writeContainerUnits(ctx, false)
+}
+
+func (c *containerAgentConvergence) writeContainerUnits(ctx context.Context, keepExisting bool) error {
+	changed, err := writeContainerUnits(c.unitDir, keepExisting)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err := c.reload(ctx); err != nil {
+			return fmt.Errorf("systemctl daemon-reload: %w", err)
+		}
+		c.log.Info("updated the agent's units from its image")
+	}
+	return nil
+}
+
+// writeContainerUnits writes the agent's units from its image, but with keepExisting, only those
+// that are missing, and reports whether it changed any.
+func writeContainerUnits(unitDir string, keepExisting bool) (bool, error) {
 	changed := false
 	// The recovery unit first, as on a host, so an interrupted write never leaves the agent's unit
 	// pointing at a recovery unit that isn't there.
@@ -592,7 +619,7 @@ func writeContainerUnits(unitDir string) (bool, error) {
 		name, content := unit.name, unit.content
 		path := filepath.Join(unitDir, name)
 		current, err := os.ReadFile(path) //nolint:gosec // the agent's fixed unit paths
-		if err == nil && bytes.Equal(current, content) {
+		if err == nil && (keepExisting || bytes.Equal(current, content)) {
 			continue
 		}
 		if err := utilio.WriteFile(path, content, 0o644); err != nil {

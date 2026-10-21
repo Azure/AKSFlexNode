@@ -538,6 +538,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 				log:               discardLogger(),
 				state:             &fakeNodeOperator{state: tc.state},
 				unitDir:           filepath.Join(dir, "systemd"),
+				signalPath:        filepath.Join(dir, "agent-upgrade-signal.json"),
 				reload:            func(context.Context) error { reloads++; return nil },
 				runningExecutable: func() (string, error) { return running, nil },
 				nspawnBinaryPath:  func(string) string { return machineBinary },
@@ -551,7 +552,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 				},
 			}
 			for run := 1; run <= 2; run++ {
-				if err := convergence.converge(t.Context()); err != nil {
+				if _, err := convergence.converge(t.Context()); err != nil {
 					t.Fatalf("converge, run %d: %v", run, err)
 				}
 			}
@@ -679,7 +680,7 @@ func TestWriteContainerUnitsWritesRecoveryFirst(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(unitDir, ServiceUnitName, "busy"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeContainerUnits(unitDir); err == nil {
+	if _, err := writeContainerUnits(unitDir, false); err == nil {
 		t.Fatal("writeContainerUnits() wrote the agent's unit over a directory")
 	}
 	recovery, err := os.ReadFile(filepath.Join(unitDir, recoveryServiceUnitName))
@@ -704,5 +705,99 @@ func TestContainerAgentUpgradeRestartsThoughItCantResetTheStartLimit(t *testing.
 	if len(*calls) != 2 || (*calls)[0] != "systemctl reset-failed "+ServiceUnitName ||
 		!strings.HasSuffix((*calls)[1], "/usr/bin/systemctl restart "+ServiceUnitName) {
 		t.Fatalf("calls = %q, want the denied reset, then the scheduled restart", *calls)
+	}
+}
+
+// While an AgentUpgrade's signal exists, the daemon may be its candidate, not yet judged, and the
+// units on disk are the last-good version's, which recovery runs through, as
+// ensureDaemonServiceAssets keeps a host's.
+func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		pending      bool
+		missing      string
+		wantHeld     bool
+		wantRewrites []string
+	}{
+		"keeps the last-good version's units": {
+			pending:  true,
+			wantHeld: true,
+		},
+		"writes a missing one": {
+			pending:      true,
+			missing:      recoveryServiceUnitName,
+			wantHeld:     true,
+			wantRewrites: []string{recoveryServiceUnitName},
+		},
+		"converges them without a pending upgrade": {
+			wantRewrites: []string{recoveryServiceUnitName, ServiceUnitName},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			unitDir := filepath.Join(dir, "systemd")
+			lastGood := "the last-good version's\n"
+			for _, unit := range []string{recoveryServiceUnitName, ServiceUnitName} {
+				if unit != tc.missing {
+					writeTestFile(t, filepath.Join(unitDir, unit), lastGood)
+				}
+			}
+			signalPath := filepath.Join(dir, "agent-upgrade-signal.json")
+			if tc.pending {
+				writeTestFile(t, signalPath, "{}")
+			}
+			reloads := 0
+			convergence := &containerAgentConvergence{
+				log:               discardLogger(),
+				state:             &fakeNodeOperator{},
+				unitDir:           unitDir,
+				signalPath:        signalPath,
+				reload:            func(context.Context) error { reloads++; return nil },
+				runningExecutable: func() (string, error) { return writeTestFile(t, filepath.Join(dir, "running"), "agent"), nil },
+				nspawnBinaryPath:  func(string) string { return filepath.Join(dir, "machines", "kube1", "aks-flex-node") },
+				images:            agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
+				install:           agentImageEnvFile{path: filepath.Join(dir, "settings")},
+				listImages:        func(context.Context) (string, error) { return "", nil },
+				ctr:               func(context.Context, ...string) error { return nil },
+			}
+
+			held, err := convergence.converge(t.Context())
+			if err != nil {
+				t.Fatalf("converge: %v", err)
+			}
+			if held != tc.wantHeld {
+				t.Errorf("held = %v, want %v", held, tc.wantHeld)
+			}
+			for _, unit := range []string{recoveryServiceUnitName, ServiceUnitName} {
+				content, err := os.ReadFile(filepath.Join(unitDir, unit))
+				if err != nil {
+					t.Fatalf("read %s: %v", unit, err)
+				}
+				if rewritten := string(content) != lastGood; rewritten != slices.Contains(tc.wantRewrites, unit) {
+					t.Errorf("%s rewritten = %v, want %v", unit, rewritten, !rewritten)
+				}
+			}
+
+			// Once the upgrade is judged, the daemon writes the units it held back.
+			reloads = 0
+			if err := convergence.writeUnits(t.Context()); err != nil {
+				t.Fatalf("writeUnits: %v", err)
+			}
+			for unit, want := range map[string][]byte{
+				recoveryServiceUnitName: containerRecoveryUnitContent,
+				ServiceUnitName:         containerServiceUnitContent,
+			} {
+				if content, err := os.ReadFile(filepath.Join(unitDir, unit)); err != nil || !bytes.Equal(content, want) {
+					t.Errorf("%s after writeUnits isn't the image's: %v", unit, err)
+				}
+			}
+			if wantReloads := map[bool]int{true: 1, false: 0}[tc.wantHeld]; reloads != wantReloads {
+				t.Errorf("reloads after writeUnits = %d, want %d", reloads, wantReloads)
+			}
+		})
 	}
 }
