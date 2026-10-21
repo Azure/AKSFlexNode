@@ -122,3 +122,21 @@ func DownloadToLocalFile(ctx context.Context, url string, filename string, perm 
 
 	return InstallFile(filename, body, perm)
 }
+
+// DownloadBytes returns the content at url, failing if it exceeds maxBytes.
+func DownloadBytes(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	body, err := downloadFromRemote(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close() //nolint:errcheck // body close
+
+	data, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", url, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("download %q exceeds %d bytes", url, maxBytes)
+	}
+	return data, nil
+}
