@@ -243,6 +243,19 @@ func TestHostAgentUpgradeExecutorRestartsThoughItCantResetTheStartLimit(t *testi
 	}
 }
 
+func TestHostAgentUpgradeExecutorRestartReportsAFailedRestart(t *testing.T) {
+	t.Parallel()
+
+	scheduleErr := errors.New("systemd-run failed")
+	executor := &hostAgentUpgradeExecutor{
+		systemctl:     func(context.Context, ...string) error { return nil },
+		runSystemdRun: func(context.Context, ...string) error { return scheduleErr },
+	}
+	if err := executor.Restart(t.Context()); !errors.Is(err, scheduleErr) {
+		t.Fatalf("Restart() = %v, want %v", err, scheduleErr)
+	}
+}
+
 func TestHostAgentUpgradeExecutorRestartRejectsPreCanceledContext(t *testing.T) {
 	t.Parallel()
 

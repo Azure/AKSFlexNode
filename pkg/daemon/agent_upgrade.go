@@ -365,9 +365,14 @@ func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
 	}
 	// systemd counts every start of the unit toward its start limit, deliberate restarts too, so
 	// a few upgrades in a row would have the next restart refused, failing the unit, which
-	// recovery takes for a failed upgrade, though the candidate never ran. reset-failed clears
-	// the count and leaves the running unit as it is; the starts that follow, a failing
-	// candidate's included, count from here. Without it, the restart is still worth trying.
+	// recovery takes for a failed upgrade, though the candidate never ran. The host root's move
+	// restarts the daemon through this too, right after such a burst, perhaps: refused, its
+	// restart would leave the agent stopped, as Restart= doesn't apply to a unit that hit its
+	// limit, and recovery does nothing without a pending AgentUpgrade. reset-failed, naming the
+	// unit, as with no name it resets every unit on the host, clears the count and leaves the
+	// running unit as it is; the starts that follow, a failing candidate's included, count from
+	// here. From systemd 255, the daemon-reload that rewriting the units runs no longer clears
+	// it. Without it, the restart is still worth trying.
 	if err := e.systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
 		e.log.Warn("failed to reset the agent unit's start limit before restarting it",
 			"unit", ServiceUnitName, "error", err)
