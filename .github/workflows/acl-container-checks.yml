@@ -1,0 +1,55 @@
+# Checks the tools in hack/acl-container: ShellCheck on their shell scripts, a compile check of
+# their Python, and agent-container.bu rendered with Butane --strict, as an operator renders it.
+name: ACL Container Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - hack/acl-container/**
+      - .github/workflows/acl-container-checks.yml
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - hack/acl-container/**
+      - .github/workflows/acl-container-checks.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SHELLCHECK_IMAGE: docker.io/koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+  # The version harness.py renders with, as BUTANE_IMAGE.
+  BUTANE_IMAGE: quay.io/coreos/butane:v0.29.0@sha256:13fec166cb47a8e053dcc23256c0ca41aaa1c61cab39793832aaf8894ca78c8f
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ShellCheck
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" \
+            hack/acl-container/*.sh hack/acl-container/image/bin/*
+
+      - name: Compile Python
+        run: python3 -m py_compile hack/acl-container/*.py
+
+      - name: Render the Butane config
+        run: |
+          files=$(mktemp -d)
+          # The one file the config names, as README.md shows it.
+          echo "AKS_FLEX_NODE_IMAGE=ghcr.io/azure/aks-flex-node-agent-acl-preview@sha256:0000000000000000000000000000000000000000000000000000000000000000" \
+            > "$files/agent-container.env"
+          docker run --rm -i -v "$files:/files:ro" "$BUTANE_IMAGE" --strict --files-dir /files \
+            < hack/acl-container/agent-container.bu > /dev/null
