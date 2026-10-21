@@ -312,12 +312,15 @@ The upgrade follows the host's, with images for binaries:
    it fails, as `ctr run --rm` leaves it when `ctr` is killed, and its scope is
    bound to the agent's unit.
 3. It selects the candidate in `agent-image.env`, with the image it runs as the
-   last good one, and restarts its unit from a transient unit.
-4. The new daemon converges: it rewrites the agent's units from its image, and
-   copies its binary into the active machine, where kubelet runs it as its
-   credential plugin. It then judges the upgrade, as on a host: the selection
+   last good one, resets its unit's start-limit count, and restarts the unit
+   from a transient unit.
+4. The new daemon converges: it copies its binary into the active machine,
+   where kubelet runs it as its credential plugin, but keeps the last good
+   version's units, which recovery runs through, as a host's daemon keeps its
+   service assets. It then judges the upgrade, as on a host: the selection
    names the candidate, it runs the candidate, and the machine's binary is its
-   own. It publishes the result to the MachineOperation.
+   own. It publishes the result to the MachineOperation, and only then writes
+   the agent's units from its image.
 5. If the new daemon fails, systemd restarts it, and `OnFailure=` starts the
    recovery unit. That runs `recover-agent-upgrade` from the last good image,
    which records the failure, selects the last good image again, and restarts
@@ -333,12 +336,13 @@ restart waits for recovery, which starts a container and takes longer than
 `RestartSec=`, and runs the image recovery restored rather than the one that
 failed.
 
-Each upgrade restarts the agent's unit, and systemd counts that toward the
-unit's start limit, 5 starts in 5 minutes, as on a host, where `main`'s unit
-has the same limit. A restart past it fails the unit, which recovery takes for
-a failed upgrade: it restores the last good image, and the upgrade is reported
-failed. So an upgrade that would be the unit's sixth start in five minutes
-fails, on a host too.
+The agent's unit allows 5 starts in 5 minutes, as `main`'s does, and systemd
+counts deliberate restarts too. So before each upgrade's restart, the daemon
+resets the unit's start count, as `main`'s does on a host, and several upgrades
+in a row aren't refused. As `kernel_t`, where containerd's files are
+unlabeled, the container may not reset it: there an upgrade that would be the
+unit's sixth start in five minutes still fails, which recovery takes for a
+failed upgrade.
 
 At every start, the daemon also removes the images upgrades pulled that it won't
 run again. The agent labels each image as it pulls it for an upgrade, and
