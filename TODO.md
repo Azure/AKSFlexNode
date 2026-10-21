@@ -149,9 +149,25 @@ image.
       of its image in the container, and through the installed binary on a
       host, Ubuntu included, so both work the same way and no host keeps the
       helper, which makes #378 moot. The machines' hooks start them with
-      `systemctl start`, so machines still start without the daemon. Remove
-      the helper existing hosts have. Prototype it on a branch from #323 once
-      #967's API is agreed.
+      `systemctl start`, so machines still start without the daemon. The
+      template units must be `Type=oneshot` without `RemainAfterExit=yes`,
+      ordered only after containerd, which on ACL is after `network.target`
+      and before `multi-user.target`, so there's no cycle with the machines.
+      They must not pull the image, and post-start must finish within the
+      machine unit's start timeout, ACL's default of 45 s, which also covers
+      the machine's boot. Remove the helper existing hosts have only once no
+      version that predates #967 can run there: a rollback or downgrade to
+      one would write hooks that run the missing helper, and its machine
+      would never start again. Versions with #967 reinstall a missing helper
+      themselves. Prototype it on a branch from #323 once #967's API is
+      agreed.
+- [ ] GPU hosts in the container: the agent's containers see the host's
+      `/dev`, `/sys`, and `/etc/os-release`, but the image's `/usr/bin` and
+      `ldconfig`. Unbounded's NVIDIA resolution looks for `nvidia-smi` in
+      `/usr/bin` and the driver's libraries through `ldconfig -p`, so on a GPU
+      host it would find the image's, none, both when provisioning a machine
+      and in its hooks. Untested. Running `ldconfig` through `host-exec` would
+      likely cover the libraries; the binaries need the host's paths.
 - [ ] unbounded version: `main` pins v0.8.0, and #323 v0.13.0. Bump it again,
       in a commit of its own, for #962 (below) and #967.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
