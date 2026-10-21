@@ -42,6 +42,7 @@ func newTestContainerUpgrade(t *testing.T, runningImage string) (*containerAgent
 		pullArgs:      []string{"--plain-http"},
 		runArgs:       []string{"--snapshotter", "native"},
 		ctr:           record("ctr"),
+		systemctl:     record("systemctl"),
 		runSystemdRun: record("systemd-run"),
 		instanceID:    "instance",
 	}, calls
@@ -363,9 +364,11 @@ func TestPublishContainerAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSi
 	if signal, err := executor.signals.read(); err != nil || signal == nil || !signal.RecoveryRequired {
 		t.Fatalf("signal before the last-good daemon starts = %#v, %v", signal, err)
 	}
-	if len(*calls) != 1 || !strings.Contains((*calls)[0], "--on-active=1000ms ") ||
-		!strings.HasSuffix((*calls)[0], "/usr/bin/systemctl restart "+ServiceUnitName) {
-		t.Fatalf("calls = %q, want one scheduled restart", *calls)
+	// The restart into the last-good image doesn't count toward the unit's start limit.
+	if len(*calls) != 2 || (*calls)[0] != "systemctl reset-failed "+ServiceUnitName ||
+		!strings.Contains((*calls)[1], "--on-active=1000ms ") ||
+		!strings.HasSuffix((*calls)[1], "/usr/bin/systemctl restart "+ServiceUnitName) {
+		t.Fatalf("calls = %q, want the unit's start limit reset, then one scheduled restart", *calls)
 	}
 	if len(*phases) != 0 {
 		t.Fatalf("published %v before the last-good daemon started", *phases)
@@ -682,5 +685,24 @@ func TestWriteContainerUnitsWritesRecoveryFirst(t *testing.T) {
 	recovery, err := os.ReadFile(filepath.Join(unitDir, recoveryServiceUnitName))
 	if err != nil || !bytes.Equal(recovery, containerRecoveryUnitContent) {
 		t.Errorf("the recovery unit wasn't written before the agent's unit failed: %v", err)
+	}
+}
+
+// As kernel_t, where containerd's files are unlabeled, the container may not reset the unit's
+// start limit; the restart still goes ahead.
+func TestContainerAgentUpgradeRestartsThoughItCantResetTheStartLimit(t *testing.T) {
+	t.Parallel()
+
+	executor, calls := newTestContainerUpgrade(t, testAgentImageV1)
+	executor.systemctl = func(_ context.Context, args ...string) error {
+		*calls = append(*calls, "systemctl "+strings.Join(args, " "))
+		return os.ErrPermission
+	}
+	if err := executor.Restart(t.Context()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if len(*calls) != 2 || (*calls)[0] != "systemctl reset-failed "+ServiceUnitName ||
+		!strings.HasSuffix((*calls)[1], "/usr/bin/systemctl restart "+ServiceUnitName) {
+		t.Fatalf("calls = %q, want the denied reset, then the scheduled restart", *calls)
 	}
 }
