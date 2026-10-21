@@ -242,7 +242,7 @@ nothing sets it, every switch takes `main`'s path:
 | `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
 | An `AgentUpgrade`'s parameters | `image` is invalid | `downloadURL` is invalid |
-| `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal | The kubelet's credential plugin, `/usr/local/bin/aks-flex-node`, where the host has the agent too | The image's binary, which is running: the kubelet's path is the host's, which has no agent |
+| `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The kubelet's credential plugin, `/usr/local/bin/aks-flex-node`, where the host has the agent too | The image's binary, which is running: the kubelet's path is the host's, which has no agent |
 
 These changes apply everywhere, and leave a host's behavior as it was:
 
