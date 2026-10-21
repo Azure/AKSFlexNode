@@ -213,8 +213,6 @@ image.
 - [ ] Once this branch lands, retire host mode on ACL, which #323 adds: its
       ACL docs, its Butane config, and `hack/acl`. A host-mode node moves to
       the container by reprovisioning.
-- [ ] Consider CI for `hack/acl-container`: ShellCheck, Python compile, and
-      Butane `--strict` rendering.
 
 ## Deferred, until everything else is done
 
