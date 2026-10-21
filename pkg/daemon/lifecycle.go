@@ -158,11 +158,11 @@ func ensureAgentUpgradeServiceAssetsAt(
 	}
 	held := false
 	if holdDuringUpgrade {
-		if _, err := os.Stat(binaryPaths.SignalPath); err == nil {
-			held = true
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("check for a pending AgentUpgrade: %w", err)
+		pending, err := agentUpgradePending(binaryPaths.SignalPath)
+		if err != nil {
+			return false, err
 		}
+		held = pending
 	}
 	if err := writeAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, binaryPaths.CurrentPath, held); err != nil {
 		return false, err
@@ -365,6 +365,17 @@ func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
 	}
 
 	return content
+}
+
+// agentUpgradePending reports whether an AgentUpgrade's signal exists: an upgrade awaits its
+// judgment, or recovery is under way.
+func agentUpgradePending(signalPath string) (bool, error) {
+	if _, err := os.Stat(signalPath); err == nil {
+		return true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("check for a pending AgentUpgrade: %w", err)
+	}
+	return false, nil
 }
 
 // writeAgentServiceAssets writes the agent's service assets, but with keepExisting, only those

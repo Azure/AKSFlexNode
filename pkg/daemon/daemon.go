@@ -53,7 +53,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			return err
 		}
 	}
-	heldServiceAssets, err := ensureHostInstall(ctx, log, cfg, Containerized())
+	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, Containerized())
 	if err != nil {
 		return err
 	}
@@ -103,8 +103,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	var upgrades agentUpgrader
 	if Containerized() {
-		if err := newContainerAgentConvergence(log, operator).converge(ctx); err != nil {
-			return err
+		convergence := newContainerAgentConvergence(log, operator)
+		held, convergeErr := convergence.converge(ctx)
+		if convergeErr != nil {
+			return convergeErr
+		}
+		if held {
+			convergeHeldAssets = convergence.writeUnits
 		}
 		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
 	} else {
@@ -173,13 +178,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},
 			upgrades.signalStore().read,
-			func(ctx context.Context) error {
-				if !heldServiceAssets {
-					return nil
-				}
-				_, err := ensureDaemonServiceAssets(ctx, log, cfg)
-				return err
-			},
+			convergeHeldAssets,
 			func() {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
