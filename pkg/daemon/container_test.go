@@ -142,6 +142,49 @@ func TestContainerized(t *testing.T) {
 	}
 }
 
+func TestCredentialPlugin(t *testing.T) {
+	t.Parallel()
+
+	const (
+		running = "/opt/aks-flex-node/bin/aks-flex-node"
+		host    = "/opt/unbounded/agent/bin/aks-flex-node"
+	)
+	tests := map[string]struct {
+		containerized bool
+		executableErr error
+		want          string
+		wantErr       bool
+	}{
+		"a host runs the host's agent":               {want: host},
+		"the container runs the running binary":      {containerized: true, want: running},
+		"the container fails without its own binary": {containerized: true, executableErr: errors.New("no executable"), wantErr: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			resolved := false
+			executable := func() (string, error) {
+				resolved = true
+				if tc.executableErr != nil {
+					return "", tc.executableErr
+				}
+				return running, nil
+			}
+			got, err := credentialPlugin(tc.containerized, executable, func() string { return host })
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("credentialPlugin(containerized=%v) error = %v, want error %v", tc.containerized, err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("credentialPlugin(containerized=%v) = %q, want %q", tc.containerized, got, tc.want)
+			}
+			if resolved != tc.containerized {
+				t.Errorf("credentialPlugin(containerized=%v) resolved the running binary: %v", tc.containerized, resolved)
+			}
+		})
+	}
+}
+
 func TestEnsureHostInstallDoesNothingInAContainer(t *testing.T) {
 	t.Parallel()
 

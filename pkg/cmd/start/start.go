@@ -68,7 +68,11 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	if err != nil {
 		return fmt.Errorf("build goal state from config: %w", err)
 	}
-	machines, err := aksmachine.NewMachineClient(cfg, logger, aksmachine.MachineClientOptions{})
+	plugin, err := daemon.CredentialPlugin()
+	if err != nil {
+		return fmt.Errorf("create AKS machine client: %w", err)
+	}
+	machines, err := aksmachine.NewMachineClient(cfg, logger, aksmachine.MachineClientOptions{CredentialPlugin: plugin})
 	if err != nil {
 		return fmt.Errorf("create AKS machine client: %w", err)
 	}

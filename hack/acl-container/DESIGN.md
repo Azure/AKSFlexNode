@@ -242,6 +242,7 @@ nothing sets it, every switch takes `main`'s path:
 | `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
 | An `AgentUpgrade`'s parameters | `image` is invalid | `downloadURL` is invalid |
+| `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal | The kubelet's credential plugin, `/usr/local/bin/aks-flex-node`, where the host has the agent too | The image's binary, which is running: the kubelet's path is the host's, which has no agent |
 
 These changes apply everywhere, and leave a host's behavior as it was:
 
@@ -253,6 +254,9 @@ These changes apply everywhere, and leave a host's behavior as it was:
 - The handoff between an upgrading daemon and its successor goes through an
   interface, with the host's executor as one implementation and the container's
   as the other. The host's behaves as before.
+- `kubeauth.BootstrapRESTConfigWithPlugin` and
+  `aksmachine.MachineClientOptions.CredentialPlugin` take the agent's own
+  clients' credential plugin. Empty, as on a host, it's the kubelet's.
 - The MachineOperation reconciler validates an `AgentUpgrade`'s parameters
   before acting on it. On a host, an `image` fails it as `InvalidParameters`.
 
