@@ -83,7 +83,9 @@ type butaneNode struct {
 // FirstBootUnitName, and the unit must stop running once the agent unit exists
 // at ServiceUnitPath. Within the template, the unit has to run the files it
 // writes, keep the ones that carry secrets private, and remove them once
-// bootstrap succeeds. Rendering it is checked with Butane itself by hack/acl.
+// bootstrap succeeds or can no longer be retried, and not retry the failures
+// bootstrap.sh says retrying can't fix. Rendering it is checked with Butane
+// itself by hack/acl.
 func TestBootstrapButaneTemplate(t *testing.T) {
 	t.Parallel()
 
@@ -141,6 +143,16 @@ func TestBootstrapButaneTemplate(t *testing.T) {
 		t.Error("the unit is not enabled, so it never runs")
 	}
 
+	// bootstrap.sh exits with this status for failures that retrying can't fix.
+	script, err := os.ReadFile(filepath.Join(scriptsDir, "bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	permanent := regexp.MustCompile(`(?m)^readonly PERMANENT_FAILURE_STATUS=([0-9]+)$`).FindSubmatch(script)
+	if permanent == nil {
+		t.Fatal("bootstrap.sh does not set PERMANENT_FAILURE_STATUS")
+	}
+
 	lines := strings.Split(unit.Contents, "\n")
 	for _, want := range []string{
 		"ConditionPathExists=!" + ServiceUnitPath,
@@ -157,6 +169,10 @@ func TestBootstrapButaneTemplate(t *testing.T) {
 		// retried; the retries themselves are never given up.
 		"TimeoutStartSec=30min",
 		"Restart=on-failure",
+		"RestartPreventExitStatus=" + string(permanent[1]),
+		// Once the agent unit is installed no retry can succeed, so the inputs
+		// go then, whatever the outcome; until then, a retry needs them.
+		"ExecStopPost=/bin/sh -c 'test ! -e " + ServiceUnitPath + " || rm -rf " + firstBootDir + "'",
 		"StartLimitIntervalSec=0",
 		"WantedBy=multi-user.target",
 	} {
