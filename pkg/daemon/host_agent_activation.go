@@ -29,6 +29,9 @@ const (
 // It does not migrate the host root, so it plans against the root the host
 // will resolve once migrated.
 func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
+	if Containerized() {
+		return agentbinary.ActivationPlan{}, errDirectActivationInContainer
+	}
 	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
@@ -36,9 +39,17 @@ func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candida
 	return agentbinary.PreflightHostDaemonActivation(ctx, hostAgentActivationOptions(paths, candidatePath), service)
 }
 
+// errDirectActivationInContainer refuses direct activation in the agent's container. There the host
+// has no binary layout to switch, and the agent is upgraded by switching images.
+var errDirectActivationInContainer = errors.New("direct activation is not available in the agent's container; " +
+	"upgrade it with an AgentUpgrade that names an image")
+
 // ActivateHostAgent activates a directly staged Flex agent binary. It uses the
 // same lock and binary layout as MachineOperation upgrades.
 func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationResult, error) {
+	if Containerized() {
+		return agentbinary.ActivationResult{}, errDirectActivationInContainer
+	}
 	if os.Geteuid() != 0 {
 		return agentbinary.ActivationResult{}, fmt.Errorf("host agent upgrade requires root privileges")
 	}
