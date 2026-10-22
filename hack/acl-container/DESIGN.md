@@ -245,6 +245,7 @@ nothing sets it, every switch takes `main`'s path:
 | `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The host's agent, `config.HostBinaryPath` | The image's binary, which is running: the host has no agent |
 | The host root's steps, in `start` and the daemon: migrating, preparing, and populating `/opt/unbounded/agent`, the move from `/usr/local`, and removing the binary install scripts left there | Run | Skipped: the host keeps nothing of the agent |
 | Direct activation, `agent-upgrade` | Switches the binary layout | Refused: an `AgentUpgrade` names an image |
+| `UninstallService`, in reset | Removes the first-boot unit, `aks-flex-node-bootstrap.service`, which runs once | Keeps it: the unit of that name is the install's bootstrap unit, which joins the node again |
 
 These changes apply everywhere, and leave a host's behavior as it was:
 
