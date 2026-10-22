@@ -6,9 +6,6 @@ Wants=network-online.target
 # container, which takes longer than RestartSec.
 After=network-online.target containerd.service aks-flex-node-agent-recovery.service
 Requires=containerd.service
-# The agent installs the nspawn lifecycle helper under /usr/local, which the
-# install makes writable with a mount.
-RequiresMountsFor=/usr/local
 # As on a host: when an upgraded agent fails, its recovery unit restores the
 # last-good image. systemd 254 and later run OnFailure= at every failure, and
 # earlier ones once the unit hits its start limit.

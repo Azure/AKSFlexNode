@@ -385,7 +385,7 @@ func TestContainerUnitsSetUpTheirScopes(t *testing.T) {
 	}
 }
 
-func TestContainerAgentUnitClearsRecoveryAndNeedsUsrLocal(t *testing.T) {
+func TestContainerAgentUnitClearsRecoveryAndNeedsNoUsrLocal(t *testing.T) {
 	t.Parallel()
 
 	// Its start waits for recovery's, so a recovery that outlived its unit can't run beside it.
@@ -393,7 +393,9 @@ func TestContainerAgentUnitClearsRecoveryAndNeedsUsrLocal(t *testing.T) {
 	if got := unitDirectives(containerServiceUnitContent, "Service", "ExecStartPre"); !strings.Contains(strings.Join(got, " "), clearRecovery) {
 		t.Errorf("ExecStartPre= is %q, want it to include %s", got, clearRecovery)
 	}
-	if got := unitDirectives(containerServiceUnitContent, "Unit", "RequiresMountsFor"); !slices.Contains(got, "/usr/local") {
-		t.Errorf("RequiresMountsFor= is %q, want it to include /usr/local", got)
+	// The lifecycle helper is under the host root, on ACL's writable root, and the install no
+	// longer mounts anything at /usr/local.
+	if got := unitDirectives(containerServiceUnitContent, "Unit", "RequiresMountsFor"); slices.Contains(got, "/usr/local") {
+		t.Errorf("RequiresMountsFor= is %q, want it not to include /usr/local", got)
 	}
 }
