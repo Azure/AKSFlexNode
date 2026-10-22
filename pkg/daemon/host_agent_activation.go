@@ -68,8 +68,11 @@ type flexDaemonActivationService struct {
 	log *slog.Logger
 	// root is the host root paths were built under, and resolveRoot what
 	// resolved it; see Preflight. A nil resolveRoot skips the check.
-	root             string
-	resolveRoot      func() string
+	root        string
+	resolveRoot func() string
+	// moveUnfinished reports a move to the host root that has not finished;
+	// see Preflight. A nil moveUnfinished skips the check.
+	moveUnfinished   func() (bool, error)
 	paths            agentUpgradePaths
 	state            stateStore
 	systemdDir       string
@@ -97,6 +100,7 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 		log:            log,
 		root:           root,
 		resolveRoot:    resolveRoot,
+		moveUnfinished: hostRootMoveUnfinishedHere,
 		paths:          paths,
 		state:          state,
 		systemdDir:     systemdSystemDir,
@@ -117,10 +121,22 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 // remove /usr/local, leaving the host on the previous binary. Checking here,
 // under the lock, refuses it instead; a retry builds the layout from the root
 // as it is now.
+//
+// A move whose first pass renamed its copy into place just before the layout
+// was built leaves the root unchanged, but has not finished, so it is checked
+// here too, as guardLegacySeed checks it before the lock is held.
 func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
 	if s.resolveRoot != nil {
 		if current := s.resolveRoot(); current != s.root {
 			return agentbinary.ServicePlan{}, fmt.Errorf("the agent's host root moved from %s to %s while the activation was prepared; retry", s.root, current)
+		}
+	}
+	if s.moveUnfinished != nil {
+		if moving, err := s.moveUnfinished(); err != nil {
+			return agentbinary.ServicePlan{}, fmt.Errorf("inspect the host root: %w", err)
+		} else if moving {
+			return agentbinary.ServicePlan{}, fmt.Errorf("the move of the agent's files to %s has not finished; restart %s, which finishes it, then retry",
+				hostroot.Path, ServiceUnitName)
 		}
 	}
 	inspectService := s.inspectService

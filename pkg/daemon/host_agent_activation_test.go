@@ -82,12 +82,21 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		now     string
-		wantErr bool
+		name string
+		// root is where the layout was built, and now where the root
+		// resolves under the lock.
+		root, now     string
+		unfinished    bool
+		unfinishedErr error
+		wantMsg       string // empty: no error
 	}{
-		{name: "unchanged root", now: hostroot.LegacyPath},
-		{name: "root moved under the activation", now: hostroot.Path, wantErr: true},
+		{name: "unchanged root", root: hostroot.LegacyPath, now: hostroot.LegacyPath},
+		{name: "root moved under the activation", root: hostroot.LegacyPath, now: hostroot.Path, wantMsg: "retry"},
+		// A move's first pass renamed its copy into place before the layout
+		// was built: the root is unchanged, but the files under the legacy
+		// root are still there.
+		{name: "unchanged root, move not finished", root: hostroot.Path, now: hostroot.Path, unfinished: true, wantMsg: "restart " + ServiceUnitName},
+		{name: "unchanged root, move state unknown", root: hostroot.Path, now: hostroot.Path, unfinishedErr: errors.New("permission denied"), wantMsg: "inspect the host root"},
 	}
 
 	for _, tt := range tests {
@@ -98,8 +107,9 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 			inspected := false
 			service := &flexDaemonActivationService{
 				log:            slog.Default(),
-				root:           hostroot.LegacyPath,
+				root:           tt.root,
 				resolveRoot:    func() string { return tt.now },
+				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
 				paths:          paths,
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
@@ -110,11 +120,11 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 			}
 
 			_, err := service.Preflight(t.Context(), paths.CurrentPath)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Preflight() error = %v, want error %v", err, tt.wantErr)
+			if (err != nil) != (tt.wantMsg != "") {
+				t.Fatalf("Preflight() error = %v, want error %v", err, tt.wantMsg != "")
 			}
-			if tt.wantErr && (inspected || !strings.Contains(err.Error(), "retry")) {
-				t.Fatalf("Preflight() went on after the root moved, or did not say to retry: inspected = %v, error = %v", inspected, err)
+			if err != nil && (inspected || !strings.Contains(err.Error(), tt.wantMsg)) {
+				t.Fatalf("Preflight() went on after refusing, or did not say %q: inspected = %v, error = %v", tt.wantMsg, inspected, err)
 			}
 		})
 	}
