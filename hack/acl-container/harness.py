@@ -1104,7 +1104,7 @@ def check_container(checks: Checks) -> None:
 
     # The units give the container only the host's root. Its entrypoint mounts the host paths the
     # agent uses at their own paths.
-    paths = ("/etc/aks-flex-node", "/etc/systemd", "/var/lib/machines", "/run", "/usr/local")
+    paths = ("/etc/aks-flex-node", "/etc/systemd", "/var/lib/machines", "/run", "/opt/unbounded")
     container = agent_out("stat -c %d:%i " + " ".join(paths)).split()
     host = ssh_out("sudo stat -c %d:%i " + " ".join(paths)).split()
     differ = [path for path, mine, theirs in zip(paths, container, host) if mine != theirs]
@@ -1113,9 +1113,20 @@ def check_container(checks: Checks) -> None:
     exec_start = ssh_out(f"systemctl show {AGENT_UNIT} -p ExecStart --value")
     checks.expect("/usr/bin/ctr" in exec_start and "aks-flex-node agent --config" in exec_start,
                   f"{AGENT_UNIT}, which start installed, runs the agent's image", exec_start)
-    installed = ssh("ls -d /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node 2>/dev/null",
+    # Neither where earlier releases installed it, nor under the host root, where hosts do now.
+    installed = ssh("ls -d /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node "
+                    "/opt/unbounded/agent/bin/aks-flex-node /opt/unbounded/agent/lib/aks-flex-node 2>/dev/null",
                     check=False).stdout.strip()
     checks.expect(installed == "", "the agent has no binary of its own on the host", installed)
+    # The nspawn lifecycle helper is the one binary of the agent on the host until its hooks run in
+    # containers; see TODO.md. It's under the host root, on ACL's writable root filesystem.
+    helper = "/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle"
+    hooks = ssh("sudo sh -c 'grep -h -E \"^Exec(Start|StartPost)=\" "
+                "/etc/systemd/system/unbounded-agent-regenerate-config@*.service "
+                "/etc/systemd/system/systemd-nspawn@*.service.d/override.conf'", check=False).stdout
+    checks.expect(ssh(f"sudo test -x {helper}", check=False).returncode == 0
+                  and helper in hooks and "/usr/local" not in hooks,
+                  "the machines' hooks run the lifecycle helper under the host root", hooks.strip())
 
 
 def daemon_state() -> dict:
