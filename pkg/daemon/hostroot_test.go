@@ -250,8 +250,9 @@ func TestGuardLegacySeed(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		released bool
+		name       string
+		released   bool
+		unfinished bool
 		// setup puts something at the seed path; dir is a scratch directory.
 		setup func(t *testing.T, seed, dir string)
 		// running stands in for runningFrom; nil reports nothing running.
@@ -340,6 +341,26 @@ func TestGuardLegacySeed(t *testing.T) {
 			setup:    func(t *testing.T, seed, _ string) { writeExecutable(t, seed, "seed") },
 			wantKept: true,
 		},
+		{
+			// Its last step failed: the files under /usr/local are still a
+			// whole installation, which a release before the host root would
+			// run from.
+			name:       "a move that has not finished is refused",
+			released:   false,
+			unfinished: true,
+			setup:      func(t *testing.T, seed, _ string) { writeExecutable(t, seed, "seed") },
+			wantErr:    true,
+			wantMsg:    "restart " + ServiceUnitName,
+			wantKept:   true,
+		},
+		{
+			name:       "a move that has not finished is refused with nothing in /usr/local/bin",
+			released:   false,
+			unfinished: true,
+			setup:      func(*testing.T, string, string) {},
+			wantErr:    true,
+			wantMsg:    "has not finished",
+		},
 	}
 
 	for _, tt := range tests {
@@ -357,7 +378,10 @@ func TestGuardLegacySeed(t *testing.T) {
 			if running == nil {
 				running = func(os.FileInfo) (bool, error) { return false, nil }
 			}
-			err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return tt.released, nil }, seed, running)
+			err := guardLegacySeed(slog.New(slog.DiscardHandler),
+				func() (bool, error) { return tt.released, nil },
+				func() (bool, error) { return tt.unfinished, nil },
+				seed, running)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("guardLegacySeed() error = %v, want error %v", err, tt.wantErr)
 			}
@@ -372,9 +396,15 @@ func TestGuardLegacySeed(t *testing.T) {
 		})
 	}
 
+	finished := func() (bool, error) { return false, nil }
 	if err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return false, errors.New("permission denied") },
-		filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
+		finished, filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
 		t.Fatal("guardLegacySeed() allowed a switch on a host root it could not inspect")
+	}
+	if err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return true, nil },
+		func() (bool, error) { return false, errors.New("permission denied") },
+		filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
+		t.Fatal("guardLegacySeed() allowed a switch where it could not tell whether a move has finished")
 	}
 }
 

@@ -231,7 +231,18 @@ func runningFrom(info os.FileInfo) (bool, error) {
 //
 // A seed this process runs from is kept, as removeDaemonLegacySeed explains, so
 // the switch is refused until the process runs from somewhere else.
-func guardLegacySeed(log *slog.Logger, released func() (bool, error), seed string, running func(os.FileInfo) (bool, error)) error {
+//
+// So is a switch while unfinished reports a move to the host root that has not
+// finished: the files it has yet to remove under /usr/local are a whole
+// installation, which such a release would run from rather than fail.
+func guardLegacySeed(log *slog.Logger, released, unfinished func() (bool, error), seed string, running func(os.FileInfo) (bool, error)) error {
+	if moving, err := unfinished(); err != nil {
+		return fmt.Errorf("inspect the host root: %w", err)
+	} else if moving {
+		return fmt.Errorf("the move of the agent's files to %s has not finished, and a release before %s would take the files still under %s as its own installation after an upgrade to it; "+
+			"restart %s, which finishes the move, then retry", hostroot.Path, hostroot.Path, hostroot.LegacyPath, ServiceUnitName)
+	}
+
 	if err := removeLegacySeed(log, released, seed, running); err != nil {
 		return err
 	}

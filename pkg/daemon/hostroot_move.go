@@ -130,17 +130,55 @@ func verifyMovedAgent(ctx context.Context, root string) error {
 // restart from the host root, nor when the host root no longer resolves to
 // where it did at startup: the move swapped the copy in and then failed, and
 // the AgentUpgrade executor still names the files under /usr/local, which the
-// units may no longer run.
-func holdForHostRoot(restarted bool, startup, current agentUpgradePaths) string {
+// units may no longer run. Nor while a move has not finished: its last step
+// failed, and the files under /usr/local it would have removed are what a
+// release before the host root would take as its own installation after an
+// AgentUpgrade to it. The next start retries that step.
+func holdForHostRoot(restarted, unfinished bool, startup, current agentUpgradePaths) string {
 	switch {
 	case restarted:
 		return "the daemon queued its restart from the host root"
 	case startup != current:
 		return fmt.Sprintf("the host root moved from %s to %s under the running daemon",
 			filepath.Dir(startup.CurrentPath), filepath.Dir(current.CurrentPath))
+	case unfinished:
+		return "the move of the agent's files to the host root has not finished; the next daemon start retries it"
 	default:
 		return ""
 	}
+}
+
+// hostRootMovingMarker is the file the agent library keeps in the host root
+// until a move has removed the files under the legacy root. The library
+// doesn't export it (movingMarker in
+// github.com/Azure/unbounded/internal/hostroot); uninstall.sh names it too.
+const hostRootMovingMarker = ".moving"
+
+// hostRootMoveUnfinishedHere is hostRootMoveUnfinished for this host's root.
+func hostRootMoveUnfinishedHere() (bool, error) {
+	return hostRootMoveUnfinished(hostroot.Path)
+}
+
+// hostRootMoveUnfinished reports whether a move of the agent's files to root
+// has started and not finished: root is a real directory that still holds the
+// library's marker. A host linked to the legacy root has none.
+func hostRootMoveUnfinished(root string) (bool, error) {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", root, err)
+	}
+	if !info.IsDir() {
+		return false, nil
+	}
+	if _, err := os.Lstat(filepath.Join(root, hostRootMovingMarker)); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", root, err)
+	}
+	return true, nil
 }
 
 // awaitReplacement keeps a daemon that may not take work idle until systemd

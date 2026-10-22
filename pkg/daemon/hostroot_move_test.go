@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -126,6 +127,7 @@ func TestHoldForHostRoot(t *testing.T) {
 	tests := []struct {
 		name             string
 		restarted        bool
+		unfinished       bool
 		startup, current agentUpgradePaths
 		wantHold         bool
 	}{
@@ -136,15 +138,112 @@ func TestHoldForHostRoot(t *testing.T) {
 		// The move swapped the copy in and then failed: the executor still
 		// names the legacy slots the units may no longer run.
 		{name: "moved under the running daemon", startup: legacy, current: root, wantHold: true},
+		// The second pass of a move failed before it removed the files under
+		// the legacy root: the next start retries it, and until then no
+		// AgentUpgrade may switch to a release that would run from them.
+		{name: "a move that has not finished", unfinished: true, startup: root, current: root, wantHold: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			reason := holdForHostRoot(tt.restarted, tt.startup, tt.current)
+			reason := holdForHostRoot(tt.restarted, tt.unfinished, tt.startup, tt.current)
 			if (reason != "") != tt.wantHold {
 				t.Fatalf("holdForHostRoot() = %q, want hold %v", reason, tt.wantHold)
+			}
+		})
+	}
+}
+
+func TestHostRootMoveUnfinished(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// setup puts something at root; dir is a scratch directory.
+		setup   func(t *testing.T, root, dir string)
+		want    bool
+		wantErr bool
+	}{
+		{name: "no host root", setup: func(*testing.T, string, string) {}},
+		{
+			name: "a finished installation",
+			setup: func(t *testing.T, root, _ string) {
+				if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "a move that has not finished",
+			setup: func(t *testing.T, root, _ string) {
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, hostRootMovingMarker), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: true,
+		},
+		{
+			// A host linked to the legacy root, even one whose target holds
+			// a file of that name, is not moving.
+			name: "a host linked to the legacy root",
+			setup: func(t *testing.T, root, dir string) {
+				legacy := filepath.Join(dir, "legacy")
+				if err := os.MkdirAll(legacy, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(legacy, hostRootMovingMarker), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(legacy, root); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "a file in its place",
+			setup: func(t *testing.T, root, _ string) {
+				if err := os.WriteFile(root, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			// Its parent is a file, so it cannot be inspected.
+			name: "an unreadable host root",
+			setup: func(t *testing.T, root, _ string) {
+				if err := os.Remove(filepath.Dir(root)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Dir(root), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			root := filepath.Join(dir, "opt", "unbounded", "agent")
+			if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(t, root, dir)
+
+			got, err := hostRootMoveUnfinished(root)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("hostRootMoveUnfinished() error = %v, want error %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("hostRootMoveUnfinished() = %v, want %v", got, tt.want)
 			}
 		})
 	}

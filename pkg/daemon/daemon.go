@@ -175,7 +175,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				// before this binary has shown it can start, and so the signal
 				// it waits for is gone.
 				restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades)
-				if reason := holdForHostRoot(restarted, upgrades.paths, defaultAgentUpgradePaths()); reason != "" {
+				unfinished, err := hostRootMoveUnfinishedHere()
+				if err != nil {
+					log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
+					unfinished = true
+				}
+				if reason := holdForHostRoot(restarted, unfinished, upgrades.paths, defaultAgentUpgradePaths()); reason != "" {
 					// The gate stays closed; the next process opens it.
 					if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
 						stopManager(err)
