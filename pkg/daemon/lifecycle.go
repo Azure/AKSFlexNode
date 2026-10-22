@@ -408,11 +408,17 @@ type uninstallServiceTask struct {
 	paths     []string
 	// flatten leaves the agent's binary without its blue/green layout; nil does nothing.
 	flatten func() error
+	// keepFirstBootUnit leaves the unit named FirstBootUnitName as it is.
+	keepFirstBootUnit bool
 }
 
 // UninstallService returns a task that removes the first-boot unit, then
 // disables, removes, and stops the agent's systemd unit, leaving the agent's
 // binary under the host root as a regular file, without its blue/green layout.
+//
+// In the agent's container, the unit of that name is the install's bootstrap
+// unit, which runs bootstrap in a container of the image. It stays, as the rest
+// of the install does, so starting it with new inputs joins the node again.
 //
 // The paths are resolved when the task is built. Nothing in reset changes the
 // host root, and ResetNode resolves the helper paths it removes the same way.
@@ -423,9 +429,10 @@ func UninstallService(log *slog.Logger) phases.Task {
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
-		unitDir: systemdSystemDir,
-		paths:   uninstallPaths(),
-		flatten: func() error { return flattenAgentLayout(log, binaryPaths, agentUpgradeLockPath) },
+		unitDir:           systemdSystemDir,
+		paths:             uninstallPaths(),
+		flatten:           func() error { return flattenAgentLayout(log, binaryPaths, agentUpgradeLockPath) },
+		keepFirstBootUnit: Containerized(),
 	}
 }
 
@@ -475,8 +482,10 @@ func removeIfPresentWith(path string, lstat func(string) (os.FileInfo, error), r
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
-	if err := removeFirstBootUnit(ctx, t.log, t.unitDir, t.systemctl); err != nil {
-		return err
+	if !t.keepFirstBootUnit {
+		if err := removeFirstBootUnit(ctx, t.log, t.unitDir, t.systemctl); err != nil {
+			return err
+		}
 	}
 	// Stopping comes last. When the daemon uninstalls its own unit, for AgentReset or a node's
 	// deletion, stopping the unit stops the daemon, and nothing after the stop would run: the
