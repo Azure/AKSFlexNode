@@ -27,7 +27,7 @@ The agent keeps its binaries and helpers under `/opt/unbounded/agent`: the `aks-
 sudo ln -sfn /opt/unbounded/agent/bin/aks-flex-node /usr/local/sbin/aks-flex-node
 ```
 
-Don't link it from `/usr/local/bin`. An earlier release takes an executable at `/usr/local/bin/aks-flex-node` as its own binary, so an AgentUpgrade refuses to run while one is there; see below.
+Don't link it from `/usr/local/bin`. An earlier release takes an executable at `/usr/local/bin/aks-flex-node` as its own binary, so an AgentUpgrade refuses to run while one is there; see [Earlier releases](migration.md#earlier-releases).
 
 `/opt/unbounded/agent` is reserved for the agent. The rest of `/opt/unbounded` belongs to the host, for example for staged offline artifacts or OCI layouts: the agent creates `/opt/unbounded` with mode `0755` if it is missing, and otherwise never changes or removes it or anything else in it. Mount a volume at a subdirectory such as `/opt/unbounded/artifacts` rather than over `/opt/unbounded`, so it does not hide the agent.
 
@@ -35,20 +35,7 @@ The filesystem that holds `/opt/unbounded/agent` must allow running programs, so
 
 Where `/usr/local/bin` is writable, the install scripts put the binary there, as earlier releases were installed. The agent copies itself to `/opt/unbounded/agent/bin` when it starts, and removes the copy in `/usr/local/bin` once nothing it runs is under `/usr/local`. Where `/usr/local` is read-only, as on Azure Container Linux, the scripts install under `/opt/unbounded/agent` directly.
 
-Earlier releases installed these files under `/usr/local`. A host installed by one of them reaches `/opt/unbounded/agent` in two stages:
-
-1. **Linked.** The first command of a newer release that changes the host, such as the agent after an AgentUpgrade, links `/opt/unbounded/agent` to `/usr/local`, creating `/opt/unbounded` if needed. The files stay where they are and every path the units name is unchanged, so the host can still be returned to the earlier release, which is still the last-good binary.
-2. **Moved.** Once neither the current nor the last-good binary is from an earlier release, the agent copies the files into a real `/opt/unbounded/agent`, runs the copied binary, points the units at them, and restarts itself from there. The restarted agent then removes the files from `/usr/local`, along with `/usr/local/lib/aks-flex-node` once nothing else is in it. That is at the first agent start after the AgentUpgrade that pushes the earlier release out of last-good. To move a host that is not due another upgrade, apply the release it already runs as an AgentUpgrade.
-
-   Nothing under `/usr/local` is removed until the agent runs from the copy, so a move that is interrupted, or a restart that fails, leaves both copies in place, and the next agent start finishes it. An agent that has queued its restart, or that finds the files moved under it by a move that then failed, takes no work; if it is not restarted within two minutes it exits, and systemd starts it again.
-
-   A host where the agent cannot run from `/opt/unbounded/agent`, because `/opt` is mounted `noexec` or for another reason, stays linked. The agent logs why, removes any copy it made, points the units back at `/usr/local` if an interrupted move had already pointed them at the copy, and tries again at its next start.
-
-`aks-flex-node reset` removes the helpers under both locations and keeps the binaries; the uninstall script removes the binaries from both, then `/opt/unbounded/agent` itself, as the link to `/usr/local` or an emptied directory, and an interrupted move's `/opt/unbounded/agent.staging`, at any stage. It leaves `/opt/unbounded`, and a link you made at `/opt/unbounded/agent` to somewhere else, as the agent does.
-
-On a host that no longer runs anything from `/usr/local`, an AgentUpgrade or a direct activation first removes the copy the install scripts left in `/usr/local/bin`, and refuses to switch the binary while `/usr/local/bin/aks-flex-node` still leads to an executable, such as through a link you made there. An earlier release would take that executable as its own binary and install itself under `/usr/local` beside the agent under `/opt/unbounded/agent`, which the agent refuses to run on. With nothing there, an AgentUpgrade to an earlier release fails as any upgrade whose daemon cannot start does: that release looks for its files under `/usr/local`, and the agent restores the last-good binary.
-
-To go back to an earlier release on a host installed under a real `/opt/unbounded/agent`, uninstall the agent first, then install the earlier release with that release's own install script. The install scripts of this release choose `/opt/unbounded/agent` on such a host, where an earlier release doesn't look for itself.
+Earlier releases installed these files under `/usr/local`. A host one of them installed moves to `/opt/unbounded/agent` when the agent is upgraded; see [Migrating to `/opt/unbounded/agent`](migration.md).
 
 ## Preflight
 
@@ -136,15 +123,7 @@ sudo /var/tmp/aks-flex-node-candidate agent-upgrade
 
 The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, and restore last-good on activation failure. If `aks-flex-node-agent.service` is active, direct activation restarts it, verifies the running executable, and synchronizes the active nspawn exec-credential binary. If the service is already inactive during reset/rejoin provisioning, activation preserves that stopped state; the subsequent bootstrap starts the service and worker.
 
-### Azure Container Linux
-
-On Azure Container Linux, and other hosts whose `/usr` is read-only, agent upgrades work as they do on other hosts, with every file under `/opt/unbounded/agent`. An AgentUpgrade or a direct activation stages the candidate in the blue/green slot under `/opt/unbounded/agent/lib/aks-flex-node` that isn't in use, switches `aks-flex-node-current` to it, synchronizes the active nspawn machine's binary, and restores last-good the same way when the candidate can't keep running. No earlier release could install on these hosts, so the [move from `/usr/local`](#where-the-agent-is-installed) never runs there, and nothing is written under `/usr/local`.
-
-- **Minimum version.** The first release that installs under `/opt/unbounded/agent` is the oldest that runs on these hosts. An AgentUpgrade to an earlier release is accepted, but that release looks for its files under `/usr/local`, and its daemon can't start. As for any upgrade whose daemon can't start, systemd runs the recovery unit as soon as the daemon fails, which restores the last-good binary, and the operation ends `Failed`. For a daemon that exits at once, that took about 10 seconds; the kubelet keeps running. Don't target an earlier release.
-- **Start limit.** These hosts' SELinux policy denies root `systemctl reset-failed`, which the recovery script runs before it restarts the agent, as the daemon does before an upgrade's restart or the host root's move. The recovery unit then reports `failed` even when the rollback worked, and nothing clears the agent unit's start limit, five starts in five minutes: restarts beyond it leave the agent stopped until it's started by hand or the host reboots. Space out AgentUpgrades on these hosts. This is tracked in [#385](https://github.com/Azure/AKSFlexNode/issues/385).
-- **Reprovisioning.** A host provisioned or reimaged from its Ignition config installs the version the config pins, which may be older than the rest of the pool. Upgrade it once it joins; see [Agent version](getting-started.md#agent-version).
-- **Rejoining after a reset.** Reset removes the first-boot unit, so the host doesn't join again on its own. Reimage it, or create it again, from its Ignition config; see [Rejoining after a reset](getting-started.md#rejoining-after-a-reset).
-- **OS updates.** How Azure Container Linux flex nodes take OS updates, in place with a reboot or by reimaging, and what cordons and drains the node first, isn't defined yet; it's tracked in [#379](https://github.com/Azure/AKSFlexNode/issues/379). The agent's state is under `/etc`, `/opt`, and `/var`, which an in-place image update keeps, but that hasn't been tested. Until it is, treat an OS update like any other disruptive operation: cordon and drain the node first, and check that it's `Ready` and `aks-flex-node-agent.service` is active afterwards.
+On Azure Container Linux, see [Azure Container Linux](azure-container-linux.md) for what differs.
 
 ## Managed node restart and reset
 

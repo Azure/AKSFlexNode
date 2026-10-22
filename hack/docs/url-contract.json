@@ -409,6 +409,13 @@
       ]
     },
     {
+      "path": "docs/usage/azure-container-linux.md",
+      "protectAnchors": true,
+      "anchors": [
+        "azure-container-linux"
+      ]
+    },
+    {
       "path": "docs/usage/cli.md",
       "protectAnchors": false,
       "anchors": [
@@ -498,6 +505,17 @@
         "service-principal",
         "understand-the-two-credentials",
         "verify-the-selected-path"
+      ]
+    },
+    {
+      "path": "docs/usage/migration.md",
+      "protectAnchors": true,
+      "anchors": [
+        "earlier-releases",
+        "how-an-existing-host-moves",
+        "migrating-to-optunboundedagent",
+        "reset-and-uninstall",
+        "what-changed"
       ]
     },
     {
