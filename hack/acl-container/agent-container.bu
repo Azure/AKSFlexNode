@@ -36,11 +36,6 @@
 variant: flatcar
 version: 1.1.0
 storage:
-  directories:
-    - path: /var/lib/aks-flex-node/usr-local/upper
-      mode: 0755
-    - path: /var/lib/aks-flex-node/usr-local/work
-      mode: 0755
   files:
     # Not in /etc/aks-flex-node: the agent's reset removes what's in it.
     - path: /etc/sysconfig/aks-flex-node-container
@@ -50,27 +45,6 @@ storage:
         local: agent-container.env
 systemd:
   units:
-    # The agent installs the nspawn lifecycle helper under /usr/local, as on
-    # main, and host systemd runs it at every machine start. ACL's /usr, and
-    # /usr/local with it, is read-only, so an overlay gives /usr/local a
-    # writable layer in /var. Until the helper runs in a container too, it is
-    # the one binary of the agent on the host; see TODO.md.
-    - name: usr-local.mount
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Writable /usr/local for the AKS Flex Node agent
-        # The units that need it require it, with RequiresMountsFor=/usr/local.
-        RequiresMountsFor=/var/lib/aks-flex-node/usr-local
-
-        [Mount]
-        What=overlay
-        Where=/usr/local
-        Type=overlay
-        Options=lowerdir=/usr/local,upperdir=/var/lib/aks-flex-node/usr-local/upper,workdir=/var/lib/aks-flex-node/usr-local/work
-
-        [Install]
-        WantedBy=local-fs.target
     - name: aks-flex-node-bootstrap.service
       enabled: true
       contents: |
@@ -81,7 +55,6 @@ systemd:
         # and then finds the inputs the reset left, if any.
         After=network-online.target containerd.service aks-flex-node-reset.service
         Requires=containerd.service
-        RequiresMountsFor=/usr/local
         ConditionPathExists=/etc/aks-flex-node/bootstrap.env
         # Until the agent's unit is enabled, which start does after writing it:
         # a bootstrap that fails after the write is retried. Conditions are
@@ -134,7 +107,6 @@ systemd:
         Description=Reset the AKS Flex Node agent and its node
         After=containerd.service
         Requires=containerd.service
-        RequiresMountsFor=/usr/local
 
         [Service]
         Type=oneshot

@@ -49,8 +49,8 @@ LABEL org.opencontainers.image.title="aks-flex-node-agent" \
 RUN tdnf install -y ca-certificates util-linux jq tar hostname \
     && tdnf clean all
 
-# The container mounts the host's /usr/local, where the agent installs its host
-# helpers, so the image's own programs live in /opt/aks-flex-node/bin.
+# The container mounts the host's /opt/unbounded, where the agent installs its
+# host helpers, so the image's own programs live apart, in /opt/aks-flex-node/bin.
 COPY --from=build /out/aks-flex-node /opt/aks-flex-node/bin/
 COPY --chmod=0755 scripts/bootstrap.sh /opt/aks-flex-node/bin/
 COPY --chmod=0755 hack/acl-container/image/bin/aks-flex-node-bootstrap \
@@ -65,8 +65,8 @@ RUN for tool in machinectl systemctl systemd-run systemd-nspawn journalctl \
       ln -s host-exec /opt/aks-flex-node/bin/$tool; \
     done
 
-# /usr/local is the host's, which the entrypoint mounts, so it stays off PATH: what
-# the host puts there mustn't shadow the image's tools.
+# Only the image's own programs are on PATH: what the host puts in the directories
+# the entrypoint mounts, such as /opt/unbounded, mustn't shadow the image's tools.
 ENV PATH=/opt/aks-flex-node/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     AKS_FLEX_NODE_CONTAINERIZED=true
 
