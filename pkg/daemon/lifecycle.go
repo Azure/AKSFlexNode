@@ -14,15 +14,30 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const (
 	ServiceUnitName         = "aks-flex-node-agent.service"
 	recoveryServiceUnitName = "aks-flex-node-agent-recovery.service"
-	recoveryScriptPath      = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
-	systemdSystemDir        = "/etc/systemd/system"
-	arcSystemdDependency    = "himdsd.service"
+	// embeddedRecoveryScriptPath is the path the embedded recovery unit names,
+	// the one releases before the host root installed to. It is replaced with
+	// the path under the resolved host root when the unit is written. Keep it
+	// in sync with the embedded asset.
+	embeddedRecoveryScriptPath = "/usr/local/lib/aks-flex-node/aks-flex-node-recovery.sh"
+	// systemdSystemDir is not under the host root. Units must live where
+	// systemd looks for them, and /etc is writable even when /usr is not.
+	systemdSystemDir     = "/etc/systemd/system"
+	arcSystemdDependency = "himdsd.service"
+
+	// ServiceUnitPath is where the agent unit is installed. The first-boot unit
+	// only runs while it is absent.
+	ServiceUnitPath = systemdSystemDir + "/" + ServiceUnitName
+	// FirstBootUnitName is the oneshot unit that runs bootstrap.sh on first
+	// boot on a host provisioned by Ignition, as scripts/aks-flex-node-bootstrap.bu
+	// documents. Reset removes it; a host without it is left alone.
+	FirstBootUnitName = "aks-flex-node-bootstrap.service"
 )
 
 //go:embed assets/aks-flex-node-agent.service
@@ -64,16 +79,8 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 }
 
 func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
-	_, err := ensureAgentUpgradeServiceAssetsAt(
-		ctx,
-		log,
-		defaultAgentUpgradePaths(),
-		agentServiceOptionsFromConfig(cfg),
-		systemdSystemDir,
-		recoveryScriptPath,
-		utilexec.ReloadSystemd,
-		false,
-	)
+	_, err := ensureServiceAssetsUnderHostRoot(ctx, log, cfg, false)
+
 	return err
 }
 
@@ -85,15 +92,28 @@ func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg 
 // keeps them, writing only missing ones, and reports that it held them back, for the daemon to
 // converge them once the upgrade is judged.
 func ensureDaemonServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) (bool, error) {
+	return ensureServiceAssetsUnderHostRoot(ctx, log, cfg, true)
+}
+
+// ensureServiceAssetsUnderHostRoot resolves the host root once, so the binary layout, the
+// units, and the recovery script they run are all written under the same root.
+func ensureServiceAssetsUnderHostRoot(
+	ctx context.Context,
+	log *slog.Logger,
+	cfg *config.Config,
+	holdDuringUpgrade bool,
+) (bool, error) {
+	root := hostroot.Resolve()
+
 	return ensureAgentUpgradeServiceAssetsAt(
 		ctx,
 		log,
-		defaultAgentUpgradePaths(),
+		agentUpgradePathsUnder(root),
 		agentServiceOptionsFromConfig(cfg),
 		systemdSystemDir,
-		recoveryScriptPath,
+		recoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
-		true,
+		holdDuringUpgrade,
 	)
 }
 
@@ -145,14 +165,8 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions age
 	if err != nil {
 		return nil, err
 	}
-	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(recoveryScriptPath), []byte(recoveryScript))
-	recoveryContent := recoveryScriptContent
-	for oldPath, newPath := range map[string]string{
-		defaultAgentUpgradePaths().LastGoodPath: binaryPaths.LastGoodPath,
-		defaultAgentUpgradePaths().SignalPath:   binaryPaths.SignalPath,
-	} {
-		recoveryContent = bytes.ReplaceAll(recoveryContent, []byte(oldPath), []byte(newPath))
-	}
+	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(embeddedRecoveryScriptPath), []byte(recoveryScript))
+	recoveryContent := renderRecoveryScript(binaryPaths)
 	// Publish dependencies before the main unit that references OnFailure, so an
 	// interrupted update never leaves systemd pointing at missing recovery assets.
 	return []agentServiceAsset{
@@ -195,6 +209,27 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	return content.Bytes(), nil
 }
 
+// renderRecoveryScript points the embedded recovery script at the binary layout
+// for this host.
+//
+// The embedded script contains the paths under the legacy root as literals, so
+// those literals are what gets replaced. Left alone on a host installed under
+// the host root, the script reads last-good from /usr/local, where there is no
+// binary, so a failed upgrade cannot be rolled back.
+func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
+	embedded := agentUpgradePathsUnder(hostroot.LegacyPath)
+	content := recoveryScriptContent
+
+	for oldPath, newPath := range map[string]string{
+		embedded.LastGoodPath: binaryPaths.LastGoodPath,
+		embedded.SignalPath:   binaryPaths.SignalPath,
+	} {
+		content = bytes.ReplaceAll(content, []byte(oldPath), []byte(newPath))
+	}
+
+	return content
+}
+
 // writeAgentServiceAssets writes the agent's service assets, but with keepExisting, only those
 // that are missing.
 func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
@@ -219,30 +254,75 @@ func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agent
 
 type uninstallServiceTask struct {
 	log *slog.Logger
-	// systemctl and paths are the host's; tests replace them.
+	// systemctl, unitDir and paths are the host's; tests replace them.
 	systemctl func(ctx context.Context, args ...string) error
+	unitDir   string
 	paths     []string
 }
 
-// UninstallService returns a task that disables, removes, and stops the systemd unit.
+// UninstallService returns a task that removes the first-boot unit, then
+// disables, removes, and stops the agent's systemd unit.
+//
+// The paths are resolved when the task is built. Nothing in reset changes the
+// host root, and ResetNode resolves the helper paths it removes the same way.
 func UninstallService(log *slog.Logger) phases.Task {
 	return &uninstallServiceTask{
 		log: log,
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
-		paths: []string{
-			filepath.Join(systemdSystemDir, ServiceUnitName),
-			filepath.Join(systemdSystemDir, recoveryServiceUnitName),
-			recoveryScriptPath,
-			defaultAgentUpgradePaths().SignalPath,
-		},
+		unitDir: systemdSystemDir,
+		paths:   uninstallPaths(),
 	}
+}
+
+// uninstallPaths returns the files UninstallService removes. The recovery
+// script is removed under the resolved host root and under the legacy root, so
+// that uninstalling does not depend on the host root having been migrated.
+func uninstallPaths() []string {
+	return uninstallPathsUnder(hostroot.Resolve(), hostroot.LegacyPath)
+}
+
+func uninstallPathsUnder(root, legacy string) []string {
+	paths := []string{
+		filepath.Join(systemdSystemDir, ServiceUnitName),
+		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+		recoveryScriptPathUnder(root),
+	}
+	if root != legacy {
+		paths = append(paths, recoveryScriptPathUnder(legacy))
+	}
+
+	return append(paths, agentUpgradePathsUnder(root).SignalPath)
+}
+
+// removeIfPresent removes a file and treats its absence as success.
+//
+// It checks first. On a read-only filesystem, such as /usr on Azure Container
+// Linux, unlinking a path that does not exist returns EROFS rather than ENOENT,
+// so the sweep of the legacy root would otherwise fail reset on a file that was
+// never there. Lstat so a dangling symlink still counts as present.
+func removeIfPresent(path string) error {
+	return removeIfPresentWith(path, os.Lstat, os.Remove)
+}
+
+func removeIfPresentWith(path string, lstat func(string) (os.FileInfo, error), remove func(string) error) error {
+	if _, err := lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+
+	return nil
 }
 
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
+	if err := removeFirstBootUnit(ctx, t.log, t.unitDir, t.systemctl); err != nil {
+		return err
+	}
 	// Stopping comes last. When the daemon uninstalls its own unit, for AgentReset or a node's
 	// deletion, stopping the unit stops the daemon, and nothing after the stop would run: the
 	// unit would stay enabled, behind a dangling .wants link, with systemd not reloaded. systemd
@@ -251,8 +331,8 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 		t.log.Warn("failed to disable service (may not be enabled)", "unit", ServiceUnitName, "error", err)
 	}
 	for _, path := range t.paths {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", path, err)
+		if err := removeIfPresent(path); err != nil {
+			return err
 		}
 	}
 	if err := t.systemctl(ctx, "daemon-reload"); err != nil {
@@ -264,4 +344,30 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
 	}
 	return nil
+}
+
+// removeFirstBootUnit disables, stops, and removes the first-boot bootstrap
+// unit, if the host was provisioned with one. On any other host the unit file
+// is absent and nothing is done.
+//
+// --now matters. The unit is a oneshot with RemainAfterExit=yes, so without a
+// stop it stays active after its file is gone, and starting it again after the
+// host is provisioned anew does nothing.
+func removeFirstBootUnit(
+	ctx context.Context,
+	log *slog.Logger,
+	unitDir string,
+	systemctl func(context.Context, ...string) error,
+) error {
+	unitPath := filepath.Join(unitDir, FirstBootUnitName)
+	if _, err := os.Lstat(unitPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	log.Info("removing first-boot bootstrap unit", "unit", FirstBootUnitName)
+	if err := systemctl(ctx, "disable", "--now", FirstBootUnitName); err != nil {
+		return fmt.Errorf("systemctl disable --now %s: %w", FirstBootUnitName, err)
+	}
+
+	return removeIfPresent(unitPath)
 }

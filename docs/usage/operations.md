@@ -13,9 +13,29 @@ This guide covers host inspection, current lifecycle operations, reset, and trou
 | Node restart | Unbounded `NodeReboot` MachineOperation | Restarts the active nspawn worker and waits for kubelet. |
 | Agent upgrade | Unbounded `AgentUpgrade` MachineOperation or direct candidate activation | Uses blue-green host binaries and restores the last-known-good binary when activation fails. |
 | Agent reset | Unbounded `AgentReset` MachineOperation | Removes local node runtime, marks the operation complete, and stops the daemon. |
-| Local reset | `aks-flex-node reset` or the uninstall script | Removes agent-managed host runtime. Cluster-side Node and Azure Machine cleanup are separate operations. |
+| Local reset | `/opt/unbounded/agent/bin/aks-flex-node reset` or the uninstall script | Removes agent-managed host runtime. Cluster-side Node and Azure Machine cleanup are separate operations. |
 
 AKS or the operator owns workload disruption decisions. Cordon and drain the Kubernetes Node before a disruptive operation when the surrounding control-plane workflow hasn't already done so.
+
+## Where the agent is installed
+
+The agent keeps its binaries and helpers under `/opt/unbounded/agent`: the `aks-flex-node` link in `/opt/unbounded/agent/bin`, along with the nspawn lifecycle helper, the blue/green binaries and recovery script in `/opt/unbounded/agent/lib/aks-flex-node`, and the LocalDNS helper in `/opt/unbounded/agent/libexec`. The config, state, logs, and systemd units stay under `/etc`, `/var`, and `/etc/systemd/system`.
+
+`/opt/unbounded/agent/bin` is not on the default `PATH`, so run the host commands in this guide as `/opt/unbounded/agent/bin/aks-flex-node`. Earlier releases left `aks-flex-node` in `/usr/local/bin`, which is on the default `PATH`, so scripts and runbooks that run it by name need updating. To run it by name, add `/opt/unbounded/agent/bin` to `PATH`, or, where `/usr/local` is writable, link it from `/usr/local/sbin`:
+
+```bash
+sudo ln -sfn /opt/unbounded/agent/bin/aks-flex-node /usr/local/sbin/aks-flex-node
+```
+
+Don't link it from `/usr/local/bin`. An earlier release takes an executable at `/usr/local/bin/aks-flex-node` as its own binary, so an AgentUpgrade refuses to run while one is there; see [Earlier releases](migration.md#earlier-releases).
+
+`/opt/unbounded/agent` is reserved for the agent. The rest of `/opt/unbounded` belongs to the host, for example for staged offline artifacts or OCI layouts: the agent creates `/opt/unbounded` with mode `0755` if it is missing, and otherwise never changes or removes it or anything else in it. Mount a volume at a subdirectory such as `/opt/unbounded/artifacts` rather than over `/opt/unbounded`, so it does not hide the agent.
+
+The filesystem that holds `/opt/unbounded/agent` must allow running programs, so `/opt` must not be mounted `noexec`. `aks-flex-node preflight` fails where it is, and `start` fails before it registers the machine if the agent cannot run from there.
+
+Where `/usr/local/bin` is writable, the install scripts put the binary there, as earlier releases were installed. The agent copies itself to `/opt/unbounded/agent/bin` when it starts, and removes the copy in `/usr/local/bin` once nothing it runs is under `/usr/local`. Where `/usr/local` is read-only, as on Azure Container Linux, the scripts install under `/opt/unbounded/agent` directly.
+
+Earlier releases installed these files under `/usr/local`. A host one of them installed moves to `/opt/unbounded/agent` when the agent is upgraded; see [Migrating to `/opt/unbounded/agent`](migration.md).
 
 ## Preflight
 
@@ -102,6 +122,8 @@ sudo /var/tmp/aks-flex-node-candidate agent-upgrade
 ```
 
 The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, and restore last-good on activation failure. If `aks-flex-node-agent.service` is active, direct activation restarts it, verifies the running executable, and synchronizes the active nspawn exec-credential binary. If the service is already inactive during reset/rejoin provisioning, activation preserves that stopped state; the subsequent bootstrap starts the service and worker.
+
+On Azure Container Linux, see [Azure Container Linux](azure-container-linux.md) for what differs.
 
 ## Managed node restart and reset
 

@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
 func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
@@ -68,6 +71,62 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 	}
 	if _, err := service.Preflight(t.Context(), "/unused/current"); err == nil {
 		t.Fatal("Preflight accepted an unknown service state")
+	}
+}
+
+// TestFlexDaemonActivationPreflightRejectsAMovedHostRoot covers an activation
+// whose layout was built before a daemon moved the host to the host root.
+// Preflight runs under the activation lock, so it is the first point that sees
+// the root as the activation will switch it.
+func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// root is where the layout was built, and now where the root
+		// resolves under the lock.
+		root, now     string
+		unfinished    bool
+		unfinishedErr error
+		wantMsg       string // empty: no error
+	}{
+		{name: "unchanged root", root: hostroot.LegacyPath, now: hostroot.LegacyPath},
+		{name: "root moved under the activation", root: hostroot.LegacyPath, now: hostroot.Path, wantMsg: "retry"},
+		// A move's first pass renamed its copy into place before the layout
+		// was built: the root is unchanged, but the files under the legacy
+		// root are still there.
+		{name: "unchanged root, move not finished", root: hostroot.Path, now: hostroot.Path, unfinished: true, wantMsg: "restart " + ServiceUnitName},
+		{name: "unchanged root, move state unknown", root: hostroot.Path, now: hostroot.Path, unfinishedErr: errors.New("permission denied"), wantMsg: "inspect the host root"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := testAgentUpgradePaths(t)
+			inspected := false
+			service := &flexDaemonActivationService{
+				log:            slog.Default(),
+				root:           tt.root,
+				resolveRoot:    func() string { return tt.now },
+				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
+				paths:          paths,
+				systemdDir:     t.TempDir(),
+				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
+				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+					inspected = true
+					return false, nil
+				},
+			}
+
+			_, err := service.Preflight(t.Context(), paths.CurrentPath)
+			if (err != nil) != (tt.wantMsg != "") {
+				t.Fatalf("Preflight() error = %v, want error %v", err, tt.wantMsg != "")
+			}
+			if err != nil && (inspected || !strings.Contains(err.Error(), tt.wantMsg)) {
+				t.Fatalf("Preflight() went on after refusing, or did not say %q: inspected = %v, error = %v", tt.wantMsg, inspected, err)
+			}
+		})
 	}
 }
 

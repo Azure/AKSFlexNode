@@ -219,6 +219,15 @@ load_config() {
   E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME="${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME:-${E2E_TARGET_AGENT_POOL_NAME}}"
   E2E_ARM_MACHINE_API_VERSION="${E2E_ARM_MACHINE_API_VERSION:-2025-10-02-preview}"
 
+  # The release the host-root-migration test installs first, from GitHub. It
+  # ends up in a download URL and a remote command line, so only a release tag
+  # is accepted, and a bad one fails here rather than late in a full run.
+  E2E_LEGACY_RELEASE="${E2E_LEGACY_RELEASE:-v0.2.0}"
+  if [[ ! "${E2E_LEGACY_RELEASE}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    log_error "E2E_LEGACY_RELEASE must be an AKS Flex Node release tag such as v0.2.0, got '${E2E_LEGACY_RELEASE}'"
+    return 1
+  fi
+
   # Kubelet resource reservation overrides applied to the token node config.
   # The remaining nodes keep the AKS-compatible defaults computed by the agent.
   E2E_KUBELET_MAX_PODS="${E2E_KUBELET_MAX_PODS:-58}"

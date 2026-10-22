@@ -63,7 +63,7 @@ func TestCommandValidatesMachine(t *testing.T) {
 	cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
 		factoryCalled = true
 		return &fakeLifecycle{}, nil
-	})
+	}, migrated)
 	cmd.SetArgs([]string{"pre-start", "not-a-machine"})
 
 	err := cmd.ExecuteContext(context.Background())
@@ -141,8 +141,10 @@ func TestCommandDispatchesOperations(t *testing.T) {
 	tests := []struct {
 		name      string
 		operation string
+		// Whether the phase migrates the host root first.
+		migrates bool
 	}{
-		{name: "pre start", operation: "pre-start"},
+		{name: "pre start", operation: "pre-start", migrates: true},
 		{name: "post start", operation: "post-start"},
 		{name: "reconcile", operation: "reconcile"},
 	}
@@ -152,8 +154,12 @@ func TestCommandDispatchesOperations(t *testing.T) {
 			t.Parallel()
 
 			fake := &fakeLifecycle{err: dispatchErr}
+			migrations := 0
 			cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
 				return fake, nil
+			}, func(*slog.Logger) error {
+				migrations++
+				return nil
 			})
 			cmd.SetArgs([]string{tt.operation, "kube2"})
 
@@ -167,6 +173,48 @@ func TestCommandDispatchesOperations(t *testing.T) {
 			if fake.machine != "kube2" {
 				t.Errorf("dispatched machine = %q, want kube2", fake.machine)
 			}
+			if got := migrations == 1; got != tt.migrates {
+				t.Errorf("migrated the host root %d times, want migrated = %v", migrations, tt.migrates)
+			}
 		})
 	}
 }
+
+// TestCommandStartsTheMachineWhenTheHostRootCannotBeMigrated: a host root that
+// cannot be migrated must not keep the kubelet machine from starting. pre-start
+// leaves its config as it is, and the other phases run as usual.
+func TestCommandStartsTheMachineWhenTheHostRootCannotBeMigrated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		operation string
+		wantRun   bool
+	}{
+		{operation: "pre-start"},
+		{operation: "post-start", wantRun: true},
+		{operation: "reconcile", wantRun: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeLifecycle{}
+			cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
+				return fake, nil
+			}, func(*slog.Logger) error {
+				return errors.New("the agent is installed under both roots")
+			})
+			cmd.SetArgs([]string{tt.operation, "kube1"})
+
+			if err := cmd.ExecuteContext(context.Background()); err != nil {
+				t.Fatalf("ExecuteContext() error = %v, want the machine to start", err)
+			}
+			if ran := fake.operation == tt.operation; ran != tt.wantRun {
+				t.Errorf("ran %s = %v, want %v", tt.operation, ran, tt.wantRun)
+			}
+		})
+	}
+}
+
+func migrated(*slog.Logger) error { return nil }
