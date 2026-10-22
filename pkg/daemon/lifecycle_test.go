@@ -755,13 +755,14 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		stopErr       error
-		flattenErr    error
-		stopEndsTask  bool
-		busyPath      bool
-		firstBootUnit bool
-		wantCalls     []string
-		wantErr       bool
+		stopErr           error
+		flattenErr        error
+		stopEndsTask      bool
+		busyPath          bool
+		firstBootUnit     bool
+		keepFirstBootUnit bool
+		wantCalls         []string
+		wantErr           bool
 	}{
 		"disables, removes, and reloads before stopping": {
 			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
@@ -783,6 +784,12 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 		"a failed flatten is a warning": {
 			flattenErr: errors.New("activation in progress"),
 			wantCalls:  []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
+		},
+		// In the agent's container, the unit of that name is the install's bootstrap unit.
+		"keeps the install's bootstrap unit in the container": {
+			firstBootUnit:     true,
+			keepFirstBootUnit: true,
+			wantCalls:         []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
 		},
 		"a failed stop is a warning": {
 			stopErr:   errors.New("unit not loaded"),
@@ -840,11 +847,16 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 					calls = append(calls, "flatten")
 					return tc.flattenErr
 				},
+				keepFirstBootUnit: tc.keepFirstBootUnit,
 				systemctl: func(_ context.Context, args ...string) error {
 					calls = append(calls, strings.Join(args, " "))
 					switch args[0] {
 					case "daemon-reload":
-						for _, path := range append([]string{firstBootUnit}, paths...) {
+						removed := paths
+						if !tc.keepFirstBootUnit {
+							removed = append([]string{firstBootUnit}, paths...)
+						}
+						for _, path := range removed {
 							if _, err := os.Stat(path); err == nil {
 								t.Errorf("%s is still there when systemd reloads", path)
 							}
@@ -865,6 +877,9 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 			}
 			if !slices.Equal(calls, tc.wantCalls) {
 				t.Errorf("systemctl calls = %q, want %q", calls, tc.wantCalls)
+			}
+			if _, err := os.Stat(firstBootUnit); tc.keepFirstBootUnit && err != nil {
+				t.Errorf("the first-boot unit is gone: %v", err)
 			}
 		})
 	}
