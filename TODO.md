@@ -184,9 +184,13 @@ image.
       fix, such as a bad `bootstrap.env`. On ACL that doesn't hold up the
       boot: with a stand-in unit with the same settings that always fails, the
       host reached `multi-user.target` and `running` while the unit kept
-      retrying. #383 asks `bootstrap.sh` for a distinct exit code for such
-      failures, for `RestartPreventExitStatus=` in `main`'s first-boot unit;
-      once it lands, give this bootstrap unit the same.
+      retrying. #407, for #383, has `bootstrap.sh` exit with 78 for such
+      failures, and a `start` that failed after changing the host, with
+      `RestartPreventExitStatus=78` in `main`'s first-boot unit; once it
+      lands, give this bootstrap unit the same. Its condition on the agent's
+      enabled unit doesn't end retries either, as its comment says it does:
+      systemd 255 doesn't check conditions again for a unit's own restarts, as
+      a stand-in on ACL showed. Fix the comment then, too.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
       cluster, with pods in machines running as `spc_t` and as `kernel_t`.
