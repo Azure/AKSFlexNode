@@ -21,7 +21,7 @@ fi
 # install the agent as on a host, or its config where the agent's unit doesn't
 # look, or download an agent rather than run the image's.
 reserved=" AKS_FLEX_NODE_CONTAINERIZED AKS_FLEX_NODE_CONFIG_PATH AKS_FLEX_NODE_INSTALL_DIR"
-reserved+=" AKS_FLEX_NODE_USE_INSTALLED_AGENT AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_AGENT_VERSION"
+reserved+=" AKS_FLEX_NODE_INSTALLED_AGENT AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_AGENT_VERSION"
 reserved+=" AKS_FLEX_NODE_AGENT_SHA256 "
 number=0
 while IFS= read -r line || [[ -n $line ]]; do
@@ -39,4 +39,4 @@ while IFS= read -r line || [[ -n $line ]]; do
         echo "aks-flex-node-bootstrap: ignoring line $number of $inputs, which isn't AKS_FLEX_NODE_NAME=value" >&2
     fi
 done <"$inputs"
-exec /opt/aks-flex-node/bin/bootstrap.sh --use-installed-agent --install-dir /opt/aks-flex-node/bin "$@"
+exec /opt/aks-flex-node/bin/bootstrap.sh --installed-agent /opt/aks-flex-node/bin/aks-flex-node "$@"
