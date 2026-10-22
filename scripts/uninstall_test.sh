@@ -107,28 +107,84 @@ rm "$HOST_ROOT"
 # A second run over a clean host succeeds.
 remove_binary >/dev/null || fail "remove_binary is not idempotent"
 
-# Without a binary to run reset, run_reset removes the units itself, including the first-boot unit
-# from an Ignition install.
+# Whatever reset did, remove_units removes the agent's units, including the first-boot unit from an
+# Ignition install, and the units that run the agent library's helpers.
 SYSTEMCTL_CALLS="$WORK_DIR/systemctl-calls"
 systemctl() { printf '%s\n' "$*" >>"$SYSTEMCTL_CALLS"; }
-INSTALL_DIR="$WORK_DIR/no-binary/bin"
 SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
 RECOVERY_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-recovery.service"
 FIRST_BOOT_UNIT_PATH="$WORK_DIR/systemd/$FIRST_BOOT_UNIT"
-mkdir -p "$WORK_DIR/systemd"
-touch "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH"
+HELPER_UNIT_DIR="$WORK_DIR/systemd"
 
+# populate_units lays out the units reset would have removed: the agent's, the first-boot unit, and
+# the helpers' units, with a drop-in of someone else's beside a machine's.
+populate_units() {
+    mkdir -p "$HELPER_UNIT_DIR/systemd-nspawn@kube1.service.d" "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d"
+    touch "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH" \
+        "$HELPER_UNIT_DIR/$LOCALDNS_UNIT" \
+        "$HELPER_UNIT_DIR/systemd-nspawn@kube1.service.d/override.conf" \
+        "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/override.conf" \
+        "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/10-someone-else.conf" \
+        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube1.service" \
+        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube2.service"
+}
+
+assert_units_removed() {
+    local unit_path
+    for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH" \
+        "$HELPER_UNIT_DIR/$LOCALDNS_UNIT" \
+        "$HELPER_UNIT_DIR/systemd-nspawn@kube1.service.d" \
+        "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/override.conf" \
+        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube1.service" \
+        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube2.service"; do
+        [[ ! -e "$unit_path" ]] || fail "unit was left: $unit_path"
+    done
+    [[ -f "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/10-someone-else.conf" ]] ||
+        fail "a machine's drop-in that isn't the agent's was removed"
+    grep -Fxq "disable --now aks-flex-node-bootstrap.service" "$SYSTEMCTL_CALLS" ||
+        fail "first-boot unit was not stopped: $(tr '\n' ';' <"$SYSTEMCTL_CALLS")"
+    grep -Fxq "disable --now $LOCALDNS_UNIT" "$SYSTEMCTL_CALLS" ||
+        fail "the LocalDNS unit was not stopped: $(tr '\n' ';' <"$SYSTEMCTL_CALLS")"
+}
+
+# A reset that fails leaves the units behind, enabled and naming binaries that are about to go.
+mkdir -p "$WORK_DIR/failing-reset/bin"
+printf '#!/bin/sh\nexit 1\n' > "$WORK_DIR/failing-reset/bin/aks-flex-node"
+chmod 0755 "$WORK_DIR/failing-reset/bin/aks-flex-node"
+INSTALL_DIR="$WORK_DIR/failing-reset/bin"
+: >"$SYSTEMCTL_CALLS"
+populate_units
 run_reset >/dev/null
-for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH" "$FIRST_BOOT_UNIT_PATH"; do
-    [[ ! -e "$unit_path" ]] || fail "unit was left: $unit_path"
+[[ "$RESET_RESULT" == failed ]] || fail "a failed reset was recorded as $RESET_RESULT"
+remove_units >/dev/null
+assert_units_removed
+
+# Without a binary to run reset, the same units go, and the helpers under both roots with the
+# binaries, so the host root goes too.
+INSTALL_DIR="$WORK_DIR/no-binary/bin"
+: >"$SYSTEMCTL_CALLS"
+populate_units
+run_reset >/dev/null
+[[ "$RESET_RESULT" == skipped ]] || fail "a reset that didn't run was recorded as $RESET_RESULT"
+remove_units >/dev/null
+assert_units_removed
+for root in "$HOST_ROOT" "$LEGACY_ROOT"; do
+    mkdir -p "$root/bin" "$root/libexec"
+    touch "$root/bin/unbounded-agent-nspawn-lifecycle" "$root/libexec/unbounded-localdns-network"
 done
-grep -Fxq "disable --now aks-flex-node-bootstrap.service" "$SYSTEMCTL_CALLS" ||
-    fail "first-boot unit was not stopped: $(tr '\n' ';' <"$SYSTEMCTL_CALLS")"
+HOST_ROOT_KEPT=false
+remove_binary >/dev/null
+for root in "$HOST_ROOT" "$LEGACY_ROOT"; do
+    [[ ! -e "$root/bin/unbounded-agent-nspawn-lifecycle" && ! -e "$root/libexec/unbounded-localdns-network" ]] ||
+        fail "a helper was left under $root"
+done
+[[ ! -e "$HOST_ROOT" ]] || fail "the helpers kept the host root: $(find "$HOST_ROOT" | tr '\n' ' ')"
+[[ -d "$HOST_ROOT_PARENT" ]] || fail "the host root's parent was removed"
 
 # A host not provisioned by Ignition has no first-boot unit, and nothing is done about one.
 : >"$SYSTEMCTL_CALLS"
 touch "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"
-output=$(run_reset)
+output=$(remove_units)
 for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
     [[ ! -e "$unit_path" ]] || fail "unit was left: $unit_path"
 done
@@ -136,5 +192,20 @@ if grep -q aks-flex-node-bootstrap "$SYSTEMCTL_CALLS" || grep -q aks-flex-node-b
     fail "a host without the first-boot unit was told about it: $(tr '\n' ';' <"$SYSTEMCTL_CALLS") $output"
 fi
 unset -f systemctl
+
+# The completion message claims the host's pre-installation state only when reset ran and the host
+# root went.
+RESET_RESULT=completed HOST_ROOT_KEPT=false
+grep -q "pre-installation state" <<<"$(show_completion_message)" ||
+    fail "a complete uninstall didn't say so"
+for state in "skipped false" "failed false" "completed true"; do
+    read -r RESET_RESULT HOST_ROOT_KEPT <<<"$state"
+    output=$(show_completion_message)
+    if grep -q "pre-installation state" <<<"$output"; then
+        fail "reset $RESET_RESULT, host root kept $HOST_ROOT_KEPT, claimed the pre-installation state: $output"
+    fi
+done
+[[ "$(RESET_RESULT=completed HOST_ROOT_KEPT=true show_completion_message)" == *"$HOST_ROOT, which still holds files"* ]] ||
+    fail "a kept host root was not reported"
 
 printf 'uninstall_test: ok\n'
