@@ -39,29 +39,37 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// logs unless the process explicitly configures its global logger.
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
 
+	// In its container the agent keeps nothing on the host to migrate, install,
+	// or remove: the image carries it.
+	containerized := Containerized()
+
 	// After an AgentUpgrade from a release that predates the host root, this is
 	// the first time the new agent runs on the host.
-	if err := MigrateHostRoot(log); err != nil {
-		return err
+	if !containerized {
+		if err := MigrateHostRoot(log); err != nil {
+			return err
+		}
 	}
 
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup,
 	// except while an AgentUpgrade is pending; see ensureDaemonServiceAssets.
-	if !Containerized() {
+	if !containerized {
 		if err := InstallHostBinary(ctx, log); err != nil {
 			return err
 		}
 	}
-	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, Containerized())
+	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, containerized)
 	if err != nil {
 		return err
 	}
 	// After the units are converged, so nothing names the copy it removes. While
 	// an AgentUpgrade is pending they are the last-good version's, which name it
 	// only on a host not yet moved off /usr/local, where nothing is removed.
-	if err := removeDaemonLegacySeed(log); err != nil {
-		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
+	if !containerized {
+		if err := removeDaemonLegacySeed(log); err != nil {
+			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
+		}
 	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
@@ -102,7 +110,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	var upgrades agentUpgrader
-	if Containerized() {
+	if containerized {
 		convergence := newContainerAgentConvergence(log, operator)
 		held, convergeErr := convergence.converge(ctx)
 		if convergeErr != nil {
