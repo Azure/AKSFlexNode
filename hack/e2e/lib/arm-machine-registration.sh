@@ -335,6 +335,8 @@ _reset_previous_arm_registration_host() {
   local machine_name="$3"
 
   log_info "Resetting the MSI host state from the previous ARM registration attempt..."
+  # That attempt may have stopped before start copied the binary under the host
+  # root, which leaves only the copy install.sh put in /usr/local/bin.
   remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE' || return 1
 set -euo pipefail
 
