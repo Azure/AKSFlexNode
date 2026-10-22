@@ -155,7 +155,6 @@ hack/acl-container/harness.py ssh sudo systemctl start aks-flex-node-bootstrap
 | `aks-flex-node-agent.service` | Runs the daemon in the container `aks-flex-node`. `start` installs it, and reset removes it. |
 | `aks-flex-node-agent-recovery.service` | Restores the last good image when an upgraded agent fails. `start` installs it with the agent's unit. |
 | `aks-flex-node-reset.service` | Runs `aks-flex-node reset` in a short-lived container |
-| `usr-local.mount` | A writable overlay on `/usr/local`, for the nspawn lifecycle helper |
 
 | File | |
 |---|---|
@@ -321,7 +320,7 @@ The subnet, interface names, and ports differ from the other harnesses in
 | File | |
 |---|---|
 | `harness.py` | The harness |
-| `agent-container.bu` | Butane config that installs the agent: the settings, the bootstrap and reset units, and the `/usr/local` overlay |
+| `agent-container.bu` | Butane config that installs the agent: the settings, and the bootstrap and reset units |
 | `image/Containerfile` | The agent image |
 | `image/bin/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
 | `image/bin/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
