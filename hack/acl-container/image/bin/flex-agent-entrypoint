@@ -25,7 +25,7 @@ host_dirs=(
     /var/lib/unbounded
     /var/log/aks-flex-node
     /run
-    /usr/local
+    /opt/unbounded
 )
 
 log() { echo "flex-agent: $*"; }
