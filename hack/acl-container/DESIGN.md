@@ -19,9 +19,10 @@ On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
   runs `main`'s `scripts/bootstrap.sh` in a container of the agent's image,
   which joins the node: it's Ready, runs pods, and serves `kubectl logs`.
 - The agent's daemon runs in a container of its image, from
-  `aks-flex-node-agent.service`, `main`'s unit name, which `start` installs. No
-  binary of the agent is in `/usr/local/bin` or `/usr/local/lib/aks-flex-node`,
-  where `main` installs it.
+  `aks-flex-node-agent.service`, `main`'s unit name, which `start` installs.
+  Apart from the nspawn lifecycle helper, no binary of the agent is under
+  `/opt/unbounded/agent`, where `main` installs it, or `/usr/local`, where
+  earlier releases did.
 - Repave, `NodeReboot`, and `AgentUpgrade` work as on a host. An `AgentUpgrade`
   names an image by digest: a good one is selected, a broken one rolls back to
   the last good image, one named by tag alone is rejected, and images the agent
@@ -94,7 +95,7 @@ flowchart TB
 
 | | `main` on Ubuntu | ACL |
 |---|---|---|
-| Install | `bootstrap.sh` downloads a release archive and installs the agent in `/usr/local/bin` | Ignition writes the settings file naming the image, and the bootstrap and reset units |
+| Install | `bootstrap.sh` downloads a release archive, and the agent installs itself under `/opt/unbounded/agent` | Ignition writes the settings file naming the image, and the bootstrap and reset units |
 | Bootstrap's inputs | `bootstrap.sh`'s flags and `AKS_FLEX_NODE_*` variables | The same variables, in `/etc/aks-flex-node/bootstrap.env`, and optionally an image in `/etc/aks-flex-node/agent-image.env` |
 | Bootstrap | `bootstrap.sh` renders the config, runs preflight, and runs `start` | The bootstrap unit runs the same `bootstrap.sh` in a container, with the agent in the image |
 | `start` | Sets up the host, then installs and starts `aks-flex-node-agent.service` and its recovery unit | The same, except installing packages; the units run containers |
@@ -160,8 +161,7 @@ It retries a bootstrap that fails, or finds no image, such as while the network
 comes up, for as long as it takes, backing off from 10 seconds to 5 minutes
 between tries. A reset first stops the bootstrap unit, ending a bootstrap in
 progress or waiting to retry, and a bootstrap started during a reset waits for
-it, so the two never run at once. The units that need `/usr/local` require its
-mount. Each unit first waits for containerd to answer, since
+it, so the two never run at once. Each unit first waits for containerd to answer, since
 `containerd.service` on ACL reports started a moment before it does.
 
 ### The image
@@ -175,8 +175,8 @@ mount. Each unit first waits for containerd to answer, since
 - `main`'s `scripts/bootstrap.sh`, and the tools it requires
 - the scripts in [`image/bin`](image/bin)
 
-They're in `/opt/aks-flex-node/bin`, since the container mounts the host's
-`/usr/local`, which is off the image's `PATH`. Both base images are pinned by
+They're in `/opt/aks-flex-node/bin`, apart from the host's `/opt/unbounded`,
+which the container mounts, and which is off the image's `PATH`. Both base images are pinned by
 digest. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It holds no
 development tools: only what the agent's containers run. It's about 180 MB,
 in six layers.
@@ -192,7 +192,7 @@ Every container runs [`flex-agent-entrypoint`](image/bin/flex-agent-entrypoint)
    and as slaves, so mounts the host makes under them later reach the
    container: `/etc/systemd`, `/etc/sysctl.d`, `/etc/modules-load.d`,
    `/etc/aks-flex-node`, `/etc/unbounded`, `/var/lib/machines`,
-   `/var/lib/unbounded`, `/var/log/aks-flex-node`, `/run`, and `/usr/local`
+   `/var/lib/unbounded`, `/var/log/aks-flex-node`, `/run`, and `/opt/unbounded`
 3. mounts the install's settings read-only at their own path, for the image the
    install names
 4. logs the agent's version, the host, its SELinux context, and its PID
@@ -242,21 +242,23 @@ nothing sets it, every switch takes `main`'s path:
 | `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
 | An `AgentUpgrade`'s parameters | `image` is invalid | `downloadURL` is invalid |
-| `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The kubelet's credential plugin, `/usr/local/bin/aks-flex-node`, where the host has the agent too | The image's binary, which is running: the kubelet's path is the host's, which has no agent |
+| `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The host's agent, `config.HostBinaryPath` | The image's binary, which is running: the host has no agent |
+| The host root's steps, in `start` and the daemon: migrating, preparing, and populating `/opt/unbounded/agent`, the move from `/usr/local`, and removing the binary install scripts left there | Run | Skipped: the host keeps nothing of the agent |
+| Direct activation, `agent-upgrade` | Switches the binary layout | Refused: an `AgentUpgrade` names an image |
 
 These changes apply everywhere, and leave a host's behavior as it was:
 
 - `RemoveRuntimeDirs`, which reset uses, empties a directory it can't remove
   because it's a mount point, as the agent's directories are in its container.
   A host's never are.
-- `bootstrap.sh --use-installed-agent` runs the agent already in
-  `--install-dir` instead of downloading one. It's off by default.
+- `bootstrap.sh --installed-agent PATH` runs the agent at `PATH` instead of
+  installing one. It's off by default.
 - The handoff between an upgrading daemon and its successor goes through an
   interface, with the host's executor as one implementation and the container's
   as the other. The host's behaves as before.
-- `kubeauth.BootstrapRESTConfigWithPlugin` and
-  `aksmachine.MachineClientOptions.CredentialPlugin` take the agent's own
-  clients' credential plugin. Empty, as on a host, it's the kubelet's.
+- `aksmachine.MachineClientOptions.CredentialPlugin` names the credential
+  plugin `start`'s Machine client runs. Empty, it's the host's agent, as
+  before.
 - The MachineOperation reconciler validates an `AgentUpgrade`'s parameters
   before acting on it. On a host, an `image` fails it as `InvalidParameters`.
 
@@ -265,7 +267,8 @@ These changes apply everywhere, and leave a host's behavior as it was:
 The bootstrap unit pulls the image, and runs the image's
 [`aks-flex-node-bootstrap`](image/bin/aks-flex-node-bootstrap). That reads
 `/etc/aks-flex-node/bootstrap.env`, one `AKS_FLEX_NODE_*=value` a line, not
-evaluated as shell, and runs `bootstrap.sh --use-installed-agent` with them.
+evaluated as shell, and runs `bootstrap.sh --installed-agent` with them, naming
+the image's agent.
 It ignores, and logs by line number, the variables the image sets: whether the
 agent is containerized, where it and its config go, and which agent to
 download. Secrets, such as a bootstrap token, go in a base config of their own,
@@ -377,9 +380,9 @@ before it stops the unit. Stopping the unit stops its container's scope too, as
 it's bound to the unit, so `aks-flex-node reset` resets the node only once the
 daemon has stopped, even one that doesn't stop on `SIGTERM`.
 
-Afterwards, nothing of the agent runs, as on a host. The settings, the
-bootstrap and reset units, and the `/usr/local` overlay stay, so new inputs
-and a start of the bootstrap unit join the node again.
+Afterwards, nothing of the agent runs, as on a host. The settings, and the
+bootstrap and reset units, stay, so new inputs and a start of the bootstrap
+unit join the node again.
 
 ## Machines belong to the host
 
@@ -399,13 +402,13 @@ touch the machines, and the check confirms that a machine's leader process is
 unchanged across a restart of the container.
 
 Each machine's unit runs the nspawn lifecycle helper,
-`/usr/local/bin/unbounded-agent-nspawn-lifecycle`, from the host's systemd at
-every start of the machine. The unbounded library installs it there as a copy
-of the agent's binary, so it's the one binary of the agent left on the host.
-ACL's `/usr/local` is read-only, so the install mounts a writable overlay on
-it, backed by `/var/lib/aks-flex-node/usr-local`. Running the hooks in
-containers of the image needs a change to unbounded; see
-[TODO.md](../../TODO.md).
+`/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle`, from the host's
+systemd at every start of the machine. The unbounded library installs it there
+as a copy of the agent's binary, so it's the one binary of the agent left on
+the host. `/opt` is on ACL's writable root filesystem, and the container mounts
+the host's `/opt/unbounded`, so the copy lands on the host.
+Azure/unbounded#967 lets the agent supply the hooks' commands instead, to run
+them in containers of the image; see [TODO.md](../../TODO.md).
 
 ## SELinux
 
