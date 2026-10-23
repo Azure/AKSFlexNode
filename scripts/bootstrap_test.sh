@@ -93,6 +93,14 @@ fi
 for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
+case "${1:-}" in
+    start) exit "${BOOTSTRAP_TEST_START_STATUS:-0}" ;;
+    preflight)
+        if [[ " $* " == *" --output json "* ]]; then
+            printf '%s\n' "${BOOTSTRAP_TEST_PREFLIGHT_JSON:-}"
+        fi
+        ;;
+esac
 AGENT
     chmod 0755 "$dir/aks-flex-node-linux-$ARCH"
     tar -C "$dir" -czf "$dir/agent.tar.gz" "aks-flex-node-linux-$ARCH"
@@ -220,6 +228,60 @@ if BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-link-calls" \
 fi
 grep -q 'client-secret file must not be a symlink' "$WORK_DIR/sp-link.log" || \
     fail "symlink client-secret rejection was not reported"
+
+# bootstrap_status NAME [VARIABLE=value...] -- [option...] runs bootstrap with the test agent, and
+# prints its exit status.
+bootstrap_status() {
+    local name="$1" status=0
+    local variables=()
+    shift
+    while [[ "$1" != -- ]]; do
+        variables+=("$1")
+        shift
+    done
+    shift
+    env BOOTSTRAP_TEST_CALLS="$WORK_DIR/$name-calls" \
+        AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+        AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        "${variables[@]}" \
+        bash "$SCRIPT" --config-path "$WORK_DIR/$name-etc/config.json" "$@" >"$WORK_DIR/$name.log" 2>&1 ||
+        status=$?
+    printf '%s' "$status"
+}
+
+# A failure that running bootstrap again, unchanged, can't fix exits with 78, which the first-boot
+# unit doesn't retry: a setting that can't work.
+for setting in "auth:AKS_FLEX_NODE_AUTH=kerberos" \
+    "sha:AKS_FLEX_NODE_AGENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000" \
+    "override:AKS_FLEX_NODE_CONFIG_OVERRIDES=[]"; do
+    status=$(bootstrap_status "setting-${setting%%:*}" "${setting#*:}" --)
+    [[ "$status" == 78 ]] || fail "bootstrap with ${setting#*:} exited $status, want 78: $(cat "$WORK_DIR/setting-${setting%%:*}.log")"
+    [[ ! -s "$WORK_DIR/setting-${setting%%:*}-calls" ]] ||
+        fail "bootstrap with ${setting#*:} ran the agent: $(cat "$WORK_DIR/setting-${setting%%:*}-calls")"
+done
+status=$(bootstrap_status setting-option -- --no-such-option)
+[[ "$status" == 78 ]] || fail "bootstrap with an unknown option exited $status, want 78"
+
+# A download that fails may work on a retry.
+status=$(bootstrap_status download AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" --)
+[[ "$status" == 1 ]] || fail "bootstrap with a failed download exited $status, want 1"
+
+# A start that fails after changing the host can't succeed on a retry either: the retry's preflight
+# refuses the deployment it left. Bootstrap asks preflight, and exits with 78 only when it does.
+deployment_left='{"status":"error","checks":[{"name":"existing-deployment","target":"/var/lib/machines/kube1","severity":"error","message":"existing node deployment artifact detected","ignored":false}]}'
+status=$(bootstrap_status start-left BOOTSTRAP_TEST_START_STATUS=7 BOOTSTRAP_TEST_PREFLIGHT_JSON="$deployment_left" --)
+[[ "$status" == 78 ]] || fail "a start that left a deployment exited $status, want 78: $(cat "$WORK_DIR/start-left.log")"
+grep -Fx "preflight --config $WORK_DIR/start-left-etc/config.json --output json" "$WORK_DIR/start-left-calls" >/dev/null ||
+    fail "bootstrap did not ask preflight about a failed start: $(cat "$WORK_DIR/start-left-calls")"
+grep -q "aks-flex-node reset" "$WORK_DIR/start-left.log" || fail "a start that left a deployment didn't say to reset"
+
+# Otherwise start's own status stands, and the unit retries: when preflight reports no deployment,
+# whatever else fails, or when it can't tell.
+no_deployment='{"status":"error","checks":[{"name":"existing-deployment","target":"","severity":"ok","message":"no existing node deployment was detected","ignored":false},{"name":"api-server-reachable","target":"api","severity":"error","message":"unreachable","ignored":false}]}'
+for report in "$no_deployment" ""; do
+    status=$(bootstrap_status start-clean BOOTSTRAP_TEST_START_STATUS=7 BOOTSTRAP_TEST_PREFLIGHT_JSON="$report" --)
+    [[ "$status" == 7 ]] || fail "a start that left no deployment exited $status, want start's 7, with preflight report '$report'"
+done
 
 command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
 cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'

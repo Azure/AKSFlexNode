@@ -31,6 +31,16 @@ RECOVERY_UNIT_PATH="/etc/systemd/system/aks-flex-node-agent-recovery.service"
 # go with the config directory. Other hosts don't have it.
 FIRST_BOOT_UNIT="aks-flex-node-bootstrap.service"
 FIRST_BOOT_UNIT_PATH="/etc/systemd/system/$FIRST_BOOT_UNIT"
+# The agent library's helpers, under either root, and the units that run them: LocalDNS's, and each
+# machine's drop-in and configuration unit. Reset removes them; see remove_helper_units.
+HELPER_UNIT_DIR="/etc/systemd/system"
+LOCALDNS_UNIT="unbounded-localdns-network.service"
+MACHINES=(kube1 kube2)
+HELPER_BINARIES=("bin/unbounded-agent-nspawn-lifecycle" "libexec/unbounded-localdns-network")
+
+# What happened to reset, and whether the host root was kept, for the completion message.
+RESET_RESULT=""
+HOST_ROOT_KEPT=false
 
 # Functions
 log_info() {
@@ -96,37 +106,72 @@ run_reset() {
     if [[ ! -f "$INSTALL_DIR/aks-flex-node" ]]; then
         log_warning "AKS Flex Node binary not found at $INSTALL_DIR/aks-flex-node"
         log_info "Skipping reset - binary may already be removed"
-        log_info "Removing systemd service directly..."
-
-        systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
-        systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
-
-        for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
-            if [[ -e "$unit_path" ]]; then
-                rm -f "$unit_path"
-                log_success "Removed systemd unit: $unit_path"
-            else
-                log_info "Systemd unit not found: $unit_path"
-            fi
-        done
-
-        # Only a host provisioned by Ignition has it. --now as well: the first-boot unit stays
-        # active after it runs, and a later provisioning could not start it again.
-        if [[ -e "$FIRST_BOOT_UNIT_PATH" || -L "$FIRST_BOOT_UNIT_PATH" ]]; then
-            systemctl disable --now "$FIRST_BOOT_UNIT" 2>/dev/null || true
-            rm -f "$FIRST_BOOT_UNIT_PATH"
-            log_success "Removed systemd unit: $FIRST_BOOT_UNIT_PATH"
-        fi
-
-        systemctl daemon-reload 2>/dev/null || true
+        RESET_RESULT=skipped
         return 0
     fi
 
-    env TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" reset 2>&1 || {
+    if env TERM="${TERM:-dumb}" "$INSTALL_DIR/aks-flex-node" reset 2>&1; then
+        RESET_RESULT=completed
+        log_success "Reset completed"
+    else
+        RESET_RESULT=failed
         log_warning "Reset failed - this may be expected if resources are already cleaned up"
-    }
+    fi
+}
 
-    log_success "Reset completed"
+# remove_units removes the agent's units, and those that run the agent library's helpers, whatever
+# reset did. Reset removes them itself, but when it failed or didn't run, they would be left
+# enabled, running binaries that are about to be removed, and failing at every boot.
+remove_units() {
+    log_info "Removing systemd units..."
+
+    systemctl stop "$SERVICE_UNIT" 2>/dev/null || true
+    systemctl disable "$SERVICE_UNIT" 2>/dev/null || true
+
+    for unit_path in "$SERVICE_UNIT_PATH" "$RECOVERY_UNIT_PATH"; do
+        if [[ -e "$unit_path" ]]; then
+            rm -f "$unit_path"
+            log_success "Removed systemd unit: $unit_path"
+        else
+            log_info "Systemd unit not found: $unit_path"
+        fi
+    done
+
+    # Only a host provisioned by Ignition has it. --now as well: the first-boot unit stays
+    # active after it runs, and a later provisioning could not start it again.
+    if [[ -e "$FIRST_BOOT_UNIT_PATH" || -L "$FIRST_BOOT_UNIT_PATH" ]]; then
+        systemctl disable --now "$FIRST_BOOT_UNIT" 2>/dev/null || true
+        rm -f "$FIRST_BOOT_UNIT_PATH"
+        log_success "Removed systemd unit: $FIRST_BOOT_UNIT_PATH"
+    fi
+
+    remove_helper_units
+
+    systemctl daemon-reload 2>/dev/null || true
+}
+
+# remove_helper_units removes the units that run the agent library's helpers, as reset does: the
+# LocalDNS unit, and each machine's drop-in and the configuration unit it requires. Other drop-ins
+# for a machine aren't the agent's, and stay. The machines themselves are left as they are.
+remove_helper_units() {
+    local machine unit_path drop_in_dir
+
+    if [[ -e "$HELPER_UNIT_DIR/$LOCALDNS_UNIT" || -L "$HELPER_UNIT_DIR/$LOCALDNS_UNIT" ]]; then
+        systemctl disable --now "$LOCALDNS_UNIT" 2>/dev/null || true
+        rm -f "$HELPER_UNIT_DIR/$LOCALDNS_UNIT"
+        log_success "Removed systemd unit: $HELPER_UNIT_DIR/$LOCALDNS_UNIT"
+    fi
+
+    for machine in "${MACHINES[@]}"; do
+        drop_in_dir="$HELPER_UNIT_DIR/systemd-nspawn@$machine.service.d"
+        for unit_path in "$drop_in_dir/override.conf" "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@$machine.service"; do
+            if [[ -e "$unit_path" || -L "$unit_path" ]]; then
+                rm -f "$unit_path"
+                log_success "Removed systemd unit: $unit_path"
+            fi
+        done
+        rmdir -- "$drop_in_dir" 2>/dev/null || true
+    done
 }
 
 remove_directories() {
@@ -145,7 +190,7 @@ remove_directories() {
 }
 
 remove_binary() {
-    local root
+    local root helper
 
     log_info "Removing binaries..."
 
@@ -162,6 +207,15 @@ remove_binary() {
             rm -rf "$root/lib/aks-flex-node"
             log_success "Removed managed binaries: $root/lib/aks-flex-node"
         fi
+
+        # Reset removes these too, but not when it failed or didn't run, and they would keep the
+        # host root.
+        for helper in "${HELPER_BINARIES[@]}"; do
+            if [[ -e "$root/$helper" || -L "$root/$helper" ]]; then
+                rm -f "$root/$helper"
+                log_success "Removed helper: $root/$helper"
+            fi
+        done
     done
 
     remove_host_root
@@ -197,6 +251,7 @@ remove_host_root() {
         rmdir -- "$dir" 2>/dev/null || true
     done
     if [[ -e "$HOST_ROOT" ]]; then
+        HOST_ROOT_KEPT=true
         log_info "Kept $HOST_ROOT: it still holds files"
     else
         log_success "Removed directory: $HOST_ROOT"
@@ -209,15 +264,30 @@ show_completion_message() {
     echo -e "${YELLOW}What was removed:${NC}"
     echo "✅ AKS Flex Node binary"
     echo "✅ Systemd service configuration"
-    echo "✅ Service user and permissions"
     echo "✅ Configuration and data directories"
     echo "✅ Log files"
-    echo "✅ Host network state"
+    if [[ "$RESET_RESULT" == completed ]]; then
+        echo "✅ Host network state"
+    fi
     echo ""
-    echo -e "${GREEN}Complete uninstallation finished!${NC}"
+    if [[ "$RESET_RESULT" == completed && "$HOST_ROOT_KEPT" == false ]]; then
+        echo -e "${GREEN}Complete uninstallation finished!${NC}"
+        echo ""
+        echo "The system has been returned to its pre-installation state. Anything the host staged under"
+        echo "$(dirname "$HOST_ROOT") was left there."
+        return 0
+    fi
+
+    echo -e "${YELLOW}What may be left:${NC}"
+    case "$RESET_RESULT" in
+        failed) echo "⚠️  The node's machines and host network state: reset failed" ;;
+        skipped) echo "⚠️  The node's machines and host network state: reset didn't run, as the binary was missing" ;;
+    esac
+    if [[ "$HOST_ROOT_KEPT" == true ]]; then
+        echo "⚠️  $HOST_ROOT, which still holds files that aren't the agent's"
+    fi
     echo ""
-    echo "The system has been returned to its pre-installation state. Anything the host staged under"
-    echo "$(dirname "$HOST_ROOT") was left there."
+    echo "Anything the host staged under $(dirname "$HOST_ROOT") was left there."
 }
 
 main() {
@@ -237,6 +307,7 @@ main() {
 
     # Uninstall components in reverse order of installation
     run_reset
+    remove_units
     remove_directories
     remove_binary
 

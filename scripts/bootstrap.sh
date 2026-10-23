@@ -87,6 +87,17 @@ fatal() {
     exit 1
 }
 
+# The exit status of a failure that running bootstrap again, unchanged, can't fix: a setting that
+# can't work, or a start that failed after changing the host, which preflight then refuses until
+# the node is reset. The first-boot unit, scripts/aks-flex-node-bootstrap.bu, doesn't retry it.
+# EX_CONFIG in sysexits.h; nothing else this script runs exits with it unchecked.
+readonly PERMANENT_FAILURE_STATUS=78
+
+fatal_permanent() {
+    printf 'bootstrap: error: %s\n' "$*" >&2
+    exit "$PERMANENT_FAILURE_STATUS"
+}
+
 usage() {
     cat <<'EOF'
 Usage: bootstrap.sh [options]
@@ -148,13 +159,17 @@ A CLI credential-file flag overrides credential values inherited from the
 environment. When invoking through sudo, explicitly preserve the required
 environment variables. The script requires preinstalled bash, curl, tar, jq, and
 flock. The aks-flex-node binary owns MSI, secret, and certificate authentication.
+
+Exit status 78 means running the script again, unchanged, can't succeed: a
+setting can't work, or start failed after changing the host, which then needs
+'aks-flex-node reset' first.
 EOF
 }
 
 require_value() {
     local option="$1"
     local value="${2:-}"
-    [[ -n "$value" ]] || fatal "$option requires a value"
+    [[ -n "$value" ]] || fatal_permanent "$option requires a value"
 }
 
 parse_args() {
@@ -204,10 +219,10 @@ parse_args() {
                 shift
                 break
                 ;;
-            *) fatal "unknown option: $1" ;;
+            *) fatal_permanent "unknown option: $1" ;;
         esac
     done
-    (($# == 0)) || fatal "unexpected positional arguments: $*"
+    (($# == 0)) || fatal_permanent "unexpected positional arguments: $*"
 }
 
 cleanup() {
@@ -233,7 +248,7 @@ check_prerequisites() {
 write_base_config() {
     local output="$1"
     if [[ -n "$BASE_CONFIG_FILE" ]]; then
-        [[ -f "$BASE_CONFIG_FILE" ]] || fatal "base config file not found: $BASE_CONFIG_FILE"
+        [[ -f "$BASE_CONFIG_FILE" ]] || fatal_permanent "base config file not found: $BASE_CONFIG_FILE"
         install -m 0600 "$BASE_CONFIG_FILE" "$output"
         return
     fi
@@ -245,7 +260,7 @@ write_base_config() {
             log "embedded base config is not populated; starting from an empty config"
             printf '{}\n' > "$output"
         else
-            fatal "embedded base config is not populated; use a generated script, a base config file, or --fetch-bootstrap-data"
+            fatal_permanent "embedded base config is not populated; use a generated script, a base config file, or --fetch-bootstrap-data"
         fi
     fi
 }
@@ -258,7 +273,7 @@ merge_config_override() {
     local merged="$TEMP_DIR/config-merged.json"
 
     printf '%s' "$raw" > "$override"
-    jq -e 'type == "object"' "$override" >/dev/null || fatal "$label must be a JSON object"
+    jq -e 'type == "object"' "$override" >/dev/null || fatal_permanent "$label must be a JSON object"
     jq -s '.[0] * .[1]' "$current" "$override" > "$merged"
     mv -f "$merged" "$current"
 }
@@ -267,14 +282,14 @@ check_credential_file_permissions() {
     local path="$1"
     local label="${2:-credential}"
     local permissions
-    [[ "$path" == /* ]] || fatal "service-principal $label file path must be absolute"
-    [[ ! -L "$path" ]] || fatal "service-principal $label file must not be a symlink"
-    [[ -f "$path" ]] || fatal "service-principal $label file must be a regular file"
+    [[ "$path" == /* ]] || fatal_permanent "service-principal $label file path must be absolute"
+    [[ ! -L "$path" ]] || fatal_permanent "service-principal $label file must not be a symlink"
+    [[ -f "$path" ]] || fatal_permanent "service-principal $label file must be a regular file"
     permissions=$(stat -c '%a' "$path")
     if (((8#$permissions & 077) != 0)); then
-        fatal "service-principal $label file must not be accessible by group or other users"
+        fatal_permanent "service-principal $label file must not be accessible by group or other users"
     fi
-    [[ -s "$path" ]] || fatal "service-principal $label file is empty"
+    [[ -s "$path" ]] || fatal_permanent "service-principal $label file is empty"
 }
 
 check_secret_file_permissions() {
@@ -293,7 +308,7 @@ validate_sp_credential_selection() {
     [[ -n "$SP_CLIENT_SECRET" ]] && ((count += 1))
     [[ -n "$SP_CLIENT_SECRET_FILE" ]] && ((count += 1))
     [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]] && ((count += 1))
-    ((count <= 1)) || fatal "configure only one service-principal secret, secret file, or certificate file"
+    ((count <= 1)) || fatal_permanent "configure only one service-principal secret, secret file, or certificate file"
 }
 
 is_true() {
@@ -339,7 +354,7 @@ fetch_latest_bootstrap_data() {
         elif jq -e '.azure.servicePrincipal != null' "$current" >/dev/null; then
             mode=service-principal
         else
-            fatal "fetching bootstrap data requires Arc, MSI, or service-principal authentication"
+            fatal_permanent "fetching bootstrap data requires Arc, MSI, or service-principal authentication"
         fi
     }
 
@@ -382,11 +397,11 @@ fetch_latest_bootstrap_data() {
                 if [[ -n "$credential_file" ]]; then
                     args+=(--sp-client-credential-file "$credential_file")
                 else
-                    fatal "service-principal bootstrap-data fetch requires a credential file"
+                    fatal_permanent "service-principal bootstrap-data fetch requires a credential file"
                 fi
             fi
             ;;
-        *) fatal "fetching bootstrap data does not support auth mode: $mode" ;;
+        *) fatal_permanent "fetching bootstrap data does not support auth mode: $mode" ;;
     esac
 
     log "fetching fresh bootstrap data from AKS RP"
@@ -449,7 +464,7 @@ apply_auth_override() {
             ' "$current" > "$rendered"
             ;;
         sp|service-principal)
-            [[ -n "$SP_CLIENT_ID" ]] || fatal "service-principal auth requires --sp-client-id or AKS_FLEX_NODE_SP_CLIENT_ID"
+            [[ -n "$SP_CLIENT_ID" ]] || fatal_permanent "service-principal auth requires --sp-client-id or AKS_FLEX_NODE_SP_CLIENT_ID"
             if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
                 check_certificate_file_permissions "$SP_CLIENT_CERTIFICATE_FILE"
                 jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --arg clientSecretFile "$SP_CLIENT_CERTIFICATE_FILE" '
@@ -490,10 +505,10 @@ apply_auth_override() {
                     }
                 ' "$current" > "$rendered"
             else
-                fatal "service-principal auth requires a protected secret file, certificate file, or AKS_FLEX_NODE_SP_CLIENT_SECRET"
+                fatal_permanent "service-principal auth requires a protected secret file, certificate file, or AKS_FLEX_NODE_SP_CLIENT_SECRET"
             fi
             ;;
-        *) fatal "unsupported auth mode: $AUTH_MODE (expected arc, msi, or service-principal)" ;;
+        *) fatal_permanent "unsupported auth mode: $AUTH_MODE (expected arc, msi, or service-principal)" ;;
     esac
     mv -f "$rendered" "$current"
 }
@@ -505,7 +520,7 @@ render_config() {
     local node_name
 
     write_base_config "$current"
-    jq -e 'type == "object"' "$current" >/dev/null || fatal "embedded base config must be a JSON object"
+    jq -e 'type == "object"' "$current" >/dev/null || fatal_permanent "embedded base config must be a JSON object"
     apply_target_overrides "$current"
 
     if is_true "$FETCH_BOOTSTRAP_DATA"; then
@@ -548,7 +563,7 @@ resolve_agent_url() {
     local archive="aks-flex-node-linux-${arch}.tar.gz"
     local url="$AGENT_URL"
     if [[ -z "$url" ]]; then
-        [[ -n "$AGENT_VERSION" ]] || fatal "set --agent-url/AKS_FLEX_NODE_AGENT_URL or --agent-version/AKS_FLEX_NODE_AGENT_VERSION"
+        [[ -n "$AGENT_VERSION" ]] || fatal_permanent "set --agent-url/AKS_FLEX_NODE_AGENT_URL or --agent-version/AKS_FLEX_NODE_AGENT_VERSION"
         url="https://github.com/${DEFAULT_REPOSITORY}/releases/download/${AGENT_VERSION}/${archive}"
     fi
     url="${url//\{\{OS\}\}/linux}"
@@ -682,7 +697,7 @@ download_and_install_agent() {
     if [[ -n "$AGENT_SHA256" ]]; then
         local actual
         actual=$(sha256sum "$archive" | awk '{print $1}')
-        [[ "${actual,,}" == "${AGENT_SHA256,,}" ]] || fatal "agent archive SHA-256 mismatch"
+        [[ "${actual,,}" == "${AGENT_SHA256,,}" ]] || fatal_permanent "agent archive SHA-256 mismatch"
     fi
 
     validate_archive_paths "$archive"
@@ -760,7 +775,22 @@ main() {
     "$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output text
     log "starting AKS Flex Node"
     umask 022
-    "$INSTALL_DIR/aks-flex-node" start --config "$CONFIG_PATH"
+    local status=0
+    "$INSTALL_DIR/aks-flex-node" start --config "$CONFIG_PATH" || status=$?
+    if ((status != 0)); then
+        if start_left_deployment; then
+            fatal_permanent "start failed after changing the host; reset the node with 'aks-flex-node reset' before bootstrapping it again"
+        fi
+        exit "$status"
+    fi
+}
+
+# start_left_deployment reports whether preflight, which bootstrap runs again before start, now
+# refuses the deployment a failed start left on the host. A preflight that can't tell counts as no.
+start_left_deployment() {
+    local report
+    report=$("$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output json 2>/dev/null) || true
+    jq -e 'any(.checks[]?; .name == "existing-deployment" and .severity == "error")' <<<"$report" >/dev/null 2>&1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

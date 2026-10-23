@@ -62,9 +62,10 @@ systemd:
         Wants=network-online.target
         After=network-online.target nss-lookup.target
         # Once the agent unit exists the agent runs the node, and bootstrap.sh
-        # would fail its preflight check for an existing deployment. Skipping
-        # on that, rather than on a marker of its own, also means a failure
-        # after the agent is installed is not retried.
+        # would fail its preflight check for an existing deployment, so later
+        # boots skip the unit. systemd doesn't check conditions again for the
+        # unit's own restarts, so this doesn't end a failing bootstrap's
+        # retries; RestartPreventExitStatus= below does.
         ConditionPathExists=!/etc/systemd/system/aks-flex-node-agent.service
         # An assertion rather than a condition: a missing script is a
         # provisioning error, and fails the unit where it can be seen.
@@ -88,6 +89,10 @@ systemd:
         RestartSec=10s
         RestartSteps=10
         RestartMaxDelaySec=300
+        # Except a failure that retrying can't fix, for which bootstrap.sh exits
+        # with 78: a setting that can't work, or a start that failed after
+        # changing the host, which then needs a reset. The unit stays failed.
+        RestartPreventExitStatus=78
         Environment=AKS_FLEX_NODE_BASE_CONFIG_FILE=/etc/aks-flex-node/first-boot/base-config.json
         EnvironmentFile=/etc/aks-flex-node/first-boot/bootstrap.env
         ExecStart=/bin/bash /etc/aks-flex-node/first-boot/bootstrap.sh
@@ -95,6 +100,11 @@ systemd:
         # URL. The installed config has what the agent needs, so they go once
         # bootstrap succeeds.
         ExecStartPost=/bin/rm -rf /etc/aks-flex-node/first-boot
+        # Once the agent unit exists no retry can succeed, and a start that
+        # failed after installing it exits with 78, so ExecStartPost never
+        # runs. The files go here then too, but not after other failures,
+        # whose retry needs them.
+        ExecStopPost=/bin/sh -c 'test ! -e /etc/systemd/system/aks-flex-node-agent.service || rm -rf /etc/aks-flex-node/first-boot'
 
         [Install]
         WantedBy=multi-user.target
