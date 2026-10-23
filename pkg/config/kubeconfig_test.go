@@ -262,8 +262,18 @@ func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
 	t.Parallel()
 
 	valid := embeddedKubeconfigWithTLS(t)
-	for _, field := range []string{"agent", "kubelet"} {
-		t.Run(field, func(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		data  string
+	}{
+		{name: "malformed agent", field: "agent", data: "apiVersion: ["},
+		{name: "malformed kubelet", field: "kubelet", data: "apiVersion: ["},
+		{name: "whitespace agent", field: "agent", data: "\n"},
+		{name: "whitespace kubelet", field: "kubelet", data: "\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			cfg := &Config{
@@ -276,10 +286,10 @@ func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
 				Agent: AgentConfig{KubeconfigData: valid},
 				Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: valid}},
 			}
-			if field == "agent" {
-				cfg.Agent.KubeconfigData = "apiVersion: ["
+			if tt.field == "agent" {
+				cfg.Agent.KubeconfigData = tt.data
 			} else {
-				cfg.Node.Kubelet.KubeconfigData = "apiVersion: ["
+				cfg.Node.Kubelet.KubeconfigData = tt.data
 			}
 			data, err := json.Marshal(cfg)
 			if err != nil {
@@ -291,7 +301,7 @@ func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
 			}
 			_, err = LoadConfig(path)
 			var validationErr *KubeconfigValidationError
-			if !errors.As(err, &validationErr) || !strings.Contains(err.Error(), "parse kubeconfig") {
+			if !errors.As(err, &validationErr) {
 				t.Fatalf("LoadConfig() error = %v, want kubeconfig validation error", err)
 			}
 		})

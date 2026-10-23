@@ -944,7 +944,7 @@ func (c *AgentConfig) validate() error {
 	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
 		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)
 	}
-	if strings.TrimSpace(c.KubeconfigData) != "" {
+	if c.KubeconfigData != "" {
 		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
 			return &KubeconfigValidationError{err: fmt.Errorf("invalid agent.kubeconfigData: %w", err)}
 		}
@@ -1062,7 +1062,7 @@ func (c *KubeletConfig) validate() error {
 	if err := validateReservedResources("kubeReserved", c.KubeReserved); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.KubeconfigData) != "" {
+	if c.KubeconfigData != "" {
 		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
 			return &KubeconfigValidationError{err: fmt.Errorf("invalid node.kubelet.kubeconfigData: %w", err)}
 		}

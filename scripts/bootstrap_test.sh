@@ -212,25 +212,28 @@ mkdir "$WORK_DIR/real-agent"
 )
 tar -C "$WORK_DIR/real-agent" -czf "$WORK_DIR/real-agent/agent.tar.gz" "aks-flex-node-linux-$ARCH"
 printf 'apiVersion: [\n' > "$WORK_DIR/malformed.kubeconfig"
-chmod 0600 "$WORK_DIR/malformed.kubeconfig"
+printf '\n' > "$WORK_DIR/whitespace.kubeconfig"
+chmod 0600 "$WORK_DIR/malformed.kubeconfig" "$WORK_DIR/whitespace.kubeconfig"
 cat > "$WORK_DIR/paired-base.json" <<'JSON'
 {"azure":{"targetCluster":{"resourceId":"/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster","location":"eastus"}}}
 JSON
-malformed_status=0
-AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/paired-base.json" \
-    bash "$SCRIPT" \
-        --agent-url "file://$WORK_DIR/real-agent/agent.tar.gz" \
-        --agent-kubeconfig "$WORK_DIR/malformed.kubeconfig" \
-        --kubelet-kubeconfig "$WORK_DIR/malformed.kubeconfig" \
-        --config-path "$WORK_DIR/malformed-etc/config.json" >"$WORK_DIR/malformed.log" 2>&1 ||
-    malformed_status=$?
-[[ "$malformed_status" == 78 ]] ||
-    fail "malformed kubeconfig exited $malformed_status, want 78: $(cat "$WORK_DIR/malformed.log")"
-grep -F "invalid agent.kubeconfigData: parse kubeconfig" "$WORK_DIR/malformed.log" >/dev/null ||
-    fail "malformed kubeconfig did not preserve validation diagnostics"
-if grep -F "starting AKS Flex Node" "$WORK_DIR/malformed.log" >/dev/null; then
-    fail "malformed kubeconfig reached start"
-fi
+for invalid in malformed whitespace; do
+    invalid_status=0
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/paired-base.json" \
+        bash "$SCRIPT" \
+            --agent-url "file://$WORK_DIR/real-agent/agent.tar.gz" \
+            --agent-kubeconfig "$WORK_DIR/$invalid.kubeconfig" \
+            --kubelet-kubeconfig "$WORK_DIR/$invalid.kubeconfig" \
+            --config-path "$WORK_DIR/$invalid-etc/config.json" >"$WORK_DIR/$invalid.log" 2>&1 ||
+        invalid_status=$?
+    [[ "$invalid_status" == 78 ]] ||
+        fail "$invalid kubeconfig exited $invalid_status, want 78: $(cat "$WORK_DIR/$invalid.log")"
+    grep -F "invalid agent.kubeconfigData:" "$WORK_DIR/$invalid.log" >/dev/null ||
+        fail "$invalid kubeconfig did not preserve validation diagnostics"
+    if grep -F "starting AKS Flex Node" "$WORK_DIR/$invalid.log" >/dev/null; then
+        fail "$invalid kubeconfig reached start"
+    fi
+done
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
