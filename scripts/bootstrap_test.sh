@@ -181,19 +181,20 @@ jq -e '
 grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK_DIR/msi-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
 
+cp /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair"
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     bash "$SCRIPT" \
         --auth msi \
         --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
         --agent-url "$AGENT_URL" \
-        --install-dir "$WORK_DIR/missing-pair-bin" \
         --config-path "$WORK_DIR/missing-pair-config.json" >"$WORK_DIR/missing-pair.out" 2>&1; then
     fail "bootstrap accepted an unpaired agent kubeconfig"
 fi
 grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
 [[ ! -e "$WORK_DIR/missing-pair-calls" ]] || fail "unpaired kubeconfig reached the agent"
-[[ ! -e "$WORK_DIR/missing-pair-bin" ]] || fail "unpaired kubeconfig installed the agent"
+cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
+    fail "unpaired kubeconfig replaced the agent"
 [[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \

@@ -22,7 +22,7 @@ users:
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1
-      command: /usr/local/bin/aks-flex-node
+      command: /opt/unbounded/agent/bin/aks-flex-node
       args: ["token", "arc"]
       interactiveMode: Never
     as: flex-agent
@@ -49,7 +49,7 @@ contexts:
 	if restCfg.Host != "https://cluster.example:443" {
 		t.Fatalf("Host = %q", restCfg.Host)
 	}
-	if restCfg.ExecProvider == nil || restCfg.ExecProvider.Command != "/usr/local/bin/aks-flex-node" {
+	if restCfg.ExecProvider == nil || restCfg.ExecProvider.Command != config.HostBinaryPath() {
 		t.Fatalf("ExecProvider = %#v", restCfg.ExecProvider)
 	}
 	if restCfg.Impersonate.UserName != "flex-agent" {
