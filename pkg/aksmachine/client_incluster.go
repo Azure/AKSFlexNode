@@ -283,6 +283,10 @@ func machineFromEndpointJSON(data []byte) (*Machine, error) {
 	if err := machine.Validate(); err != nil {
 		return nil, fmt.Errorf("validate cluster endpoint machine response: %w", err)
 	}
+	// Same contract as the ARM client: omitted means false, and an undecodable value leaves intent unset instead of failing unrelated lifecycle handling.
+	if enabled, err := disconnectToleranceFromMachineJSON(data); err == nil {
+		machine.Goal.DisconnectToleranceEnabled = &enabled
+	}
 	return machine, nil
 }
 

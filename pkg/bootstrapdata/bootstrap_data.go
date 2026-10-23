@@ -33,6 +33,8 @@ import (
 )
 
 const (
+	// TODO: move to 2026-10-02-preview (returns node.disconnectTolerance) once ARM accepts
+	// it, together with scripts/bootstrap.sh and the Machine client default.
 	DefaultAPIVersion              = "2026-05-02-preview"
 	DefaultResourceManagerEndpoint = "https://management.azure.com"
 	DefaultAuthorityHost           = "https://login.microsoftonline.com"

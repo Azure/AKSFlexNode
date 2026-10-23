@@ -179,7 +179,7 @@ func TestARMMachineClientOptions(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("not implemented")
 	})
-	opts := armMachineClientOptions(azcore.ClientOptions{Transport: transport})
+	opts := armMachineClientOptions(azcore.ClientOptions{Transport: transport}, "")
 
 	if opts.Transport == nil {
 		t.Fatal("Transport was not preserved")
@@ -589,7 +589,7 @@ func newTestARMMachineClient(t *testing.T, transport policy.Transporter) *armMac
 	sdkClient, err := armcontainerservice.NewMachinesClient(
 		machineID.SubscriptionID,
 		staticARMProxyCredential{},
-		armMachineClientOptions(azcore.ClientOptions{Transport: transport}),
+		armMachineClientOptions(azcore.ClientOptions{Transport: transport}, ""),
 	)
 	if err != nil {
 		t.Fatalf("NewMachinesClient() error = %v", err)

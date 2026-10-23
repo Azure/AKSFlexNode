@@ -186,6 +186,10 @@ type MachineClientConfig struct {
 	// dev-test ARM proxy URL. In in-cluster mode it is an absolute Kubernetes API
 	// service-proxy path for the read-only machine endpoint.
 	EndpointURL string `json:"endpointUrl,omitempty"`
+
+	// APIVersion overrides the ARM Machine API version; empty uses the SDK default.
+	// Disconnect-tolerance intent needs 2026-10-02-preview or later.
+	APIVersion string `json:"apiVersion,omitempty"`
 }
 
 // ComponentsConfig is the AKS RP component version contract used by the agent
@@ -252,6 +256,21 @@ type NodeConfig struct {
 	// (e.g. "dedicated=infra:NoSchedule", "gpu:NoExecute").
 	Taints  []string      `json:"taints,omitempty"`
 	Kubelet KubeletConfig `json:"kubelet"`
+	// DisconnectTolerance is bootstrap-time intent from AKS RP. Kept raw so a
+	// malformed value can't fail config loading.
+	DisconnectTolerance json.RawMessage `json:"disconnectTolerance,omitempty"`
+}
+
+// BootstrapDisconnectToleranceEnabled reports node.disconnectTolerance.enabled from bootstrap data.
+// A missing object or "enabled" means false per the agreed RP contract; a malformed value is also treated as false.
+func (cfg *Config) BootstrapDisconnectToleranceEnabled() bool {
+	if cfg == nil || cfg.Node.DisconnectTolerance == nil {
+		return false
+	}
+	var profile struct {
+		Enabled *bool `json:"enabled"`
+	}
+	return json.Unmarshal(cfg.Node.DisconnectTolerance, &profile) == nil && profile.Enabled != nil && *profile.Enabled
 }
 
 // KubeletConfig holds kubelet-specific configuration settings.
@@ -857,9 +876,14 @@ var validMachineOperationModes = map[string]bool{
 	"disable": true,
 }
 
+var machineAPIVersionPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?$`)
+
 func (c MachineClientConfig) validate() error {
 	if c.Mode != "" && !validMachineClientModes[c.Mode] {
 		return fmt.Errorf("invalid agent.machineClient.mode: %s. Valid values are: arm, in-cluster", c.Mode)
+	}
+	if c.APIVersion != "" && !machineAPIVersionPattern.MatchString(c.APIVersion) {
+		return fmt.Errorf("invalid agent.machineClient.apiVersion: %q", c.APIVersion)
 	}
 	endpointURL := strings.TrimSpace(c.EndpointURL)
 	if c.Mode == MachineClientModeInCluster && endpointURL == "" {
