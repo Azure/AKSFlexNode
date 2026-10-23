@@ -42,6 +42,7 @@ func TestDisconnectToleranceFromMachineJSON(t *testing.T) {
 		"enabled omitted is false":     {body: rpMachineJSON(`{}`)},
 		"extra members ignored":        {body: rpMachineJSON(`{"enabled":true,"future":1}`), want: true},
 		"no properties":                {body: `{"name":"flex-node-1"}`},
+		"null properties":              {body: `{"name":"flex-node-1","properties":null}`},
 		"object null is malformed":     {body: rpMachineJSON("null"), wantErr: true},
 		"dt not object is malformed":   {body: rpMachineJSON("true"), wantErr: true},
 		"object is string":             {body: rpMachineJSON(`"true"`), wantErr: true},

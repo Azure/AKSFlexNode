@@ -1,8 +1,9 @@
 package aksmachine
 
 import (
-	"encoding/json"
 	"fmt"
+
+	"github.com/tidwall/gjson"
 )
 
 // disconnectToleranceFromMachineJSON reads properties.flexNodesProfile.disconnectTolerance.enabled,
@@ -10,48 +11,33 @@ import (
 // Missing intent means false. Malformed intent returns an error so callers keep current state.
 // Errors never include response content.
 // TODO: when armcontainerservice.MachineProperties includes FlexNodesProfile, read it in
-// machineFromARM and remove this file plus the raw-response decoding in both Machine clients.
+// machineFromARM and remove this file, the gjson dependency and the raw-response decoding
+// in both Machine clients.
 func disconnectToleranceFromMachineJSON(data []byte) (bool, error) {
-	var body struct {
-		Properties *struct {
-			FlexNodesProfile json.RawMessage `json:"flexNodesProfile"`
-		} `json:"properties"`
-	}
-	if err := json.Unmarshal(data, &body); err != nil {
+	if !gjson.ValidBytes(data) {
 		return false, fmt.Errorf("decode machine response for disconnect tolerance")
 	}
-	if body.Properties == nil || body.Properties.FlexNodesProfile == nil {
+	machine := gjson.ParseBytes(data)
+	if !machine.IsObject() {
+		return false, fmt.Errorf("decode machine response for disconnect tolerance")
+	}
+	// Each level must be an object when present; gjson alone would read a
+	// malformed parent as missing, which means false and would disable Hub.
+	for _, path := range []string{"properties", "properties.flexNodesProfile", "properties.flexNodesProfile.disconnectTolerance"} {
+		value := machine.Get(path)
+		if !value.Exists() || (path == "properties" && value.Type == gjson.Null) {
+			return false, nil
+		}
+		if !value.IsObject() {
+			return false, fmt.Errorf("machine %s: value is not an object", path)
+		}
+	}
+	enabled := machine.Get("properties.flexNodesProfile.disconnectTolerance.enabled")
+	if !enabled.Exists() {
 		return false, nil
 	}
-	var profile map[string]json.RawMessage
-	if string(body.Properties.FlexNodesProfile) == "null" || json.Unmarshal(body.Properties.FlexNodesProfile, &profile) != nil {
-		return false, fmt.Errorf("machine flexNodesProfile: value is not an object")
+	if !enabled.IsBool() {
+		return false, fmt.Errorf("machine disconnectTolerance: enabled is not a boolean")
 	}
-	dt, ok := profile["disconnectTolerance"]
-	if !ok {
-		return false, nil
-	}
-	enabled, err := decodeDisconnectTolerance(dt)
-	if err != nil {
-		return false, fmt.Errorf("machine flexNodesProfile.disconnectTolerance: %w", err)
-	}
-	return enabled, nil
-}
-
-// decodeDisconnectTolerance decodes a present {"enabled": <bool>} object.
-// A missing "enabled" means false; any other shape is an error.
-func decodeDisconnectTolerance(raw json.RawMessage) (bool, error) {
-	var profile map[string]json.RawMessage
-	if string(raw) == "null" || json.Unmarshal(raw, &profile) != nil {
-		return false, fmt.Errorf("value is not an object")
-	}
-	value, ok := profile["enabled"]
-	if !ok {
-		return false, nil
-	}
-	var enabled bool
-	if string(value) == "null" || json.Unmarshal(value, &enabled) != nil {
-		return false, fmt.Errorf("enabled is not a boolean")
-	}
-	return enabled, nil
+	return enabled.Bool(), nil
 }
