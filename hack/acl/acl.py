@@ -123,6 +123,8 @@ EXPORT_RESOURCE_GROUP = os.environ.get("ACL_IMAGE_RESOURCE_GROUP", "")
 EXPORT_SUBSCRIPTION = os.environ.get("ACL_IMAGE_SUBSCRIPTION", "")
 GALLERY_IMAGE_PATTERN = re.compile(r"/SharedGalleries/([^/]+)/Images/([^/]+)")
 GALLERY_VERSION_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+# Gallery and image names, which name the image cache's directories.
+GALLERY_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # The export's temporary disks carry this tag, and only disks with it are ever swept. It is not
 # the unbounded harness's, so neither harness sweeps the other's disks in a shared group.
 EXPORT_DISK_TAG = "aks-flex-node-acl-harness"
@@ -270,28 +272,31 @@ def sha256(path: Path) -> str:
 def gallery_image() -> Path:
     """Return the gallery image as a qcow2 in IMAGE_DIR, exporting it unless an earlier run did.
 
-    The file is named for the version, so a newer one is exported without a change here and never
-    masked by an earlier export. It is made under another name and renamed only once complete, so
-    an interrupted export never sits under the name that is reused. A reused file is checked in
-    full, since a host that crashed after an export could have lost its tail.
+    The file is under the gallery's and the image's names, since a version is only unique within
+    its gallery image, and named for the version, so a newer one is exported without a change here
+    and never masked by an earlier export. It is made under another name and renamed only once
+    complete, so an interrupted export never sits under the name that is reused. A reused file is
+    checked in full, since a host that crashed after an export could have lost its tail.
     """
+    gallery, image_name = gallery_image_parts()
     version = gallery_version()
-    image = IMAGE_DIR / f"acl-gallery-{version}.qcow2"
+    image_dir = IMAGE_DIR / gallery / image_name
+    image = image_dir / f"acl-gallery-{version}.qcow2"
     if image.exists():
         if run(["qemu-img", "check", "-q", "-f", "qcow2", str(image)], check=False).returncode != 0:
             die(f"{image}, exported earlier, fails qemu-img check; remove it to export it again")
         log(f"using {image}, exported earlier")
         return image
 
-    IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    image_dir.mkdir(parents=True, exist_ok=True)
     # What an export killed outright left behind, whatever its version: the sparse VHD alone can
     # take most of a gigabyte.
-    for leftover in IMAGE_DIR.glob("acl-gallery-*.qcow2.part*"):
+    for leftover in image_dir.glob("acl-gallery-*.qcow2.part*"):
         leftover.unlink(missing_ok=True)
     partial = image.with_name(image.name + ".part")
     export_gallery_image(f"{GALLERY_IMAGE}/Versions/{version}", partial)
     partial.replace(image)
-    fsync_dir(IMAGE_DIR)
+    fsync_dir(image_dir)
     return image
 
 
@@ -306,7 +311,7 @@ def fsync_dir(path: Path) -> None:
 def gallery_image_parts() -> tuple[str, str]:
     """Return the gallery's unique name and the image definition."""
     match = GALLERY_IMAGE_PATTERN.fullmatch(GALLERY_IMAGE)
-    if not match:
+    if not match or not all(GALLERY_NAME_PATTERN.fullmatch(name) for name in match.groups()):
         die(f"ACL_IMAGE_GALLERY_IMAGE={GALLERY_IMAGE!r} is not /SharedGalleries/<gallery>/Images/<image>")
         raise AssertionError("unreachable")
     return match.group(1), match.group(2)
@@ -1823,7 +1828,7 @@ def cmd_down(_: argparse.Namespace) -> None:
         run(["kind", "delete", "cluster", "--name", CLUSTER])
     shutil.rmtree(STATE, ignore_errors=True)
     log("removed the VM, network, cluster, and state")
-    if IMAGE_DIR.is_dir() and any(IMAGE_DIR.glob("acl-gallery-*.qcow2")):
+    if IMAGE_DIR.is_dir() and any(IMAGE_DIR.rglob("acl-gallery-*.qcow2")):
         log(f"kept the exported images in {IMAGE_DIR}; remove it to reclaim the space")
 
 

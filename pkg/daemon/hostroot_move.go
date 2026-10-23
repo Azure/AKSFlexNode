@@ -265,10 +265,11 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 // and the machine would not start again. Each call installs it under the
 // host root as it resolves then, so under the copy while moving, and back
 // under /usr/local when a move is undone, where this release's helper keeps
-// the units on /usr/local.
+// the units on /usr/local. A machine whose config supplies its hooks' commands
+// runs no helper, so none is installed for it.
 func nspawnLifecycleTasks(log *slog.Logger, rootFS *goalstates.RootFS) []phases.Task {
 	return []phases.Task{
-		rootfs.EnsureNSpawnLifecycleHelper(),
+		rootfs.EnsureNSpawnLifecycleHelperFor(rootFS),
 		rootfs.EnsureNSpawnConfig(log, rootFS),
 	}
 }

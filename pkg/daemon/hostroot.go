@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -187,7 +189,7 @@ func removeLegacySeed(log *slog.Logger, released func() (bool, error), seed stri
 		}
 
 		if self {
-			log.Info("keeping the agent binary an install script left for earlier releases while this process runs from it; "+
+			log.Info("keeping the agent binary an install script left for earlier releases while the agent runs from it; "+
 				"the next start removes it", "path", seed)
 
 			return nil
@@ -215,6 +217,45 @@ func runningFrom(info os.FileInfo) (bool, error) {
 	return os.SameFile(self, info), nil
 }
 
+// runningOrServingFrom is runningFrom for direct activation, which runs beside
+// the agent service rather than as it: the file is also in use while the
+// service's main process runs it. On a host a release before the blue/green
+// layout installed, the service runs /usr/local/bin/aks-flex-node until it
+// restarts, even once an activation runs from elsewhere. self is runningFrom,
+// mainPID returns the service's MainPID, 0 when it has no process, and
+// procRoot is /proc.
+func runningOrServingFrom(info os.FileInfo, self func(os.FileInfo) (bool, error), mainPID func() (string, error), procRoot string) (bool, error) {
+	if running, err := self(info); err != nil || running {
+		return running, err
+	}
+
+	output, err := mainPID()
+	if err != nil {
+		return false, fmt.Errorf("find %s's main process: %w", ServiceUnitName, err)
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil || pid < 0 {
+		return false, fmt.Errorf("invalid %s MainPID %q", ServiceUnitName, output)
+	}
+
+	if pid == 0 {
+		return false, nil
+	}
+
+	exe, err := os.Stat(filepath.Join(procRoot, strconv.Itoa(pid), "exe"))
+	if errors.Is(err, os.ErrNotExist) {
+		// It has ended since.
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("inspect %s's running executable: %w", ServiceUnitName, err)
+	}
+
+	return os.SameFile(exe, info), nil
+}
+
 // guardLegacySeed runs before an AgentUpgrade or a direct activation switches
 // the agent binary. It removes the binary install scripts left in
 // /usr/local/bin, and refuses the switch while something there would still be
@@ -229,8 +270,9 @@ func runningFrom(info os.FileInfo) (bool, error) {
 // any upgrade whose daemon cannot start. The release cannot be told from the
 // archive before it is staged, so every switch is guarded.
 //
-// A seed this process runs from is kept, as removeDaemonLegacySeed explains, so
-// the switch is refused until the process runs from somewhere else.
+// A seed running reports the agent runs from, this process or, for direct
+// activation, the agent service, is kept, as removeDaemonLegacySeed explains, so
+// the switch is refused until the agent runs from somewhere else.
 //
 // So is a switch while unfinished reports a move to the host root that has not
 // finished: the files it has yet to remove under /usr/local are a whole
@@ -259,7 +301,7 @@ func guardLegacySeed(log *slog.Logger, released, unfinished func() (bool, error)
 
 	if info, err := os.Lstat(seed); err == nil && info.Mode().IsRegular() && running != nil {
 		if self, err := running(info); err == nil && self {
-			return fmt.Errorf("%s is the binary this process runs from, and a release before %s would take it as its own binary after an upgrade to it; "+
+			return fmt.Errorf("%s is the binary the agent runs from, and a release before %s would take it as its own binary after an upgrade to it; "+
 				"if it is the agent service's, restart %s so that the agent runs from %s, otherwise run the new binary from another path, then retry",
 				seed, hostroot.Path, ServiceUnitName, hostroot.Path)
 		}

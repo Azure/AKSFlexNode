@@ -139,7 +139,8 @@ More details:
 
 - **Versions:** the version is the gallery's latest unless `ACL_IMAGE_VERSION`
   pins one, so every `up` without either setting asks `az` for it. The image is
-  saved as `.vm/acl-images/acl-gallery-<version>.qcow2` and reused, after a
+  saved as `.vm/acl-images/<gallery>/<image>/acl-gallery-<version>.qcow2`, since
+  a version is only unique within its gallery image, and reused, after a
   `qemu-img check`, while that version is current, so a newer one is exported
   without a change here. To boot a saved image without `az`, pin its version
   with `ACL_IMAGE_VERSION`, or pass it with `--image`.

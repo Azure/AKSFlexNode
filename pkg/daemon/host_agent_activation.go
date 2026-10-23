@@ -45,7 +45,12 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := MigrateHostRoot(log); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	if err := guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, runningFrom); err != nil {
+	running := func(info os.FileInfo) (bool, error) {
+		return runningOrServingFrom(info, runningFrom, func() (string, error) {
+			return utilexec.OutputCmd(ctx, log, "systemctl", "show", "--property", "MainPID", "--value", ServiceUnitName)
+		}, "/proc")
+	}
+	if err := guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, running); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
 	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve)
