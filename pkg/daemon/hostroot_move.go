@@ -256,17 +256,16 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 // nspawnLifecycleTasks returns what rewriting the units does for the nspawn
 // machine, in order.
 //
-// The helper is installed first, from the running binary, before the units
-// name it. The move copies the helper the earlier release installed, and that
-// helper is a copy of the earlier release's binary: its pre-start, which runs
-// at every machine start, regenerates the units with the helper path that
-// release knows, under /usr/local, which the move then removes. Left in place,
-// it would point the machine's units at a missing helper at its next start,
-// and the machine would not start again. Each call installs it under the
-// host root as it resolves then, so under the copy while moving, and back
-// under /usr/local when a move is undone, where this release's helper keeps
-// the units on /usr/local. A machine whose config supplies its hooks' commands
-// runs no helper, so none is installed for it.
+// This release's config supplies the machine's hooks' commands, which start
+// the agent's nspawn lifecycle units, written under the host root by then, so
+// the hooks name nothing under it, and unbounded installs no helper for them.
+// The helper the earlier release installed, which the move copies, is a link
+// to the agent's binary by then too; see ensureNSpawnLifecycleHelperLink.
+//
+// For hooks that run the helper, it would be installed first, from the running
+// binary, before the units name it: the earlier release's copy regenerates the
+// units with the helper path that release knows, under /usr/local, which the
+// move removes, and the machine would not start again.
 func nspawnLifecycleTasks(log *slog.Logger, rootFS *goalstates.RootFS) []phases.Task {
 	return []phases.Task{
 		rootfs.EnsureNSpawnLifecycleHelperFor(rootFS),

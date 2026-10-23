@@ -434,26 +434,34 @@ REMOTE
 }
 
 # _host_root_migration_assert_helper checks a moved host's nspawn lifecycle
-# helper is the running agent's binary, and that every hook the machine's units
-# run names it under /opt/unbounded/agent. The move copies the earlier release's
-# helper, and only rewriting the units for the move replaces it.
+# hooks: every one starts the agent's nspawn lifecycle units, which run the agent
+# under /opt/unbounded/agent, and the helper beside it, kept for hooks an earlier
+# release writes, is a link to the running agent's binary. The move copies the
+# earlier release's helper, and converging the agent's files replaces it.
 _host_root_migration_assert_helper() {
   local vm_ip="$1"
   remote_exec "${vm_ip}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 helper=/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle
+binary=/opt/unbounded/agent/bin/aks-flex-node
 pid="$(systemctl show --property MainPID --value aks-flex-node-agent.service)"
 [[ "${pid:-0}" -gt 0 ]] || { echo "aks-flex-node-agent.service is not running" >&2; exit 1; }
 running="$(sudo readlink -f "/proc/${pid}/exe")"
+[[ "$(sudo readlink "${helper}")" == aks-flex-node ]] ||
+  { echo "${helper} is not a link to aks-flex-node: $(sudo ls -l "${helper}")" >&2; exit 1; }
 sudo cmp -s "${helper}" "${running}" ||
   { echo "${helper} is not the running agent's binary ${running}" >&2; exit 1; }
-hooks="$(sudo sh -c 'grep -h nspawn-lifecycle /etc/systemd/system/systemd-nspawn@*.service.d/override.conf \
-  /etc/systemd/system/unbounded-agent-regenerate-config@*.service 2>/dev/null' || true)"
+hooks="$(sudo sh -c 'grep -h "^ExecStartPost=" /etc/systemd/system/systemd-nspawn@*.service.d/override.conf; \
+  grep -h "^ExecStart=" /etc/systemd/system/unbounded-agent-regenerate-config@*.service' 2>/dev/null || true)"
 [[ -n "${hooks}" ]] || { echo "found no nspawn lifecycle hooks" >&2; exit 1; }
-if grep -v -F "${helper}" <<<"${hooks}"; then
-  echo "nspawn lifecycle hooks do not all run ${helper}" >&2
+if grep -v -x -E 'Exec(Start|StartPost)=/usr/bin/systemctl start aks-flex-node-nspawn-(pre|post)-start@%i\.service' <<<"${hooks}"; then
+  echo "nspawn lifecycle hooks do not all start the agent's nspawn lifecycle units" >&2
   exit 1
 fi
+for phase in pre-start post-start; do
+  sudo grep -Fqx "ExecStart=${binary} nspawn-lifecycle ${phase} %i" "/etc/systemd/system/aks-flex-node-nspawn-${phase}@.service" ||
+    { echo "aks-flex-node-nspawn-${phase}@.service does not run ${binary}" >&2; exit 1; }
+done
 REMOTE
 }
 

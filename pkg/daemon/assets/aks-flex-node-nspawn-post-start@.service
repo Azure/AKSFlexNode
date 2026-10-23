@@ -1,0 +1,17 @@
+[Unit]
+Description=AKS Flex Node nspawn post-start for machine %i
+# The machine's unit starts it, through systemctl start from ExecStartPost=,
+# once the machine has started: the agent's nspawn-lifecycle post-start rewires
+# NVIDIA devices into it. It runs the current agent, so it never lags an
+# upgrade or a rollback.
+#
+# The machine's start timeout bounds it, as when the hook ran the phase itself:
+# if the machine's start fails or times out, systemd stops this unit with it.
+# No After= on the machine: the machine's start waits for this unit.
+BindsTo=systemd-nspawn@%i.service
+
+[Service]
+# No RemainAfterExit=: each start of the machine runs it again.
+Type=oneshot
+ExecStart={{.BinaryPath}} nspawn-lifecycle post-start %i
+TimeoutStartSec=infinity

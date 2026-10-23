@@ -126,7 +126,9 @@ populate_units() {
         "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/override.conf" \
         "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/10-someone-else.conf" \
         "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube1.service" \
-        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube2.service"
+        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube2.service" \
+        "$HELPER_UNIT_DIR/aks-flex-node-nspawn-pre-start@.service" \
+        "$HELPER_UNIT_DIR/aks-flex-node-nspawn-post-start@.service"
 }
 
 assert_units_removed() {
@@ -136,7 +138,9 @@ assert_units_removed() {
         "$HELPER_UNIT_DIR/systemd-nspawn@kube1.service.d" \
         "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/override.conf" \
         "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube1.service" \
-        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube2.service"; do
+        "$HELPER_UNIT_DIR/unbounded-agent-regenerate-config@kube2.service" \
+        "$HELPER_UNIT_DIR/aks-flex-node-nspawn-pre-start@.service" \
+        "$HELPER_UNIT_DIR/aks-flex-node-nspawn-post-start@.service"; do
         [[ ! -e "$unit_path" ]] || fail "unit was left: $unit_path"
     done
     [[ -f "$HELPER_UNIT_DIR/systemd-nspawn@kube2.service.d/10-someone-else.conf" ]] ||

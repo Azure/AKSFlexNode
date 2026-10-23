@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -57,6 +59,8 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 	assertResolvedPath(t, paths.BinaryPath, paths.BluePath)
 	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
 	assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
+	// For hooks a release before the nspawn lifecycle units writes, after a rollback.
+	assertResolvedPath(t, filepath.Join(filepath.Dir(paths.BinaryPath), nspawnLifecycleHelperName), paths.BluePath)
 	unit, err := os.ReadFile(unitPath)
 	if err != nil {
 		t.Fatalf("read service unit: %v", err)
@@ -90,7 +94,7 @@ func TestEnsureDaemonServiceAssetsKeepsTheLastGoodAssetsWhileAnUpgradeIsPending(
 
 	tests := map[string]struct {
 		pending      bool
-		missing      string
+		missing      []string
 		wantHeld     bool
 		wantRewrites []string
 	}{
@@ -100,12 +104,21 @@ func TestEnsureDaemonServiceAssetsKeepsTheLastGoodAssetsWhileAnUpgradeIsPending(
 		},
 		"writes a missing one": {
 			pending:      true,
-			missing:      recoveryServiceUnitName,
+			missing:      []string{recoveryServiceUnitName},
 			wantHeld:     true,
 			wantRewrites: []string{recoveryServiceUnitName},
 		},
+		// An upgrade from a release before them: the candidate's hooks start them, so they're
+		// written while the upgrade is pending.
+		"writes the nspawn lifecycle units an earlier release didn't have": {
+			pending:      true,
+			missing:      []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit},
+			wantHeld:     true,
+			wantRewrites: []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit},
+		},
 		"converges them without a pending upgrade": {
-			wantRewrites: []string{"recovery script", recoveryServiceUnitName, ServiceUnitName},
+			wantRewrites: []string{"recovery script", recoveryServiceUnitName, ServiceUnitName,
+				config.NSpawnPreStartUnit, config.NSpawnPostStartUnit},
 		},
 	}
 	for name, tc := range tests {
@@ -122,13 +135,15 @@ func TestEnsureDaemonServiceAssetsKeepsTheLastGoodAssetsWhileAnUpgradeIsPending(
 			systemdDir := filepath.Join(t.TempDir(), "systemd")
 			recoveryPath := filepath.Join(t.TempDir(), "aks-flex-node-recovery.sh")
 			assets := map[string]string{
-				"recovery script":       recoveryPath,
-				recoveryServiceUnitName: filepath.Join(systemdDir, recoveryServiceUnitName),
-				ServiceUnitName:         filepath.Join(systemdDir, ServiceUnitName),
+				"recovery script":          recoveryPath,
+				recoveryServiceUnitName:    filepath.Join(systemdDir, recoveryServiceUnitName),
+				ServiceUnitName:            filepath.Join(systemdDir, ServiceUnitName),
+				config.NSpawnPreStartUnit:  filepath.Join(systemdDir, config.NSpawnPreStartUnit),
+				config.NSpawnPostStartUnit: filepath.Join(systemdDir, config.NSpawnPostStartUnit),
 			}
 			lastGood := "the last-good version's\n"
 			for name, path := range assets {
-				if name == tc.missing {
+				if slices.Contains(tc.missing, name) {
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -164,6 +179,180 @@ func TestEnsureDaemonServiceAssetsKeepsTheLastGoodAssetsWhileAnUpgradeIsPending(
 				if rewritten := string(content) != lastGood; rewritten != slices.Contains(tc.wantRewrites, name) {
 					t.Errorf("%s rewritten = %v, want %v", name, rewritten, !rewritten)
 				}
+			}
+		})
+	}
+}
+
+// TestNSpawnLifecycleUnits pins the template units the machines' hooks start: each start of a
+// machine runs the current agent's phase again, pre-start's hang fails for its caller to retry,
+// and post-start is bounded by the machine's own start, which stops it with the machine's.
+func TestNSpawnLifecycleUnits(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	systemdDir := filepath.Join(t.TempDir(), "systemd")
+	assets, err := desiredAgentServiceAssets(paths, agentServiceOptions{}, systemdDir, filepath.Join(t.TempDir(), "recovery.sh"), paths.CurrentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := map[string]string{}
+	agentUnit := slices.IndexFunc(assets, func(a agentServiceAsset) bool { return filepath.Base(a.path) == ServiceUnitName })
+	for i, asset := range assets {
+		name := filepath.Base(asset.path)
+		content[name] = string(asset.content)
+		if (name == config.NSpawnPreStartUnit || name == config.NSpawnPostStartUnit) && i > agentUnit {
+			t.Errorf("%s is written after %s", name, ServiceUnitName)
+		}
+	}
+
+	for _, tc := range []struct {
+		unit, phase string
+		want        []string
+	}{
+		{unit: config.NSpawnPreStartUnit, phase: "pre-start", want: []string{"TimeoutStartSec=2min"}},
+		{unit: config.NSpawnPostStartUnit, phase: "post-start", want: []string{"BindsTo=systemd-nspawn@%i.service", "TimeoutStartSec=infinity"}},
+	} {
+		unit, ok := content[tc.unit]
+		if !ok {
+			t.Errorf("%s is not among the service assets", tc.unit)
+			continue
+		}
+		lines := strings.Split(unit, "\n")
+		// The binary under the host root, which start installs first, and the binary layout
+		// links to the current one.
+		for _, want := range append(tc.want, "Type=oneshot", "ExecStart="+paths.BinaryPath+" nspawn-lifecycle "+tc.phase+" %i") {
+			if !slices.Contains(lines, want) {
+				t.Errorf("%s has no line %q:\n%s", tc.unit, want, unit)
+			}
+		}
+		for _, line := range lines {
+			// A unit that stays active wouldn't run at the machine's next start, and one ordered
+			// after the machine would wait for the start that waits for it.
+			if strings.HasPrefix(line, "RemainAfterExit=") || strings.HasPrefix(line, "After=") || strings.HasPrefix(line, "[Install]") {
+				t.Errorf("%s has %q:\n%s", tc.unit, line, unit)
+			}
+		}
+	}
+}
+
+// TestEnsureNSpawnLifecycleUnits: StartNode writes the units the machine's hooks start before it
+// starts the machine, as start does before it installs the agent's other units, but leaves those
+// there, which the daemon converges.
+func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		existing   []string
+		wantReload bool
+	}{
+		"writes both on a fresh host": {wantReload: true},
+		"writes a missing one":        {existing: []string{config.NSpawnPreStartUnit}, wantReload: true},
+		"leaves the existing ones":    {existing: []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			systemdDir := t.TempDir()
+			bin := filepath.Join(t.TempDir(), "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			binary := filepath.Join(bin, binaryName)
+			writeExecutable(t, binary, "agent")
+			for _, unit := range tc.existing {
+				if err := os.WriteFile(filepath.Join(systemdDir, unit), []byte("existing\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reloaded := false
+			task := &ensureNSpawnLifecycleUnitsTask{
+				log:        slog.New(slog.DiscardHandler),
+				systemdDir: systemdDir,
+				binaryPath: func() string { return binary },
+				reload: func(context.Context, *slog.Logger) error {
+					reloaded = true
+					return nil
+				},
+			}
+			if err := task.Do(t.Context()); err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			for _, unit := range []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit} {
+				content, err := os.ReadFile(filepath.Join(systemdDir, unit))
+				if err != nil {
+					t.Fatalf("%s: %v", unit, err)
+				}
+				if kept := string(content) == "existing\n"; kept != slices.Contains(tc.existing, unit) {
+					t.Errorf("%s kept = %v, want %v", unit, kept, !kept)
+				}
+			}
+			if reloaded != tc.wantReload {
+				t.Errorf("reloaded = %v, want %v", reloaded, tc.wantReload)
+			}
+			// Before the machine starts, for hooks an earlier release's pre-start writes.
+			if target, err := os.Readlink(filepath.Join(bin, nspawnLifecycleHelperName)); err != nil || target != binaryName {
+				t.Errorf("helper links to %q, %v; want %q", target, err, binaryName)
+			}
+		})
+	}
+}
+
+// TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst: the machine's hooks start the nspawn
+// lifecycle units, so they have to be there before anything starts the machine.
+func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
+	t.Parallel()
+
+	gs := &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{}, NodeStart: &goalstates.NodeStart{}}
+	name := StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
+	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
+		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)
+	}
+}
+
+// TestEnsureNSpawnLifecycleHelperLink: the helper beside the agent's binary ends up a link to it,
+// whatever was there.
+func TestEnsureNSpawnLifecycleHelperLink(t *testing.T) {
+	t.Parallel()
+
+	for name, setup := range map[string]func(t *testing.T, helper string){
+		"none": func(*testing.T, string) {},
+		"a copy an earlier release installed": func(t *testing.T, helper string) {
+			if err := os.WriteFile(helper, []byte("an earlier agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a link elsewhere": func(t *testing.T, helper string) {
+			if err := os.Symlink("/nonexistent/aks-flex-node", helper); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"the link": func(t *testing.T, helper string) {
+			if err := os.Symlink(binaryName, helper); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			bin := filepath.Join(t.TempDir(), "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			binary := filepath.Join(bin, binaryName)
+			writeExecutable(t, binary, "agent")
+			helper := filepath.Join(bin, nspawnLifecycleHelperName)
+			setup(t, helper)
+
+			if err := ensureNSpawnLifecycleHelperLink(binary); err != nil {
+				t.Fatalf("ensureNSpawnLifecycleHelperLink: %v", err)
+			}
+			if target, err := os.Readlink(helper); err != nil || target != binaryName {
+				t.Fatalf("helper links to %q, %v; want %q, relative, so it survives a move of the root", target, err, binaryName)
+			}
+			if got, err := os.ReadFile(helper); err != nil || string(got) != "agent" {
+				t.Fatalf("the helper runs %q, %v; want the agent's binary", got, err)
 			}
 		})
 	}
@@ -406,6 +595,8 @@ func TestUninstallPathsSweepBothRoots(t *testing.T) {
 			want := append(tt.want,
 				filepath.Join(systemdSystemDir, ServiceUnitName),
 				filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+				filepath.Join(systemdSystemDir, config.NSpawnPreStartUnit),
+				filepath.Join(systemdSystemDir, config.NSpawnPostStartUnit),
 				"/etc/aks-flex-node/agent-upgrade-signal.json",
 			)
 			slices.Sort(got)

@@ -1,0 +1,14 @@
+[Unit]
+Description=AKS Flex Node nspawn pre-start for machine %i
+# The machine's config regeneration unit starts it, through systemctl start,
+# before every start of the machine: the agent's nspawn-lifecycle pre-start
+# regenerates the machine's host-side config. It runs the current agent, so it
+# never lags an upgrade or a rollback.
+
+[Service]
+# No RemainAfterExit=: each start of the machine runs it again.
+Type=oneshot
+ExecStart={{.BinaryPath}} nspawn-lifecycle pre-start %i
+# The config regeneration unit has no start timeout of its own, and retries a
+# failure, so a hang here fails and is retried rather than holding the machine.
+TimeoutStartSec=2min

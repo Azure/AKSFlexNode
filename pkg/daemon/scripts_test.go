@@ -11,6 +11,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -50,6 +51,25 @@ func TestScriptsInstallUnderTheAgentHostRoot(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestUninstallRemovesTheNSpawnLifecycleUnits keeps uninstall.sh's list of the nspawn lifecycle
+// units, which it removes when reset didn't, in step with the units the agent writes.
+func TestUninstallRemovesTheNSpawnLifecycleUnits(t *testing.T) {
+	t.Parallel()
+
+	script, err := os.ReadFile(filepath.Join(scriptsDir, "uninstall.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := regexp.MustCompile(`(?m)^NSPAWN_LIFECYCLE_UNITS=\(([^)]*)\)$`).FindSubmatch(script)
+	if list == nil {
+		t.Fatal("uninstall.sh does not set NSPAWN_LIFECYCLE_UNITS")
+	}
+	got := strings.Fields(strings.ReplaceAll(string(list[1]), `"`, ""))
+	if want := []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit}; !slices.Equal(got, want) {
+		t.Errorf("uninstall.sh removes %q, want %q", got, want)
 	}
 }
 
