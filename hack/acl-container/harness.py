@@ -1546,6 +1546,25 @@ def check_rejoin(checks: Checks, how: str, image: str = "", registry_unreachable
     checks.expect(running == (image or VM_AGENT_IMAGE), f"the agent runs {what}", running)
 
 
+def check_bootstrap_stops_retrying(checks: Checks) -> None:
+    """A bootstrap that can't succeed isn't retried: with a setting that can't work, bootstrap.sh
+    exits with 78, which ctr run passes on, and which the bootstrap unit's
+    RestartPreventExitStatus= names, so the unit fails rather than retrying. A unit that retried
+    would cycle through auto-restart instead of staying failed."""
+    inputs = bootstrap_inputs()
+    inputs[BOOTSTRAP_INPUTS] += "AKS_FLEX_NODE_AUTH=kerberos\n"
+    log(f"bootstrapping {HOSTNAME} with a setting that can't work")
+    for path, content in inputs.items():
+        ssh(f"sudo install -D -m 0600 /dev/stdin {path}", input=content)
+    ssh(f"sudo systemctl start --no-block {BOOTSTRAP_UNIT}")
+    eventually(lambda: unit_properties(BOOTSTRAP_UNIT, "ActiveState").get("ActiveState") == "failed", 600, 5)
+    unit = unit_properties(BOOTSTRAP_UNIT, "ActiveState", "Result", "ExecMainStatus", "NRestarts")
+    checks.expect(unit.get("ActiveState") == "failed" and unit.get("ExecMainStatus") == "78"
+                  and unit.get("NRestarts") == "0",
+                  f"a bootstrap with a setting that can't work fails with 78, and {BOOTSTRAP_UNIT} doesn't retry it",
+                  ", ".join(f"{k}={v}" for k, v in unit.items()))
+
+
 def check_agent_reset(checks: Checks, rejoin_image: str) -> None:
     """AgentReset, which the daemon carries out: it resets the node, completes the operation, and
     stops the agent by removing its unit. The node joins again with another image."""
@@ -1580,6 +1599,7 @@ def check_deletion_signal(checks: Checks) -> None:
             "--overwrite", quiet=True)
     check_reset(checks, "the deletion signal")
     register_machine(kubernetes_version())
+    check_bootstrap_stops_retrying(checks)
     check_rejoin(checks, "the deletion signal")
 
 
