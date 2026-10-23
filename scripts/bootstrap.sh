@@ -635,16 +635,26 @@ install_agent_binary() {
             fatal "agent binary activation is in progress; retry"
         fi
 
-        # Once the agent has started, this path is a link into its blue/green layout,
-        # which only the agent's upgrade flow switches while the agent is installed.
-        # After a reset, the link is replaced with this binary like any other file:
-        # start removes a layout an earlier release's reset kept, and seeds a new
-        # one from the binary it runs. The message doesn't say to run the link,
-        # which may not be the agent's.
-        if [[ -L "$target" ]] &&
-            { [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
-                systemctl is-active --quiet "$SERVICE_UNIT"; }; then
+        # While the agent is installed, this path is a link into its blue/green
+        # layout, which only the agent's upgrade flow switches. The message doesn't
+        # say to run the link, which may not be the agent's.
+        agent_installed=false
+        if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
+            systemctl is-active --quiet "$SERVICE_UNIT"; then
+            agent_installed=true
+        fi
+        if [[ -L "$target" ]] && [[ "$agent_installed" == true ]]; then
             fatal "refusing to replace the agent binary link at $target while the agent service is installed or active; use the agent upgrade flow, or reset the node, before rerunning this script"
+        fi
+
+        # Otherwise a blue/green layout is what a reset by an earlier release kept.
+        # The link at this path is replaced like any other file, and the layout
+        # goes: an agent from before start removes such a layout itself would point
+        # this path back at the layout's binary rather than run this one.
+        layout="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
+        if [[ "$agent_installed" == false && ( -e "$layout" || -L "$layout" ) ]]; then
+            log "removing the agent's blue/green binary layout a reset kept"
+            rm -rf -- "$layout" || fatal "failed to remove $layout"
         fi
 
         staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||

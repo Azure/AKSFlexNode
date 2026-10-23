@@ -75,6 +75,7 @@ assert_no_staged_files() {
 assert_no_staged_files
 
 # Managed installations must use the upgrade flow; the installer must not detach this link.
+mkdir -p "$MANAGED_BINARY_DIR"
 cp "$replacement_binary" "$MANAGED_BINARY_DIR/aks-flex-node-blue"
 ln -s "$MANAGED_BINARY_DIR/aks-flex-node-blue" "$MANAGED_BINARY_DIR/aks-flex-node-current"
 rm "$INSTALL_DIR/aks-flex-node"
@@ -90,13 +91,14 @@ grep -q "reset the node" "$WORK_DIR/managed.log" || fail "managed reinstall guid
 assert_no_staged_files
 
 # An earlier release's reset removed the service unit but kept the layout. Reinstalling replaces the
-# link with the binary, and leaves the layout to the agent's start, which removes a layout that
-# doesn't run the binary starting it.
+# link with the binary and removes the layout, which an agent from before start removes it would
+# point the link back at.
 rm "$SERVICE_UNIT_PATH"
 install_binary "$running_binary" >"$WORK_DIR/reset-reinstall.log" 2>&1 || fail "reinstall after reset failed"
 [[ ! -L "$INSTALL_DIR/aks-flex-node" && -x "$INSTALL_DIR/aks-flex-node" ]] || fail "reset reinstall did not install a direct binary"
 cmp -s "$INSTALL_DIR/aks-flex-node" "$running_binary" || fail "reset reinstall did not install the new binary"
-[[ -x "$MANAGED_BINARY_DIR/aks-flex-node-blue" ]] || fail "reset reinstall changed the layout, which start replaces"
+[[ ! -e "$MANAGED_BINARY_DIR" ]] || fail "reset reinstall kept the layout an earlier agent would run"
+grep -q "layout a reset kept" "$WORK_DIR/reset-reinstall.log" || fail "removing the retained layout was not reported"
 assert_no_staged_files
 
 # Any other link at the binary path is replaced too, once no agent is installed, which leaves what it

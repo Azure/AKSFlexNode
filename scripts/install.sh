@@ -301,18 +301,32 @@ install_binary() {
             exit 1
         fi
 
-        # Once the agent has started, this path is a link into its blue/green layout, which only the
-        # agent's upgrade flow switches while the agent is installed: updating it here would bypass
-        # activation locking, rollback, and nspawn synchronization. After a reset, the link is
-        # replaced with this binary like any other file: the agent's start removes a layout an
-        # earlier release's reset kept, and seeds a new one from the binary it runs. The message
-        # doesn't say to run the link, which may not be the agent's.
-        if [[ -L "$target_path" ]] &&
-            { [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
-                systemctl is-active --quiet "$SERVICE_UNIT"; }; then
+        # While the agent is installed, this path is a link into its blue/green layout, which only the
+        # agent's upgrade flow switches: updating it here would bypass activation locking, rollback,
+        # and nspawn synchronization. The message doesn't say to run the link, which may not be the
+        # agent's.
+        agent_installed=false
+        if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
+            systemctl is-active --quiet "$SERVICE_UNIT"; then
+            agent_installed=true
+        fi
+        if [[ -L "$target_path" ]] && [[ "$agent_installed" == true ]]; then
             log_error "Refusing to replace the agent binary link at $target_path while the agent service is installed or active."
             log_error "Use the agent upgrade flow, or reset the node, before rerunning this script."
             exit 1
+        fi
+
+        # Otherwise a blue/green layout is what a reset by an earlier release kept. The link at this
+        # path is replaced like any other file, and the layout goes: an agent from before start
+        # removes such a layout itself would point this path back at the layout's binary rather than
+        # run this one.
+        layout="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
+        if [[ "$agent_installed" == false && ( -e "$layout" || -L "$layout" ) ]]; then
+            log_warning "Removing the agent's blue/green binary layout a reset kept"
+            if ! rm -rf -- "$layout"; then
+                log_error "Failed to remove $layout"
+                exit 1
+            fi
         fi
 
         if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||

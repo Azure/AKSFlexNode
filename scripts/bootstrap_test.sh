@@ -679,8 +679,8 @@ assert_ran_from "$WORK_DIR/mismatch-calls" /opt/unbounded/agent/bin/aks-flex-nod
 
 # An earlier release's reset removed the agent's unit but kept its blue/green layout, with the binary
 # path a link into it. A rerun replaces the link with the downloaded agent, which start runs from
-# there, and which removes the layout, since it doesn't run that binary; it has to leave the link
-# alone while the agent unit is installed. These cases run bootstrap.sh with the agent unit and the
+# there, and removes the layout, which an agent from before start removes it would point the link
+# back at; it has to leave both alone while the agent unit is installed. These cases run bootstrap.sh with the agent unit and the
 # upgrade lock pointed at the test's own files, so they don't depend on whether this host runs the
 # agent.
 TEST_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-bootstrap-test.service"
@@ -714,8 +714,8 @@ make_retained_layout() {
     ln -s "$root/lib/aks-flex-node/aks-flex-node-current" "$root/bin/aks-flex-node"
 }
 
-# assert_reinstalled ROOT CALLS checks a rerun replaced the retained layout's link under ROOT with the
-# downloaded agent, and ran it from there. The layout is start's to remove.
+# assert_reinstalled ROOT CALLS checks a rerun replaced the retained layout under ROOT with the
+# downloaded agent, and ran it from there.
 assert_reinstalled() {
     local root="$1" calls="$2" installed downloaded
     [[ -f "$root/bin/aks-flex-node" && ! -L "$root/bin/aks-flex-node" ]] ||
@@ -723,6 +723,7 @@ assert_reinstalled() {
     installed=$(sha256sum "$root/bin/aks-flex-node" | awk '{print $1}')
     downloaded=$(sha256sum "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" | awk '{print $1}')
     [[ "$installed" == "$downloaded" ]] || fail "rerun after reset under $root did not install the downloaded agent"
+    [[ ! -e "$root/lib/aks-flex-node" ]] || fail "rerun after reset under $root kept the layout an earlier agent would run"
     assert_ran_from "$calls" "$root/bin/aks-flex-node"
     grep -q '^start ' "$calls" || fail "rerun after reset under $root did not start the downloaded agent"
 }
