@@ -27,7 +27,6 @@ SERVICE_UNIT_PATH="/etc/systemd/system/$SERVICE_UNIT"
 HOST_ROOT="/opt/unbounded/agent"
 LEGACY_ROOT="/usr/local"
 INSTALL_DIR="$LEGACY_ROOT/bin"
-MANAGED_BINARY_DIR="$LEGACY_ROOT/lib/aks-flex-node"
 AGENT_UPGRADE_LOCK_PATH="/run/aks-flex-node-agent-upgrade.lock"
 CONFIG_DIR="/etc/aks-flex-node"
 DATA_DIR="/var/lib/aks-flex-node"
@@ -251,7 +250,7 @@ download_binary() {
 }
 
 # resolve_install_dir picks where to install without running the binary: under the host root on a
-# host already installed there, since reset keeps the layout; in /usr/local/bin where that is
+# host already installed there, since reset leaves the binary there; in /usr/local/bin where that is
 # writable, as earlier releases were, so one of them finds itself there, while a newer agent copies
 # itself under the host root when it starts; and under the host root otherwise, as on Azure
 # Container Linux, where /usr/local is read-only.
@@ -266,20 +265,6 @@ resolve_install_dir() {
     fi
 
     INSTALL_DIR="$root/bin"
-    MANAGED_BINARY_DIR="$root/lib/aks-flex-node"
-}
-
-is_managed_binary_link() {
-    local target_path="$1"
-    local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
-    local link_target resolved_target
-
-    link_target=$(readlink -- "$target_path") || return 1
-    [[ "$link_target" == "$current_path" ]] || return 1
-    resolved_target=$(readlink -e -- "$target_path") || return 1
-    [[ "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ||
-       "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-green" ]] &&
-        [[ -f "$resolved_target" && -x "$resolved_target" ]]
 }
 
 install_binary() {
@@ -316,26 +301,18 @@ install_binary() {
             exit 1
         fi
 
-        if [[ -L "$target_path" ]]; then
-            # Once the agent has started, this path is a symlink into the managed blue/green layout.
-            # Updating it here would bypass activation locking, rollback, and nspawn synchronization.
-            if ! is_managed_binary_link "$target_path"; then
-                log_error "Refusing to replace the unexpected symbolic link at $target_path."
-                log_error "Inspect and remove the link before rerunning this script; do not execute it as AKS Flex Node."
-                exit 1
-            fi
-            if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
-                systemctl is-active --quiet "$SERVICE_UNIT"; then
-                log_error "Refusing to replace the managed symbolic link at $target_path while the agent service is installed or active."
-                log_error "Use the agent upgrade flow, or run '$target_path reset' before rerunning this script."
-                exit 1
-            fi
-
-            # Reset removes the service but currently retains the managed links. Remove that inactive
-            # layout so the normal first-install path can seed it again when the agent starts.
-            log_warning "Removing the managed binary layout retained after reset"
-            rm -f -- "$target_path"
-            rm -rf -- "$MANAGED_BINARY_DIR"
+        # Once the agent has started, this path is a link into its blue/green layout, which only the
+        # agent's upgrade flow switches while the agent is installed: updating it here would bypass
+        # activation locking, rollback, and nspawn synchronization. After a reset, the link is
+        # replaced with this binary like any other file: the agent's start removes a layout an
+        # earlier release's reset kept, and seeds a new one from the binary it runs. The message
+        # doesn't say to run the link, which may not be the agent's.
+        if [[ -L "$target_path" ]] &&
+            { [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
+                systemctl is-active --quiet "$SERVICE_UNIT"; }; then
+            log_error "Refusing to replace the agent binary link at $target_path while the agent service is installed or active."
+            log_error "Use the agent upgrade flow, or reset the node, before rerunning this script."
+            exit 1
         fi
 
         if ! staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||

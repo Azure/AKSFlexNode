@@ -677,11 +677,12 @@ grep -q "deprecated and ignored; installing in /opt/unbounded/agent/bin" "$WORK_
 [[ ! -e "$WORK_DIR/elsewhere" ]] || fail "the ignored --install-dir was created"
 assert_ran_from "$WORK_DIR/mismatch-calls" /opt/unbounded/agent/bin/aks-flex-node
 
-# Reset removes the agent's unit but keeps its blue/green layout, with the binary path a link into it.
-# A rerun has to install the downloaded agent rather than leave start to link the retained slot back
-# into place, and has to leave the layout alone while the agent unit is installed. These cases run
-# bootstrap.sh with the agent unit and the upgrade lock pointed at the test's own files, so they don't
-# depend on whether this host runs the agent.
+# An earlier release's reset removed the agent's unit but kept its blue/green layout, with the binary
+# path a link into it. A rerun replaces the link with the downloaded agent, which start runs from
+# there, and which removes the layout, since it doesn't run that binary; it has to leave the link
+# alone while the agent unit is installed. These cases run bootstrap.sh with the agent unit and the
+# upgrade lock pointed at the test's own files, so they don't depend on whether this host runs the
+# agent.
 TEST_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-bootstrap-test.service"
 mkdir -p "$(dirname "$TEST_UNIT_PATH")"
 run_with_test_unit() {
@@ -713,8 +714,8 @@ make_retained_layout() {
     ln -s "$root/lib/aks-flex-node/aks-flex-node-current" "$root/bin/aks-flex-node"
 }
 
-# assert_reinstalled ROOT CALLS checks a rerun replaced the retained layout under ROOT with the
-# downloaded agent, and ran it from there.
+# assert_reinstalled ROOT CALLS checks a rerun replaced the retained layout's link under ROOT with the
+# downloaded agent, and ran it from there. The layout is start's to remove.
 assert_reinstalled() {
     local root="$1" calls="$2" installed downloaded
     [[ -f "$root/bin/aks-flex-node" && ! -L "$root/bin/aks-flex-node" ]] ||
@@ -722,7 +723,6 @@ assert_reinstalled() {
     installed=$(sha256sum "$root/bin/aks-flex-node" | awk '{print $1}')
     downloaded=$(sha256sum "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" | awk '{print $1}')
     [[ "$installed" == "$downloaded" ]] || fail "rerun after reset under $root did not install the downloaded agent"
-    [[ ! -e "$root/lib/aks-flex-node" ]] || fail "rerun after reset under $root retained the managed binary layout"
     assert_ran_from "$calls" "$root/bin/aks-flex-node"
     grep -q '^start ' "$calls" || fail "rerun after reset under $root did not start the downloaded agent"
 }
@@ -768,24 +768,39 @@ grep -q 'while the agent service is installed or active' "$WORK_DIR/live.log" ||
     fail "the managed layout of an installed agent changed"
 [[ ! -s "$WORK_DIR/live-calls" ]] || fail "the agent was run on a node whose agent unit is installed"
 
-# Any other link at the binary path is not the agent's layout; leave it for the operator to inspect.
+# Any other link at the binary path is replaced too, once no agent is installed, which leaves what it
+# led to alone.
 clear_installation
 mkdir -p /opt/unbounded/agent/bin
 printf '#!/bin/sh\nexit 0\n' > "$WORK_DIR/odd-target"
 chmod 0755 "$WORK_DIR/odd-target"
 ln -s "$WORK_DIR/odd-target" /opt/unbounded/agent/bin/aks-flex-node
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-calls" \
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    run_with_test_unit --auth arc --config-path "$WORK_DIR/odd-etc/config.json" >/dev/null ||
+    fail "rerun over another link at the binary path failed"
+assert_reinstalled /opt/unbounded/agent "$WORK_DIR/odd-calls"
+[[ "$(cat "$WORK_DIR/odd-target")" == $'#!/bin/sh\nexit 0' ]] || fail "the rerun changed what another link led to"
+
+# While the agent unit is installed, any link is refused, and the message doesn't say to run it, as it
+# may not be the agent's.
+clear_installation
+mkdir -p /opt/unbounded/agent/bin
+ln -s "$WORK_DIR/odd-target" /opt/unbounded/agent/bin/aks-flex-node
+printf '[Unit]\n' > "$TEST_UNIT_PATH"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-live-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        run_with_test_unit --auth arc --config-path "$WORK_DIR/odd-etc/config.json" \
-            >"$WORK_DIR/odd.log" 2>&1; then
-    fail "unexpected agent binary symlink was replaced"
+        run_with_test_unit --auth arc --config-path "$WORK_DIR/odd-live-etc/config.json" \
+            >"$WORK_DIR/odd-live.log" 2>&1; then
+    fail "another link was replaced while the agent unit is installed"
 fi
-grep -q 'refusing to replace the unexpected symbolic link' "$WORK_DIR/odd.log" ||
-    fail "unexpected agent binary symlink rejection was not reported"
-[[ -L /opt/unbounded/agent/bin/aks-flex-node &&
-   $(readlink /opt/unbounded/agent/bin/aks-flex-node) == "$WORK_DIR/odd-target" ]] ||
-    fail "unexpected agent binary symlink changed"
-[[ ! -s "$WORK_DIR/odd-calls" ]] || fail "the agent was run beside an unexpected symlink"
+rm -f "$TEST_UNIT_PATH"
+! grep -q "/opt/unbounded/agent/bin/aks-flex-node reset" "$WORK_DIR/odd-live.log" ||
+    fail "the refusal said to run a link that may not be the agent's"
+[[ "$(readlink /opt/unbounded/agent/bin/aks-flex-node)" == "$WORK_DIR/odd-target" ]] ||
+    fail "a refused link changed"
+[[ ! -s "$WORK_DIR/odd-live-calls" ]] || fail "the agent was run on a node whose agent unit is installed"
 
 echo "bootstrap script tests passed"
