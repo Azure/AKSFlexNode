@@ -135,6 +135,43 @@ func validateAgentUpgradePaths(paths agentUpgradePaths) error {
 	return nil
 }
 
+// flattenAgentLayout leaves the agent's binary under the host root as a regular file, a copy of
+// the binary the layout runs, and removes the blue/green layout, as reset does once the agent's
+// unit is gone: the aks-flex-node command still works, and the next start seeds a new layout from
+// the binary that runs it. It holds the activation lock, so it never runs beside an activation's
+// switch. Without a layout, it does nothing.
+func flattenAgentLayout(log *slog.Logger, paths agentUpgradePaths, lockPath string) error {
+	layoutDir := filepath.Dir(paths.CurrentPath)
+	if _, err := os.Lstat(layoutDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect %s: %w", layoutDir, err)
+	}
+	lock, err := agentbinary.AcquireHostActivationLock(lockPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close() //nolint:errcheck // releasing the lock
+
+	active, err := resolvedExecutable(paths.CurrentPath)
+	if err != nil {
+		active, err = resolvedExecutable(paths.LastGoodPath)
+	}
+	if err != nil {
+		return fmt.Errorf("find the binary the layout runs: %w", err)
+	}
+	// Renamed over the link, so the path is never missing or partial.
+	if err := copyExecutable(active, paths.BinaryPath); err != nil {
+		return fmt.Errorf("install %s at %s: %w", active, paths.BinaryPath, err)
+	}
+	if err := os.RemoveAll(layoutDir); err != nil {
+		return fmt.Errorf("remove %s: %w", layoutDir, err)
+	}
+	log.Info("left the agent binary as a regular file, without its blue/green layout",
+		"path", paths.BinaryPath, "from", active)
+	return nil
+}
+
 func resolvedExecutable(path string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {

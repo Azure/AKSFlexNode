@@ -258,14 +258,18 @@ type uninstallServiceTask struct {
 	systemctl func(ctx context.Context, args ...string) error
 	unitDir   string
 	paths     []string
+	// flatten leaves the agent's binary without its blue/green layout; nil does nothing.
+	flatten func() error
 }
 
 // UninstallService returns a task that removes the first-boot unit, then
-// disables, removes, and stops the agent's systemd unit.
+// disables, removes, and stops the agent's systemd unit, leaving the agent's
+// binary under the host root as a regular file, without its blue/green layout.
 //
 // The paths are resolved when the task is built. Nothing in reset changes the
 // host root, and ResetNode resolves the helper paths it removes the same way.
 func UninstallService(log *slog.Logger) phases.Task {
+	binaryPaths := agentUpgradePathsUnder(hostroot.Resolve())
 	return &uninstallServiceTask{
 		log: log,
 		systemctl: func(ctx context.Context, args ...string) error {
@@ -273,6 +277,7 @@ func UninstallService(log *slog.Logger) phases.Task {
 		},
 		unitDir: systemdSystemDir,
 		paths:   uninstallPaths(),
+		flatten: func() error { return flattenAgentLayout(log, binaryPaths, agentUpgradeLockPath) },
 	}
 }
 
@@ -339,6 +344,15 @@ func (t *uninstallServiceTask) Do(ctx context.Context) error {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 	t.log.Info("systemd service uninstalled", "unit", ServiceUnitName)
+
+	// Once no unit names the layout, so nothing restarts the agent from it, and before the stop,
+	// which ends a daemon resetting its own node. A layout left behind does no harm: start
+	// replaces it with the binary that runs it.
+	if t.flatten != nil {
+		if err := t.flatten(); err != nil {
+			t.log.Warn("kept the agent's blue/green binary layout; the next start replaces it", "error", err)
+		}
+	}
 
 	if err := t.systemctl(ctx, "stop", ServiceUnitName); err != nil {
 		t.log.Warn("failed to stop service (may not be running)", "unit", ServiceUnitName, "error", err)
