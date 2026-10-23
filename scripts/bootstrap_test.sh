@@ -190,7 +190,10 @@ if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
         --agent-url "$AGENT_URL" \
         --config-path "$WORK_DIR/missing-pair-config.json" >"$WORK_DIR/missing-pair.out" 2>&1; then
     fail "bootstrap accepted an unpaired agent kubeconfig"
+else
+    missing_pair_status=$?
 fi
+[[ "$missing_pair_status" == 78 ]] || fail "unpaired kubeconfig did not report a permanent configuration failure"
 grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
 [[ ! -e "$WORK_DIR/missing-pair-calls" ]] || fail "unpaired kubeconfig reached the agent"
 cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
