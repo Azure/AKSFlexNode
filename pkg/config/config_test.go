@@ -82,9 +82,6 @@ func TestMachineClientConfigInClusterEndpointURL(t *testing.T) {
 }
 
 func TestSetDefaults(t *testing.T) {
-	boolPtr := func(value bool) *bool {
-		return &value
-	}
 	tests := []struct {
 		name   string
 		config *Config
@@ -175,68 +172,6 @@ func TestSetDefaults(t *testing.T) {
 			config: &Config{Agent: AgentConfig{MachineOperationMode: "disable"}},
 			want: func(c *Config) bool {
 				return c.Agent.MachineOperationMode == "disable"
-			},
-		},
-		{
-			name:   "require machine registration is preserved",
-			config: &Config{Agent: AgentConfig{RequireMachineRegistration: boolPtr(true)}},
-			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
-			},
-		},
-		{
-			name: "explicit best-effort machine registration is preserved for managed identity",
-			config: &Config{
-				Agent: AgentConfig{RequireMachineRegistration: boolPtr(false)},
-				Azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}},
-			},
-			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration != nil && !*c.Agent.RequireMachineRegistration
-			},
-		},
-		{
-			name: "managed identity requires machine registration",
-			config: &Config{Azure: AzureConfig{
-				ManagedIdentity: &ManagedIdentityConfig{},
-			}},
-			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
-			},
-		},
-		{
-			name: "service principal requires machine registration",
-			config: &Config{Azure: AzureConfig{
-				ServicePrincipal: &ServicePrincipalConfig{
-					TenantID:     "tenant-id",
-					ClientID:     "client-id",
-					ClientSecret: "client-secret",
-				},
-			}},
-			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
-			},
-		},
-		{
-			name: "Arc identity requires machine registration",
-			config: &Config{Azure: AzureConfig{
-				Arc: &ArcConfig{
-					Enabled:       true,
-					MachineName:   "machine-name",
-					ResourceGroup: "resource-group",
-					Location:      "eastus",
-				},
-			}},
-			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration != nil && *c.Agent.RequireMachineRegistration
-			},
-		},
-		{
-			name: "bootstrap token does not require machine registration",
-			config: &Config{Azure: AzureConfig{
-				BootstrapToken: &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
-			}},
-			want: func(c *Config) bool {
-				return c.Agent.RequireMachineRegistration != nil && !*c.Agent.RequireMachineRegistration
 			},
 		},
 	}

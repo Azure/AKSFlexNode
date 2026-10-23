@@ -12,72 +12,26 @@ import (
 func TestEnsureMachineCreateFailure(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]struct {
-		require bool
-		wantErr string
-	}{
-		"best effort ignores create failure": {},
-		"required returns create failure": {
-			require: true,
-			wantErr: "ensure-machine: create machine: boom",
-		},
-	}
+	client := &ensureMachineClient{createErr: errors.New("boom")}
+	goal := GoalState{KubernetesVersion: "1.35.1"}
+	task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			client := &ensureMachineClient{createErr: errors.New("boom")}
-			goal := GoalState{KubernetesVersion: "1.35.1"}
-			task := EnsureMachine(client, &goal, tt.require, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-			err := task.Do(context.Background())
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("Do() error = %v, want containing %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Do() error = %v", err)
-			}
-		})
+	err := task.Do(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ensure-machine: create machine: boom") {
+		t.Fatalf("Do() error = %v, want create failure", err)
 	}
 }
 
 func TestEnsureMachineGetFailure(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]struct {
-		require bool
-		wantErr string
-	}{
-		"best effort ignores get failure": {},
-		"required returns get failure": {
-			require: true,
-			wantErr: "ensure-machine: get machine: boom",
-		},
-	}
+	client := &ensureMachineClient{getErr: errors.New("boom")}
+	goal := GoalState{KubernetesVersion: "1.35.1"}
+	task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			client := &ensureMachineClient{getErr: errors.New("boom")}
-			goal := GoalState{KubernetesVersion: "1.35.1"}
-			task := EnsureMachine(client, &goal, tt.require, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-			err := task.Do(context.Background())
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("Do() error = %v, want containing %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Do() error = %v", err)
-			}
-		})
+	err := task.Do(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ensure-machine: get machine: boom") {
+		t.Fatalf("Do() error = %v, want get failure", err)
 	}
 }
 
@@ -89,7 +43,7 @@ func TestEnsureMachineCreatesAndAdoptsSettingsVersion(t *testing.T) {
 		KubernetesVersion: "1.35.1",
 		SettingsVersion:   "etag-created",
 	}}}
-	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err := task.Do(context.Background()); err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -126,7 +80,7 @@ func TestEnsureMachineAdoptsExistingSettingsVersionWithoutReplacingLocalGoal(t *
 			ImageGCLowThreshold:  60,
 		},
 	}}}
-	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err := task.Do(context.Background()); err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -156,7 +110,7 @@ func TestEnsureMachineUpdatesMismatchedVersion(t *testing.T) {
 			SettingsVersion:   "etag-new",
 		}},
 	}
-	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err := task.Do(context.Background()); err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -183,7 +137,7 @@ func TestEnsureMachineRejectsUnchangedRemoteVersionAfterUpdate(t *testing.T) {
 			SettingsVersion:   "etag-old",
 		}},
 	}
-	task := EnsureMachine(client, &goal, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	err := task.Do(context.Background())
 	if err == nil || !strings.Contains(err.Error(), `AKS machine Kubernetes version "1.34.0" does not match local bootstrap version "1.35.1"`) {
@@ -199,20 +153,13 @@ func TestEnsureMachineRejectsInvalidExistingMachine(t *testing.T) {
 
 	tests := map[string]struct {
 		machine *Machine
-		require bool
 		wantErr string
 	}{
-		"best effort preserves local goal after missing settings version": {
+		"rejects missing settings version": {
 			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
-		},
-		"required rejects missing settings version": {
-			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
-			require: true,
 			wantErr: "goal settings version is empty",
 		},
-		"best effort preserves local goal after nil response": {},
-		"required rejects nil response": {
-			require: true,
+		"rejects nil response": {
 			wantErr: "machine is nil",
 		},
 	}
@@ -223,7 +170,7 @@ func TestEnsureMachineRejectsInvalidExistingMachine(t *testing.T) {
 
 			goal := GoalState{KubernetesVersion: "1.35.1", NodeLabels: map[string]string{"source": "local"}}
 			client := &ensureMachineClient{machine: tt.machine, getResultSet: true}
-			task := EnsureMachine(client, &goal, tt.require, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			task := EnsureMachine(client, &goal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 			err := task.Do(t.Context())
 			if tt.wantErr != "" {
