@@ -74,10 +74,18 @@ func (h *handler) execute(ctx context.Context) error {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
 
+	nodeChecks := nodestart.Preflight(log, *agentCfg, gs)
+	if cfg.UsesKubeconfigCredentials() {
+		nodeChecks, err = pairedKubeconfigChecks(cfg, nodeChecks)
+		if err != nil {
+			return fmt.Errorf("configure paired kubeconfig preflight: %w", err)
+		}
+	}
+
 	checks := preflight.Flatten(
 		arc.Preflight(cfg, log),
 		host.Preflight(log, *agentCfg, gs),
-		nodestart.Preflight(log, *agentCfg, gs),
+		nodeChecks,
 		rootfs.Preflight(log, *agentCfg, gs),
 		npd.Preflight(cfg),
 	)

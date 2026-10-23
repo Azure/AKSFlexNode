@@ -423,6 +423,8 @@ AKS_FLEX_NODE_AGENT_POOL_NAME
 AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
 AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
 AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
+AKS_FLEX_NODE_AGENT_KUBECONFIG
+AKS_FLEX_NODE_KUBELET_KUBECONFIG
 AKS_FLEX_NODE_CONFIG_OVERRIDES
 AKS_FLEX_NODE_INSTALL_DIR
 AKS_FLEX_NODE_CONFIG_PATH
@@ -466,10 +468,13 @@ The script processes JSON in this order:
 9. Apply dedicated rootfs and offline-artifact source overrides.
 10. Set `agent.nodeName` from the lowercase host name only when absent.
 11. Apply the dedicated auth selection.
-12. Validate the final JSON with jq.
-13. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
+12. When paired kubeconfig files are configured, read them with `jq --rawfile`
+    and embed their exact content as `agent.kubeconfigData` and
+    `node.kubelet.kubeconfigData`.
+13. Validate the final JSON with jq.
+14. Atomically install the config at `/etc/aks-flex-node/config.json` with mode
     `0600`.
-14. Clear bootstrap environment variables, including signed artifact URLs and
+15. Clear bootstrap environment variables, including signed artifact URLs and
     any direct SP secret, before launching the agent commands.
 
 The ARM token, request body, authorization header, and bootstrap-data response

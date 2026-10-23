@@ -18,6 +18,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/cmd/start"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/token"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/version"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
 func main() {
@@ -33,8 +34,17 @@ func main() {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "Command execution failed: %v\n", err)
-		os.Exit(1)
+		os.Exit(commandErrorExitCode(err))
 	}
+}
+
+func commandErrorExitCode(err error) int {
+	var kubeconfigErr *config.KubeconfigValidationError
+	if errors.As(err, &kubeconfigErr) {
+		// EX_CONFIG matches the first-boot unit's RestartPreventExitStatus.
+		return 78
+	}
+	return 1
 }
 
 func newRootCommand() *cobra.Command {

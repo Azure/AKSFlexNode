@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/transport"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
@@ -21,6 +23,24 @@ func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
 // BootstrapRESTConfigWithPlugin is BootstrapRESTConfig with the exec
 // credential plugin named by the caller.
 func BootstrapRESTConfigWithPlugin(cfg *config.Config, plugin string) (*rest.Config, error) {
+	if cfg.UsesKubeconfigCredentials() {
+		restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(cfg.Agent.KubeconfigData))
+		if err != nil {
+			return nil, fmt.Errorf("build Kubernetes REST config from agent kubeconfig: %w", err)
+		}
+		if restCfg.ExecProvider != nil && !utilio.IsExecutable(restCfg.ExecProvider.Command) {
+			return nil, fmt.Errorf("agent kubeconfig exec credential plugin %s is not executable on the host", restCfg.ExecProvider.Command)
+		}
+		transportCfg, err := restCfg.TransportConfig()
+		if err != nil {
+			return nil, fmt.Errorf("validate agent kubeconfig transport: %w", err)
+		}
+		if _, err := transport.TLSConfigFor(transportCfg); err != nil {
+			return nil, fmt.Errorf("validate agent kubeconfig TLS material: %w", err)
+		}
+		return restCfg, nil
+	}
+
 	apiServerURL := cfg.APIServerURL()
 	if apiServerURL == "" {
 		return nil, fmt.Errorf("kubernetes API server URL is empty")
