@@ -94,8 +94,9 @@ the items of the upgrade test plan they cover:
   ([#385](https://github.com/Azure/AKSFlexNode/issues/385)).
 
 U2 and U7 also log, without checking, whether the nspawn lifecycle helper is
-the running agent's binary. After an upgrade it isn't, until the helper is
-refreshed on every daemon start. The node joins with a bootstrap token, so its
+the running agent's binary. The machines' hooks start the agent's nspawn
+lifecycle units instead, and the helper is a link to the agent's binary, so it
+should be. The node joins with a bootstrap token, so its
 kubelet authenticates with a client certificate, and the restart in U2 doesn't
 exercise the agent as an exec credential plugin.
 

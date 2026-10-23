@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -623,5 +624,30 @@ func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 	}
 	if ac.CNI.PluginVersion != "" {
 		t.Fatalf("CNI.PluginVersion=%q, want empty", ac.CNI.PluginVersion)
+	}
+}
+
+// TestToAgentConfig_NSpawnLifecycle: the machines' hooks start the agent's nspawn lifecycle units
+// for the machine, %i, rather than run a helper unbounded copies onto the host.
+func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
+	t.Parallel()
+
+	ac := ToAgentConfig(&Config{}, goalstates.NSpawnMachineKube1)
+	want := &agentconfig.NSpawnLifecycleConfig{
+		PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
+		PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
+	}
+	if ac.NSpawnLifecycle == nil || *ac.NSpawnLifecycle != *want {
+		t.Fatalf("NSpawnLifecycle = %+v, want %+v", ac.NSpawnLifecycle, want)
+	}
+	if err := agentconfig.ValidateNSpawnLifecycle(ac.NSpawnLifecycle); err != nil {
+		t.Fatalf("unbounded rejects the hooks' commands: %v", err)
+	}
+	rootFS, err := goalstates.ResolveNSpawnConfig(ac, goalstates.NSpawnMachineKube1)
+	if err != nil {
+		t.Fatalf("ResolveNSpawnConfig: %v", err)
+	}
+	if rootFS.UsesLifecycleHelper() {
+		t.Fatal("the machine's hooks would still run the lifecycle helper")
 	}
 }

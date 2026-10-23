@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -23,6 +24,12 @@ const (
 	// hostBinaryRelativePath is the host's aks-flex-node, relative to the host
 	// root; see HostBinaryPath.
 	hostBinaryRelativePath = "bin/aks-flex-node"
+
+	// NSpawnPreStartUnit and NSpawnPostStartUnit are the template units that
+	// run the agent's nspawn-lifecycle phases for a machine, its name the
+	// instance. The machines' hooks start them; see ToAgentConfig.
+	NSpawnPreStartUnit  = "aks-flex-node-nspawn-pre-start@.service"
+	NSpawnPostStartUnit = "aks-flex-node-nspawn-post-start@.service"
 
 	// aksAADServerID is the Azure AD server application ID for AKS.
 	aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
@@ -137,7 +144,26 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
 	}
 
+	ac.NSpawnLifecycle = nspawnLifecycleHooks()
+
 	return ac
+}
+
+// nspawnLifecycleHooks returns the commands the machines' hooks run at every
+// start of a machine, in place of the lifecycle helper unbounded would copy
+// onto the host. They start the agent's template units, which run the current
+// agent's nspawn-lifecycle phase for the machine, %i, and fail the hook if it
+// fails. Starting a unit, rather than running the agent, leaves how the agent
+// runs to the units: the agent writes them, and converges them as it changes.
+func nspawnLifecycleHooks() *agentconfig.NSpawnLifecycleConfig {
+	start := func(template string) string {
+		return "/usr/bin/systemctl start " + strings.Replace(template, "@.", "@%i.", 1)
+	}
+
+	return &agentconfig.NSpawnLifecycleConfig{
+		PreStartCommand:  start(NSpawnPreStartUnit),
+		PostStartCommand: start(NSpawnPostStartUnit),
+	}
 }
 
 func kubeletConfiguration(cfg *Config) map[string]any {

@@ -1247,10 +1247,12 @@ def path_exists(path: str) -> bool:
 # What reset has to remove, by what it is. Each is checked to exist before reset, so that its
 # absence afterwards means something.
 RESET_REMOVES = {
-    "the agent, recovery, and first-boot units": [
+    "the agent, recovery, first-boot, and nspawn lifecycle units": [
         f"/etc/systemd/system/{AGENT_UNIT}",
         "/etc/systemd/system/aks-flex-node-agent-recovery.service",
         f"/etc/systemd/system/{BOOTSTRAP_UNIT}",
+        "/etc/systemd/system/aks-flex-node-nspawn-pre-start@.service",
+        "/etc/systemd/system/aks-flex-node-nspawn-post-start@.service",
     ],
     "the config, credentials, and logs": ["/etc/aks-flex-node", "/var/log/aks-flex-node"],
     "the host helpers under the host root": [
@@ -1603,13 +1605,12 @@ def check_kubelet_auth(checks: Checks, step: str, machine: str) -> None:
 
 def record_lifecycle_helper(step: str, snapshot: AgentSnapshot) -> None:
     """Log, without checking, whether the nspawn lifecycle helper is the running agent's binary.
-    The helper is a copy of the agent that last ran the machine's lifecycle tasks, and is not yet
-    refreshed on every daemon start (review item F6), so after an upgrade it is expected to
-    differ."""
+    The machines' hooks start the agent's nspawn lifecycle units instead, and the helper, kept for
+    hooks an earlier release writes, is a link to the agent's binary, so it is expected to be."""
     same = bool(snapshot.helper_sha256) and snapshot.helper_sha256 == snapshot.running_sha256
     log(f"{step}: recorded, not checked: {LIFECYCLE_HELPER} ({short(snapshot.helper_sha256)}) "
         f"{'is' if same else 'is not'} the running agent's binary ({short(snapshot.running_sha256)}); "
-        "it is expected to differ until the helper is refreshed on every daemon start (F6)")
+        "it is a link to the agent's binary, so it is expected to be")
 
 
 def check_recovery_assets(checks: Checks, step: str) -> None:

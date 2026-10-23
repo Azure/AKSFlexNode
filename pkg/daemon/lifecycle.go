@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -47,6 +48,21 @@ var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Parse(stri
 
 //go:embed assets/aks-flex-node-agent-recovery.service
 var recoveryServiceUnitContent []byte
+
+//go:embed assets/aks-flex-node-nspawn-pre-start@.service
+var nspawnPreStartUnitContent []byte
+
+//go:embed assets/aks-flex-node-nspawn-post-start@.service
+var nspawnPostStartUnitContent []byte
+
+var (
+	nspawnPreStartUnitTemplate  = template.Must(template.New(config.NSpawnPreStartUnit).Parse(string(nspawnPreStartUnitContent)))
+	nspawnPostStartUnitTemplate = template.Must(template.New(config.NSpawnPostStartUnit).Parse(string(nspawnPostStartUnitContent)))
+)
+
+// nspawnLifecycleHelperName is the lifecycle helper unbounded copies beside the agent's binary
+// for the machines' hooks to run, when the agent supplies no commands for them.
+var nspawnLifecycleHelperName = filepath.Base(goalstates.LegacyHostPaths().NSpawnLifecycleBinary)
 
 //go:embed assets/aks-flex-node-recovery.sh
 var recoveryScriptContent []byte
@@ -129,6 +145,9 @@ func ensureAgentUpgradeServiceAssetsAt(
 	if err := ensureAgentUpgradeLayout(ctx, log, binaryPaths); err != nil {
 		return false, fmt.Errorf("initialize agent binary layout: %w", err)
 	}
+	if err := ensureNSpawnLifecycleHelperLink(binaryPaths.BinaryPath); err != nil {
+		return false, err
+	}
 	held := false
 	if holdDuringUpgrade {
 		if _, err := os.Stat(binaryPaths.SignalPath); err == nil {
@@ -167,9 +186,21 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions age
 	}
 	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(embeddedRecoveryScriptPath), []byte(recoveryScript))
 	recoveryContent := renderRecoveryScript(binaryPaths)
+	preStartContent, err := renderNSpawnLifecycleUnit(nspawnPreStartUnitTemplate, currentBinaryPath)
+	if err != nil {
+		return nil, err
+	}
+	postStartContent, err := renderNSpawnLifecycleUnit(nspawnPostStartUnitTemplate, currentBinaryPath)
+	if err != nil {
+		return nil, err
+	}
 	// Publish dependencies before the main unit that references OnFailure, so an
 	// interrupted update never leaves systemd pointing at missing recovery assets.
+	// The machines' hooks start the nspawn lifecycle units, and the daemon
+	// rewrites the hooks once it has written these.
 	return []agentServiceAsset{
+		{path: filepath.Join(systemdDir, config.NSpawnPreStartUnit), content: preStartContent, mode: 0o644},
+		{path: filepath.Join(systemdDir, config.NSpawnPostStartUnit), content: postStartContent, mode: 0o644},
 		{path: recoveryScript, content: recoveryContent, mode: 0o750},
 		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
 		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
@@ -207,6 +238,36 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}
 	return content.Bytes(), nil
+}
+
+// renderNSpawnLifecycleUnit renders a template unit that runs an nspawn-lifecycle phase with the
+// current agent.
+func renderNSpawnLifecycleUnit(unit *template.Template, currentBinaryPath string) ([]byte, error) {
+	var content bytes.Buffer
+	if err := unit.Execute(&content, agentServiceTemplateData{CurrentBinaryPath: currentBinaryPath}); err != nil {
+		return nil, fmt.Errorf("render %s: %w", unit.Name(), err)
+	}
+	return content.Bytes(), nil
+}
+
+// ensureNSpawnLifecycleHelperLink makes the lifecycle helper beside the agent's binary a link to
+// it. This release's hooks start its nspawn lifecycle units rather than run the helper, but a
+// release from before them, after a rollback or a downgrade, writes hooks that run it, and
+// without it the machine never starts again. As a link to the agent's binary, which is the
+// current one, it runs whichever agent is installed, so it never goes stale and nothing has to
+// keep it up to date, and it can stay: unbounded no longer writes the path once the agent
+// supplies the hooks' commands. A copy an earlier release installed is replaced; reset and
+// uninstall remove the link with the rest of the agent.
+func ensureNSpawnLifecycleHelperLink(binaryPath string) error {
+	helper := filepath.Join(filepath.Dir(binaryPath), nspawnLifecycleHelperName)
+	target := filepath.Base(binaryPath)
+	if current, err := os.Readlink(helper); err == nil && current == target {
+		return nil
+	}
+	if err := replaceSymlink(helper, target); err != nil {
+		return fmt.Errorf("link the nspawn lifecycle helper %s to %s: %w", helper, target, err)
+	}
+	return nil
 }
 
 // renderRecoveryScript points the embedded recovery script at the binary layout
@@ -287,6 +348,8 @@ func uninstallPathsUnder(root, legacy string) []string {
 	paths := []string{
 		filepath.Join(systemdSystemDir, ServiceUnitName),
 		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
+		filepath.Join(systemdSystemDir, config.NSpawnPreStartUnit),
+		filepath.Join(systemdSystemDir, config.NSpawnPostStartUnit),
 		recoveryScriptPathUnder(root),
 	}
 	if root != legacy {
