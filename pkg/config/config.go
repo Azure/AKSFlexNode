@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/transport"
 )
 
 const (
@@ -596,8 +597,16 @@ func validateEmbeddedKubeconfig(data string) error {
 	if err := clientcmd.Validate(*kubeconfig); err != nil {
 		return fmt.Errorf("validate kubeconfig: %w", err)
 	}
-	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(data)); err != nil {
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig([]byte(data))
+	if err != nil {
 		return fmt.Errorf("validate active kubeconfig context: %w", err)
+	}
+	transportConfig, err := restConfig.TransportConfig()
+	if err != nil {
+		return fmt.Errorf("validate kubeconfig transport: %w", err)
+	}
+	if _, err := transport.TLSConfigFor(transportConfig); err != nil {
+		return fmt.Errorf("validate kubeconfig TLS material: %w", err)
 	}
 	return nil
 }
@@ -628,7 +637,7 @@ func (c *Config) validateBootstrapToken() error {
 	return nil
 }
 
-// APIServerURL returns the kube-apiserver URL derived from the RP cluster FQDN.
+// APIServerURL returns the kube-apiserver URL from the validated kubeconfig or RP cluster FQDN.
 func (c *Config) APIServerURL() string {
 	if c == nil {
 		return ""
@@ -1046,6 +1055,7 @@ func (c *KubeletConfig) validate() error {
 		}
 		contextConfig := kubeconfig.Contexts[kubeconfig.CurrentContext]
 		cluster := kubeconfig.Clusters[contextConfig.Cluster]
+		c.ClusterFQDN = cluster.Server
 		c.CACertData = base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
 	}
 
@@ -1096,8 +1106,8 @@ func (c *Config) validateAuthSettings() error {
 			armAuthMethodCount++
 		}
 	}
-	if armAuthMethodCount == 0 && !c.IsBootstrapTokenConfigured() {
-		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	if armAuthMethodCount == 0 && !c.IsBootstrapTokenConfigured() && !c.UsesKubeconfigCredentials() {
+		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, Bootstrap Token, or paired kubeconfigs")
 	}
 	if armAuthMethodCount > 1 {
 		return fmt.Errorf("only one Azure authentication method can be enabled at a time: Arc, Service Principal, or Managed Identity")

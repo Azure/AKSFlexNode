@@ -1,6 +1,9 @@
 package config
 
 import (
+	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,9 +34,25 @@ contexts:
     user: identity
 `
 
+func embeddedKubeconfigWithTLS(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "certificate.pem")
+	writeTestClientCertificate(t, path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read test certificate: %v", err)
+	}
+	return strings.Replace(validEmbeddedKubeconfig, "Y2E=", base64.StdEncoding.EncodeToString(data), 1)
+}
+
 func TestValidateEmbeddedKubeconfig(t *testing.T) {
 	t.Parallel()
 
+	validEmbeddedKubeconfig := embeddedKubeconfigWithTLS(t)
+	_, caData, _ := strings.Cut(validEmbeddedKubeconfig, "certificate-authority-data: ")
+	caData, _, _ = strings.Cut(caData, "\n")
+	caLine := "certificate-authority-data: " + caData
 	tests := map[string]struct {
 		data    string
 		wantErr string
@@ -48,15 +67,28 @@ func TestValidateEmbeddedKubeconfig(t *testing.T) {
 		"external CA": {
 			data: strings.Replace(
 				validEmbeddedKubeconfig,
-				"certificate-authority-data: Y2E=",
+				caLine,
 				"certificate-authority: /etc/kubernetes/ca.crt",
 				1,
 			),
 			wantErr: "certificate-authority file references",
 		},
 		"missing CA data": {
-			data:    strings.Replace(validEmbeddedKubeconfig, "    certificate-authority-data: Y2E=\n", "", 1),
+			data:    strings.Replace(validEmbeddedKubeconfig, "    "+caLine+"\n", "", 1),
 			wantErr: "certificate-authority-data is required",
+		},
+		"malformed CA": {
+			data:    strings.Replace(validEmbeddedKubeconfig, caLine, "certificate-authority-data: Y2E=", 1),
+			wantErr: "validate kubeconfig TLS material",
+		},
+		"malformed client certificate": {
+			data: strings.Replace(
+				validEmbeddedKubeconfig,
+				"    exec:\n",
+				"    client-certificate-data: bmFk\n    client-key-data: bmFk\n    exec:\n",
+				1,
+			),
+			wantErr: "validate kubeconfig TLS material",
 		},
 		"relative exec command": {
 			data:    strings.Replace(validEmbeddedKubeconfig, "command: /usr/local/bin/aks-flex-node", "command: aks-flex-node", 1),
@@ -178,6 +210,7 @@ func TestUsesKubeconfigCredentials(t *testing.T) {
 func TestValidateArcWithEmbeddedKubeconfigsDoesNotRequireBootstrapToken(t *testing.T) {
 	t.Parallel()
 
+	validEmbeddedKubeconfig := embeddedKubeconfigWithTLS(t)
 	cfg := &Config{
 		Azure: AzureConfig{
 			SubscriptionID: "12345678-1234-1234-1234-123456789012",
@@ -196,6 +229,25 @@ func TestValidateArcWithEmbeddedKubeconfigsDoesNotRequireBootstrapToken(t *testi
 		},
 	}
 
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() error = %v", err)
+	}
+}
+
+func TestValidatePairedKubeconfigsWithoutAzureIdentity(t *testing.T) {
+	t.Parallel()
+
+	kubeconfig := embeddedKubeconfigWithTLS(t)
+	cfg := &Config{
+		Azure: AzureConfig{
+			TargetCluster: &TargetClusterConfig{
+				ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+				Location:   "eastus",
+			},
+		},
+		Agent: AgentConfig{KubeconfigData: kubeconfig},
+		Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: kubeconfig}},
+	}
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate() error = %v", err)
 	}

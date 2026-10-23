@@ -192,6 +192,9 @@ if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
     fail "bootstrap accepted an unpaired agent kubeconfig"
 fi
 grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
+[[ ! -e "$WORK_DIR/missing-pair-calls" ]] || fail "unpaired kubeconfig reached the agent"
+[[ ! -e "$WORK_DIR/missing-pair-bin" ]] || fail "unpaired kubeconfig installed the agent"
+[[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \

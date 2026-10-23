@@ -8,12 +8,14 @@ import (
 func TestToAgentConfigUsesVerbatimKubeletKubeconfig(t *testing.T) {
 	t.Parallel()
 
-	const kubeletKubeconfig = validEmbeddedKubeconfig + "\n# kubelet identity\n"
+	kubeletKubeconfig := embeddedKubeconfigWithTLS(t) + "\n# kubelet identity\n"
 	cfg := &Config{
 		Agent: AgentConfig{KubeconfigData: validEmbeddedKubeconfig},
 		Node: NodeConfig{
 			Kubelet: KubeletConfig{
 				KubeconfigData:       kubeletKubeconfig,
+				ClusterFQDN:          "stale.example",
+				CACertData:           "stale-ca",
 				ImageGCHighThreshold: 80,
 				ImageGCLowThreshold:  70,
 			},
@@ -33,7 +35,11 @@ func TestToAgentConfigUsesVerbatimKubeletKubeconfig(t *testing.T) {
 	if agentCfg.Kubelet.Auth.ExecCredential != nil {
 		t.Fatal("generated exec credential was configured with embedded kubeconfigs")
 	}
-	if agentCfg.Cluster.CaCertBase64 != "Y2E=" {
-		t.Fatalf("Cluster.CaCertBase64 = %q, want Y2E=", agentCfg.Cluster.CaCertBase64)
+	if agentCfg.Cluster.CaCertBase64 == "" || agentCfg.Cluster.CaCertBase64 == "stale-ca" ||
+		agentCfg.Cluster.CaCertBase64 != cfg.Node.Kubelet.CACertData {
+		t.Fatal("Cluster.CaCertBase64 did not use the active kubeconfig CA")
+	}
+	if agentCfg.Kubelet.ApiServer != "https://cluster.example:443" {
+		t.Fatalf("Kubelet.ApiServer = %q, want active kubeconfig server", agentCfg.Kubelet.ApiServer)
 	}
 }

@@ -337,7 +337,13 @@ Azure authorizer instead, so this pattern requires
 The following per-node example lets the Arc principal read and watch only its
 own Node when it acts as the host agent. It can impersonate only the matching
 `system:node:<node-name>` user and `system:nodes` group when it acts as the
-kubelet. Set `<arc-principal-username>` to the exact username returned by
+kubelet. This Node-only role requires `agent.machineOperationMode: disable`.
+To use the default `auto` mode when the MachineOperation CRD is installed,
+also grant the principal `get`, `list`, and `watch` on
+`unbounded-cloud.io/machineoperations`, and `get`, `patch`, and `update` on
+`unbounded-cloud.io/machineoperations/status`, as shown in
+[`hack/controller-deployment/rbac.yaml`](../../hack/controller-deployment/rbac.yaml).
+Set `<arc-principal-username>` to the exact username returned by
 `kubectl auth whoami` when using the Arc credential; for an Arc system-assigned
 identity, this is normally its principal object ID.
 
