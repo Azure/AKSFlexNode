@@ -1863,7 +1863,7 @@ def cmd_down(_: argparse.Namespace) -> None:
         log("removed the VM, cluster, network, registry, and state")
     else:
         log(f"removed the VM, cluster, network, and registry; not {STATE}, which up didn't make")
-    if IMAGE_DIR.is_dir() and any(IMAGE_DIR.glob("acl-gallery-*.qcow2")):
+    if IMAGE_DIR.is_dir() and any(IMAGE_DIR.rglob("acl-gallery-*.qcow2")):
         log(f"kept the exported images in {IMAGE_DIR}; remove it to reclaim the space")
 
 
