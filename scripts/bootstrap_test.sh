@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# setup-go's executable may not be on sudo's secure_path.
+BOOTSTRAP_TEST_GO="${BOOTSTRAP_TEST_GO:-$(command -v go)}"
+export BOOTSTRAP_TEST_GO
+
 if [[ $EUID -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
 fi
@@ -199,6 +203,34 @@ grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
 cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
     fail "unpaired kubeconfig replaced the agent"
 [[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
+
+# Exercise the real CLI's validation exit status, not a stub's configured response.
+mkdir "$WORK_DIR/real-agent"
+(
+    cd "$REPO_ROOT"
+    "$BOOTSTRAP_TEST_GO" build -o "$WORK_DIR/real-agent/aks-flex-node-linux-$ARCH" ./cmd/aks-flex-node
+)
+tar -C "$WORK_DIR/real-agent" -czf "$WORK_DIR/real-agent/agent.tar.gz" "aks-flex-node-linux-$ARCH"
+printf 'apiVersion: [\n' > "$WORK_DIR/malformed.kubeconfig"
+chmod 0600 "$WORK_DIR/malformed.kubeconfig"
+cat > "$WORK_DIR/paired-base.json" <<'JSON'
+{"azure":{"targetCluster":{"resourceId":"/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster","location":"eastus"}}}
+JSON
+malformed_status=0
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/paired-base.json" \
+    bash "$SCRIPT" \
+        --agent-url "file://$WORK_DIR/real-agent/agent.tar.gz" \
+        --agent-kubeconfig "$WORK_DIR/malformed.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/malformed.kubeconfig" \
+        --config-path "$WORK_DIR/malformed-etc/config.json" >"$WORK_DIR/malformed.log" 2>&1 ||
+    malformed_status=$?
+[[ "$malformed_status" == 78 ]] ||
+    fail "malformed kubeconfig exited $malformed_status, want 78: $(cat "$WORK_DIR/malformed.log")"
+grep -F "invalid agent.kubeconfigData: parse kubeconfig" "$WORK_DIR/malformed.log" >/dev/null ||
+    fail "malformed kubeconfig did not preserve validation diagnostics"
+if grep -F "starting AKS Flex Node" "$WORK_DIR/malformed.log" >/dev/null; then
+    fail "malformed kubeconfig reached start"
+fi
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \

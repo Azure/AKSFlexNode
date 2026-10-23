@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,6 +255,46 @@ func TestValidatePairedKubeconfigsWithoutAzureIdentity(t *testing.T) {
 	}
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate() error = %v", err)
+	}
+}
+
+func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
+	t.Parallel()
+
+	valid := embeddedKubeconfigWithTLS(t)
+	for _, field := range []string{"agent", "kubelet"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{
+				Azure: AzureConfig{
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{KubeconfigData: valid},
+				Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: valid}},
+			}
+			if field == "agent" {
+				cfg.Agent.KubeconfigData = "apiVersion: ["
+			} else {
+				cfg.Node.Kubelet.KubeconfigData = "apiVersion: ["
+			}
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = LoadConfig(path)
+			var validationErr *KubeconfigValidationError
+			if !errors.As(err, &validationErr) || !strings.Contains(err.Error(), "parse kubeconfig") {
+				t.Fatalf("LoadConfig() error = %v, want kubeconfig validation error", err)
+			}
+		})
 	}
 }
 

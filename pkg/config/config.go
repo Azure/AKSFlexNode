@@ -533,6 +533,15 @@ var BootstrapTokenPattern = regexp.MustCompile(`^[a-z0-9]{6}\.[a-z0-9]{16}$`)
 
 var systemdServiceNamePattern = regexp.MustCompile(`^[A-Za-z0-9:_.@-]+\.service$`)
 
+// KubeconfigValidationError identifies inputs that cannot be repaired by retrying bootstrap.
+type KubeconfigValidationError struct {
+	err error
+}
+
+func (e *KubeconfigValidationError) Error() string { return e.err.Error() }
+
+func (e *KubeconfigValidationError) Unwrap() error { return e.err }
+
 // validateAzureResourceID validates the format of an AKS cluster resource ID using regex pattern matching
 func validateAzureResourceID(resourceID string) error {
 	// Check AKS cluster resource ID format
@@ -937,7 +946,7 @@ func (c *AgentConfig) validate() error {
 	}
 	if strings.TrimSpace(c.KubeconfigData) != "" {
 		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
-			return fmt.Errorf("invalid agent.kubeconfigData: %w", err)
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid agent.kubeconfigData: %w", err)}
 		}
 	}
 	return nil
@@ -1055,7 +1064,7 @@ func (c *KubeletConfig) validate() error {
 	}
 	if strings.TrimSpace(c.KubeconfigData) != "" {
 		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
-			return fmt.Errorf("invalid node.kubelet.kubeconfigData: %w", err)
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid node.kubelet.kubeconfigData: %w", err)}
 		}
 		kubeconfig, err := clientcmd.Load([]byte(c.KubeconfigData))
 		if err != nil {
@@ -1105,7 +1114,7 @@ func (c *Config) validateAuthSettings() error {
 	agentKubeconfig := strings.TrimSpace(c.Agent.KubeconfigData) != ""
 	kubeletKubeconfig := strings.TrimSpace(c.Node.Kubelet.KubeconfigData) != ""
 	if agentKubeconfig != kubeletKubeconfig {
-		return fmt.Errorf("agent.kubeconfigData and node.kubelet.kubeconfigData must be configured together")
+		return &KubeconfigValidationError{err: fmt.Errorf("agent.kubeconfigData and node.kubelet.kubeconfigData must be configured together")}
 	}
 
 	armAuthMethodCount := 0
