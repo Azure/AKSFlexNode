@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Disconnect tolerance: when AKS enables it for a node, the agent downloads and runs OpenYurt YurtHub in the worker and routes kubelet through it, so workloads keep running while the node is disconnected from the API server. Enabling it requires outbound HTTPS to `packages.microsoft.com`; joining does not. State is reported as a `DisconnectTolerance` Node condition on every node ([#390](https://github.com/Azure/AKSFlexNode/pull/390), [#391](https://github.com/Azure/AKSFlexNode/pull/391), [#392](https://github.com/Azure/AKSFlexNode/pull/392)).
+- `agent.machineClient.apiVersion` overrides the ARM Machine API version ([#390](https://github.com/Azure/AKSFlexNode/pull/390)).
+
 ### Changed
 
 - **Breaking change:** `AgentUpgrade` MachineOperations now require `parameters.sha256`, the SHA-256 of the compressed release archive. Requests with missing, blank, or malformed digests fail with `InvalidParameters`; mismatched digests fail before extraction or candidate execution. Update upgrade controllers and scripts to supply the digest for each target version and architecture from the release's `checksums.txt` before deploying agents with this requirement.

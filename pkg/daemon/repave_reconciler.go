@@ -69,6 +69,7 @@ type repaveReconciler struct {
 	client   client.Client
 	operator nodeOperator
 	nodeName string
+	hub      hubMachineReconciler
 	// machineEvents queues AKS-machine-driven reconciles so cached Node
 	// reads can detect state that existed before the daemon started and then keep
 	// polling for ARM-only machine transitions.
@@ -82,6 +83,9 @@ type repaveReconcilerOptions struct {
 	Client   client.Client
 	Operator nodeOperator
 	NodeName string
+	// Hub reconciles disconnect-tolerance intent from Machine reads. Optional so
+	// tests and callers without Hub support can omit it.
+	Hub hubMachineReconciler
 	// MachineReconcileInterval is the steady-state fallback interval for
 	// re-reading the AKS machine resource. Kubernetes Node events wake the
 	// controller for node-side signals, but AKS machine changes happen in ARM and
@@ -117,6 +121,7 @@ func newRepaveReconciler(opts repaveReconcilerOptions) (*repaveReconciler, error
 		machines:                 opts.Machines,
 		client:                   opts.Client,
 		operator:                 opts.Operator,
+		hub:                      opts.Hub,
 		nodeName:                 opts.NodeName,
 		machineEvents:            make(chan event.TypedGenericEvent[struct{}], 1),
 		machineReconcileInterval: opts.MachineReconcileInterval,
@@ -176,10 +181,17 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	r.log.Info("daemon reconcile decision", "decision", decision.Kind, "reason", decision.Reason)
 
 	switch decision.Kind {
-	case decisionNoop, decisionWaitForMachineDelete, decisionWaitForNodeSignal:
+	case decisionNoop, decisionWaitForMachineDelete:
+		return nil
+	case decisionWaitForNodeSignal:
+		r.reconcileHub(ctx, machineSnap, nodeSnap, state)
 		return nil
 	case decisionReportSucceeded:
-		return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, decision.Goal.SettingsVersion, decision.Reason)
+		// Report first so Hub work (which can download and wait for readiness)
+		// never delays Machine status.
+		err := r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, decision.Goal.SettingsVersion, decision.Reason)
+		r.reconcileHub(ctx, machineSnap, nodeSnap, state)
+		return err
 	case decisionApplyGoalState:
 		return r.applyGoalState(ctx, state, decision.Goal)
 	case decisionResetDelete:
@@ -187,6 +199,24 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	default:
 		return fmt.Errorf("unsupported daemon decision %q", decision.Kind)
 	}
+}
+
+// reconcileHub applies DT intent in place while the Node exists, including while
+// a newer Machine goal waits for its repave signal. Failures are logged, not
+// returned, so they don't switch the Machine poll to fast error backoff; the
+// adapter paces its own retries and the journal keeps progress.
+func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machineSnapshot, nodeSnap nodeSnapshot, state *State) {
+	if r.hub == nil || nodeSnap.node == nil || machineSnap.machine == nil {
+		return
+	}
+	if err := r.hub.ReconcileHub(ctx, machineSnap.machine.Goal, state, nodeSnap.node); err != nil {
+		r.log.Error("hub reconcile failed; will retry on a later read", "error", err)
+	}
+}
+
+// hubMachineReconciler maps Machine reads to local Hub state. It runs on the same serialized queue as repave and MachineOperations.
+type hubMachineReconciler interface {
+	ReconcileHub(context.Context, aksmachine.GoalState, *State, *corev1.Node) error
 }
 
 func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot, error) {

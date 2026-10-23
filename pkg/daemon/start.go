@@ -6,6 +6,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
@@ -47,6 +48,7 @@ func StartNode(
 	return phases.Serial(log,
 		stageContainerImageArchiveBindSource(log, containerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
+		yurthub.Stage(gs.RootFS.MachineDir),
 		ConfigureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log,
 			npd.Download(log, cfg, gs.RootFS.MachineDir),
