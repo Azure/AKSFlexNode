@@ -591,8 +591,16 @@ func validateEmbeddedKubeconfig(data string) error {
 	if cluster, ok := kubeconfig.Clusters[contextConfig.Cluster]; !ok || cluster == nil {
 		return fmt.Errorf("current context does not reference an existing cluster")
 	}
-	if authInfo, ok := kubeconfig.AuthInfos[contextConfig.AuthInfo]; !ok || authInfo == nil {
+	authInfo, ok := kubeconfig.AuthInfos[contextConfig.AuthInfo]
+	if !ok || authInfo == nil {
 		return fmt.Errorf("current context does not reference an existing user")
+	}
+	if authInfo.Token == "" &&
+		(len(authInfo.ClientCertificateData) == 0 || len(authInfo.ClientKeyData) == 0) &&
+		(authInfo.Username == "" || authInfo.Password == "") &&
+		authInfo.Exec == nil &&
+		authInfo.AuthProvider == nil {
+		return fmt.Errorf("current context must provide authentication credentials")
 	}
 	if err := clientcmd.Validate(*kubeconfig); err != nil {
 		return fmt.Errorf("validate kubeconfig: %w", err)

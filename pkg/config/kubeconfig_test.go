@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const validEmbeddedKubeconfig = `apiVersion: v1
@@ -250,6 +253,47 @@ func TestValidatePairedKubeconfigsWithoutAzureIdentity(t *testing.T) {
 	}
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate() error = %v", err)
+	}
+}
+
+func TestValidateAgentKubeconfigRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	kubeletKubeconfig := embeddedKubeconfigWithTLS(t)
+	tests := map[string]clientcmdapi.AuthInfo{
+		"empty user":                {},
+		"impersonation only":        {Impersonate: "flex-agent", ImpersonateGroups: []string{"flex-agents"}},
+		"certificate without key":   {ClientCertificateData: []byte("certificate")},
+		"username without password": {Username: "agent"},
+	}
+	for name, authInfo := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			agentKubeconfig, err := clientcmd.Load([]byte(kubeletKubeconfig))
+			if err != nil {
+				t.Fatalf("load test kubeconfig: %v", err)
+			}
+			agentKubeconfig.AuthInfos["identity"] = &authInfo
+			data, err := clientcmd.Write(*agentKubeconfig)
+			if err != nil {
+				t.Fatalf("write test kubeconfig: %v", err)
+			}
+			cfg := &Config{
+				Azure: AzureConfig{
+					TargetCluster: &TargetClusterConfig{
+						ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+						Location:   "eastus",
+					},
+				},
+				Agent: AgentConfig{KubeconfigData: string(data)},
+				Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: kubeletKubeconfig}},
+			}
+			err = cfg.validate()
+			if err == nil || !strings.Contains(err.Error(), "invalid agent.kubeconfigData: current context must provide authentication credentials") {
+				t.Fatalf("validate() error = %v, want agent authentication error", err)
+			}
+		})
 	}
 }
 
