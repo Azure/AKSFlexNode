@@ -231,7 +231,9 @@ type ensureNSpawnLifecycleUnitsTask struct {
 // EnsureNSpawnLifecycleUnits returns a task that writes the nspawn lifecycle units the machines'
 // hooks start, those that are missing, so that StartNode can start a machine: start installs the
 // agent's other units only once the node runs. The daemon converges them with those units, while
-// an AgentUpgrade isn't pending, so this leaves the existing ones as they are.
+// an AgentUpgrade isn't pending, so this leaves the existing ones as they are. It links the
+// lifecycle helper too, for hooks an earlier release's pre-start writes, as after a reset that
+// kept that release's binaries; see ensureNSpawnLifecycleHelperLink.
 func EnsureNSpawnLifecycleUnits(log *slog.Logger) phases.Task {
 	return &ensureNSpawnLifecycleUnitsTask{
 		log:        log,
@@ -244,7 +246,11 @@ func EnsureNSpawnLifecycleUnits(log *slog.Logger) phases.Task {
 func (t *ensureNSpawnLifecycleUnitsTask) Name() string { return "ensure-nspawn-lifecycle-units" }
 
 func (t *ensureNSpawnLifecycleUnitsTask) Do(ctx context.Context) error {
-	assets, err := nspawnLifecycleUnitAssets(t.systemdDir, t.binaryPath())
+	binaryPath := t.binaryPath()
+	if err := ensureNSpawnLifecycleHelperLink(binaryPath); err != nil {
+		return err
+	}
+	assets, err := nspawnLifecycleUnitAssets(t.systemdDir, binaryPath)
 	if err != nil {
 		return err
 	}

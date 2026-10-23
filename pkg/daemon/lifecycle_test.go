@@ -254,6 +254,12 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 			t.Parallel()
 
 			systemdDir := t.TempDir()
+			bin := filepath.Join(t.TempDir(), "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			binary := filepath.Join(bin, binaryName)
+			writeExecutable(t, binary, "agent")
 			for _, unit := range tc.existing {
 				if err := os.WriteFile(filepath.Join(systemdDir, unit), []byte("existing\n"), 0o644); err != nil {
 					t.Fatal(err)
@@ -263,7 +269,7 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 			task := &ensureNSpawnLifecycleUnitsTask{
 				log:        slog.New(slog.DiscardHandler),
 				systemdDir: systemdDir,
-				binaryPath: func() string { return "/opt/unbounded/agent/bin/aks-flex-node" },
+				binaryPath: func() string { return binary },
 				reload: func(context.Context, *slog.Logger) error {
 					reloaded = true
 					return nil
@@ -283,6 +289,10 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 			}
 			if reloaded != tc.wantReload {
 				t.Errorf("reloaded = %v, want %v", reloaded, tc.wantReload)
+			}
+			// Before the machine starts, for hooks an earlier release's pre-start writes.
+			if target, err := os.Readlink(filepath.Join(bin, nspawnLifecycleHelperName)); err != nil || target != binaryName {
+				t.Errorf("helper links to %q, %v; want %q", target, err, binaryName)
 			}
 		})
 	}
