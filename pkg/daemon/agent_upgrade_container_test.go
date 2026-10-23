@@ -387,12 +387,56 @@ func TestPublishContainerAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSi
 	}
 }
 
+// TestContainerAgentUpgradeInterruptedBeforeStage: the daemon ends between RecordPending and
+// Stage, recovery runs for the failed unit, and the next daemon judges the upgrade. Nothing
+// switched, so the upgrade fails, the selection stays, and the signal goes.
+func TestContainerAgentUpgradeInterruptedBeforeStage(t *testing.T) {
+	t.Parallel()
+
+	executor, calls := newTestContainerUpgrade(t, testAgentImageV2)
+	executor.instanceID = "initiator"
+	if err := executor.images.write(testAgentImageV2, testAgentImageV1); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
+		t.Fatalf("RecordPending: %v", err)
+	}
+	unitActiveState := func(context.Context) (string, error) { return "failed", nil }
+	if err := recoverContainerAgentUpgrade(t.Context(), discardLogger(), "failed repeatedly",
+		executor.signals, executor.images, executor.systemctl, unitActiveState, executor.runSystemdRun); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	assertSelectedImages(t, executor.images, testAgentImageV2, testAgentImageV1)
+
+	*calls = nil
+	executor.instanceID = "restarted"
+	var phases []machinav1alpha3.OperationPhase
+	executor.finishMachineOperation = func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
+		phases = append(phases, result.Phase)
+		return nil
+	}
+	if err := publishAndClearAgentUpgradeSignal(t.Context(), discardLogger(), nil, executor); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if !slices.Equal(phases, []machinav1alpha3.OperationPhase{machinav1alpha3.OperationPhaseFailed}) {
+		t.Errorf("published phases = %v, want Failed", phases)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("calls = %q, want none: the agent already runs its image", *calls)
+	}
+	assertSelectedImages(t, executor.images, testAgentImageV2, testAgentImageV1)
+	if signal, err := executor.signals.read(); err != nil || signal != nil {
+		t.Errorf("signal after publishing = %#v, %v", signal, err)
+	}
+}
+
 func TestRecoverContainerAgentUpgrade(t *testing.T) {
 	t.Parallel()
 
 	resetFailed := "systemctl reset-failed " + ServiceUnitName
 	tests := map[string]struct {
 		pending      bool
+		interrupted  bool
 		resetFails   bool
 		state        string
 		stateErr     error
@@ -400,6 +444,13 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 		wantSelected string
 	}{
 		"leaves an ordinary failure alone": {
+			wantSelected: testAgentImageV2,
+		},
+		// The daemon ended between RecordPending and Stage, so the upgrade never switched.
+		"restarts the agent on its image when the upgrade never chose a candidate": {
+			pending:      true,
+			interrupted:  true,
+			wantCalls:    []string{resetFailed, "systemctl --no-block restart " + ServiceUnitName},
 			wantSelected: testAgentImageV2,
 		},
 		"restores the last-good image and restarts the agent": {
@@ -439,13 +490,17 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.pending {
-				if err := executor.signals.write(agentUpgradeSignal{
+				signal := agentUpgradeSignal{
 					OperationName:   "upgrade",
 					ActiveMachine:   "kube1",
 					CandidateImage:  testAgentImageV2,
 					PreviousImage:   testAgentImageV1,
 					SwitchCommitted: true,
-				}); err != nil {
+				}
+				if tc.interrupted {
+					signal = agentUpgradeSignal{OperationName: "upgrade", ActiveMachine: "kube1"}
+				}
+				if err := executor.signals.write(signal); err != nil {
 					t.Fatal(err)
 				}
 			}
