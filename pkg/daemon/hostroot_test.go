@@ -256,10 +256,13 @@ func TestGuardLegacySeed(t *testing.T) {
 		// setup puts something at the seed path; dir is a scratch directory.
 		setup func(t *testing.T, seed, dir string)
 		// running stands in for runningFrom; nil reports nothing running.
-		running  func(os.FileInfo) (bool, error)
-		wantErr  bool
-		wantMsg  string
-		wantKept bool
+		running func(os.FileInfo) (bool, error)
+		// servedBySeed has the agent service's main process run the seed,
+		// for direct activation, which runs from another path.
+		servedBySeed bool
+		wantErr      bool
+		wantMsg      string
+		wantKept     bool
 	}{
 		{name: "nothing there", released: true, setup: func(*testing.T, string, string) {}},
 		{
@@ -291,6 +294,17 @@ func TestGuardLegacySeed(t *testing.T) {
 			wantErr:  true,
 			wantMsg:  "restart " + ServiceUnitName,
 			wantKept: true,
+		},
+		{
+			// A host an earlier release installed in /usr/local/bin, updated by
+			// rerunning the install: its service runs the seed until it restarts.
+			name:         "a seed the agent service runs from is refused to direct activation",
+			released:     true,
+			setup:        func(t *testing.T, seed, _ string) { writeExecutable(t, seed, "seed") },
+			servedBySeed: true,
+			wantErr:      true,
+			wantMsg:      "restart " + ServiceUnitName,
+			wantKept:     true,
 		},
 		{
 			// An operator's link to the running agent is not the seed.
@@ -378,6 +392,19 @@ func TestGuardLegacySeed(t *testing.T) {
 			if running == nil {
 				running = func(os.FileInfo) (bool, error) { return false, nil }
 			}
+			if tt.servedBySeed {
+				proc := filepath.Join(dir, "proc")
+				if err := os.MkdirAll(filepath.Join(proc, "42"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(seed, filepath.Join(proc, "42", "exe")); err != nil {
+					t.Fatal(err)
+				}
+				running = func(info os.FileInfo) (bool, error) {
+					return runningOrServingFrom(info, func(os.FileInfo) (bool, error) { return false, nil },
+						func() (string, error) { return "42\n", nil }, proc)
+				}
+			}
 			err := guardLegacySeed(slog.New(slog.DiscardHandler),
 				func() (bool, error) { return tt.released, nil },
 				func() (bool, error) { return tt.unfinished, nil },
@@ -405,6 +432,77 @@ func TestGuardLegacySeed(t *testing.T) {
 		func() (bool, error) { return false, errors.New("permission denied") },
 		filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
 		t.Fatal("guardLegacySeed() allowed a switch where it could not tell whether a move has finished")
+	}
+}
+
+// TestRunningOrServingFrom: direct activation counts a file as in use when this
+// process runs it, or the agent service's main process does, compared as files
+// through /proc/<MainPID>/exe.
+func TestRunningOrServingFrom(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	seed := filepath.Join(dir, "seed")
+	other := filepath.Join(dir, "other")
+	writeExecutable(t, seed, "seed")
+	writeExecutable(t, other, "other")
+	proc := filepath.Join(dir, "proc")
+	for pid, exe := range map[string]string{"42": seed, "43": other} {
+		if err := os.MkdirAll(filepath.Join(proc, pid), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(exe, filepath.Join(proc, pid, "exe")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := os.Lstat(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notSelf := func(os.FileInfo) (bool, error) { return false, nil }
+
+	for _, tt := range []struct {
+		name    string
+		self    func(os.FileInfo) (bool, error)
+		mainPID func() (string, error)
+		want    bool
+		wantErr bool
+	}{
+		{
+			name:    "this process runs it",
+			self:    func(os.FileInfo) (bool, error) { return true, nil },
+			mainPID: func() (string, error) { t.Error("the service was asked"); return "", nil },
+			want:    true,
+		},
+		{name: "the service runs it", self: notSelf, mainPID: func() (string, error) { return "42\n", nil }, want: true},
+		{name: "the service runs another file", self: notSelf, mainPID: func() (string, error) { return "43", nil }},
+		{name: "the service has no process", self: notSelf, mainPID: func() (string, error) { return "0", nil }},
+		{name: "the service's process has ended", self: notSelf, mainPID: func() (string, error) { return "44", nil }},
+		{
+			name:    "the service can't be asked",
+			self:    notSelf,
+			mainPID: func() (string, error) { return "", errors.New("systemctl failed") },
+			wantErr: true,
+		},
+		{name: "the service reports no PID", self: notSelf, mainPID: func() (string, error) { return "", nil }, wantErr: true},
+		{
+			name:    "this process can't tell",
+			self:    func(os.FileInfo) (bool, error) { return false, errors.New("permission denied") },
+			mainPID: func() (string, error) { return "42", nil },
+			wantErr: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := runningOrServingFrom(info, tt.self, tt.mainPID, proc)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("runningOrServingFrom() error = %v, want error %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("runningOrServingFrom() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
