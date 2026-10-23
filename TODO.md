@@ -38,8 +38,6 @@ lands.
 - [ ] Document the container mode in `docs/usage/azure-container-linux.md`,
       which describes host mode, as the way to run on ACL, and host mode as
       interim.
-- [ ] Pin a release of unbounded, not its `main`; see the unbounded version,
-      below.
 
 ## ACL's SELinux fix
 
@@ -127,10 +125,10 @@ image.
       `post-start` rewires NVIDIA devices. Unbounded copies the agent's binary
       there when it provisions a machine. `/opt` is on ACL's writable root
       filesystem, and the containers mount the host's `/opt/unbounded`, so the
-      copy lands on the host. Azure/unbounded#967, merged but in no release
-      yet, lets the caller supply the hooks' commands, as
-      `AgentConfig.NSpawnLifecycle`, in which `%i` is the machine, and then
-      skips the copy. Once unbounded's `main` is pinned, the agent installs
+      copy lands on the host. Azure/unbounded#967, in v0.18.0, lets the
+      caller supply the hooks' commands, as `AgentConfig.NSpawnLifecycle`, in
+      which `%i` is the machine, and then skips the copy. Once the agent is on
+      v0.18.0, it installs
       template units, `aks-flex-node-nspawn-{pre,post}-start@.service`, which
       run `nspawn-lifecycle` for the machine `%i`: in a short-lived container
       of its image in the container, and through the installed binary on a
@@ -158,16 +156,30 @@ image.
       host it would find the image's, none, both when provisioning a machine
       and in its hooks. Untested. Running `ldconfig` through `host-exec` would
       likely cover the libraries; the binaries need the host's paths.
-- [ ] unbounded version: `main` pins v0.15.0. Pin unbounded's `main`, in a
-      commit of its own, for #962 (below) and #967, which are in no release
-      yet. Before this branch merges, move to a release that has both.
+- [ ] Swap in the container: `start`'s `DisableSwap`, unbounded's, runs
+      `swapoff -a` and masks swap units through the host's tools, but
+      comments out swap entries in `/etc/fstab` from Go, which in the
+      container edits the image's `/etc/fstab`, not the host's. Swap in the
+      host's `fstab` would come back after a reboot, and kubelet, with
+      unbounded's default `failSwapOn`, wouldn't start. A mount can't fix it:
+      the edit replaces the file. ACL has no swap: no `/etc/fstab` at
+      runtime, no swap or zram units, and the Azure agent's
+      `ResourceDisk.EnableSwap=n`, in 3.20261019.3 and 3.20261021.1. So it
+      matters only if an operator's Ignition config adds swap to `fstab`.
+      Fix it with a task that edits `/host/etc/fstab` in the container, or an
+      `fstab` path option upstream. Unbounded doesn't mask `dev-disk-by*`
+      swap units, or turn off the Azure agent's swap, in either mode.
+- [ ] unbounded version: `main` pins v0.16.0. v0.18.0 has #962 (below) and
+      #967. A PR to `main` bumps to it, switching #323's move to
+      `EnsureNSpawnLifecycleHelperFor`, as above; then this branch rebases
+      onto it.
 - [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
       the service's "state could not be determined" on any host where it
       isn't running, Ubuntu included. `systemctl is-active` exits non-zero
       for every state but active, 3 for inactive and 4 for no such unit,
       which the check takes for an error. Raised with unbounded as
       Azure/unbounded#962, which reads `systemctl show` instead. It's merged,
-      but in no release yet; it comes with the pin of unbounded's `main`.
+      and in v0.18.0; it comes with the bump.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
       `/etc/aks-flex-node/agent-image.env`, which the harness writes through
