@@ -2,13 +2,26 @@
 
 set -euo pipefail
 
-# setup-go's executable may not be on sudo's secure_path.
-BOOTSTRAP_TEST_GO="${BOOTSTRAP_TEST_GO:-$(command -v go)}"
-export BOOTSTRAP_TEST_GO
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-if [[ $EUID -ne 0 ]]; then
-    exec sudo -E bash "$0" "$@"
+# Build before sudo to keep compilation in the invoking user's context.
+if [[ "${1:-}" != --run-privileged ]]; then
+    BUILD_DIR=$(mktemp -d)
+    trap 'rm -f "$BUILD_DIR/aks-flex-node"; rmdir "$BUILD_DIR"' EXIT
+    (
+        cd "$REPO_ROOT"
+        go build -o "$BUILD_DIR/aks-flex-node" ./cmd/aks-flex-node
+    )
+    if [[ $EUID -eq 0 ]]; then
+        bash "$0" --run-privileged "$BUILD_DIR/aks-flex-node" "$@"
+    else
+        sudo -E bash "$0" --run-privileged "$BUILD_DIR/aks-flex-node" "$@"
+    fi
+    exit
 fi
+[[ $EUID -eq 0 && $# -ge 2 ]] || { echo "bootstrap_test: privileged phase requires root and the test binary" >&2; exit 1; }
+REAL_AGENT_BINARY="$2"
+shift 2
 
 # Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded/agent. Run in a private
 # mount namespace so both can be overlaid below, and no case can replace a real binary on the host.
@@ -17,10 +30,9 @@ fi
 # unmount the host's /usr/local and /opt.
 if [[ "$(readlink /proc/self/ns/mnt)" == "$(readlink /proc/1/ns/mnt)" ]]; then
     command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
-    exec unshare --mount --propagation private bash "$0" "$@"
+    exec unshare --mount --propagation private bash "$0" --run-privileged "$REAL_AGENT_BINARY" "$@"
 fi
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$REPO_ROOT/scripts/bootstrap.sh"
 WORK_DIR=$(mktemp -d)
 SERVER_PID=""
@@ -184,8 +196,12 @@ jq -e '
 [[ $(stat -c '%a' "$WORK_DIR/msi-etc/config.json") == 600 ]] || fail "MSI config mode is not 0600"
 grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK_DIR/msi-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
+[[ "$(sort -u "$WORK_DIR/msi-calls.path")" == /opt/unbounded/agent/bin/aks-flex-node ]] ||
+    fail "paired bootstrap did not install the host credential binary before preflight"
+[[ -x /opt/unbounded/agent/bin/aks-flex-node ]] || fail "paired host credential binary is not executable"
 
 cp /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair"
+cp /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair"
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
     bash "$SCRIPT" \
@@ -202,14 +218,39 @@ grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
 [[ ! -e "$WORK_DIR/missing-pair-calls" ]] || fail "unpaired kubeconfig reached the agent"
 cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
     fail "unpaired kubeconfig replaced the agent"
+cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair" ||
+    fail "unpaired kubeconfig replaced the paired agent"
 [[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
+
+command -v setpriv >/dev/null || fail "setpriv is required"
+for selection in paired unpaired; do
+    selection_args=(--agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig")
+    expected_status=78
+    expected_message="must be configured together"
+    if [[ "$selection" == paired ]]; then
+        selection_args+=(--kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig")
+        expected_status=1
+        expected_message="run this script as root"
+    fi
+    non_root_status=0
+    setpriv --reuid=65534 --regid=65534 --clear-groups \
+        bash "$SCRIPT" "${selection_args[@]}" \
+            --config-path "$WORK_DIR/non-root-$selection-config.json" >"$WORK_DIR/non-root-$selection.log" 2>&1 ||
+        non_root_status=$?
+    [[ "$non_root_status" == "$expected_status" ]] ||
+        fail "non-root $selection input exited $non_root_status, want $expected_status: $(cat "$WORK_DIR/non-root-$selection.log")"
+    grep -F "$expected_message" "$WORK_DIR/non-root-$selection.log" >/dev/null ||
+        fail "non-root $selection input lost its diagnostic"
+    [[ ! -e "$WORK_DIR/non-root-$selection-config.json" ]] || fail "non-root bootstrap installed the config"
+    cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
+        fail "non-root bootstrap replaced the agent"
+    cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair" ||
+        fail "non-root bootstrap replaced the paired agent"
+done
 
 # Exercise the real CLI's validation exit status, not a stub's configured response.
 mkdir "$WORK_DIR/real-agent"
-(
-    cd "$REPO_ROOT"
-    "$BOOTSTRAP_TEST_GO" build -o "$WORK_DIR/real-agent/aks-flex-node-linux-$ARCH" ./cmd/aks-flex-node
-)
+cp "$REAL_AGENT_BINARY" "$WORK_DIR/real-agent/aks-flex-node-linux-$ARCH"
 tar -C "$WORK_DIR/real-agent" -czf "$WORK_DIR/real-agent/agent.tar.gz" "aks-flex-node-linux-$ARCH"
 printf 'apiVersion: [\n' > "$WORK_DIR/malformed.kubeconfig"
 printf '\n' > "$WORK_DIR/whitespace.kubeconfig"
@@ -234,6 +275,22 @@ for invalid in malformed whitespace; do
         fail "$invalid kubeconfig reached start"
     fi
 done
+
+rm -rf /opt/unbounded/agent
+rmdir /opt/unbounded
+embedded_pair_overrides=$(jq -n \
+    --rawfile agent "$WORK_DIR/cli-agent.kubeconfig" \
+    --rawfile kubelet "$WORK_DIR/cli-kubelet.kubeconfig" \
+    '{agent:{kubeconfigData:$agent},node:{kubelet:{kubeconfigData:$kubelet}}}')
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/embedded-pair-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+AKS_FLEX_NODE_CONFIG_OVERRIDES="$embedded_pair_overrides" \
+    bash "$SCRIPT" --auth msi --config-path "$WORK_DIR/embedded-pair-etc/config.json" >/dev/null
+[[ "$(sort -u "$WORK_DIR/embedded-pair-calls.path")" == /opt/unbounded/agent/bin/aks-flex-node ]] ||
+    fail "JSON-configured paired bootstrap did not stage the host credential binary"
+rm -rf /opt/unbounded/agent
+rmdir /opt/unbounded
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \

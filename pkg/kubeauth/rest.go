@@ -28,6 +28,9 @@ func BootstrapRESTConfigWithPlugin(cfg *config.Config, plugin string) (*rest.Con
 		if err != nil {
 			return nil, fmt.Errorf("build Kubernetes REST config from agent kubeconfig: %w", err)
 		}
+		if restCfg.ExecProvider != nil && !utilio.IsExecutable(restCfg.ExecProvider.Command) {
+			return nil, fmt.Errorf("agent kubeconfig exec credential plugin %s is not executable on the host", restCfg.ExecProvider.Command)
+		}
 		transportCfg, err := restCfg.TransportConfig()
 		if err != nil {
 			return nil, fmt.Errorf("validate agent kubeconfig transport: %w", err)

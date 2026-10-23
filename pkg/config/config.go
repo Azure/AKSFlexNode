@@ -570,16 +570,14 @@ func validateEmbeddedKubeconfig(data string) error {
 			return fmt.Errorf("kubeconfig cluster %q is empty", name)
 		}
 		if err := validateAbsoluteHTTPSURL(cluster.Server, httpsURLValidationOptions{
-			fieldName: fmt.Sprintf("kubeconfig cluster %q server", name),
-			allowPort: true,
+			fieldName:     fmt.Sprintf("kubeconfig cluster %q server", name),
+			allowPort:     true,
+			allowRootPath: true,
 		}); err != nil {
 			return err
 		}
 		if cluster.CertificateAuthority != "" {
 			return fmt.Errorf("certificate-authority file references are not supported for cluster %q", name)
-		}
-		if len(cluster.CertificateAuthorityData) == 0 {
-			return fmt.Errorf("certificate-authority-data is required for cluster %q", name)
 		}
 	}
 	for name, authInfo := range kubeconfig.AuthInfos {
@@ -705,8 +703,9 @@ func (c *AzureConfig) validateResourceManagerEndpointURL() error {
 }
 
 type httpsURLValidationOptions struct {
-	fieldName string
-	allowPort bool
+	fieldName     string
+	allowPort     bool
+	allowRootPath bool
 }
 
 func validateAbsoluteHTTPSURL(rawURL string, opts httpsURLValidationOptions) error {
@@ -726,7 +725,8 @@ func validateAbsoluteHTTPSURL(rawURL string, opts httpsURLValidationOptions) err
 	if !opts.allowPort && parsed.Port() != "" {
 		return fmt.Errorf("%s must not include user info or port", opts.fieldName)
 	}
-	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if (parsed.Path != "" && (!opts.allowRootPath || parsed.EscapedPath() != "/")) ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("%s must not include a path, query, or fragment", opts.fieldName)
 	}
 	return nil
@@ -1021,6 +1021,11 @@ func (c *Config) validate() error {
 	if err := c.validateAuthSettings(); err != nil {
 		return err
 	}
+	if c.UsesKubeconfigCredentials() {
+		if err := c.validateKubeconfigPair(); err != nil {
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid paired kubeconfigs: %w", err)}
+		}
+	}
 	if c.IsARCEnabled() && !c.IsBootstrapTokenConfigured() && !c.UsesKubeconfigCredentials() {
 		return fmt.Errorf("azure.bootstrapToken is required with Arc authentication; fetch fresh bootstrap data before loading the runtime config")
 	}
@@ -1072,7 +1077,10 @@ func (c *KubeletConfig) validate() error {
 		}
 		contextConfig := kubeconfig.Contexts[kubeconfig.CurrentContext]
 		cluster := kubeconfig.Clusters[contextConfig.Cluster]
-		c.ClusterFQDN = cluster.Server
+		if len(cluster.CertificateAuthorityData) == 0 {
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid node.kubelet.kubeconfigData: certificate-authority-data is required for the active cluster")}
+		}
+		c.ClusterFQDN = strings.TrimSuffix(cluster.Server, "/")
 		c.CACertData = base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
 	}
 
@@ -1106,6 +1114,30 @@ func validateReservedResources(field string, reservations map[string]string) err
 		if quantity.Sign() < 0 {
 			return fmt.Errorf("node.kubelet.%s quantity for resource %q cannot be negative: %s", field, name, value)
 		}
+	}
+	return nil
+}
+
+func (c *Config) validateKubeconfigPair() error {
+	agent, err := clientcmd.RESTConfigFromKubeConfig([]byte(c.Agent.KubeconfigData))
+	if err != nil {
+		return fmt.Errorf("load agent kubeconfig: %w", err)
+	}
+	kubelet, err := clientcmd.RESTConfigFromKubeConfig([]byte(c.Node.Kubelet.KubeconfigData))
+	if err != nil {
+		return fmt.Errorf("load kubelet kubeconfig: %w", err)
+	}
+	if kubelet.Impersonate.UserName != "" && kubelet.Impersonate.UserName != "system:node:"+c.Agent.NodeName {
+		return fmt.Errorf("kubelet impersonation user must match system:node:%s for agent.nodeName", c.Agent.NodeName)
+	}
+	if strings.TrimSuffix(agent.Host, "/") != strings.TrimSuffix(kubelet.Host, "/") {
+		return fmt.Errorf("agent and kubelet active contexts must use the same API server")
+	}
+	agentCA, kubeletCA := x509.NewCertPool(), x509.NewCertPool()
+	// Compare trust anchors, not PEM formatting or certificate order.
+	if !agentCA.AppendCertsFromPEM(agent.CAData) ||
+		!kubeletCA.AppendCertsFromPEM(kubelet.CAData) || !agentCA.Equal(kubeletCA) {
+		return fmt.Errorf("agent and kubelet active contexts must use the same certificate authority")
 	}
 	return nil
 }

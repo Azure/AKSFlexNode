@@ -76,10 +76,9 @@ func (h *handler) execute(ctx context.Context) error {
 
 	nodeChecks := nodestart.Preflight(log, *agentCfg, gs)
 	if cfg.UsesKubeconfigCredentials() {
-		for i, check := range nodeChecks {
-			if check.Name() == checkAPIServerReachableName {
-				nodeChecks[i] = kubeconfigAPIServerReachableChecker{data: cfg.Node.Kubelet.KubeconfigData}
-			}
+		nodeChecks, err = pairedKubeconfigChecks(cfg, nodeChecks)
+		if err != nil {
+			return fmt.Errorf("configure paired kubeconfig preflight: %w", err)
 		}
 	}
 

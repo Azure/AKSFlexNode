@@ -1,15 +1,88 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	preflightcmd "github.com/Azure/AKSFlexNode/pkg/cmd/preflight"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
+
+func TestPairedKubeconfigMismatchExitCode(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("invalid configuration reached the API server")
+	}))
+	t.Cleanup(server.Close)
+	ca := base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
+	kubeconfig := fmt.Sprintf(`apiVersion: v1
+kind: Config
+current-context: default
+clusters:
+- name: cluster
+  cluster:
+    server: %s
+    certificate-authority-data: %s
+users:
+- name: node
+  user:
+    token: test-token
+    as: system:node:flex-node
+contexts:
+- name: default
+  context:
+    cluster: cluster
+    user: node
+`, server.URL, ca)
+	tests := map[string]func(*config.Config){
+		"node name": func(cfg *config.Config) { cfg.Agent.NodeName = "different-node" },
+		"API server": func(cfg *config.Config) {
+			cfg.Agent.KubeconfigData = strings.Replace(kubeconfig, server.URL, "https://different.example", 1)
+		},
+		"certificate authority": func(cfg *config.Config) {
+			cfg.Agent.KubeconfigData = strings.Replace(kubeconfig, "    certificate-authority-data: "+ca+"\n", "", 1)
+		},
+	}
+	for name, configure := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := config.Config{
+				Azure: config.AzureConfig{TargetCluster: &config.TargetClusterConfig{
+					ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					Location:   "eastus",
+				}},
+				Agent: config.AgentConfig{NodeName: "flex-node", KubeconfigData: kubeconfig},
+				Node:  config.NodeConfig{Kubelet: config.KubeletConfig{KubeconfigData: kubeconfig}},
+			}
+			configure(&cfg)
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := preflightcmd.NewCommand()
+			cmd.SetArgs([]string{"--config", path})
+			err = cmd.ExecuteContext(t.Context())
+			if err == nil || commandErrorExitCode(err) != 78 {
+				t.Fatalf("preflight error = %v, want exit 78", err)
+			}
+		})
+	}
+}
 
 func TestMalformedKubeconfigExitCode(t *testing.T) {
 	t.Parallel()

@@ -78,9 +78,23 @@ func TestValidateEmbeddedKubeconfig(t *testing.T) {
 			),
 			wantErr: "certificate-authority file references",
 		},
-		"missing CA data": {
-			data:    strings.Replace(validEmbeddedKubeconfig, "    "+caLine+"\n", "", 1),
-			wantErr: "certificate-authority-data is required",
+		"agent can use system roots": {
+			data: strings.Replace(validEmbeddedKubeconfig, "    "+caLine+"\n", "", 1),
+		},
+		"trailing server slash": {
+			data: strings.Replace(validEmbeddedKubeconfig, "https://cluster.example:443", "https://cluster.example:443/", 1),
+		},
+		"server path": {
+			data:    strings.Replace(validEmbeddedKubeconfig, "https://cluster.example:443", "https://cluster.example:443/path", 1),
+			wantErr: "must not include a path",
+		},
+		"encoded server slash": {
+			data:    strings.Replace(validEmbeddedKubeconfig, "https://cluster.example:443", "https://cluster.example:443/%2f", 1),
+			wantErr: "must not include a path",
+		},
+		"unused cluster without CA": {
+			data: strings.Replace(validEmbeddedKubeconfig, "users:\n",
+				"- name: unused\n  cluster:\n    server: https://unused.example:443\nusers:\n", 1),
 		},
 		"malformed CA": {
 			data:    strings.Replace(validEmbeddedKubeconfig, caLine, "certificate-authority-data: Y2E=", 1),
@@ -227,6 +241,7 @@ func TestValidateArcWithEmbeddedKubeconfigsDoesNotRequireBootstrapToken(t *testi
 		},
 		Agent: AgentConfig{
 			LogLevel:       "info",
+			NodeName:       "flex-node",
 			KubeconfigData: validEmbeddedKubeconfig,
 		},
 		Node: NodeConfig{
@@ -250,7 +265,7 @@ func TestValidatePairedKubeconfigsWithoutAzureIdentity(t *testing.T) {
 				Location:   "eastus",
 			},
 		},
-		Agent: AgentConfig{KubeconfigData: kubeconfig},
+		Agent: AgentConfig{NodeName: "flex-node", KubeconfigData: kubeconfig},
 		Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: kubeconfig}},
 	}
 	if err := cfg.validate(); err != nil {
@@ -262,6 +277,15 @@ func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
 	t.Parallel()
 
 	valid := embeddedKubeconfigWithTLS(t)
+	withoutCA, err := clientcmd.Load([]byte(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutCA.Clusters["cluster"].CertificateAuthorityData = nil
+	withoutCAData, err := clientcmd.Write(*withoutCA)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name  string
 		field string
@@ -271,6 +295,7 @@ func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
 		{name: "malformed kubelet", field: "kubelet", data: "apiVersion: ["},
 		{name: "whitespace agent", field: "agent", data: "\n"},
 		{name: "whitespace kubelet", field: "kubelet", data: "\n"},
+		{name: "missing kubelet CA", field: "kubelet", data: string(withoutCAData)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -303,6 +328,159 @@ func TestLoadInvalidKubeconfigReturnsValidationError(t *testing.T) {
 			var validationErr *KubeconfigValidationError
 			if !errors.As(err, &validationErr) {
 				t.Fatalf("LoadConfig() error = %v, want kubeconfig validation error", err)
+			}
+		})
+	}
+}
+
+func TestLoadPairedKubeconfigConsistency(t *testing.T) {
+	t.Parallel()
+
+	base := embeddedKubeconfigWithTLS(t)
+	other := embeddedKubeconfigWithTLS(t)
+	otherConfig, err := clientcmd.Load([]byte(other))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCA := otherConfig.Clusters["cluster"].CertificateAuthorityData
+	tests := map[string]struct {
+		configure func(*Config, *clientcmdapi.Config, *clientcmdapi.Config)
+		wantErr   string
+	}{
+		"matching pair": {},
+		"node name mismatch": {
+			configure: func(cfg *Config, _, _ *clientcmdapi.Config) { cfg.Agent.NodeName = "different-node" },
+			wantErr:   "must match system:node:different-node",
+		},
+		"non-node impersonation": {
+			configure: func(_ *Config, _, kubelet *clientcmdapi.Config) {
+				kubelet.AuthInfos["identity"].Impersonate = "other-user"
+			},
+			wantErr: "kubelet impersonation user must match",
+		},
+		"without impersonation": {
+			configure: func(_ *Config, _, kubelet *clientcmdapi.Config) {
+				kubelet.AuthInfos["identity"].Impersonate = ""
+				kubelet.AuthInfos["identity"].ImpersonateGroups = nil
+			},
+		},
+		"resolved hostname": {
+			configure: func(cfg *Config, _, kubelet *clientcmdapi.Config) {
+				cfg.Agent.NodeName = ""
+				kubelet.AuthInfos["identity"].Impersonate = "system:node:" + strings.ToLower(strings.TrimSpace(hostname))
+			},
+		},
+		"server mismatch": {
+			configure: func(_ *Config, agent, _ *clientcmdapi.Config) {
+				agent.Clusters["cluster"].Server = "https://different.example:443"
+			},
+			wantErr: "must use the same API server",
+		},
+		"trailing slash": {
+			configure: func(_ *Config, _, kubelet *clientcmdapi.Config) {
+				kubelet.Clusters["cluster"].Server += "/"
+			},
+		},
+		"CA mismatch": {
+			configure: func(_ *Config, agent, _ *clientcmdapi.Config) {
+				agent.Clusters["cluster"].CertificateAuthorityData = otherCA
+			},
+			wantErr: "must use the same certificate authority",
+		},
+		"missing agent CA": {
+			configure: func(_ *Config, agent, _ *clientcmdapi.Config) {
+				agent.Clusters["cluster"].CertificateAuthorityData = nil
+			},
+			wantErr: "must use the same certificate authority",
+		},
+		"CA bundle order and formatting": {
+			configure: func(_ *Config, agent, kubelet *clientcmdapi.Config) {
+				ca := agent.Clusters["cluster"].CertificateAuthorityData
+				agent.Clusters["cluster"].CertificateAuthorityData = append(append([]byte("\n"), ca...), otherCA...)
+				kubelet.Clusters["cluster"].CertificateAuthorityData = append(append([]byte("\n\n"), otherCA...), ca...)
+			},
+		},
+		"unused cluster without CA": {
+			configure: func(_ *Config, agent, kubelet *clientcmdapi.Config) {
+				agent.Clusters["unused"] = &clientcmdapi.Cluster{Server: "https://agent-unused.example"}
+				kubelet.Clusters["unused"] = &clientcmdapi.Cluster{Server: "https://kubelet-unused.example"}
+			},
+		},
+		"selected context mismatch": {
+			configure: func(_ *Config, agent, _ *clientcmdapi.Config) {
+				agent.Clusters["selected"] = &clientcmdapi.Cluster{
+					Server:                   "https://different.example",
+					CertificateAuthorityData: agent.Clusters["cluster"].CertificateAuthorityData,
+				}
+				agent.Contexts["selected"] = &clientcmdapi.Context{Cluster: "selected", AuthInfo: "identity"}
+				agent.CurrentContext = "selected"
+			},
+			wantErr: "must use the same API server",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			agent, err := clientcmd.Load([]byte(base))
+			if err != nil {
+				t.Fatal(err)
+			}
+			kubelet, err := clientcmd.Load([]byte(base))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := &Config{
+				Azure: AzureConfig{TargetCluster: &TargetClusterConfig{
+					ResourceID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster",
+					Location:   "eastus",
+				}},
+				Agent: AgentConfig{NodeName: "flex-node"},
+			}
+			if tt.configure != nil {
+				tt.configure(cfg, agent, kubelet)
+			}
+			agentData, err := clientcmd.Write(*agent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kubeletData, err := clientcmd.Write(*kubelet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Agent.KubeconfigData = string(agentData)
+			cfg.Node.Kubelet.KubeconfigData = string(kubeletData)
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadConfig(path)
+			if tt.wantErr != "" {
+				var validationErr *KubeconfigValidationError
+				if !errors.As(err, &validationErr) || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadConfig() error = %v, want permanent error containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if err := loaded.validate(); err != nil {
+				t.Fatalf("repeated validation error = %v", err)
+			}
+			if loaded.Agent.KubeconfigData != string(agentData) || loaded.Node.Kubelet.KubeconfigData != string(kubeletData) {
+				t.Fatal("validation changed the embedded kubeconfigs")
+			}
+			if loaded.Node.Kubelet.ClusterFQDN != "https://cluster.example:443" {
+				t.Fatalf("ClusterFQDN = %q, want normalized active server", loaded.Node.Kubelet.ClusterFQDN)
 			}
 		})
 	}

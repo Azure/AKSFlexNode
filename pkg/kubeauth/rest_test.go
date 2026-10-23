@@ -1,6 +1,9 @@
 package kubeauth
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,21 +38,27 @@ contexts:
     cluster: cluster
     user: agent
 `
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "host-credential")
+	marker := filepath.Join(dir, "called")
+	if err := os.WriteFile(plugin, fmt.Appendf(nil, "#!/bin/sh\ntouch %q\nexit 1\n", marker), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{
-		Agent: config.AgentConfig{KubeconfigData: kubeconfig},
+		Agent: config.AgentConfig{KubeconfigData: strings.Replace(kubeconfig, config.HostBinaryPath(), plugin, 1)},
 		Node: config.NodeConfig{
 			Kubelet: config.KubeletConfig{KubeconfigData: kubeconfig},
 		},
 	}
 
-	restCfg, err := BootstrapRESTConfig(cfg)
+	restCfg, err := BootstrapRESTConfigWithPlugin(cfg, filepath.Join(dir, "unused-legacy-override"))
 	if err != nil {
 		t.Fatalf("BootstrapRESTConfig() error = %v", err)
 	}
 	if restCfg.Host != "https://cluster.example:443" {
 		t.Fatalf("Host = %q", restCfg.Host)
 	}
-	if restCfg.ExecProvider == nil || restCfg.ExecProvider.Command != config.HostBinaryPath() {
+	if restCfg.ExecProvider == nil || restCfg.ExecProvider.Command != plugin {
 		t.Fatalf("ExecProvider = %#v", restCfg.ExecProvider)
 	}
 	if restCfg.Impersonate.UserName != "flex-agent" {
@@ -60,6 +69,9 @@ contexts:
 	}
 	if got := restCfg.Impersonate.Extra["example.com/scope"]; len(got) != 1 || got[0] != "machine" {
 		t.Fatalf("Impersonate.Extra = %#v", got)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("host credential plugin ran while building REST config: %v", err)
 	}
 }
 

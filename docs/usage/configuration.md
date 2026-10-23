@@ -256,17 +256,22 @@ The image credential provider executes a plugin to obtain short-lived pull crede
 
 ### Embedded Agent And Kubelet Kubeconfigs
 
-Use paired embedded kubeconfigs when the host agent and kubelet must authenticate as different Kubernetes identities. For example, both kubeconfigs can obtain an Arc HIMDS-backed token while the host agent acts directly as the Arc principal and the kubelet impersonates its Kubernetes node identity. The two fields are optional, but they must be configured together.
+Use paired embedded kubeconfigs to configure host-agent and kubelet Kubernetes credentials separately. The authenticated identities can be the same or separate, but the kubelet must use the node's **system-assigned managed identity (SAMI)**. For an Arc-connected node, this is its Arc SAMI. The host agent can use that same SAMI or a separate identity with the required agent permissions. The two fields are optional, but they must be configured together; separate kubeconfigs do not by themselves provide identity or permission isolation.
 
 In this mode:
 
 - `agent.kubeconfigData` is authoritative for the host daemon manager, node watches, direct Kubernetes operations, and the in-cluster Machine endpoint.
 - `node.kubelet.kubeconfigData` is written byte-for-byte to `/var/lib/kubelet/kubeconfig`; kubelet and Node Problem Detector use it.
-- The API server and CA come from the respective kubeconfig. `node.kubelet.clusterFQDN`, `node.kubelet.caCertData`, and `azure.bootstrapToken` are not required.
+- The active contexts must use the same API server and CA. A trailing server `/` and equivalent CA bundles with different PEM formatting or certificate order are accepted. `node.kubelet.clusterFQDN`, `node.kubelet.caCertData`, and `azure.bootstrapToken` are not required.
+- If the kubelet uses impersonation, its `as` user must be `system:node:<agent.nodeName>`, using the resolved host name when `agent.nodeName` is omitted. Mismatched node names, API servers, and CAs are permanent configuration errors (exit status 78).
 - Kubelet TLS bootstrap and the daemon client-certificate provider are bypassed; the kubeconfig exec credentials remain authoritative. Any previously issued daemon client certificate and private key are removed when the daemon enters this mode.
 - Arc can remain enabled for ARM authentication and makes the agent service depend on `himdsd.service`.
 
-The kubeconfigs must be self-contained: use embedded CA, client certificate, and client key data rather than file references. Token-file references are rejected. Exec commands must be absolute and available in the host for the agent kubeconfig or inside nspawn for the kubelet kubeconfig.
+The kubeconfigs must be self-contained: use embedded CA, client certificate, and client key data rather than file references. Both active clusters must include matching CA data; unused clusters need not embed a CA. Token-file references are rejected. Exec commands must be absolute and available in the host for the agent kubeconfig or inside nspawn for the kubelet kubeconfig. Host preflight checks the active agent exec command without running it and does not try to execute or locate the kubelet's container-only plugin.
+
+The kubelet's `clientCAFile` also uses this CA to authenticate incoming API-server connections. This assumes the API endpoint's trust CA is the AKS cluster CA. An API proxy signed by a different CA can make `kubectl logs` and `kubectl exec` fail even if kubelet can connect to the proxy; that topology requires separate trust configuration and is not supported by these paired kubeconfig settings alone.
+
+Entering paired mode removes `/etc/aks-flex-node/daemon-credentials`, including the daemon's previously issued client certificate and private key. Before switching back to bootstrap-token mode, obtain a **fresh bootstrap token**, remove both embedded kubeconfig fields, and supply the normal bootstrap API server and CA settings. Do not expect the retired daemon credentials to be restored.
 
 The bootstrap script safely reads protected source files and embeds their exact content into the root-owned `0600` JSON config:
 
@@ -277,12 +282,21 @@ sudo ./scripts/bootstrap.sh \
   --kubelet-kubeconfig /run/aks-flex-node/kubelet.kubeconfig
 ```
 
-The source files must be absolute, non-symlink regular files with no group or other access. Equivalent environment variables are `AKS_FLEX_NODE_AGENT_KUBECONFIG` and `AKS_FLEX_NODE_KUBELET_KUBECONFIG`.
+The source files must be absolute, non-symlink regular files with no group or other access. Equivalent environment variables are `AKS_FLEX_NODE_AGENT_KUBECONFIG` and `AKS_FLEX_NODE_KUBELET_KUBECONFIG`. On a fresh host, paired bootstrap also stages the agent at `/opt/unbounded/agent/bin/aks-flex-node` before preflight so the host exec command shown below already exists.
 
-Each kubeconfig has an independent user entry. The agent kubeconfig does not
+Each kubeconfig has a separately configured user entry. The agent kubeconfig does not
 need impersonation when the authenticated Arc principal is bound directly to
-the agent's Kubernetes permissions. The kubelet kubeconfig can use the same
-renewable exec credential with the node-specific impersonation fields:
+the agent's Kubernetes permissions. The following excerpts use the same Arc
+SAMI for both clients, with node-specific impersonation only in the kubelet
+kubeconfig. For separate identities, configure the agent's own credential
+and bind its principal to the agent roles; keep the node impersonation role
+bound to the kubelet's SAMI.
+
+These HIMDS excerpts describe credentials, not a complete nspawn authentication
+setup: the kubelet also needs access to the HIMDS endpoint and challenge files
+inside nspawn. The host agent's `himdsd.service` dependency does not provide
+that container access. Arc-TPM paired-mode E2E validation is deferred until
+the required feature is registered in the E2E subscription.
 
 ```yaml
 # agent.kubeconfigData user excerpt
@@ -334,18 +348,20 @@ for Kubernetes authorization evaluate Microsoft Entra principals through the
 Azure authorizer instead, so this pattern requires
 `aadProfile.enableAzureRbac=false`.
 
-The following per-node example lets the Arc principal read and watch only its
-own Node when it acts as the host agent. It can impersonate only the matching
-`system:node:<node-name>` user and `system:nodes` group when it acts as the
-kubelet. This Node-only role requires `agent.machineOperationMode: disable`.
+The following per-node example grants the agent principal direct read/watch
+access to its own Node and lets the kubelet SAMI impersonate only the matching
+`system:node:<node-name>` user and `system:nodes` group. When both placeholders
+identify the same principal, the host agent's credential can also impersonate
+the node: the Node-only direct permissions are not an isolation boundary.
+This Node-only role requires `agent.machineOperationMode: disable`.
 To use the default `auto` mode when the MachineOperation CRD is installed,
 also grant the principal `get`, `list`, and `watch` on
 `unbounded-cloud.io/machineoperations`, and `get`, `patch`, and `update` on
 `unbounded-cloud.io/machineoperations/status`, as shown in
 [`hack/controller-deployment/rbac.yaml`](../../hack/controller-deployment/rbac.yaml).
-Set `<arc-principal-username>` to the exact username returned by
-`kubectl auth whoami` when using the Arc credential; for an Arc system-assigned
-identity, this is normally its principal object ID.
+Set `<agent-principal-username>` and `<kubelet-sami-principal-username>` to the
+exact usernames returned by `kubectl --context <context> --namespace kube-system auth whoami`
+using each credential. For an Arc SAMI, this is normally its principal object ID.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -369,7 +385,7 @@ roleRef:
 subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: User
-  name: "<arc-principal-username>"
+  name: "<agent-principal-username>"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -396,7 +412,29 @@ roleRef:
 subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: User
-  name: "<arc-principal-username>"
+  name: "<kubelet-sami-principal-username>"
+```
+
+When `agent.machineClient.mode` is `in-cluster`, also grant the **agent**
+principal `get`, `update`, and `patch` on `services/proxy`, restricted to
+`http:aks-flex-controller:80` in `kube-system`. The controller deployment
+manifest linked above defines the `aks-flex-controller-service-proxy-reader`
+Role; bind it to the agent identity:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: <node-name>-agent-service-proxy
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aks-flex-controller-service-proxy-reader
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: "<agent-principal-username>"
 ```
 
 Kubernetes users and groups are identity strings, so the Node object does not

@@ -326,6 +326,9 @@ validate_kubeconfig_selection() {
        [[ -z "$AGENT_KUBECONFIG" && -n "$KUBELET_KUBECONFIG" ]]; then
         fatal_permanent "--agent-kubeconfig and --kubelet-kubeconfig must be configured together"
     fi
+}
+
+check_kubeconfig_file_permissions() {
     if [[ -n "$AGENT_KUBECONFIG" ]]; then
         check_credential_file_permissions "$AGENT_KUBECONFIG" "agent kubeconfig"
         check_credential_file_permissions "$KUBELET_KUBECONFIG" "kubelet kubeconfig"
@@ -718,6 +721,23 @@ install_agent_binary() {
     log "installed agent at $target"
 }
 
+install_paired_agent_binary() {
+    local paired candidate
+    paired=$(jq -r '
+        (.agent.kubeconfigData // "") != "" and
+        (.node.kubelet.kubeconfigData // "") != ""
+    ' "$CONFIG_PATH") || fatal "failed to inspect paired kubeconfig configuration"
+    if [[ "$paired" != true || "$INSTALL_DIR" == "$HOST_ROOT/bin" ]]; then
+        return 0
+    fi
+    # Paired exec credentials already name the final host path before start
+    # creates its managed binary layout.
+    candidate="$INSTALL_DIR/aks-flex-node"
+    INSTALL_DIR="$HOST_ROOT/bin"
+    MANAGED_BINARY_DIR="$HOST_ROOT/lib/aks-flex-node"
+    install_agent_binary "$candidate"
+}
+
 download_and_install_agent() {
     local arch="$1"
     local url archive extract_dir expected candidate
@@ -800,6 +820,7 @@ main() {
     validate_sp_credential_selection
     validate_kubeconfig_selection
     [[ $EUID -eq 0 ]] || fatal "run this script as root"
+    check_kubeconfig_file_permissions
     check_prerequisites
 
     TEMP_DIR=$(mktemp -d)
@@ -812,6 +833,7 @@ main() {
     download_and_install_agent "$arch"
     render_config "$rendered_config"
     install_config "$rendered_config"
+    install_paired_agent_binary
     clear_bootstrap_environment
 
     log "running preflight"
