@@ -9,7 +9,7 @@ opt-out is later scope.
 | Owner | Responsibility |
 | --- | --- |
 | Dalec / PMC | Native Hub packages and publication. |
-| Flex agent release | Embeds the pinned Hub binaries. |
+| Flex agent release | Pins the Hub packages it downloads (`packages.json`). |
 | Flex host agent | Worker service and config, kubelet routing, cache/PKI, Node metadata, lifecycle. |
 | RP / ENO | DT intent, the yurt-manager chart and Hub's cluster prerequisites. |
 
@@ -26,7 +26,7 @@ explicit intent, not manager presence, so disable must work after the manager is
 - **Omitted means false**, including responses from an older RP. An RP rollback
   past the field disables DT on capable agents.
 - **A failed read changes nothing**; local state is kept until a successful read.
-- **Malformed values** (wrong shape or `null`) leave intent unset with a warning;
+- **Malformed values** (wrong shape or `null`) leave intent unset (logged at debug);
   the Machine read itself still succeeds.
 - RP resolves the value per read without changing the Machine ETag, so it is
   checked on every read, independently of SettingsVersion.
@@ -55,7 +55,8 @@ Joining never needs PMC; enabling Hub does. Hosts need outbound HTTPS to
 environment. The download is bounded to 3 minutes. If it fails or the checksums
 don't match, Prepare fails and the adapter retries on later reads while kubelet stays
 on the direct API. On an enabled Hub, a failed download for a new pin keeps the
-running binary. Unsupported images or architectures, and exec-credential-only joins
+running binary; if the installed binary itself is missing or damaged, Hub isn't
+restarted until a download repairs it. Unsupported images or architectures, and exec-credential-only joins
 (SP, MSI, Arc; Hub needs a kubelet client certificate) log a warning instead,
 re-checked at most every 15 minutes.
 
@@ -181,10 +182,18 @@ NodePools, `yurt-hub-cfg` itself and the upstream Hub ClusterRole aren't needed.
   Machine read, so every node does one extra status patch and ARM read per poll.
 - **Verify failures:** if Verify keeps failing after Route, kubelet stays on Hub; there
   is no automatic fallback.
+- **Kubelet re-bootstrap:** routing keeps `--bootstrap-kubeconfig`, so kubelet can
+  recover an expired client certificate as it can without Hub. That rewrites the
+  proxy kubeconfig to the direct API server, so kubelet bypasses Hub until the next
+  enable; the agent doesn't detect it.
 - **Hashing cost:** each steady read hashes the installed Hub binary a few times;
   cache by size and modification time if it shows up.
 - **Autonomy condition:** Hub's node condition reads only the legacy annotation, so
   it reports autonomy disabled.
+- **Pre-baked Hub:** once the unbounded worker images pre-install Kubernetes
+  components, they could ship Hub too. Prepare would then use the image's binary when
+  it is at least the pinned version and download only otherwise, so an agent update
+  can still move Hub forward without a new image.
 
 ## Validation
 

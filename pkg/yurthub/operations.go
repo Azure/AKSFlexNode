@@ -209,6 +209,12 @@ func (o *Operations) Converge(ctx context.Context) error {
 	}
 	version, err := installBinary(ctx, root, o.packages, o.arch, o.fetch)
 	if errors.Is(err, ErrUnsupportedWorker) || errors.Is(err, ErrPackageDownload) {
+		// Without a start record matching the files on disk, the installed
+		// binary may be missing or corrupt. Restarting would stop a Hub that
+		// still runs from the old file, so wait for a successful repair.
+		if !startedWithCurrentFiles(root) {
+			return fmt.Errorf("hub files changed and the binary could not be repaired: %w", err)
+		}
 		o.cfg.Log.Warn("keeping the installed hub binary", "machine", o.machine, "reason", err.Error())
 	} else if err != nil {
 		return err
