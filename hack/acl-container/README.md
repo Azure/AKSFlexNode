@@ -211,7 +211,8 @@ host-exec ip -br addr
 
 Without `--image` or `ACL_IMAGE`, `up` boots the Azure build of ACL from the
 shared gallery image `ACL_IMAGE_GALLERY_IMAGE`, which it exports to
-`.vm/acl-images/acl-gallery-<version>.qcow2` the first time. The export copies
+`.vm/acl-images/<gallery>/<image>/acl-gallery-<version>.qcow2` the first time:
+a version is only unique within its gallery image. The export copies
 the image to a temporary managed disk in `ACL_IMAGE_RESOURCE_GROUP`, which has
 to be in `westus2`, where the image is replicated, downloads the disk's 910 MiB
 of written pages, and deletes the disk. It takes about 70 seconds on a fast

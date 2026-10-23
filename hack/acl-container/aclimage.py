@@ -5,9 +5,10 @@ temporary managed disk, the disk's written pages are read through a read-only
 SAS into a sparse VHD, the disk is deleted whether or not that worked, and the
 raw disk inside the VHD is converted to qcow2.
 
-The image is saved as <ACL_IMAGE_DIR>/acl-gallery-<version>.qcow2 and reused
-while that version is current. See README.md for the settings and the Azure
-permissions the export needs.
+The image is saved as <ACL_IMAGE_DIR>/<gallery>/<image>/acl-gallery-<version>.qcow2
+and reused while that version is current: a version is only unique within its
+gallery image. See README.md for the settings and the Azure permissions the
+export needs.
 """
 
 from __future__ import annotations
@@ -44,6 +45,8 @@ EXPORT_RESOURCE_GROUP = os.environ.get("ACL_IMAGE_RESOURCE_GROUP", "")
 EXPORT_SUBSCRIPTION = os.environ.get("ACL_IMAGE_SUBSCRIPTION", "")
 GALLERY_IMAGE_PATTERN = re.compile(r"/SharedGalleries/([^/]+)/Images/([^/]+)")
 GALLERY_VERSION_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+# Gallery and image names, which name the cache's directories.
+GALLERY_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # Export disks carry this tag, and the sweep only ever deletes stale disks that have it.
 EXPORT_DISK_TAG = "aks-flex-node-acl-harness"
 EXPORT_STALE_AFTER = 6 * 3600
@@ -79,10 +82,13 @@ def run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess
 def gallery_image(image_dir: Path) -> Path:
     """Return the gallery image as a qcow2 in image_dir, exporting it unless an earlier run did.
 
-    The file is named for the version and renamed into place only once complete, so an
-    interrupted export never sits under the name that is reused.
+    The file is under the gallery's and the image's names, named for the version, and renamed
+    into place only once complete, so an interrupted export never sits under the name that is
+    reused, and another gallery image's version never stands in for this one's.
     """
+    gallery, image_name = gallery_identity()
     version = gallery_version()
+    image_dir = image_dir / gallery / image_name
     image = image_dir / f"acl-gallery-{version}.qcow2"
     if image.exists():
         if subprocess.run(["qemu-img", "check", "-q", "-f", "qcow2", str(image)]).returncode != 0:
@@ -104,6 +110,15 @@ def gallery_image(image_dir: Path) -> Path:
     return image
 
 
+def gallery_identity() -> tuple[str, str]:
+    """Return the gallery's and the image's names in ACL_IMAGE_GALLERY_IMAGE."""
+    match = GALLERY_IMAGE_PATTERN.fullmatch(GALLERY_IMAGE)
+    if not match or not all(GALLERY_NAME_PATTERN.fullmatch(name) for name in match.groups()):
+        die(f"ACL_IMAGE_GALLERY_IMAGE={GALLERY_IMAGE!r} is not /SharedGalleries/<gallery>/Images/<image>")
+        raise AssertionError("unreachable")
+    return match.group(1), match.group(2)
+
+
 def gallery_version() -> str:
     """Return ACL_IMAGE_VERSION, or the version "latest" names now."""
     if GALLERY_VERSION == "latest":
@@ -111,14 +126,11 @@ def gallery_version() -> str:
             "leave it unset for the gallery's latest version")
     version = GALLERY_VERSION
     if not version:
-        match = GALLERY_IMAGE_PATTERN.fullmatch(GALLERY_IMAGE)
-        if not match:
-            die(f"ACL_IMAGE_GALLERY_IMAGE={GALLERY_IMAGE!r} is not /SharedGalleries/<gallery>/Images/<image>")
-            raise AssertionError("unreachable")
+        gallery, image = gallery_identity()
         version = az([
             "sig", "image-version", "show-shared",
-            "--gallery-unique-name", match.group(1),
-            "--gallery-image-definition", match.group(2),
+            "--gallery-unique-name", gallery,
+            "--gallery-image-definition", image,
             "--gallery-image-version", "latest",
             "--location", GALLERY_LOCATION,
             "--query", "name", "-o", "tsv",
