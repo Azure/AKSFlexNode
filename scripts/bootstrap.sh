@@ -161,8 +161,8 @@ environment variables. The script requires preinstalled bash, curl, tar, jq, and
 flock. The aks-flex-node binary owns MSI, secret, and certificate authentication.
 
 Exit status 78 means running the script again, unchanged, can't succeed: a
-setting can't work, or start failed after changing the host, which then needs
-'aks-flex-node reset' first.
+setting can't work, or start failed after changing the host, now or in an
+earlier run, which then needs 'aks-flex-node reset' first.
 EOF
 }
 
@@ -772,22 +772,31 @@ main() {
     clear_bootstrap_environment
 
     log "running preflight"
-    "$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output text
+    local status=0
+    "$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output text || status=$?
+    if ((status != 0)); then
+        # As a bootstrap after one whose start failed after changing the host finds it, such
+        # as the first-boot unit's at the next boot.
+        if deployment_on_host; then
+            fatal_permanent "the host has a node deployment already, such as one a failed start left; reset the node with 'aks-flex-node reset' before bootstrapping it again"
+        fi
+        exit "$status"
+    fi
     log "starting AKS Flex Node"
     umask 022
-    local status=0
     "$INSTALL_DIR/aks-flex-node" start --config "$CONFIG_PATH" || status=$?
     if ((status != 0)); then
-        if start_left_deployment; then
+        if deployment_on_host; then
             fatal_permanent "start failed after changing the host; reset the node with 'aks-flex-node reset' before bootstrapping it again"
         fi
         exit "$status"
     fi
 }
 
-# start_left_deployment reports whether preflight, which bootstrap runs again before start, now
-# refuses the deployment a failed start left on the host. A preflight that can't tell counts as no.
-start_left_deployment() {
+# deployment_on_host reports whether preflight refuses a node deployment on the host, which no
+# bootstrap gets past until the node is reset: one a failed start just left, or an earlier one
+# left. A preflight that can't tell counts as no.
+deployment_on_host() {
     local report
     report=$("$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output json 2>/dev/null) || true
     jq -e 'any(.checks[]?; .name == "existing-deployment" and .severity == "error")' <<<"$report" >/dev/null 2>&1
