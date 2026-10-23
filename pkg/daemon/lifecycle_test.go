@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -218,7 +219,9 @@ func TestNSpawnLifecycleUnits(t *testing.T) {
 			continue
 		}
 		lines := strings.Split(unit, "\n")
-		for _, want := range append(tc.want, "Type=oneshot", "ExecStart="+paths.CurrentPath+" nspawn-lifecycle "+tc.phase+" %i") {
+		// The binary under the host root, which start installs first, and the binary layout
+		// links to the current one.
+		for _, want := range append(tc.want, "Type=oneshot", "ExecStart="+paths.BinaryPath+" nspawn-lifecycle "+tc.phase+" %i") {
 			if !slices.Contains(lines, want) {
 				t.Errorf("%s has no line %q:\n%s", tc.unit, want, unit)
 			}
@@ -230,6 +233,70 @@ func TestNSpawnLifecycleUnits(t *testing.T) {
 				t.Errorf("%s has %q:\n%s", tc.unit, line, unit)
 			}
 		}
+	}
+}
+
+// TestEnsureNSpawnLifecycleUnits: StartNode writes the units the machine's hooks start before it
+// starts the machine, as start does before it installs the agent's other units, but leaves those
+// there, which the daemon converges.
+func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		existing   []string
+		wantReload bool
+	}{
+		"writes both on a fresh host": {wantReload: true},
+		"writes a missing one":        {existing: []string{config.NSpawnPreStartUnit}, wantReload: true},
+		"leaves the existing ones":    {existing: []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			systemdDir := t.TempDir()
+			for _, unit := range tc.existing {
+				if err := os.WriteFile(filepath.Join(systemdDir, unit), []byte("existing\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reloaded := false
+			task := &ensureNSpawnLifecycleUnitsTask{
+				log:        slog.New(slog.DiscardHandler),
+				systemdDir: systemdDir,
+				binaryPath: func() string { return "/opt/unbounded/agent/bin/aks-flex-node" },
+				reload: func(context.Context, *slog.Logger) error {
+					reloaded = true
+					return nil
+				},
+			}
+			if err := task.Do(t.Context()); err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			for _, unit := range []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit} {
+				content, err := os.ReadFile(filepath.Join(systemdDir, unit))
+				if err != nil {
+					t.Fatalf("%s: %v", unit, err)
+				}
+				if kept := string(content) == "existing\n"; kept != slices.Contains(tc.existing, unit) {
+					t.Errorf("%s kept = %v, want %v", unit, kept, !kept)
+				}
+			}
+			if reloaded != tc.wantReload {
+				t.Errorf("reloaded = %v, want %v", reloaded, tc.wantReload)
+			}
+		})
+	}
+}
+
+// TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst: the machine's hooks start the nspawn
+// lifecycle units, so they have to be there before anything starts the machine.
+func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
+	t.Parallel()
+
+	gs := &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{}, NodeStart: &goalstates.NodeStart{}}
+	name := StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
+	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
+		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)
 	}
 }
 

@@ -13,5 +13,5 @@ BindsTo=systemd-nspawn@%i.service
 [Service]
 # No RemainAfterExit=: each start of the machine runs it again.
 Type=oneshot
-ExecStart={{.CurrentBinaryPath}} nspawn-lifecycle post-start %i
+ExecStart={{.BinaryPath}} nspawn-lifecycle post-start %i
 TimeoutStartSec=infinity

@@ -8,7 +8,7 @@ Description=AKS Flex Node nspawn pre-start for machine %i
 [Service]
 # No RemainAfterExit=: each start of the machine runs it again.
 Type=oneshot
-ExecStart={{.CurrentBinaryPath}} nspawn-lifecycle pre-start %i
+ExecStart={{.BinaryPath}} nspawn-lifecycle pre-start %i
 # The config regeneration unit has no start timeout of its own, and retries a
 # failure, so a hang here fails and is retried rather than holding the machine.
 TimeoutStartSec=2min

@@ -186,11 +186,7 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions age
 	}
 	recoveryServiceContent := bytes.ReplaceAll(recoveryServiceUnitContent, []byte(embeddedRecoveryScriptPath), []byte(recoveryScript))
 	recoveryContent := renderRecoveryScript(binaryPaths)
-	preStartContent, err := renderNSpawnLifecycleUnit(nspawnPreStartUnitTemplate, currentBinaryPath)
-	if err != nil {
-		return nil, err
-	}
-	postStartContent, err := renderNSpawnLifecycleUnit(nspawnPostStartUnitTemplate, currentBinaryPath)
+	lifecycleUnits, err := nspawnLifecycleUnitAssets(systemdDir, binaryPaths.BinaryPath)
 	if err != nil {
 		return nil, err
 	}
@@ -198,13 +194,79 @@ func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions age
 	// interrupted update never leaves systemd pointing at missing recovery assets.
 	// The machines' hooks start the nspawn lifecycle units, and the daemon
 	// rewrites the hooks once it has written these.
+	return append(lifecycleUnits,
+		agentServiceAsset{path: recoveryScript, content: recoveryContent, mode: 0o750},
+		agentServiceAsset{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
+		agentServiceAsset{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
+	), nil
+}
+
+// nspawnLifecycleUnitAssets returns the template units the machines' hooks start, which run the
+// agent's nspawn-lifecycle phases through binaryPath: the agent's binary under the host root,
+// which start installs before anything else, and which the binary layout later makes a link to
+// the current one, so they always run the current agent.
+func nspawnLifecycleUnitAssets(systemdDir, binaryPath string) ([]agentServiceAsset, error) {
+	preStart, err := renderNSpawnLifecycleUnit(nspawnPreStartUnitTemplate, binaryPath)
+	if err != nil {
+		return nil, err
+	}
+	postStart, err := renderNSpawnLifecycleUnit(nspawnPostStartUnitTemplate, binaryPath)
+	if err != nil {
+		return nil, err
+	}
 	return []agentServiceAsset{
-		{path: filepath.Join(systemdDir, config.NSpawnPreStartUnit), content: preStartContent, mode: 0o644},
-		{path: filepath.Join(systemdDir, config.NSpawnPostStartUnit), content: postStartContent, mode: 0o644},
-		{path: recoveryScript, content: recoveryContent, mode: 0o750},
-		{path: filepath.Join(systemdDir, recoveryServiceUnitName), content: recoveryServiceContent, mode: 0o644},
-		{path: filepath.Join(systemdDir, ServiceUnitName), content: serviceContent, mode: 0o644},
+		{path: filepath.Join(systemdDir, config.NSpawnPreStartUnit), content: preStart, mode: 0o644},
+		{path: filepath.Join(systemdDir, config.NSpawnPostStartUnit), content: postStart, mode: 0o644},
 	}, nil
+}
+
+type ensureNSpawnLifecycleUnitsTask struct {
+	log *slog.Logger
+	// systemdDir, binaryPath and reload are the host's; tests replace them.
+	systemdDir string
+	binaryPath func() string
+	reload     func(context.Context, *slog.Logger) error
+}
+
+// EnsureNSpawnLifecycleUnits returns a task that writes the nspawn lifecycle units the machines'
+// hooks start, those that are missing, so that StartNode can start a machine: start installs the
+// agent's other units only once the node runs. The daemon converges them with those units, while
+// an AgentUpgrade isn't pending, so this leaves the existing ones as they are.
+func EnsureNSpawnLifecycleUnits(log *slog.Logger) phases.Task {
+	return &ensureNSpawnLifecycleUnitsTask{
+		log:        log,
+		systemdDir: systemdSystemDir,
+		binaryPath: func() string { return agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath },
+		reload:     utilexec.ReloadSystemd,
+	}
+}
+
+func (t *ensureNSpawnLifecycleUnitsTask) Name() string { return "ensure-nspawn-lifecycle-units" }
+
+func (t *ensureNSpawnLifecycleUnitsTask) Do(ctx context.Context) error {
+	assets, err := nspawnLifecycleUnitAssets(t.systemdDir, t.binaryPath())
+	if err != nil {
+		return err
+	}
+	written := false
+	for _, asset := range assets {
+		if _, err := os.Stat(asset.path); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("check %s: %w", asset.path, err)
+		}
+		if err := utilio.WriteFile(asset.path, asset.content, asset.mode); err != nil {
+			return fmt.Errorf("write %s: %w", asset.path, err)
+		}
+		written = true
+	}
+	if !written {
+		return nil
+	}
+	if err := t.reload(ctx, t.log); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
+	return nil
 }
 
 func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error) {
@@ -240,11 +302,11 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	return content.Bytes(), nil
 }
 
-// renderNSpawnLifecycleUnit renders a template unit that runs an nspawn-lifecycle phase with the
-// current agent.
-func renderNSpawnLifecycleUnit(unit *template.Template, currentBinaryPath string) ([]byte, error) {
+// renderNSpawnLifecycleUnit renders a template unit that runs an nspawn-lifecycle phase through
+// binaryPath.
+func renderNSpawnLifecycleUnit(unit *template.Template, binaryPath string) ([]byte, error) {
 	var content bytes.Buffer
-	if err := unit.Execute(&content, agentServiceTemplateData{CurrentBinaryPath: currentBinaryPath}); err != nil {
+	if err := unit.Execute(&content, struct{ BinaryPath string }{BinaryPath: binaryPath}); err != nil {
 		return nil, fmt.Errorf("render %s: %w", unit.Name(), err)
 	}
 	return content.Bytes(), nil
