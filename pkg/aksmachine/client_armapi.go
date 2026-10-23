@@ -132,7 +132,7 @@ func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {
 // value cannot block unrelated upgrade or deletion handling.
 func (c *armMachineClient) disconnectTolerance(rawResponse *http.Response) *bool {
 	if rawResponse == nil {
-		c.logger.Warn("machine response unavailable; keeping current disconnect-tolerance state")
+		c.logger.Debug("disconnect-tolerance intent resolved to nil: machine response unavailable")
 		return nil
 	}
 	data, err := runtime.Payload(rawResponse)
@@ -142,7 +142,7 @@ func (c *armMachineClient) disconnectTolerance(rawResponse *http.Response) *bool
 			return &enabled
 		}
 	}
-	c.logger.Warn("ignoring undecodable disconnect-tolerance intent; keeping current state", "error", err)
+	c.logger.Debug("disconnect-tolerance intent resolved to nil", "error", err)
 	return nil
 }
 
