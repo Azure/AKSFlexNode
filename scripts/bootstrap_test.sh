@@ -114,6 +114,8 @@ case "${1:-}" in
     preflight)
         if [[ " $* " == *" --output json "* ]]; then
             printf '%s\n' "${BOOTSTRAP_TEST_PREFLIGHT_JSON:-}"
+        else
+            exit "${BOOTSTRAP_TEST_PREFLIGHT_STATUS:-0}"
         fi
         ;;
 esac
@@ -410,9 +412,22 @@ grep -Fx "preflight --config $WORK_DIR/start-left-etc/config.json --output json"
     fail "bootstrap did not ask preflight about a failed start: $(cat "$WORK_DIR/start-left-calls")"
 grep -q "aks-flex-node reset" "$WORK_DIR/start-left.log" || fail "a start that left a deployment didn't say to reset"
 
+no_deployment='{"status":"error","checks":[{"name":"existing-deployment","target":"","severity":"ok","message":"no existing node deployment was detected","ignored":false},{"name":"api-server-reachable","target":"api","severity":"error","message":"unreachable","ignored":false}]}'
+
+# A bootstrap after one whose start failed after changing the host, such as the first-boot unit's
+# at the next boot, finds the deployment in its own preflight, before it runs start: 78 again.
+status=$(bootstrap_status preflight-left BOOTSTRAP_TEST_PREFLIGHT_STATUS=5 BOOTSTRAP_TEST_PREFLIGHT_JSON="$deployment_left" --)
+[[ "$status" == 78 ]] || fail "a preflight that found a deployment exited $status, want 78: $(cat "$WORK_DIR/preflight-left.log")"
+! grep -q '^start ' "$WORK_DIR/preflight-left-calls" || fail "bootstrap ran start after its preflight failed"
+grep -q "aks-flex-node reset" "$WORK_DIR/preflight-left.log" || fail "a preflight that found a deployment didn't say to reset"
+
+# A preflight that fails for anything else keeps its own status, and the unit retries.
+status=$(bootstrap_status preflight-clean BOOTSTRAP_TEST_PREFLIGHT_STATUS=5 BOOTSTRAP_TEST_PREFLIGHT_JSON="$no_deployment" --)
+[[ "$status" == 5 ]] || fail "a preflight that found no deployment exited $status, want its own 5"
+! grep -q '^start ' "$WORK_DIR/preflight-clean-calls" || fail "bootstrap ran start after its preflight failed"
+
 # Otherwise start's own status stands, and the unit retries: when preflight reports no deployment,
 # whatever else fails, or when it can't tell.
-no_deployment='{"status":"error","checks":[{"name":"existing-deployment","target":"","severity":"ok","message":"no existing node deployment was detected","ignored":false},{"name":"api-server-reachable","target":"api","severity":"error","message":"unreachable","ignored":false}]}'
 for report in "$no_deployment" ""; do
     status=$(bootstrap_status start-clean BOOTSTRAP_TEST_START_STATUS=7 BOOTSTRAP_TEST_PREFLIGHT_JSON="$report" --)
     [[ "$status" == 7 ]] || fail "a start that left no deployment exited $status, want start's 7, with preflight report '$report'"
