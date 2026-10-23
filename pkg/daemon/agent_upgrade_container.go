@@ -365,9 +365,11 @@ func (e *containerAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSigna
 }
 
 // rollbackImageSwitch selects the upgrade's previous image again, if the upgrade switched to its
-// candidate, or may have.
+// candidate, or may have. Stage records the candidate, with the previous image, before it changes
+// the selection, so an upgrade without one never switched, even when recovery ran for it, as after
+// the daemon ended between RecordPending and Stage.
 func rollbackImageSwitch(images agentImageEnvFile, signal *agentUpgradeSignal) error {
-	if signal == nil {
+	if signal == nil || signal.CandidateImage == "" {
 		return nil
 	}
 	active, err := candidateImageActive(images, signal)
