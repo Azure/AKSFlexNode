@@ -56,9 +56,11 @@ systemd:
         After=network-online.target containerd.service aks-flex-node-reset.service
         Requires=containerd.service
         ConditionPathExists=/etc/aks-flex-node/bootstrap.env
-        # Until the agent's unit is enabled, which start does after writing it:
-        # a bootstrap that fails after the write is retried. Conditions are
-        # checked at every start, automatic restarts included.
+        # Until the agent's unit is enabled, which start does after writing it,
+        # so a later boot runs a bootstrap that failed after the write. systemd
+        # doesn't check conditions again for the unit's own restarts, so this
+        # doesn't end a failing bootstrap's retries; RestartPreventExitStatus=
+        # below does.
         ConditionPathExists=!/etc/systemd/system/multi-user.target.wants/aks-flex-node-agent.service
         # It retries, backing off, for as long as it takes; see Restart= below.
         StartLimitIntervalSec=0
@@ -97,6 +99,11 @@ systemd:
         RestartSec=10s
         RestartSteps=5
         RestartMaxDelaySec=5min
+        # Except a failure that retrying can't fix, for which bootstrap.sh exits
+        # with 78, through ctr run: a setting that can't work, or a start that
+        # failed after changing the host, which then needs a reset. The unit
+        # stays failed, with its inputs, until new ones and a start.
+        RestartPreventExitStatus=78
         TimeoutStartSec=30min
 
         [Install]

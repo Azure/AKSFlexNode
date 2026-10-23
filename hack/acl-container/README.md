@@ -301,8 +301,9 @@ The subnet, interface names, and ports differ from the other harnesses in
 - **The VM doesn't come up.** `harness.py console` follows its serial console,
   also in `.vm/acl-container/serial.log`.
 - **Bootstrap fails.** `journalctl -u aks-flex-node-bootstrap -b` on the VM
-  shows the pull, `bootstrap.sh`, preflight, and `start`. The unit retries a few
-  times, then fails, and `up` prints its log.
+  shows the pull, `bootstrap.sh`, preflight, and `start`. The unit retries until
+  bootstrap succeeds, unless retrying can't fix the failure: then it fails, with
+  status 78, and `up` prints its log.
 - **The agent's container doesn't start.** `journalctl -u aks-flex-node-agent -b`
   on the VM shows the entrypoint's checks. A failed check exits the container,
   and systemd retries it.

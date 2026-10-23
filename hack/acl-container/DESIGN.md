@@ -152,14 +152,16 @@ waits for recovery's:
 The agent's unit restarts on failure, and runs its recovery unit through
 `OnFailure=`. The bootstrap unit runs at boot only while bootstrap's inputs are
 there and the agent's unit isn't enabled, so it does nothing once the agent is
-installed, and retries a bootstrap that failed after `start` wrote the agent's
-unit. After a reset, new inputs and a start of the unit join the node again. It
+installed. After a reset, new inputs and a start of the unit join the node again. It
 pulls the image at every bootstrap, so a tag names what it does now, as `main`'s
 bootstrap downloads the agent its inputs name. When the pull fails, an image
 already there, such as the install's after a reset, runs as it is, offline too.
 It retries a bootstrap that fails, or finds no image, such as while the network
 comes up, for as long as it takes, backing off from 10 seconds to 5 minutes
-between tries. A reset first stops the bootstrap unit, ending a bootstrap in
+between tries. It doesn't retry one that retrying can't fix, for which
+`bootstrap.sh` exits with 78, as on a host: a setting that can't work, or a
+`start` that failed after changing the host, which then needs a reset. The unit
+stays failed then, until new inputs and a start. A reset first stops the bootstrap unit, ending a bootstrap in
 progress or waiting to retry, and a bootstrap started during a reset waits for
 it, so the two never run at once. Each unit first waits for containerd to answer, since
 `containerd.service` on ACL reports started a moment before it does.
