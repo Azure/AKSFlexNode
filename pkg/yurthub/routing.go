@@ -19,13 +19,18 @@ const (
 
 	directKubeconfigArg = "--kubeconfig=/" + directKubeconfig
 	proxyKubeconfigArg  = "--kubeconfig=/" + proxyKubeconfig
+	// Kept from unbounded's 10-kubeconfig.conf for certificate joins (the only
+	// joins Hub supports), so kubelet can still re-bootstrap an expired client
+	// certificate. Re-bootstrap rewrites the proxy kubeconfig to the direct API
+	// server, so kubelet bypasses Hub until the next enable reroutes it.
+	bootstrapKubeconfigArg = "--bootstrap-kubeconfig=/var/lib/kubelet/bootstrap-kubeconfig"
 )
 
 var routingUnit = []byte(`[Unit]
 Wants=aks-flex-yurthub.service
 After=aks-flex-yurthub.service
 [Service]
-Environment="KUBELET_KUBECONFIG_ARGS=` + proxyKubeconfigArg + `"
+Environment="KUBELET_KUBECONFIG_ARGS=` + bootstrapKubeconfigArg + ` ` + proxyKubeconfigArg + `"
 `)
 
 // configureRouting writes the proxy kubeconfig, then the kubelet drop-in that

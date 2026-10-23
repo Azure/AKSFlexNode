@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,7 @@ type fakeWorker struct {
 
 // run simulates commands inside the worker the way systemd behaves: enabling
 // or disabling a unit whose file is missing fails, and the live kubelet
-// --kubeconfig follows whether the routing drop-in exists.
+// arguments follow the routing drop-in.
 func (w *fakeWorker) run(_ context.Context, args ...string) (string, error) {
 	cmd := strings.Join(args, " ")
 	w.commands = append(w.commands, cmd)
@@ -68,11 +69,17 @@ func (w *fakeWorker) run(_ context.Context, args ...string) (string, error) {
 	case strings.HasPrefix(cmd, "systemctl show --property=MainPID"):
 		return "123\n", nil
 	case cmd == "cat /proc/123/cmdline":
-		kubeconfig := directKubeconfigArg
-		if _, err := os.Stat(filepath.Join(w.dir, routingDropIn)); err == nil {
-			kubeconfig = proxyKubeconfigArg
+		// Mirror unbounded's 10-kubeconfig.conf for a certificate join, and let
+		// the routing drop-in replace it the way systemd would.
+		args := bootstrapKubeconfigArg + " " + directKubeconfigArg
+		if dropIn, err := os.ReadFile(filepath.Join(w.dir, routingDropIn)); err == nil {
+			_, value, ok := strings.Cut(string(dropIn), `KUBELET_KUBECONFIG_ARGS=`)
+			if !ok {
+				return "", fmt.Errorf("routing drop-in sets no kubelet arguments")
+			}
+			args, _, _ = strings.Cut(value, `"`)
 		}
-		return strings.Join([]string{"/usr/local/bin/kubelet", "--bootstrap-kubeconfig=/var/lib/kubelet/bootstrap-kubeconfig", kubeconfig}, "\x00"), nil
+		return strings.Join(append([]string{"/usr/local/bin/kubelet"}, strings.Fields(args)...), "\x00"), nil
 	}
 	return "", nil
 }
@@ -178,6 +185,11 @@ func TestOperationsEnableDisable(t *testing.T) {
 	}
 	if _, exists := node.Annotations[legacyAutonomyAnnotation]; exists {
 		t.Fatal("agent added the deprecated autonomy annotation")
+	}
+	// Routing must keep kubelet's TLS-bootstrap recovery.
+	cmdline, err := worker.run(ctx, "cat", "/proc/123/cmdline")
+	if err != nil || !slices.Equal(strings.Split(cmdline, "\x00")[1:], []string{bootstrapKubeconfigArg, proxyKubeconfigArg}) {
+		t.Fatalf("routed kubelet arguments = %q, %v", cmdline, err)
 	}
 
 	for range 2 {
@@ -477,6 +489,47 @@ func TestOperationsDriftRepairWithFailedRestart(t *testing.T) {
 	}
 	if countCommand(worker.commands, restart) != 1 {
 		t.Fatalf("restart after drift repair not retried: %v", worker.commands)
+	}
+}
+
+// TestOperationsConvergeKeepsHubWhenRepairFails: the installed binary is
+// removed or corrupted while PMC is unreachable. The running Hub still serves
+// from the old file, so Converge must not restart it until a repair succeeds.
+func TestOperationsConvergeKeepsHubWhenRepairFails(t *testing.T) {
+	t.Parallel()
+	restart := "systemctl restart " + serviceName
+	for name, damage := range map[string]func(path string) error{
+		"missing binary": os.Remove,
+		"corrupt binary": func(path string) error { return os.WriteFile(path, []byte("corrupt"), 0o755) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			worker := newFakeWorker(t)
+			ops, _, _ := newTestOperations(t, worker, true)
+			enableForTest(t, ops)
+			fetch := ops.fetch
+			ops.fetch = func(context.Context, string) ([]byte, error) { return nil, errors.New("offline") }
+			if err := damage(filepath.Join(worker.dir, installedBinary)); err != nil {
+				t.Fatal(err)
+			}
+			worker.commands = nil
+			for range 2 {
+				if err := ops.Converge(t.Context()); !errors.Is(err, ErrPackageDownload) {
+					t.Fatalf("Converge error = %v, want ErrPackageDownload", err)
+				}
+			}
+			if got := countCommand(worker.commands, restart); got != 0 {
+				t.Fatalf("restarted hub without a repaired binary: %v", worker.commands)
+			}
+			ops.fetch = fetch
+			worker.commands = nil
+			if err := ops.Converge(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := countCommand(worker.commands, restart); got != 1 {
+				t.Fatalf("hub restarts after repair = %d, want 1: %v", got, worker.commands)
+			}
+		})
 	}
 }
 
