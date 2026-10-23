@@ -11,6 +11,7 @@ require (
 	github.com/Azure/unbounded v0.8.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/renameio/v2 v2.0.2
+	github.com/klauspost/compress v1.19.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/tidwall/gjson v1.20.0
@@ -70,7 +71,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/keybase/go-keychain v0.0.1 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/moby/sys/user v0.4.1 // indirect

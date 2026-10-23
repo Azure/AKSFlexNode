@@ -1,0 +1,42 @@
+{
+  "comment": "Pinned Dalec-built YurtHub packages. The agent downloads the package for the worker image (matched on /etc/os-release ID and VERSION_ID) when disconnect tolerance is enabled, and verifies the package and binary checksums before installing.",
+  "upstreamVersion": "v1.7.0",
+  "variants": [
+    {
+      "id": "ubuntu",
+      "versionId": "24.04",
+      "arch": "amd64",
+      "binarySHA256": "6e78e6959f9ec0b41fb7689c095b81d923a974fe18aea8d4dc1175badcca4245",
+      "package": {
+        "format": "deb",
+        "version": "1.7.0-ubuntu24.04u5",
+        "url": "https://packages.microsoft.com/ubuntu/24.04/prod/pool/main/y/yurthub/yurthub_1.7.0-ubuntu24.04u5_amd64.deb",
+        "sha256": "8247912d4722dc404c592bea7b49bd1aa9402b9ac6fb42c221d103e2997a028e"
+      }
+    },
+    {
+      "id": "ubuntu",
+      "versionId": "26.04",
+      "arch": "amd64",
+      "binarySHA256": "6848209369c6c27f87bb5d42b197466bf6f59569ac49aade9ad174d8b12fc0df",
+      "package": {
+        "format": "deb",
+        "version": "1.7.0-ubuntu26.04u5",
+        "url": "https://packages.microsoft.com/ubuntu/26.04/prod/pool/main/y/yurthub/yurthub_1.7.0-ubuntu26.04u5_amd64.deb",
+        "sha256": "d602ba2ff5d0f65dc78df091f21c40587678888976ec47ebe8052ebdb2362972"
+      }
+    },
+    {
+      "id": "azurelinux",
+      "versionId": "3.0",
+      "arch": "amd64",
+      "binarySHA256": "d41f5fe91b3b8eceb7bfc7b937dea0ef25998d88e0d7beaa3ad391b91c42981d",
+      "package": {
+        "format": "rpm",
+        "version": "1.7.0-5.azl3",
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/cloud-native/x86_64/Packages/y/yurthub-1.7.0-5.azl3.x86_64.rpm",
+        "sha256": "459137b7094aaa0e0f80a0cc38c50d7f2fe564f9fa62743cbe24a1b0799cb029"
+      }
+    }
+  ]
+}

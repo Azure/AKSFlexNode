@@ -1,6 +1,7 @@
 package utilio
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -69,4 +70,29 @@ func WriteFile(filename string, content []byte, perm os.FileMode) error {
 	}
 
 	return renameio.WriteFile(filename, content, perm, renameio.WithTempDir(filepath.Dir(filename)))
+}
+
+// WriteFileInRoot is WriteFile's worker-rootfs counterpart. All paths, including
+// the temporary file and publication, remain beneath root even through symlinks.
+// os.Root cannot be passed to renameio, so publication uses root-relative Rename.
+// The caller owns filename and decides whether existing content may be replaced.
+func WriteFileInRoot(root *os.Root, filename string, content []byte, perm os.FileMode) error {
+	if err := root.MkdirAll(filepath.Dir(filename), 0o750); err != nil {
+		return err
+	}
+	tmp := filename + "." + rand.Text()
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp) //nolint:errcheck // best-effort temporary file cleanup
+	_, writeErr := f.Write(content)
+	var syncErr error
+	if writeErr == nil {
+		syncErr = f.Sync()
+	}
+	if err := errors.Join(writeErr, syncErr, f.Close()); err != nil {
+		return err
+	}
+	return root.Rename(tmp, filename)
 }
