@@ -13,7 +13,6 @@ type ensureMachineTask struct {
 	machines MachineClient
 	goal     *GoalState
 	logger   *slog.Logger
-	require  bool
 }
 
 // EnsureMachine returns a task that ensures this machine is registered in AKS.
@@ -21,8 +20,8 @@ type ensureMachineTask struct {
 // Kubernetes version already matches, the task adopts only the remote ETag as
 // the reconciliation baseline; other remote settings do not replace the local
 // goal. Subsequent ETag changes are handled by the daemon as new remote goals.
-func EnsureMachine(machines MachineClient, goal *GoalState, require bool, logger *slog.Logger) phases.Task {
-	return &ensureMachineTask{machines: machines, goal: goal, require: require, logger: logger}
+func EnsureMachine(machines MachineClient, goal *GoalState, logger *slog.Logger) phases.Task {
+	return &ensureMachineTask{machines: machines, goal: goal, logger: logger}
 }
 
 func (t *ensureMachineTask) Name() string { return "ensure-machine" }
@@ -116,9 +115,5 @@ func validateMachineForGoal(machine *Machine, goal GoalState) error {
 }
 
 func (t *ensureMachineTask) handleError(operation string, err error) error {
-	if t.require {
-		return fmt.Errorf("ensure-machine: %s: %w", operation, err)
-	}
-	t.logger.Warn("skipping AKS machine registration after failure", "operation", operation, "error", err)
-	return nil
+	return fmt.Errorf("ensure-machine: %s: %w", operation, err)
 }

@@ -168,10 +168,6 @@ type AgentConfig struct {
 	// machine resource when no Kubernetes Node event wakes the controller.
 	MachineReconcileInterval JSONDuration `json:"machineReconcileInterval,omitempty"`
 
-	// RequireMachineRegistration fails bootstrap if the AKS machine resource
-	// cannot be read or created. When false, registration is best-effort.
-	RequireMachineRegistration *bool `json:"requireMachineRegistration,omitempty"`
-
 	// MachineOperationMode controls MachineOperation handling. Supported values:
 	// "auto" detects Machina CRs, "disable" uses a noop reconciler.
 	MachineOperationMode string `json:"machineOperationMode,omitempty"`
@@ -452,10 +448,6 @@ func (c *Config) setAgentDefaults() {
 	}
 	if c.Agent.MachineOperationMode == "" {
 		c.Agent.MachineOperationMode = defaultMachineOperationMode
-	}
-	if c.Agent.RequireMachineRegistration == nil {
-		requireMachineRegistration := c.IsARCEnabled() || c.IsSPConfigured() || c.IsMIConfigured()
-		c.Agent.RequireMachineRegistration = &requireMachineRegistration
 	}
 }
 
