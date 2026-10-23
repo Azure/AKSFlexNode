@@ -24,7 +24,7 @@ The key contract between them is an AKS RP-exposed ARM machine resource. The ARM
 
 In the durable-identity flow, bootstrap obtains pool data and configures the host with an Azure identity. During `aks-flex-node start`, the agent ensures that the Azure Machine exists and that its Kubernetes version matches the local bootstrap goal. After the node joins, the daemon reads desired Machine state and combines it with the Kubernetes `Node` signal for this instance.
 
-A bootstrap-token-only configuration remains available for standalone evaluation. Without a durable Azure identity, Machine registration is best effort and the agent can't continuously reconcile ARM Machine state.
+A bootstrap-token-only configuration remains available for standalone evaluation, but Machine registration is still required and any registration failure aborts bootstrap. A durable Azure identity is needed for continuous ARM Machine reconciliation.
 
 Lifecycle operations use these signals:
 
@@ -101,7 +101,7 @@ The implemented order is:
 8. After worker startup succeeds, the agent persists the initial daemon state.
 9. The daemon starts its Machine polling and Kubernetes `Node` watch loops.
 
-Machine creation and update are idempotent for an unchanged Kubernetes version. When `agent.requireMachineRegistration` is `true`, an unavailable or unauthorized Machine API fails bootstrap before host mutation. Bootstrap-token-only evaluation configs default this setting to `false`, so Machine registration failures are logged and bootstrap can continue.
+Machine creation and update are idempotent for an unchanged Kubernetes version. An unavailable or unauthorized Machine API fails bootstrap before host mutation, regardless of authentication method.
 
 ## Control loops
 

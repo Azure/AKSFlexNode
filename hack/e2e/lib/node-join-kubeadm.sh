@@ -339,8 +339,7 @@ node_join_kubeadm() {
     "machineClient": {
       "mode": "in-cluster",
       "endpointUrl": "${E2E_CONTROLLER_SERVICE_PROXY_PATH}"
-    },
-    "requireMachineRegistration": true
+    }
   },
   "components": {
     "kubernetes": "${E2E_KUBERNETES_VERSION}",

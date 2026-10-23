@@ -153,20 +153,13 @@ func TestEnsureMachineRejectsInvalidExistingMachine(t *testing.T) {
 
 	tests := map[string]struct {
 		machine *Machine
-		require bool
 		wantErr string
 	}{
-		"best effort preserves local goal after missing settings version": {
+		"rejects missing settings version": {
 			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
-		},
-		"required rejects missing settings version": {
-			machine: &Machine{Goal: GoalState{KubernetesVersion: "1.35.1"}},
-			require: true,
 			wantErr: "goal settings version is empty",
 		},
-		"best effort preserves local goal after nil response": {},
-		"required rejects nil response": {
-			require: true,
+		"rejects nil response": {
 			wantErr: "machine is nil",
 		},
 	}

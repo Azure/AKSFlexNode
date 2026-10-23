@@ -186,7 +186,6 @@ node_join_offline() {
     '.agent.logLevel = "debug"
       | .agent.machineClient.mode = "in-cluster"
       | .agent.machineClient.endpointUrl = $machineEndpointURL
-      | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
       | .components = (.components // {})
       | .components.kubernetes = $kubernetesVersion

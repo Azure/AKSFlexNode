@@ -111,7 +111,7 @@ See [Configuration](usage/configuration.md) for the option reference and sample 
 
 Kubernetes bootstrap data contains a short-lived token, API server address, and cluster CA. Kubelet and the daemon use it to request separate client certificates. After issuance, they use those certificates for ongoing Kubernetes API access.
 
-A bootstrap-token-only configuration is available for repository evaluation, but it doesn't provide durable Azure authentication and Machine registration is best effort by default.
+A bootstrap-token-only configuration is available for repository evaluation, but it doesn't provide durable Azure authentication. Machine registration is required for all authentication methods and a registration failure aborts bootstrap.
 
 ### Managed Identity
 
@@ -191,7 +191,7 @@ AKS Flex Node uses separate Azure and Kubernetes credentials.
 
 Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access.
 
-A bootstrap-token-only config is available for repository evaluation flows, where Machine registration is best effort by default. The primary Azure Machine workflow requires a durable Azure identity. Authentication doesn't change lifecycle ownership: host mutation remains local and privileged, while AKS or the operator owns workload disruption such as cordon and drain.
+A bootstrap-token-only config is available for repository evaluation flows, but Machine registration is required for it as well. The primary Azure Machine workflow requires a durable Azure identity. Authentication doesn't change lifecycle ownership: host mutation remains local and privileged, while AKS or the operator owns workload disruption such as cordon and drain.
 
 ## Detailed design topics
 

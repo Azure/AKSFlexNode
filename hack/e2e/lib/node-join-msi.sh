@@ -139,8 +139,7 @@ _node_join_msi() {
     "logDir": "/var/log/aks-flex-node",
     "machineClient": {
       "mode": "arm"
-    },
-    "requireMachineRegistration": true
+    }
   },
   "networking": {
     "localDNS": {
