@@ -38,7 +38,7 @@ the agent's privileged containers talk to the host's systemd over D-Bus. See
 export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group   # only for the first export
 hack/acl-container/harness.py up                   # cluster, image, VM, bootstrap
 hack/acl-container/harness.py status               # the VM, the agent, machines, nodes
-hack/acl-container/harness.py check                # 72 checks, 7 to 10 minutes
+hack/acl-container/harness.py check                # 78 checks, 7 to 10 minutes
 hack/acl-container/harness.py down                 # remove the VM, cluster, network, and state
 ```
 
