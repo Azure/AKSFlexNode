@@ -101,9 +101,11 @@ pulls the image and runs `main`'s `bootstrap.sh` from it, whose `start` installs
 `aks-flex-node-agent.service`, which runs the daemon in a container, as `start`
 installs it on a host. Reset removes that unit, after which nothing of the agent
 runs, and `aks-flex-node-reset.service` runs `aks-flex-node reset` in a container
-of its own. The units give each container only the host's root: its entrypoint
-mounts the host paths the agent uses at their own paths, and the host's tools
-run through `host-exec`.
+of its own. The machines' hooks start the agent's nspawn lifecycle units, as on a
+host, which run its phases in short-lived containers of its image. The units
+give each container only the host's root: its entrypoint mounts the host paths
+the agent uses at their own paths, and the host's tools run through
+`host-exec`.
 
 `AgentUpgrade` takes an `image` in a container, rather than a release archive:
 the agent pulls it, checks that its agent runs, and selects it in
@@ -118,37 +120,6 @@ whatever provisions bootstrap's inputs can name the image to join with, as
 rest of `/etc/aks-flex-node`, so without it, bootstrap runs the install's
 image.
 
-- [ ] nspawn lifecycle helper, the one binary of the agent left on the host.
-      Each machine's units run
-      `/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle` at every
-      start of the machine: `pre-start` rewrites its `.nspawn` file and
-      `post-start` rewires NVIDIA devices. Unbounded copies the agent's binary
-      there when it provisions a machine. `/opt` is on ACL's writable root
-      filesystem, and the containers mount the host's `/opt/unbounded`, so the
-      copy lands on the host. Azure/unbounded#967, in v0.18.0, lets the
-      caller supply the hooks' commands, as `AgentConfig.NSpawnLifecycle`, in
-      which `%i` is the machine, and then skips the copy. Once the agent is on
-      v0.18.0, it installs
-      template units, `aks-flex-node-nspawn-{pre,post}-start@.service`, which
-      run `nspawn-lifecycle` for the machine `%i`: in a short-lived container
-      of its image in the container, and through the installed binary on a
-      host, Ubuntu included, so both work the same way and no host keeps the
-      helper, which makes #378 moot. The machines' hooks start them with
-      `systemctl start`, so machines still start without the daemon. The
-      template units must be `Type=oneshot` without `RemainAfterExit=yes`,
-      ordered only after containerd, which on ACL is after `network.target`
-      and before `multi-user.target`, so there's no cycle with the machines.
-      They must not pull the image, and post-start must finish within the
-      machine unit's start timeout, ACL's default of 45 s. Remove the helper
-      existing hosts have only once no version that predates #967 can run
-      there: a rollback or downgrade to one would write hooks that run the
-      missing helper, and its machine would never start again. Versions with
-      #967 reinstall a missing helper themselves, from their own binary,
-      which is static, so it runs on the host. At the bump, #323's host-root
-      move, `nspawnLifecycleTasks`, must switch from
-      `EnsureNSpawnLifecycleHelper()` to `EnsureNSpawnLifecycleHelperFor`,
-      or it puts the helper back on hosts whose config supplies the
-      commands.
 - [ ] GPU hosts in the container: the agent's containers see the host's
       `/dev`, `/sys`, and `/etc/os-release`, but the image's `/usr/bin` and
       `ldconfig`. Unbounded's NVIDIA resolution looks for `nvidia-smi` in
@@ -169,17 +140,6 @@ image.
       Fix it with a task that edits `/host/etc/fstab` in the container, or an
       `fstab` path option upstream. Unbounded doesn't mask `dev-disk-by*`
       swap units, or turn off the Azure agent's swap, in either mode.
-- [ ] unbounded version: `main` pins v0.16.0. v0.18.0 has #962 (below) and
-      #967. A PR to `main` bumps to it, switching #323's move to
-      `EnsureNSpawnLifecycleHelperFor`, as above; then this branch rebases
-      onto it.
-- [ ] unbounded: preflight's `docker-active` and `kubelet-active` warn that
-      the service's "state could not be determined" on any host where it
-      isn't running, Ubuntu included. `systemctl is-active` exits non-zero
-      for every state but active, 3 for inactive and 4 for no such unit,
-      which the check takes for an error. Raised with unbounded as
-      Azure/unbounded#962, which reads `systemctl show` instead. It's merged,
-      and in v0.18.0; it comes with the bump.
 - [ ] Bootstrap: the bootstrap unit runs `bootstrap.sh` with the inputs in
       `/etc/aks-flex-node/bootstrap.env`, and optionally an image in
       `/etc/aks-flex-node/agent-image.env`, which the harness writes through
