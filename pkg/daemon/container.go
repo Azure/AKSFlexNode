@@ -3,14 +3,18 @@ package daemon
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
@@ -31,6 +35,73 @@ var containerServiceUnitContent []byte
 //
 //go:embed assets/aks-flex-node-agent-recovery-container.service
 var containerRecoveryUnitContent []byte
+
+// containerNSpawnPreStartUnitContent and containerNSpawnPostStartUnitContent are the nspawn
+// lifecycle units in the agent's container, which the machines' hooks start: they run the agent's
+// nspawn-lifecycle phases in containers of its image, so no binary of the agent is on the host.
+//
+//go:embed assets/aks-flex-node-nspawn-pre-start-container@.service
+var containerNSpawnPreStartUnitContent []byte
+
+//go:embed assets/aks-flex-node-nspawn-post-start-container@.service
+var containerNSpawnPostStartUnitContent []byte
+
+// containerNSpawnLifecycleUnitAssets returns the container's nspawn lifecycle units, under the
+// names the machines' hooks start; see config.NSpawnPreStartUnit.
+func containerNSpawnLifecycleUnitAssets(systemdDir string) []agentServiceAsset {
+	return []agentServiceAsset{
+		{path: filepath.Join(systemdDir, config.NSpawnPreStartUnit), content: containerNSpawnPreStartUnitContent, mode: 0o644},
+		{path: filepath.Join(systemdDir, config.NSpawnPostStartUnit), content: containerNSpawnPostStartUnitContent, mode: 0o644},
+	}
+}
+
+// retireNSpawnLifecycleHelper removes the nspawn lifecycle helper, the copy of the agent's binary
+// an earlier preview of the agent's container left on the host, once the active machine's hooks
+// no longer run it: it rewrites them first, to start the container's nspawn lifecycle units, as
+// the machine's next pre-start would. Without a helper, it does nothing.
+func retireNSpawnLifecycleHelper(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore) error {
+	return retireNSpawnLifecycleHelperAt(ctx, log, goalstates.ResolveHostPaths().NSpawnLifecycleBinary,
+		func(ctx context.Context) error { return rewriteActiveMachineHooks(ctx, log, cfg, state) })
+}
+
+func retireNSpawnLifecycleHelperAt(ctx context.Context, log *slog.Logger, helper string, rewriteHooks func(context.Context) error) error {
+	if _, err := os.Lstat(helper); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect %s: %w", helper, err)
+	}
+	if err := rewriteHooks(ctx); err != nil {
+		return err
+	}
+	if err := removeIfPresent(helper); err != nil {
+		return err
+	}
+	log.Info("removed the nspawn lifecycle helper an earlier agent left on the host", "path", helper)
+	return nil
+}
+
+// rewriteActiveMachineHooks rewrites the active machine's config, hooks included, from cfg. With
+// no active machine, there are no hooks to rewrite.
+func rewriteActiveMachineHooks(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore) error {
+	current, err := state.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if current == nil || !validActiveMachine(current.ActiveMachine) {
+		return nil
+	}
+	_, _, rootFS, err := activeMachineConfig(ctx, cfg, state)
+	if err != nil {
+		return err
+	}
+	if err := phases.Serial(log, nspawnLifecycleTasks(log, rootFS)...).Do(ctx); err != nil {
+		return err
+	}
+	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
+	return nil
+}
 
 // Containerized reports whether the agent runs in its container image.
 func Containerized() bool {

@@ -234,6 +234,9 @@ type ensureNSpawnLifecycleUnitsTask struct {
 	systemdDir string
 	binaryPath func() string
 	reload     func(context.Context, *slog.Logger) error
+	// containerized writes the agent's container's units, and no helper link: the host has no
+	// binary of the agent to link to.
+	containerized bool
 }
 
 // EnsureNSpawnLifecycleUnits returns a task that writes the nspawn lifecycle units the machines'
@@ -244,23 +247,29 @@ type ensureNSpawnLifecycleUnitsTask struct {
 // kept that release's binaries; see ensureNSpawnLifecycleHelperLink.
 func EnsureNSpawnLifecycleUnits(log *slog.Logger) phases.Task {
 	return &ensureNSpawnLifecycleUnitsTask{
-		log:        log,
-		systemdDir: systemdSystemDir,
-		binaryPath: func() string { return agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath },
-		reload:     utilexec.ReloadSystemd,
+		log:           log,
+		systemdDir:    systemdSystemDir,
+		binaryPath:    func() string { return agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath },
+		reload:        utilexec.ReloadSystemd,
+		containerized: Containerized(),
 	}
 }
 
 func (t *ensureNSpawnLifecycleUnitsTask) Name() string { return "ensure-nspawn-lifecycle-units" }
 
 func (t *ensureNSpawnLifecycleUnitsTask) Do(ctx context.Context) error {
-	binaryPath := t.binaryPath()
-	if err := ensureNSpawnLifecycleHelperLink(binaryPath); err != nil {
-		return err
-	}
-	assets, err := nspawnLifecycleUnitAssets(t.systemdDir, binaryPath)
-	if err != nil {
-		return err
+	var assets []agentServiceAsset
+	if t.containerized {
+		assets = containerNSpawnLifecycleUnitAssets(t.systemdDir)
+	} else {
+		binaryPath := t.binaryPath()
+		if err := ensureNSpawnLifecycleHelperLink(binaryPath); err != nil {
+			return err
+		}
+		var err error
+		if assets, err = nspawnLifecycleUnitAssets(t.systemdDir, binaryPath); err != nil {
+			return err
+		}
 	}
 	written := false
 	for _, asset := range assets {

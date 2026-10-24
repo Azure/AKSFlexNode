@@ -243,12 +243,18 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
-		existing   []string
-		wantReload bool
+		existing      []string
+		containerized bool
+		wantReload    bool
 	}{
 		"writes both on a fresh host": {wantReload: true},
 		"writes a missing one":        {existing: []string{config.NSpawnPreStartUnit}, wantReload: true},
 		"leaves the existing ones":    {existing: []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit}},
+		"writes the container's, and no helper, in the agent's container": {
+			existing:      []string{config.NSpawnPostStartUnit},
+			containerized: true,
+			wantReload:    true,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -274,6 +280,7 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 					reloaded = true
 					return nil
 				},
+				containerized: tc.containerized,
 			}
 			if err := task.Do(t.Context()); err != nil {
 				t.Fatalf("Do: %v", err)
@@ -286,12 +293,20 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 				if kept := string(content) == "existing\n"; kept != slices.Contains(tc.existing, unit) {
 					t.Errorf("%s kept = %v, want %v", unit, kept, !kept)
 				}
+				if runsContainer := strings.Contains(string(content), "/usr/bin/ctr "); !slices.Contains(tc.existing, unit) && runsContainer != tc.containerized {
+					t.Errorf("%s runs a container = %v, want %v", unit, runsContainer, tc.containerized)
+				}
 			}
 			if reloaded != tc.wantReload {
 				t.Errorf("reloaded = %v, want %v", reloaded, tc.wantReload)
 			}
-			// Before the machine starts, for hooks an earlier release's pre-start writes.
-			if target, err := os.Readlink(filepath.Join(bin, nspawnLifecycleHelperName)); err != nil || target != binaryName {
+			// Before the machine starts, for hooks an earlier release's pre-start writes. The
+			// container's host has no binary of the agent to link to.
+			target, err := os.Readlink(filepath.Join(bin, nspawnLifecycleHelperName))
+			switch {
+			case tc.containerized && !errors.Is(err, os.ErrNotExist):
+				t.Errorf("helper links to %q, %v; want none", target, err)
+			case !tc.containerized && (err != nil || target != binaryName):
 				t.Errorf("helper links to %q, %v; want %q", target, err, binaryName)
 			}
 		})

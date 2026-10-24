@@ -12,6 +12,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 )
@@ -588,7 +589,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 			if tc.machine {
 				writeTestFile(t, machineBinary, "older agent")
 			}
-			reloads := 0
+			reloads, retired := 0, 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
 				state:             &fakeNodeOperator{state: tc.state},
@@ -605,6 +606,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 					t.Errorf("unexpected ctr %q", args)
 					return nil
 				},
+				retireHelper: func(context.Context) error { retired++; return nil },
 			}
 			for run := 1; run <= 2; run++ {
 				if _, err := convergence.converge(t.Context()); err != nil {
@@ -614,9 +616,14 @@ func TestContainerAgentConvergence(t *testing.T) {
 			if reloads != tc.wantReloads {
 				t.Errorf("reloads = %d, want %d", reloads, tc.wantReloads)
 			}
+			if retired != 2 {
+				t.Errorf("retired the lifecycle helper %d times, want 2, once per start", retired)
+			}
 			for unit, want := range map[string][]byte{
-				ServiceUnitName:         containerServiceUnitContent,
-				recoveryServiceUnitName: containerRecoveryUnitContent,
+				ServiceUnitName:            containerServiceUnitContent,
+				recoveryServiceUnitName:    containerRecoveryUnitContent,
+				config.NSpawnPreStartUnit:  containerNSpawnPreStartUnitContent,
+				config.NSpawnPostStartUnit: containerNSpawnPostStartUnitContent,
 			} {
 				content, err := os.ReadFile(filepath.Join(convergence.unitDir, unit))
 				if err != nil || string(content) != string(want) {
@@ -763,6 +770,9 @@ func TestContainerAgentUpgradeRestartsThoughItCantResetTheStartLimit(t *testing.
 	}
 }
 
+// containerUnitNames are the units writeContainerUnits writes.
+var containerUnitNames = []string{config.NSpawnPreStartUnit, config.NSpawnPostStartUnit, recoveryServiceUnitName, ServiceUnitName}
+
 // While an AgentUpgrade's signal exists, the daemon may be its candidate, not yet judged, and the
 // units on disk are the last-good version's, which recovery runs through, as
 // ensureDaemonServiceAssets keeps a host's.
@@ -786,7 +796,7 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			wantRewrites: []string{recoveryServiceUnitName},
 		},
 		"converges them without a pending upgrade": {
-			wantRewrites: []string{recoveryServiceUnitName, ServiceUnitName},
+			wantRewrites: containerUnitNames,
 		},
 	}
 	for name, tc := range tests {
@@ -796,7 +806,7 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			dir := t.TempDir()
 			unitDir := filepath.Join(dir, "systemd")
 			lastGood := "the last-good version's\n"
-			for _, unit := range []string{recoveryServiceUnitName, ServiceUnitName} {
+			for _, unit := range containerUnitNames {
 				if unit != tc.missing {
 					writeTestFile(t, filepath.Join(unitDir, unit), lastGood)
 				}
@@ -805,7 +815,7 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			if tc.pending {
 				writeTestFile(t, signalPath, "{}")
 			}
-			reloads := 0
+			reloads, retired := 0, 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
 				state:             &fakeNodeOperator{},
@@ -818,6 +828,8 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 				install:           agentImageEnvFile{path: filepath.Join(dir, "settings")},
 				listImages:        func(context.Context) (string, error) { return "", nil },
 				ctr:               func(context.Context, ...string) error { return nil },
+				// While the upgrade is pending, the last-good version's hooks may run the helper.
+				retireHelper: func(context.Context) error { retired++; return nil },
 			}
 
 			held, err := convergence.converge(t.Context())
@@ -827,7 +839,10 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			if held != tc.wantHeld {
 				t.Errorf("held = %v, want %v", held, tc.wantHeld)
 			}
-			for _, unit := range []string{recoveryServiceUnitName, ServiceUnitName} {
+			if wantRetired := map[bool]int{true: 0, false: 1}[tc.wantHeld]; retired != wantRetired {
+				t.Errorf("retired the lifecycle helper %d times, want %d", retired, wantRetired)
+			}
+			for _, unit := range containerUnitNames {
 				content, err := os.ReadFile(filepath.Join(unitDir, unit))
 				if err != nil {
 					t.Fatalf("read %s: %v", unit, err)
@@ -843,12 +858,17 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 				t.Fatalf("writeUnits: %v", err)
 			}
 			for unit, want := range map[string][]byte{
-				recoveryServiceUnitName: containerRecoveryUnitContent,
-				ServiceUnitName:         containerServiceUnitContent,
+				recoveryServiceUnitName:    containerRecoveryUnitContent,
+				ServiceUnitName:            containerServiceUnitContent,
+				config.NSpawnPreStartUnit:  containerNSpawnPreStartUnitContent,
+				config.NSpawnPostStartUnit: containerNSpawnPostStartUnitContent,
 			} {
 				if content, err := os.ReadFile(filepath.Join(unitDir, unit)); err != nil || !bytes.Equal(content, want) {
 					t.Errorf("%s after writeUnits isn't the image's: %v", unit, err)
 				}
+			}
+			if wantRetired := map[bool]int{true: 1, false: 2}[tc.wantHeld]; retired != wantRetired {
+				t.Errorf("retired the lifecycle helper %d times after writeUnits, want %d", retired, wantRetired)
 			}
 			if wantReloads := map[bool]int{true: 1, false: 0}[tc.wantHeld]; reloads != wantReloads {
 				t.Errorf("reloads after writeUnits = %d, want %d", reloads, wantReloads)

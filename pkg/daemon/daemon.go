@@ -117,6 +117,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	var upgrades agentUpgrader
 	if containerized {
 		convergence := newContainerAgentConvergence(log, operator)
+		convergence.retireHelper = func(ctx context.Context) error {
+			return retireNSpawnLifecycleHelper(ctx, log, cfg, store)
+		}
 		held, convergeErr := convergence.converge(ctx)
 		if convergeErr != nil {
 			return convergeErr
