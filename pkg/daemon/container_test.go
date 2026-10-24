@@ -329,8 +329,10 @@ func TestContainerUnitsWaitForContainerd(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string][]byte{
-		ServiceUnitName:         containerServiceUnitContent,
-		recoveryServiceUnitName: containerRecoveryUnitContent,
+		ServiceUnitName:            containerServiceUnitContent,
+		recoveryServiceUnitName:    containerRecoveryUnitContent,
+		config.NSpawnPreStartUnit:  containerNSpawnPreStartUnitContent,
+		config.NSpawnPostStartUnit: containerNSpawnPostStartUnitContent,
 	}
 	for name, content := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -369,8 +371,10 @@ func TestContainerUnitsSetUpTheirScopes(t *testing.T) {
 
 	annotations := agentScopeAnnotations("%n")
 	for name, content := range map[string][]byte{
-		ServiceUnitName:         containerServiceUnitContent,
-		recoveryServiceUnitName: containerRecoveryUnitContent,
+		ServiceUnitName:            containerServiceUnitContent,
+		recoveryServiceUnitName:    containerRecoveryUnitContent,
+		config.NSpawnPreStartUnit:  containerNSpawnPreStartUnitContent,
+		config.NSpawnPostStartUnit: containerNSpawnPostStartUnitContent,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -393,9 +397,108 @@ func TestContainerAgentUnitClearsRecoveryAndNeedsNoUsrLocal(t *testing.T) {
 	if got := unitDirectives(containerServiceUnitContent, "Service", "ExecStartPre"); !strings.Contains(strings.Join(got, " "), clearRecovery) {
 		t.Errorf("ExecStartPre= is %q, want it to include %s", got, clearRecovery)
 	}
-	// The lifecycle helper is under the host root, on ACL's writable root, and the install no
-	// longer mounts anything at /usr/local.
+	// The install no longer mounts anything at /usr/local, and nothing of the agent's is there.
 	if got := unitDirectives(containerServiceUnitContent, "Unit", "RequiresMountsFor"); slices.Contains(got, "/usr/local") {
 		t.Errorf("RequiresMountsFor= is %q, want it not to include /usr/local", got)
+	}
+}
+
+// TestContainerNSpawnLifecycleUnits pins the container's units the machines' hooks start, as
+// TestNSpawnLifecycleUnits pins a host's: each runs the phase in a container of the agent's image,
+// which is on the host, so it pulls nothing.
+func TestContainerNSpawnLifecycleUnits(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		unit, phase string
+		content     []byte
+		want        []string
+	}{
+		{unit: config.NSpawnPreStartUnit, phase: "pre-start", content: containerNSpawnPreStartUnitContent, want: []string{"TimeoutStartSec=2min"}},
+		{unit: config.NSpawnPostStartUnit, phase: "post-start", content: containerNSpawnPostStartUnitContent, want: []string{"BindsTo=systemd-nspawn@%i.service", "TimeoutStartSec=infinity"}},
+	} {
+		t.Run(tc.phase, func(t *testing.T) {
+			t.Parallel()
+
+			unit := string(tc.content)
+			lines := strings.Split(unit, "\n")
+			for _, want := range append(tc.want, "Type=oneshot", "Requires=containerd.service") {
+				if !slices.Contains(lines, want) {
+					t.Errorf("%s has no line %q", tc.unit, want)
+				}
+			}
+			var execStart string
+			for _, line := range strings.Split(strings.ReplaceAll(unit, "\\\n", ""), "\n") {
+				if strings.HasPrefix(line, "ExecStart=") {
+					execStart = line
+				}
+			}
+			if !strings.HasPrefix(execStart, "ExecStart=/usr/bin/ctr --namespace aks-flex run --rm ") ||
+				!strings.HasSuffix(execStart, "flex-agent-entrypoint aks-flex-node nspawn-lifecycle "+tc.phase+" %i") {
+				t.Errorf("%s ExecStart= is %q, want a container of the agent's image running the phase", tc.unit, execStart)
+			}
+			for _, line := range lines {
+				// A unit that stays active wouldn't run at the machine's next start, one ordered
+				// after the machine would wait for the start that waits for it, and pulling the
+				// image could hold the machine's start on the registry.
+				if strings.HasPrefix(line, "RemainAfterExit=") || strings.HasPrefix(line, "[Install]") ||
+					(strings.HasPrefix(line, "After=") && strings.Contains(line, "systemd-nspawn@")) ||
+					strings.Contains(line, " pull ") {
+					t.Errorf("%s has %q", tc.unit, line)
+				}
+			}
+		})
+	}
+}
+
+// TestRetireNSpawnLifecycleHelper: the helper goes only once the hooks that ran it are rewritten.
+func TestRetireNSpawnLifecycleHelper(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		helper      bool
+		rewriteErr  error
+		wantRewrite bool
+		wantHelper  bool
+		wantErr     bool
+	}{
+		"does nothing without a helper": {},
+		"rewrites the hooks, then removes the helper": {
+			helper:      true,
+			wantRewrite: true,
+		},
+		"keeps the helper when the hooks can't be rewritten": {
+			helper:      true,
+			rewriteErr:  os.ErrPermission,
+			wantRewrite: true,
+			wantHelper:  true,
+			wantErr:     true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			helper := filepath.Join(t.TempDir(), nspawnLifecycleHelperName)
+			if tc.helper {
+				writeExecutable(t, helper, "agent")
+			}
+			rewrote := false
+			err := retireNSpawnLifecycleHelperAt(t.Context(), discardLogger(), helper, func(context.Context) error {
+				rewrote = true
+				if _, err := os.Lstat(helper); err != nil {
+					t.Errorf("the helper was gone before the hooks were rewritten: %v", err)
+				}
+				return tc.rewriteErr
+			})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("retireNSpawnLifecycleHelperAt() = %v, want error %v", err, tc.wantErr)
+			}
+			if rewrote != tc.wantRewrite {
+				t.Errorf("rewrote = %v, want %v", rewrote, tc.wantRewrite)
+			}
+			if _, err := os.Lstat(helper); (err == nil) != tc.wantHelper {
+				t.Errorf("helper present = %v, want %v", err == nil, tc.wantHelper)
+			}
+		})
 	}
 }

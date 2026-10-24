@@ -1,0 +1,33 @@
+[Unit]
+Description=AKS Flex Node nspawn pre-start for machine %i
+# The machine's config regeneration unit starts it, through systemctl start,
+# before every start of the machine: the agent's nspawn-lifecycle pre-start, in
+# a container of the agent's image, regenerates the machine's host-side config.
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+# No RemainAfterExit=: each start of the machine runs it again.
+Type=oneshot
+Environment=AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=
+# The image the agent's unit runs, which is here, so it's not pulled.
+EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+EnvironmentFile=-/etc/aks-flex-node/agent-image.env
+# containerd.service reports started before containerd answers.
+ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-nspawn-pre-start-%i
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-nspawn-pre-start-%i
+# In a scope systemd tracks, set up as the agent's unit sets up its container's.
+ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+  --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:nspawn-pre-start-%i \
+  --annotation "org.systemd.property.BindsTo=['%n']" \
+  --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+  --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
+  --privileged --net-host --with-ns pid:/proc/1/ns/pid \
+  --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+  --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_IMAGE} \
+  ${AKS_FLEX_NODE_IMAGE} aks-flex-node-nspawn-pre-start-%i \
+  flex-agent-entrypoint aks-flex-node nspawn-lifecycle pre-start %i
+# The config regeneration unit has no start timeout of its own, and retries a
+# failure, so a hang here fails and is retried rather than holding the machine.
+TimeoutStartSec=2min
