@@ -75,6 +75,7 @@ assert_no_staged_files() {
 assert_no_staged_files
 
 # Managed installations must use the upgrade flow; the installer must not detach this link.
+mkdir -p "$MANAGED_BINARY_DIR"
 cp "$replacement_binary" "$MANAGED_BINARY_DIR/aks-flex-node-blue"
 ln -s "$MANAGED_BINARY_DIR/aks-flex-node-blue" "$MANAGED_BINARY_DIR/aks-flex-node-current"
 rm "$INSTALL_DIR/aks-flex-node"
@@ -83,30 +84,45 @@ touch "$SERVICE_UNIT_PATH"
 if install_binary "$running_binary" >"$WORK_DIR/managed.log" 2>&1; then
     fail "installer replaced a managed binary symlink"
 fi
-grep -q "aks-flex-node reset" "$WORK_DIR/managed.log" || fail "managed reinstall guidance omitted reset"
+grep -q "reset the node" "$WORK_DIR/managed.log" || fail "managed reinstall guidance omitted reset"
+! grep -q "$INSTALL_DIR/aks-flex-node reset" "$WORK_DIR/managed.log" || fail "managed reinstall guidance said to run the link"
 [[ -L "$INSTALL_DIR/aks-flex-node" ]] || fail "managed binary symlink was removed"
 [[ "$(readlink -f "$INSTALL_DIR/aks-flex-node")" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ]] || fail "managed activation changed"
 assert_no_staged_files
 
-# Reset removes the service unit; reinstall must clean the retained layout and install directly.
+# An earlier release's reset removed the service unit but kept the layout. Reinstalling replaces the
+# link with the binary and removes the layout, which an agent from before start removes it would
+# point the link back at.
 rm "$SERVICE_UNIT_PATH"
 install_binary "$running_binary" >"$WORK_DIR/reset-reinstall.log" 2>&1 || fail "reinstall after reset failed"
-grep -q "layout retained after reset" "$WORK_DIR/reset-reinstall.log" || fail "retained layout cleanup was not reported"
 [[ ! -L "$INSTALL_DIR/aks-flex-node" && -x "$INSTALL_DIR/aks-flex-node" ]] || fail "reset reinstall did not install a direct binary"
-[[ ! -e "$MANAGED_BINARY_DIR" ]] || fail "reset reinstall retained the managed layout"
+cmp -s "$INSTALL_DIR/aks-flex-node" "$running_binary" || fail "reset reinstall did not install the new binary"
+[[ ! -e "$MANAGED_BINARY_DIR" ]] || fail "reset reinstall kept the layout an earlier agent would run"
+grep -q "layout a reset kept" "$WORK_DIR/reset-reinstall.log" || fail "removing the retained layout was not reported"
 assert_no_staged_files
 
-# Unexpected links must be rejected without advising root to execute their targets.
+# Any other link at the binary path is replaced too, once no agent is installed, which leaves what it
+# led to alone.
 rm "$INSTALL_DIR/aks-flex-node"
 ln -s "$replacement_binary" "$INSTALL_DIR/aks-flex-node"
+install_binary "$running_binary" >/dev/null 2>&1 || fail "reinstall over another link failed"
+if [[ -L "$INSTALL_DIR/aks-flex-node" ]] || ! cmp -s "$INSTALL_DIR/aks-flex-node" "$running_binary"; then
+    fail "reinstall did not replace another link with the binary"
+fi
+[[ -x "$replacement_binary" ]] || fail "reinstall changed what another link led to"
+assert_no_staged_files
+
+# While an agent is installed, any link is refused, without advising root to run it, as it may not
+# be the agent's.
+rm "$INSTALL_DIR/aks-flex-node"
+ln -s "$replacement_binary" "$INSTALL_DIR/aks-flex-node"
+touch "$SERVICE_UNIT_PATH"
 if install_binary "$running_binary" >"$WORK_DIR/unexpected.log" 2>&1; then
-    fail "installer replaced an unexpected binary symlink"
+    fail "installer replaced a binary symlink while the agent is installed"
 fi
-if grep -q "aks-flex-node reset" "$WORK_DIR/unexpected.log"; then
-    fail "unexpected symlink guidance advised executing the link"
-fi
-grep -q "do not execute" "$WORK_DIR/unexpected.log" || fail "unexpected symlink safety guidance was omitted"
-[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$replacement_binary" ]] || fail "unexpected symlink changed"
+rm "$SERVICE_UNIT_PATH"
+! grep -q "$INSTALL_DIR/aks-flex-node reset" "$WORK_DIR/unexpected.log" || fail "symlink guidance advised running the link"
+[[ "$(readlink "$INSTALL_DIR/aks-flex-node")" == "$replacement_binary" ]] || fail "a refused symlink changed"
 assert_no_staged_files
 
 # A malformed directory target must fail rather than receive the staged binary.
@@ -146,8 +162,7 @@ use_roots() {
 
 assert_install_root() {
     local want="$1" case="$2"
-    [[ "$INSTALL_DIR" == "$want/bin" && "$MANAGED_BINARY_DIR" == "$want/lib/aks-flex-node" ]] ||
-        fail "$case: installs under $INSTALL_DIR and $MANAGED_BINARY_DIR, want $want"
+    [[ "$INSTALL_DIR" == "$want/bin" ]] || fail "$case: installs under $INSTALL_DIR, want $want/bin"
     [[ -z "$(find "$LEGACY_ROOT" -name '.aks-flex-node.*' -print -quit 2>/dev/null)" ]] ||
         fail "$case: the writability probe was left behind"
 }

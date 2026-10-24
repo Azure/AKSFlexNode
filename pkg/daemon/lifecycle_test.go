@@ -756,6 +756,7 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 
 	tests := map[string]struct {
 		stopErr       error
+		flattenErr    error
 		stopEndsTask  bool
 		busyPath      bool
 		firstBootUnit bool
@@ -763,7 +764,7 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 		wantErr       bool
 	}{
 		"disables, removes, and reloads before stopping": {
-			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "stop " + ServiceUnitName},
+			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
 		},
 		// On a host provisioned by Ignition. The first-boot unit goes first, while the agent,
 		// which may be the process running this task, is still running.
@@ -773,19 +774,26 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 				"disable --now " + FirstBootUnitName,
 				"disable " + ServiceUnitName,
 				"daemon-reload",
+				"flatten",
 				"stop " + ServiceUnitName,
 			},
 		},
+		// Once no unit names the layout, and before the stop that can end the daemon. Start replaces
+		// a layout left behind.
+		"a failed flatten is a warning": {
+			flattenErr: errors.New("activation in progress"),
+			wantCalls:  []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
+		},
 		"a failed stop is a warning": {
 			stopErr:   errors.New("unit not loaded"),
-			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "stop " + ServiceUnitName},
+			wantCalls: []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
 		},
 		// As when the daemon uninstalls its own unit: the stop's SIGTERM cancels its context,
 		// with everything else already done.
 		"a stop that ends the caller leaves nothing undone": {
 			stopErr:      context.Canceled,
 			stopEndsTask: true,
-			wantCalls:    []string{"disable " + ServiceUnitName, "daemon-reload", "stop " + ServiceUnitName},
+			wantCalls:    []string{"disable " + ServiceUnitName, "daemon-reload", "flatten", "stop " + ServiceUnitName},
 		},
 		"stops nothing when it can't remove a file": {
 			busyPath:  true,
@@ -828,6 +836,10 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 				log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 				unitDir: dir,
 				paths:   paths,
+				flatten: func() error {
+					calls = append(calls, "flatten")
+					return tc.flattenErr
+				},
 				systemctl: func(_ context.Context, args ...string) error {
 					calls = append(calls, strings.Join(args, " "))
 					switch args[0] {
