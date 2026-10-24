@@ -123,7 +123,7 @@ def gallery_version() -> str:
     """Return ACL_IMAGE_VERSION, or the version "latest" names now."""
     if GALLERY_VERSION == "latest":
         die("ACL_IMAGE_VERSION=latest would reuse whichever version was exported first; "
-            "leave it unset for the gallery's latest version")
+            "set it empty, ACL_IMAGE_VERSION=, for the gallery's latest version")
     version = GALLERY_VERSION
     if not version:
         gallery, image = gallery_identity()
