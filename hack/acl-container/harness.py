@@ -83,6 +83,8 @@ BOOTSTRAP_UNIT = "aks-flex-node-bootstrap.service"
 RESET_UNIT = "aks-flex-node-reset.service"
 CTR_NAMESPACE = "aks-flex"
 CONTAINER_ID = "aks-flex-node"
+# The nspawn lifecycle helper's name, under a host's install; the container's host has none.
+LIFECYCLE_HELPER = "unbounded-agent-nspawn-lifecycle"
 CTR = f"ctr --namespace {CTR_NAMESPACE}"
 
 IGNITION_NAME = "config.ign"
@@ -939,6 +941,28 @@ def unit_properties(unit: str, *names: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
 
+def lifecycle_unit(phase: str, machine: str = "") -> str:
+    """The agent's nspawn lifecycle unit for phase: the template, or its instance for machine."""
+    return f"aks-flex-node-nspawn-{phase}@{machine}.service" if machine else \
+        f"aks-flex-node-nspawn-{phase}@.service"
+
+
+def lifecycle_runs(machine: str, phase: str) -> list[str]:
+    """The results of the start jobs of machine's nspawn lifecycle unit for phase this boot, from
+    systemd's journal: done for a run that succeeded."""
+    out = ssh(f"sudo journalctl -b -o json _PID=1 UNIT={shlex.quote(lifecycle_unit(phase, machine))} "
+              "JOB_TYPE=start", check=False).stdout
+    results = []
+    for line in out.splitlines():
+        try:
+            result = json.loads(line).get("JOB_RESULT")
+        except json.JSONDecodeError:
+            continue
+        if result:
+            results.append(result)
+    return results
+
+
 def agent_installed() -> bool:
     return ssh(f"test -e /etc/systemd/system/{AGENT_UNIT}", check=False).returncode == 0
 
@@ -1113,20 +1137,33 @@ def check_container(checks: Checks) -> None:
     exec_start = ssh_out(f"systemctl show {AGENT_UNIT} -p ExecStart --value")
     checks.expect("/usr/bin/ctr" in exec_start and "aks-flex-node agent --config" in exec_start,
                   f"{AGENT_UNIT}, which start installed, runs the agent's image", exec_start)
-    # Neither where earlier releases installed it, nor under the host root, where hosts do now.
+    # Neither where earlier releases installed it, nor under the host root, where hosts do now, nor
+    # the nspawn lifecycle helper, a host's link to it there.
     installed = ssh("ls -d /usr/local/bin/aks-flex-node /usr/local/lib/aks-flex-node "
-                    "/opt/unbounded/agent/bin/aks-flex-node /opt/unbounded/agent/lib/aks-flex-node 2>/dev/null",
-                    check=False).stdout.strip()
+                    f"/usr/local/bin/{LIFECYCLE_HELPER} /opt/unbounded/agent/bin/aks-flex-node "
+                    f"/opt/unbounded/agent/lib/aks-flex-node /opt/unbounded/agent/bin/{LIFECYCLE_HELPER} "
+                    "2>/dev/null", check=False).stdout.strip()
     checks.expect(installed == "", "the agent has no binary of its own on the host", installed)
-    # The nspawn lifecycle helper is the one binary of the agent on the host until its hooks run in
-    # containers; see TODO.md. It's under the host root, on ACL's writable root filesystem.
-    helper = "/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle"
-    hooks = ssh("sudo sh -c 'grep -h -E \"^Exec(Start|StartPost)=\" "
-                "/etc/systemd/system/unbounded-agent-regenerate-config@*.service "
-                "/etc/systemd/system/systemd-nspawn@*.service.d/override.conf'", check=False).stdout
-    checks.expect(ssh(f"sudo test -x {helper}", check=False).returncode == 0
-                  and helper in hooks and "/usr/local" not in hooks,
-                  "the machines' hooks run the lifecycle helper under the host root", hooks.strip())
+    # The machines' hooks start the agent's nspawn lifecycle units, which run its phases in
+    # containers of its image, as E2E checks a host's.
+    machine = daemon_state().get("activeMachine", "")
+    hooks = ssh(f"sudo grep -h -E '^Exec(Start|StartPost)=' "
+                f"/etc/systemd/system/unbounded-agent-regenerate-config@{shlex.quote(machine)}.service "
+                f"/etc/systemd/system/systemd-nspawn@{shlex.quote(machine)}.service.d/override.conf",
+                check=False).stdout.splitlines()
+    want_hooks = [f"ExecStart=/usr/bin/systemctl start {lifecycle_unit('pre-start', '%i')}",
+                  f"ExecStartPost=/usr/bin/systemctl start {lifecycle_unit('post-start', '%i')}"]
+    checks.expect(all(hook in hooks for hook in want_hooks),
+                  f"{machine or 'the active machine'}'s hooks start the agent's nspawn lifecycle units",
+                  "\n".join(hooks))
+    for phase in ("pre-start", "post-start"):
+        unit = ssh(f"sudo cat /etc/systemd/system/{lifecycle_unit(phase)}", check=False).stdout
+        exec_start = re.search(r"^ExecStart=((?:.*\\\n)*.*)$", unit, re.M)
+        command = re.sub(r"\\\n\s*", "", exec_start.group(1)) if exec_start else ""
+        checks.expect(command.startswith("/usr/bin/ctr --namespace aks-flex run ")
+                      and command.endswith(f"flex-agent-entrypoint aks-flex-node nspawn-lifecycle {phase} %i"),
+                      f"{lifecycle_unit(phase)} runs the agent's {phase} in a container of its image",
+                      command or unit.strip())
 
 
 def daemon_state() -> dict:
@@ -1304,15 +1341,22 @@ def machine_operation(kind: str, timeout: float = 600,
 
 
 def check_node_reboot(checks: Checks) -> None:
-    """NodeReboot restarts the active machine, as main's soft-reboot demo requests it."""
+    """NodeReboot restarts the active machine, as main's soft-reboot demo requests it, through its
+    hooks, which run the agent's nspawn lifecycle phases in containers."""
     active = daemon_state().get("activeMachine", "")
     leader = machine_leader(active)
+    runs = {phase: lifecycle_runs(active, phase) for phase in ("pre-start", "post-start")}
     phase, message = run_machine_operation("NodeReboot")
     checks.expect(phase == "Complete", "a NodeReboot MachineOperation completes",
                   f"{phase or 'no phase'}: {message}")
     new_leader = machine_leader(active)
     checks.expect(new_leader not in ("", leader) and machine_state(active) == "running",
                   f"NodeReboot restarted {active}", f"leader {leader}, then {new_leader or 'none'}")
+    for lifecycle_phase, before in runs.items():
+        after = lifecycle_runs(active, lifecycle_phase)
+        checks.expect(len(after) > len(before) and after[-1] == "done",
+                      f"{active}'s restart ran its {lifecycle_phase} in the agent's container",
+                      f"start jobs this boot: {', '.join(after) or 'none'}")
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the NodeReboot")
 
 
