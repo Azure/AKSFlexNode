@@ -1,0 +1,73 @@
+[Unit]
+Description=AKS Flex Node Agent
+Wants=network-online.target
+# A restart after a failure waits for a recovery the failure started, so it runs
+# the image recovery restores rather than the one that failed: recovery starts a
+# container, which takes longer than RestartSec.
+After=network-online.target containerd.service aks-flex-node-agent-recovery.service
+Requires=containerd.service
+# As on a host: when an upgraded agent fails, its recovery unit restores the
+# last-good image. systemd 254 and later run OnFailure= at every failure, and
+# earlier ones once the unit hits its start limit.
+OnFailure=aks-flex-node-agent-recovery.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# The settings' optional variables, empty unless they set them.
+Environment=AKS_FLEX_NODE_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS= AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=
+# The agent's image, from the host's provisioning, which bootstrap pulled, or
+# the one an AgentUpgrade selected.
+EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+EnvironmentFile=-/etc/aks-flex-node/agent-image.env
+# containerd.service reports started before containerd answers, and a start
+# that runs ctr then fails: it counts toward the start limit, and starts the
+# recovery unit. So wait for it, within TimeoutStartSec.
+ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
+# The task and container outlive ctr if it is killed, so clear them. task
+# delete --force kills the task and waits for it, so the container's delete
+# then finds it stopped.
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node
+# This start waits for recovery's, and a recovery that timed out may still run
+# in its container, so no recovery runs beside the agent.
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-recovery
+# The container gets the host's root at /host, and its entrypoint mounts the
+# host paths the agent uses at their own paths. The agent learns its image, and
+# how to pull and run images, for AgentUpgrade. runc asks systemd for a scope
+# for it, aks-flex-agent.scope in system-aksflex.slice, so systemd tracks and
+# accounts for it; ctr would otherwise put it in a cgroup outside any unit. The
+# scope:
+# - is bound to this unit, so stopping the unit stops the container, even when
+#   systemd has to kill ctr, which leaves the task running, or the unit's file
+#   is gone, as when the agent uninstalls its own unit
+# - kills what's left of the container after 30 s, within this unit's
+#   TimeoutStopSec and ACL's default of 45 s, which a unit whose file is gone
+#   has, so a stop of the unit ends only once its container has
+# - is unloaded even when it fails, as when it's killed: a failed scope keeps
+#   the next container from its name, and on ACL nothing may reset it
+# The other units, and AgentUpgrade's check, set up their scopes the same way.
+ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+  --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:agent \
+  --annotation "org.systemd.property.BindsTo=['%n']" \
+  --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+  --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
+  --privileged --net-host --with-ns pid:/proc/1/ns/pid \
+  --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+  --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_IMAGE} \
+  --env=AKS_FLEX_NODE_PULL_ARGS=${AKS_FLEX_NODE_PULL_ARGS} \
+  --env=AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS=${AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS} \
+  --env=AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=${AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS} \
+  ${AKS_FLEX_NODE_IMAGE} aks-flex-node \
+  flex-agent-entrypoint aks-flex-node agent --config /etc/aks-flex-node/config.json
+ExecStop=/usr/bin/ctr --namespace aks-flex task kill --signal SIGTERM aks-flex-node
+TimeoutStartSec=300
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

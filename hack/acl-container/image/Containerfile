@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1.7
+#
+# Preview image that runs the AKS Flex Node agent as privileged containerd
+# containers on Azure Container Linux; see hack/acl-container/DESIGN.md. It
+# holds only what the agent's containers run, and no development tools. Build it
+# from the repository root:
+#
+#   podman build -f hack/acl-container/image/Containerfile -t aks-flex-node-agent:proto .
+
+# Base images are pinned by digest: the published image is built from them. The
+# Go one is go.mod's version, upstream, as the release builds the agent with.
+FROM docker.io/library/golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS build
+
+WORKDIR /src
+
+ARG VERSION=proto
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+# Static, unlike the release's native build: the binary runs in the container,
+# and is copied into the machines, for kubelet, each with libraries of its own.
+ENV CGO_ENABLED=0
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Only what the agent is built from: the repository root can also hold .vm,
+# with the harness's VM disks.
+COPY cmd ./cmd
+COPY pkg ./pkg
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath \
+      -ldflags "-X github.com/Azure/AKSFlexNode/pkg/cmd/version.Version=${VERSION} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.GitCommit=${GIT_COMMIT} -X github.com/Azure/AKSFlexNode/pkg/cmd/version.BuildTime=${BUILD_TIME} -w -s" \
+      -o /out/aks-flex-node \
+      ./cmd/aks-flex-node
+
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:af39b0587a0fd132e574faabf9aaf56833d69908b9ff227131d519ee219759e7
+
+LABEL org.opencontainers.image.title="aks-flex-node-agent" \
+      org.opencontainers.image.description="Preview: the AKS Flex Node agent as privileged containers on Azure Container Linux"
+
+# ca-certificates: the base image's ca-certificates-base lacks roots that public
+# registries chain to, such as ghcr.io's. util-linux: the entrypoint's mount and
+# host-exec's nsenter. jq and tar: bootstrap.sh requires them. hostname:
+# bootstrap.sh names the node after the host.
+RUN tdnf install -y ca-certificates util-linux jq tar hostname \
+    && tdnf clean all
+
+# The container mounts the host's /opt/unbounded, where the agent installs its
+# host helpers, so the image's own programs live apart, in /opt/aks-flex-node/bin.
+COPY --from=build /out/aks-flex-node /opt/aks-flex-node/bin/
+COPY --chmod=0755 scripts/bootstrap.sh /opt/aks-flex-node/bin/
+COPY --chmod=0755 hack/acl-container/image/bin/aks-flex-node-bootstrap \
+     hack/acl-container/image/bin/flex-agent-entrypoint \
+     hack/acl-container/image/bin/host-exec \
+     /opt/aks-flex-node/bin/
+# These names run the host's binaries against the host root; see host-exec.
+# The agent runs them by name, and the host's copies match its systemd and
+# kernel.
+RUN for tool in machinectl systemctl systemd-run systemd-nspawn journalctl \
+        ip nft sysctl modprobe swapoff udevadm mount umount mountpoint ctr; do \
+      ln -s host-exec /opt/aks-flex-node/bin/$tool; \
+    done
+
+# Only the image's own programs are on PATH: what the host puts in the directories
+# the entrypoint mounts, such as /opt/unbounded, mustn't shadow the image's tools.
+ENV PATH=/opt/aks-flex-node/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    AKS_FLEX_NODE_CONTAINERIZED=true
+
+ENTRYPOINT ["/opt/aks-flex-node/bin/flex-agent-entrypoint"]

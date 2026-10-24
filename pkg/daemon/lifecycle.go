@@ -72,8 +72,16 @@ type installServiceTask struct {
 	log *slog.Logger
 }
 
-// InstallService returns a task that installs, enables, and starts the systemd unit.
+// InstallService returns a task that installs, enables, and starts the systemd unit. In the
+// agent's container, the unit runs the agent's image instead of a binary on the host.
 func InstallService(cfg *config.Config, log *slog.Logger) phases.Task {
+	return installService(cfg, log, Containerized())
+}
+
+func installService(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
+	if containerized {
+		return newInstallContainerServiceTask(log)
+	}
 	return &installServiceTask{cfg: cfg, log: log}
 }
 
@@ -150,11 +158,11 @@ func ensureAgentUpgradeServiceAssetsAt(
 	}
 	held := false
 	if holdDuringUpgrade {
-		if _, err := os.Stat(binaryPaths.SignalPath); err == nil {
-			held = true
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("check for a pending AgentUpgrade: %w", err)
+		pending, err := agentUpgradePending(binaryPaths.SignalPath)
+		if err != nil {
+			return false, err
 		}
+		held = pending
 	}
 	if err := writeAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, binaryPaths.CurrentPath, held); err != nil {
 		return false, err
@@ -226,6 +234,9 @@ type ensureNSpawnLifecycleUnitsTask struct {
 	systemdDir string
 	binaryPath func() string
 	reload     func(context.Context, *slog.Logger) error
+	// containerized writes the agent's container's units, and no helper link: the host has no
+	// binary of the agent to link to.
+	containerized bool
 }
 
 // EnsureNSpawnLifecycleUnits returns a task that writes the nspawn lifecycle units the machines'
@@ -236,23 +247,29 @@ type ensureNSpawnLifecycleUnitsTask struct {
 // kept that release's binaries; see ensureNSpawnLifecycleHelperLink.
 func EnsureNSpawnLifecycleUnits(log *slog.Logger) phases.Task {
 	return &ensureNSpawnLifecycleUnitsTask{
-		log:        log,
-		systemdDir: systemdSystemDir,
-		binaryPath: func() string { return agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath },
-		reload:     utilexec.ReloadSystemd,
+		log:           log,
+		systemdDir:    systemdSystemDir,
+		binaryPath:    func() string { return agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath },
+		reload:        utilexec.ReloadSystemd,
+		containerized: Containerized(),
 	}
 }
 
 func (t *ensureNSpawnLifecycleUnitsTask) Name() string { return "ensure-nspawn-lifecycle-units" }
 
 func (t *ensureNSpawnLifecycleUnitsTask) Do(ctx context.Context) error {
-	binaryPath := t.binaryPath()
-	if err := ensureNSpawnLifecycleHelperLink(binaryPath); err != nil {
-		return err
-	}
-	assets, err := nspawnLifecycleUnitAssets(t.systemdDir, binaryPath)
-	if err != nil {
-		return err
+	var assets []agentServiceAsset
+	if t.containerized {
+		assets = containerNSpawnLifecycleUnitAssets(t.systemdDir)
+	} else {
+		binaryPath := t.binaryPath()
+		if err := ensureNSpawnLifecycleHelperLink(binaryPath); err != nil {
+			return err
+		}
+		var err error
+		if assets, err = nspawnLifecycleUnitAssets(t.systemdDir, binaryPath); err != nil {
+			return err
+		}
 	}
 	written := false
 	for _, asset := range assets {
@@ -359,6 +376,17 @@ func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
 	return content
 }
 
+// agentUpgradePending reports whether an AgentUpgrade's signal exists: an upgrade awaits its
+// judgment, or recovery is under way.
+func agentUpgradePending(signalPath string) (bool, error) {
+	if _, err := os.Stat(signalPath); err == nil {
+		return true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("check for a pending AgentUpgrade: %w", err)
+	}
+	return false, nil
+}
+
 // writeAgentServiceAssets writes the agent's service assets, but with keepExisting, only those
 // that are missing.
 func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
@@ -389,11 +417,17 @@ type uninstallServiceTask struct {
 	paths     []string
 	// flatten leaves the agent's binary without its blue/green layout; nil does nothing.
 	flatten func() error
+	// keepFirstBootUnit leaves the unit named FirstBootUnitName as it is.
+	keepFirstBootUnit bool
 }
 
 // UninstallService returns a task that removes the first-boot unit, then
 // disables, removes, and stops the agent's systemd unit, leaving the agent's
 // binary under the host root as a regular file, without its blue/green layout.
+//
+// In the agent's container, the unit of that name is the install's bootstrap
+// unit, which runs bootstrap in a container of the image. It stays, as the rest
+// of the install does, so starting it with new inputs joins the node again.
 //
 // The paths are resolved when the task is built. Nothing in reset changes the
 // host root, and ResetNode resolves the helper paths it removes the same way.
@@ -404,9 +438,10 @@ func UninstallService(log *slog.Logger) phases.Task {
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
-		unitDir: systemdSystemDir,
-		paths:   uninstallPaths(),
-		flatten: func() error { return flattenAgentLayout(log, binaryPaths, agentUpgradeLockPath) },
+		unitDir:           systemdSystemDir,
+		paths:             uninstallPaths(),
+		flatten:           func() error { return flattenAgentLayout(log, binaryPaths, agentUpgradeLockPath) },
+		keepFirstBootUnit: Containerized(),
 	}
 }
 
@@ -456,8 +491,10 @@ func removeIfPresentWith(path string, lstat func(string) (os.FileInfo, error), r
 func (t *uninstallServiceTask) Name() string { return "uninstall-service" }
 
 func (t *uninstallServiceTask) Do(ctx context.Context) error {
-	if err := removeFirstBootUnit(ctx, t.log, t.unitDir, t.systemctl); err != nil {
-		return err
+	if !t.keepFirstBootUnit {
+		if err := removeFirstBootUnit(ctx, t.log, t.unitDir, t.systemctl); err != nil {
+			return err
+		}
 	}
 	// Stopping comes last. When the daemon uninstalls its own unit, for AgentReset or a node's
 	// deletion, stopping the unit stops the daemon, and nothing after the stop would run: the

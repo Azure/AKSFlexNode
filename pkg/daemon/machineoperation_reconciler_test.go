@@ -325,11 +325,26 @@ func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		parameters map[string]string
-		wantErr    string
+		parameters  map[string]string
+		validateErr error
+		wantErr     string
 	}{
 		"missing URL": {
 			wantErr: "downloadURL",
+		},
+		"an image named by tag alone": {
+			parameters: map[string]string{agentUpgradeImageParameter: "registry.example/aks-flex-node-agent:v2"},
+			wantErr:    "no digest",
+		},
+		// Parameters that parse, but that this agent can't act on, such as an archive for the
+		// agent in its container.
+		"parameters the agent can't carry out": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+			},
+			validateErr: errors.New(`the agent runs in its container, where AgentUpgrade takes "image"`),
+			wantErr:     "runs in its container",
 		},
 		"missing digest": {
 			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret"},
@@ -354,7 +369,10 @@ func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			upgrader := &fakeAgentUpgradeExecutor{acquireErr: errors.New("activation lock must not be acquired")}
+			upgrader := &fakeAgentUpgradeExecutor{
+				acquireErr:  errors.New("activation lock must not be acquired"),
+				validateErr: tt.validateErr,
+			}
 			store := &fakeMachineOperationStore{}
 			target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
 			op := daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade, Parameters: tt.parameters}
@@ -586,17 +604,18 @@ func TestMachineOperationHandlersAgentResetStopFailure(t *testing.T) {
 }
 
 type fakeAgentUpgradeExecutor struct {
-	pending    bool
-	staged     bool
-	aborted    bool
-	restarted  bool
-	failure    string
-	recovering bool
-	acquireErr error
-	pendingErr error
-	stageErr   error
-	abortErr   error
-	restartErr error
+	pending     bool
+	staged      bool
+	aborted     bool
+	restarted   bool
+	failure     string
+	recovering  bool
+	acquireErr  error
+	pendingErr  error
+	stageErr    error
+	abortErr    error
+	restartErr  error
+	validateErr error
 }
 
 func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
@@ -604,6 +623,10 @@ func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 		return nil, f.acquireErr
 	}
 	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (f *fakeAgentUpgradeExecutor) Validate(agentUpgradeRequest) error {
+	return f.validateErr
 }
 
 func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error {

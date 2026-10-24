@@ -39,27 +39,37 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// logs unless the process explicitly configures its global logger.
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
 
+	// In its container the agent keeps nothing on the host to migrate, install,
+	// or remove: the image carries it.
+	containerized := Containerized()
+
 	// After an AgentUpgrade from a release that predates the host root, this is
 	// the first time the new agent runs on the host.
-	if err := MigrateHostRoot(log); err != nil {
-		return err
+	if !containerized {
+		if err := MigrateHostRoot(log); err != nil {
+			return err
+		}
 	}
 
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup,
 	// except while an AgentUpgrade is pending; see ensureDaemonServiceAssets.
-	if err := InstallHostBinary(ctx, log); err != nil {
-		return err
+	if !containerized {
+		if err := InstallHostBinary(ctx, log); err != nil {
+			return err
+		}
 	}
-	heldServiceAssets, err := ensureDaemonServiceAssets(ctx, log, cfg)
+	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, containerized)
 	if err != nil {
 		return err
 	}
 	// After the units are converged, so nothing names the copy it removes. While
 	// an AgentUpgrade is pending they are the last-good version's, which name it
 	// only on a host not yet moved off /usr/local, where nothing is removed.
-	if err := removeDaemonLegacySeed(log); err != nil {
-		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
+	if !containerized {
+		if err := removeDaemonLegacySeed(log); err != nil {
+			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
+		}
 	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
@@ -99,7 +109,23 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	upgrades, err := newHostAgentUpgradeExecutor(log, operator)
+	var upgrades agentUpgrader
+	if containerized {
+		convergence := newContainerAgentConvergence(log, operator)
+		convergence.retireHelper = func(ctx context.Context) error {
+			return retireNSpawnLifecycleHelper(ctx, log, cfg, store)
+		}
+		held, convergeErr := convergence.converge(ctx)
+		if convergeErr != nil {
+			return convergeErr
+		}
+		if held {
+			convergeHeldAssets = convergence.writeUnits
+		}
+		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
+	} else {
+		upgrades, err = newHostAgentUpgradeExecutor(log, operator)
+	}
 	if err != nil {
 		return err
 	}
@@ -162,30 +188,27 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			func(ctx context.Context) error {
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},
-			upgrades.signals.read,
-			func(ctx context.Context) error {
-				if !heldServiceAssets {
-					return nil
-				}
-				_, err := ensureDaemonServiceAssets(ctx, log, cfg)
-				return err
-			},
+			upgrades.signalStore().read,
+			convergeHeldAssets,
 			func() {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
-				// it waits for is gone.
-				restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, upgrades)
-				unfinished, err := hostRootMoveUnfinishedHere()
-				if err != nil {
-					log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
-					unfinished = true
-				}
-				if reason := holdForHostRoot(restarted, unfinished, upgrades.paths, defaultAgentUpgradePaths()); reason != "" {
-					// The gate stays closed; the next process opens it.
-					if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
-						stopManager(err)
+				// it waits for is gone. In its container the agent has no
+				// install on the host to move.
+				if hostUpgrades, ok := upgrades.(*hostAgentUpgradeExecutor); ok {
+					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades)
+					unfinished, err := hostRootMoveUnfinishedHere()
+					if err != nil {
+						log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
+						unfinished = true
 					}
-					return
+					if reason := holdForHostRoot(restarted, unfinished, hostUpgrades.paths, defaultAgentUpgradePaths()); reason != "" {
+						// The gate stays closed; the next process opens it.
+						if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
+							stopManager(err)
+						}
+						return
+					}
 				}
 				gate.open()
 			},
@@ -204,7 +227,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 }
 
 func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, func(), error) {
-	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg, config.HostBinaryPath())
+	plugin, err := CredentialPlugin()
+	if err != nil {
+		return nil, nil, err
+	}
+	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg, plugin)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -243,8 +270,7 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 }
 
 // bootstrapCredentialRESTConfig builds the client the daemon uses until its own
-// certificate is issued. An exec credential runs plugin, the host's
-// aks-flex-node.
+// certificate is issued. An exec credential runs plugin; see CredentialPlugin.
 func bootstrapCredentialRESTConfig(cfg *config.Config, plugin string) (*rest.Config, error) {
 	return kubeauth.BootstrapRESTConfigWithPlugin(cfg, plugin)
 }

@@ -536,6 +536,24 @@
       ]
     },
     {
+      "path": "hack/acl-container/README.md",
+      "protectAnchors": false,
+      "anchors": [
+        "azure-container-linux-harness-the-agent-in-a-container",
+        "files",
+        "inside-the-agents-container",
+        "on-the-vm",
+        "quick-start",
+        "requirements",
+        "settings",
+        "the-acl-image",
+        "troubleshooting",
+        "try-a-preview",
+        "what-check-covers",
+        "working-with-the-node"
+      ]
+    },
+    {
       "path": "hack/acl/README.md",
       "protectAnchors": true,
       "anchors": [
