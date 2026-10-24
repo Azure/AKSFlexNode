@@ -12,7 +12,7 @@
 On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
 `main`'s controller,
-`harness.py check` verifies 72 checks, including all of the following:
+`harness.py check` verifies 78 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -20,9 +20,10 @@ On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
   which joins the node: it's Ready, runs pods, and serves `kubectl logs`.
 - The agent's daemon runs in a container of its image, from
   `aks-flex-node-agent.service`, `main`'s unit name, which `start` installs.
-  Apart from the nspawn lifecycle helper, no binary of the agent is under
-  `/opt/unbounded/agent`, where `main` installs it, or `/usr/local`, where
-  earlier releases did.
+  No binary of the agent is under `/opt/unbounded/agent`, where `main`
+  installs it, or `/usr/local`, where earlier releases did.
+- The machines' hooks start the agent's nspawn lifecycle units, which run its
+  phases in containers of its image, at every start of a machine.
 - Repave, `NodeReboot`, and `AgentUpgrade` work as on a host. An `AgentUpgrade`
   names an image by digest: a good one is selected, a broken one rolls back to
   the last good image, one named by tag alone is rejected, and images the agent
@@ -60,8 +61,8 @@ as `kernel_t` on that build as it ships, and every check passes either way. See
 
 - **Nothing of the agent on the host.** The host gets only configuration:
   units, settings, and the agent's data. Everything the agent does runs in a
-  container of its image. The one exception left is the nspawn lifecycle
-  helper; see [Machines belong to the host](#machines-belong-to-the-host).
+  container of its image, the machines' lifecycle hooks included; see
+  [Machines belong to the host](#machines-belong-to-the-host).
 - **`main`'s code and behavior.** The agent keeps `main`'s config, commands,
   unit name, MachineOperations, and reset. Where a container needs something
   different, `pkg/daemon` switches on `AKS_FLEX_NODE_CONTAINERIZED`, which only
@@ -241,11 +242,12 @@ nothing sets it, every switch takes `main`'s path:
 | `setupHost`, in `start` | Installs packages, then configures the OS | Configures the OS. The package manager on `PATH` is the image's, and would install into the container; the host's provisioning provides its packages. |
 | `InstallService`, in `start` | Installs the unit that runs the binary, its recovery unit and script | Writes the container units, then enables and starts the agent's |
 | `daemon.Run` | Converges the binary layout and units; upgrades by binary | Converges the units, the binary in the active machine, and the images; upgrades by image |
+| The nspawn lifecycle units the machines' hooks start, which `StartNode` writes first and the daemon converges | Run the binary under the host root, and link the lifecycle helper to it, for hooks an earlier release writes | Run the phase in a container of the agent's image, with no helper |
 | `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
 | An `AgentUpgrade`'s parameters | `image` is invalid | `downloadURL` is invalid |
 | `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The host's agent, `config.HostBinaryPath` | The image's binary, which is running: the host has no agent |
-| The host root's steps, in `start` and the daemon: migrating, preparing, and populating `/opt/unbounded/agent`, the move from `/usr/local`, and removing the binary install scripts left there | Run | Skipped: the host keeps nothing of the agent |
+| The host root's steps, in `start`, the daemon, and `nspawn-lifecycle pre-start`: migrating, preparing, and populating `/opt/unbounded/agent`, the move from `/usr/local`, and removing the binary install scripts left there | Run | Skipped: the host keeps nothing of the agent |
 | Direct activation, `agent-upgrade` | Switches the binary layout | Refused: an `AgentUpgrade` names an image |
 | `UninstallService`, in reset | Removes the first-boot unit, `aks-flex-node-bootstrap.service`, which runs once | Keeps it: the unit of that name is the install's bootstrap unit, which joins the node again |
 
@@ -397,21 +399,26 @@ not the container's:
 |---|---|
 | The agent's unit | `/system.slice/aks-flex-node-agent.service` (only `ctr`) |
 | The agent's container | `/system.slice/system-aksflex.slice/aks-flex-agent.scope` |
-| Its other containers | Scopes beside it: `aks-flex-bootstrap`, `aks-flex-reset`, `aks-flex-recovery`, and `aks-flex-upgrade-check` |
+| Its other containers | Scopes beside it: `aks-flex-bootstrap`, `aks-flex-reset`, `aks-flex-recovery`, `aks-flex-upgrade-check`, and each machine's `aks-flex-nspawn-pre-start-NAME` and `aks-flex-nspawn-post-start-NAME` |
 | A machine | `/machine.slice/systemd-nspawn@NAME.service` |
 
 So stopping, restarting, upgrading, or replacing the agent's container doesn't
 touch the machines, and the check confirms that a machine's leader process is
 unchanged across a restart of the container.
 
-Each machine's unit runs the nspawn lifecycle helper,
-`/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle`, from the host's
-systemd at every start of the machine. The unbounded library installs it there
-as a copy of the agent's binary, so it's the one binary of the agent left on
-the host. `/opt` is on ACL's writable root filesystem, and the container mounts
-the host's `/opt/unbounded`, so the copy lands on the host.
-Azure/unbounded#967 lets the agent supply the hooks' commands instead, to run
-them in containers of the image; see [TODO.md](../../TODO.md).
+At every start of a machine, its hooks start the agent's nspawn lifecycle
+units, `aks-flex-node-nspawn-pre-start@.service` before it and
+`aks-flex-node-nspawn-post-start@.service` once it has started, as on a host.
+In the container's units, each runs its phase, `aks-flex-node nspawn-lifecycle`,
+in a short-lived container of the image the agent's unit runs. That image is on
+the host, so a machine's start pulls nothing, and the machines start without the
+agent's daemon.
+
+An earlier preview left a copy of the agent's binary on the host,
+`/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle`, which its hooks
+ran. The daemon rewrites the active machine's hooks and removes the copy at its
+start, once no `AgentUpgrade` is pending: until it's judged, the last good
+image's hooks may run it.
 
 ## SELinux
 
@@ -491,7 +498,6 @@ describes it.
   OS for an offline first boot
 - how operators deliver bootstrap's inputs, and `--fetch-bootstrap-data` with
   the VM's identity
-- the nspawn lifecycle helper
 - a run on an Azure VM, and ACL in `main`'s e2e
 
 ## Measurements
@@ -506,7 +512,7 @@ whose disk writes the host caches (`cache=unsafe`):
 | ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
-| `check`, with a reboot | 72 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
+| `check`, with a reboot | 78 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
 | Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |

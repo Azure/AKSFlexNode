@@ -18,8 +18,7 @@ ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
 # Static, unlike the release's native build: the binary runs in the container,
-# and is copied into the machines, for kubelet, and onto the host, as the nspawn
-# lifecycle helper, each with libraries of its own.
+# and is copied into the machines, for kubelet, each with libraries of its own.
 ENV CGO_ENABLED=0
 
 COPY go.mod go.sum ./
