@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -204,23 +205,13 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		return err
 	}
 
-	active, err := activeMachineFromStore(ctx, state)
+	activeName, agentCfg, rootFS, err := activeMachineConfig(ctx, cfg, state)
 	if err != nil {
 		return err
 	}
 
-	machineCfg := cfg.DeepCopy()
-	if active.State.AppliedKubernetesVersion != "" {
-		machineCfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
-	}
-	agentCfg := config.ToAgentConfig(machineCfg, active.Name)
-
 	// The nspawn lifecycle helper, the machine's service override and its
 	// config regeneration unit.
-	rootFS, err := goalstates.ResolveNSpawnConfig(agentCfg, active.Name)
-	if err != nil {
-		return fmt.Errorf("resolve machine nspawn config: %w", err)
-	}
 	if err := phases.Serial(log, nspawnLifecycleTasks(log, rootFS)...).Do(ctx); err != nil {
 		return err
 	}
@@ -228,7 +219,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 	// The LocalDNS network unit and its helper, on a host that has them. The
 	// network they configure is already up, so the unit is not run again.
 	if _, err := os.Stat(filepath.Join(goalstates.SystemdSystemDir, goalstates.LocalDNSNetworkUnit)); err == nil {
-		gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
+		gs, err := goalstates.ResolveMachine(log, agentCfg, activeName, nil)
 		if err != nil {
 			return fmt.Errorf("resolve machine goal state: %w", err)
 		}
@@ -251,6 +242,25 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())),
 		filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary),
 	)
+}
+
+// activeMachineConfig returns the active machine's name, its agent config, at the Kubernetes
+// version it runs, and its nspawn config, from cfg.
+func activeMachineConfig(ctx context.Context, cfg *config.Config, state stateStore) (string, *agentconfig.AgentConfig, *goalstates.RootFS, error) {
+	active, err := activeMachineFromStore(ctx, state)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	machineCfg := cfg.DeepCopy()
+	if active.State.AppliedKubernetesVersion != "" {
+		machineCfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
+	}
+	agentCfg := config.ToAgentConfig(machineCfg, active.Name)
+	rootFS, err := goalstates.ResolveNSpawnConfig(agentCfg, active.Name)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("resolve machine nspawn config: %w", err)
+	}
+	return active.Name, agentCfg, rootFS, nil
 }
 
 // nspawnLifecycleTasks returns what rewriting the units does for the nspawn
