@@ -32,9 +32,6 @@ lands.
 - [ ] ACL's SELinux rule reaches the image AKS will use. ACL 3.0.20261019 has
       it, but from a development gallery, and excluded from its latest. Then
       move the harness's default to that image, and link ACL's tracking item.
-- [ ] Agree on `AgentUpgrade`'s `image` parameter with AKS, which sends
-      AgentUpgrades, including that it must be pinned by digest, as `main`
-      requires `sha256` for an archive since #369.
 - [ ] Document the container mode in `docs/usage/azure-container-linux.md`,
       which describes host mode, as the way to run on ACL, and host mode as
       interim.
@@ -107,8 +104,9 @@ give each container only the host's root: its entrypoint mounts the host paths
 the agent uses at their own paths, and the host's tools run through
 `host-exec`.
 
-`AgentUpgrade` takes an `image` in a container, rather than a release archive:
-the agent pulls it, checks that its agent runs, and selects it in
+`AgentUpgrade` names an image in a container, rather than a release archive,
+as an `oci://` `downloadURL` with its digest as `sha256`: the agent pulls it,
+checks that its agent runs, and selects it in
 `/etc/aks-flex-node/agent-image.env`, which its unit reads, before restarting
 on it. As on a host, the restarted daemon judges the upgrade and publishes the
 result, and a recovery unit, here running the last good image, restores that
