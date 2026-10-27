@@ -691,32 +691,6 @@ def add_harness_access(doc: dict, ssh_public_key: str) -> dict:
     return doc
 
 
-def add_containerd_labels(doc: dict) -> dict:
-    """Label /var/lib/containerd as ACL's file_contexts has it, before containerd starts, as an
-    ACL build that labels it would. ACL 3.0.20261019 builds it into the image unlabeled, so
-    every container containerd starts stays kernel_t; labeled, the agent's run as spc_t, where
-    ACL's SELinux rule for containers applies. Labeled once, the files containerd adds inherit
-    the labels, so later boots change nothing."""
-    unit = textwrap.dedent("""\
-        [Unit]
-        Description=Label /var/lib/containerd as file_contexts has it (AKS Flex Node harness)
-        After=local-fs.target
-        Before=containerd.service
-        ConditionPathExists=/var/lib/containerd
-
-        [Service]
-        Type=oneshot
-        RemainAfterExit=yes
-        ExecStart=/usr/sbin/restorecon -R /var/lib/containerd
-
-        [Install]
-        WantedBy=containerd.service
-    """)
-    doc.setdefault("systemd", {}).setdefault("units", []).append(
-        {"name": "aclc-label-containerd.service", "enabled": True, "contents": unit})
-    return doc
-
-
 def first_boot_kargs(config_url: str) -> str:
     """What the first boot's command line needs: where Ignition fetches its config, the
     initramfs address it fetches it over (named, since an empty device matches lo first), and a
@@ -1084,16 +1058,15 @@ def check_container(checks: Checks) -> None:
     checks.expect(cgroup == "0::/system.slice/system-aksflex.slice/aks-flex-agent.scope",
                   "the agent's container runs in aks-flex-agent.scope, where systemd tracks it", cgroup)
 
-    # The agent's containers run as spc_t, as executing a file of containerd's snapshots, labeled
-    # for containers, moves them to it. Where containerd's files are unlabeled, as ACL 3.0.20261019
-    # ships them, nothing moves them, and they stay kernel_t, as every host process is on ACL.
+    # The agent's containers run as spc_t, where ACL's SELinux rule for containers applies: ACL
+    # labels containerd's snapshots for containers, and executing a file of them moves a container
+    # to spc_t. Unlabeled, they'd stay kernel_t, as every host process is on ACL.
     snapshots = ssh_out("sudo stat -c %C /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots")
     snapshot_type = (snapshots.split(":") + ["", "", ""])[2]
-    expected = "kernel_t" if snapshot_type == "unlabeled_t" else "spc_t"
     context = agent_out("tr -d '\\0' </proc/self/attr/current")
-    checks.expect(f":{expected}:" in context,
-                  f"the agent container runs as {expected}, as containerd's snapshots are "
-                  f"{snapshot_type or 'unknown'}", context)
+    checks.expect(snapshot_type == "container_ro_file_t" and ":spc_t:" in context,
+                  "the agent container runs as spc_t, as containerd's snapshots are container_ro_file_t",
+                  f"snapshots {snapshot_type or 'unknown'}, the container {context}")
 
     host_root = ssh_out("sudo stat -c %d:%i /")
     checks.expect(agent_out("stat -c %d:%i /host") == host_root,
@@ -1796,9 +1769,6 @@ def cmd_up(args: argparse.Namespace) -> None:
         push_agent_image()
 
     doc = add_harness_access(render_ignition(args.agent), public_key)
-    if args.agent and args.label_containerd:
-        log("labeling /var/lib/containerd before containerd starts: the agent's containers run as spc_t")
-        doc = add_containerd_labels(doc)
     ignition = STATE / IGNITION_NAME
     # The bootstrap unit runs bootstrap at first boot because these are there.
     for path, content in bootstrap.items():
@@ -1961,11 +1931,6 @@ def main() -> None:
                          "gallery image is exported to ACL_IMAGE_DIR and booted")
     up.add_argument("--no-agent", dest="agent", action="store_false",
                     help="boot plain Azure Container Linux, without the agent container")
-    up.add_argument("--label-containerd", action="store_true",
-                    default=os.environ.get("ACLC_LABEL_CONTAINERD", "") in ("1", "true", "yes"),
-                    help="label /var/lib/containerd as ACL's file_contexts has it before containerd "
-                         "starts, so the agent's containers run as spc_t, as on an ACL build that "
-                         "labels it (or ACLC_LABEL_CONTAINERD=1)")
     up.set_defaults(func=cmd_up)
 
     push = commands.add_parser("push", help="rebuild and push the agent image, and restart the container")

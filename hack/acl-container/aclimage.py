@@ -38,9 +38,10 @@ GALLERY_IMAGE = os.environ.get(
 )
 # Where the export's disk is made, which the image has to be replicated to.
 GALLERY_LOCATION = os.environ.get("ACL_IMAGE_GALLERY_LOCATION", "westus2")
-# The first build with the SELinux rule the agent's container needs. It's excluded from the
-# gallery's latest, so it's named; an empty ACL_IMAGE_VERSION asks the gallery for its latest.
-GALLERY_VERSION = os.environ.get("ACL_IMAGE_VERSION", "3.20261019.3")
+# A build with the SELinux rule the agent's containers need, that labels containerd's files, so
+# they run as spc_t, where the rule applies. It's excluded from the gallery's latest, so it's
+# named; an empty ACL_IMAGE_VERSION asks the gallery for its latest.
+GALLERY_VERSION = os.environ.get("ACL_IMAGE_VERSION", "3.20261027.1")
 EXPORT_RESOURCE_GROUP = os.environ.get("ACL_IMAGE_RESOURCE_GROUP", "")
 EXPORT_SUBSCRIPTION = os.environ.get("ACL_IMAGE_SUBSCRIPTION", "")
 GALLERY_IMAGE_PATTERN = re.compile(r"/SharedGalleries/([^/]+)/Images/([^/]+)")
