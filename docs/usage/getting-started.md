@@ -472,7 +472,7 @@ install -m 0600 /dev/null /var/lib/aks-flex-node/first-boot-complete
 
 ### Hosts provisioned by Ignition
 
-Azure Container Linux and other hosts provisioned by Ignition have a read-only `/usr` and no interactive first boot. Give them the bootstrap script in their Ignition config instead of running it on the host. [`scripts/aks-flex-node-bootstrap.bu`](../../scripts/aks-flex-node-bootstrap.bu) is a [Butane](https://coreos.github.io/butane/) config that does this, from three files in the same directory:
+Azure Container Linux and other hosts provisioned by Ignition have a read-only `/usr` and no interactive first boot. Give them the bootstrap script in their Ignition config instead of running it on the host. On Azure Container Linux, run the agent in containers of its image instead, which installs nothing of it on the host; see [Azure Container Linux](azure-container-linux.md). [`scripts/aks-flex-node-bootstrap.bu`](../../scripts/aks-flex-node-bootstrap.bu) is a [Butane](https://coreos.github.io/butane/) config that does this, from three files in the same directory:
 
 - `bootstrap.sh`, from the release the host installs, unchanged.
 - `base-config.json`, the base config: `{}` when bootstrap data is fetched from AKS, as here.
