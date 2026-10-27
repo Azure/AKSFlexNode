@@ -57,8 +57,9 @@ build is cached. It:
 5. builds [`Dockerfile.aks-flex-node-agent`](../../Dockerfile.aks-flex-node-agent),
    the agent image, and pushes it to a registry it runs on the bridge,
    `192.168.112.1:5099`
-6. renders the Butane config, adds bootstrap's inputs, an SSH
-   user, a hostname, and a static address, and boots the VM at `192.168.112.10`
+6. renders the Butane config with bootstrap's inputs, adds the base config they
+   name, an SSH user, a hostname, and a static address, and boots the VM at
+   `192.168.112.10`
 7. waits for the bootstrap unit to bootstrap the node, for the agent's container
    to run, and for the node to be Ready
 
