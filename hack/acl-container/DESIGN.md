@@ -1,28 +1,28 @@
 # Design: the AKS Flex Node agent in a container on Azure Container Linux
 
 > [!NOTE]
-> **Status:** development. `main`'s agent runs on Azure Container Linux (ACL)
-> as privileged containerd containers of its own image, and `harness.py check`
-> verifies `main`'s lifecycle against a local cluster, on ACL 3.0.20261026,
-> which has the SELinux rule the agent needs and labels containerd's files. [README.md](README.md) is
-> how to use the harness, and [TODO.md](../../TODO.md) is the remaining work.
+> The AKS Flex Node agent runs on Azure Container Linux (ACL) as privileged
+> containerd containers of its own image. This is how, and what differs from
+> installing it on a host. [Azure Container Linux](../../docs/usage/azure-container-linux.md)
+> is how operators run it, and [README.md](README.md) is how to use the harness
+> that verifies it.
 
 ## Result
 
 On ACL 3.0.20261026 (build 1236866), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261027.1, joined to a local kind cluster running
-`main`'s controller,
-`harness.py check` verifies 80 checks, including all of the following:
+the in-cluster controller, `harness.py check` verifies 80 checks, including all
+of the following:
 
 - An Ignition config rendered from
   [`scripts/aks-flex-node-agent-container.bu`](../../scripts/aks-flex-node-agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
-  runs `main`'s `scripts/bootstrap.sh` in a container of the agent's image,
+  runs `scripts/bootstrap.sh` in a container of the agent's image,
   which joins the node: it's Ready, runs pods, and serves `kubectl logs`.
 - The agent's daemon runs in a container of its image, from
-  `aks-flex-node-agent.service`, `main`'s unit name, which `start` installs.
-  No binary of the agent is under `/opt/unbounded/agent`, where `main`
-  installs it, or `/usr/local`, where earlier releases did.
+  `aks-flex-node-agent.service`, the agent's unit name on a host too, which
+  `start` installs. No binary of the agent is under `/opt/unbounded/agent`,
+  where a host install keeps it, or `/usr/local`, where earlier releases did.
 - The machines' hooks start the agent's nspawn lifecycle units, which run its
   phases in containers of its image, at every start of a machine.
 - Repave, `NodeReboot`, and `AgentUpgrade` work as on a host. An `AgentUpgrade`
@@ -65,8 +65,9 @@ the first to label containerd's files. See [SELinux](#selinux).
   units, settings, and the agent's data. Everything the agent does runs in a
   container of its image, the machines' lifecycle hooks included; see
   [Machines belong to the host](#machines-belong-to-the-host).
-- **`main`'s code and behavior.** The agent keeps `main`'s config, commands,
-  unit name, MachineOperations, and reset. Where a container needs something
+- **The host install's code and behavior.** The agent keeps the config,
+  commands, unit name, MachineOperations, and reset it has on a host. Where a
+  container needs something
   different, `pkg/daemon` switches on `AKS_FLEX_NODE_CONTAINERIZED`, which only
   the image sets; see [What changes in the agent](#what-changes-in-the-agent).
 - **Host paths at their own paths.** Each container gets only the host's root,
@@ -81,7 +82,7 @@ the first to label containerd's files. See [SELinux](#selinux).
 ```mermaid
 flowchart TB
     subgraph host["Azure Container Linux host"]
-        ign["Ignition, first boot"] -->|writes| install["settings file<br/>bootstrap and reset units"]
+        ign["Ignition, first boot"] -->|writes| install["settings file, bootstrap's inputs<br/>bootstrap and reset units"]
         install --> bunit["aks-flex-node-bootstrap.service"]
         bunit -->|ctr run| boot["bootstrap container<br/>bootstrap.sh: config, preflight, start"]
         boot -->|writes, enables, starts| aunit["aks-flex-node-agent.service<br/>and its recovery unit"]
@@ -96,9 +97,9 @@ flowchart TB
 
 ### Lifecycle on Ubuntu and on ACL
 
-| | `main` on Ubuntu | ACL |
+| | On Ubuntu | On ACL |
 |---|---|---|
-| Install | `bootstrap.sh` downloads a release archive, and the agent installs itself under `/opt/unbounded/agent` | Ignition writes the settings file naming the image, and the bootstrap and reset units |
+| Install | `bootstrap.sh` downloads a release archive, and the agent installs itself under `/opt/unbounded/agent` | Ignition writes the settings file naming the image, bootstrap's inputs, and the bootstrap and reset units |
 | Bootstrap's inputs | `bootstrap.sh`'s flags and `AKS_FLEX_NODE_*` variables | The same variables, in `/etc/aks-flex-node/bootstrap.env`, and optionally an image in `/etc/aks-flex-node/agent-image.env` |
 | Bootstrap | `bootstrap.sh` renders the config, runs preflight, and runs `start` | The bootstrap unit runs the same `bootstrap.sh` in a container, with the agent in the image |
 | `start` | Sets up the host, then installs and starts `aks-flex-node-agent.service` and its recovery unit | The same, except installing packages; the units run containers |
@@ -156,7 +157,7 @@ The agent's unit restarts on failure, and runs its recovery unit through
 `OnFailure=`. The bootstrap unit runs at boot only while bootstrap's inputs are
 there and the agent's unit isn't enabled, so it does nothing once the agent is
 installed. After a reset, new inputs and a start of the unit join the node again. It
-pulls the image at every bootstrap, so a tag names what it does now, as `main`'s
+pulls the image at every bootstrap, so a tag names what it does now, as a host's
 bootstrap downloads the agent its inputs name. When the pull fails, an image
 already there, such as the install's after a reset, runs as it is, offline too.
 It retries a bootstrap that fails, or finds no image, such as while the network
@@ -178,7 +179,7 @@ builds Azure Linux 3.0 core with:
   The build sets the version, commit, and build time it's given, as the
   release's does. Unlike the release's, it's static, since the binary also runs
   in the machines, each with libraries of its own.
-- `main`'s `scripts/bootstrap.sh`, and the tools it requires
+- `scripts/bootstrap.sh`, and the tools it requires
 - the scripts in [`scripts/agent-image`](../../scripts/agent-image)
 
 They're in `/opt/aks-flex-node/bin`, apart from the host's `/opt/unbounded`,
@@ -240,7 +241,7 @@ own.
 ## What changes in the agent
 
 `daemon.Containerized()` reads `AKS_FLEX_NODE_CONTAINERIZED`. On a host, where
-nothing sets it, every switch takes `main`'s path:
+nothing sets it, every switch takes the host's path:
 
 | Where | On a host | In the container |
 |---|---|---|
@@ -250,29 +251,27 @@ nothing sets it, every switch takes `main`'s path:
 | The nspawn lifecycle units the machines' hooks start, which `StartNode` writes first and the daemon converges | Run the binary under the host root, and link the lifecycle helper to it, for hooks an earlier release writes | Run the phase in a container of the agent's image, with no helper |
 | `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
-| An `AgentUpgrade`'s `downloadURL` | An archive's, HTTP or HTTPS; an image's, `oci://`, is invalid, as on `main` | An image's; an archive's is invalid |
+| An `AgentUpgrade`'s `downloadURL` | An archive's, HTTP or HTTPS; an image's, `oci://`, is invalid, as any other URL is | An image's; an archive's is invalid |
 | `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The host's agent, `config.HostBinaryPath` | The image's binary, which is running: the host has no agent |
 | The host root's steps, in `start`, the daemon, and `nspawn-lifecycle pre-start`: migrating, preparing, and populating `/opt/unbounded/agent`, the move from `/usr/local`, and removing the binary install scripts left there | Run | Skipped: the host keeps nothing of the agent |
 | Direct activation, `agent-upgrade` | Switches the binary layout | Refused: an `AgentUpgrade` names an image |
 | `UninstallService`, in reset | Removes the first-boot unit, `aks-flex-node-bootstrap.service`, which runs once | Keeps it: the unit of that name is the install's bootstrap unit, which joins the node again |
 
-These changes apply everywhere, and leave a host's behavior as it was:
+Shared code serves both:
 
 - `RemoveRuntimeDirs`, which reset uses, empties a directory it can't remove
   because it's a mount point, as the agent's directories are in its container.
   A host's never are.
 - `bootstrap.sh --installed-agent PATH` runs the agent at `PATH` instead of
-  installing one. It's off by default.
+  installing one, as the container's bootstrap does. It's off by default.
 - The handoff between an upgrading daemon and its successor goes through an
   interface, with the host's executor as one implementation and the container's
-  as the other. The host's behaves as before.
+  as the other.
 - `aksmachine.MachineClientOptions.CredentialPlugin` names the credential
-  plugin `start`'s Machine client runs. Empty, it's the host's agent, as
-  before.
+  plugin `start`'s Machine client runs. Empty, it's the host's agent.
 - The MachineOperation reconciler has the agent's executor validate an
-  `AgentUpgrade`'s parameters before acting on it. A host's checks an
-  archive's URL and SHA-256 there, as `main` checks them, with the same
-  results.
+  `AgentUpgrade`'s parameters before acting on it: the host's an archive's URL
+  and SHA-256, and the container's an image's.
 
 ## Bootstrap
 
@@ -288,8 +287,10 @@ named by `AKS_FLEX_NODE_BASE_CONFIG_FILE`. `bootstrap.sh` renders
 `/etc/aks-flex-node/config.json`, runs preflight, and runs `start`, as on a
 host.
 
-The harness writes bootstrap's inputs through Ignition. How operators deliver
-them is open; see [TODO.md](../../TODO.md).
+The Butane config takes `bootstrap.env` from the directory it's rendered in,
+and writes it through Ignition at first boot. A base config or a service
+principal's credential are entries to uncomment. After a reset, new inputs and
+a start of the bootstrap unit join the node again.
 
 ### Which image
 
@@ -312,13 +313,13 @@ an archive on a host, as Helm and Flux name OCI artifacts: `downloadURL` is
 `oci://` and the image's fully qualified repository, with or without a tag, and
 `sha256` is the image's digest. For an image built for several architectures,
 that's its index's, which serves each of them, where a host's archive is one
-architecture's. `main` requires an archive's SHA-256, so that the agent never
+architecture's. A host requires an archive's SHA-256, so that the agent never
 runs an unverified candidate, not even to check its version. The digest is the
 image's equivalent: `ctr` verifies the content it pulls against it. A request
 without the digest fails as `InvalidParameters`, as an archive without its
 SHA-256 does, and so do one with the digest in the URL, which `sha256` alone
-gives, and an archive's URL. A host rejects an `oci://` URL as `main` does any
-URL that isn't HTTP or HTTPS.
+gives, and an archive's URL. A host rejects an `oci://` URL, as it does any URL
+that isn't HTTP or HTTPS.
 
 The upgrade follows the host's, with images for binaries:
 
@@ -360,9 +361,9 @@ restart waits for recovery, which starts a container and takes longer than
 `RestartSec=`, and runs the image recovery restored rather than the one that
 failed.
 
-The agent's unit allows 5 starts in 5 minutes, as `main`'s does, and systemd
+The agent's unit allows 5 starts in 5 minutes, as a host's does, and systemd
 counts deliberate restarts too. So before each upgrade's restart, the daemon
-resets the unit's start count, as `main`'s does on a host, and several upgrades
+resets the unit's start count, as it does on a host, and several upgrades
 in a row aren't refused. Recovery resets it too, before it restarts the unit on
 the last good image.
 
@@ -378,7 +379,7 @@ would hold it there.
 
 ## Reset
 
-There are three ways in, all `main`'s code:
+There are three ways in, all the host's code:
 
 - An `AgentReset` MachineOperation, which the daemon carries out
 - The deletion signal, when the node's Machine is deleted
@@ -475,7 +476,7 @@ container start, about 12 seconds, and is gone.
   containerd checks the content it pulls against it. An `AgentUpgrade` has to
   give its image's digest, and an install's image should be pinned by it. The
   host trusts whoever provides the digest, the install's provisioning or AKS,
-  as `main` trusts the SHA-256 an `AgentUpgrade` comes with, and verifies no
+  as a host install trusts the SHA-256 an `AgentUpgrade` comes with, and verifies no
   signature. Released images carry attested build provenance, for audits. The
   harness's install names a tag, pulled over plain HTTP from a local registry.
 - Whoever can create MachineOperations for a machine can make it run an image
@@ -488,13 +489,14 @@ container start, about 12 seconds, and is gone.
 
 ## Open questions
 
-[TODO.md](../../TODO.md) tracks them, among them:
-
-- image delivery: pinning, private registries, and an image shipped with the
-  OS for an offline first boot
-- how operators deliver bootstrap's inputs, and `--fetch-bootstrap-data` with
-  the VM's identity
-- a run on an Azure VM, and ACL in `main`'s e2e
+- GPU hosts: the agent's containers find the image's NVIDIA tools, not the
+  host's ([#416](https://github.com/Azure/AKSFlexNode/issues/416)).
+- Swap in the host's `/etc/fstab` comes back after a reboot
+  ([#417](https://github.com/Azure/AKSFlexNode/issues/417)).
+- A run on an Azure VM, with `--fetch-bootstrap-data`, and ACL in the E2E tests
+  ([#399](https://github.com/Azure/AKSFlexNode/issues/399)).
+- How ACL hosts take OS updates
+  ([#379](https://github.com/Azure/AKSFlexNode/issues/379)).
 
 ## Measurements
 

@@ -20,7 +20,7 @@
 #
 # This is the agent's install, which nothing of the agent runs from: the units
 # only run containers of its image. aks-flex-node-bootstrap.service does what
-# main's scripts/bootstrap.sh does on a host: it pulls the image and runs
+# scripts/bootstrap.sh does on a host: it pulls the image and runs
 # bootstrap, which renders the agent's config and runs start, which installs
 # and starts the agent's own unit, aks-flex-node-agent.service. It runs at boot
 # once /etc/aks-flex-node/bootstrap.env, bootstrap's inputs, is there, until the
@@ -108,7 +108,7 @@ systemd:
         # delete --force kills the task and waits for it.
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-bootstrap
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-bootstrap
-        # Pulls at every bootstrap, so a tag names what it does now, as main's
+        # Pulls at every bootstrap, so a tag names what it does now, as a host's
         # bootstrap downloads the agent its inputs name. When the pull fails, an
         # image that's here already, such as the install's after a reset, runs as
         # it is, offline too; without one, ctr run fails, and the unit retries.
