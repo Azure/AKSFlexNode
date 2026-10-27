@@ -13,22 +13,6 @@ lands.
 
 ## Before merging
 
-- [ ] The preview image workflow, `.github/workflows/acl-preview-image.yml`,
-      is temporary. It builds the agent's image on every push to this branch
-      and publishes it to `ghcr.io/azure/aks-flex-node-agent-acl-preview` for
-      early adopters. Before this branch merges, do one of these:
-      - Formalize it: build the agent's image from `main` as part of the
-        release, with the release's version tags, like the agent's other
-        artifacts (its archives, and the controller image, which `release.yml`
-        builds and publishes behind the `release` environment's approval).
-      - Remove it: revert its commit.
-
-      Either way, retire the preview package, and tell early adopters where
-      the image moved, or that it's gone. A formalized image may also want to
-      be reproducible, which the preview isn't, though its base images are
-      pinned: `tdnf` installs whatever the repositories hold at build time, so
-      every rebuild of a commit has a new digest. That would take pinning the
-      packages, and a fixed time for the build, its files, and its labels.
 - [ ] ACL's SELinux rule, and its labels on containerd's files, reach the
       image AKS will use. ACL 3.0.20261026 has both, but from a development
       gallery, and excluded from its latest. Then move the harness's default
@@ -75,7 +59,7 @@ resets it in each of the three ways, bootstrapping it again after each.
 ## Run the real agent in the container
 
 Nothing of the agent runs on the host itself. The host's provisioning,
-`agent-container.bu`, installs units that run containers of the agent's image,
+`scripts/aks-flex-node-agent-container.bu`, installs units that run containers of the agent's image,
 and a settings file that names the image. `aks-flex-node-bootstrap.service`
 pulls the image and runs `main`'s `bootstrap.sh` from it, whose `start` installs
 `aks-flex-node-agent.service`, which runs the daemon in a container, as `start`

@@ -10,10 +10,10 @@
     hack/acl-container/harness.py console                  follow the VM's serial console
     hack/acl-container/harness.py down                     stop the VM, remove the network, registry, and state
 
-The VM is provisioned only by the Ignition config that agent-container.bu renders, plus harness
-access: an SSH user, a hostname, and a static address. The agent image is built from this
-repository with image/Containerfile and pushed to a registry on the bridge, which the VM's
-containerd pulls from. See README.md for usage and DESIGN.md for what this proves.
+The VM is provisioned only by the Ignition config that scripts/aks-flex-node-agent-container.bu
+renders, plus harness access: an SSH user, a hostname, and a static address. The agent image is
+built from this repository with Dockerfile.aks-flex-node-agent and pushed to a registry on the
+bridge, which the VM's containerd pulls from. See README.md for usage and DESIGN.md for what this proves.
 """
 
 from __future__ import annotations
@@ -74,10 +74,10 @@ AGENT_TAG = os.environ.get("ACLC_AGENT_TAG", "proto")
 LOCAL_AGENT_IMAGE = f"localhost/{AGENT_REPOSITORY}:{AGENT_TAG}"
 # The reference the VM pulls. The registry is plain HTTP and only listens on the bridge.
 VM_AGENT_IMAGE = f"{GATEWAY}:{REGISTRY_PORT}/{AGENT_REPOSITORY}:{AGENT_TAG}"
-BUTANE_TEMPLATE = HERE / "agent-container.bu"
+BUTANE_TEMPLATE = REPO / "scripts" / "aks-flex-node-agent-container.bu"
 BUTANE_IMAGE = os.environ.get("ACLC_BUTANE_IMAGE", "quay.io/coreos/butane:v0.29.0")
 
-# Must match agent-container.bu, and the agent's unit, which start installs.
+# Must match the Butane config, and the agent's unit, which start installs.
 AGENT_UNIT = "aks-flex-node-agent.service"
 BOOTSTRAP_UNIT = "aks-flex-node-bootstrap.service"
 RESET_UNIT = "aks-flex-node-reset.service"
@@ -191,7 +191,7 @@ def build_agent_image() -> None:
     commit = capture(["git", "rev-parse", "--short", "HEAD"], cwd=REPO) if (REPO / ".git").exists() else "unknown"
     dirty = run(["git", "diff", "--quiet", "HEAD"], check=False, cwd=REPO).returncode != 0
     log(f"building {LOCAL_AGENT_IMAGE} with {ENGINE}")
-    run([ENGINE, "build", "-f", str(HERE / "image" / "Containerfile"),
+    run([ENGINE, "build", "-f", str(REPO / "Dockerfile.aks-flex-node-agent"),
          "--build-arg", f"GIT_COMMIT={commit}{'-dirty' if dirty else ''}",
          "-t", LOCAL_AGENT_IMAGE, str(REPO)])
 
@@ -635,7 +635,7 @@ def butane(template: Path, files: Path) -> dict:
 
 
 def render_ignition(with_agent: bool) -> dict:
-    """Render agent-container.bu, from the one file it names. Without the agent, the VM gets only
+    """Render the Butane config, from the one file it names. Without the agent, the VM gets only
     the harness's access."""
     if not with_agent:
         return {"ignition": {"version": "3.4.0"}}

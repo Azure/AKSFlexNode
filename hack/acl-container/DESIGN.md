@@ -14,7 +14,8 @@ On ACL 3.0.20261026 (build 1236866), from the Azure gallery image
 `main`'s controller,
 `harness.py check` verifies 80 checks, including all of the following:
 
-- An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
+- An Ignition config rendered from
+  [`scripts/aks-flex-node-agent-container.bu`](../../scripts/aks-flex-node-agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
   runs `main`'s `scripts/bootstrap.sh` in a container of the agent's image,
   which joins the node: it's Ready, runs pods, and serves `kubectl logs`.
@@ -170,24 +171,27 @@ it, so the two never run at once. Each unit first waits for containerd to answer
 
 ### The image
 
-[`image/Containerfile`](image/Containerfile) builds Azure Linux 3.0 core with:
+[`Dockerfile.aks-flex-node-agent`](../../Dockerfile.aks-flex-node-agent)
+builds Azure Linux 3.0 core with:
 
 - the agent, built with upstream Go, `go.mod`'s version, as the release is.
   The build sets the version, commit, and build time it's given, as the
   release's does. Unlike the release's, it's static, since the binary also runs
-  in the machines and on the host, each with libraries of its own.
+  in the machines, each with libraries of its own.
 - `main`'s `scripts/bootstrap.sh`, and the tools it requires
-- the scripts in [`image/bin`](image/bin)
+- the scripts in [`scripts/agent-image`](../../scripts/agent-image)
 
 They're in `/opt/aks-flex-node/bin`, apart from the host's `/opt/unbounded`,
 which the container mounts, and which is off the image's `PATH`. Both base images are pinned by
 digest. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`. It holds no
 development tools: only what the agent's containers run. It's about 180 MB,
-in six layers.
+in six layers. A release publishes it as `ghcr.io/azure/aks-flex-node-agent`,
+tagged with the release's version, for `linux/amd64` and `linux/arm64`, with
+attested build provenance. The harness runs it on `linux/amd64` only.
 
 ### The entrypoint
 
-Every container runs [`flex-agent-entrypoint`](image/bin/flex-agent-entrypoint)
+Every container runs [`flex-agent-entrypoint`](../../scripts/agent-image/flex-agent-entrypoint)
 `COMMAND`. Before it runs the command, it:
 
 1. mounts the host's `os-release` over the container's, read-only, for the
@@ -212,7 +216,7 @@ with the host's provisioning.
 
 The image links `machinectl`, `systemctl`, `systemd-run`, `systemd-nspawn`,
 `journalctl`, `ip`, `nft`, `sysctl`, `modprobe`, `swapoff`, `udevadm`, `mount`,
-`umount`, `mountpoint`, and `ctr` to [`host-exec`](image/bin/host-exec), and
+`umount`, `mountpoint`, and `ctr` to [`host-exec`](../../scripts/agent-image/host-exec), and
 the agent runs them by name. `host-exec` runs most of them as
 `chroot /host /usr/bin/env PATH=... TOOL ARGS`:
 
@@ -273,7 +277,7 @@ These changes apply everywhere, and leave a host's behavior as it was:
 ## Bootstrap
 
 The bootstrap unit pulls the image, and runs the image's
-[`aks-flex-node-bootstrap`](image/bin/aks-flex-node-bootstrap). That reads
+[`aks-flex-node-bootstrap`](../../scripts/agent-image/aks-flex-node-bootstrap). That reads
 `/etc/aks-flex-node/bootstrap.env`, one `AKS_FLEX_NODE_*=value` a line, not
 evaluated as shell, and runs `bootstrap.sh --installed-agent` with them, naming
 the image's agent.
@@ -469,10 +473,10 @@ container start, about 12 seconds, and is gone.
   containerd's socket, which the agent has.
 - The image is what that trust rests on, and its digest identifies it:
   containerd checks the content it pulls against it. An `AgentUpgrade` has to
-  give its image's digest, and an install's image should be pinned by it. The host trusts
-  whoever provides the digest, the install's provisioning or AKS, as `main`
-  trusts the SHA-256 an `AgentUpgrade` comes with, and verifies no signature.
-  Published preview images carry signed build provenance, for audits. The
+  give its image's digest, and an install's image should be pinned by it. The
+  host trusts whoever provides the digest, the install's provisioning or AKS,
+  as `main` trusts the SHA-256 an `AgentUpgrade` comes with, and verifies no
+  signature. Released images carry attested build provenance, for audits. The
   harness's install names a tag, pulled over plain HTTP from a local registry.
 - Whoever can create MachineOperations for a machine can make it run an image
   of their choosing, as root, through `AgentUpgrade`, as on a host they can make

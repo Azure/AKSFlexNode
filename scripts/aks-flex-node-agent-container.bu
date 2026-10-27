@@ -1,10 +1,10 @@
 # Butane config that installs the AKS Flex Node agent on Azure Container Linux,
-# where it runs as privileged containerd containers of its image. Prototype; see
-# DESIGN.md next to it.
+# where it runs as privileged containerd containers of its image. See
+# hack/acl-container/DESIGN.md.
 #
 # Render it with Butane, from a directory holding the file it names:
 #
-#   butane --strict --files-dir . agent-container.bu > agent.ign
+#   butane --strict --files-dir . aks-flex-node-agent-container.bu > agent.ign
 #
 #   agent-container.env  AKS_FLEX_NODE_IMAGE, the agent image reference, and
 #                        optionally AKS_FLEX_NODE_PULL_ARGS, extra flags for
