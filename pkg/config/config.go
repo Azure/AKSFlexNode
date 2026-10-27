@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -25,6 +26,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/transport"
 )
 
 const (
@@ -156,8 +159,9 @@ func (d JSONDuration) MarshalJSON() ([]byte, error) {
 
 // AgentConfig holds agent-specific operational configuration.
 type AgentConfig struct {
-	LogLevel string `json:"logLevel"` // Logging level: debug, info, warning, error
-	LogDir   string `json:"logDir"`   // Directory for log files
+	LogLevel       string `json:"logLevel"`                 // Logging level: debug, info, warning, error
+	LogDir         string `json:"logDir"`                   // Directory for log files
+	KubeconfigData string `json:"kubeconfigData,omitempty"` // Embedded kubeconfig used by host Kubernetes clients
 	// NodeName is resolved from the host hostname when omitted.
 	NodeName string `json:"nodeName,omitempty"`
 
@@ -259,6 +263,7 @@ type KubeletConfig struct {
 	Verbosity            int               `json:"verbosity"`
 	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
+	KubeconfigData       string            `json:"kubeconfigData,omitempty"` // Embedded kubeconfig installed verbatim inside nspawn
 	ClusterFQDN          string            `json:"clusterFQDN,omitempty"`    // Kubernetes API server FQDN from AKS RP bootstrap data
 	CACertData           string            `json:"caCertData"`               // Base64-encoded CA certificate data
 	NodeIP               string            `json:"nodeIP"`                   // IP address to advertise as the node's primary IP (--node-ip kubelet flag)
@@ -316,10 +321,21 @@ func (cfg *Config) IsBootstrapTokenConfigured() bool {
 	return cfg.Azure.BootstrapToken != nil
 }
 
+// UsesKubeconfigCredentials reports whether both host-agent and kubelet
+// Kubernetes credentials are supplied as embedded kubeconfigs.
+func (cfg *Config) UsesKubeconfigCredentials() bool {
+	return cfg != nil &&
+		strings.TrimSpace(cfg.Agent.KubeconfigData) != "" &&
+		strings.TrimSpace(cfg.Node.Kubelet.KubeconfigData) != ""
+}
+
 // NeedsBootstrapDataRefresh reports whether repave can replace the short-lived
 // bootstrap token by authenticating to AKS RP with a durable Azure credential.
 func (cfg *Config) NeedsBootstrapDataRefresh() bool {
-	return cfg != nil && cfg.IsBootstrapTokenConfigured() && (cfg.UsesManagedIdentityCredential() || cfg.IsSPConfigured())
+	return cfg != nil &&
+		!cfg.UsesKubeconfigCredentials() &&
+		cfg.IsBootstrapTokenConfigured() &&
+		(cfg.UsesManagedIdentityCredential() || cfg.IsSPConfigured())
 }
 
 // resolveNodeName resolves the Kubernetes Node name once and stores it on the
@@ -517,6 +533,15 @@ var BootstrapTokenPattern = regexp.MustCompile(`^[a-z0-9]{6}\.[a-z0-9]{16}$`)
 
 var systemdServiceNamePattern = regexp.MustCompile(`^[A-Za-z0-9:_.@-]+\.service$`)
 
+// KubeconfigValidationError identifies inputs that cannot be repaired by retrying bootstrap.
+type KubeconfigValidationError struct {
+	err error
+}
+
+func (e *KubeconfigValidationError) Error() string { return e.err.Error() }
+
+func (e *KubeconfigValidationError) Unwrap() error { return e.err }
+
 // validateAzureResourceID validates the format of an AKS cluster resource ID using regex pattern matching
 func validateAzureResourceID(resourceID string) error {
 	// Check AKS cluster resource ID format
@@ -528,8 +553,81 @@ func validateAzureResourceID(resourceID string) error {
 	return nil
 }
 
+func validateEmbeddedKubeconfig(data string) error {
+	kubeconfig, err := clientcmd.Load([]byte(data))
+	if err != nil {
+		return fmt.Errorf("parse kubeconfig: %w", err)
+	}
+	if kubeconfig.CurrentContext == "" {
+		return fmt.Errorf("current context is empty")
+	}
+	contextConfig, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]
+	if !ok || contextConfig == nil {
+		return fmt.Errorf("current context does not reference an existing context")
+	}
+	for name, cluster := range kubeconfig.Clusters {
+		if cluster == nil {
+			return fmt.Errorf("kubeconfig cluster %q is empty", name)
+		}
+		if err := validateAbsoluteHTTPSURL(cluster.Server, httpsURLValidationOptions{
+			fieldName:     fmt.Sprintf("kubeconfig cluster %q server", name),
+			allowPort:     true,
+			allowRootPath: true,
+		}); err != nil {
+			return err
+		}
+		if cluster.CertificateAuthority != "" {
+			return fmt.Errorf("certificate-authority file references are not supported for cluster %q", name)
+		}
+	}
+	for name, authInfo := range kubeconfig.AuthInfos {
+		if authInfo == nil {
+			return fmt.Errorf("kubeconfig user %q is empty", name)
+		}
+		switch {
+		case authInfo.ClientCertificate != "":
+			return fmt.Errorf("client-certificate file references are not supported for user %q", name)
+		case authInfo.ClientKey != "":
+			return fmt.Errorf("client-key file references are not supported for user %q", name)
+		case authInfo.TokenFile != "":
+			return fmt.Errorf("token-file references are not supported for user %q", name)
+		case authInfo.Exec != nil && !filepath.IsAbs(authInfo.Exec.Command):
+			return fmt.Errorf("exec command must be an absolute path for user %q", name)
+		}
+	}
+	if cluster, ok := kubeconfig.Clusters[contextConfig.Cluster]; !ok || cluster == nil {
+		return fmt.Errorf("current context does not reference an existing cluster")
+	}
+	authInfo, ok := kubeconfig.AuthInfos[contextConfig.AuthInfo]
+	if !ok || authInfo == nil {
+		return fmt.Errorf("current context does not reference an existing user")
+	}
+	if authInfo.Token == "" &&
+		(len(authInfo.ClientCertificateData) == 0 || len(authInfo.ClientKeyData) == 0) &&
+		(authInfo.Username == "" || authInfo.Password == "") &&
+		authInfo.Exec == nil &&
+		authInfo.AuthProvider == nil {
+		return fmt.Errorf("current context must provide authentication credentials")
+	}
+	if err := clientcmd.Validate(*kubeconfig); err != nil {
+		return fmt.Errorf("validate kubeconfig: %w", err)
+	}
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig([]byte(data))
+	if err != nil {
+		return fmt.Errorf("validate active kubeconfig context: %w", err)
+	}
+	transportConfig, err := restConfig.TransportConfig()
+	if err != nil {
+		return fmt.Errorf("validate kubeconfig transport: %w", err)
+	}
+	if _, err := transport.TLSConfigFor(transportConfig); err != nil {
+		return fmt.Errorf("validate kubeconfig TLS material: %w", err)
+	}
+	return nil
+}
+
 func (c *Config) validateBootstrapToken() error {
-	if !c.IsBootstrapTokenConfigured() {
+	if !c.IsBootstrapTokenConfigured() || c.UsesKubeconfigCredentials() {
 		return nil
 	}
 	if err := c.Azure.BootstrapToken.validate(); err != nil {
@@ -554,7 +652,7 @@ func (c *Config) validateBootstrapToken() error {
 	return nil
 }
 
-// APIServerURL returns the kube-apiserver URL derived from the RP cluster FQDN.
+// APIServerURL returns the kube-apiserver URL from the validated kubeconfig or RP cluster FQDN.
 func (c *Config) APIServerURL() string {
 	if c == nil {
 		return ""
@@ -605,8 +703,9 @@ func (c *AzureConfig) validateResourceManagerEndpointURL() error {
 }
 
 type httpsURLValidationOptions struct {
-	fieldName string
-	allowPort bool
+	fieldName     string
+	allowPort     bool
+	allowRootPath bool
 }
 
 func validateAbsoluteHTTPSURL(rawURL string, opts httpsURLValidationOptions) error {
@@ -626,7 +725,8 @@ func validateAbsoluteHTTPSURL(rawURL string, opts httpsURLValidationOptions) err
 	if !opts.allowPort && parsed.Port() != "" {
 		return fmt.Errorf("%s must not include user info or port", opts.fieldName)
 	}
-	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if (parsed.Path != "" && (!opts.allowRootPath || parsed.EscapedPath() != "/")) ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("%s must not include a path, query, or fragment", opts.fieldName)
 	}
 	return nil
@@ -844,6 +944,11 @@ func (c *AgentConfig) validate() error {
 	if c.MachineOperationMode != "" && !validMachineOperationModes[c.MachineOperationMode] {
 		return fmt.Errorf("invalid agent.machineOperationMode: %s. Valid values are: auto, disable", c.MachineOperationMode)
 	}
+	if c.KubeconfigData != "" {
+		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid agent.kubeconfigData: %w", err)}
+		}
+	}
 	return nil
 }
 
@@ -916,7 +1021,12 @@ func (c *Config) validate() error {
 	if err := c.validateAuthSettings(); err != nil {
 		return err
 	}
-	if c.IsARCEnabled() && !c.IsBootstrapTokenConfigured() {
+	if c.UsesKubeconfigCredentials() {
+		if err := c.validateKubeconfigPair(); err != nil {
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid paired kubeconfigs: %w", err)}
+		}
+	}
+	if c.IsARCEnabled() && !c.IsBootstrapTokenConfigured() && !c.UsesKubeconfigCredentials() {
 		return fmt.Errorf("azure.bootstrapToken is required with Arc authentication; fetch fresh bootstrap data before loading the runtime config")
 	}
 	if err := c.validateBootstrapToken(); err != nil {
@@ -957,8 +1067,26 @@ func (c *KubeletConfig) validate() error {
 	if err := validateReservedResources("kubeReserved", c.KubeReserved); err != nil {
 		return err
 	}
+	if c.KubeconfigData != "" {
+		if err := validateEmbeddedKubeconfig(c.KubeconfigData); err != nil {
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid node.kubelet.kubeconfigData: %w", err)}
+		}
+		kubeconfig, err := clientcmd.Load([]byte(c.KubeconfigData))
+		if err != nil {
+			return fmt.Errorf("parse node.kubelet.kubeconfigData: %w", err)
+		}
+		contextConfig := kubeconfig.Contexts[kubeconfig.CurrentContext]
+		cluster := kubeconfig.Clusters[contextConfig.Cluster]
+		if len(cluster.CertificateAuthorityData) == 0 {
+			return &KubeconfigValidationError{err: fmt.Errorf("invalid node.kubelet.kubeconfigData: certificate-authority-data is required for the active cluster")}
+		}
+		c.ClusterFQDN = strings.TrimSuffix(cluster.Server, "/")
+		c.CACertData = base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
+	}
 
-	kubelet := agentconfig.AgentKubeletConfig{}
+	kubelet := agentconfig.AgentKubeletConfig{
+		KubeconfigData: []byte(c.KubeconfigData),
+	}
 	if c.ImageCredentialProvider != nil {
 		kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{
 			ConfigPath: c.ImageCredentialProvider.ConfigPath,
@@ -990,15 +1118,45 @@ func validateReservedResources(field string, reservations map[string]string) err
 	return nil
 }
 
+func (c *Config) validateKubeconfigPair() error {
+	agent, err := clientcmd.RESTConfigFromKubeConfig([]byte(c.Agent.KubeconfigData))
+	if err != nil {
+		return fmt.Errorf("load agent kubeconfig: %w", err)
+	}
+	kubelet, err := clientcmd.RESTConfigFromKubeConfig([]byte(c.Node.Kubelet.KubeconfigData))
+	if err != nil {
+		return fmt.Errorf("load kubelet kubeconfig: %w", err)
+	}
+	if kubelet.Impersonate.UserName != "" && kubelet.Impersonate.UserName != "system:node:"+c.Agent.NodeName {
+		return fmt.Errorf("kubelet impersonation user must match system:node:%s for agent.nodeName", c.Agent.NodeName)
+	}
+	if strings.TrimSuffix(agent.Host, "/") != strings.TrimSuffix(kubelet.Host, "/") {
+		return fmt.Errorf("agent and kubelet active contexts must use the same API server")
+	}
+	agentCA, kubeletCA := x509.NewCertPool(), x509.NewCertPool()
+	// Compare trust anchors, not PEM formatting or certificate order.
+	if !agentCA.AppendCertsFromPEM(agent.CAData) ||
+		!kubeletCA.AppendCertsFromPEM(kubelet.CAData) || !agentCA.Equal(kubeletCA) {
+		return fmt.Errorf("agent and kubelet active contexts must use the same certificate authority")
+	}
+	return nil
+}
+
 func (c *Config) validateAuthSettings() error {
+	agentKubeconfig := strings.TrimSpace(c.Agent.KubeconfigData) != ""
+	kubeletKubeconfig := strings.TrimSpace(c.Node.Kubelet.KubeconfigData) != ""
+	if agentKubeconfig != kubeletKubeconfig {
+		return &KubeconfigValidationError{err: fmt.Errorf("agent.kubeconfigData and node.kubelet.kubeconfigData must be configured together")}
+	}
+
 	armAuthMethodCount := 0
 	for _, m := range []bool{c.IsARCEnabled(), c.IsSPConfigured(), c.IsMIConfigured()} {
 		if m {
 			armAuthMethodCount++
 		}
 	}
-	if armAuthMethodCount == 0 && !c.IsBootstrapTokenConfigured() {
-		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, or Bootstrap Token")
+	if armAuthMethodCount == 0 && !c.IsBootstrapTokenConfigured() && !c.UsesKubeconfigCredentials() {
+		return fmt.Errorf("at least one authentication method must be configured: Arc, Service Principal, Managed Identity, Bootstrap Token, or paired kubeconfigs")
 	}
 	if armAuthMethodCount > 1 {
 		return fmt.Errorf("only one Azure authentication method can be enabled at a time: Arc, Service Principal, or Managed Identity")

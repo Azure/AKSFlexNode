@@ -2,9 +2,26 @@
 
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
-    exec sudo -E bash "$0" "$@"
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# Build before sudo to keep compilation in the invoking user's context.
+if [[ "${1:-}" != --run-privileged ]]; then
+    BUILD_DIR=$(mktemp -d)
+    trap 'rm -f "$BUILD_DIR/aks-flex-node"; rmdir "$BUILD_DIR"' EXIT
+    (
+        cd "$REPO_ROOT"
+        go build -o "$BUILD_DIR/aks-flex-node" ./cmd/aks-flex-node
+    )
+    if [[ $EUID -eq 0 ]]; then
+        bash "$0" --run-privileged "$BUILD_DIR/aks-flex-node" "$@"
+    else
+        sudo -E bash "$0" --run-privileged "$BUILD_DIR/aks-flex-node" "$@"
+    fi
+    exit
 fi
+[[ $EUID -eq 0 && $# -ge 2 ]] || { echo "bootstrap_test: privileged phase requires root and the test binary" >&2; exit 1; }
+REAL_AGENT_BINARY="$2"
+shift 2
 
 # Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded/agent. Run in a private
 # mount namespace so both can be overlaid below, and no case can replace a real binary on the host.
@@ -13,10 +30,9 @@ fi
 # unmount the host's /usr/local and /opt.
 if [[ "$(readlink /proc/self/ns/mnt)" == "$(readlink /proc/1/ns/mnt)" ]]; then
     command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
-    exec unshare --mount --propagation private bash "$0" "$@"
+    exec unshare --mount --propagation private bash "$0" --run-privileged "$REAL_AGENT_BINARY" "$@"
 fi
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$REPO_ROOT/scripts/bootstrap.sh"
 WORK_DIR=$(mktemp -d)
 SERVER_PID=""
@@ -90,7 +106,7 @@ JSON
     chmod 0600 "$output"
     exit 0
 fi
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_AGENT_KUBECONFIG AKS_FLEX_NODE_KUBELET_KUBECONFIG AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
 case "${1:-}" in
@@ -129,6 +145,24 @@ cat > "$WORK_DIR/base.json" <<'JSON'
 JSON
 chmod 0600 "$WORK_DIR/base.json"
 
+cat > "$WORK_DIR/environment-agent.kubeconfig" <<'EOF'
+environment-agent
+EOF
+cat > "$WORK_DIR/environment-kubelet.kubeconfig" <<'EOF'
+environment-kubelet
+EOF
+cat > "$WORK_DIR/cli-agent.kubeconfig" <<'EOF'
+apiVersion: v1
+kind: Config
+current-context: agent
+EOF
+cat > "$WORK_DIR/cli-kubelet.kubeconfig" <<'EOF'
+apiVersion: v1
+kind: Config
+current-context: kubelet
+EOF
+chmod 0600 "$WORK_DIR"/*.kubeconfig
+
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/msi-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AUTH=service-principal \
@@ -138,11 +172,15 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
 AKS_FLEX_NODE_AGENT_SHA256="$AGENT_SHA256" \
 AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE='https://environment.example/rootfs.tar.gz' \
 AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE='https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz' \
+AKS_FLEX_NODE_AGENT_KUBECONFIG="$WORK_DIR/environment-agent.kubeconfig" \
+AKS_FLEX_NODE_KUBELET_KUBECONFIG="$WORK_DIR/environment-kubelet.kubeconfig" \
 AKS_FLEX_NODE_CONFIG_OVERRIDES='{"node":{"labels":{"environment":"true"}}}' \
     bash "$SCRIPT" \
         --auth msi \
         --msi-client-id cli-msi \
         --bootstrap-oci-image 'https://cli.example/rootfs.tar.gz' \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig" \
         --config-overrides '{"node":{"labels":{"cli":"true"}},"bootstrap":{"offlineArtifacts":{"source":"https://generic-cli.example/ignored.tar.gz"}}}' \
         --config-path "$WORK_DIR/msi-etc/config.json" >/dev/null
 
@@ -152,12 +190,109 @@ jq -e '
   .azure.arc.enabled == false and
   .bootstrap.ociImage == "https://cli.example/rootfs.tar.gz" and
   .bootstrap.offlineArtifacts.source == "https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz" and
+  .agent.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: agent\n" and
+  .node.kubelet.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: kubelet\n" and
   .node.labels == {"base":"true", "environment":"true", "cli":"true"} and
   (.agent.nodeName | length > 0)
 ' "$WORK_DIR/msi-etc/config.json" >/dev/null
 [[ $(stat -c '%a' "$WORK_DIR/msi-etc/config.json") == 600 ]] || fail "MSI config mode is not 0600"
 grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK_DIR/msi-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
+[[ "$(sort -u "$WORK_DIR/msi-calls.path")" == /opt/unbounded/agent/bin/aks-flex-node ]] ||
+    fail "paired bootstrap did not install the host credential binary before preflight"
+[[ -x /opt/unbounded/agent/bin/aks-flex-node ]] || fail "paired host credential binary is not executable"
+
+cp /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair"
+cp /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    bash "$SCRIPT" \
+        --auth msi \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --agent-url "$AGENT_URL" \
+        --config-path "$WORK_DIR/missing-pair-config.json" >"$WORK_DIR/missing-pair.out" 2>&1; then
+    fail "bootstrap accepted an unpaired agent kubeconfig"
+else
+    missing_pair_status=$?
+fi
+[[ "$missing_pair_status" == 78 ]] || fail "unpaired kubeconfig did not report a permanent configuration failure"
+grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
+[[ ! -e "$WORK_DIR/missing-pair-calls" ]] || fail "unpaired kubeconfig reached the agent"
+cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
+    fail "unpaired kubeconfig replaced the agent"
+cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair" ||
+    fail "unpaired kubeconfig replaced the paired agent"
+[[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
+
+command -v setpriv >/dev/null || fail "setpriv is required"
+for selection in paired unpaired; do
+    selection_args=(--agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig")
+    expected_status=78
+    expected_message="must be configured together"
+    if [[ "$selection" == paired ]]; then
+        selection_args+=(--kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig")
+        expected_status=1
+        expected_message="run this script as root"
+    fi
+    non_root_status=0
+    setpriv --reuid=65534 --regid=65534 --clear-groups \
+        bash "$SCRIPT" "${selection_args[@]}" \
+            --config-path "$WORK_DIR/non-root-$selection-config.json" >"$WORK_DIR/non-root-$selection.log" 2>&1 ||
+        non_root_status=$?
+    [[ "$non_root_status" == "$expected_status" ]] ||
+        fail "non-root $selection input exited $non_root_status, want $expected_status: $(cat "$WORK_DIR/non-root-$selection.log")"
+    grep -F "$expected_message" "$WORK_DIR/non-root-$selection.log" >/dev/null ||
+        fail "non-root $selection input lost its diagnostic"
+    [[ ! -e "$WORK_DIR/non-root-$selection-config.json" ]] || fail "non-root bootstrap installed the config"
+    cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
+        fail "non-root bootstrap replaced the agent"
+    cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair" ||
+        fail "non-root bootstrap replaced the paired agent"
+done
+
+# Exercise the real CLI's validation exit status, not a stub's configured response.
+mkdir "$WORK_DIR/real-agent"
+cp "$REAL_AGENT_BINARY" "$WORK_DIR/real-agent/aks-flex-node-linux-$ARCH"
+tar -C "$WORK_DIR/real-agent" -czf "$WORK_DIR/real-agent/agent.tar.gz" "aks-flex-node-linux-$ARCH"
+printf 'apiVersion: [\n' > "$WORK_DIR/malformed.kubeconfig"
+printf '\n' > "$WORK_DIR/whitespace.kubeconfig"
+chmod 0600 "$WORK_DIR/malformed.kubeconfig" "$WORK_DIR/whitespace.kubeconfig"
+cat > "$WORK_DIR/paired-base.json" <<'JSON'
+{"azure":{"targetCluster":{"resourceId":"/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster","location":"eastus"}}}
+JSON
+for invalid in malformed whitespace; do
+    invalid_status=0
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/paired-base.json" \
+        bash "$SCRIPT" \
+            --agent-url "file://$WORK_DIR/real-agent/agent.tar.gz" \
+            --agent-kubeconfig "$WORK_DIR/$invalid.kubeconfig" \
+            --kubelet-kubeconfig "$WORK_DIR/$invalid.kubeconfig" \
+            --config-path "$WORK_DIR/$invalid-etc/config.json" >"$WORK_DIR/$invalid.log" 2>&1 ||
+        invalid_status=$?
+    [[ "$invalid_status" == 78 ]] ||
+        fail "$invalid kubeconfig exited $invalid_status, want 78: $(cat "$WORK_DIR/$invalid.log")"
+    grep -F "invalid agent.kubeconfigData:" "$WORK_DIR/$invalid.log" >/dev/null ||
+        fail "$invalid kubeconfig did not preserve validation diagnostics"
+    if grep -F "starting AKS Flex Node" "$WORK_DIR/$invalid.log" >/dev/null; then
+        fail "$invalid kubeconfig reached start"
+    fi
+done
+
+rm -rf /opt/unbounded/agent
+rmdir /opt/unbounded
+embedded_pair_overrides=$(jq -n \
+    --rawfile agent "$WORK_DIR/cli-agent.kubeconfig" \
+    --rawfile kubelet "$WORK_DIR/cli-kubelet.kubeconfig" \
+    '{agent:{kubeconfigData:$agent},node:{kubelet:{kubeconfigData:$kubelet}}}')
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/embedded-pair-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+AKS_FLEX_NODE_CONFIG_OVERRIDES="$embedded_pair_overrides" \
+    bash "$SCRIPT" --auth msi --config-path "$WORK_DIR/embedded-pair-etc/config.json" >/dev/null
+[[ "$(sort -u "$WORK_DIR/embedded-pair-calls.path")" == /opt/unbounded/agent/bin/aks-flex-node ]] ||
+    fail "JSON-configured paired bootstrap did not stage the host credential binary"
+rm -rf /opt/unbounded/agent
+rmdir /opt/unbounded
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
