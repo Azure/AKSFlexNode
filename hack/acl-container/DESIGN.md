@@ -428,8 +428,8 @@ image's hooks may run it.
 
 ## SELinux
 
-[SELINUX.md](SELINUX.md) is the full finding, written up for the ACL team.
-In short:
+We raised what the agent's containers needed with the ACL team, who changed
+their builds:
 
 - ACL's `/usr` is unlabeled, so every host process is `kernel_t`: systemd,
   dbus-daemon, machined, and containerd.
@@ -441,9 +441,8 @@ In short:
   denied, and `machinectl` and `systemctl` failed with `Access denied`.
 - ACL 3.0.20261019 adds the one rule the agent needs,
   `allow spc_t kernel_t:dbus send_msg;`. With it, every host operation the
-  agent performs works from `spc_t`, with no denials: `selinux-repro.sh`
-  reports 0 of 59 failures, and `check` passes. `ctr` reaches containerd's
-  socket from `spc_t` without a rule of its own.
+  agent performs works from `spc_t`, with no denials, and `check` passes.
+  `ctr` reaches containerd's socket from `spc_t` without a rule of its own.
 
 ### containerd's labels
 
@@ -461,8 +460,7 @@ expects `spc_t`, and fails on an unlabeled build.
 Until ACL shipped the rule, the harness had an opt-in workaround: it ran the
 agent's containers on containerd's native snapshotter, its directory relabeled
 `usr_t`, so they stayed `kernel_t`. It cost a copy of the image at every
-container start, about 12 seconds, and is gone. [SELINUX.md](SELINUX.md)
-describes it.
+container start, about 12 seconds, and is gone.
 
 ## Security
 

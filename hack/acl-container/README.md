@@ -9,8 +9,7 @@ running `main`'s in-cluster controller, and the VM bootstraps itself into it,
 with no Azure resources involved.
 
 [DESIGN.md](DESIGN.md) explains how the agent runs on ACL and what differs from
-a host install. [SELINUX.md](SELINUX.md) is the SELinux finding for the ACL
-team. This file is how to use the harness.
+a host install. This file is how to use the harness.
 
 The harness boots ACL 3.0.20261026, whose SELinux policy lets the agent's
 privileged containers talk to the host's systemd over D-Bus, and which labels
@@ -326,6 +325,3 @@ The subnet, interface names, and ports differ from the other harnesses in
 | `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
 | `aclimage.py` | Gallery image export |
 | `ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon |
-| `SELINUX.md` | The SELinux finding, written up for the ACL team |
-| `selinux-repro.sh` | Standalone reproduction of the SELinux finding, for any ACL host |
-| `selinux-verify.sh` | Builds candidate SELinux policies from an ACL host's own, and runs `selinux-repro.sh` against them |

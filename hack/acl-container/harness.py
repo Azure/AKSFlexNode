@@ -896,7 +896,7 @@ def wait_for_agent(timeout: float = 600) -> None:
         if "Access denied" in failure:
             die(f"the agent container cannot reach the host's systemd over D-Bus: {failure}\n"
                 "ACL's SELinux policy needs `allow spc_t kernel_t:dbus send_msg;`, which ACL "
-                "3.0.20261019 and later have (see SELINUX.md). Look for denials with "
+                "3.0.20261019 and later have (see SELinux in DESIGN.md). Look for denials with "
                 "`sudo journalctl -b | grep 'avc:  denied'` on the VM.")
         return False
 
