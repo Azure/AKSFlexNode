@@ -634,10 +634,10 @@ def butane(template: Path, files: Path) -> dict:
     return json.loads(rendered)
 
 
-def render_ignition(with_agent: bool) -> dict:
-    """Render the Butane config, from the one file it names. Without the agent, the VM gets only
-    the harness's access."""
-    if not with_agent:
+def render_ignition(bootstrap_env: str | None) -> dict:
+    """Render the Butane config, from the files it names: the image's settings, and bootstrap's
+    inputs, bootstrap_env. Without them, for no agent, the VM gets only the harness's access."""
+    if bootstrap_env is None:
         return {"ignition": {"version": "3.4.0"}}
     files = STATE / "butane-files"
     shutil.rmtree(files, ignore_errors=True)
@@ -646,6 +646,7 @@ def render_ignition(with_agent: bool) -> dict:
         AKS_FLEX_NODE_IMAGE={VM_AGENT_IMAGE}
         AKS_FLEX_NODE_PULL_ARGS=--plain-http
     """))
+    (files / "bootstrap.env").write_text(bootstrap_env)
     return butane(BUTANE_TEMPLATE, files)
 
 
@@ -1768,9 +1769,10 @@ def cmd_up(args: argparse.Namespace) -> None:
         build_agent_image()
         push_agent_image()
 
-    doc = add_harness_access(render_ignition(args.agent), public_key)
+    doc = add_harness_access(render_ignition(bootstrap.pop(BOOTSTRAP_INPUTS, None)), public_key)
     ignition = STATE / IGNITION_NAME
-    # The bootstrap unit runs bootstrap at first boot because these are there.
+    # The Butane config takes bootstrap.env; the file it names, the base config, goes in as an
+    # operator's would.
     for path, content in bootstrap.items():
         doc["storage"]["files"].append({"path": path, "mode": 0o600, "overwrite": True,
                                         "contents": {"source": data_url(content)}})

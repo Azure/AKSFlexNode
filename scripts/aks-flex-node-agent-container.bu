@@ -2,7 +2,7 @@
 # where it runs as privileged containerd containers of its image. See
 # hack/acl-container/DESIGN.md.
 #
-# Render it with Butane, from a directory holding the file it names:
+# Render it with Butane, from a directory holding the two files it names:
 #
 #   butane --strict --files-dir . aks-flex-node-agent-container.bu > agent.ign
 #
@@ -10,6 +10,10 @@
 #                        optionally AKS_FLEX_NODE_PULL_ARGS, extra flags for
 #                        `ctr image pull`, such as --plain-http for a registry
 #                        without TLS
+#   bootstrap.env        bootstrap.sh's AKS_FLEX_NODE_* settings, one per line
+#
+# agent.ign carries bootstrap's settings, which may name secrets, so keep it as
+# private as they are.
 #
 # AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS and AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS,
 # unset by default, pass a snapshotter to `ctr image pull` and `ctr run`.
@@ -36,6 +40,10 @@
 variant: flatcar
 version: 1.1.0
 storage:
+  directories:
+    # For a service principal credential; see below.
+    # - path: /etc/aks-flex-node/credentials
+    #   mode: 0700
   files:
     # Not in /etc/aks-flex-node: the agent's reset removes what's in it.
     - path: /etc/sysconfig/aks-flex-node-container
@@ -43,6 +51,30 @@ storage:
       overwrite: true
       contents:
         local: agent-container.env
+    # Bootstrap's inputs, which the bootstrap unit runs with at first boot.
+    # Reset removes them, with the rest of /etc/aks-flex-node.
+    - path: /etc/aks-flex-node/bootstrap.env
+      mode: 0600
+      overwrite: true
+      contents:
+        local: bootstrap.env
+    # For a base config, uncomment this, and set AKS_FLEX_NODE_BASE_CONFIG_FILE
+    # in bootstrap.env to its path.
+    # - path: /etc/aks-flex-node/base-config.json
+    #   mode: 0600
+    #   overwrite: true
+    #   contents:
+    #     local: base-config.json
+    # For --auth service-principal, uncomment this and the directory above, and
+    # set AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE in bootstrap.env to its path. Use
+    # sp-client-certificate and AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE for a
+    # certificate, with a .pfx suffix for PKCS#12. The agent reads it from there
+    # after bootstrap, so it stays until a reset.
+    # - path: /etc/aks-flex-node/credentials/sp-client-secret
+    #   mode: 0600
+    #   overwrite: true
+    #   contents:
+    #     local: sp-client-secret
 systemd:
   units:
     - name: aks-flex-node-bootstrap.service

@@ -62,9 +62,10 @@ jobs:
       - name: Render the Butane config
         run: |
           files=$(mktemp -d)
-          # The one file the config names, as README.md shows it.
+          # The two files the config names, as docs/usage/azure-container-linux.md shows them.
           echo "AKS_FLEX_NODE_IMAGE=ghcr.io/azure/aks-flex-node-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000" \
             > "$files/agent-container.env"
+          echo "AKS_FLEX_NODE_AUTH=msi" > "$files/bootstrap.env"
           docker run --rm -i -v "$files:/files:ro" "$BUTANE_IMAGE" --strict --files-dir /files \
             < scripts/aks-flex-node-agent-container.bu > /dev/null
 
