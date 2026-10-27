@@ -1487,15 +1487,15 @@ def agent_image_by_digest() -> str:
 def check_agent_upgrade(checks: Checks) -> str:
     """AgentUpgrade by image, as main's e2e upgrades by archive: to a candidate whose agent
     binary differs, then to one whose daemon fails, which rolls back to the last good image, then
-    one naming an image by tag alone, which is rejected, as main rejects an archive without its
-    SHA-256, then back to the agent's own image. Return the good candidate."""
+    requests that are rejected, among them an image without its digest, as main rejects an
+    archive without its SHA-256, then back to the agent's own image. Return the good candidate."""
     good, broken = build_candidate_images()
     # The good candidate, the broken one and its rollback, and the agent's own image.
     make_room_for_agent_starts(4)
     original = agent_image_by_digest()
     before = agent_binary_digest()
 
-    phase, message = run_machine_operation("AgentUpgrade", parameters={"image": good})
+    phase, message = run_machine_operation("AgentUpgrade", parameters=upgrade_parameters(good))
     checks.expect(phase == "Complete", "an AgentUpgrade to a candidate image completes",
                   f"{phase or 'no phase'}: {message}")
     upgraded = agent_binary_digest()
@@ -1506,7 +1506,8 @@ def check_agent_upgrade(checks: Checks) -> str:
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the upgrade")
 
     log("the next candidate's daemon fails, and its recovery unit restores the last good image")
-    phase, message = run_machine_operation("AgentUpgrade", timeout=1800, parameters={"image": broken})
+    phase, message = run_machine_operation("AgentUpgrade", timeout=1800,
+                                           parameters=upgrade_parameters(broken))
     checks.expect(phase == "Failed", "an AgentUpgrade to an image whose daemon fails, fails",
                   f"{phase or 'no phase'}: {message}")
     wait_for_agent()
@@ -1517,17 +1518,27 @@ def check_agent_upgrade(checks: Checks) -> str:
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the rollback")
 
     selection = ssh_out(f"sudo cat {AGENT_IMAGE_SELECTION}")
-    result = machine_operation("AgentUpgrade", parameters={"image": VM_AGENT_IMAGE})
-    checks.expect(result["phase"] == "Failed" and result["reason"] == "InvalidParameters",
-                  "an AgentUpgrade naming an image by tag alone fails as InvalidParameters",
-                  f"{result['phase'] or 'no phase'} ({result['reason'] or 'no reason'}): {result['message']}")
+    candidate = upgrade_parameters(good)
+    rejected = {
+        "an image without its digest": {"downloadURL": candidate["downloadURL"]},
+        "an image whose URL has its digest": {"downloadURL": f"oci://{good}", "sha256": candidate["sha256"]},
+        "an archive, in the container": {
+            "downloadURL": "https://github.com/Azure/AKSFlexNode/releases/download/v0.0.0/aks-flex-node-linux-amd64.tar.gz",
+            "sha256": candidate["sha256"],
+        },
+    }
+    for request, parameters in rejected.items():
+        result = machine_operation("AgentUpgrade", parameters=parameters)
+        checks.expect(result["phase"] == "Failed" and result["reason"] == "InvalidParameters",
+                      f"an AgentUpgrade naming {request} fails as InvalidParameters",
+                      f"{result['phase'] or 'no phase'} ({result['reason'] or 'no reason'}): {result['message']}")
     untouched = (agent_image() == good and agent_binary_digest() == upgraded
                  and ssh_out(f"sudo cat {AGENT_IMAGE_SELECTION}") == selection
                  and ssh(f"sudo test ! -e {AGENT_UPGRADE_SIGNAL}", check=False).returncode == 0)
-    checks.expect(untouched, "the rejected AgentUpgrade left the agent, its image selection, and "
+    checks.expect(untouched, "the rejected AgentUpgrades left the agent, its image selection, and "
                   "the upgrade signal as they were")
 
-    phase, message = run_machine_operation("AgentUpgrade", parameters={"image": original})
+    phase, message = run_machine_operation("AgentUpgrade", parameters=upgrade_parameters(original))
     checks.expect(phase == "Complete" and agent_image() == original and agent_binary_digest() == before,
                   "an AgentUpgrade back to the agent's own image completes",
                   f"{phase or 'no phase'}: {message}")
@@ -1536,6 +1547,13 @@ def check_agent_upgrade(checks: Checks) -> str:
                   "the agent removed the broken candidate's image, and kept the last good one",
                   " ".join(images))
     return good
+
+
+def upgrade_parameters(image: str) -> dict[str, str]:
+    """An AgentUpgrade's parameters for an image pinned by digest, as main's take an archive's URL
+    and SHA-256: the image's repository, as an oci:// downloadURL, and its digest."""
+    repository, _, digest = image.partition("@")
+    return {"downloadURL": f"oci://{repository}", "sha256": digest.removeprefix("sha256:")}
 
 
 def check_reset(checks: Checks, how: str) -> None:
