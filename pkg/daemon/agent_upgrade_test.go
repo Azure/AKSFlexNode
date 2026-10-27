@@ -72,44 +72,9 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 			},
 			wantErr: "64 hexadecimal",
 		},
-		"image by digest": {
-			parameters: map[string]string{
-				agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node@sha256:" + strings.Repeat("a", 64),
-			},
-		},
-		"image by tag and digest": {
-			parameters: map[string]string{
-				agentUpgradeImageParameter: "registry.example:5000/aks-flex-node-agent:v2@sha256:" + strings.Repeat("a", 64),
-			},
-		},
-		// As an archive needs its SHA-256.
-		"image by tag alone": {
-			parameters: map[string]string{agentUpgradeImageParameter: "registry.example:5000/aks-flex-node-agent:v2"},
-			wantErr:    "no digest",
-		},
-		"image without tag or digest": {
-			parameters: map[string]string{agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node"},
-			wantErr:    "no digest",
-		},
-		"image with a malformed digest": {
-			parameters: map[string]string{agentUpgradeImageParameter: "mcr.microsoft.com/aks/flex-node@sha256:bad"},
-			wantErr:    "invalid image reference",
-		},
-		// ctr pulls only fully qualified references.
-		"image not fully qualified": {
-			parameters: map[string]string{agentUpgradeImageParameter: "flex-node:v2"},
-			wantErr:    "invalid image reference",
-		},
-		"image that would read as a flag": {
-			parameters: map[string]string{agentUpgradeImageParameter: "--snapshotter=native"},
-			wantErr:    "invalid image reference",
-		},
-		"image and archive": {
-			parameters: map[string]string{
-				agentUpgradeImageParameter:       "mcr.microsoft.com/aks/flex-node:v2",
-				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-			},
-			wantErr: "excludes",
+		// The agent in its container checks an image's; see TestAgentUpgradeImage.
+		"an image": {
+			parameters: map[string]string{agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent"},
 		},
 	}
 	for name, tt := range tests {

@@ -332,10 +332,6 @@ func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 		"missing URL": {
 			wantErr: "downloadURL",
 		},
-		"an image named by tag alone": {
-			parameters: map[string]string{agentUpgradeImageParameter: "registry.example/aks-flex-node-agent:v2"},
-			wantErr:    "no digest",
-		},
 		// Parameters that parse, but that this agent can't act on, such as an archive for the
 		// agent in its container.
 		"parameters the agent can't carry out": {
@@ -343,7 +339,7 @@ func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
 				agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
 			},
-			validateErr: errors.New(`the agent runs in its container, where AgentUpgrade takes "image"`),
+			validateErr: errors.New(`the agent runs in its container, where "downloadURL" names an image`),
 			wantErr:     "runs in its container",
 		},
 		"missing digest": {

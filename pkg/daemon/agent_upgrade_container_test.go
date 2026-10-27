@@ -19,7 +19,9 @@ import (
 
 const (
 	testAgentImageV1 = "registry.example/aks-flex-node-agent:v1"
-	testAgentImageV2 = "registry.example/aks-flex-node-agent:v2"
+	// testAgentImageV2 is the image testAgentUpgradeV2 names.
+	testAgentImageV2       = "registry.example/aks-flex-node-agent:v2@sha256:" + testAgentImageV2Digest
+	testAgentImageV2Digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 // newTestContainerUpgrade returns a container executor with its files in a test directory, and
@@ -71,27 +73,116 @@ func assertSelectedImages(t *testing.T, images agentImageEnvFile, wantCurrent, w
 	}
 }
 
+// testAgentUpgradeV2 is an AgentUpgrade to testAgentImageV2.
+var testAgentUpgradeV2 = agentUpgradeRequest{
+	downloadURL: "oci://registry.example/aks-flex-node-agent:v2",
+	sha256:      testAgentImageV2Digest,
+}
+
 func TestAgentUpgradeExecutorsTakeTheirOwnKindOfRequest(t *testing.T) {
 	t.Parallel()
 
-	image := agentUpgradeRequest{image: testAgentImageV2}
-	archive := agentUpgradeRequest{downloadURL: "https://example.com/agent.tar.gz"}
+	archive := agentUpgradeRequest{downloadURL: "https://example.com/agent.tar.gz", sha256: strings.Repeat("a", 64)}
 	tests := map[string]struct {
 		executor agentUpgradeExecutor
 		request  agentUpgradeRequest
-		wantErr  bool
+		wantErr  string
 	}{
-		"a host takes an archive":      {executor: &hostAgentUpgradeExecutor{}, request: archive},
-		"a host refuses an image":      {executor: &hostAgentUpgradeExecutor{}, request: image, wantErr: true},
-		"a container takes an image":   {executor: &containerAgentUpgradeExecutor{}, request: image},
-		"a container refuses archives": {executor: &containerAgentUpgradeExecutor{}, request: archive, wantErr: true},
+		"a host takes an archive": {executor: &hostAgentUpgradeExecutor{}, request: archive},
+		// As main, which takes only archives, refuses any URL that isn't HTTP or HTTPS.
+		"a host refuses an image":      {executor: &hostAgentUpgradeExecutor{}, request: testAgentUpgradeV2, wantErr: "must use HTTP or HTTPS"},
+		"a container takes an image":   {executor: &containerAgentUpgradeExecutor{}, request: testAgentUpgradeV2},
+		"a container refuses archives": {executor: &containerAgentUpgradeExecutor{}, request: archive, wantErr: "runs in its container"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if err := tc.executor.Validate(tc.request); (err != nil) != tc.wantErr {
-				t.Errorf("Validate() error = %v, want error %v", err, tc.wantErr)
+			err := tc.executor.Validate(tc.request)
+			if (err != nil) != (tc.wantErr != "") || err != nil && !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("Validate() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestAgentUpgradeImage(t *testing.T) {
+	t.Parallel()
+
+	digest := strings.Repeat("a", 64)
+	tests := map[string]struct {
+		downloadURL string
+		sha256      string
+		want        string
+		wantErr     string
+	}{
+		"a repository": {
+			downloadURL: "oci://mcr.microsoft.com/aks/flex-node",
+			sha256:      digest,
+			want:        "mcr.microsoft.com/aks/flex-node@sha256:" + digest,
+		},
+		"a repository and tag, with a port": {
+			downloadURL: "oci://registry.example:5000/aks-flex-node-agent:v2",
+			sha256:      digest,
+			want:        "registry.example:5000/aks-flex-node-agent:v2@sha256:" + digest,
+		},
+		// As a host takes an archive's, and as any URL's scheme.
+		"a prefixed digest, in capitals, and the scheme in capitals": {
+			downloadURL: "OCI://mcr.microsoft.com/aks/flex-node",
+			sha256:      "sha256:" + strings.ToUpper(digest),
+			want:        "mcr.microsoft.com/aks/flex-node@sha256:" + digest,
+		},
+		"an archive": {
+			downloadURL: "https://example.com/agent.tar.gz",
+			sha256:      digest,
+			wantErr:     "runs in its container",
+		},
+		// As an archive needs its SHA-256.
+		"no digest": {
+			downloadURL: "oci://mcr.microsoft.com/aks/flex-node:v2",
+			wantErr:     `missing required parameter "sha256"`,
+		},
+		"a malformed digest": {
+			downloadURL: "oci://mcr.microsoft.com/aks/flex-node",
+			sha256:      "bad",
+			wantErr:     "64 hexadecimal",
+		},
+		// The digest comes from one place, as an archive's does.
+		"a digest in the URL": {
+			downloadURL: "oci://mcr.microsoft.com/aks/flex-node@sha256:" + digest,
+			sha256:      digest,
+			wantErr:     "not in the URL",
+		},
+		// ctr pulls only fully qualified references.
+		"not fully qualified": {
+			downloadURL: "oci://flex-node:v2",
+			sha256:      digest,
+			wantErr:     "invalid image reference",
+		},
+		"one that would read as a flag": {
+			downloadURL: "oci://--snapshotter=native",
+			sha256:      digest,
+			wantErr:     "invalid image reference",
+		},
+		"credentials": {
+			downloadURL: "oci://user:secret@mcr.microsoft.com/aks/flex-node",
+			sha256:      digest,
+			wantErr:     "invalid image reference",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := agentUpgradeImage(agentUpgradeRequest{downloadURL: tc.downloadURL, sha256: tc.sha256})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("agentUpgradeImage() = %q, %v; want error %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("agentUpgradeImage() = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
@@ -217,7 +308,7 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 				t.Fatalf("RecordPending: %v", err)
 			}
 
-			err := executor.Stage(ctx, agentUpgradeRequest{image: testAgentImageV2})
+			err := executor.Stage(ctx, testAgentUpgradeV2)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Stage() error = %v, want error %v", err, tc.wantErr)
 			}
@@ -261,7 +352,7 @@ func TestContainerAgentUpgradeAbortRestoresThePreviousImage(t *testing.T) {
 	if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
 		t.Fatalf("RecordPending: %v", err)
 	}
-	if err := executor.Stage(t.Context(), agentUpgradeRequest{image: testAgentImageV2}); err != nil {
+	if err := executor.Stage(t.Context(), testAgentUpgradeV2); err != nil {
 		t.Fatalf("Stage: %v", err)
 	}
 	// As when the restart can't be scheduled after the switch.
