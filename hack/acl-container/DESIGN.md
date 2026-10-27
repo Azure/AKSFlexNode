@@ -3,14 +3,14 @@
 > [!NOTE]
 > **Status:** development. `main`'s agent runs on Azure Container Linux (ACL)
 > as privileged containerd containers of its own image, and `harness.py check`
-> verifies `main`'s lifecycle against a local cluster, on ACL 3.0.20261019, the
-> first build with the SELinux rule the agent needs. [README.md](README.md) is
+> verifies `main`'s lifecycle against a local cluster, on ACL 3.0.20261026,
+> which has the SELinux rule the agent needs and labels containerd's files. [README.md](README.md) is
 > how to use the harness, and [TODO.md](../../TODO.md) is the remaining work.
 
 ## Result
 
-On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
-`acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
+On ACL 3.0.20261026 (build 1236866), from the Azure gallery image
+`acl-1es-eval-kvm` version 3.20261027.1, joined to a local kind cluster running
 `main`'s controller,
 `harness.py check` verifies 80 checks, including all of the following:
 
@@ -40,23 +40,23 @@ On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
   then starts again.
   The agent's binary, which kubelet runs as its credential plugin, runs in them.
 
-The agent's containers need one SELinux rule, `allow spc_t kernel_t:dbus
-send_msg;`, which ACL 3.0.20261019 is the first to have. They run as `spc_t`, or
-as `kernel_t` on that build as it ships, and every check passes either way. See
-[SELinux](#selinux).
+The agent's containers run as `spc_t`, as ACL's labels on containerd's files
+make them, and need one SELinux rule there, `allow spc_t kernel_t:dbus
+send_msg;`. ACL 3.0.20261019 is the first build with the rule, and 3.0.20261026
+the first to label containerd's files. See [SELinux](#selinux).
 
 ## What ACL provides
 
 | | |
 |---|---|
-| OS | Microsoft Azure Container Linux 3.0.20261019, build 1229918 (`ID=azurelinux`, `VARIANT_ID=azurecontainerlinux`, `ID_LIKE=flatcar`) |
-| Kernel | 6.6.158.1-1.azl3 |
+| OS | Microsoft Azure Container Linux 3.0.20261026, build 1236866 (`ID=azurelinux`, `VARIANT_ID=azurecontainerlinux`, `ID_LIKE=flatcar`) |
+| Kernel | 6.6.159.1-1.azl3 |
 | systemd | 255 (255-34.azl3), with `machinectl`, `systemd-nspawn`, `systemd-run`, machined, and importd; `machines.target` is enabled |
-| Container runtime | containerd 2.3.6, `ctr` 2.3.6, runc 1.4.3, all in `/usr`. `containerd.service` is enabled and running. No docker, nerdctl, or podman. |
-| SELinux | `targeted`, **enforcing**, compiled policy only (`/etc/selinux/targeted/policy/policy.33`); no policy store, so no `semodule`, but `file_contexts`, `restorecon`, and `setfiles` |
+| Container runtime | containerd 2.3.7, `ctr` 2.3.7, runc 1.4.3, all in `/usr`. `containerd.service` is enabled and running. No docker, nerdctl, or podman. |
+| SELinux | `targeted`, **enforcing**, compiled policy (`/etc/selinux/targeted/policy/policy.33`), with `file_contexts`, `restorecon`, and `setfiles` |
 | Filesystems | `/usr` read-only btrfs on dm-verity and **unlabeled**; `/etc` an overlay, writable; `/` and `/var` ext4, writable |
 | `/var/lib/machines` | Exists, mode 0700. `/etc/systemd/nspawn` does not, until written. |
-| `/var/lib/containerd` | Built into the image, with an Arc agent image in a containerd namespace of its own, and **unlabeled**, though `file_contexts` labels it `container_var_lib_t` |
+| `/var/lib/containerd` | Built into the image, and labeled as `file_contexts` has it: `container_var_lib_t`, with containerd's snapshots `container_ro_file_t` |
 
 ## Principles
 
@@ -359,10 +359,8 @@ failed.
 The agent's unit allows 5 starts in 5 minutes, as `main`'s does, and systemd
 counts deliberate restarts too. So before each upgrade's restart, the daemon
 resets the unit's start count, as `main`'s does on a host, and several upgrades
-in a row aren't refused. As `kernel_t`, where containerd's files are
-unlabeled, the container may not reset it: there an upgrade that would be the
-unit's sixth start in five minutes still fails, which recovery takes for a
-failed upgrade.
+in a row aren't refused. Recovery resets it too, before it restarts the unit on
+the last good image.
 
 At every start, the daemon also removes the images upgrades pulled that it won't
 run again. The agent labels each image as it pulls it for an upgrade, and
@@ -447,30 +445,18 @@ In short:
   reports 0 of 59 failures, and `check` passes. `ctr` reaches containerd's
   socket from `spc_t` without a rule of its own.
 
-### Two domains, from containerd's labels
+### containerd's labels
 
-ACL 3.0.20261019 builds `/var/lib/containerd` into the image, with an Arc agent
-image, and the build leaves it unlabeled, though ACL's `file_contexts` labels
-it `container_var_lib_t`. The files containerd adds later inherit `unlabeled_t`,
-so nothing moves a container out of `kernel_t`, and the agent's containers run
-as `kernel_t`, as every host process does. Where containerd makes the directory
-itself, or `restorecon` labels it, they run as `spc_t`. The agent works either
-way: `check` passes on the build as it ships, and after
-`up --label-containerd`, which labels `/var/lib/containerd` with `restorecon`
-before containerd first starts, and expects the domain the label implies.
-
-| containerd's files | The agent's containers | The machines they create | `reset-failed` in recovery |
-|---|---|---|---|
-| Labeled, as `file_contexts` has them | `spc_t` | `kernel_t` | Allowed |
-| Unlabeled, as ACL 3.0.20261019 ships them | `kernel_t` | `spc_t` | Denied |
-
-The machines' domain follows from the agent's: a directory `kernel_t` makes in
-`/var/lib/machines` is `container_var_lib_t`, whose files run as `spc_t`, while
-one `spc_t` makes stays `var_lib_t`. Where `reset-failed` is denied, upgrade
-recovery starts a failed agent unit once its start limit has passed instead. A
-start, not a restart: by then the unit may be running again, on the restored
-image, and a start leaves it alone. The agent keeps this for any host whose
-policy denies its container `reset-failed`, as another immutable OS's might.
+ACL builds `/var/lib/containerd` into the image. From 3.0.20261026 it's
+labeled as ACL's `file_contexts` has it, `container_var_lib_t`, with
+containerd's snapshots `container_ro_file_t`, and the files containerd adds
+inherit the labels. So the agent's containers run as `spc_t`, which may
+`reset-failed` the agent's unit, as upgrades and their recovery do, and the
+machines they create run as `kernel_t`: a directory `spc_t` makes in
+`/var/lib/machines` stays `var_lib_t`. Earlier builds left the directory
+unlabeled, so every container containerd started stayed `kernel_t`, which may
+not. ACL tests its builds for the labels now, and the agent needs them: `check`
+expects `spc_t`, and fails on an unlabeled build.
 
 Until ACL shipped the rule, the harness had an opt-in workaround: it ran the
 agent's containers on containerd's native snapshotter, its directory relabeled
