@@ -3,6 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -163,11 +166,37 @@ func (e *containerAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 }
 
 func (e *containerAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
-	if request.image == "" {
-		return fmt.Errorf("the agent runs in its container, where AgentUpgrade takes %q rather than %q",
-			agentUpgradeImageParameter, agentUpgradeDownloadURLParameter)
+	_, err := agentUpgradeImage(request)
+	return err
+}
+
+// agentUpgradeImage returns the image an AgentUpgrade names, pinned by digest, as ctr pulls it:
+// downloadURL is agentUpgradeImageScheme and a fully qualified repository, with or without a tag,
+// and sha256 is the image's digest. The digest comes only from sha256, as an archive's does, not
+// from the URL as well. ctr verifies the content it pulls against it, so the agent never runs an
+// unverified candidate, not even to check its version.
+func agentUpgradeImage(request agentUpgradeRequest) (string, error) {
+	repository, ok := cutAgentUpgradeImageScheme(request.downloadURL)
+	if !ok {
+		return "", fmt.Errorf("the agent runs in its container, where %q names an image: %s<repository>[:<tag>], with the image's digest in %q",
+			agentUpgradeDownloadURLParameter, agentUpgradeImageScheme, agentUpgradeSHA256Parameter)
 	}
-	return nil
+	named, err := reference.ParseNamed(repository)
+	if err != nil {
+		return "", fmt.Errorf("parameter %q: invalid image reference: %w", agentUpgradeDownloadURLParameter, err)
+	}
+	if _, digested := named.(reference.Digested); digested {
+		return "", fmt.Errorf("parameter %q: give the image's digest in %q, not in the URL",
+			agentUpgradeDownloadURLParameter, agentUpgradeSHA256Parameter)
+	}
+	if request.sha256 == "" {
+		return "", fmt.Errorf("missing required parameter %q", agentUpgradeSHA256Parameter)
+	}
+	digest := strings.ToLower(strings.TrimPrefix(request.sha256, "sha256:"))
+	if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
+		return "", fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
+	}
+	return repository + "@sha256:" + digest, nil
 }
 
 func (e *containerAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {
@@ -183,30 +212,34 @@ func (e *containerAgentUpgradeExecutor) RecordFailure(message string) error {
 }
 
 func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgradeRequest) error {
+	image, err := agentUpgradeImage(request)
+	if err != nil {
+		return err
+	}
 	previous, err := e.currentImage()
 	if err != nil {
 		return err
 	}
-	if err := e.signals.recordCandidateImage(request.image, previous); err != nil {
+	if err := e.signals.recordCandidateImage(image, previous); err != nil {
 		return err
 	}
 	pullCtx, cancelPull := context.WithTimeout(ctx, agentImagePullTimeout)
 	defer cancelPull()
 	pull := append([]string{"--namespace", agentContainerdNamespace, "image", "pull",
 		"--label", agentUpgradeImageLabel + "=pulled"}, e.pullArgs...)
-	if err := e.ctr(pullCtx, append(pull, request.image)...); err != nil {
-		return fmt.Errorf("pull %s: %w", request.image, err)
+	if err := e.ctr(pullCtx, append(pull, image)...); err != nil {
+		return fmt.Errorf("pull %s: %w", image, err)
 	}
-	if err := e.checkCandidate(ctx, request.image); err != nil {
+	if err := e.checkCandidate(ctx, image); err != nil {
 		return err
 	}
-	if err := e.images.write(request.image, previous); err != nil {
+	if err := e.images.write(image, previous); err != nil {
 		return e.rollbackAfterStage(ctx, err)
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("record committed AgentUpgrade switch: %w", err))
 	}
-	e.log.Info("selected the agent's upgraded image", "image", request.image, "previous", previous)
+	e.log.Info("selected the agent's upgraded image", "image", image, "previous", previous)
 	return nil
 }
 

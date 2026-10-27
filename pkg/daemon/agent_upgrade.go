@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/distribution/reference"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
@@ -30,9 +29,9 @@ import (
 const (
 	agentUpgradeDownloadURLParameter = "downloadURL"
 	agentUpgradeSHA256Parameter      = "sha256"
-	// agentUpgradeImageParameter names the image an AgentUpgrade of the agent in its container
-	// switches to, in place of a release archive.
-	agentUpgradeImageParameter = "image"
+	// agentUpgradeImageScheme begins a downloadURL that names an image, for the agent in its
+	// container, rather than a release archive, as Helm and Flux name OCI artifacts.
+	agentUpgradeImageScheme = "oci://"
 )
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
@@ -47,27 +46,19 @@ func defaultAgentUpgradePaths() agentUpgradePaths {
 type agentUpgradeRequest struct {
 	downloadURL string
 	sha256      string
-	image       string
 }
 
 func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest, error) {
 	request := agentUpgradeRequest{
 		downloadURL: strings.TrimSpace(parameters[agentUpgradeDownloadURLParameter]),
 		sha256:      strings.TrimSpace(parameters[agentUpgradeSHA256Parameter]),
-		image:       strings.TrimSpace(parameters[agentUpgradeImageParameter]),
-	}
-	if request.image != "" {
-		if request.downloadURL != "" || request.sha256 != "" {
-			return agentUpgradeRequest{}, fmt.Errorf("parameter %q excludes %q and %q",
-				agentUpgradeImageParameter, agentUpgradeDownloadURLParameter, agentUpgradeSHA256Parameter)
-		}
-		if err := validateAgentImage(request.image); err != nil {
-			return agentUpgradeRequest{}, err
-		}
-		return request, nil
 	}
 	if request.downloadURL == "" {
 		return agentUpgradeRequest{}, fmt.Errorf("missing required parameter %q", agentUpgradeDownloadURLParameter)
+	}
+	// An image is the container's to check; a host rejects it, as any URL that isn't HTTP or HTTPS.
+	if _, ok := cutAgentUpgradeImageScheme(request.downloadURL); ok {
+		return request, nil
 	}
 	if _, err := secureAgentInstallOptions(request.downloadURL, request.sha256); err != nil {
 		return agentUpgradeRequest{}, err
@@ -75,19 +66,13 @@ func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest
 	return request, nil
 }
 
-// validateAgentImage accepts a fully qualified image reference pinned by digest, with or without
-// a tag, as ctr pulls it. As an archive needs its SHA-256, an image needs its digest: ctr verifies
-// the content it pulls against it, so the agent never runs an unverified candidate, not even to
-// check its version.
-func validateAgentImage(image string) error {
-	named, err := reference.ParseNamed(image)
-	if err != nil {
-		return fmt.Errorf("parameter %q: invalid image reference: %w", agentUpgradeImageParameter, err)
+// cutAgentUpgradeImageScheme returns downloadURL without agentUpgradeImageScheme, which, as any
+// URL's scheme, may be in any case, and whether it began with it.
+func cutAgentUpgradeImageScheme(downloadURL string) (string, bool) {
+	if len(downloadURL) < len(agentUpgradeImageScheme) || !strings.EqualFold(downloadURL[:len(agentUpgradeImageScheme)], agentUpgradeImageScheme) {
+		return "", false
 	}
-	if _, digested := named.(reference.Digested); !digested {
-		return fmt.Errorf("parameter %q: image reference %q has no digest", agentUpgradeImageParameter, image)
-	}
-	return nil
+	return downloadURL[len(agentUpgradeImageScheme):], true
 }
 
 type agentUpgradeSignal struct {
@@ -305,12 +290,11 @@ func (e *hostAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 	return agentbinary.AcquireHostActivationLock(agentUpgradeLockPath)
 }
 
+// Validate takes an archive's HTTP or HTTPS URL, as parseAgentUpgradeRequest does for any URL but
+// an image's.
 func (e *hostAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
-	if request.image != "" {
-		return fmt.Errorf("parameter %q is for the agent in its container; on a host, AgentUpgrade takes %q",
-			agentUpgradeImageParameter, agentUpgradeDownloadURLParameter)
-	}
-	return nil
+	_, err := secureAgentInstallOptions(request.downloadURL, request.sha256)
+	return err
 }
 
 func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {
