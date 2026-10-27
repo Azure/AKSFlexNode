@@ -24,7 +24,13 @@ none runs as `spc_t`, and the new rule is exercised only once something, such
 as `restorecon -R /var/lib/containerd`, labels the directory. See
 [Questions](#questions).
 
-The rest of this document describes the gap as it was before that build.
+ACL 3.0.20261026 (build 1236866), gallery image
+`ACLDEVEL/acl-1es-eval-kvm` version 3.20261027.1, labels it as `file_contexts`
+has it, so the agent's containers run as `spc_t` as the build ships, with the
+rule above, and pass all of the harness's checks, with no denials. `/usr` is
+still unlabeled, and host root still can't run `systemctl reset-failed`.
+
+The rest of this document describes the gap as it was before those builds.
 
 ## Summary
 
@@ -444,7 +450,8 @@ costs we would like to drop:
    `file_contexts` has it? Unlabeled, as in 3.0.20261019, every container
    containerd starts stays `kernel_t`, whatever its image. A later relabel
    would move them all to `spc_t`, and so move the machines an agent in a
-   container creates from `spc_t` to `kernel_t`.
+   container creates from `spc_t` to `kernel_t`. *Answered: ACL 3.0.20261026
+   labels it, and ACL's tests check the labels.*
 
 ## Appendix: checking the policy
 
