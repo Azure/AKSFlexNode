@@ -29,53 +29,38 @@ lands.
       pinned: `tdnf` installs whatever the repositories hold at build time, so
       every rebuild of a commit has a new digest. That would take pinning the
       packages, and a fixed time for the build, its files, and its labels.
-- [ ] ACL's SELinux rule reaches the image AKS will use. ACL 3.0.20261019 has
-      it, but from a development gallery, and excluded from its latest. Then
-      move the harness's default to that image, and link ACL's tracking item.
+- [ ] ACL's SELinux rule, and its labels on containerd's files, reach the
+      image AKS will use. ACL 3.0.20261026 has both, but from a development
+      gallery, and excluded from its latest. Then move the harness's default
+      to that image, and link ACL's tracking item.
 - [ ] Document the container mode in `docs/usage/azure-container-linux.md`,
       which describes host mode, as the way to run on ACL, and host mode as
       interim.
 
 ## ACL's SELinux fix
 
-ACL 3.0.20261019 (build 1229918), gallery image
-`ACLDEVEL/acl-1es-eval-kvm` version 3.20261019.3, ships
-`allow spc_t kernel_t:dbus send_msg;`. On it, `selinux-repro.sh` with
-`MACHINE=` set reports 0 of 59 failures and no denials, and `check` passes
-without the workaround, whose commit is reverted. The harness boots that build
-by default. See `hack/acl-container/SELINUX.md`.
+ACL 3.0.20261019 (build 1229918) ships `allow spc_t kernel_t:dbus send_msg;`,
+and `check` passes without the workaround, whose commit is reverted. ACL
+3.0.20261026 (build 1236866), gallery image `ACLDEVEL/acl-1es-eval-kvm` version
+3.20261027.1, also labels `/var/lib/containerd`, so the agent's containers run
+as `spc_t` as it ships, and `check` passes on it with no denials. ACL tests its
+builds for the labels now. The harness boots that build by default, and expects
+`spc_t`. See `hack/acl-container/SELINUX.md`.
 
-- [ ] ACL's next nightly labels `/var/lib/containerd`, which they said
-      after our writeup of 2026-10-20 (SELINUX.md's question 5): 3.0.20261019
-      builds it into the image, with an Arc agent image, and leaves it
-      unlabeled, so every container containerd starts stays `kernel_t`, and
-      the machines the agent creates run as `spc_t`. Labeled, the agent's
-      containers run as `spc_t` and its machines as `kernel_t`. 3.0.20261020
-      (build 1230898, gallery version 3.20261021.1) doesn't label it either,
-      and keeps the D-Bus rule: `check` passes on it as it ships and with
-      `up --label-containerd`. When the nightly is out:
-      - Boot it in the harness as it ships, and run `check`: the agent's
-        containers should run as `spc_t` without `up --label-containerd`.
-      - Make it the harness's default, pinned in `aclimage.py`.
-      - Keep 3.0.20261019 bootable, with `ACL_IMAGE_VERSION=3.20261019.3`,
-        to run `check` where the agent's containers are `kernel_t` and may
-        not `reset-failed` their unit. Upgrade recovery's fallback for that,
-        starting the unit once its start limit has passed, stays, for any
-        host whose policy denies it.
-      - Then decide whether `--label-containerd` still earns its place.
 - [ ] Early adopters need access to that build's gallery image, ACLDEVEL's
       `acl-1es-eval-kvm`, which is shared with particular tenants.
-- [ ] Reprovision any development hosts set up with the workaround: Ignition
-      runs once, so they keep it until reprovisioned.
+- [ ] Reprovision any development hosts set up with the workaround, or from
+      a build before 3.0.20261026: Ignition runs once, so they keep the
+      workaround, and earlier builds leave containerd's files unlabeled, where
+      the agent's containers may not reset their unit's start limit.
 - [ ] If ACL labels `/usr` too, rerun `hack/acl-container/selinux-verify.sh`,
       since host processes then leave `kernel_t`.
 
 Separately: ACL considered `allow kernel_t unlabeled_t:service reload;`, so
-host root could run `systemctl reset-failed`; 3.0.20261019 doesn't add it. ACL
-will allow it in a future image, which #385, host mode's start limit, waits
-for. When it ships, check it in `hack/acl` and close #385. The container's
-fallback for a denied `reset-failed` stays, for any host whose policy denies
-it.
+host root could run `systemctl reset-failed`; neither 3.0.20261019 nor
+3.0.20261026 adds it. ACL will allow it in a future image, which #385, host
+mode's start limit, waits for. When it ships, check it in `hack/acl` and close
+#385. The agent's containers don't need it: as `spc_t`, they may already.
 
 ## Parity with `main`
 
@@ -151,7 +136,7 @@ image.
       containers see them at their own paths. Arc is deferred, below.
 - [ ] End-to-end on AKS: `main`'s e2e joins Ubuntu VMs to AKS in Azure;
       decide whether to add ACL VMs to it. Locally the harness joins a kind
-      cluster, with pods in machines running as `spc_t` and as `kernel_t`.
+      cluster, with pods in its machines.
 
 ## Container launch and image
 
