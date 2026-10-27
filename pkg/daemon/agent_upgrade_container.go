@@ -430,7 +430,7 @@ func (e *containerAgentUpgradeExecutor) finish(
 }
 
 // recoverContainerAgentUpgrade is the recovery unit's work in the agent's container, which runs
-// it from the last-good image once the upgraded agent's unit has hit its start limit. As main's
+// it from the last-good image once the upgraded agent's unit has hit its start limit. As a host's
 // recovery script does, it records the failure, restores the last-good image, and restarts the
 // agent's unit.
 func recoverContainerAgentUpgrade(

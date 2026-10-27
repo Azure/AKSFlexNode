@@ -1,6 +1,6 @@
 #!/bin/bash
-# Bootstrap the node from the agent's container, as main's scripts/bootstrap.sh
-# does on a host: render /etc/aks-flex-node/config.json, run preflight, and run
+# Bootstrap the node from the agent's container, as scripts/bootstrap.sh does
+# on a host: render /etc/aks-flex-node/config.json, run preflight, and run
 # start, which installs and starts the agent's unit. bootstrap.sh is in the
 # image and runs the agent in it rather than downloading one.
 #

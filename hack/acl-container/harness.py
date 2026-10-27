@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Prototype: run the AKS Flex Node agent as a privileged containerd container on Azure Container Linux.
+"""Harness: run the AKS Flex Node agent as privileged containerd containers on Azure Container Linux.
 
     hack/acl-container/harness.py up [--image ACL.qcow2]   build and push the agent image, boot the VM
     hack/acl-container/harness.py push                     rebuild and push the image, restart the container
-    hack/acl-container/harness.py check                    run the feasibility checks
+    hack/acl-container/harness.py check                    run the checks
     hack/acl-container/harness.py status                   show the VM, agent container, and machines
     hack/acl-container/harness.py ssh [COMMAND]            shell on the VM, or run a command there
     hack/acl-container/harness.py agent [COMMAND]          shell in the agent container, or run a command there
@@ -111,7 +111,7 @@ VETH_KIND = "eth-aclc"
 KUBECONFIG = STATE / "kubeconfig"
 CLUSTER_MARKER = STATE / "cluster"
 CONTROLLER_IMAGE = "localhost/aks-flex-controller:aclc"
-# main's in-cluster machine endpoint, through the API server's service proxy.
+# The in-cluster machine endpoint, through the API server's service proxy.
 PROXY_PATH = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
 BOOTSTRAP_GROUP = "system:bootstrappers:aks-flex-node"
 AGENT_POOL = "aclc"
@@ -314,7 +314,7 @@ def restore_forwarding() -> None:
 # ---------------------------------------------------------------------------------------------
 # Cluster
 #
-# A kind cluster for the agent to join, with main's in-cluster controller as its machine
+# A kind cluster for the agent to join, with the in-cluster controller as its machine
 # endpoint and a bootstrap token for the node, so no Azure resources are involved. kind runs on
 # root Podman, since attaching its node to the VM's bridge needs root anyway.
 
@@ -470,7 +470,7 @@ subjects:
 
 
 def install_controller() -> None:
-    """Deploy main's aks-flex-controller from hack/controller-deployment, with a locally built
+    """Deploy aks-flex-controller from hack/controller-deployment, with a locally built
     image, and the MachineOperation CRDs the daemon watches."""
     log("deploying aks-flex-controller")
     context = STATE / "controller"
@@ -558,7 +558,7 @@ def create_bootstrap_token() -> str:
 
 
 def agent_config(token: str, version: str) -> dict:
-    """The agent's config, in main's format, for a bootstrap-token node that reads its machine from
+    """The agent's config, as on any host, for a bootstrap-token node that reads its machine from
     the in-cluster controller. bootstrap.sh starts from it."""
     ca = kubectl_out("config", "view", "--minify", "--raw", "-o",
                      "jsonpath={.clusters[0].cluster.certificate-authority-data}")
@@ -1192,7 +1192,7 @@ def check_cluster(checks: Checks, after: str = "") -> None:
 
 
 def check_repave(checks: Checks) -> None:
-    """Repave as main's e2e does: change the machine's settings version and delete the Node. The
+    """Repave as the E2E tests do: change the machine's settings version and delete the Node. The
     daemon then starts the other machine, kube1 or kube2, with the new settings, and removes the
     old one, its bpffs mount on the host included."""
     before = daemon_state().get("activeMachine", "")
@@ -1234,7 +1234,7 @@ def agent_log_tail() -> str:
 
 def run_machine_operation(kind: str, timeout: float = 600,
                           parameters: dict[str, str] | None = None) -> tuple[str, str]:
-    """Request a MachineOperation of the node, as main's demos and e2e do, and return its final
+    """Request a MachineOperation of the node, as the demos and E2E tests do, and return its final
     phase and message."""
     result = machine_operation(kind, timeout, parameters)
     return result["phase"], result["message"]
@@ -1286,7 +1286,7 @@ def unique_name(prefix: str) -> str:
 def machine_operation(kind: str, timeout: float = 600,
                       parameters: dict[str, str] | None = None) -> dict[str, str]:
     """Request a MachineOperation of the node, and return its final phase, its message, and the
-    reason of its Completed condition, which main's e2e checks for a rejected request."""
+    reason of its Completed condition, which the E2E tests check for a rejected request."""
     name = unique_name(f"aclc-{kind.lower()}")
     log(f"requesting {kind} MachineOperation {name}")
     spec = {"machineRef": HOSTNAME, "operationKind": kind, "ttlSecondsAfterFinished": 3600}
@@ -1315,7 +1315,7 @@ def machine_operation(kind: str, timeout: float = 600,
 
 
 def check_node_reboot(checks: Checks) -> None:
-    """NodeReboot restarts the active machine, as main's soft-reboot demo requests it, through its
+    """NodeReboot restarts the active machine, as the soft-reboot demo requests it, through its
     hooks, which run the agent's nspawn lifecycle phases in containers."""
     active = daemon_state().get("activeMachine", "")
     leader = machine_leader(active)
@@ -1334,7 +1334,7 @@ def check_node_reboot(checks: Checks) -> None:
     checks.expect(eventually(node_ready, 300), f"node {HOSTNAME} is Ready after the NodeReboot")
 
 
-# A broken candidate's agent, as main's e2e builds one: it answers version, so the upgrade
+# A broken candidate's agent, as the E2E tests build one: it answers version, so the upgrade
 # switches to it, but its daemon fails.
 BROKEN_AGENT = """\
 #!/bin/bash
@@ -1347,7 +1347,7 @@ exit 1
 
 
 def build_candidate_images() -> tuple[str, str]:
-    """Build two candidates from the agent's image, as main's e2e builds its candidates from its
+    """Build two candidates from the agent's image, as the E2E tests build theirs from the agent's
     binary: a good one, whose agent binary differs but runs, and a broken one. Push them, and
     return the references the VM pulls them by, pinned by digest. A candidate already pushed from
     the same agent image, by the same recipe, is reused while the registry has it."""
@@ -1459,7 +1459,7 @@ def agent_image_by_digest() -> str:
 
 
 def check_agent_upgrade(checks: Checks) -> str:
-    """AgentUpgrade by image, as main's e2e upgrades by archive: to a candidate whose agent
+    """AgentUpgrade by image, as the E2E tests upgrade by archive: to a candidate whose agent
     binary differs, then to one whose daemon fails, which rolls back to the last good image, then
     requests that are rejected, among them an image without its digest, as main rejects an
     archive without its SHA-256, then back to the agent's own image. Return the good candidate."""
@@ -1524,14 +1524,14 @@ def check_agent_upgrade(checks: Checks) -> str:
 
 
 def upgrade_parameters(image: str) -> dict[str, str]:
-    """An AgentUpgrade's parameters for an image pinned by digest, as main's take an archive's URL
+    """An AgentUpgrade's parameters for an image pinned by digest, as a host's take an archive's URL
     and SHA-256: the image's repository, as an oci:// downloadURL, and its digest."""
     repository, _, digest = image.partition("@")
     return {"downloadURL": f"oci://{repository}", "sha256": digest.removeprefix("sha256:")}
 
 
 def check_reset(checks: Checks, how: str) -> None:
-    """A reset ends as on main's hosts: the agent's unit is gone and nothing of the agent runs,
+    """A reset ends as on other hosts: the agent's unit is gone and nothing of the agent runs,
     nor any machine. What installed the agent stays, so the node can be bootstrapped again."""
 
     def stopped() -> bool:
@@ -1626,7 +1626,7 @@ def check_local_reset(checks: Checks) -> None:
 
 
 def check_deletion_signal(checks: Checks) -> None:
-    """AKS deleting the node, as main's e2e does: its Machine gone, then its Node tainted. The
+    """AKS deleting the node, as the E2E tests do: its Machine gone, then its Node tainted. The
     daemon resets the node and stops the agent, as for AgentReset."""
     log(f"deleting {HOSTNAME}'s machine and tainting its Node")
     kubectl("-n", "kube-system", "patch", "configmap", "aks-flex-machines", "--type=merge",
@@ -1938,7 +1938,7 @@ def main() -> None:
     push = commands.add_parser("push", help="rebuild and push the agent image, and restart the container")
     push.set_defaults(func=cmd_push)
 
-    check = commands.add_parser("check", help="run the feasibility checks")
+    check = commands.add_parser("check", help="run the checks")
     check.add_argument("--no-reboot", dest="reboot", action="store_false",
                        help="skip the VM reboot")
     check.add_argument("--only", type=check_groups, default=CHECK_GROUPS, metavar="GROUP[,GROUP...]",

@@ -6,7 +6,7 @@ and joins the VM to a Kubernetes cluster. It boots ACL in a local VM under
 QEMU/KVM, provisioned only by the Ignition config rendered from
 [`scripts/aks-flex-node-agent-container.bu`](../../scripts/aks-flex-node-agent-container.bu).
 It creates a local kind cluster
-running `main`'s in-cluster controller, and the VM bootstraps itself into it,
+running the in-cluster controller, and the VM bootstraps itself into it,
 with no Azure resources involved.
 
 [DESIGN.md](DESIGN.md) explains how the agent runs on ACL and what differs from
@@ -49,7 +49,7 @@ build is cached. It:
    IPv4 forwarding on if it's off (`down` restores it)
 2. creates the kind cluster `aclc` on root Podman, and attaches its node to the
    bridge at `192.168.112.2`, where the VM reaches the API server
-3. builds `main`'s `aks-flex-controller` and deploys it from
+3. builds `aks-flex-controller` and deploys it from
    `hack/controller-deployment`, with its CSR approver, the MachineOperation
    CRDs, and the bootstrap-token RBAC `scripts/aks-flex-config` applies
 4. registers the VM as a machine in the controller's ConfigMap, and creates a
@@ -73,7 +73,7 @@ OS. `up` again replaces the VM and the cluster.
   `umount` are the host's, and that the agent has no binary of its own on the
   host
 - The node: Ready, its machine running, a pod on it, and `kubectl logs`
-- Repave from kube1 to kube2, as `main`'s e2e does
+- Repave from kube1 to kube2, as the E2E tests do
 - A `NodeReboot` MachineOperation
 - The agent's machine: in the host's `machine.slice`, reached from the agent's
   container with `systemd-run --machine` and `machinectl shell`, kept running
@@ -104,7 +104,7 @@ export KUBECONFIG=.vm/acl-container/kubeconfig
 kubectl get nodes -o wide
 ```
 
-Request MachineOperations as `main`'s demos and e2e do:
+Request MachineOperations as the demos and E2E tests do:
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -121,8 +121,8 @@ kubectl get machineoperation reboot-1 -w
 
 An `AgentUpgrade` names an image rather than an archive, in the same
 parameters: `downloadURL` is `oci://` and the image's fully qualified
-repository, with or without a tag, and `sha256` is the image's digest, as
-`main` requires an archive's SHA-256:
+repository, with or without a tag, and `sha256` is the image's digest, as a
+host requires an archive's SHA-256:
 
 ```yaml
 spec:
@@ -149,7 +149,7 @@ hack/acl-container/harness.py ssh sudo systemctl start aks-flex-node-bootstrap
 
 | Unit | |
 |---|---|
-| `aks-flex-node-bootstrap.service` | Pulls the image and runs `main`'s `bootstrap.sh` in a short-lived container, at boot, once bootstrap's inputs are there and until the agent is installed |
+| `aks-flex-node-bootstrap.service` | Pulls the image and runs `scripts/bootstrap.sh` in a short-lived container, at boot, once bootstrap's inputs are there and until the agent is installed |
 | `aks-flex-node-agent.service` | Runs the daemon in the container `aks-flex-node`. `start` installs it, and reset removes it. |
 | `aks-flex-node-agent-recovery.service` | Restores the last good image when an upgraded agent fails. `start` installs it with the agent's unit. |
 | `aks-flex-node-reset.service` | Runs `aks-flex-node reset` in a short-lived container |
@@ -284,7 +284,7 @@ The subnet, interface names, and ports differ from the other harnesses in
 | `../../scripts/aks-flex-node-agent-container.bu` | Butane config that installs the agent: the settings, and the bootstrap and reset units |
 | `../../Dockerfile.aks-flex-node-agent` | The agent image |
 | `../../scripts/agent-image/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
-| `../../scripts/agent-image/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
+| `../../scripts/agent-image/aks-flex-node-bootstrap` | Runs `scripts/bootstrap.sh` with bootstrap's inputs |
 | `../../scripts/agent-image/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
 | `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
 | `aclimage.py` | Gallery image export |
