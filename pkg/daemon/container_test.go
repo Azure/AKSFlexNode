@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -349,18 +348,6 @@ func TestContainerUnitsWaitForContainerd(t *testing.T) {
 				t.Errorf("the unit's first command is %q, want a wait for containerd to answer", first)
 			}
 		})
-	}
-}
-
-// Recovery that can't reset the agent's failed unit restarts it once the unit's start limit has
-// passed, by agentUnitStartLimitInterval, so the two have to agree.
-func TestContainerAgentUnitStartLimitMatchesRecovery(t *testing.T) {
-	t.Parallel()
-
-	got := unitDirectives(containerServiceUnitContent, "Unit", "StartLimitIntervalSec")
-	want := strconv.Itoa(int(agentUnitStartLimitInterval.Seconds()))
-	if !slices.Equal(got, []string{want}) {
-		t.Errorf("StartLimitIntervalSec= is %q, want %s, agentUnitStartLimitInterval in seconds", got, want)
 	}
 }
 
