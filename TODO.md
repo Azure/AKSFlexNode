@@ -45,7 +45,7 @@ and `check` passes without the workaround, whose commit is reverted. ACL
 3.20261027.1, also labels `/var/lib/containerd`, so the agent's containers run
 as `spc_t` as it ships, and `check` passes on it with no denials. ACL tests its
 builds for the labels now. The harness boots that build by default, and expects
-`spc_t`. See `hack/acl-container/SELINUX.md`.
+`spc_t`.
 
 - [ ] Early adopters need access to that build's gallery image, ACLDEVEL's
       `acl-1es-eval-kvm`, which is shared with particular tenants.
@@ -53,8 +53,6 @@ builds for the labels now. The harness boots that build by default, and expects
       a build before 3.0.20261026: Ignition runs once, so they keep the
       workaround, and earlier builds leave containerd's files unlabeled, where
       the agent's containers may not reset their unit's start limit.
-- [ ] If ACL labels `/usr` too, rerun `hack/acl-container/selinux-verify.sh`,
-      since host processes then leave `kernel_t`.
 
 Separately: ACL considered `allow kernel_t unlabeled_t:service reload;`, so
 host root could run `systemctl reset-failed`; neither 3.0.20261019 nor

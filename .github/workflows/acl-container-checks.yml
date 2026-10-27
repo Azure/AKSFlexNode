@@ -40,7 +40,7 @@ jobs:
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" \
-            hack/acl-container/*.sh hack/acl-container/image/bin/*
+            hack/acl-container/image/bin/*
 
       - name: Compile Python
         run: python3 -m py_compile hack/acl-container/*.py
