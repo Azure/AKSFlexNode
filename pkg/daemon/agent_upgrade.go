@@ -531,13 +531,6 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 			agentImageEnvFile{path: agentImageSelectionPath},
 			func(ctx context.Context, args ...string) error {
 				return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
-			},
-			func(ctx context.Context) (string, error) {
-				state, err := utilexec.OutputCmd(ctx, log, "systemctl", "show", "-p", "ActiveState", "--value", ServiceUnitName)
-				return strings.TrimSpace(state), err
-			},
-			func(ctx context.Context, args ...string) error {
-				return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
 			}); err != nil {
 			return err
 		}

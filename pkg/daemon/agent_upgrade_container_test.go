@@ -493,9 +493,8 @@ func TestContainerAgentUpgradeInterruptedBeforeStage(t *testing.T) {
 	if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
 		t.Fatalf("RecordPending: %v", err)
 	}
-	unitActiveState := func(context.Context) (string, error) { return "failed", nil }
 	if err := recoverContainerAgentUpgrade(t.Context(), discardLogger(), "failed repeatedly",
-		executor.signals, executor.images, executor.systemctl, unitActiveState, executor.runSystemdRun); err != nil {
+		executor.signals, executor.images, executor.systemctl); err != nil {
 		t.Fatalf("recover: %v", err)
 	}
 	assertSelectedImages(t, executor.images, testAgentImageV2, testAgentImageV1)
@@ -530,10 +529,9 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 		pending      bool
 		interrupted  bool
 		resetFails   bool
-		state        string
-		stateErr     error
 		wantCalls    []string
 		wantSelected string
+		wantErr      bool
 	}{
 		"leaves an ordinary failure alone": {
 			wantSelected: testAgentImageV2,
@@ -550,27 +548,13 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 			wantCalls:    []string{resetFailed, "systemctl --no-block restart " + ServiceUnitName},
 			wantSelected: testAgentImageV1,
 		},
-		// As kernel_t, where containerd's files are unlabeled.
-		"waits out the start limit when it can't reset a failed unit": {
+		// The image is restored, for the next start of the unit, however it comes about.
+		"reports a unit it can't reset": {
 			pending:      true,
 			resetFails:   true,
-			state:        "failed",
-			wantCalls:    []string{resetFailed, "systemd-run "},
-			wantSelected: testAgentImageV1,
-		},
-		"leaves a restarting unit to restart onto the restored image": {
-			pending:      true,
-			resetFails:   true,
-			state:        "activating",
 			wantCalls:    []string{resetFailed},
 			wantSelected: testAgentImageV1,
-		},
-		"waits out the start limit when it can't tell the unit's state": {
-			pending:      true,
-			resetFails:   true,
-			stateErr:     os.ErrPermission,
-			wantCalls:    []string{resetFailed, "systemd-run "},
-			wantSelected: testAgentImageV1,
+			wantErr:      true,
 		},
 	}
 	for name, tc := range tests {
@@ -603,11 +587,10 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 				}
 				return nil
 			}
-			unitActiveState := func(context.Context) (string, error) { return tc.state, tc.stateErr }
-
-			if err := recoverContainerAgentUpgrade(t.Context(), discardLogger(), "failed repeatedly",
-				executor.signals, executor.images, systemctl, unitActiveState, executor.runSystemdRun); err != nil {
-				t.Fatalf("recover: %v", err)
+			err := recoverContainerAgentUpgrade(t.Context(), discardLogger(), "failed repeatedly",
+				executor.signals, executor.images, systemctl)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("recover: %v, want error %v", err, tc.wantErr)
 			}
 			if len(*calls) != len(tc.wantCalls) {
 				t.Fatalf("calls = %q, want %q", *calls, tc.wantCalls)
@@ -615,22 +598,6 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 			for i, want := range tc.wantCalls {
 				if !strings.HasPrefix((*calls)[i], want) {
 					t.Errorf("call %d = %q, want it to start with %q", i, (*calls)[i], want)
-				}
-			}
-			// A start, after the start limit: by then the unit may be running on the restored image,
-			// which a restart would cut off.
-			if n := len(*calls); n > 0 && strings.HasPrefix((*calls)[n-1], "systemd-run ") {
-				for _, want := range []string{
-					"--unit=aks-flex-node-agent-recovery-start-",
-					"--on-active=300000ms",
-					"--timer-property=AccuracySec=100ms",
-				} {
-					if !strings.Contains((*calls)[n-1], want) {
-						t.Errorf("the scheduled start %q lacks %s", (*calls)[n-1], want)
-					}
-				}
-				if !strings.HasSuffix((*calls)[n-1], " /usr/bin/systemctl start "+ServiceUnitName) {
-					t.Errorf("recovery schedules %q, want a start of the agent's unit", (*calls)[n-1])
 				}
 			}
 			current, _, err := executor.images.read()
@@ -839,25 +806,6 @@ func TestWriteContainerUnitsWritesRecoveryFirst(t *testing.T) {
 	recovery, err := os.ReadFile(filepath.Join(unitDir, recoveryServiceUnitName))
 	if err != nil || !bytes.Equal(recovery, containerRecoveryUnitContent) {
 		t.Errorf("the recovery unit wasn't written before the agent's unit failed: %v", err)
-	}
-}
-
-// As kernel_t, where containerd's files are unlabeled, the container may not reset the unit's
-// start limit; the restart still goes ahead.
-func TestContainerAgentUpgradeRestartsThoughItCantResetTheStartLimit(t *testing.T) {
-	t.Parallel()
-
-	executor, calls := newTestContainerUpgrade(t, testAgentImageV1)
-	executor.systemctl = func(_ context.Context, args ...string) error {
-		*calls = append(*calls, "systemctl "+strings.Join(args, " "))
-		return os.ErrPermission
-	}
-	if err := executor.Restart(t.Context()); err != nil {
-		t.Fatalf("Restart: %v", err)
-	}
-	if len(*calls) != 2 || (*calls)[0] != "systemctl reset-failed "+ServiceUnitName ||
-		!strings.HasSuffix((*calls)[1], "/usr/bin/systemctl restart "+ServiceUnitName) {
-		t.Fatalf("calls = %q, want the denied reset, then the scheduled restart", *calls)
 	}
 }
 
