@@ -85,7 +85,7 @@ journalctl -u aks-flex-node-agent -f
 
 ## Managed agent upgrade
 
-When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and the required SHA-256 of the compressed archive:
+When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and the required SHA-256 of the compressed archive. On Azure Container Linux, where the agent runs in containers of its image, it names an image instead; see [Upgrading the agent](azure-container-linux.md#upgrading-the-agent).
 
 ```yaml
 apiVersion: unbounded-cloud.io/v1alpha3
