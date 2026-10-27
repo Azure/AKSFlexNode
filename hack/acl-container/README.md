@@ -38,7 +38,7 @@ the agent's privileged containers talk to the host's systemd over D-Bus. See
 export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group   # only for the first export
 hack/acl-container/harness.py up                   # cluster, image, VM, bootstrap
 hack/acl-container/harness.py status               # the VM, the agent, machines, nodes
-hack/acl-container/harness.py check                # 78 checks, 7 to 10 minutes
+hack/acl-container/harness.py check                # 80 checks, 7 to 10 minutes
 hack/acl-container/harness.py down                 # remove the VM, cluster, network, and state
 ```
 
@@ -83,8 +83,8 @@ containerd first starts, as ACL's `file_contexts` has it, so they run as
   container with `systemd-run --machine` and `machinectl shell`, kept running
   across a restart of the agent's container, and back after a VM reboot
 - `AgentUpgrade`: to a good candidate image, to a broken one, which rolls back,
-  to one named by tag alone, which is rejected, and back to the agent's own
-  image
+  requests without the image's digest, with it in the URL, or naming an
+  archive, which are rejected, and back to the agent's own image
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal, each followed by
   bootstrapping the node again
 
@@ -123,16 +123,18 @@ EOF
 kubectl get machineoperation reboot-1 -w
 ```
 
-An `AgentUpgrade` takes an image rather than an archive: fully qualified, and
-pinned by digest, with or without a tag, as `main` requires an archive's
-SHA-256:
+An `AgentUpgrade` names an image rather than an archive, in the same
+parameters: `downloadURL` is `oci://` and the image's fully qualified
+repository, with or without a tag, and `sha256` is the image's digest, as
+`main` requires an archive's SHA-256:
 
 ```yaml
 spec:
   machineRef: acl-flex-proto
   operationKind: AgentUpgrade
   parameters:
-    image: 192.168.112.1:5099/aks-flex-node-agent@sha256:...
+    downloadURL: oci://192.168.112.1:5099/aks-flex-node-agent
+    sha256: ...
 ```
 
 To reset the node by hand, and bootstrap it again:

@@ -12,7 +12,7 @@
 On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 `acl-1es-eval-kvm` version 3.20261019.3, joined to a local kind cluster running
 `main`'s controller,
-`harness.py check` verifies 78 checks, including all of the following:
+`harness.py check` verifies 80 checks, including all of the following:
 
 - An Ignition config rendered from [`agent-container.bu`](agent-container.bu)
   installs the agent with only systemd units and settings. Its bootstrap unit
@@ -25,9 +25,10 @@ On ACL 3.0.20261019 (build 1229918), from the Azure gallery image
 - The machines' hooks start the agent's nspawn lifecycle units, which run its
   phases in containers of its image, at every start of a machine.
 - Repave, `NodeReboot`, and `AgentUpgrade` work as on a host. An `AgentUpgrade`
-  names an image by digest: a good one is selected, a broken one rolls back to
-  the last good image, one named by tag alone is rejected, and images the agent
-  won't run again are removed.
+  names an image and its digest: a good one is selected, a broken one rolls
+  back to the last good image, requests without the digest, with it in the URL,
+  or naming an archive are rejected, and images the agent won't run again are
+  removed.
 - `AgentReset`, `aks-flex-node reset`, and the deletion signal each end as on a
   host: the agent's unit is gone, and nothing of the agent runs. What installed
   it stays, so bootstrapping again joins the node, with the install's image or
@@ -102,7 +103,7 @@ flowchart TB
 | `start` | Sets up the host, then installs and starts `aks-flex-node-agent.service` and its recovery unit | The same, except installing packages; the units run containers |
 | Daemon start | Converges its binary layout and units | Rewrites its units from its image, copies its binary into the active machine, and removes old images |
 | Repave, `NodeReboot` | The daemon replaces or restarts the active machine | The same code |
-| `AgentUpgrade` | Takes `downloadURL` and `sha256`, and switches blue/green binaries | Takes `image`, and selects it in `agent-image.env` |
+| `AgentUpgrade` | Takes `downloadURL` and `sha256`, and switches blue/green binaries | Takes an image as an `oci://` `downloadURL`, with its digest as `sha256`, and selects it in `agent-image.env` |
 | Upgrade recovery | The recovery unit's script restores the last good binary | The recovery unit runs the last good image, which restores it |
 | `AgentReset`, deletion signal | The daemon resets the node and removes its unit | The same code |
 | `aks-flex-node reset` | Run by hand | `aks-flex-node-reset.service` runs it in a container |
@@ -245,7 +246,7 @@ nothing sets it, every switch takes `main`'s path:
 | The nspawn lifecycle units the machines' hooks start, which `StartNode` writes first and the daemon converges | Run the binary under the host root, and link the lifecycle helper to it, for hooks an earlier release writes | Run the phase in a container of the agent's image, with no helper |
 | `RecoverAgentUpgrade` | Restores the last good binaries | Restores the last good image, and restarts the agent's unit |
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's package database, and `containerd-active`, which warns that bootstrap will disable containerd |
-| An `AgentUpgrade`'s parameters | `image` is invalid | `downloadURL` is invalid |
+| An `AgentUpgrade`'s `downloadURL` | An archive's, HTTP or HTTPS; an image's, `oci://`, is invalid, as on `main` | An image's; an archive's is invalid |
 | `CredentialPlugin`, for the agent's own clients in `start` and the daemon, with a managed identity or a service principal and no bootstrap token | The host's agent, `config.HostBinaryPath` | The image's binary, which is running: the host has no agent |
 | The host root's steps, in `start`, the daemon, and `nspawn-lifecycle pre-start`: migrating, preparing, and populating `/opt/unbounded/agent`, the move from `/usr/local`, and removing the binary install scripts left there | Run | Skipped: the host keeps nothing of the agent |
 | Direct activation, `agent-upgrade` | Switches the binary layout | Refused: an `AgentUpgrade` names an image |
@@ -264,8 +265,10 @@ These changes apply everywhere, and leave a host's behavior as it was:
 - `aksmachine.MachineClientOptions.CredentialPlugin` names the credential
   plugin `start`'s Machine client runs. Empty, it's the host's agent, as
   before.
-- The MachineOperation reconciler validates an `AgentUpgrade`'s parameters
-  before acting on it. On a host, an `image` fails it as `InvalidParameters`.
+- The MachineOperation reconciler has the agent's executor validate an
+  `AgentUpgrade`'s parameters before acting on it. A host's checks an
+  archive's URL and SHA-256 there, as `main` checks them, with the same
+  results.
 
 ## Bootstrap
 
@@ -300,13 +303,18 @@ instead. The bootstrap, reset, and agent's units all read it:
 
 ## AgentUpgrade by image
 
-An `AgentUpgrade` in the container takes an `image`: a fully qualified
-reference pinned by digest, with or without a tag. `main` requires an archive's
-SHA-256, so that the agent never runs an unverified candidate, not even to
-check its version. The digest is the image's equivalent: `ctr` verifies the
-content it pulls against it. An image named by tag alone fails as
-`InvalidParameters`, as an archive without its SHA-256 does. The parameter's
-name is this branch's choice, to agree with AKS.
+An `AgentUpgrade` in the container names an image in the parameters that name
+an archive on a host, as Helm and Flux name OCI artifacts: `downloadURL` is
+`oci://` and the image's fully qualified repository, with or without a tag, and
+`sha256` is the image's digest. For an image built for several architectures,
+that's its index's, which serves each of them, where a host's archive is one
+architecture's. `main` requires an archive's SHA-256, so that the agent never
+runs an unverified candidate, not even to check its version. The digest is the
+image's equivalent: `ctr` verifies the content it pulls against it. A request
+without the digest fails as `InvalidParameters`, as an archive without its
+SHA-256 does, and so do one with the digest in the URL, which `sha256` alone
+gives, and an archive's URL. A host rejects an `oci://` URL as `main` does any
+URL that isn't HTTP or HTTPS.
 
 The upgrade follows the host's, with images for binaries:
 
@@ -476,15 +484,15 @@ describes it.
   is root on the host, as is the agent installed on a host. So is access to
   containerd's socket, which the agent has.
 - The image is what that trust rests on, and its digest identifies it:
-  containerd checks the content it pulls against it. An `AgentUpgrade`'s image
-  has to be pinned by digest, and an install's should be. The host trusts
+  containerd checks the content it pulls against it. An `AgentUpgrade` has to
+  give its image's digest, and an install's image should be pinned by it. The host trusts
   whoever provides the digest, the install's provisioning or AKS, as `main`
   trusts the SHA-256 an `AgentUpgrade` comes with, and verifies no signature.
   Published preview images carry signed build provenance, for audits. The
   harness's install names a tag, pulled over plain HTTP from a local registry.
 - Whoever can create MachineOperations for a machine can make it run an image
-  of their choosing, as root, through `AgentUpgrade`. On a host, `downloadURL`
-  and `sha256` grant the same, so treat the parameters as sensitive either way.
+  of their choosing, as root, through `AgentUpgrade`, as on a host they can make
+  it run an archive of their choosing, so treat the parameters as sensitive.
 - `ctr` keeps NoNewPrivileges on.
 - The harness writes bootstrap's inputs, with the bootstrap token, mode 0600,
   and reset removes them. The install's settings, which an install's pull flags
@@ -512,7 +520,7 @@ whose disk writes the host caches (`cache=unsafe`):
 | ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
 | First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
 | Container start, unit start to entrypoint | about 1.2 s |
-| `check`, with a reboot | 78 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
+| `check`, with a reboot | 80 checks, 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
 | Agent image | about 180 MB, six layers |
 | containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
 | Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
