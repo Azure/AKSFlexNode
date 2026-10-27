@@ -1,5 +1,7 @@
-# Checks the tools in hack/acl-container: ShellCheck on their shell scripts, a compile check of
-# their Python, and agent-container.bu rendered with Butane --strict, as an operator renders it.
+# Checks the agent's image for Azure Container Linux and the tools around it: ShellCheck on the
+# image's scripts, a compile check of the harness's Python, the install's Butane config rendered
+# with Butane --strict, as an operator renders it, and the image built for its platforms, as a
+# release builds it, without pushing it.
 name: ACL Container Checks
 
 on:
@@ -8,15 +10,27 @@ on:
       - main
       - dev
     paths:
+      - Dockerfile.aks-flex-node-agent
+      - go.mod
+      - scripts/agent-image/**
+      - scripts/aks-flex-node-agent-container.bu
+      - scripts/bootstrap.sh
       - hack/acl-container/**
       - .github/workflows/acl-container-checks.yml
+      - .github/workflows/agent-image-build.yml
   push:
     branches:
       - main
       - dev
     paths:
+      - Dockerfile.aks-flex-node-agent
+      - go.mod
+      - scripts/agent-image/**
+      - scripts/aks-flex-node-agent-container.bu
+      - scripts/bootstrap.sh
       - hack/acl-container/**
       - .github/workflows/acl-container-checks.yml
+      - .github/workflows/agent-image-build.yml
   workflow_dispatch:
 
 permissions:
@@ -40,7 +54,7 @@ jobs:
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" \
-            hack/acl-container/image/bin/*
+            scripts/agent-image/*
 
       - name: Compile Python
         run: python3 -m py_compile hack/acl-container/*.py
@@ -49,7 +63,17 @@ jobs:
         run: |
           files=$(mktemp -d)
           # The one file the config names, as README.md shows it.
-          echo "AKS_FLEX_NODE_IMAGE=ghcr.io/azure/aks-flex-node-agent-acl-preview@sha256:0000000000000000000000000000000000000000000000000000000000000000" \
+          echo "AKS_FLEX_NODE_IMAGE=ghcr.io/azure/aks-flex-node-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000" \
             > "$files/agent-container.env"
           docker run --rm -i -v "$files:/files:ro" "$BUTANE_IMAGE" --strict --files-dir /files \
-            < hack/acl-container/agent-container.bu > /dev/null
+            < scripts/aks-flex-node-agent-container.bu > /dev/null
+
+  image:
+    name: Build the image
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent-image-build.yml
+    with:
+      source_ref: ${{ github.sha }}
+      version: check-${{ github.sha }}
+      push_image: false

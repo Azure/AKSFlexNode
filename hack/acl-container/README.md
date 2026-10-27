@@ -4,7 +4,8 @@ This harness runs the AKS Flex Node agent from this repository on Azure
 Container Linux (ACL), as privileged containerd containers of its own image,
 and joins the VM to a Kubernetes cluster. It boots ACL in a local VM under
 QEMU/KVM, provisioned only by the Ignition config rendered from
-[`agent-container.bu`](agent-container.bu). It creates a local kind cluster
+[`scripts/aks-flex-node-agent-container.bu`](../../scripts/aks-flex-node-agent-container.bu).
+It creates a local kind cluster
 running `main`'s in-cluster controller, and the VM bootstraps itself into it,
 with no Azure resources involved.
 
@@ -53,9 +54,10 @@ build is cached. It:
    CRDs, and the bootstrap-token RBAC `scripts/aks-flex-config` applies
 4. registers the VM as a machine in the controller's ConfigMap, and creates a
    bootstrap token
-5. builds [`image/Containerfile`](image/Containerfile), the agent image, and
-   pushes it to a registry it runs on the bridge, `192.168.112.1:5099`
-6. renders `agent-container.bu` with Butane, adds bootstrap's inputs, an SSH
+5. builds [`Dockerfile.aks-flex-node-agent`](../../Dockerfile.aks-flex-node-agent),
+   the agent image, and pushes it to a registry it runs on the bridge,
+   `192.168.112.1:5099`
+6. renders the Butane config, adds bootstrap's inputs, an SSH
    user, a hostname, and a static address, and boots the VM at `192.168.112.10`
 7. waits for the bootstrap unit to bootstrap the node, for the agent's container
    to run, and for the node to be Ready
@@ -278,11 +280,11 @@ The subnet, interface names, and ports differ from the other harnesses in
 | File | |
 |---|---|
 | `harness.py` | The harness |
-| `agent-container.bu` | Butane config that installs the agent: the settings, and the bootstrap and reset units |
-| `image/Containerfile` | The agent image |
-| `image/bin/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
-| `image/bin/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
-| `image/bin/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
+| `../../scripts/aks-flex-node-agent-container.bu` | Butane config that installs the agent: the settings, and the bootstrap and reset units |
+| `../../Dockerfile.aks-flex-node-agent` | The agent image |
+| `../../scripts/agent-image/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
+| `../../scripts/agent-image/aks-flex-node-bootstrap` | Runs `main`'s `bootstrap.sh` with bootstrap's inputs |
+| `../../scripts/agent-image/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
 | `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
 | `aclimage.py` | Gallery image export |
 | `ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon |

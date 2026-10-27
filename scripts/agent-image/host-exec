@@ -3,11 +3,12 @@
 # mounts at /host.
 #
 # The image links the host tools the agent runs, such as machinectl and
-# systemctl, to this script (see its Containerfile), so those names run the
-# host's binaries, with the host's libraries and configuration, rather than
-# copies in the image that could disagree with the host. /host is a recursive
-# bind of the host's /, so under chroot /run, with the D-Bus socket, is the
-# host's, and so is /proc, since the container shares the host's PID namespace.
+# systemctl, to this script (see Dockerfile.aks-flex-node-agent), so those
+# names run the host's binaries, with the host's libraries and configuration,
+# rather than copies in the image that could disagree with the host. /host is a
+# recursive bind of the host's /, so under chroot /run, with the D-Bus socket,
+# is the host's, and so is /proc, since the container shares the host's PID
+# namespace.
 #
 #   host-exec COMMAND [ARGS...]   run any host command
 set -euo pipefail
