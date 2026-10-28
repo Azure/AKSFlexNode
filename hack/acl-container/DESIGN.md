@@ -484,8 +484,11 @@ container start, about 12 seconds, and is gone.
   it run an archive of their choosing, so treat the parameters as sensitive.
 - `ctr` keeps NoNewPrivileges on.
 - The harness writes bootstrap's inputs, with the bootstrap token, mode 0600,
-  and reset removes them. The install's settings, which an install's pull flags
-  could put credentials in, are 0600 too.
+  and reset removes them. The install's settings are 0600 too.
+- The pull and snapshotter flags in the install's settings appear on `ctr`'s
+  command lines, which other local users can read through `/proc`. Never put
+  registry credentials in them. Pulling the agent's image from a registry that
+  needs credentials isn't supported yet.
 
 ## Open questions
 

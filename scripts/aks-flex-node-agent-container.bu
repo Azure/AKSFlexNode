@@ -9,7 +9,10 @@
 #   agent-container.env  AKS_FLEX_NODE_IMAGE, the agent image reference, and
 #                        optionally AKS_FLEX_NODE_PULL_ARGS, extra flags for
 #                        `ctr image pull`, such as --plain-http for a registry
-#                        without TLS
+#                        without TLS. Never put credentials in them: they're
+#                        on ctr's command line, which other local users can
+#                        read. A registry that needs credentials isn't
+#                        supported yet.
 #   bootstrap.env        bootstrap.sh's AKS_FLEX_NODE_* settings, one per line
 #
 # agent.ign carries bootstrap's settings, which may name secrets, so keep it as
