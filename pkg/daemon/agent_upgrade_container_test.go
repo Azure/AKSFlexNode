@@ -629,25 +629,27 @@ func TestContainerAgentConvergence(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		state       *State
-		machine     bool
-		wantBinary  string
-		wantReloads int
+		state      *State
+		machine    bool
+		unitsThere bool
+		wantBinary string
 	}{
 		"writes the units and copies the agent into the machine, once": {
-			state:       &State{ActiveMachine: "kube1"},
-			machine:     true,
-			wantBinary:  "running agent",
-			wantReloads: 1,
+			state:      &State{ActiveMachine: "kube1"},
+			machine:    true,
+			wantBinary: "running agent",
 		},
 		"skips a machine that isn't there": {
-			state:       &State{ActiveMachine: "kube1"},
-			wantReloads: 1,
+			state: &State{ActiveMachine: "kube1"},
 		},
 		"skips the machine before the node is started": {
-			machine:     true,
-			wantBinary:  "older agent",
-			wantReloads: 1,
+			machine:    true,
+			wantBinary: "older agent",
+		},
+		// An earlier start wrote them, and ended before its reload, or its reload failed.
+		"reloads systemd although the units are the image's already": {
+			state:      &State{ActiveMachine: "kube1"},
+			unitsThere: true,
 		},
 	}
 	for name, tc := range tests {
@@ -660,11 +662,17 @@ func TestContainerAgentConvergence(t *testing.T) {
 			if tc.machine {
 				writeTestFile(t, machineBinary, "older agent")
 			}
+			unitDir := filepath.Join(dir, "systemd")
+			if tc.unitsThere {
+				if _, err := writeContainerUnits(unitDir, false); err != nil {
+					t.Fatal(err)
+				}
+			}
 			reloads, retired := 0, 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
 				state:             &fakeNodeOperator{state: tc.state},
-				unitDir:           filepath.Join(dir, "systemd"),
+				unitDir:           unitDir,
 				signalPath:        filepath.Join(dir, "agent-upgrade-signal.json"),
 				reload:            func(context.Context) error { reloads++; return nil },
 				runningExecutable: func() (string, error) { return running, nil },
@@ -684,8 +692,9 @@ func TestContainerAgentConvergence(t *testing.T) {
 					t.Fatalf("converge, run %d: %v", run, err)
 				}
 			}
-			if reloads != tc.wantReloads {
-				t.Errorf("reloads = %d, want %d", reloads, tc.wantReloads)
+			// Once a start: whether it changed a unit doesn't say whether systemd has it.
+			if reloads != 2 {
+				t.Errorf("reloads = %d, want 2, once per start", reloads)
 			}
 			if retired != 2 {
 				t.Errorf("retired the lifecycle helper %d times, want 2, once per start", retired)

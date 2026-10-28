@@ -528,8 +528,17 @@ func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	if err := c.writeContainerUnits(ctx, held); err != nil {
+	changed, err := writeContainerUnits(c.unitDir, held)
+	if err != nil {
 		return false, err
+	}
+	if changed {
+		c.log.Info("updated the agent's units from its image")
+	}
+	// Whether or not this start changed a unit: an earlier one may have written them and ended
+	// before its reload, or its reload failed, and the files no longer show it.
+	if err := c.reload(ctx); err != nil {
+		return false, fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 	if !held {
 		c.retireNSpawnLifecycleHelper(ctx)
@@ -600,13 +609,18 @@ func (c *containerAgentConvergence) removeImages(ctx context.Context) {
 	}
 }
 
-// writeContainerUnits writes the agent's units in its container where they differ, and reports
-// whether any did.
 // writeUnits writes the agent's units from its image, those converge held back while an
 // AgentUpgrade was pending, once the upgrade is judged.
 func (c *containerAgentConvergence) writeUnits(ctx context.Context) error {
-	if err := c.writeContainerUnits(ctx, false); err != nil {
+	changed, err := writeContainerUnits(c.unitDir, false)
+	if err != nil {
 		return err
+	}
+	if changed {
+		if err := c.reload(ctx); err != nil {
+			return fmt.Errorf("systemctl daemon-reload: %w", err)
+		}
+		c.log.Info("updated the agent's units from its image")
 	}
 	c.retireNSpawnLifecycleHelper(ctx)
 	return nil
@@ -624,26 +638,12 @@ func (c *containerAgentConvergence) retireNSpawnLifecycleHelper(ctx context.Cont
 	}
 }
 
-func (c *containerAgentConvergence) writeContainerUnits(ctx context.Context, keepExisting bool) error {
-	changed, err := writeContainerUnits(c.unitDir, keepExisting)
-	if err != nil {
-		return err
-	}
-	if changed {
-		if err := c.reload(ctx); err != nil {
-			return fmt.Errorf("systemctl daemon-reload: %w", err)
-		}
-		c.log.Info("updated the agent's units from its image")
-	}
-	return nil
-}
-
 // writeContainerUnits writes the agent's units from its image, but with keepExisting, only those
 // that are missing, and reports whether it changed any.
 func writeContainerUnits(unitDir string, keepExisting bool) (bool, error) {
 	changed := false
-	// The recovery unit first, as on a host, so an interrupted write never leaves the agent's unit
-	// pointing at a recovery unit that isn't there.
+	// The agent's unit last, as on a host, so an interrupted write never leaves it pointing at a
+	// recovery unit that isn't there.
 	for _, unit := range []struct {
 		name    string
 		content []byte
