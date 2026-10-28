@@ -181,7 +181,9 @@ func agentUpgradeImage(request agentUpgradeRequest) (string, error) {
 	}
 	named, err := reference.ParseNamed(repository)
 	if err != nil {
-		return "", fmt.Errorf("parameter %q: invalid image reference: %w", agentUpgradeDownloadURLParameter, err)
+		// Not the parser's error: it can repeat the reference, and with it a credential.
+		return "", fmt.Errorf("parameter %q: invalid image reference: give %s and a fully qualified repository, with or without a tag",
+			agentUpgradeDownloadURLParameter, agentUpgradeImageScheme)
 	}
 	if _, digested := named.(reference.Digested); digested {
 		return "", fmt.Errorf("parameter %q: give the image's digest in %q, not in the URL",

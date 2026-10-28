@@ -115,6 +115,8 @@ func TestAgentUpgradeImage(t *testing.T) {
 		sha256      string
 		want        string
 		wantErr     string
+		// secret is in downloadURL, and mustn't be in the error.
+		secret string
 	}{
 		"a repository": {
 			downloadURL: "oci://mcr.microsoft.com/aks/flex-node",
@@ -168,6 +170,14 @@ func TestAgentUpgradeImage(t *testing.T) {
 			downloadURL: "oci://user:secret@mcr.microsoft.com/aks/flex-node",
 			sha256:      digest,
 			wantErr:     "invalid image reference",
+			secret:      "secret",
+		},
+		// The parser's own error would repeat a repository with capitals in it.
+		"a credential in a query": {
+			downloadURL: "oci://registry.example/agent?Sig=SecretValue",
+			sha256:      digest,
+			wantErr:     "invalid image reference",
+			secret:      "SecretValue",
 		},
 	}
 	for name, tc := range tests {
@@ -178,6 +188,9 @@ func TestAgentUpgradeImage(t *testing.T) {
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("agentUpgradeImage() = %q, %v; want error %q", got, err, tc.wantErr)
+				}
+				if tc.secret != "" && strings.Contains(err.Error(), tc.secret) {
+					t.Errorf("agentUpgradeImage() error %q repeats %q", err, tc.secret)
 				}
 				return
 			}
