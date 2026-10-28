@@ -30,6 +30,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 from xml.etree import ElementTree
 
 GALLERY_IMAGE = os.environ.get(
@@ -65,7 +66,7 @@ def warn(message: str) -> None:
     print(f"[acl-image] warning: {message}", flush=True)
 
 
-def die(message: str) -> None:
+def die(message: str) -> NoReturn:
     print(f"[acl-image] error: {message}", file=sys.stderr, flush=True)
     sys.exit(1)
 
@@ -116,7 +117,6 @@ def gallery_identity() -> tuple[str, str]:
     match = GALLERY_IMAGE_PATTERN.fullmatch(GALLERY_IMAGE)
     if not match or not all(GALLERY_NAME_PATTERN.fullmatch(name) for name in match.groups()):
         die(f"ACL_IMAGE_GALLERY_IMAGE={GALLERY_IMAGE!r} is not /SharedGalleries/<gallery>/Images/<image>")
-        raise AssertionError("unreachable")
     return match.group(1), match.group(2)
 
 
