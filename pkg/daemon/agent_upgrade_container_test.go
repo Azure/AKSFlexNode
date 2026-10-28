@@ -668,7 +668,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			reloads, retired := 0, 0
+			reloads := 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
 				state:             &fakeNodeOperator{state: tc.state},
@@ -685,7 +685,6 @@ func TestContainerAgentConvergence(t *testing.T) {
 					t.Errorf("unexpected ctr %q", args)
 					return nil
 				},
-				retireHelper: func(context.Context) error { retired++; return nil },
 			}
 			for run := 1; run <= 2; run++ {
 				if _, err := convergence.converge(t.Context()); err != nil {
@@ -695,9 +694,6 @@ func TestContainerAgentConvergence(t *testing.T) {
 			// Once a start: whether it changed a unit doesn't say whether systemd has it.
 			if reloads != 2 {
 				t.Errorf("reloads = %d, want 2, once per start", reloads)
-			}
-			if retired != 2 {
-				t.Errorf("retired the lifecycle helper %d times, want 2, once per start", retired)
 			}
 			for unit, want := range map[string][]byte{
 				ServiceUnitName:            containerServiceUnitContent,
@@ -876,7 +872,7 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			if tc.pending {
 				writeTestFile(t, signalPath, "{}")
 			}
-			reloads, retired := 0, 0
+			reloads := 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
 				state:             &fakeNodeOperator{},
@@ -889,8 +885,6 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 				install:           agentImageEnvFile{path: filepath.Join(dir, "settings")},
 				listImages:        func(context.Context) (string, error) { return "", nil },
 				ctr:               func(context.Context, ...string) error { return nil },
-				// While the upgrade is pending, the last-good version's hooks may run the helper.
-				retireHelper: func(context.Context) error { retired++; return nil },
 			}
 
 			held, err := convergence.converge(t.Context())
@@ -899,9 +893,6 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			}
 			if held != tc.wantHeld {
 				t.Errorf("held = %v, want %v", held, tc.wantHeld)
-			}
-			if wantRetired := map[bool]int{true: 0, false: 1}[tc.wantHeld]; retired != wantRetired {
-				t.Errorf("retired the lifecycle helper %d times, want %d", retired, wantRetired)
 			}
 			for _, unit := range containerUnitNames {
 				content, err := os.ReadFile(filepath.Join(unitDir, unit))
@@ -927,9 +918,6 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 				if content, err := os.ReadFile(filepath.Join(unitDir, unit)); err != nil || !bytes.Equal(content, want) {
 					t.Errorf("%s after writeUnits isn't the image's: %v", unit, err)
 				}
-			}
-			if wantRetired := map[bool]int{true: 1, false: 2}[tc.wantHeld]; retired != wantRetired {
-				t.Errorf("retired the lifecycle helper %d times after writeUnits, want %d", retired, wantRetired)
 			}
 			if wantReloads := map[bool]int{true: 1, false: 0}[tc.wantHeld]; reloads != wantReloads {
 				t.Errorf("reloads after writeUnits = %d, want %d", reloads, wantReloads)

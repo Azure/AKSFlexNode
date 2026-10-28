@@ -497,9 +497,6 @@ type containerAgentConvergence struct {
 	runningImage string
 	listImages   func(context.Context) (string, error)
 	ctr          func(context.Context, ...string) error
-	// retireHelper removes the nspawn lifecycle helper an earlier agent left on the host; nil does
-	// nothing.
-	retireHelper func(context.Context) error
 }
 
 func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoader) *containerAgentConvergence {
@@ -548,9 +545,6 @@ func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) 
 	// before its reload, or its reload failed, and the files no longer show it.
 	if err := c.reload(ctx); err != nil {
 		return false, fmt.Errorf("systemctl daemon-reload: %w", err)
-	}
-	if !held {
-		c.retireNSpawnLifecycleHelper(ctx)
 	}
 	c.removeImages(ctx)
 
@@ -631,20 +625,7 @@ func (c *containerAgentConvergence) writeUnits(ctx context.Context) error {
 		}
 		c.log.Info("updated the agent's units from its image")
 	}
-	c.retireNSpawnLifecycleHelper(ctx)
 	return nil
-}
-
-// retireNSpawnLifecycleHelper retires the helper once the units are the image's, not while an
-// upgrade is pending: an earlier last-good image's hooks run it. Failing is only logged; the next
-// start tries again, and the helper still works for the hooks that run it.
-func (c *containerAgentConvergence) retireNSpawnLifecycleHelper(ctx context.Context) {
-	if c.retireHelper == nil {
-		return
-	}
-	if err := c.retireHelper(ctx); err != nil {
-		c.log.Warn("kept the nspawn lifecycle helper an earlier agent left on the host", "error", err)
-	}
 }
 
 // writeContainerUnits writes the agent's units from its image, but with keepExisting, only those

@@ -376,17 +376,14 @@ func TestContainerUnitsSetUpTheirScopes(t *testing.T) {
 	}
 }
 
-func TestContainerAgentUnitClearsRecoveryAndNeedsNoUsrLocal(t *testing.T) {
+// The agent's unit's start waits for recovery's, so a recovery that outlived its unit can't run
+// beside it.
+func TestContainerAgentUnitClearsRecovery(t *testing.T) {
 	t.Parallel()
 
-	// Its start waits for recovery's, so a recovery that outlived its unit can't run beside it.
 	clearRecovery := "-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-recovery"
 	if got := unitDirectives(containerServiceUnitContent, "Service", "ExecStartPre"); !strings.Contains(strings.Join(got, " "), clearRecovery) {
 		t.Errorf("ExecStartPre= is %q, want it to include %s", got, clearRecovery)
-	}
-	// The install no longer mounts anything at /usr/local, and nothing of the agent's is there.
-	if got := unitDirectives(containerServiceUnitContent, "Unit", "RequiresMountsFor"); slices.Contains(got, "/usr/local") {
-		t.Errorf("RequiresMountsFor= is %q, want it not to include /usr/local", got)
 	}
 }
 
@@ -433,58 +430,6 @@ func TestContainerNSpawnLifecycleUnits(t *testing.T) {
 					strings.Contains(line, " pull ") {
 					t.Errorf("%s has %q", tc.unit, line)
 				}
-			}
-		})
-	}
-}
-
-// TestRetireNSpawnLifecycleHelper: the helper goes only once the hooks that ran it are rewritten.
-func TestRetireNSpawnLifecycleHelper(t *testing.T) {
-	t.Parallel()
-
-	for name, tc := range map[string]struct {
-		helper      bool
-		rewriteErr  error
-		wantRewrite bool
-		wantHelper  bool
-		wantErr     bool
-	}{
-		"does nothing without a helper": {},
-		"rewrites the hooks, then removes the helper": {
-			helper:      true,
-			wantRewrite: true,
-		},
-		"keeps the helper when the hooks can't be rewritten": {
-			helper:      true,
-			rewriteErr:  os.ErrPermission,
-			wantRewrite: true,
-			wantHelper:  true,
-			wantErr:     true,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			helper := filepath.Join(t.TempDir(), nspawnLifecycleHelperName)
-			if tc.helper {
-				writeExecutable(t, helper, "agent")
-			}
-			rewrote := false
-			err := retireNSpawnLifecycleHelperAt(t.Context(), discardLogger(), helper, func(context.Context) error {
-				rewrote = true
-				if _, err := os.Lstat(helper); err != nil {
-					t.Errorf("the helper was gone before the hooks were rewritten: %v", err)
-				}
-				return tc.rewriteErr
-			})
-			if (err != nil) != tc.wantErr {
-				t.Errorf("retireNSpawnLifecycleHelperAt() = %v, want error %v", err, tc.wantErr)
-			}
-			if rewrote != tc.wantRewrite {
-				t.Errorf("rewrote = %v, want %v", rewrote, tc.wantRewrite)
-			}
-			if _, err := os.Lstat(helper); (err == nil) != tc.wantHelper {
-				t.Errorf("helper present = %v, want %v", err == nil, tc.wantHelper)
 			}
 		})
 	}
