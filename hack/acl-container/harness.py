@@ -19,6 +19,7 @@ bridge, which the VM's containerd pulls from. See README.md for usage and DESIGN
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import hashlib
 import http.server
@@ -36,6 +37,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from typing import NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # ukiboot.py is hack/acl's, which boots ACL the same way.
@@ -145,7 +147,7 @@ def log(message: str) -> None:
     print(f"[aclc] {message}", flush=True)
 
 
-def die(message: str) -> None:
+def die(message: str) -> NoReturn:
     print(f"[aclc] error: {message}", file=sys.stderr, flush=True)
     sys.exit(1)
 
@@ -218,11 +220,6 @@ def start_registry() -> None:
 def stop_registry() -> None:
     if shutil.which(ENGINE):
         run([ENGINE, "rm", "-f", REGISTRY_NAME], check=False, capture=True)
-
-
-def push_agent_image() -> str:
-    """Push the agent image and return its digest."""
-    return push_image(LOCAL_AGENT_IMAGE, AGENT_TAG).rpartition("@")[2]
 
 
 def push_image(local: str, tag: str) -> str:
@@ -325,7 +322,6 @@ def kind(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     binary = shutil.which("kind")
     if binary is None:
         die("kind is needed for the cluster the agent joins")
-        raise AssertionError
     return run(["sudo", "env", "KIND_EXPERIMENTAL_PROVIDER=podman", binary, *args],
                check=check, capture=not check)
 
@@ -653,7 +649,6 @@ def render_ignition(bootstrap_env: str | None) -> dict:
 
 
 def data_url(content: str) -> str:
-    import base64
     return "data:;base64," + base64.b64encode(content.encode()).decode()
 
 
@@ -746,7 +741,6 @@ def ovmf_firmware() -> tuple[Path, Path]:
         if Path(code).is_file() and Path(variables).is_file():
             return Path(code), Path(variables)
     die("OVMF firmware not found; install the ovmf or edk2-ovmf package")
-    raise AssertionError
 
 
 def ensure_ssh_key() -> str:
@@ -871,6 +865,7 @@ def agent_task_status() -> str:
 
 
 def agent_task_pid() -> str:
+    """Return the agent task's PID, or "" if there is none."""
     out = ssh(f"sudo {CTR} task ls", check=False).stdout
     for line in out.splitlines()[1:]:
         fields = line.split()
@@ -1056,7 +1051,7 @@ def check_container(checks: Checks) -> None:
     checks.expect(ssh(f"systemctl is-active {AGENT_UNIT}", check=False).stdout.strip() == "active",
                   f"{AGENT_UNIT} is active")
     checks.expect(agent_task_status() == "RUNNING", "the agent task runs in containerd")
-    pid = ssh_out(f"sudo {CTR} task ls | awk '$1 == \"{CONTAINER_ID}\" {{print $2}}'")
+    pid = agent_task_pid()
     cgroup = ssh_out(f"cat /proc/{pid}/cgroup") if pid else ""
     checks.expect(cgroup == "0::/system.slice/system-aksflex.slice/aks-flex-agent.scope",
                   "the agent's container runs in aks-flex-agent.scope, where systemd tracks it", cgroup)
@@ -1684,7 +1679,7 @@ def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
     # A container that won't stop still stops with its unit, though systemd only kills ctr: its
     # scope, bound to the unit, kills it 30 s into the stop, before the unit's own timeout, and is
     # unloaded though it failed, so the next container gets its name.
-    pid = ssh_out(f"sudo {CTR} task ls | awk '$1 == \"{CONTAINER_ID}\" {{print $2}}'")
+    pid = agent_task_pid()
     make_room_for_agent_starts(1)
     log(f"stopping {AGENT_UNIT} with its daemon ignoring SIGTERM")
     out = ssh("sudo bash -s", timeout=300, check=False, input=textwrap.dedent(f"""\
@@ -1778,7 +1773,7 @@ def cmd_up(args: argparse.Namespace) -> None:
         CLUSTER_MARKER.unlink(missing_ok=True)
     if args.agent:
         build_agent_image()
-        push_agent_image()
+        push_image(LOCAL_AGENT_IMAGE, AGENT_TAG)
 
     doc = add_harness_access(render_ignition(bootstrap.pop(BOOTSTRAP_INPUTS, None)), public_key)
     ignition = STATE / IGNITION_NAME
@@ -1816,7 +1811,7 @@ def snapshotter_pull_args() -> str:
 def cmd_push(_: argparse.Namespace) -> None:
     require_vm()
     build_agent_image()
-    push_agent_image()
+    push_image(LOCAL_AGENT_IMAGE, AGENT_TAG)
     # The agent's unit runs the image bootstrap pulled, so pull the new one as bootstrap does. An
     # AgentUpgrade's selection of another image would override it.
     log(f"pulling {VM_AGENT_IMAGE} on the VM and restarting {AGENT_UNIT}")
@@ -1859,7 +1854,7 @@ def cmd_check(args: argparse.Namespace) -> None:
 
     def machines() -> None:
         check_machine_lifecycle(checks, reboot=args.reboot)
-        if cluster and args.reboot:
+        if args.reboot:
             wait_for_node_ready()
             checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
 
