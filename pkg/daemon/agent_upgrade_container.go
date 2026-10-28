@@ -573,7 +573,7 @@ func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) 
 
 // removeImages removes the images AgentUpgrades pulled, which carry agentUpgradeImageLabel, that
 // the agent won't run again: all but the selected and last good ones, the install's, which
-// bootstrap runs after a reset, even offline, and the one this daemon runs. Images it didn't pull
+// bootstrap runs after a reset, and the one this daemon runs. Images it didn't pull
 // for an upgrade, such as one staged for a join, stay. Failing to remove one is only logged, and
 // failing to learn which to keep removes none.
 func (c *containerAgentConvergence) removeImages(ctx context.Context) {

@@ -1621,7 +1621,7 @@ def check_local_reset(checks: Checks) -> None:
                   "" if succeeded else ssh(f"journalctl -u {RESET_UNIT} -b --no-pager -n 30",
                                            check=False).stdout)
     check_reset(checks, "reset")
-    # The install's image is still here, so bootstrap runs it, offline as it would be.
+    # The install's image is still here, so bootstrap runs it without pulling.
     check_rejoin(checks, "reset", registry_unreachable=True)
 
 
