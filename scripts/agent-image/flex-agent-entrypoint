@@ -6,7 +6,8 @@
 # unchanged, uses the host's. The list is here, in the image, so it changes with
 # the agent rather than with the host's provisioning. It then checks what the
 # agent relies on, the host's machinectl answering over D-Bus, logs it, and runs
-# COMMAND. A failed check exits, so the failure shows in the unit's log.
+# COMMAND. A failed check exits, so the failure shows in the unit's log, except
+# for reset and upgrade recovery, which warn and run.
 set -euo pipefail
 
 host=/host
@@ -73,6 +74,15 @@ log "host: $(. /etc/os-release && echo "$PRETTY_NAME")"
 log "SELinux context: $(tr -d '\0' </proc/self/attr/current 2>/dev/null || echo none)"
 log "PID namespace: $(readlink /proc/self/ns/pid), host $(readlink /proc/1/ns/pid)"
 if ! machines=$(machinectl list --no-legend --no-pager 2>&1); then
+    # Reset and recovery do what they can without machined: they're how a broken
+    # node is brought back.
+    case "${1:-} ${2:-}" in
+        "aks-flex-node reset" | "aks-flex-node recover-agent-upgrade")
+            log "warning: the host's machinectl failed: $machines"
+            log "agent container running $* anyway"
+            exec "$@"
+            ;;
+    esac
     log "error: the host's machinectl failed: $machines"
     exit 1
 fi
