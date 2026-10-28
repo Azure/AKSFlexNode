@@ -516,7 +516,7 @@ jobs:
           sha256: ${AGENT_IMAGE_DIGEST#sha256:}
           \`\`\`
 
-          Verify its build provenance with \`gh attestation verify oci://${AGENT_IMAGE}@${AGENT_IMAGE_DIGEST} --owner ${GITHUB_REPOSITORY_OWNER}\`. See [Azure Container Linux](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/docs/usage/azure-container-linux.md).
+          Verify its build provenance with \`gh attestation verify oci://${AGENT_IMAGE}@${AGENT_IMAGE_DIGEST} --repo ${GITHUB_REPOSITORY}\`. See [Azure Container Linux](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/docs/usage/azure-container-linux.md).
 
           ### Verification
 
