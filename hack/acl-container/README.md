@@ -239,7 +239,7 @@ for its latest instead. Once a version is exported, `up` boots it again without
 | `ACL_IMAGE_VERSION` | `3.20261027.1` | Gallery image version; empty for the gallery's latest |
 | `ACL_IMAGE_GALLERY_IMAGE` | `/SharedGalleries/035db282-f1c8-4ce7-b78f-2a7265d5398c-ACLDEVEL/Images/acl-1es-eval-kvm` | Gallery image |
 | `ACL_IMAGE_DIR` | `.vm/acl-images` | Where exported images are kept; `down` keeps them |
-| `ACLC_STATE_DIR` | `.vm/acl-container` | VM disk, logs, SSH key, kubeconfig, rendered Ignition |
+| `ACLC_STATE_DIR` | `.vm/acl-container` | VM disk, logs, SSH key, kubeconfig, rendered Ignition. A new or empty directory, which `down` removes |
 | `ACLC_CONTAINER_ENGINE` | `podman` if installed, else `docker` | Builds the images, runs the registry and Butane |
 | `ACLC_KIND_CLUSTER` | `aclc` | The kind cluster's name |
 | `ACLC_KIND_NODE_IMAGE` | kind's default | The kind node image |

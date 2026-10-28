@@ -45,8 +45,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DEFAULT_STATE = REPO / ".vm" / "acl-container"
 STATE = Path(os.environ.get("ACLC_STATE_DIR", str(DEFAULT_STATE)))
-# up marks the state directory it makes, which down removes only if it's the default or marked:
-# ACLC_STATE_DIR could name any directory.
+# up makes the state directory, or takes an empty one, and marks it; down removes it only if it's
+# the default or marked: ACLC_STATE_DIR could name any directory.
 STATE_MARKER = STATE / ".aclc-state"
 IMAGE_DIR = Path(os.environ.get("ACL_IMAGE_DIR", str(REPO / ".vm" / "acl-images")))
 
@@ -1741,16 +1741,25 @@ def check_prerequisites(with_agent: bool) -> None:
         die("sudo needs a password; run `sudo -v` in this terminal first")
 
 
+def claim_state_dir() -> None:
+    """Make the state directory and mark it, for down to remove. An existing one has to be the
+    default, marked already, or empty: down mustn't remove a directory that holds anything else."""
+    if STATE.exists() and not STATE_MARKER.exists() and STATE.resolve() != DEFAULT_STATE.resolve():
+        if not STATE.is_dir() or any(STATE.iterdir()):
+            die(f"{STATE} isn't a directory up made, or an empty one; set ACLC_STATE_DIR to a new or empty directory")
+    STATE.mkdir(parents=True, exist_ok=True)
+    STATE.chmod(0o700)
+    STATE_MARKER.touch()
+
+
 def cmd_up(args: argparse.Namespace) -> None:
     local = Path(args.image).expanduser() if args.image else None
     if local and not local.is_file():
         die(f"image not found: {local}")
+    claim_state_dir()
     check_prerequisites(args.agent)
     image = local or aclimage.gallery_image(IMAGE_DIR)
     stop_vm()
-    STATE.mkdir(parents=True, exist_ok=True)
-    STATE.chmod(0o700)
-    STATE_MARKER.touch()
     public_key = ensure_ssh_key()
 
     create_network()
