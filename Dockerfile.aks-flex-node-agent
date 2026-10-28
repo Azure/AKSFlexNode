@@ -65,7 +65,7 @@ COPY --chmod=0755 scripts/agent-image/aks-flex-node-bootstrap \
 # The agent runs them by name, and the host's copies match its systemd and
 # kernel.
 RUN for tool in machinectl systemctl systemd-run systemd-nspawn journalctl \
-        ip nft sysctl modprobe swapoff udevadm mount umount mountpoint ctr; do \
+        resolvectl ip nft sysctl modprobe swapoff udevadm mount umount mountpoint ctr; do \
       ln -s host-exec /opt/aks-flex-node/bin/$tool; \
     done
 
