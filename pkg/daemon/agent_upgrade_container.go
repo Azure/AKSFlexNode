@@ -456,9 +456,12 @@ func recoverContainerAgentUpgrade(
 		return err
 	}
 	// The failing candidate may have hit the unit's start limit, which reset-failed clears, so the
-	// unit starts again, on the restored image: it reads the selection at every start.
+	// unit starts again, on the restored image: it reads the selection at every start. Without the
+	// reset, the restart is still worth trying, as a host's recovery script and an upgrade's
+	// restart try it.
 	if err := systemctl(ctx, "reset-failed", ServiceUnitName); err != nil {
-		return fmt.Errorf("reset the agent's unit: %w", err)
+		log.Warn("failed to reset the agent unit's start limit before restarting it",
+			"unit", ServiceUnitName, "error", err)
 	}
 	return systemctl(ctx, "--no-block", "restart", ServiceUnitName)
 }
