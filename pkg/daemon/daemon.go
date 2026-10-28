@@ -71,6 +71,30 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
+	store, err := NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	operator, err := newNSpawnNodeOperator(cfg, store)
+	if err != nil {
+		return err
+	}
+	// In its container, the agent's units and its binary in the active machine converge here,
+	// before the daemon builds its clients, as a host's install does above: a daemon whose
+	// credentials fail still leaves them as its image has them.
+	if containerized {
+		convergence := newContainerAgentConvergence(log, operator)
+		convergence.retireHelper = func(ctx context.Context) error {
+			return retireNSpawnLifecycleHelper(ctx, log, cfg, store)
+		}
+		held, err := convergence.converge(ctx)
+		if err != nil {
+			return err
+		}
+		if held {
+			convergeHeldAssets = convergence.writeUnits
+		}
+	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err
@@ -81,10 +105,6 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	})
 	if err != nil {
 		return fmt.Errorf("create AKS machine client: %w", err)
-	}
-	store, err := NewFileStateStore()
-	if err != nil {
-		return err
 	}
 	nodeName := cfg.Agent.NodeName
 	// TODO: use the ARM machine resource name once the AKS RP Machine API contract is defined.
@@ -105,23 +125,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
-	operator, err := newNSpawnNodeOperator(cfg, store)
-	if err != nil {
-		return err
-	}
 	var upgrades agentUpgrader
 	if containerized {
-		convergence := newContainerAgentConvergence(log, operator)
-		convergence.retireHelper = func(ctx context.Context) error {
-			return retireNSpawnLifecycleHelper(ctx, log, cfg, store)
-		}
-		held, convergeErr := convergence.converge(ctx)
-		if convergeErr != nil {
-			return convergeErr
-		}
-		if held {
-			convergeHeldAssets = convergence.writeUnits
-		}
 		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
 	} else {
 		upgrades, err = newHostAgentUpgradeExecutor(log, operator)
