@@ -429,12 +429,6 @@ in a short-lived container of the image the agent's unit runs. That image is on
 the host, so a machine's start pulls nothing, and the machines start without the
 agent's daemon.
 
-An earlier preview left a copy of the agent's binary on the host,
-`/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle`, which its hooks
-ran. The daemon rewrites the active machine's hooks and removes the copy at its
-start, once no `AgentUpgrade` is pending: until it's judged, the last good
-image's hooks may run it.
-
 ## SELinux
 
 We raised what the agent's containers needed with the ACL team, who changed

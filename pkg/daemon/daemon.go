@@ -84,9 +84,6 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// credentials fail still leaves them as its image has them.
 	if containerized {
 		convergence := newContainerAgentConvergence(log, operator)
-		convergence.retireHelper = func(ctx context.Context) error {
-			return retireNSpawnLifecycleHelper(ctx, log, cfg, store)
-		}
 		held, err := convergence.converge(ctx)
 		if err != nil {
 			return err
