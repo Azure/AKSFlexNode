@@ -1,5 +1,12 @@
 # Azure Container Linux
 
+> [!WARNING]
+> **Experimental.** Azure Container Linux support is experimental, whether the agent runs in containers, as this page describes, or [on the host](#the-agent-on-the-host). Don't use it for production nodes. Its settings, units, and `AgentUpgrade` parameters may change between releases without a migration path.
+>
+> - The agent in containers needs Azure Container Linux 3.0.20261026 or later, which isn't yet in the image AKS uses.
+> - It has run only on local VMs, not on Azure VMs, so bootstrap with a managed identity or a service principal is untested ([#399](https://github.com/Azure/AKSFlexNode/issues/399)).
+> - Not supported yet: offline install, GPU hosts ([#416](https://github.com/Azure/AKSFlexNode/issues/416)), and pulling the agent's image from a registry that needs credentials.
+
 Azure Container Linux mounts `/usr` read-only and is provisioned only by Ignition. On it, the agent runs as privileged containerd containers of its own image, which each release publishes. Nothing of the agent is installed on the host: its Ignition config installs only systemd units and settings, and the units run containers of the image. Installing the agent on the host instead, as [Hosts provisioned by Ignition](getting-started.md#hosts-provisioned-by-ignition) describes, also works, as an interim; see [The agent on the host](#the-agent-on-the-host).
 
 The agent keeps its config, commands, unit name, MachineOperations, and reset: it joins, repaves, restarts its machine, upgrades, and resets as on any host.

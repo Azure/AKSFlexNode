@@ -8,8 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Support for Azure Container Linux and other hosts with a read-only `/usr`, and a Butane config, `scripts/aks-flex-node-bootstrap.bu`, that bootstraps a host provisioned by Ignition ([#323](https://github.com/Azure/AKSFlexNode/pull/323)).
-- Run the agent on Azure Container Linux as privileged containers of its image, which installs nothing of it on the host. Releases publish the image, `ghcr.io/azure/aks-flex-node-agent`, for `linux/amd64` and `linux/arm64`, and a Butane config, `scripts/aks-flex-node-agent-container.bu`, installs it. There, an `AgentUpgrade` names an image, as an `oci://` `downloadURL` with its digest as `sha256` ([#370](https://github.com/Azure/AKSFlexNode/pull/370)).
+- Support for Azure Container Linux (experimental) and other hosts with a read-only `/usr`, and a Butane config, `scripts/aks-flex-node-bootstrap.bu`, that bootstraps a host provisioned by Ignition ([#323](https://github.com/Azure/AKSFlexNode/pull/323)).
+- Experimental: run the agent on Azure Container Linux as privileged containers of its image, with nothing of the agent installed on the host. It needs Azure Container Linux 3.0.20261026 or later. Releases publish the image, `ghcr.io/azure/aks-flex-node-agent`, for `linux/amd64` and `linux/arm64`, and a Butane config, `scripts/aks-flex-node-agent-container.bu`, installs it. There, an `AgentUpgrade` names an image, as an `oci://` `downloadURL` with its digest as `sha256`. `bootstrap.sh --installed-agent PATH`, or `AKS_FLEX_NODE_INSTALLED_AGENT`, runs an agent that's already installed rather than downloading one ([#370](https://github.com/Azure/AKSFlexNode/pull/370)).
 
 ### Changed
 
