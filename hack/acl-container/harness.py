@@ -38,6 +38,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# ukiboot.py is hack/acl's, which boots ACL the same way.
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "acl"))
 import aclimage  # noqa: E402
 import ukiboot  # noqa: E402
 

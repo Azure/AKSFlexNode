@@ -292,4 +292,4 @@ The subnet, interface names, and ports differ from the other harnesses in
 | `../../scripts/agent-image/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
 | `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
 | `aclimage.py` | Gallery image export |
-| `ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon |
+| `../acl/ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon; shared with `hack/acl` |

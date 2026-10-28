@@ -16,6 +16,7 @@ on:
       - scripts/aks-flex-node-agent-container.bu
       - scripts/bootstrap.sh
       - hack/acl-container/**
+      - hack/acl/ukiboot.py
       - .github/workflows/acl-container-checks.yml
       - .github/workflows/agent-image-build.yml
   push:
@@ -29,6 +30,7 @@ on:
       - scripts/aks-flex-node-agent-container.bu
       - scripts/bootstrap.sh
       - hack/acl-container/**
+      - hack/acl/ukiboot.py
       - .github/workflows/acl-container-checks.yml
       - .github/workflows/agent-image-build.yml
   workflow_dispatch:
@@ -57,7 +59,7 @@ jobs:
             scripts/agent-image/*
 
       - name: Compile Python
-        run: python3 -m py_compile hack/acl-container/*.py
+        run: python3 -m py_compile hack/acl-container/*.py hack/acl/ukiboot.py
 
       - name: Render the Butane config
         run: |
