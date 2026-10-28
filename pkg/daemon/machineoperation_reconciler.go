@@ -189,7 +189,7 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
 	}
-	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
+	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent"); err != nil {
 		cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
 		abortErr := h.agentUpgrade.Abort(cleanupCtx)
 		cancel()

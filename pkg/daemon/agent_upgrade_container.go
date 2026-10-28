@@ -81,7 +81,7 @@ func (s agentImageEnvFile) read() (current, lastGood string, err error) {
 		return "", "", nil
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("read the agent's image selection: %w", err)
+		return "", "", fmt.Errorf("read the agent's images: %w", err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		name, value, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -432,9 +432,10 @@ func (e *containerAgentUpgradeExecutor) finish(
 }
 
 // recoverContainerAgentUpgrade is the recovery unit's work in the agent's container, which runs
-// it from the last-good image once the upgraded agent's unit has hit its start limit. As a host's
-// recovery script does, it records the failure, restores the last-good image, and restarts the
-// agent's unit.
+// it from the last-good image when the upgraded agent's unit fails: at every failure on systemd
+// 254 and later, and once the unit hits its start limit on earlier ones. As a host's recovery
+// script does, it records the failure, restores the last-good image, and restarts the agent's
+// unit.
 func recoverContainerAgentUpgrade(
 	ctx context.Context,
 	log *slog.Logger,
