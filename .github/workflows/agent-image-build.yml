@@ -48,16 +48,22 @@ jobs:
           fetch-depth: 0
 
       # The image's last stage installs packages for each platform: arm64's runs under QEMU on
-      # the amd64 runner. Its Go build cross-compiles, on the runner's own platform.
+      # the amd64 runner. Its Go build cross-compiles, on the runner's own platform. The
+      # emulators run every arm64 step of the published image, so they're pinned by digest, and
+      # pulled rather than restored from a cache.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
 
+      # BuildKit builds the published image, so it's pinned by digest too.
       - name: Configure Docker Buildx
         run: |
           set -euo pipefail
-          docker buildx create --name aks-flex-builder --use
+          docker buildx create --name aks-flex-builder --use \
+            --driver-opt image=docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
           docker buildx inspect --bootstrap
 
       - name: Login to GHCR

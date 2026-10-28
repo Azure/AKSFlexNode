@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
 # The image that runs the AKS Flex Node agent as privileged containerd containers
 # on Azure Container Linux; see hack/acl-container/DESIGN.md. It holds only what
@@ -8,7 +8,8 @@
 #   podman build -f Dockerfile.aks-flex-node-agent -t aks-flex-node-agent:dev .
 
 # Base images are pinned by digest, each an index of their platforms: the
-# published image is built from them. The Go one is go.mod's version, upstream,
+# published image is built from them. So is the syntax frontend above, which
+# BuildKit runs to read this file. The Go image is go.mod's version, upstream,
 # as the release builds the agent with. It runs on the build's own platform and
 # cross-compiles for the image's.
 FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS build
