@@ -548,13 +548,13 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 			wantCalls:    []string{resetFailed, "systemctl --no-block restart " + ServiceUnitName},
 			wantSelected: testAgentImageV1,
 		},
-		// The image is restored, for the next start of the unit, however it comes about.
-		"reports a unit it can't reset": {
+		// The restart may still work: on systemd 254 and later, recovery runs at the first
+		// failure, before the start limit.
+		"restarts the agent even when it can't reset the unit": {
 			pending:      true,
 			resetFails:   true,
-			wantCalls:    []string{resetFailed},
+			wantCalls:    []string{resetFailed, "systemctl --no-block restart " + ServiceUnitName},
 			wantSelected: testAgentImageV1,
-			wantErr:      true,
 		},
 	}
 	for name, tc := range tests {
