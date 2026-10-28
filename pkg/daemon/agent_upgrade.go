@@ -29,9 +29,6 @@ import (
 const (
 	agentUpgradeDownloadURLParameter = "downloadURL"
 	agentUpgradeSHA256Parameter      = "sha256"
-	// agentUpgradeImageScheme begins a downloadURL that names an image, for the agent in its
-	// container, rather than a release archive, as Helm and Flux name OCI artifacts.
-	agentUpgradeImageScheme = "oci://"
 )
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
@@ -48,6 +45,9 @@ type agentUpgradeRequest struct {
 	sha256      string
 }
 
+// parseAgentUpgradeRequest reads an AgentUpgrade's parameters and checks what every agent requires
+// of them: a download URL and a SHA-256. Which URLs an agent takes, an archive's or an image's, is
+// its executor's to check; see agentUpgradeExecutor.Validate.
 func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest, error) {
 	request := agentUpgradeRequest{
 		downloadURL: strings.TrimSpace(parameters[agentUpgradeDownloadURLParameter]),
@@ -56,23 +56,23 @@ func parseAgentUpgradeRequest(parameters map[string]string) (agentUpgradeRequest
 	if request.downloadURL == "" {
 		return agentUpgradeRequest{}, fmt.Errorf("missing required parameter %q", agentUpgradeDownloadURLParameter)
 	}
-	// An image is the container's to check; a host rejects it, as any URL that isn't HTTP or HTTPS.
-	if _, ok := cutAgentUpgradeImageScheme(request.downloadURL); ok {
-		return request, nil
-	}
-	if _, err := secureAgentInstallOptions(request.downloadURL, request.sha256); err != nil {
+	if _, err := agentUpgradeDigest(request.sha256); err != nil {
 		return agentUpgradeRequest{}, err
 	}
 	return request, nil
 }
 
-// cutAgentUpgradeImageScheme returns downloadURL without agentUpgradeImageScheme, which, as any
-// URL's scheme, may be in any case, and whether it began with it.
-func cutAgentUpgradeImageScheme(downloadURL string) (string, bool) {
-	if len(downloadURL) < len(agentUpgradeImageScheme) || !strings.EqualFold(downloadURL[:len(agentUpgradeImageScheme)], agentUpgradeImageScheme) {
-		return "", false
+// agentUpgradeDigest returns an AgentUpgrade's SHA-256 in lower-case hex, without the optional
+// "sha256:" prefix.
+func agentUpgradeDigest(sha256Parameter string) (string, error) {
+	if sha256Parameter == "" {
+		return "", fmt.Errorf("missing required parameter %q", agentUpgradeSHA256Parameter)
 	}
-	return downloadURL[len(agentUpgradeImageScheme):], true
+	digest := strings.ToLower(strings.TrimPrefix(sha256Parameter, "sha256:"))
+	if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
+		return "", fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
+	}
+	return digest, nil
 }
 
 type agentUpgradeSignal struct {
@@ -290,8 +290,7 @@ func (e *hostAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 	return agentbinary.AcquireHostActivationLock(agentUpgradeLockPath)
 }
 
-// Validate takes an archive's HTTP or HTTPS URL, as parseAgentUpgradeRequest does for any URL but
-// an image's.
+// Validate takes an archive's HTTP or HTTPS URL, and refuses an image's, as any other URL.
 func (e *hostAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
 	_, err := secureAgentInstallOptions(request.downloadURL, request.sha256)
 	return err

@@ -3,8 +3,6 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -168,6 +166,19 @@ func (e *containerAgentUpgradeExecutor) Validate(request agentUpgradeRequest) er
 	return err
 }
 
+// agentUpgradeImageScheme begins a downloadURL that names an image, for the agent in its container,
+// rather than a release archive, as Helm and Flux name OCI artifacts.
+const agentUpgradeImageScheme = "oci://"
+
+// cutAgentUpgradeImageScheme returns downloadURL without agentUpgradeImageScheme, which, as any
+// URL's scheme, may be in any case, and whether it began with it.
+func cutAgentUpgradeImageScheme(downloadURL string) (string, bool) {
+	if len(downloadURL) < len(agentUpgradeImageScheme) || !strings.EqualFold(downloadURL[:len(agentUpgradeImageScheme)], agentUpgradeImageScheme) {
+		return "", false
+	}
+	return downloadURL[len(agentUpgradeImageScheme):], true
+}
+
 // agentUpgradeImage returns the image an AgentUpgrade names, pinned by digest, as ctr pulls it:
 // downloadURL is agentUpgradeImageScheme and a fully qualified repository, with or without a tag,
 // and sha256 is the image's digest. The digest comes only from sha256, as an archive's does, not
@@ -189,12 +200,9 @@ func agentUpgradeImage(request agentUpgradeRequest) (string, error) {
 		return "", fmt.Errorf("parameter %q: give the image's digest in %q, not in the URL",
 			agentUpgradeDownloadURLParameter, agentUpgradeSHA256Parameter)
 	}
-	if request.sha256 == "" {
-		return "", fmt.Errorf("missing required parameter %q", agentUpgradeSHA256Parameter)
-	}
-	digest := strings.ToLower(strings.TrimPrefix(request.sha256, "sha256:"))
-	if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
-		return "", fmt.Errorf("expected SHA-256 must be exactly 64 hexadecimal characters")
+	digest, err := agentUpgradeDigest(request.sha256)
+	if err != nil {
+		return "", err
 	}
 	return repository + "@sha256:" + digest, nil
 }
