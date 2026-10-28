@@ -159,7 +159,7 @@ there and the agent's unit isn't enabled, so it does nothing once the agent is
 installed. After a reset, new inputs and a start of the unit join the node again. It
 pulls the image at every bootstrap, so a tag names what it does now, as a host's
 bootstrap downloads the agent its inputs name. When the pull fails, an image
-already there, such as the install's after a reset, runs as it is, offline too.
+already there, such as the install's after a reset, runs as it is.
 It retries a bootstrap that fails, or finds no image, such as while the network
 comes up, for as long as it takes, backing off from 10 seconds to 5 minutes
 between tries. It doesn't retry one that retrying can't fix, for which
@@ -371,7 +371,7 @@ At every start, the daemon also removes the images upgrades pulled that it won't
 run again. The agent labels each image as it pulls it for an upgrade, and
 removes only those, never one staged, or built into the OS, for a join. It
 keeps the selected one, the last good one, the install's, which bootstrap runs
-after a reset, even offline, and the one it runs. It's best effort: a failed
+after a reset, and the one it runs. It's best effort: a failed
 removal is only logged, and not knowing which to keep removes none. Each call
 to containerd has a minute: the daemon does this before it reports an upgrade
 or reconciles, and its unit counts as started already, so a call that hung

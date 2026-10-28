@@ -114,7 +114,7 @@ systemd:
         # Pulls at every bootstrap, so a tag names what it does now, as a host's
         # bootstrap downloads the agent its inputs name. When the pull fails, an
         # image that's here already, such as the install's after a reset, runs as
-        # it is, offline too; without one, ctr run fails, and the unit retries.
+        # it is; without one, ctr run fails, and the unit retries.
         ExecStartPre=-/usr/bin/ctr --namespace aks-flex image pull $AKS_FLEX_NODE_SNAPSHOTTER_PULL_ARGS $AKS_FLEX_NODE_PULL_ARGS ${AKS_FLEX_NODE_IMAGE}
         # In a scope systemd tracks, set up as the agent's unit, in the agent's
         # image, sets up its container's: bound to this unit, killed 30 s into a
