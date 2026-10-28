@@ -72,9 +72,17 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 			},
 			wantErr: "64 hexadecimal",
 		},
-		// The agent in its container checks an image's; see TestAgentUpgradeImage.
+		// Which URLs an agent takes is its executor's to check; see
+		// TestAgentUpgradeExecutorsTakeTheirOwnKindOfRequest.
 		"an image": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent",
+				agentUpgradeSHA256Parameter:      "sha256:" + strings.Repeat("a", 64),
+			},
+		},
+		"an image without its digest": {
 			parameters: map[string]string{agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent"},
+			wantErr:    agentUpgradeSHA256Parameter,
 		},
 	}
 	for name, tt := range tests {
