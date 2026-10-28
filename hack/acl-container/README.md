@@ -1,5 +1,9 @@
 # Azure Container Linux harness: the agent in a container
 
+> [!WARNING]
+> Azure Container Linux support is experimental, and not for production nodes.
+> See the limits in [Azure Container Linux](../../docs/usage/azure-container-linux.md).
+
 This harness runs the AKS Flex Node agent from this repository on Azure
 Container Linux (ACL), as privileged containerd containers of its own image,
 and joins the VM to a Kubernetes cluster. It boots ACL in a local VM under

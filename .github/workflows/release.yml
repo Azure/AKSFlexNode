@@ -499,11 +499,11 @@ jobs:
           - **Ubuntu 22.04 LTS (AMD64)**: \`aks-flex-node-linux-amd64.tar.gz\`
           - **Ubuntu 22.04 LTS (ARM64)**: \`aks-flex-node-linux-arm64.tar.gz\`
           - **Ubuntu 24.04 LTS**: Compatible with AMD64 and ARM64 binaries above
-          - **Azure Container Linux**: the agent's image, below
+          - **Azure Container Linux** (experimental): the agent's image, below
 
-          ### Azure Container Linux
+          ### Azure Container Linux (experimental)
 
-          On Azure Container Linux, the agent runs as privileged containers of its image, for \`linux/amd64\` and \`linux/arm64\`. Name it pinned by digest in the install's settings, as \`AKS_FLEX_NODE_IMAGE\`:
+          Azure Container Linux support is experimental and not for production nodes; see the guide linked below for what it needs and what isn't supported yet. On Azure Container Linux, the agent runs as privileged containers of its image, for \`linux/amd64\` and \`linux/arm64\`. Name it pinned by digest in the install's settings, as \`AKS_FLEX_NODE_IMAGE\`:
 
           \`\`\`
           ${AGENT_IMAGE}:${RELEASE_VERSION}@${AGENT_IMAGE_DIGEST}

@@ -1,6 +1,6 @@
 # Butane config that bootstraps AKS Flex Node on a host provisioned by Ignition,
-# such as Azure Container Linux. See "Hosts provisioned by Ignition" in
-# docs/usage/getting-started.md.
+# such as Azure Container Linux, where support is experimental. See "Hosts
+# provisioned by Ignition" in docs/usage/getting-started.md.
 #
 # Render it with Butane, from a directory holding the three files it names:
 #

@@ -85,7 +85,7 @@ journalctl -u aks-flex-node-agent -f
 
 ## Managed agent upgrade
 
-When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and the required SHA-256 of the compressed archive. On Azure Container Linux, where the agent runs in containers of its image, it names an image instead; see [Upgrading the agent](azure-container-linux.md#upgrading-the-agent).
+When the Unbounded `MachineOperation` API is installed, submit an `AgentUpgrade` with an HTTP or HTTPS release archive and the required SHA-256 of the compressed archive. When the agent runs in containers on Azure Container Linux, which is experimental, it names an image instead; see [Upgrading the agent](azure-container-linux.md#upgrading-the-agent).
 
 ```yaml
 apiVersion: unbounded-cloud.io/v1alpha3
@@ -123,7 +123,7 @@ sudo /var/tmp/aks-flex-node-candidate agent-upgrade
 
 The candidate must be staged separately from the installed binary. Direct activation and `MachineOperation` activation share one host lock and refuse to overlap with a pending operation signal. Both paths verify the candidate, switch the same blue/green layout, and restore last-good on activation failure. If `aks-flex-node-agent.service` is active, direct activation restarts it, verifies the running executable, and synchronizes the active nspawn exec-credential binary. If the service is already inactive during reset/rejoin provisioning, activation preserves that stopped state; the subsequent bootstrap starts the service and worker.
 
-On Azure Container Linux, see [Azure Container Linux](azure-container-linux.md) for what differs.
+On Azure Container Linux, where support is experimental, see [Azure Container Linux](azure-container-linux.md) for what differs.
 
 ## Managed node restart and reset
 

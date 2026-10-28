@@ -1,5 +1,9 @@
 # Design: the AKS Flex Node agent in a container on Azure Container Linux
 
+> [!WARNING]
+> Azure Container Linux support is experimental, and not for production nodes.
+> See the limits in [Azure Container Linux](../../docs/usage/azure-container-linux.md).
+
 > [!NOTE]
 > The AKS Flex Node agent runs on Azure Container Linux (ACL) as privileged
 > containerd containers of its own image. This is how, and what differs from
