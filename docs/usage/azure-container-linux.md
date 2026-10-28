@@ -7,9 +7,12 @@
 > - It has run only on local VMs, not on Azure VMs, so bootstrap with a managed identity or a service principal is untested ([#399](https://github.com/Azure/AKSFlexNode/issues/399)).
 > - Not supported yet: offline install, GPU hosts ([#416](https://github.com/Azure/AKSFlexNode/issues/416)), and pulling the agent's image from a registry that needs credentials.
 
-Azure Container Linux mounts `/usr` read-only and is provisioned only by Ignition. On it, the agent runs as privileged containerd containers of its own image, which each release publishes. Nothing of the agent is installed on the host: its Ignition config installs only systemd units and settings, and the units run containers of the image. Installing the agent on the host instead, as [Hosts provisioned by Ignition](getting-started.md#hosts-provisioned-by-ignition) describes, also works, as an interim; see [The agent on the host](#the-agent-on-the-host).
+Azure Container Linux mounts `/usr` read-only and is provisioned only by Ignition. The agent can run on it in two ways:
 
-The agent keeps its config, commands, unit name, MachineOperations, and reset: it joins, repaves, restarts its machine, upgrades, and resets as on any host.
+- **In containers**, as this page describes. The agent runs as privileged containerd containers of an image that each release publishes. The host gets only systemd units and settings files, and no agent binaries.
+- **On the host**, under `/opt/unbounded/agent`, as [Hosts provisioned by Ignition](getting-started.md#hosts-provisioned-by-ignition) describes. See [The agent on the host](#the-agent-on-the-host) for what differs there.
+
+In containers, the agent keeps its configuration, its commands, the `aks-flex-node-agent.service` unit, MachineOperations, repave, and reset. This page covers what differs. For how it works, see the [design](../../hack/acl-container/DESIGN.md).
 
 ## Requirements
 
@@ -64,18 +67,23 @@ Use `node.ign` as the host's Ignition config; on Azure, that's the VM's custom d
 - For a base config, uncomment its entry in the template, put `base-config.json` next to it, and set `AKS_FLEX_NODE_BASE_CONFIG_FILE=/etc/aks-flex-node/base-config.json`.
 - For a service principal, uncomment the credential entries in the template, put the secret or certificate file next to it, and set `AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE` or `AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE` to its path under `/etc/aks-flex-node/credentials/`. Don't put the secret itself in `bootstrap.env`.
 
-On first boot, Ignition writes the settings and enables `aks-flex-node-bootstrap.service`. Once the network is online, the unit pulls the image and runs `bootstrap.sh` in a container of it. Bootstrap installs and starts `aks-flex-node-agent.service`, which runs the agent's daemon in a container of the image.
+On first boot, Ignition writes the settings and enables `aks-flex-node-bootstrap.service`. Once the network is online, the unit pulls the image and runs `bootstrap.sh` in a container of it. Bootstrap installs and starts `aks-flex-node-agent.service`, which runs the agent's daemon in a container of the image. Once the agent's unit is installed, later boots skip the bootstrap unit. Follow its progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
 
-The unit retries failures with a delay that grows to five minutes. It doesn't retry those that retrying can't fix, for which bootstrap exits with status 78: a setting that can't work, or a `start` that failed after changing the host, which then needs a [reset](#reset-and-rejoining). Those leave the unit failed. Once the agent's unit is installed, later boots skip it. Follow progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.
+If bootstrap fails, the unit tries again, waiting from 10 seconds up to 5 minutes between attempts. It stops, and stays failed, when `bootstrap.sh` exits with status 78, because retrying can't help:
+
+- **A setting can't work.** Fix `/etc/aks-flex-node/bootstrap.env`, then run `sudo systemctl start aks-flex-node-bootstrap.service`.
+- **`start` failed after changing the host.** [Reset the node](#reset-and-rejoining) first.
+
+Once the node has joined, `kubectl get nodes` in your Bash environment lists it as `Ready`.
 
 ## Upgrading the agent
 
-An [AgentUpgrade](operations.md#managed-agent-upgrade) names an image in the parameters that name a release archive on other hosts:
+An [AgentUpgrade](operations.md#managed-agent-upgrade) names an image instead of a release archive. Copy both parameters from the release notes:
 
-- `downloadURL` is `oci://` and the image's repository, with or without a tag.
-- `sha256` is the image's digest.
-
-Both are in the release notes:
+| Parameter | Value |
+|---|---|
+| `downloadURL` | `oci://`, then the image's fully qualified repository, with or without a tag, and without a digest. For example, `oci://ghcr.io/azure/aks-flex-node-agent:<release>`. |
+| `sha256` | The image's digest: 64 hexadecimal characters, with or without `sha256:` |
 
 ```yaml
 apiVersion: unbounded-cloud.io/v1alpha3
@@ -90,7 +98,11 @@ spec:
     sha256: <digest>
 ```
 
-The digest comes only from `sha256`. A request without it, with it in the URL as well, or naming a release archive fails with `InvalidParameters` before anything is pulled.
+The operation fails with `InvalidParameters`, before anything is pulled, if `sha256` is missing or malformed, if the URL has a digest, or if it isn't an `oci://` URL. Follow it until it's `Complete` or `Failed`:
+
+```bash
+kubectl get machineoperation upgrade-agent-worker-01 -w
+```
 
 The agent pulls the image, which containerd verifies against the digest, and checks that its agent runs. Then it switches to the image and restarts on it. If the new agent can't keep running, the recovery unit restores the last-good image, and the operation ends `Failed`. At its next start, the agent removes the images upgrades pulled that it won't run again.
 
@@ -107,11 +119,11 @@ To remove the agent, reprovision the host without its Ignition config.
 On the host:
 
 - `systemctl status aks-flex-node-agent.service`, and `journalctl -u aks-flex-node-agent.service` for the agent's log.
-- `ctr --namespace aks-flex task ls` lists the agent's running containers. The daemon's is `aks-flex-node`.
+- `sudo ctr --namespace aks-flex task ls` lists the agent's running containers. The daemon's is `aks-flex-node`.
 - To run the agent's commands, run them in its container:
 
   ```bash
-  sudo ctr --namespace aks-flex task exec --exec-id status aks-flex-node aks-flex-node --help
+  sudo ctr --namespace aks-flex task exec --exec-id version aks-flex-node aks-flex-node version
   ```
 
 ## OS updates
@@ -123,6 +135,6 @@ How Azure Container Linux flex nodes take OS updates, in place with a reboot or 
 Installing the agent on the host, as [Hosts provisioned by Ignition](getting-started.md#hosts-provisioned-by-ignition) describes, also works on Azure Container Linux, and on other hosts whose `/usr` is read-only. Agent upgrades work there as they do on other hosts, with every file under `/opt/unbounded/agent`. An AgentUpgrade or a direct activation stages the candidate in the blue/green slot under `/opt/unbounded/agent/lib/aks-flex-node` that isn't in use, switches `aks-flex-node-current` to it, synchronizes the active nspawn machine's binary, and restores last-good the same way when the candidate can't keep running. No earlier release could install on these hosts, so the [move from `/usr/local`](migration.md) never runs there, and nothing is written under `/usr/local`.
 
 - **Minimum version.** The first release that installs under `/opt/unbounded/agent` is the oldest that runs on these hosts. An AgentUpgrade to an earlier release is accepted, but that release looks for its files under `/usr/local`, and its daemon can't start. As for any upgrade whose daemon can't start, systemd runs the recovery unit as soon as the daemon fails, which restores the last-good binary, and the operation ends `Failed`. For a daemon that exits at once, that took about 10 seconds; the kubelet keeps running. Don't target an earlier release.
-- **Start limit.** On Azure Container Linux, the SELinux policy denies root `systemctl reset-failed`, which the recovery script runs before it restarts the agent, as the daemon does before an upgrade's restart or the host root's move. The recovery unit then reports `failed` even when the rollback worked, and nothing clears the agent unit's start limit, five starts in five minutes: restarts beyond it leave the agent stopped until it's started by hand or the host reboots. Space out AgentUpgrades on these hosts. This is tracked in [#385](https://github.com/Azure/AKSFlexNode/issues/385). The agent in its containers isn't affected.
+- **Start limit.** Azure Container Linux's SELinux policy denies `systemctl reset-failed` to host processes, which the recovery script and the daemon run before they restart the agent. So the recovery unit reports `failed` even when the rollback worked, and the agent unit's start limit, 5 starts in 5 minutes, is never cleared: further restarts leave the agent stopped until you start it or reboot the host. Space out AgentUpgrades on these hosts ([#385](https://github.com/Azure/AKSFlexNode/issues/385)). The agent in containers isn't affected.
 - **Reprovisioning.** A host provisioned or reimaged from its Ignition config installs the version the config pins, which may be older than the rest of the pool. Upgrade it once it joins; see [Agent version](getting-started.md#agent-version).
 - **Rejoining after a reset.** Reset removes the first-boot unit, so the host doesn't join again on its own. Reimage it, or create it again, from its Ignition config; see [Rejoining after a reset](getting-started.md#rejoining-after-a-reset).

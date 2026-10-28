@@ -13,22 +13,20 @@ It creates a local kind cluster
 running the in-cluster controller, and the VM bootstraps itself into it,
 with no Azure resources involved.
 
-[DESIGN.md](DESIGN.md) explains how the agent runs on ACL and what differs from
-a host install. This file is how to use the harness.
-
-The harness boots ACL 3.0.20261026, whose SELinux policy lets the agent's
-privileged containers talk to the host's systemd over D-Bus, and which labels
-containerd's files, so they run as `spc_t`. See [SELinux](DESIGN.md#selinux).
+[DESIGN.md](DESIGN.md) explains how the agent runs in containers, and
+[Azure Container Linux](../../docs/usage/azure-container-linux.md) how operators
+run it. This file is how to use the harness. It boots ACL 3.0.20261026, the
+first build with what the agent's containers need; see
+[SELinux](DESIGN.md#selinux).
 
 ## Requirements
 
 - Linux with KVM: `/dev/kvm` readable and writable
 - `qemu-system-x86_64`, `qemu-img`, `qemu-nbd`, and OVMF firmware (the `ovmf` or
   `edk2-ovmf` package)
-- `podman`, or `docker` with `ACLC_CONTAINER_ENGINE=docker`, to build the agent
-  image and run the registry and Butane
-- `kind`, `kubectl`, and `go`, for the cluster and the controller's image. kind
-  runs on root Podman, through `sudo`.
+- `podman`: kind runs on root Podman, through `sudo`, and Podman also builds the
+  images and runs the registry and Butane, unless `ACLC_CONTAINER_ENGINE=docker`
+- `kind`, `kubectl`, and `go`, for the cluster and the controller's image
 - `ip`, `iptables`, `sysctl`, `ssh`, `ssh-keygen`, `setsid`
 - `sudo` without a password prompt, for kind, the bridge, TAP device,
   forwarding, and firewall rules. Run `sudo -v` first if your sudo caches
@@ -42,7 +40,7 @@ containerd's files, so they run as `spc_t`. See [SELinux](DESIGN.md#selinux).
 export ACL_IMAGE_RESOURCE_GROUP=my-westus2-group   # only for the first export
 hack/acl-container/harness.py up                   # cluster, image, VM, bootstrap
 hack/acl-container/harness.py status               # the VM, the agent, machines, nodes
-hack/acl-container/harness.py check                # 80 checks, 7 to 10 minutes
+hack/acl-container/harness.py check                # 7 to 10 minutes
 hack/acl-container/harness.py down                 # remove the VM, cluster, network, and state
 ```
 
@@ -123,10 +121,9 @@ EOF
 kubectl get machineoperation reboot-1 -w
 ```
 
-An `AgentUpgrade` names an image rather than an archive, in the same
-parameters: `downloadURL` is `oci://` and the image's fully qualified
-repository, with or without a tag, and `sha256` is the image's digest, as a
-host requires an archive's SHA-256:
+An `AgentUpgrade` names an image; see
+[Upgrading the agent](../../docs/usage/azure-container-linux.md#upgrading-the-agent)
+for its parameters. Here, the image is in the harness's registry:
 
 ```yaml
 spec:
@@ -151,22 +148,8 @@ hack/acl-container/harness.py ssh sudo systemctl start aks-flex-node-bootstrap
 
 ## On the VM
 
-| Unit | |
-|---|---|
-| `aks-flex-node-bootstrap.service` | Pulls the image and runs `scripts/bootstrap.sh` in a short-lived container, at boot, once bootstrap's inputs are there and until the agent is installed |
-| `aks-flex-node-agent.service` | Runs the daemon in the container `aks-flex-node`. `start` installs it, and reset removes it. |
-| `aks-flex-node-agent-recovery.service` | Restores the last good image when an upgraded agent fails. `start` installs it with the agent's unit. |
-| `aks-flex-node-reset.service` | Runs `aks-flex-node reset` in a short-lived container |
-
-| File | |
-|---|---|
-| `/etc/sysconfig/aks-flex-node-container` | The install's settings: the image, and pull flags. Ignition writes it. |
-| `/etc/aks-flex-node/bootstrap.env`, `base-config.json` | Bootstrap's inputs, `AKS_FLEX_NODE_*` variables and the base config they name, with the bootstrap token |
-| `/etc/aks-flex-node/agent-image.env` | Another image for the agent than the install's: one `AgentUpgrade` selected, or one bootstrap was given |
-| `/etc/aks-flex-node/config.json`, `daemon-state.json` | The agent's config, which bootstrap renders, and its state |
-
-Reset removes everything in `/etc/aks-flex-node` and leaves the settings and
-the bootstrap and reset units.
+[Units and files](DESIGN.md#units-and-files) lists the units and files the
+install and the agent put on the VM. To look at them:
 
 ```bash
 systemctl status aks-flex-node-agent
@@ -227,11 +210,43 @@ gallery's images and versions. Its tenant has to be one the gallery is shared
 with.
 
 `up` exports the version `ACL_IMAGE_VERSION` names, 3.20261027.1 by default,
-which has the SELinux rule the agent needs and labels containerd's files. Its
-gallery excludes it from
-its latest, so set `ACL_IMAGE_VERSION=` (empty) to have `az` ask the gallery
-for its latest instead. Once a version is exported, `up` boots it again without
-`az`.
+which has the SELinux rule the agent needs and labels containerd's files. The
+gallery leaves it out of its latest, so it's named. Set `ACL_IMAGE_VERSION=`
+(empty) to have `az` ask the gallery for its latest instead, which it does at
+every `up`. Once a named version is exported, `up` boots it again without `az`.
+
+## Tested environment
+
+`check` passes on ACL 3.0.20261026 (build 1236866), from the gallery image
+`acl-1es-eval-kvm` version 3.20261027.1, which provides:
+
+| | |
+|---|---|
+| OS | Microsoft Azure Container Linux 3.0.20261026, build 1236866 (`ID=azurelinux`, `VARIANT_ID=azurecontainerlinux`, `ID_LIKE=flatcar`) |
+| Kernel | 6.6.159.1-1.azl3 |
+| systemd | 255 (255-34.azl3), with `machinectl`, `systemd-nspawn`, `systemd-run`, machined, and importd; `machines.target` is enabled |
+| Container runtime | containerd 2.3.7, `ctr` 2.3.7, runc 1.4.3, all in `/usr`. `containerd.service` is enabled and running. No docker, nerdctl, or podman. |
+| SELinux | `targeted`, **enforcing** |
+| Filesystems | `/usr` read-only btrfs on dm-verity and unlabeled; `/etc` an overlay, writable; `/` and `/var` ext4, writable |
+| `/var/lib/containerd` | Built into the image, labeled `container_var_lib_t`, with containerd's snapshots `container_ro_file_t` |
+
+The harness's install names the agent's image by a tag, pulled over plain HTTP
+from its local registry, unlike a release's install, which pins it by digest.
+
+On a 16-core Intel Xeon Platinum 8370C running WSL2, with a 4-CPU, 4 GB VM
+whose disk writes the host caches (`cache=unsafe`):
+
+| | |
+|---|---|
+| Gallery image export (first `up` only) | 70 s, 910 MiB downloaded |
+| `up`, image and build cache present | about 5 min, with the kind cluster and the controller |
+| ACL boot | about 13 s to systemd's startup on a reboot (3.7 s kernel, 4.8 s initrd, 4.7 s userspace) |
+| First bootstrap, unit start to agent installed | about 11 s, with the image and the machine's rootfs pulled |
+| Container start, unit start to entrypoint | about 1.2 s |
+| `check`, with a reboot | 7 to 10 min, mostly downloads: each rejoin pulls the machine's image and binaries again |
+| Agent image | about 180 MB, six layers |
+| containerd on the VM | about 200 MB of snapshots and 340 MB of content, the image's Arc agent image included |
+| Machine rootfs (`agent-azlinux3`) | 141 MB compressed, 356 MB unpacked |
 
 ## Settings
 
@@ -285,11 +300,12 @@ The subnet, interface names, and ports differ from the other harnesses in
 | File | |
 |---|---|
 | `harness.py` | The harness |
+| `DESIGN.md` | How the agent runs in containers |
 | `../../scripts/aks-flex-node-agent-container.bu` | Butane config that installs the agent: the settings, and the bootstrap and reset units |
 | `../../Dockerfile.aks-flex-node-agent` | The agent image |
 | `../../scripts/agent-image/flex-agent-entrypoint` | The containers' entrypoint: mounts the host's paths, checks the host's D-Bus, runs its command |
 | `../../scripts/agent-image/aks-flex-node-bootstrap` | Runs `scripts/bootstrap.sh` with bootstrap's inputs |
 | `../../scripts/agent-image/host-exec` | Runs the host's tools: under `chroot /host`, or for mounts in the host's mount namespace |
-| `../../pkg/daemon/assets/aks-flex-node-agent-container.service`, `aks-flex-node-agent-recovery-container.service` | The agent's unit and recovery unit, which `start` installs |
+| `../../pkg/daemon/assets/*-container*.service` | The agent's four units, which `start` installs and the daemon converges |
 | `aclimage.py` | Gallery image export |
 | `../acl/ukiboot.py` | Adds first-boot kernel arguments to the UKI's addon; shared with `hack/acl` |

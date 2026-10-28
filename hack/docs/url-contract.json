@@ -412,7 +412,14 @@
       "path": "docs/usage/azure-container-linux.md",
       "protectAnchors": true,
       "anchors": [
-        "azure-container-linux"
+        "azure-container-linux",
+        "checking-the-agent",
+        "install-and-join",
+        "os-updates",
+        "requirements",
+        "reset-and-rejoining",
+        "the-agent-on-the-host",
+        "upgrading-the-agent"
       ]
     },
     {
@@ -546,6 +553,7 @@
         "quick-start",
         "requirements",
         "settings",
+        "tested-environment",
         "the-acl-image",
         "troubleshooting",
         "what-check-covers",
