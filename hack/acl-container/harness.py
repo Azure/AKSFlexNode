@@ -8,10 +8,11 @@
     hack/acl-container/harness.py ssh [COMMAND]            shell on the VM, or run a command there
     hack/acl-container/harness.py agent [COMMAND]          shell in the agent container, or run a command there
     hack/acl-container/harness.py console                  follow the VM's serial console
-    hack/acl-container/harness.py down                     stop the VM, remove the network, registry, and state
+    hack/acl-container/harness.py down                     stop the VM, remove the cluster, network, registry, and state
 
 The VM is provisioned only by the Ignition config that scripts/aks-flex-node-agent-container.bu
-renders, plus harness access: an SSH user, a hostname, and a static address. The agent image is
+renders, plus harness access: an SSH user, a hostname, a static address, and the base config
+bootstrap's inputs name, with the bootstrap token. The agent image is
 built from this repository with Dockerfile.aks-flex-node-agent and pushed to a registry on the
 bridge, which the VM's containerd pulls from. See README.md for usage and DESIGN.md for what this proves.
 """
@@ -52,6 +53,7 @@ STATE = Path(os.environ.get("ACLC_STATE_DIR", str(DEFAULT_STATE)))
 # up makes the state directory, or takes an empty one, and marks it; down removes it only if it's
 # the default or marked: ACLC_STATE_DIR could name any directory.
 STATE_MARKER = STATE / ".aclc-state"
+VM_DISK = STATE / "acl.qcow2"
 IMAGE_DIR = Path(os.environ.get("ACL_IMAGE_DIR", str(REPO / ".vm" / "acl-images")))
 
 # The subnet and interface names are this harness's own, so other local VM harnesses can run
@@ -236,7 +238,12 @@ def push_image(local: str, tag: str) -> str:
         loopback = f"127.0.0.1:{REGISTRY_PORT}/{AGENT_REPOSITORY}:{tag}"
         run(["docker", "tag", local, loopback])
         run(["docker", "push", "--quiet", loopback])
-        digest = capture(["docker", "inspect", "-f", "{{index .RepoDigests 0}}", loopback]).split("@")[-1]
+        # The image may also have been pushed elsewhere, under digests of other repositories.
+        repository = loopback.rsplit(":", 1)[0] + "@"
+        digests = capture(["docker", "inspect", "-f", "{{range .RepoDigests}}{{println .}}{{end}}", loopback])
+        digest = next((d.split("@")[-1] for d in digests.split() if d.startswith(repository)), "")
+        if not digest:
+            die(f"docker reports no digest for {loopback} after pushing it")
         digest_file.write_text(digest + "\n")
     log(f"pushed {vm_image}@{digest}")
     return f"{GATEWAY}:{REGISTRY_PORT}/{AGENT_REPOSITORY}@{digest}"
@@ -269,13 +276,19 @@ def create_network() -> None:
             saved.write_text(forwarding + "\n")
         log("enabling IPv4 forwarding (down restores it)")
         sudo("sysctl", "-q", "-w", "net.ipv4.ip_forward=1")
+    # From the bridge, the VM's and the kind node's traffic, between them too, and only replies
+    # into it: nothing else may reach the VM's sshd or the API server through this host.
     sudo("iptables", "-I", "FORWARD", "-i", BRIDGE, "-j", "ACCEPT")
-    sudo("iptables", "-I", "FORWARD", "-o", BRIDGE, "-j", "ACCEPT")
+    sudo("iptables", "-I", "FORWARD", *FORWARD_REPLIES)
     sudo("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", f"{SUBNET}.0/24",
          "!", "-d", f"{SUBNET}.0/24", "-j", "MASQUERADE")
     if docker_uses_nft():
         sudo("nft", "insert", "rule", "ip", "filter", "DOCKER-USER", "iifname", BRIDGE, "accept")
-        sudo("nft", "insert", "rule", "ip", "filter", "DOCKER-USER", "oifname", BRIDGE, "accept")
+        sudo("nft", "insert", "rule", "ip", "filter", "DOCKER-USER", "oifname", BRIDGE,
+             "ct", "state", "related,established", "accept")
+
+
+FORWARD_REPLIES = ["-o", BRIDGE, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"]
 
 
 def docker_uses_nft() -> bool:
@@ -286,9 +299,9 @@ def docker_uses_nft() -> bool:
 def delete_network() -> None:
     for iface in (TAP, VETH_HOST, BRIDGE):
         sudo("ip", "link", "delete", iface, check=False)
-    for chain_opt in ("-i", "-o"):
-        while sudo("iptables", "-D", "FORWARD", chain_opt, BRIDGE, "-j", "ACCEPT",
-                   check=False).returncode == 0:
+    # The -o rule without conntrack is an earlier harness's.
+    for rule in (["-i", BRIDGE, "-j", "ACCEPT"], FORWARD_REPLIES, ["-o", BRIDGE, "-j", "ACCEPT"]):
+        while sudo("iptables", "-D", "FORWARD", *rule, check=False).returncode == 0:
             pass
     while sudo("iptables", "-t", "nat", "-D", "POSTROUTING", "-s", f"{SUBNET}.0/24",
                "!", "-d", f"{SUBNET}.0/24", "-j", "MASQUERADE", check=False).returncode == 0:
@@ -508,7 +521,8 @@ def install_controller() -> None:
             "-p", json.dumps(patch))
     kubectl("-n", "kube-system", "rollout", "status", "deployment/aks-flex-controller",
             "--timeout=180s")
-    kubectl("get", "--raw", f"{PROXY_PATH}/healthz", quiet=True)
+    wait_until("the controller's machine endpoint to answer", 60,
+               lambda: kubectl("get", "--raw", f"{PROXY_PATH}/healthz", check=False, quiet=True).returncode == 0)
 
 
 def kubernetes_version() -> str:
@@ -707,6 +721,10 @@ class FileServer:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - required name
+                # The Ignition config has the bootstrap token: it's the VM's alone.
+                if self.client_address[0] != VM_IP:
+                    self.send_error(403)
+                    return
                 path = served.get(self.path.lstrip("/").split("?", 1)[0])
                 if path is None:
                     self.send_error(404)
@@ -751,7 +769,7 @@ def ensure_ssh_key() -> str:
 
 
 def launch_vm(image: Path, config_url: str) -> None:
-    disk = STATE / "acl.qcow2"
+    disk = VM_DISK
     disk.unlink(missing_ok=True)
     info = json.loads(capture(["qemu-img", "info", "--output=json", str(image)]))
     # The root partition runs to the end of the disk, so a smaller overlay stops boot.
@@ -789,14 +807,17 @@ def launch_vm(image: Path, config_url: str) -> None:
 
 
 def vm_pid() -> int | None:
-    """The VM's QEMU process, from its PID file, while it runs. A PID can be reused, so the
-    process has to be QEMU's."""
+    """The VM's QEMU process, from its PID file, while it runs. A PID can be reused, by another
+    harness's QEMU too, so the process has to be QEMU running this harness's disk."""
     try:
         pid = int((STATE / "qemu.pid").read_text().strip())
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
     except (OSError, ValueError):
         return None
-    return pid if b"qemu-system" in cmdline else None
+    disk = f"file={VM_DISK},".encode()
+    if not args or b"qemu-system" not in args[0] or not any(arg.startswith(disk) for arg in args):
+        return None
+    return pid
 
 
 def vm_running() -> bool:
@@ -810,13 +831,14 @@ def stop_vm() -> None:
         pid_file.unlink(missing_ok=True)
         return
     log(f"stopping VM (pid {pid})")
-    os.kill(pid, 15)
-    for _ in range(10):
-        time.sleep(1)
-        if vm_pid() is None:
-            break
-    else:
-        os.kill(pid, 9)
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, 15)
+        for _ in range(10):
+            time.sleep(1)
+            if vm_pid() is None:
+                break
+        else:
+            os.kill(pid, 9)
     pid_file.unlink(missing_ok=True)
 
 
@@ -874,23 +896,27 @@ def agent_task_pid() -> str:
     return ""
 
 
+def agent_ready() -> bool:
+    """Whether the agent's container runs, and its entrypoint has logged its checks. Only this
+    start of the unit counts: the journal keeps the lines of the ones before it."""
+    if agent_task_status() != "RUNNING":
+        return False
+    return "agent container ready" in ssh(
+        f"id=$(systemctl show {AGENT_UNIT} -p InvocationID --value) && [ -n \"$id\" ] && "
+        f"journalctl -b --no-pager -o cat _SYSTEMD_INVOCATION_ID=$id", check=False).stdout
+
+
 def wait_for_agent(timeout: float = 600) -> None:
     log(f"waiting for the agent container ({AGENT_UNIT})")
+    since = ssh_out("date +%s")
 
-    def running() -> bool:
-        if agent_task_status() == "RUNNING":
-            # The entrypoint logs its checks, then idles. Only this start of the unit counts: the
-            # journal keeps the lines of the ones before it.
-            return "agent container ready" in ssh(
-                f"id=$(systemctl show {AGENT_UNIT} -p InvocationID --value) && [ -n \"$id\" ] && "
-                f"journalctl -b --no-pager -o cat _SYSTEMD_INVOCATION_ID=$id", check=False).stdout
-        state = ssh(f"systemctl show {AGENT_UNIT} -p ActiveState --value", check=False).stdout.strip()
-        if state == "failed":
-            print(ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -n 40", check=False).stdout)
+    def ready() -> bool:
+        if agent_ready():
+            return True
         # The entrypoint exits when the host's machinectl fails, and systemd restarts it, so a
-        # denial would otherwise only show as a timeout.
-        failure = ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -o cat | grep -m1 'machinectl failed'",
-                      check=False).stdout.strip()
+        # denial would otherwise only show as a timeout. Only the starts since this wait count.
+        failure = ssh(f"journalctl -u {AGENT_UNIT} --since @{since} --no-pager -o cat "
+                      "| grep -m1 'machinectl failed'", check=False).stdout.strip()
         if "Access denied" in failure:
             die(f"the agent container cannot reach the host's systemd over D-Bus: {failure}\n"
                 "ACL's SELinux policy needs `allow spc_t kernel_t:dbus send_msg;`, which ACL "
@@ -898,12 +924,9 @@ def wait_for_agent(timeout: float = 600) -> None:
                 "`sudo journalctl -b | grep 'avc:  denied'` on the VM.")
         return False
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if running():
-            log("the agent container is running")
-            return
-        time.sleep(5)
+    if eventually(ready, timeout, 5):
+        log("the agent container is running")
+        return
     print(ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -n 60", check=False).stdout)
     die(f"timed out after {int(timeout)}s waiting for the agent container")
 
@@ -1007,6 +1030,9 @@ class Checks:
         self.failures: list[str] = []
         self.started = time.monotonic()
         self.durations: list[tuple[str, float]] = []
+        # A group that stopped early, as its helpers die on what they can't go on from. It leaves
+        # the node as it was then, so later groups, which start from a joined node, don't run.
+        self.stopped = ""
 
     def expect(self, ok: bool, description: str, detail: str = "") -> None:
         if ok:
@@ -1022,6 +1048,9 @@ class Checks:
         started = time.monotonic()
         try:
             yield
+        except SystemExit:
+            self.stopped = name
+            self.failures.append(f"the {name} group stopped early")
         finally:
             self.durations.append((name, time.monotonic() - started))
 
@@ -1047,11 +1076,6 @@ def machine_state(machine: str) -> str:
 
 def machine_leader(machine: str) -> str:
     return ssh(f"machinectl show {shlex.quote(machine)} -p Leader --value", check=False).stdout.strip()
-
-
-def wait_machine(machine: str, want: str, timeout: float = 180) -> None:
-    wait_until(f"machine {machine} to be {want or 'gone'}", timeout,
-               lambda: machine_state(machine) == want, 3)
 
 
 def check_container(checks: Checks) -> None:
@@ -1081,10 +1105,9 @@ def check_container(checks: Checks) -> None:
     host_pidns = ssh_out("sudo readlink /proc/1/ns/pid")
     checks.expect(agent_out("readlink /proc/self/ns/pid") == host_pidns,
                   "the container shares the host's PID namespace")
-    container_os = agent_out(". /etc/os-release; echo $ID")
-    host_os = ssh_out(". /etc/os-release; echo ${VARIANT_ID:-$ID}")
-    checks.expect(container_os != host_os, "the container has its own root filesystem",
-                  f"container {container_os}, host {host_os}")
+    container_root = agent_out("stat -c %d:%i /")
+    checks.expect(container_root not in ("", host_root), "the container has its own root filesystem",
+                  f"container {container_root}, host {host_root}")
 
     version = ssh_out("machinectl --version | head -1")
     checks.expect(agent_out("machinectl --version | head -1") == version,
@@ -1392,7 +1415,7 @@ def build_candidate_images() -> tuple[str, str]:
 
 def pushed_candidate(record: Path, key: str) -> str:
     """The reference a candidate was pushed by, if the record says it was built as key describes
-    and the registry still has it, which up and down replace; or ""."""
+    and the registry still has it, which down removes; or ""."""
     try:
         pushed = json.loads(record.read_text())
     except (OSError, ValueError):
@@ -1727,10 +1750,11 @@ def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
         ssh("sudo systemctl reboot", check=False, timeout=15)
         wait_until("the VM to go down", 120, lambda: ssh("true", check=False, timeout=5).returncode != 0, 3)
         wait_for_ssh()
-        wait_for_agent()
-        checks.expect(True, "the agent container came back after a reboot")
-        wait_machine(machine, "running", timeout=300)
-        checks.expect(True, f"{machine} runs again after the reboot")
+        back = eventually(agent_ready, 600)
+        checks.expect(back, "the agent container came back after a reboot",
+                      "" if back else ssh(f"journalctl -u {AGENT_UNIT} -b --no-pager -n 30", check=False).stdout)
+        checks.expect(eventually(lambda: machine_state(machine) == "running", 300, 3),
+                      f"{machine} runs again after the reboot", machine_state(machine) or "no machine")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1741,8 +1765,8 @@ def check_prerequisites(with_agent: bool) -> None:
     tools = ["qemu-system-x86_64", "qemu-img", "qemu-nbd", "ssh", "ssh-keygen", "ip", "iptables",
              "setsid", "sysctl"]
     if with_agent:
-        tools.append(ENGINE)
-        tools += ["kind", "kubectl", "go"]
+        # kind runs on root Podman, whichever engine builds the images.
+        tools += sorted({ENGINE, "podman"}) + ["kind", "kubectl", "go", "nsenter"]
     missing = [tool for tool in tools if shutil.which(tool) is None]
     if missing:
         die("missing tools: " + ", ".join(missing))
@@ -1771,6 +1795,15 @@ def cmd_up(args: argparse.Namespace) -> None:
     claim_state_dir()
     check_prerequisites(args.agent)
     image = local or aclimage.gallery_image(IMAGE_DIR)
+    try:
+        bring_up(args, image)
+    except (Exception, SystemExit):
+        # Not undone here: the serial log and the cluster are what tell why.
+        log(f"up failed; `{Path(sys.argv[0]).name} down` removes what it made")
+        raise
+
+
+def bring_up(args: argparse.Namespace, image: Path) -> None:
     stop_vm()
     public_key = ensure_ssh_key()
 
@@ -1823,8 +1856,14 @@ def snapshotter_pull_args() -> str:
     return ""
 
 
-def cmd_push(_: argparse.Namespace) -> None:
+def require_agent() -> None:
     require_vm()
+    if not cluster_enabled():
+        die("the VM was brought up with --no-agent, so it has no agent; run `up` without it")
+
+
+def cmd_push(_: argparse.Namespace) -> None:
+    require_agent()
     build_agent_image()
     push_image(LOCAL_AGENT_IMAGE, AGENT_TAG)
     # The agent's unit runs the image bootstrap pulled, so pull the new one as bootstrap does. An
@@ -1832,6 +1871,9 @@ def cmd_push(_: argparse.Namespace) -> None:
     log(f"pulling {VM_AGENT_IMAGE} on the VM and restarting {AGENT_UNIT}")
     ssh(f"sudo {CTR} image pull --plain-http {snapshotter_pull_args()} {VM_AGENT_IMAGE} >/dev/null",
         timeout=600)
+    # A restart counts toward the unit's start limit, and a start past it would take recovery,
+    # which would restore an upgrade's last good image.
+    make_room_for_agent_starts(1)
     ssh(f"sudo rm -f {AGENT_IMAGE_SELECTION} && sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
 
@@ -1842,8 +1884,6 @@ def cmd_push(_: argparse.Namespace) -> None:
 # before upgrade's four restarts rather than waiting for them to age out.
 CHECK_GROUPS = ("container", "cluster", "repave", "nodereboot", "machines", "upgrade",
                 "agentreset", "reset", "deletion")
-# The groups that need the cluster, which up --no-agent doesn't create.
-CLUSTER_CHECK_GROUPS = set(CHECK_GROUPS) - {"container"}
 
 
 def check_groups(value: str) -> tuple[str, ...]:
@@ -1858,9 +1898,8 @@ def check_groups(value: str) -> tuple[str, ...]:
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    require_vm()
+    require_agent()
     checks = Checks()
-    cluster = cluster_enabled()
     good_image = ""
 
     def upgrade() -> None:
@@ -1870,8 +1909,7 @@ def cmd_check(args: argparse.Namespace) -> None:
     def machines() -> None:
         check_machine_lifecycle(checks, reboot=args.reboot)
         if args.reboot:
-            wait_for_node_ready()
-            checks.expect(True, f"node {HOSTNAME} is Ready again after the reboot")
+            checks.expect(eventually(node_ready, 1200, 10), f"node {HOSTNAME} is Ready again after the reboot")
 
     groups = {
         "container": lambda: check_container(checks),
@@ -1885,11 +1923,11 @@ def cmd_check(args: argparse.Namespace) -> None:
         "deletion": lambda: check_deletion_signal(checks),
     }
     for name in args.only:
-        if name in CLUSTER_CHECK_GROUPS and not cluster:
-            log(f"skipping {name}: the VM was brought up without the agent or a cluster")
-            continue
         with checks.group(name):
             groups[name]()
+        if checks.stopped:
+            log(f"not running the groups after {checks.stopped}, which stopped early")
+            break
     checks.done()
 
 
@@ -1913,7 +1951,7 @@ def cmd_ssh(args: argparse.Namespace) -> None:
 
 
 def exec_in_agent(command: list[str]) -> None:
-    require_vm()
+    require_agent()
     tty = sys.stdin.isatty() and sys.stdout.isatty()
     remote = agent_command(command or ["/bin/bash", "-l"], tty)
     os.execvp("ssh", ["ssh", *SSH_OPTS, *(["-t"] if tty else []), f"{SSH_USER}@{VM_IP}", remote])
@@ -1981,7 +2019,7 @@ def main() -> None:
     console = commands.add_parser("console", help="follow the VM's serial console")
     console.set_defaults(func=cmd_console)
 
-    down = commands.add_parser("down", help="stop the VM, and remove the network, registry, and state")
+    down = commands.add_parser("down", help="stop the VM, and remove the cluster, network, registry, and state")
     down.set_defaults(func=cmd_down)
 
     args = parser.parse_args()

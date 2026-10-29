@@ -14,6 +14,7 @@ export needs.
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import datetime
 import http.client
 import json
@@ -55,6 +56,8 @@ EXPORT_STALE_AFTER = 6 * 3600
 EXPORT_SAS_SECONDS = 1800
 EXPORT_CHUNK = 8 << 20
 EXPORT_WORKERS = 16
+# An export's files, until it's complete.
+PARTIAL_PREFIX = ".aclimage-export-"
 VHD_FOOTER_SIZE = 512
 
 
@@ -99,11 +102,23 @@ def gallery_image(image_dir: Path) -> Path:
         return image
 
     image_dir.mkdir(parents=True, exist_ok=True)
-    for leftover in image_dir.glob("acl-gallery-*.qcow2.part*"):
-        leftover.unlink(missing_ok=True)
-    partial = image.with_name(image.name + ".part")
-    export_gallery_image(f"{GALLERY_IMAGE}/Versions/{version}", partial)
-    partial.replace(image)
+    # Each export writes files of its own, so exports at once, this harness's or hack/acl's, which
+    # shares the directory, never remove each other's. Only an interrupted export's are swept,
+    # which nothing has written to for an hour.
+    stale = time.time() - 3600
+    for leftover in image_dir.glob(f"{PARTIAL_PREFIX}*"):
+        with contextlib.suppress(OSError):
+            if leftover.stat().st_mtime < stale:
+                leftover.unlink()
+    partial = image_dir / f"{PARTIAL_PREFIX}{version}-{secrets.token_hex(4)}.qcow2"
+    try:
+        export_gallery_image(f"{GALLERY_IMAGE}/Versions/{version}", partial)
+        # Linked rather than renamed, so an export that finished first, which may be in use,
+        # stays.
+        with contextlib.suppress(FileExistsError):
+            os.link(partial, image)
+    finally:
+        partial.unlink(missing_ok=True)
     fd = os.open(image_dir, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -268,7 +283,10 @@ BlobFetch = Callable[[str, dict[str, str]], tuple[bytes, dict[str, str]]]
 def download_page_blob(sas: str, destination: Path, fetch: BlobFetch | None = None) -> None:
     """Download the written pages of a page blob into a sparse file of the blob's size. The SAS
     is on no command line, and no error raised here names it."""
-    fetch = fetch or blob_request
+    # Set when a download fails, or on Ctrl-C: the others stop rather than retry, so the export
+    # ends once the requests in flight do.
+    stop = threading.Event()
+    fetch = fetch or (lambda url, headers: blob_request(url, headers, stop))
     ranges: list[tuple[int, int]] = []
     marker = ""
     size = 0
@@ -285,7 +303,7 @@ def download_page_blob(sas: str, destination: Path, fetch: BlobFetch | None = No
     if size < VHD_FOOTER_SIZE:
         raise RuntimeError(f"the exported disk reports a size of {size} bytes")
     chunks = page_chunks(ranges)
-    total = sum(stop - start + 1 for start, stop in chunks)
+    total = sum(end - start + 1 for start, end in chunks)
     log(f"downloading {total >> 20} MiB written in a {size >> 20} MiB disk")
 
     started = time.monotonic()
@@ -296,10 +314,14 @@ def download_page_blob(sas: str, destination: Path, fetch: BlobFetch | None = No
         os.ftruncate(fd, size)
 
         def fetch_chunk(chunk: tuple[int, int]) -> None:
-            start, stop = chunk
-            data, _headers = fetch(sas, {"Range": f"bytes={start}-{stop}"})
-            if len(data) != stop - start + 1:
-                raise RuntimeError(f"read {len(data)} bytes at offset {start}, expected {stop - start + 1}")
+            if stop.is_set():
+                return
+            start, end = chunk
+            data, _headers = fetch(sas, {"Range": f"bytes={start}-{end}"})
+            if len(data) != end - start + 1:
+                raise RuntimeError(f"read {len(data)} bytes at offset {start}, expected {end - start + 1}")
+            if stop.is_set():
+                return
             if data.count(0) != len(data):
                 os.pwrite(fd, data, start)
             with lock:
@@ -315,6 +337,7 @@ def download_page_blob(sas: str, destination: Path, fetch: BlobFetch | None = No
                 for future in concurrent.futures.as_completed(futures):
                     future.result()
             except BaseException:
+                stop.set()
                 for future in futures:
                     future.cancel()
                 raise
@@ -347,12 +370,15 @@ def check_fixed_vhd(path: Path, size: int) -> None:
                            f"(cookie {cookie!r}, type {kind}, size {current})")
 
 
-def blob_request(url: str, headers: dict[str, str]) -> tuple[bytes, dict[str, str]]:
-    """GET from blob storage, retrying what may pass. Errors never name the URL, which carries
-    the SAS."""
+def blob_request(url: str, headers: dict[str, str],
+                 stop: threading.Event | None = None) -> tuple[bytes, dict[str, str]]:
+    """GET from blob storage, retrying what may pass, until stop is set. Errors never name the
+    URL, which carries the SAS."""
     request = urllib.request.Request(url, headers={"x-ms-version": "2021-12-02", **headers})
     attempts = 5
     for attempt in range(1, attempts + 1):
+        if stop is not None and stop.is_set():
+            raise RuntimeError("blob storage request stopped")
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
                 return response.read(), {k.lower(): v for k, v in response.headers.items()}
