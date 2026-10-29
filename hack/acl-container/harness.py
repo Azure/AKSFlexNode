@@ -957,6 +957,13 @@ def wait_for_bootstrap(timeout: float = 1800) -> None:
     log(f"bootstrap installed {AGENT_UNIT}")
 
 
+def bootstrap_inputs_left() -> list[str]:
+    """Return which of bootstrap's inputs are on the VM."""
+    paths = (BOOTSTRAP_INPUTS, BASE_CONFIG)
+    out = ssh("sudo ls -d " + " ".join(paths) + " 2>/dev/null", check=False).stdout
+    return [path for path in paths if path in out.split()]
+
+
 def bootstrap_again(image: str = "") -> None:
     """Join the VM again, as bootstrapping a host again does: new inputs, with a new token, and a
     start of the bootstrap unit. With an image, the inputs select it, as bootstrap.sh's inputs
@@ -1156,6 +1163,9 @@ def check_cluster(checks: Checks, after: str = "") -> None:
     """The node the agent in the container joined: Ready, on the machine the agent made active,
     running a pod, and reachable from the API server for its logs."""
     checks.expect(node_ready(), f"node {HOSTNAME} is Ready{after}")
+    left = bootstrap_inputs_left()
+    checks.expect(not left, "bootstrap removed its inputs, with the bootstrap token, once it succeeded",
+                  ", ".join(left))
     active = daemon_state().get("activeMachine", "")
     checks.expect(bool(active) and machine_state(active) == "running",
                   f"the agent's active machine, {active or 'none'}, runs on the host")
@@ -1574,6 +1584,8 @@ def check_rejoin(checks: Checks, how: str, image: str = "", registry_unreachable
     checks.expect(eventually(node_ready, 1200, 10),
                   f"node {HOSTNAME} joins again after {how}, once bootstrapped{unreachable}",
                   "" if node_ready() else agent_log_tail())
+    left = bootstrap_inputs_left()
+    checks.expect(not left, f"bootstrap after {how} removed its inputs once it succeeded", ", ".join(left))
     running = agent_image()
     what = "the image bootstrap was given" if image else "the install's image"
     checks.expect(running == (image or VM_AGENT_IMAGE), f"the agent runs {what}", running)
@@ -1596,6 +1608,9 @@ def check_bootstrap_stops_retrying(checks: Checks) -> None:
                   and unit.get("NRestarts") == "0",
                   f"a bootstrap with a setting that can't work fails with 78, and {BOOTSTRAP_UNIT} doesn't retry it",
                   ", ".join(f"{k}={v}" for k, v in unit.items()))
+    # Before the agent's unit is installed, so new inputs and a start can fix the setting.
+    checks.expect(bootstrap_inputs_left() == [BOOTSTRAP_INPUTS, BASE_CONFIG],
+                  "the failed bootstrap kept its inputs, for a retry with the setting fixed")
 
 
 def check_agent_reset(checks: Checks, rejoin_image: str) -> None:

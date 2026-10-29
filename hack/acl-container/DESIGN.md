@@ -90,7 +90,8 @@ they run before the agent is installed and after it's removed.
 | File | Holds | Written by | After a reset |
 |---|---|---|---|
 | `/etc/sysconfig/aks-flex-node-container` | The install's settings: `AKS_FLEX_NODE_IMAGE`, and optional pull and snapshotter flags | Ignition | Kept |
-| `/etc/aks-flex-node/bootstrap.env` | Bootstrap's inputs, one `AKS_FLEX_NODE_*` variable a line, and the base config or credential files they name | Ignition, or whatever provisions a rejoin | Removed |
+| `/etc/aks-flex-node/bootstrap.env`, `base-config.json` | Bootstrap's inputs, one `AKS_FLEX_NODE_*` variable a line, and the base config they name | Ignition, or whatever provisions a rejoin | Removed once bootstrap succeeds, or fails with the agent's unit installed |
+| `/etc/aks-flex-node/credentials/` | A service principal's credential, which the agent reads | Ignition, or whatever provisions a rejoin | Removed |
 | `/etc/aks-flex-node/agent-image.env` | The image selection: `AKS_FLEX_NODE_IMAGE`, with `AKS_FLEX_NODE_LAST_GOOD_IMAGE` after an upgrade | `AgentUpgrade`, or whatever provisions a rejoin | Removed |
 | `/etc/aks-flex-node/agent-upgrade-signal.json` | A pending `AgentUpgrade` | The daemon | Removed |
 
@@ -130,6 +131,7 @@ The agent's unit restarts on failure, and starts its recovery unit through
 | Its image | Pulled at every run, so a tag names its current image. If the pull fails, an image already on the host, such as the install's after a reset, runs as it is. |
 | Its inputs | `bootstrap.env`, which the image's [`aks-flex-node-bootstrap`](../../scripts/agent-image/aks-flex-node-bootstrap) reads: one `AKS_FLEX_NODE_*=value` a line, not evaluated as shell. It ignores, with a warning, the variables the image sets: where the agent and its config go, and which agent to download. Secrets go in files the inputs name. |
 | What it runs | `bootstrap.sh --installed-agent`, naming the image's agent: it renders `/etc/aks-flex-node/config.json`, runs preflight, and runs `start`. |
+| Success | It removes `bootstrap.env` and `base-config.json`. A service principal's credential stays. |
 | A failure | Retried for as long as it takes, backing off from 10 seconds to 5 minutes. |
 | Exit status 78 | Not retried: a setting that can't work, or a `start` that failed after changing the host. The unit stays failed until new inputs and a start. |
 | A reset | The reset unit stops it first, and a bootstrap started during a reset waits for the reset. |
@@ -352,7 +354,8 @@ The harness's checks fail if the agent's container isn't `spc_t`.
   sensitive.
 - `ctr` keeps NoNewPrivileges on.
 - Bootstrap's inputs, which can hold a bootstrap token, and the install's
-  settings are mode 0600. Reset removes the inputs.
+  settings are mode 0600. The bootstrap unit removes the inputs once bootstrap
+  succeeds; the agent's config has what it needs.
 - The pull and snapshotter flags in the install's settings appear on `ctr`'s
   command lines, which other local users can read through `/proc`. Never put
   registry credentials in them. Pulling the agent's image from a registry that

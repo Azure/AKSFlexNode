@@ -28,9 +28,10 @@
 # bootstrap, which renders the agent's config and runs start, which installs
 # and starts the agent's own unit, aks-flex-node-agent.service. It runs at boot
 # once /etc/aks-flex-node/bootstrap.env, bootstrap's inputs, is there, until the
-# agent is installed. aks-flex-node-reset.service runs `aks-flex-node reset`,
-# which removes the agent's unit and the node and leaves this, so new inputs
-# and a start of the bootstrap unit join the node again.
+# agent is installed. Once bootstrap succeeds, it removes its inputs.
+# aks-flex-node-reset.service runs `aks-flex-node reset`, which removes the
+# agent's unit and the node and leaves this, so new inputs and a start of the
+# bootstrap unit join the node again.
 #
 # The units run the image agent-container.env names, unless
 # /etc/aks-flex-node/agent-image.env names another, as AKS_FLEX_NODE_IMAGE.
@@ -55,15 +56,16 @@ storage:
       overwrite: true
       contents:
         local: agent-container.env
-    # Bootstrap's inputs, which the bootstrap unit runs with at first boot.
-    # Reset removes them, with the rest of /etc/aks-flex-node.
+    # Bootstrap's inputs, which the bootstrap unit runs with at first boot. It
+    # removes them once bootstrap succeeds, as reset would.
     - path: /etc/aks-flex-node/bootstrap.env
       mode: 0600
       overwrite: true
       contents:
         local: bootstrap.env
     # For a base config, uncomment this, and set AKS_FLEX_NODE_BASE_CONFIG_FILE
-    # in bootstrap.env to its path.
+    # in bootstrap.env to its path. Keep that path: the bootstrap unit removes
+    # it with bootstrap.env.
     # - path: /etc/aks-flex-node/base-config.json
     #   mode: 0600
     #   overwrite: true
@@ -141,6 +143,14 @@ systemd:
         # stays failed, with its inputs, until new ones and a start.
         RestartPreventExitStatus=78
         TimeoutStartSec=30min
+        # Bootstrap's inputs can carry a bootstrap token, and the agent's config
+        # has what it needs, so they go once bootstrap succeeds. A service
+        # principal's credential stays: the agent reads it.
+        ExecStartPost=/bin/rm -f /etc/aks-flex-node/bootstrap.env /etc/aks-flex-node/base-config.json
+        # Once the agent's unit exists no retry can succeed, and a start that
+        # failed after installing it exits with 78, so ExecStartPost never runs.
+        # They go then too, but not after other failures, whose retry needs them.
+        ExecStopPost=/bin/sh -c 'test ! -e /etc/systemd/system/aks-flex-node-agent.service || rm -f /etc/aks-flex-node/bootstrap.env /etc/aks-flex-node/base-config.json'
 
         [Install]
         WantedBy=multi-user.target
