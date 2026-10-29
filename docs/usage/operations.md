@@ -19,7 +19,7 @@ AKS or the operator owns workload disruption decisions. Cordon and drain the Kub
 
 ## Where the agent is installed
 
-The agent keeps its binaries and helpers under `/opt/unbounded/agent`: the `aks-flex-node` link in `/opt/unbounded/agent/bin`, along with the nspawn lifecycle helper, the blue/green binaries and recovery script in `/opt/unbounded/agent/lib/aks-flex-node`, and the LocalDNS helper in `/opt/unbounded/agent/libexec`. The config, state, logs, and systemd units stay under `/etc`, `/var`, and `/etc/systemd/system`.
+When the agent runs in containers on Azure Container Linux, which is experimental, none of it is installed on the host, and this section doesn't apply; see [Azure Container Linux](azure-container-linux.md). Everywhere else, the agent keeps its binaries and helpers under `/opt/unbounded/agent`: the `aks-flex-node` link in `/opt/unbounded/agent/bin`, along with the nspawn lifecycle helper, the blue/green binaries and recovery script in `/opt/unbounded/agent/lib/aks-flex-node`, and the LocalDNS helper in `/opt/unbounded/agent/libexec`. The config, state, logs, and systemd units stay under `/etc`, `/var`, and `/etc/systemd/system`.
 
 `/opt/unbounded/agent/bin` is not on the default `PATH`, so run the host commands in this guide as `/opt/unbounded/agent/bin/aks-flex-node`. Earlier releases left `aks-flex-node` in `/usr/local/bin`, which is on the default `PATH`, so scripts and runbooks that run it by name need updating. To run it by name, add `/opt/unbounded/agent/bin` to `PATH`, or, where `/usr/local` is writable, link it from `/usr/local/sbin`:
 
@@ -33,7 +33,7 @@ Don't link it from `/usr/local/bin`. An earlier release takes an executable at `
 
 The filesystem that holds `/opt/unbounded/agent` must allow running programs, so `/opt` must not be mounted `noexec`. `aks-flex-node preflight` fails where it is, and `start` fails before it registers the machine if the agent cannot run from there.
 
-Where `/usr/local/bin` is writable, the install scripts put the binary there, as earlier releases were installed. The agent copies itself to `/opt/unbounded/agent/bin` when it starts, and removes the copy in `/usr/local/bin` once nothing it runs is under `/usr/local`. Where `/usr/local` is read-only, as on Azure Container Linux, the scripts install under `/opt/unbounded/agent` directly.
+Where `/usr/local/bin` is writable, the install scripts put the binary there, as earlier releases were installed. The agent copies itself to `/opt/unbounded/agent/bin` when it starts, and removes the copy in `/usr/local/bin` once nothing it runs is under `/usr/local`. Where `/usr/local` is read-only, as on Azure Container Linux when the agent is installed on the host, the scripts install under `/opt/unbounded/agent` directly.
 
 Earlier releases installed these files under `/usr/local`. A host one of them installed moves to `/opt/unbounded/agent` when the agent is upgraded; see [Migrating to `/opt/unbounded/agent`](migration.md).
 
@@ -196,6 +196,8 @@ trap - EXIT
 ```
 
 The uninstall script runs the local reset, removes the installed binary and agent-managed directories, and preserves externally managed Azure Arc software. It doesn't remove the Kubernetes Node, Azure Machine, Flex node pool, host VM, Azure identity, or role assignments.
+
+When the agent runs in containers on Azure Container Linux, there's no uninstall script, and `uninstall.sh` doesn't apply. Reset the node with an `AgentReset` MachineOperation or `sudo systemctl start aks-flex-node-reset.service`, and to remove the agent, reprovision the host without its Ignition config; see [Reset and rejoining](azure-container-linux.md#reset-and-rejoining).
 
 After local cleanup, remove or verify removal of the Kubernetes Node and Azure Machine through the controlling AKS workflow. For a standalone evaluation flow, remove the Node explicitly:
 
