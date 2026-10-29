@@ -263,7 +263,9 @@ whose disk writes the host caches (`cache=unsafe`):
 | `ACLC_KIND_CLUSTER` | `aclc` | The kind cluster's name |
 | `ACLC_KIND_NODE_IMAGE` | kind's default | The kind node image |
 | `ACLC_SUBNET` | `192.168.112` | First three octets of the bridge subnet |
+| `ACLC_BRIDGE`, `ACLC_TAP`, `ACLC_VETH_HOST` | `virbr-aclc`, `tap-aclc`, `veth-aclc-kind` | The bridge, the VM's TAP device, and the kind node's veth on the bridge |
 | `ACLC_DNS` | `8.8.8.8 8.8.4.4` | The VM's DNS servers |
+| `ACLC_REGISTRY_NAME` | `aclc-registry` | The registry's container |
 | `ACLC_REGISTRY_IMAGE` | `docker.io/library/registry:2` | The registry's image |
 | `ACLC_REGISTRY_PORT` | `5099` | Registry port on the bridge and on loopback |
 | `ACLC_SERVE_PORT` | `8298` | Port the Ignition config is served on during `up` |
@@ -272,7 +274,9 @@ whose disk writes the host caches (`cache=unsafe`):
 | `ACLC_BUTANE_IMAGE` | `quay.io/coreos/butane:v0.29.0` | Butane image |
 
 The subnet, interface names, and ports differ from the other harnesses in
-`hack`, so they can run alongside this one.
+`hack`, so they can run alongside this one. To run a second copy of this one,
+set its own `ACLC_STATE_DIR`, `ACLC_SUBNET`, interface names, registry name and
+port, Ignition port, kind cluster, and `ACLC_AGENT_TAG`.
 
 ## Troubleshooting
 

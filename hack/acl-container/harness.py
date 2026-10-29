@@ -61,8 +61,8 @@ IMAGE_DIR = Path(os.environ.get("ACL_IMAGE_DIR", str(REPO / ".vm" / "acl-images"
 SUBNET = os.environ.get("ACLC_SUBNET", "192.168.112")
 GATEWAY = f"{SUBNET}.1"
 VM_IP = f"{SUBNET}.10"
-BRIDGE = "virbr-aclc"
-TAP = "tap-aclc"
+BRIDGE = os.environ.get("ACLC_BRIDGE", "virbr-aclc")
+TAP = os.environ.get("ACLC_TAP", "tap-aclc")
 DNS = os.environ.get("ACLC_DNS", "8.8.8.8 8.8.4.4").split()
 SERVE_PORT = int(os.environ.get("ACLC_SERVE_PORT", "8298"))
 VM_MEMORY = os.environ.get("ACLC_VM_MEMORY", "4096")
@@ -72,7 +72,7 @@ HOSTNAME = "acl-flex-proto"
 SSH_USER = "core"
 
 ENGINE = os.environ.get("ACLC_CONTAINER_ENGINE") or ("podman" if shutil.which("podman") else "docker")
-REGISTRY_NAME = "aclc-registry"
+REGISTRY_NAME = os.environ.get("ACLC_REGISTRY_NAME", "aclc-registry")
 REGISTRY_IMAGE = os.environ.get("ACLC_REGISTRY_IMAGE", "docker.io/library/registry:2")
 REGISTRY_PORT = int(os.environ.get("ACLC_REGISTRY_PORT", "5099"))
 AGENT_REPOSITORY = "aks-flex-node-agent"
@@ -112,11 +112,11 @@ KIND_NODE = f"{CLUSTER}-control-plane"
 KIND_NODE_IMAGE = os.environ.get("ACLC_KIND_NODE_IMAGE", "")
 KIND_BRIDGE_IP = f"{SUBNET}.2"
 API_SERVER = f"{KIND_BRIDGE_IP}:6443"
-VETH_HOST = "veth-aclc-kind"
+VETH_HOST = os.environ.get("ACLC_VETH_HOST", "veth-aclc-kind")
 VETH_KIND = "eth-aclc"
 KUBECONFIG = STATE / "kubeconfig"
 CLUSTER_MARKER = STATE / "cluster"
-CONTROLLER_IMAGE = "localhost/aks-flex-controller:aclc"
+CONTROLLER_IMAGE = f"localhost/aks-flex-controller:{CLUSTER}"
 # The in-cluster machine endpoint, through the API server's service proxy.
 PROXY_PATH = "/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy"
 BOOTSTRAP_GROUP = "system:bootstrappers:aks-flex-node"
@@ -1404,7 +1404,8 @@ def build_candidate_images() -> tuple[str, str]:
         for name, content in files.items():
             (context / name).write_text(content)
         (context / "Containerfile").write_text("\n".join([f"FROM {LOCAL_AGENT_IMAGE}", *steps]) + "\n")
-        local = f"localhost/{AGENT_REPOSITORY}:{tag}"
+        # Tagged apart from another copy of the harness's, in the same image store.
+        local = f"localhost/{AGENT_REPOSITORY}:{AGENT_TAG}-{tag}"
         log(f"building {local}")
         run([ENGINE, "build", "--quiet", "-t", local, str(context)], capture=True)
         reference = push_image(local, tag)
