@@ -65,6 +65,7 @@ Use `node.ign` as the host's Ignition config; on Azure, that's the VM's custom d
 - Values are taken exactly as written, quotes included, and never expanded, so don't quote them.
 - Don't set the agent's version, URL, or digest, `AKS_FLEX_NODE_CONFIG_PATH`, or `AKS_FLEX_NODE_INSTALL_DIR`: the image is the agent, and sets the rest. They're ignored, with a warning.
 - For a base config, uncomment its entry in the template, put `base-config.json` next to it, and set `AKS_FLEX_NODE_BASE_CONFIG_FILE=/etc/aks-flex-node/base-config.json`.
+- Once bootstrap succeeds, the bootstrap unit removes `bootstrap.env` and `base-config.json`, which can carry a bootstrap token: the agent's config has what it needs. A service principal's credential file stays, because the agent reads it.
 - For a service principal, uncomment the credential entries in the template, put the secret or certificate file next to it, and set `AKS_FLEX_NODE_SP_CLIENT_SECRET_FILE` or `AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE` to its path under `/etc/aks-flex-node/credentials/`. Don't put the secret itself in `bootstrap.env`.
 
 On first boot, Ignition writes the settings and enables `aks-flex-node-bootstrap.service`. Once the network is online, the unit pulls the image and runs `bootstrap.sh` in a container of it. Bootstrap installs and starts `aks-flex-node-agent.service`, which runs the agent's daemon in a container of the image. Once the agent's unit is installed, later boots skip the bootstrap unit. Follow its progress on the host with `journalctl -u aks-flex-node-bootstrap.service`.

@@ -7,8 +7,8 @@
 # bootstrap.sh takes its inputs from AKS_FLEX_NODE_* variables, read here from
 # /etc/aks-flex-node/bootstrap.env, one VARIABLE=value a line. Values aren't
 # evaluated as shell. A base config with secrets, such as a bootstrap token,
-# goes in a file of its own, named by AKS_FLEX_NODE_BASE_CONFIG_FILE. Reset
-# removes both with the rest of /etc/aks-flex-node.
+# goes in a file of its own, named by AKS_FLEX_NODE_BASE_CONFIG_FILE. The
+# bootstrap unit removes both once bootstrap succeeds.
 set -euo pipefail
 
 inputs=/etc/aks-flex-node/bootstrap.env
