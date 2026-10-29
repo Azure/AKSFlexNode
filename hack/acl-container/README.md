@@ -276,6 +276,8 @@ The subnet, interface names, and ports differ from the other harnesses in
 
 ## Troubleshooting
 
+- **`up` fails.** It leaves what it made so far, the VM's serial log and the
+  cluster included, to show why. `harness.py down` removes it all.
 - **The VM doesn't come up.** `harness.py console` follows its serial console,
   also in `.vm/acl-container/serial.log`.
 - **Bootstrap fails.** `journalctl -u aks-flex-node-bootstrap -b` on the VM
