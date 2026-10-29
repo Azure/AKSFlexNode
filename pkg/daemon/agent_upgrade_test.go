@@ -72,6 +72,18 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 			},
 			wantErr: "64 hexadecimal",
 		},
+		// Which URLs an agent takes is its executor's to check; see
+		// TestAgentUpgradeExecutorsTakeTheirOwnKindOfRequest.
+		"an image": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent",
+				agentUpgradeSHA256Parameter:      "sha256:" + strings.Repeat("a", 64),
+			},
+		},
+		"an image without its digest": {
+			parameters: map[string]string{agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent"},
+			wantErr:    agentUpgradeSHA256Parameter,
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -201,7 +213,9 @@ func TestHostAgentUpgradeExecutorSchedulesRestartOutsideService(t *testing.T) {
 			calls = append(calls, "systemd-run "+joined)
 			for _, expected := range []string{
 				"--collect",
-				"--on-active=1s",
+				"--on-active=1000ms",
+				// Without it, systemd fires the timer up to a minute late.
+				"--timer-property=AccuracySec=100ms",
 				"--unit=aks-flex-node-agent-upgrade-restart-",
 				"/usr/bin/systemctl restart " + ServiceUnitName,
 			} {

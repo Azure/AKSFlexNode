@@ -1,0 +1,40 @@
+#!/bin/bash
+# Run one of the host's tools against the host root, which the agent container
+# mounts at /host.
+#
+# The image links the host tools the agent runs, such as machinectl and
+# systemctl, to this script (see Dockerfile.aks-flex-node-agent), so those
+# names run the host's binaries, with the host's libraries and configuration,
+# rather than copies in the image that could disagree with the host. /host is a
+# recursive bind of the host's /, so under chroot /run, with the D-Bus socket,
+# is the host's, and so is /proc, since the container shares the host's PID
+# namespace.
+#
+#   host-exec COMMAND [ARGS...]   run any host command
+set -euo pipefail
+
+host_root=${HOST_ROOT:-/host}
+name=$(basename "$0")
+if [[ $name == host-exec ]]; then
+    if (( $# == 0 )); then
+        echo "usage: host-exec COMMAND [ARGS...]" >&2
+        exit 2
+    fi
+    name=$1
+    shift
+fi
+
+if [[ ! -x $host_root/usr/bin/env ]]; then
+    echo "host-exec: the host root is not mounted at $host_root" >&2
+    exit 1
+fi
+host_path=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+case $name in
+    # The container's mounts of host paths are slaves of the host's, so a
+    # mount or unmount made in the container's mount namespace, chroot or not,
+    # never reaches the host. These run in the host's, PID 1's, instead.
+    mount | umount | mountpoint)
+        exec /usr/bin/nsenter --mount=/proc/1/ns/mnt -- /usr/bin/env "$host_path" "$name" "$@"
+        ;;
+esac
+exec /usr/sbin/chroot "$host_root" /usr/bin/env "$host_path" "$name" "$@"

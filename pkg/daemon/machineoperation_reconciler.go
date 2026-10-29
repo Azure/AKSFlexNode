@@ -163,6 +163,9 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 	if err != nil {
 		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
 	}
+	if err := h.agentUpgrade.Validate(request); err != nil {
+		return h.finishFailedMachineOperation(ctx, store, op, "InvalidParameters", err.Error())
+	}
 	activationLock, err := h.agentUpgrade.Acquire()
 	if errors.Is(err, agentbinary.ErrActivationInProgress) {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -186,7 +189,7 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
 	}
-	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent binary"); err != nil {
+	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent"); err != nil {
 		cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
 		abortErr := h.agentUpgrade.Abort(cleanupCtx)
 		cancel()

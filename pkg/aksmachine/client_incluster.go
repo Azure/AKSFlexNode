@@ -44,11 +44,20 @@ type kubernetesStatusError struct {
 	} `json:"details,omitempty"`
 }
 
+// bootstrapRESTConfig is kubeauth's bootstrap REST config, whose exec credential runs plugin, or the
+// host's agent when plugin is empty.
+func bootstrapRESTConfig(cfg *config.Config, plugin string) (*rest.Config, error) {
+	if plugin == "" {
+		return kubeauth.BootstrapRESTConfig(cfg)
+	}
+	return kubeauth.BootstrapRESTConfigWithPlugin(cfg, plugin)
+}
+
 // newClusterEndpointClientFromBootstrapConfig is used by start for EnsureMachine
 // before daemon credentials exist. EnsureMachine is a no-op when the controller
 // has already created the machine.
-func newClusterEndpointClientFromBootstrapConfig(cfg *config.Config, logger *slog.Logger) (MachineClient, error) {
-	restCfg, err := kubeauth.BootstrapRESTConfig(cfg)
+func newClusterEndpointClientFromBootstrapConfig(cfg *config.Config, logger *slog.Logger, plugin string) (MachineClient, error) {
+	restCfg, err := bootstrapRESTConfig(cfg, plugin)
 	if err != nil {
 		return nil, err
 	}

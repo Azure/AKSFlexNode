@@ -1,0 +1,91 @@
+#!/bin/bash
+# Entrypoint of the agent container: flex-agent-entrypoint COMMAND [ARG...]
+#
+# The units that start the container give it only the host's root, at /host.
+# This mounts the host paths the agent uses at their own paths, so the agent,
+# unchanged, uses the host's. The list is here, in the image, so it changes with
+# the agent rather than with the host's provisioning. It then checks what the
+# agent relies on, the host's machinectl answering over D-Bus, logs it, and runs
+# COMMAND. A failed check exits, so the failure shows in the unit's log, except
+# for reset and upgrade recovery, which warn and run.
+set -euo pipefail
+
+host=/host
+# mount on PATH runs in the host's mount namespace; see host-exec.
+mount=/usr/bin/mount
+chroot=/usr/sbin/chroot
+# Host directories the agent uses. Mounts the host makes under them later
+# reach the container, but not the other way: those go through host-exec.
+host_dirs=(
+    /etc/systemd
+    /etc/sysctl.d
+    /etc/modules-load.d
+    /etc/aks-flex-node
+    /etc/unbounded
+    /var/lib/machines
+    /var/lib/unbounded
+    /var/log/aks-flex-node
+    /run
+    /opt/unbounded
+)
+
+log() { echo "flex-agent: $*"; }
+
+if (($# == 0)); then
+    echo "usage: flex-agent-entrypoint COMMAND [ARG...]" >&2
+    exit 2
+fi
+if [[ ! -e $host/etc/os-release ]]; then
+    log "error: the host root is not mounted at $host"
+    exit 1
+fi
+
+# Where a host path is under $host, resolved within the host's root: a symlink of
+# the host's, such as /var/lib/machines moved to a data disk, names a host path,
+# which resolved here would be one of this container's.
+host_path() {
+    echo "$host$($chroot "$host" /usr/bin/readlink -m "$1")"
+}
+
+# The host's OS identity, for the agent's OS detection. Both sides' os-release
+# are symlinks, so each is resolved within its own root.
+os_release=$(readlink -f /etc/os-release)
+$mount --bind "$(host_path /etc/os-release)" "$os_release"
+$mount -o remount,bind,ro "$os_release"
+for dir in "${host_dirs[@]}"; do
+    source=$(host_path "$dir")
+    mkdir -p "$source" "$dir"
+    $mount --rbind "$source" "$dir"
+    $mount --make-rslave "$dir"
+done
+# The install's settings, read-only, for the image the host's provisioning names.
+settings=/etc/sysconfig/aks-flex-node-container
+settings_source=$(host_path "$settings")
+if [[ -f $settings_source ]]; then
+    mkdir -p "$(dirname "$settings")"
+    touch "$settings"
+    $mount --bind "$settings_source" "$settings"
+    $mount -o remount,bind,ro "$settings"
+fi
+
+log "$(aks-flex-node version | paste -sd ' ')"
+# shellcheck source=/dev/null
+log "host: $(. /etc/os-release && echo "$PRETTY_NAME")"
+log "SELinux context: $(tr -d '\0' </proc/self/attr/current 2>/dev/null || echo none)"
+log "PID namespace: $(readlink /proc/self/ns/pid), host $(readlink /proc/1/ns/pid)"
+if ! machines=$(machinectl list --no-legend --no-pager 2>&1); then
+    # Reset and recovery do what they can without machined: they're how a broken
+    # node is brought back.
+    case "${1:-} ${2:-}" in
+        "aks-flex-node reset" | "aks-flex-node recover-agent-upgrade")
+            log "warning: the host's machinectl failed: $machines"
+            log "agent container running $* anyway"
+            exec "$@"
+            ;;
+    esac
+    log "error: the host's machinectl failed: $machines"
+    exit 1
+fi
+log "host $(machinectl --version | head -1); $(grep -c . <<<"$machines") machine(s) running"
+log "agent container ready; running $*"
+exec "$@"

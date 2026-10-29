@@ -1,0 +1,42 @@
+#!/bin/bash
+# Bootstrap the node from the agent's container, as scripts/bootstrap.sh does
+# on a host: render /etc/aks-flex-node/config.json, run preflight, and run
+# start, which installs and starts the agent's unit. bootstrap.sh is in the
+# image and runs the agent in it rather than downloading one.
+#
+# bootstrap.sh takes its inputs from AKS_FLEX_NODE_* variables, read here from
+# /etc/aks-flex-node/bootstrap.env, one VARIABLE=value a line. Values aren't
+# evaluated as shell. A base config with secrets, such as a bootstrap token,
+# goes in a file of its own, named by AKS_FLEX_NODE_BASE_CONFIG_FILE. The
+# bootstrap unit removes both once bootstrap succeeds.
+set -euo pipefail
+
+inputs=/etc/aks-flex-node/bootstrap.env
+
+if [[ ! -f $inputs ]]; then
+    echo "aks-flex-node-bootstrap: no $inputs" >&2
+    exit 1
+fi
+# What the image sets, which bootstrap's inputs mustn't change: they'd have start
+# install the agent as on a host, or its config where the agent's unit doesn't
+# look, or download an agent rather than run the image's.
+reserved=" AKS_FLEX_NODE_CONTAINERIZED AKS_FLEX_NODE_CONFIG_PATH AKS_FLEX_NODE_INSTALL_DIR"
+reserved+=" AKS_FLEX_NODE_INSTALLED_AGENT AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_AGENT_VERSION"
+reserved+=" AKS_FLEX_NODE_AGENT_SHA256 "
+number=0
+while IFS= read -r line || [[ -n $line ]]; do
+    number=$((number + 1))
+    line=${line%$'\r'}
+    if [[ $line =~ ^(AKS_FLEX_NODE_[A-Z0-9_]+)= ]]; then
+        name=${BASH_REMATCH[1]}
+        if [[ $reserved == *" $name "* ]]; then
+            echo "aks-flex-node-bootstrap: ignoring $name, line $number of $inputs: the image sets it" >&2
+            continue
+        fi
+        export "${line?}"
+    elif [[ -n ${line//[[:space:]]/} && $line != \#* ]]; then
+        # Only its number: the line could be part of a secret.
+        echo "aks-flex-node-bootstrap: ignoring line $number of $inputs, which isn't AKS_FLEX_NODE_NAME=value" >&2
+    fi
+done <"$inputs"
+exec /opt/aks-flex-node/bin/bootstrap.sh --installed-agent /opt/aks-flex-node/bin/aks-flex-node "$@"

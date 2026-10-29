@@ -153,3 +153,18 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 		t.Fatal("Preflight accepted a pending MachineOperation signal")
 	}
 }
+
+// TestDirectActivationIsRefusedInAContainer: in the agent's container the host has no binary
+// layout to switch, and an AgentUpgrade switches images instead. It sets the environment, so it
+// doesn't run in parallel.
+func TestDirectActivationIsRefusedInAContainer(t *testing.T) {
+	t.Setenv(ContainerizedEnv, "true")
+	log := slog.New(slog.DiscardHandler)
+
+	if _, err := PreflightHostAgentActivation(t.Context(), log, "/nonexistent/aks-flex-node"); !errors.Is(err, errDirectActivationInContainer) {
+		t.Fatalf("PreflightHostAgentActivation() error = %v, want %v", err, errDirectActivationInContainer)
+	}
+	if _, err := ActivateHostAgent(t.Context(), log, "/nonexistent/aks-flex-node"); !errors.Is(err, errDirectActivationInContainer) {
+		t.Fatalf("ActivateHostAgent() error = %v, want %v", err, errDirectActivationInContainer)
+	}
+}

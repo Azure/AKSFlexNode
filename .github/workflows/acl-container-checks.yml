@@ -1,0 +1,82 @@
+# Checks the agent's image for Azure Container Linux and the tools around it: ShellCheck on the
+# image's scripts, a compile check of the harness's Python, the install's Butane config rendered
+# with Butane --strict, as an operator renders it, and the image built for its platforms, as a
+# release builds it, without pushing it.
+name: ACL Container Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - Dockerfile.aks-flex-node-agent
+      - go.mod
+      - scripts/agent-image/**
+      - scripts/aks-flex-node-agent-container.bu
+      - scripts/bootstrap.sh
+      - hack/acl-container/**
+      - hack/acl/ukiboot.py
+      - .github/workflows/acl-container-checks.yml
+      - .github/workflows/agent-image-build.yml
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - Dockerfile.aks-flex-node-agent
+      - go.mod
+      - scripts/agent-image/**
+      - scripts/aks-flex-node-agent-container.bu
+      - scripts/bootstrap.sh
+      - hack/acl-container/**
+      - hack/acl/ukiboot.py
+      - .github/workflows/acl-container-checks.yml
+      - .github/workflows/agent-image-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SHELLCHECK_IMAGE: docker.io/koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+  # The version harness.py renders with, as BUTANE_IMAGE.
+  BUTANE_IMAGE: quay.io/coreos/butane:v0.29.0@sha256:13fec166cb47a8e053dcc23256c0ca41aaa1c61cab39793832aaf8894ca78c8f
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ShellCheck
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" \
+            scripts/agent-image/*
+
+      - name: Compile Python
+        run: python3 -m py_compile hack/acl-container/*.py hack/acl/ukiboot.py
+
+      - name: Render the Butane config
+        run: |
+          files=$(mktemp -d)
+          # The two files the config names, as docs/usage/azure-container-linux.md shows them.
+          echo "AKS_FLEX_NODE_IMAGE=ghcr.io/azure/aks-flex-node-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000" \
+            > "$files/agent-container.env"
+          echo "AKS_FLEX_NODE_AUTH=msi" > "$files/bootstrap.env"
+          docker run --rm -i -v "$files:/files:ro" "$BUTANE_IMAGE" --strict --files-dir /files \
+            < scripts/aks-flex-node-agent-container.bu > /dev/null
+
+  image:
+    name: Build the image
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent-image-build.yml
+    with:
+      source_ref: ${{ github.sha }}
+      version: check-${{ github.sha }}
+      push_image: false
