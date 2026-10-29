@@ -2,7 +2,8 @@
 # for linux/amd64 and linux/arm64. release.yml publishes it with each release, and ACL Container
 # Checks builds it without pushing. Published, it's pushed by digest, its build provenance is
 # attested, and only then is it tagged with the version and the commit, so a tag only ever names an
-# attested image.
+# attested image. The build is reproducible: a commit's image has one digest, so a release that's
+# run again tags the image it published before.
 name: Build AKS Flex Node Agent Image
 
 on:
@@ -86,7 +87,10 @@ jobs:
           image="ghcr.io/${owner}/${IMAGE_PACKAGE}"
           commit_sha="$(git rev-parse HEAD)"
           short_sha="${commit_sha:0:12}"
-          build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          # The commit's time, not the clock's, for every timestamp in the image, and for the
+          # packages it installs: those published by then.
+          source_date_epoch="$(git log -1 --format=%ct)"
+          build_time="$(date -u -d "@${source_date_epoch}" +"%Y-%m-%dT%H:%M:%SZ")"
 
           labels=(
             "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
@@ -107,6 +111,7 @@ jobs:
             --build-arg "VERSION=${IMAGE_VERSION}"
             --build-arg "GIT_COMMIT=${short_sha}"
             --build-arg "BUILD_TIME=${build_time}"
+            --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}"
           )
           for label in "${labels[@]}"; do
             build_args+=(--label "${label}")
@@ -115,7 +120,7 @@ jobs:
           # Pushed by digest only: the tags move once it's attested.
           if [[ "${PUSH_IMAGE}" == "true" ]]; then
             build_args+=(
-              --output "type=image,name=${image},push-by-digest=true,name-canonical=true,push=true"
+              --output "type=image,name=${image},push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true"
               --metadata-file metadata.json
             )
           fi
