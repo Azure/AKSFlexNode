@@ -282,6 +282,11 @@ port, Ignition port, kind cluster, and `ACLC_AGENT_TAG`.
 
 - **`up` fails.** It leaves what it made so far, the VM's serial log and the
   cluster included, to show why. `harness.py down` removes it all.
+- **Bootstrap gets `503 MachineStoreUnavailable`, and kube-proxy or the controller
+  crash-loop with `too many open files`.** kind clusters, this one's and
+  others', have used up the host's inotify instances. Raise the limit, as
+  [kind suggests](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files),
+  with `sudo sysctl fs.inotify.max_user_instances=512`, then `down` and `up`.
 - **The VM doesn't come up.** `harness.py console` follows its serial console,
   also in `.vm/acl-container/serial.log`.
 - **Bootstrap fails.** `journalctl -u aks-flex-node-bootstrap -b` on the VM
