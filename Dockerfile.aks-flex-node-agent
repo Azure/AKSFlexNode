@@ -50,8 +50,16 @@ LABEL org.opencontainers.image.title="aks-flex-node-agent" \
 # registries chain to, such as ghcr.io's. util-linux: the entrypoint's mount and
 # host-exec's nsenter. jq and tar: bootstrap.sh requires them. hostname:
 # bootstrap.sh names the node after the host.
-RUN tdnf install -y ca-certificates util-linux jq tar hostname \
-    && tdnf clean all
+#
+# With SOURCE_DATE_EPOCH, which a release sets to its commit's time, the build
+# is reproducible: the packages are those published by then, rpm records that
+# time as when they were installed, and tdnf's history and ldconfig's cache,
+# which record when they ran, go.
+ARG SOURCE_DATE_EPOCH
+RUN tdnf install -y ${SOURCE_DATE_EPOCH:+--snapshottime=${SOURCE_DATE_EPOCH}} \
+      ca-certificates util-linux jq tar hostname \
+    && tdnf clean all \
+    && rm -f /usr/lib/sysimage/tdnf/history.db /var/cache/ldconfig/aux-cache
 
 # The container mounts the host's /opt/unbounded, where the agent installs its
 # host helpers, so the image's own programs live apart, in /opt/aks-flex-node/bin.

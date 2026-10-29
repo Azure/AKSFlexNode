@@ -149,10 +149,11 @@ builds Azure Linux 3.0 core with:
 They're in `/opt/aks-flex-node/bin`, the only directory of the image's on
 `PATH`. They can't be in `/opt/unbounded`, since the entrypoint mounts the
 host's over it. The image sets `AKS_FLEX_NODE_CONTAINERIZED=true`, and holds no
-development tools. Every image its build pulls is pinned by digest. A release
-publishes it as `ghcr.io/azure/aks-flex-node-agent` for `linux/amd64` and
-`linux/arm64`, tagged with the version and the commit, with attested build
-provenance.
+development tools. Every image its build pulls is pinned by digest, and a
+release builds it reproducibly, at its commit's time: the same commit gives the
+same digest. A release publishes it as `ghcr.io/azure/aks-flex-node-agent` for
+`linux/amd64` and `linux/arm64`, tagged with the version and the commit, with
+attested build provenance.
 
 ### The entrypoint
 
