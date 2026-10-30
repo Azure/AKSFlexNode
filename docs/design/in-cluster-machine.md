@@ -41,7 +41,7 @@ The local bootstrap configuration is authoritative while `aks-flex-node start` i
 7. The returned ETag becomes the reconciliation baseline for the locally applied goal.
 8. The daemon state is seeded from that ETag before host or nspawn state is mutated. A later ETag change is treated as a new remote goal.
 
-The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created machine. Its fixture must therefore already match the local bootstrap version. When machine registration is required, a mismatch fails bootstrap before host mutation.
+The ConfigMap-backed controller is read-only: it accepts mutation requests but returns the pre-created machine. Its fixture must therefore already match the local bootstrap version. A mismatch or any other registration failure aborts bootstrap before host mutation.
 
 ## Daemon flow
 

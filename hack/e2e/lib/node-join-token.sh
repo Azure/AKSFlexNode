@@ -83,7 +83,6 @@ node_join_token() {
     '.agent.logLevel = "debug"
       | .agent.machineClient.mode = "in-cluster"
       | .agent.machineClient.endpointUrl = $machineEndpointURL
-      | .agent.requireMachineRegistration = true
       | .node.kubelet.nodeIP = $nodeIP
       | .node.maxPods = $maxPods
       | .node.kubelet.systemReserved = {"cpu": $systemReservedCPU, "memory": $systemReservedMemory}

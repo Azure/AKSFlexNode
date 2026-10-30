@@ -261,8 +261,7 @@ _fetch_arc_bootstrap_config() {
       | .agent = ((.agent // {}) * {
           "logLevel": "debug",
           "nodeName": $nodeName,
-          "machineClient": {"mode": "in-cluster", "endpointUrl": $machineEndpointURL},
-          "requireMachineRegistration": true
+          "machineClient": {"mode": "in-cluster", "endpointUrl": $machineEndpointURL}
         })
       | .node.kubelet.nodeIP = $nodeIP' \
     "${output}" > "${output}.tmp"

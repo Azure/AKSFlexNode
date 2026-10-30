@@ -904,7 +904,6 @@ def base_config(token: str, version: str) -> dict:
         "agent": {
             "nodeName": NODE_NAME,
             "machineClient": {"mode": "in-cluster", "endpointUrl": PROXY_PATH},
-            "requireMachineRegistration": True,
         },
         "components": {"kubernetes": version},
         # Required so that reset has LocalDNS state to clean up.

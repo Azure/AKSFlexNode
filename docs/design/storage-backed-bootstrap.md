@@ -380,8 +380,7 @@ Example shape, with credentials redacted:
   "agent": {
     "machineClient": {
       "mode": "arm"
-    },
-    "requireMachineRegistration": true
+    }
   },
   "components": {
     "kubernetes": "1.35.6"

@@ -108,7 +108,6 @@ Earlier configs can contain `azure.arc.machineName`, `azure.arc.resourceGroup`, 
 | `agent.machineClient.mode` | string | Machine source. Use `arm` for direct ARM reads or `in-cluster` for the in-cluster read-only endpoint via Kubernetes service proxy. | `arm` |
 | `agent.machineClient.endpointUrl` | string | Backend endpoint. Optional in `arm` mode for dev-test ARM proxy use; required in `in-cluster` mode and must be an absolute Kubernetes API service-proxy path with no scheme or host. | `/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy` |
 | `agent.machineReconcileInterval` | duration string | Daemon interval for re-reading machine state. Uses Go duration syntax. | `10m` |
-| `agent.requireMachineRegistration` | boolean | Fails bootstrap when the AKS machine resource cannot be read or created. When false, registration is best-effort. | `true` with Arc, service principal, or managed identity; otherwise `false` |
 | `agent.machineOperationMode` | string | MachineOperation handling mode. | `auto` |
 
 ## Components
