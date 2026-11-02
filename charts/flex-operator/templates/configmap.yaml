@@ -1,0 +1,10 @@
+# Mirrors upstream 03-configmap.yaml.tmpl. Exposed to the operator via envFrom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unbounded-operator-config
+  namespace: {{ include "flex-operator.namespace" . }}
+  labels:
+    {{- include "flex-operator.labels" . | nindent 4 }}
+data:
+  {{- include "flex-operator.configData" . | nindent 2 }}

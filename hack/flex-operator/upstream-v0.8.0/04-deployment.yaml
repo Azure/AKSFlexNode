@@ -1,0 +1,98 @@
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unbounded-operator
+  namespace: unbounded-system
+  labels:
+    app.kubernetes.io/name: unbounded-operator
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: unbounded-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: unbounded-operator
+        app.kubernetes.io/component: controller
+      annotations:
+        # On AKS (which does not publish kube-public/cluster-info) this makes the
+        # pod's KUBERNETES_SERVICE_HOST the public API FQDN, which the operator
+        # uses as the last-resort source for the advertised API server endpoint.
+        # AKS only honors this as a pod annotation (not a label). Inert on
+        # clusters that do not honor it.
+        kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+        # Rolls the operator when any ConfigMap data changes at render time.
+        # Canonical JSON matches the `kubectl unbounded install` hash.
+        unbounded-cloud.io/operator-config-hash: "894a990d76a531299093a6379bbaa7b1740ae3f218ec4fca242150c93a4a2f02"
+    spec:
+      # The operator installs the cluster CNI, so it must be able to reach the
+      # API server before pod networking or cluster DNS is available. Default
+      # DNS uses the node resolver for the AKS API FQDN annotation above.
+      hostNetwork: true
+      dnsPolicy: Default
+      serviceAccountName: unbounded-operator
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: controller
+          image: ghcr.io/azure/unbounded-operator:v0.8.0
+          imagePullPolicy: Always
+          args:
+            - --leader-elect=true
+            - --leader-elect-namespace=unbounded-system
+            - --namespace=unbounded-system
+          envFrom:
+            # Environment-specific operator settings. See
+            # deploy/unbounded-operator/03-configmap.yaml.tmpl.
+            - configMapRef:
+                name: unbounded-operator-config
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          startupProbe:
+            # The operator applies and establishes CRDs at startup
+            # (operator.BootstrapCRDs, CRDBootstrapTimeout = 4m) before the
+            # manager starts and binds the health server, so /healthz is not
+            # served during bootstrap. Give startup up to 270s (54 x 5s), which
+            # exceeds the full bootstrap timeout, before liveness takes over.
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            failureThreshold: 54
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5

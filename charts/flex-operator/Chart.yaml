@@ -1,0 +1,15 @@
+apiVersion: v2
+name: flex-operator
+description: >-
+  PoC AKS cluster extension that installs the upstream Unbounded operator
+  (unbounded-operator) as the "Flex operator" for flex nodes for AKS.
+type: application
+version: 0.1.0
+appVersion: "v0.8.0"
+home: https://github.com/Azure/unbounded
+sources:
+  - https://github.com/Azure/unbounded/tree/v0.8.0/deploy/unbounded-operator
+annotations:
+  # Keep in sync with hack/flex-operator/upstream-v0.8.0 and UNBOUNDED_VERSION
+  # in docs/usage/getting-started.md.
+  unbounded.azure.com/upstream-manifests: deploy/unbounded-operator@v0.8.0

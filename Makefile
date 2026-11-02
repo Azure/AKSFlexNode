@@ -125,6 +125,13 @@ docs-check: docs-cli-check
 	@echo "Checking documentation content..."
 	@python3 hack/docs/check_docs.py
 
+.PHONY: chart-check
+chart-check: ## Lint the flex-operator chart and check it against the pinned upstream manifests
+	@command -v helm >/dev/null || { echo "helm is required for chart-check" >&2; exit 1; }
+	@helm lint --strict charts/flex-operator --namespace unbounded-system
+	@helm template flex-operator charts/flex-operator --namespace unbounded-system \
+		| python3 hack/flex-operator/compare_upstream.py - hack/flex-operator/upstream-v0.8.0
+
 .PHONY: check
 check: docs-check fmt-all vet lint test
 	@echo "All checks passed!"

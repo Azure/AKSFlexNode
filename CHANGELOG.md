@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Experimental `charts/flex-operator` Helm chart that packages the Unbounded operator (v0.8.0) for installation as an AKS cluster extension, with `make chart-check` to detect drift from the upstream manifests.
 - Support for Azure Container Linux and other hosts with a read-only `/usr`, and a Butane config, `scripts/aks-flex-node-bootstrap.bu`, that bootstraps a host provisioned by Ignition ([#323](https://github.com/Azure/AKSFlexNode/pull/323)).
 
 ### Changed

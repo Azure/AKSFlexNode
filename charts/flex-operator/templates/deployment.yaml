@@ -1,0 +1,77 @@
+# Mirrors upstream 04-deployment.yaml.tmpl at the pinned release.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unbounded-operator
+  namespace: {{ include "flex-operator.namespace" . }}
+  labels:
+    {{- include "flex-operator.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: unbounded-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: unbounded-operator
+        app.kubernetes.io/component: controller
+      annotations:
+        kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+        unbounded-cloud.io/operator-config-hash: {{ include "flex-operator.configData" . | sha256sum | quote }}
+    spec:
+      # The operator installs the cluster CNI, so it must reach the API server
+      # before pod networking or cluster DNS exists.
+      hostNetwork: true
+      dnsPolicy: Default
+      serviceAccountName: unbounded-operator
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: controller
+          image: {{ include "flex-operator.image" . }}
+          imagePullPolicy: {{ .Values.operator.imagePullPolicy }}
+          args:
+            - --leader-elect=true
+            - --leader-elect-namespace={{ include "flex-operator.namespace" . }}
+            - --namespace={{ include "flex-operator.namespace" . }}
+          envFrom:
+            - configMapRef:
+                name: unbounded-operator-config
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}
+          startupProbe:
+            # CRD bootstrap (up to 4m) runs before /healthz is served.
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            failureThreshold: 54
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5

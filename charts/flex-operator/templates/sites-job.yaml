@@ -1,0 +1,138 @@
+{{- if .Values.sites }}
+# Applies Unbounded Site / SitePeering objects after the operator has
+# bootstrapped its CRDs. Mirrors applyUnboundedPrivateSites in the AKS RP
+# Flex Node E2E. A Site with net enabled makes the operator install
+# Unbounded-Net (CNI): use only on clusters created with --network-plugin none.
+{{- $ns := include "flex-operator.namespace" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flex-operator-sites
+  namespace: {{ $ns }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flex-operator-sites
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["sites"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  - apiGroups: ["net.unbounded-cloud.io"]
+    resources: ["sitepeerings"]
+    verbs: ["get", "list", "create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flex-operator-sites
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flex-operator-sites
+subjects:
+  - kind: ServiceAccount
+    name: flex-operator-sites
+    namespace: {{ $ns }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flex-operator-sites
+  namespace: {{ $ns }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+data:
+  sites.yaml: |
+    {{- range .Values.sites }}
+    ---
+    apiVersion: unbounded-cloud.io/v1alpha3
+    kind: Site
+    metadata:
+      name: {{ .name }}
+    spec:
+      components:
+        net:
+          enabled: true
+      nodeCidrs:
+        {{- toYaml .nodeCidrs | nindent 8 }}
+      podCidrAssignments:
+        - cidrBlocks:
+            {{- toYaml .podCidrs | nindent 12 }}
+          nodeBlockSizes:
+            ipv4: {{ default 24 .nodeBlockSize }}
+      tunnelProtocol: {{ default "Auto" .tunnelProtocol }}
+    {{- end }}
+    {{- with .Values.sitePeering }}
+    {{- if .sites }}
+    ---
+    apiVersion: net.unbounded-cloud.io/v1alpha1
+    kind: SitePeering
+    metadata:
+      name: {{ default "flex-site-peering" .name }}
+    spec:
+      sites:
+        {{- toYaml .sites | nindent 8 }}
+      meshNodes: {{ ne (toString .meshNodes) "false" }}
+      tunnelProtocol: {{ default "Auto" .tunnelProtocol }}
+    {{- end }}
+    {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flex-operator-sites
+  namespace: {{ $ns }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: {{ .Values.siteJob.timeoutSeconds }}
+  template:
+    spec:
+      serviceAccountName: flex-operator-sites
+      restartPolicy: OnFailure
+      # Pod networking may not exist yet on a --network-plugin none cluster.
+      hostNetwork: true
+      dnsPolicy: Default
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: apply
+          image: {{ .Values.siteJob.image }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              kubectl wait --for=condition=Established --timeout={{ sub .Values.siteJob.timeoutSeconds 30 }}s \
+                crd/sites.unbounded-cloud.io crd/sitepeerings.net.unbounded-cloud.io
+              kubectl apply --server-side --field-manager=flex-operator-extension -f /config/sites.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: flex-operator-sites
+{{- end }}

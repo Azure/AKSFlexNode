@@ -47,6 +47,7 @@ The [lab index](labs/README.md) covers private and public cluster networking, VN
 - [Development guide](development.md) covers builds, tests, CI, and documentation changes.
 - [E2E test guide](../hack/e2e/README.md) describes the Azure validation suite.
 - [QEMU local VM guide](../hack/qemu/README.md) describes the local development VM.
+- [flex-operator chart](../charts/flex-operator/README.md) is an experimental Helm package of the Unbounded operator for AKS cluster extensions.
 
 ## Report problems
 

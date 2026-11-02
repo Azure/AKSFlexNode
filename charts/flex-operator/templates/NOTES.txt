@@ -1,0 +1,8 @@
+Flex operator (unbounded-operator {{ .Chart.AppVersion }}) installed in {{ .Release.Namespace }}.
+The operator installs Unbounded CRDs at startup; check:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/unbounded-operator
+{{- if not .Values.sites }}
+No Sites were configured. Create Sites (kubectl unbounded site init, or set
+.Values.sites on a --network-plugin none cluster) before attaching flex nodes.
+{{- end }}
+Uninstall does not delete operator-installed CRDs, Sites or component workloads.

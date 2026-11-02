@@ -1,0 +1,115 @@
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: unbounded-operator
+  labels:
+    app.kubernetes.io/name: unbounded-operator
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["sites"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["sites/status"]
+    verbs: ["get", "patch", "update"]
+  # Legacy net-group Sites are read during migration and translated into the
+  # machina-group Sites above; their finalizers are cleared (update/patch) so the
+  # CRD can be deleted once drained.
+  - apiGroups: ["net.unbounded-cloud.io"]
+    resources: ["sites"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["net.unbounded-cloud.io"]
+    resources: ["sitenodeslices"]
+    verbs: ["get", "list", "watch"]
+  # Cluster-scoped custom resources whose embedded secret references are
+  # repointed from the legacy namespaces to unbounded-system.
+  - apiGroups: ["unbounded-cloud.io"]
+    resources: ["machines", "machineoperationcredentials"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["namespaces", "serviceaccounts", "configmaps", "services", "secrets"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete", "deletecollection"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "replicationcontrollers", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  # Read-only, and only ever read: a component that registers admission
+  # webhooks or an aggregated API points them at a Service, and a registration
+  # whose backend is not serving is worse than none. Endpoints answer whether
+  # anything is actually behind that Service. The net controller Service has no
+  # selector - its leader pod writes these itself - so there is no other way to
+  # tell a running backend from a Deployment that merely exists.
+  #
+  # The verbs are exactly what the reads need and no more. These go through
+  # Env.LiveReader, which bypasses the manager cache. Both endpoint objects use
+  # the Service's own name, so get suffices. Neither is watched, which is the
+  # point of reading them live.
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete", "deletecollection"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    # The gantry component installs a low-priority PriorityClass (gantry-low)
+    # so its agents are preemptible under cluster pressure.
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    # escalate + bind let the operator install the component RBAC (net,
+    # machina, metalman, storage) whose Roles/ClusterRoles grant permissions
+    # the operator itself does not hold; without them the apiserver rejects the
+    # role creation as a privilege escalation. deletecollection lets the reaper
+    # DeleteAllOf the legacy component RBAC by label.
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete", "deletecollection", "escalate", "bind"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations", "validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
+  - apiGroups: ["apiregistration.k8s.io"]
+    resources: ["apiservices"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: unbounded-operator
+  labels:
+    app.kubernetes.io/name: unbounded-operator
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: unbounded-operator
+subjects:
+  - kind: ServiceAccount
+    name: unbounded-operator
+    namespace: unbounded-system
