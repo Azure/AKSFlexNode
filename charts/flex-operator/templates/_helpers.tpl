@@ -27,3 +27,20 @@ UNBOUNDED_API_SERVER_ENDPOINT: {{ .Values.operator.apiServerEndpoint | quote }}
 UNBOUNDED_IMAGE_REGISTRY: {{ trimSuffix "/" .Values.operator.imageRegistry | quote }}
 UNBOUNDED_REAP_LEGACY_RESOURCES: {{ .Values.operator.reapLegacyResources | toString | quote }}
 {{- end -}}
+
+{{/*
+Fail when an operator Deployment exists that this release doesn't own, for
+example one installed by `kubectl unbounded install`. Helm would otherwise
+fail later with a less clear ownership error, or a second release would fight
+the first. lookup returns nothing during `helm template`, so this only runs
+against a live cluster.
+*/}}
+{{- define "flex-operator.assertNoForeignOperator" -}}
+{{- $existing := lookup "apps/v1" "Deployment" .Release.Namespace "unbounded-operator" -}}
+{{- if $existing -}}
+{{- $owner := dig "metadata" "annotations" "meta.helm.sh/release-name" "" $existing -}}
+{{- if ne $owner .Release.Name -}}
+{{- fail (printf "unbounded-operator already exists in %s and isn't managed by release %q (managed by %q). Remove the existing installation, or adopt it explicitly, before installing flex-operator." .Release.Namespace .Release.Name (default "kubectl unbounded install or another tool" $owner)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
