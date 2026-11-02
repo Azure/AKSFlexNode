@@ -645,7 +645,7 @@ func writeContainerUnits(unitDir string, keepExisting bool) (bool, error) {
 	} {
 		name, content := unit.name, unit.content
 		path := filepath.Join(unitDir, name)
-		current, err := os.ReadFile(path) //nolint:gosec // the agent's fixed unit paths
+		current, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- path is built from the agent-owned systemd directory and fixed unit name
 		if err == nil && (keepExisting || bytes.Equal(current, content)) {
 			continue
 		}
