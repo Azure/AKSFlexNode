@@ -32,14 +32,15 @@ operator:
 # Empty (default) installs only the operator. Example:
 #   sites:
 #     - name: cluster
-#       nodeCidrs: ["10.224.0.0/16"]
-#       podCidrs: ["10.244.0.0/16"]
-#     - name: flex
-#       nodeCidrs: ["10.241.0.0/16"]
-#       podCidrs: ["10.245.0.0/16"]
+#       nodeCidrs: ["10.91.0.0/16"]
+#       podCidrs: ["10.93.0.0/16"]
+#     - name: flex-site
+#       nodeCidrs: ["10.92.0.0/16"]
+#       podCidrs: ["10.95.0.0/16"]
+#       # machina: false     # default true, as kubectl unbounded site init
 #   sitePeering:
-#     name: aks-flex-private-l3
-#     sites: [cluster, flex]
+#     name: cluster-flex-private-l3
+#     sites: [cluster, flex-site]
 sites: []
 sitePeering: {}
 siteJob:

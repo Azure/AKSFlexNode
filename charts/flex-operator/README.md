@@ -35,9 +35,12 @@ kubectl -n unbounded-system rollout status deploy/unbounded-operator
 | `operator.reapLegacyResources` | `true` | Upstream legacy-migration switch. |
 | `sites`, `sitePeering` | empty | Optional Sites and SitePeering applied by a post-install/post-upgrade Job. |
 
-A Site with networking enabled makes the operator install Unbounded-Net, which
-replaces the cluster CNI. Set `sites` only on an AKS cluster created with
-`--network-plugin none`. See [values.yaml](values.yaml) for an example.
+The Job creates the same Site objects as `kubectl unbounded site init`
+(Machina enabled by default; set `machina: false` per Site to disable). Any Site
+makes the operator install Unbounded-Net, which replaces the cluster CNI. Set
+`sites` only on an AKS cluster created with `--network-plugin none`. See
+[values.yaml](values.yaml) for an example. The Job runs `kubectl` directly
+because the default image has no shell.
 
 ## Differences from the upstream manifests
 
@@ -55,6 +58,14 @@ Check for unintended drift after changing the chart or the pinned release:
 helm template flex-operator charts/flex-operator -n unbounded-system \
   | python3 hack/flex-operator/compare_upstream.py - hack/flex-operator/upstream-v0.8.0
 ```
+
+## Upgrade
+
+Upgrading the chart to a newer Unbounded release upgrades the operator; the
+operator then upgrades its CRDs and every component to its own version. Sync
+`templates/rbac.yaml` with the new release's
+`deploy/unbounded-operator/02-rbac.yaml.tmpl` and regenerate
+`hack/flex-operator/upstream-<version>` so `make chart-check` stays green.
 
 ## Uninstall
 

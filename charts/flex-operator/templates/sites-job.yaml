@@ -1,8 +1,8 @@
 {{- if .Values.sites }}
 # Applies Unbounded Site / SitePeering objects after the operator has
-# bootstrapped its CRDs. Mirrors applyUnboundedPrivateSites in the AKS RP
-# Flex Node E2E. A Site with net enabled makes the operator install
-# Unbounded-Net (CNI): use only on clusters created with --network-plugin none.
+# established its CRDs, matching what `kubectl unbounded site init` creates.
+# Any Site makes the operator install Unbounded-Net (CNI): use only on
+# clusters created with --network-plugin none.
 {{- $ns := include "flex-operator.namespace" . }}
 apiVersion: v1
 kind: ServiceAccount
@@ -67,10 +67,15 @@ data:
     kind: Site
     metadata:
       name: {{ .name }}
+      labels:
+        unbounded-cloud.io/site: {{ .name | quote }}
     spec:
+      # Same component defaults as `kubectl unbounded site init`. Networking
+      # isn't a Site component: the operator deploys Unbounded-Net once any
+      # Site exists.
       components:
-        net:
-          enabled: true
+        machina:
+          enabled: {{ ne (toString .machina) "false" }}
       nodeCidrs:
         {{- toYaml .nodeCidrs | nindent 8 }}
       podCidrAssignments:
@@ -118,16 +123,28 @@ spec:
         - key: node.kubernetes.io/not-ready
           operator: Exists
           effect: NoSchedule
+      # The kubectl image is distroless (no shell), so each step calls kubectl
+      # directly: wait for the operator to establish the CRDs, then apply.
+      initContainers:
+        - name: wait-for-crds
+          image: {{ .Values.siteJob.image }}
+          command: ["kubectl"]
+          args:
+            - wait
+            - --for=condition=Established
+            - --timeout={{ sub .Values.siteJob.timeoutSeconds 30 }}s
+            - crd/sites.unbounded-cloud.io
+            - crd/sitepeerings.net.unbounded-cloud.io
       containers:
         - name: apply
           image: {{ .Values.siteJob.image }}
-          command:
-            - /bin/sh
-            - -ec
-            - |
-              kubectl wait --for=condition=Established --timeout={{ sub .Values.siteJob.timeoutSeconds 30 }}s \
-                crd/sites.unbounded-cloud.io crd/sitepeerings.net.unbounded-cloud.io
-              kubectl apply --server-side --field-manager=flex-operator-extension -f /config/sites.yaml
+          command: ["kubectl"]
+          args:
+            - apply
+            - --server-side
+            - --field-manager=flex-operator-extension
+            - -f
+            - /config/sites.yaml
           volumeMounts:
             - name: config
               mountPath: /config

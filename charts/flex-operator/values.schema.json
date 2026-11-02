@@ -24,7 +24,8 @@
           "nodeCidrs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
           "podCidrs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
           "nodeBlockSize": {"type": "integer", "minimum": 16, "maximum": 30},
-          "tunnelProtocol": {"type": "string"}
+          "tunnelProtocol": {"enum": ["WireGuard", "IPIP", "GENEVE", "VXLAN", "None", "Auto"]},
+          "machina": {"type": "boolean"}
         }
       }
     },
