@@ -36,6 +36,7 @@ fi
 SCRIPT="$REPO_ROOT/scripts/bootstrap.sh"
 WORK_DIR=$(mktemp -d)
 SERVER_PID=""
+NON_ROOT_SCRIPT=""
 cleanup() {
     if [[ -n "$SERVER_PID" ]]; then
         kill "$SERVER_PID" 2>/dev/null || true
@@ -45,6 +46,7 @@ cleanup() {
     # Twice: a failed read-only case leaves its bind over the overlay.
     umount /usr/local 2>/dev/null || true
     umount /usr/local 2>/dev/null || true
+    [[ -z "$NON_ROOT_SCRIPT" ]] || rm -f -- "$NON_ROOT_SCRIPT"
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -225,6 +227,10 @@ cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-mis
 [[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
 
 command -v setpriv >/dev/null || fail "setpriv is required"
+# The runner's checkout may be inaccessible to nobody; expose only the script,
+# not the credential fixtures in the private work directory.
+NON_ROOT_SCRIPT=$(mktemp /tmp/aks-flex-node-bootstrap-non-root.XXXXXX)
+install -m 0644 "$SCRIPT" "$NON_ROOT_SCRIPT"
 for selection in paired unpaired; do
     selection_args=(--agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig")
     expected_status=78
@@ -236,7 +242,7 @@ for selection in paired unpaired; do
     fi
     non_root_status=0
     setpriv --reuid=65534 --regid=65534 --clear-groups \
-        bash "$SCRIPT" "${selection_args[@]}" \
+        bash "$NON_ROOT_SCRIPT" "${selection_args[@]}" \
             --config-path "$WORK_DIR/non-root-$selection-config.json" >"$WORK_DIR/non-root-$selection.log" 2>&1 ||
         non_root_status=$?
     [[ "$non_root_status" == "$expected_status" ]] ||
