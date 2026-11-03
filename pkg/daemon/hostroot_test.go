@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -61,43 +62,120 @@ func TestHostRootMarkersAreTheReleasedBinaryLayout(t *testing.T) {
 func TestInstallHostBinary(t *testing.T) {
 	t.Parallel()
 
+	// layout seeds a blue/green layout from a binary "installed", which leaves the binary under
+	// the host root a link to its current slot, as a reset by an earlier release keeps it.
+	layout := func(t *testing.T, paths agentUpgradePaths) {
+		t.Helper()
+		writeExecutable(t, paths.BinaryPath, "installed")
+		if err := ensureAgentUpgradeLayout(t.Context(), slog.New(slog.DiscardHandler), paths); err != nil {
+			t.Fatalf("ensureAgentUpgradeLayout: %v", err)
+		}
+	}
 	tests := []struct {
-		name      string
-		setup     func(t *testing.T, target string)
-		verifyErr error
-		wantCopy  bool
-		wantErr   string
+		name          string
+		unitInstalled bool
+		// setup lays out the host root, and returns the binary that runs, or "" for one
+		// elsewhere, "running".
+		setup       func(t *testing.T, paths agentUpgradePaths) string
+		lockHeld    bool
+		verifyErr   error
+		wantContent string
+		wantLayout  bool
+		wantErr     string
+		wantErrIs   error
 	}{
-		{name: "fresh host", setup: func(*testing.T, string) {}, wantCopy: true},
+		{name: "fresh host", setup: func(*testing.T, agentUpgradePaths) string { return "" }, wantContent: "running"},
+
+		// The daemon's: with the agent's unit installed, the binary changes only through an
+		// activation.
 		{
-			name: "a usable binary is kept",
-			setup: func(t *testing.T, target string) {
-				writeExecutable(t, target, "installed")
+			name:          "a usable binary is kept while the unit is installed",
+			unitInstalled: true,
+			setup: func(t *testing.T, paths agentUpgradePaths) string {
+				writeExecutable(t, paths.BinaryPath, "installed")
+				return ""
 			},
+			wantContent: "installed",
 		},
 		{
-			name: "a managed link to a usable slot is kept",
-			setup: func(t *testing.T, target string) {
-				slot := filepath.Join(filepath.Dir(target), "slot")
-				writeExecutable(t, slot, "installed")
-				if err := os.Symlink(slot, target); err != nil {
-					t.Fatal(err)
-				}
-			},
+			name:          "a layout is kept while the unit is installed",
+			unitInstalled: true,
+			setup:         func(t *testing.T, paths agentUpgradePaths) string { layout(t, paths); return "" },
+			wantContent:   "installed",
+			wantLayout:    true,
 		},
 		{
-			name: "a dangling link is replaced",
-			setup: func(t *testing.T, target string) {
-				if err := os.Symlink(filepath.Join(filepath.Dir(target), "missing"), target); err != nil {
+			name:          "a dangling link is replaced while the unit is installed",
+			unitInstalled: true,
+			setup: func(t *testing.T, paths agentUpgradePaths) string {
+				if err := os.Symlink(filepath.Join(filepath.Dir(paths.BinaryPath), "missing"), paths.BinaryPath); err != nil {
 					t.Fatal(err)
 				}
+				return ""
 			},
-			wantCopy: true,
+			wantContent: "running",
+		},
+
+		// start's, before the agent's unit is installed: the binary is the one running.
+		{
+			name: "start replaces the binary a reset left",
+			setup: func(t *testing.T, paths agentUpgradePaths) string {
+				writeExecutable(t, paths.BinaryPath, "installed")
+				return ""
+			},
+			wantContent: "running",
+		},
+		{
+			name: "start keeps the binary it runs from",
+			setup: func(t *testing.T, paths agentUpgradePaths) string {
+				writeExecutable(t, paths.BinaryPath, "installed")
+				return paths.BinaryPath
+			},
+			wantContent: "installed",
+		},
+		{
+			name:        "start replaces a layout an earlier release's reset kept",
+			setup:       func(t *testing.T, paths agentUpgradePaths) string { layout(t, paths); return "" },
+			wantContent: "running",
+		},
+		{
+			name: "start run from the layout keeps it",
+			setup: func(t *testing.T, paths agentUpgradePaths) string {
+				layout(t, paths)
+				current, err := filepath.EvalSymlinks(paths.CurrentPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return current
+			},
+			wantContent: "installed",
+			wantLayout:  true,
+		},
+		{
+			// An install script replaced the layout's link with the binary it runs.
+			name: "start removes a layout beside the binary it runs from",
+			setup: func(t *testing.T, paths agentUpgradePaths) string {
+				layout(t, paths)
+				if err := os.Remove(paths.BinaryPath); err != nil {
+					t.Fatal(err)
+				}
+				writeExecutable(t, paths.BinaryPath, "from the script")
+				return paths.BinaryPath
+			},
+			wantContent: "from the script",
+		},
+		{
+			name:        "start doesn't run beside an activation",
+			setup:       func(t *testing.T, paths agentUpgradePaths) string { layout(t, paths); return "" },
+			lockHeld:    true,
+			wantContent: "installed",
+			wantLayout:  true,
+			wantErrIs:   agentbinary.ErrActivationInProgress,
 		},
 		{
 			// As under /opt mounted noexec.
 			name:      "a copy that cannot run is removed",
-			setup:     func(*testing.T, string) {},
+			setup:     func(*testing.T, agentUpgradePaths) string { return "" },
 			verifyErr: errors.New("permission denied"),
 			wantErr:   "must not be mounted noexec",
 		},
@@ -108,18 +186,31 @@ func TestInstallHostBinary(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			self := filepath.Join(dir, "running")
-			writeExecutable(t, self, "running")
-			target := filepath.Join(dir, "root", "bin", binaryName)
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			paths := agentUpgradePathsUnder(filepath.Join(dir, "root"))
+			if err := os.MkdirAll(filepath.Dir(paths.BinaryPath), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			tt.setup(t, target)
+			self := tt.setup(t, paths)
+			if self == "" {
+				self = filepath.Join(dir, "running")
+				writeExecutable(t, self, "running")
+			}
+			unitPath := filepath.Join(dir, ServiceUnitName)
+			if tt.unitInstalled {
+				writeExecutable(t, unitPath, "[Service]\n")
+			}
+			lockPath := filepath.Join(dir, "agent-upgrade.lock")
+			if tt.lockHeld {
+				lock, err := agentbinary.AcquireHostActivationLock(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = lock.Close() })
+			}
 
-			prepared := false
 			verified := ""
-			err := installHostBinary(t.Context(), slog.New(slog.DiscardHandler), target,
-				func() error { prepared = true; return nil },
+			err := installHostBinary(t.Context(), slog.New(slog.DiscardHandler), paths, unitPath, lockPath,
+				func() error { return nil },
 				func() (string, error) { return self, nil },
 				func(_ context.Context, path string) error { verified = path; return tt.verifyErr })
 
@@ -127,33 +218,38 @@ func TestInstallHostBinary(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !errors.Is(err, tt.verifyErr) {
 					t.Fatalf("installHostBinary() error = %v, want one containing %q and the cause", err, tt.wantErr)
 				}
-				if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("a copy that cannot run was left at %s: %v", target, err)
+				if _, err := os.Lstat(paths.BinaryPath); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("a copy that cannot run was left at %s: %v", paths.BinaryPath, err)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("installHostBinary() error = %v", err)
+			if !errors.Is(err, tt.wantErrIs) {
+				t.Fatalf("installHostBinary() error = %v, want %v", err, tt.wantErrIs)
 			}
 
-			got, err := os.ReadFile(target)
+			got, err := os.ReadFile(paths.BinaryPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if copied := string(got) == "running"; copied != tt.wantCopy || prepared != tt.wantCopy {
-				t.Fatalf("copied = %v, prepared = %v, want %v", copied, prepared, tt.wantCopy)
+			if string(got) != tt.wantContent {
+				t.Fatalf("%s holds %q, want %q", paths.BinaryPath, got, tt.wantContent)
 			}
-			if wantVerified := map[bool]string{true: target}[tt.wantCopy]; verified != wantVerified {
+			copied := tt.wantContent == "running"
+			if wantVerified := map[bool]string{true: paths.BinaryPath}[copied]; verified != wantVerified {
 				t.Fatalf("verified %q, want %q", verified, wantVerified)
 			}
-			if tt.wantCopy {
-				info, err := os.Stat(target)
+			if copied {
+				info, err := os.Lstat(paths.BinaryPath)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if info.Mode().Perm() != agentUpgradeBinaryMode {
-					t.Fatalf("installed binary mode = %v, want %v", info.Mode().Perm(), os.FileMode(agentUpgradeBinaryMode))
+				if !info.Mode().IsRegular() || info.Mode().Perm() != agentUpgradeBinaryMode {
+					t.Fatalf("installed binary is %v, want a regular file with mode %v", info.Mode(), os.FileMode(agentUpgradeBinaryMode))
 				}
+			}
+			_, err = os.Lstat(filepath.Dir(paths.CurrentPath))
+			if kept := err == nil; kept != tt.wantLayout {
+				t.Fatalf("layout kept = %v, want %v", kept, tt.wantLayout)
 			}
 		})
 	}

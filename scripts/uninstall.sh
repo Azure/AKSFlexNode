@@ -31,11 +31,13 @@ RECOVERY_UNIT_PATH="/etc/systemd/system/aks-flex-node-agent-recovery.service"
 # go with the config directory. Other hosts don't have it.
 FIRST_BOOT_UNIT="aks-flex-node-bootstrap.service"
 FIRST_BOOT_UNIT_PATH="/etc/systemd/system/$FIRST_BOOT_UNIT"
-# The agent library's helpers, under either root, and the units that run them: LocalDNS's, and each
-# machine's drop-in and configuration unit. Reset removes them; see remove_helper_units.
+# The agent library's helpers, under either root, and the units that run them: LocalDNS's, each
+# machine's drop-in and configuration unit, and the agent's nspawn lifecycle units, which those
+# start. Reset removes them; see remove_helper_units.
 HELPER_UNIT_DIR="/etc/systemd/system"
 LOCALDNS_UNIT="unbounded-localdns-network.service"
 MACHINES=(kube1 kube2)
+NSPAWN_LIFECYCLE_UNITS=("aks-flex-node-nspawn-pre-start@.service" "aks-flex-node-nspawn-post-start@.service")
 HELPER_BINARIES=("bin/unbounded-agent-nspawn-lifecycle" "libexec/unbounded-localdns-network")
 
 # What happened to reset, and whether the host root was kept, for the completion message.
@@ -171,6 +173,13 @@ remove_helper_units() {
             fi
         done
         rmdir -- "$drop_in_dir" 2>/dev/null || true
+    done
+
+    for unit_path in "${NSPAWN_LIFECYCLE_UNITS[@]/#/$HELPER_UNIT_DIR/}"; do
+        if [[ -e "$unit_path" || -L "$unit_path" ]]; then
+            rm -f "$unit_path"
+            log_success "Removed systemd unit: $unit_path"
+        fi
     done
 }
 

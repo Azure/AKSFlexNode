@@ -68,16 +68,25 @@ func PrepareHostRoot(ctx context.Context, log *slog.Logger) error {
 // release finds itself there.
 var legacySeedPath = filepath.Join(hostroot.LegacyPath, "bin", binaryName)
 
-// InstallHostBinary copies the running binary to <host root>/bin/aks-flex-node
-// when no usable binary is there, as on a fresh host where an install script put
-// it in /usr/local/bin, or one an earlier release installed directly there
-// without the blue/green layout. That copy seeds the layout. It fails, and
-// leaves no copy, when the copy cannot run.
+// InstallHostBinary puts the binary under the host root, <host root>/bin/aks-flex-node, which
+// the agent's blue/green layout is seeded from:
+//
+//   - While the agent's unit is installed, as for the daemon, the binary changes only through an
+//     activation, so it is copied only when no usable binary is there, as on a host an earlier
+//     release installed directly in /usr/local/bin.
+//   - Otherwise, as for start before it installs the agent, it is the running binary. One there
+//     that isn't, such as the one a reset left, is replaced with a copy of it, and a layout that
+//     doesn't run it, such as one a reset by an earlier release kept, is removed, so the layout
+//     start seeds runs the binary doing the start.
+//
+// It fails, and leaves no copy, when the copy cannot run.
 func InstallHostBinary(ctx context.Context, log *slog.Logger) error {
 	return installHostBinary(
 		ctx,
 		log,
-		agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath,
+		agentUpgradePathsUnder(hostroot.Resolve()),
+		ServiceUnitPath,
+		agentUpgradeLockPath,
 		func() error { return PrepareHostRoot(ctx, log) },
 		runningAgentExecutable,
 		agentbinary.Verify,
@@ -87,15 +96,74 @@ func InstallHostBinary(ctx context.Context, log *slog.Logger) error {
 func installHostBinary(
 	ctx context.Context,
 	log *slog.Logger,
+	paths agentUpgradePaths,
+	unitPath, lockPath string,
+	prepare func() error,
+	executable func() (string, error),
+	verify func(context.Context, string) error,
+) error {
+	target := paths.BinaryPath
+	if _, err := os.Lstat(unitPath); err == nil {
+		if utilio.IsExecutable(target) {
+			return nil
+		}
+		return copyHostBinary(ctx, log, target, prepare, executable, verify)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check for the agent's unit: %w", err)
+	}
+
+	// Not beside an activation's switch.
+	lock, err := agentbinary.AcquireHostActivationLock(lockPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close() //nolint:errcheck // releasing the lock
+
+	self, err := executable()
+	if err != nil {
+		return err
+	}
+	running, err := os.Stat(self)
+	if err != nil {
+		return fmt.Errorf("inspect the running binary: %w", err)
+	}
+	// Copied before a layout goes, as the running binary can be one of its slots.
+	if installed, err := os.Stat(target); err != nil || !os.SameFile(installed, running) || !utilio.IsExecutable(target) {
+		if err := copyHostBinary(ctx, log, target, prepare, func() (string, error) { return self, nil }, verify); err != nil {
+			return err
+		}
+	}
+	return removeStaleLayout(log, paths, running)
+}
+
+// removeStaleLayout removes the agent's blue/green layout when its current binary isn't the
+// running one: seeded again, it would point the binary under the host root back at it.
+func removeStaleLayout(log *slog.Logger, paths agentUpgradePaths, running os.FileInfo) error {
+	layoutDir := filepath.Dir(paths.CurrentPath)
+	if _, err := os.Lstat(layoutDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect %s: %w", layoutDir, err)
+	}
+	if current, err := os.Stat(paths.CurrentPath); err == nil && os.SameFile(current, running) {
+		return nil
+	}
+	log.Info("removing the agent's blue/green layout, which doesn't run this binary", "path", layoutDir)
+	if err := os.RemoveAll(layoutDir); err != nil {
+		return fmt.Errorf("remove %s: %w", layoutDir, err)
+	}
+	return nil
+}
+
+// copyHostBinary copies the running binary to target, and keeps it only if it runs.
+func copyHostBinary(
+	ctx context.Context,
+	log *slog.Logger,
 	target string,
 	prepare func() error,
 	executable func() (string, error),
 	verify func(context.Context, string) error,
 ) error {
-	if utilio.IsExecutable(target) {
-		return nil
-	}
-
 	if err := prepare(); err != nil {
 		return err
 	}

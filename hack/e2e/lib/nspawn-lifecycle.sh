@@ -26,6 +26,7 @@ _validate_nspawn_lifecycle_contract() {
 set -euo pipefail
 
 helper="/opt/unbounded/agent/bin/unbounded-agent-nspawn-lifecycle"
+binary="/opt/unbounded/agent/bin/aks-flex-node"
 state_file="/etc/aks-flex-node/daemon-state.json"
 machine="$(sudo python3 - <<'PY'
 import json
@@ -39,13 +40,21 @@ case "${machine}" in
   *) echo "invalid active machine in ${state_file}: ${machine:-empty}" >&2; exit 1 ;;
 esac
 
+# The helper stays for hooks an earlier release writes, as a link to the agent's binary.
 sudo test -x "${helper}"
+[[ "$(sudo readlink "${helper}")" == aks-flex-node ]] ||
+  { echo "${helper} is not a link to aks-flex-node: $(sudo ls -l "${helper}")" >&2; exit 1; }
 sudo "${helper}" nspawn-lifecycle --help >/dev/null
 
+# The machine's hooks start the agent's nspawn lifecycle units, for the machine, %i, which run
+# the agent under the host root.
 regeneration_unit="/etc/systemd/system/unbounded-agent-regenerate-config@${machine}.service"
 override="/etc/systemd/system/systemd-nspawn@${machine}.service.d/override.conf"
-sudo grep -Fqx "ExecStart=${helper} nspawn-lifecycle pre-start ${machine}" "${regeneration_unit}"
-sudo grep -Fqx "ExecStartPost=${helper} nspawn-lifecycle post-start ${machine}" "${override}"
+sudo grep -Fqx "ExecStart=/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service" "${regeneration_unit}"
+sudo grep -Fqx "ExecStartPost=/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service" "${override}"
+for phase in pre-start post-start; do
+  sudo grep -Fqx "ExecStart=${binary} nspawn-lifecycle ${phase} %i" "/etc/systemd/system/aks-flex-node-nspawn-${phase}@.service"
+done
 
 state="$(sudo machinectl show "${machine}" --property=State --value)"
 if [[ "${state}" != "running" ]]; then
@@ -55,7 +64,7 @@ fi
 
 printf '%s\n' "${machine}"
 REMOTE
-  log_success "Installed lifecycle helper and generated hooks are valid on ${mode} node"
+  log_success "Generated hooks, lifecycle units, and helper link are valid on ${mode} node"
 }
 
 _reconcile_nspawn_lifecycle() {
@@ -101,8 +110,8 @@ if [[ -z "${old_leader}" || "${old_leader}" == "0" ]]; then
   exit 1
 fi
 
-# Reconcile restarts systemd-nspawn@<machine>; its generated dependencies invoke
-# pre-start and post-start through the copied lifecycle helper.
+# Reconcile restarts systemd-nspawn@<machine>; its generated hooks start the
+# agent's nspawn lifecycle units, which run pre-start and post-start.
 sudo "${helper}" nspawn-lifecycle reconcile "${machine}"
 
 deadline=$((SECONDS + E2E_NSPAWN_LIFECYCLE_TIMEOUT))
@@ -137,6 +146,6 @@ nspawn_lifecycle_all() {
   done
 
   # One representative online bootstrap-token node exercises the mutating
-  # lifecycle flow; every mode above verifies the installed helper contract.
+  # lifecycle flow; every mode above verifies the hooks and lifecycle units.
   _reconcile_nspawn_lifecycle token
 }

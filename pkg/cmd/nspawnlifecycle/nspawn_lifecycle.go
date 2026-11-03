@@ -27,8 +27,9 @@ type lifecycle interface {
 type lifecycleFactory func(*slog.Logger) (lifecycle, error)
 
 // NewCommand returns the application-owned wrapper for Unbounded's nspawn
-// lifecycle operations. Shared rootfs provisioning copies this executable to
-// the stable host helper path used by its generated systemd units.
+// lifecycle operations. The machines' hooks run it through the agent's nspawn
+// lifecycle units, and hooks an earlier release wrote run it as the lifecycle
+// helper, a link to the agent's binary.
 func NewCommand() *cobra.Command {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	return newCommand(log, func(log *slog.Logger) (lifecycle, error) {
@@ -37,8 +38,9 @@ func NewCommand() *cobra.Command {
 }
 
 // newCommand builds the phases. Only pre-start migrates the host root: it
-// regenerates the machine's config, which names the lifecycle helper under it,
-// while post-start and reconcile write nothing there.
+// regenerates the machine's config, which can name files under it, such as the
+// lifecycle helper in an earlier release's hooks, while post-start and
+// reconcile write nothing there.
 func newCommand(log *slog.Logger, factory lifecycleFactory, migrate func(*slog.Logger) error) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "nspawn-lifecycle",

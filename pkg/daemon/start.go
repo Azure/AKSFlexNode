@@ -45,6 +45,8 @@ func StartNode(
 	state *State,
 ) phases.Task {
 	return phases.Serial(log,
+		// Before anything starts the machine: its hooks start these units.
+		EnsureNSpawnLifecycleUnits(log),
 		stageContainerImageArchiveBindSource(log, containerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
 		ConfigureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
