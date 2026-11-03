@@ -310,6 +310,9 @@ func TestContainerAgentUnitRestartsAfterRecovery(t *testing.T) {
 		"a failure starts recovery":         {key: "OnFailure", want: recoveryServiceUnitName},
 		"a restart waits for that recovery": {key: "After", want: recoveryServiceUnitName},
 		"it starts once containerd has":     {key: "After", want: "containerd.service"},
+		// The agent's credentials may come from Arc's identity service.
+		"it wants Arc's identity service":   {key: "Wants", want: "himdsd.service"},
+		"it starts once Arc's identity has": {key: "After", want: "himdsd.service"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

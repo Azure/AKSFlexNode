@@ -78,6 +78,90 @@ contexts:
 	}
 }
 
+// In the agent's container, the caller's plugin is the image's agent, and the host has none: an
+// agent kubeconfig that names the host's agent, as the documentation's does, runs the image's.
+func TestBootstrapRESTConfigRunsThePluginWhereTheKubeconfigNamesTheHostAgent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	image := filepath.Join(dir, "image-agent")
+	other := filepath.Join(dir, "other-plugin")
+	for _, path := range []string{image, other} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := map[string]struct {
+		command string
+		plugin  string
+		want    string
+	}{
+		"the host's agent as documented runs the plugin": {
+			command: "/opt/unbounded/agent/bin/aks-flex-node",
+			plugin:  image,
+			want:    image,
+		},
+		"the host's agent as resolved runs the plugin": {
+			command: config.HostBinaryPath(),
+			plugin:  image,
+			want:    image,
+		},
+		"another command runs as written": {
+			command: other,
+			plugin:  image,
+			want:    other,
+		},
+		// On a host, the plugin is the host's agent, and the kubeconfig is used as written.
+		"on a host, the host's agent runs as written": {
+			command: config.HostBinaryPath(),
+			plugin:  config.HostBinaryPath(),
+			want:    config.HostBinaryPath(),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			kubeconfig := fmt.Sprintf(`apiVersion: v1
+kind: Config
+current-context: default
+clusters:
+- name: cluster
+  cluster:
+    server: https://cluster.example:443
+users:
+- name: agent
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1
+      command: %s
+      args: ["token", "kubelogin"]
+      interactiveMode: Never
+contexts:
+- name: default
+  context:
+    cluster: cluster
+    user: agent
+`, tc.command)
+			cfg := &config.Config{
+				Agent: config.AgentConfig{KubeconfigData: kubeconfig},
+				Node:  config.NodeConfig{Kubelet: config.KubeletConfig{KubeconfigData: kubeconfig}},
+			}
+			restCfg, err := BootstrapRESTConfigWithPlugin(cfg, tc.plugin)
+			// Where no agent is installed, as on a build machine, the host's agent isn't executable.
+			if err != nil && strings.Contains(err.Error(), tc.want+" is not executable") {
+				return
+			}
+			if err != nil {
+				t.Fatalf("BootstrapRESTConfigWithPlugin() error = %v", err)
+			}
+			if restCfg.ExecProvider == nil || restCfg.ExecProvider.Command != tc.want {
+				t.Fatalf("exec command = %#v, want %s", restCfg.ExecProvider, tc.want)
+			}
+		})
+	}
+}
+
 func TestBootstrapRESTConfigRejectsInvalidAgentTLSData(t *testing.T) {
 	t.Parallel()
 

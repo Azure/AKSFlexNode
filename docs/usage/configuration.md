@@ -282,7 +282,7 @@ sudo ./scripts/bootstrap.sh \
   --kubelet-kubeconfig /run/aks-flex-node/kubelet.kubeconfig
 ```
 
-The source files must be absolute, non-symlink regular files with no group or other access. Equivalent environment variables are `AKS_FLEX_NODE_AGENT_KUBECONFIG` and `AKS_FLEX_NODE_KUBELET_KUBECONFIG`. On a fresh host, paired bootstrap also stages the agent at `/opt/unbounded/agent/bin/aks-flex-node` before preflight so the host exec command shown below already exists.
+The source files must be absolute, non-symlink regular files with no group or other access. Equivalent environment variables are `AKS_FLEX_NODE_AGENT_KUBECONFIG` and `AKS_FLEX_NODE_KUBELET_KUBECONFIG`. On a fresh host, paired bootstrap also stages the agent at `/opt/unbounded/agent/bin/aks-flex-node` before preflight so the host exec command shown below already exists. When the agent runs in containers on Azure Container Linux, which is experimental, nothing is staged on the host: the agent's clients run the image's agent where the agent kubeconfig names `/opt/unbounded/agent/bin/aks-flex-node`; see [Azure Container Linux](azure-container-linux.md#install-and-join).
 
 Each kubeconfig has a separately configured user entry. The agent kubeconfig does not
 need impersonation when the authenticated Arc principal is bound directly to

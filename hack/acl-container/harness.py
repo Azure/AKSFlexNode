@@ -1708,12 +1708,25 @@ def check_machine_lifecycle(checks: Checks, reboot: bool) -> None:
                   (shell.stdout + shell.stderr).strip())
 
     leader = machine_leader(machine)
+    # The VM has no Arc, so this restart's container also checks the mount of Arc's challenge
+    # files, which the entrypoint makes on a host with Arc, from a stand-in written before it.
+    arc_tokens = "/var/opt/azcmagent/tokens"
+    challenge = secrets.token_hex(8)
+    ssh(f"sudo install -D -m 0640 /dev/stdin {arc_tokens}/aclc-probe.key", input=challenge)
     make_room_for_agent_starts(1)
     log(f"restarting {AGENT_UNIT} while {machine} runs (leader pid {leader})")
     ssh(f"sudo systemctl restart {AGENT_UNIT}")
     wait_for_agent()
     checks.expect(machine_state(machine) == "running" and machine_leader(machine) == leader,
                   f"{machine} kept running, with the same leader, while the agent's container restarted")
+    # A file Arc writes after the container starts shows through the mount too.
+    ssh(f"sudo install -m 0640 /dev/stdin {arc_tokens}/aclc-later.key", input=challenge)
+    seen = agent(f"cat {arc_tokens}/aclc-probe.key {arc_tokens}/aclc-later.key", check=False).stdout
+    read_only = agent(f"touch {arc_tokens}/aclc-written", check=False).returncode != 0
+    checks.expect(seen == challenge * 2 and read_only,
+                  "the agent's container reads the host's Arc challenge files, read-only, at their own path",
+                  f"read {seen!r}, read-only {read_only}")
+    ssh("sudo rm -rf /var/opt/azcmagent", check=False)
 
     # A container that won't stop still stops with its unit, though systemd only kills ctr: its
     # scope, bound to the unit, kills it 30 s into the stop, before the unit's own timeout, and is

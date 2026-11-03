@@ -67,6 +67,16 @@ if [[ -f $settings_source ]]; then
     $mount --bind "$settings_source" "$settings"
     $mount -o remount,bind,ro "$settings"
 fi
+# Arc's identity endpoint, which the agent's credentials reach over the host's network, answers
+# with a challenge file here that the client reads. Read-only: only Arc writes it. Only on a host
+# with Arc; files Arc writes later show through the mount.
+arc_tokens=/var/opt/azcmagent/tokens
+arc_tokens_source=$(host_path "$arc_tokens")
+if [[ -d $arc_tokens_source ]]; then
+    mkdir -p "$arc_tokens"
+    $mount --bind "$arc_tokens_source" "$arc_tokens"
+    $mount -o remount,bind,ro "$arc_tokens"
+fi
 
 log "$(aks-flex-node version | paste -sd ' ')"
 # shellcheck source=/dev/null

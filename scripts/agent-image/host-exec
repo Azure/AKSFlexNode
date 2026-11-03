@@ -28,7 +28,9 @@ if [[ ! -x $host_root/usr/bin/env ]]; then
     echo "host-exec: the host root is not mounted at $host_root" >&2
     exit 1
 fi
-host_path=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+# Arc's installer puts azcmagent in /opt/azcmagent/bin, and links it into /usr/bin where /usr is
+# writable.
+host_path=PATH=/usr/sbin:/usr/bin:/sbin:/bin:/opt/azcmagent/bin
 case $name in
     # The container's mounts of host paths are slaves of the host's, so a
     # mount or unmount made in the container's mount namespace, chroot or not,

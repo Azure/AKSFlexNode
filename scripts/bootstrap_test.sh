@@ -455,6 +455,25 @@ jq -e '.node.labels == {"base":"true"}' "$WORK_DIR/image-agent-etc/config.json" 
 grep -Fx "preflight --config $WORK_DIR/image-agent-etc/config.json --output text" "$WORK_DIR/image-agent-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/image-agent-etc/config.json" "$WORK_DIR/image-agent-calls" >/dev/null
 
+# With paired kubeconfigs too, the installed agent runs where it is, and nothing is put on the host
+# for their exec command: in the agent's image, the agent's clients run the image's agent there.
+host_agent_before=$(sha256sum /opt/unbounded/agent/bin/aks-flex-node 2>/dev/null || echo none)
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/image-paired-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" \
+    bash "$SCRIPT" --installed-agent "$WORK_DIR/image-agent-bin/aks-flex-node" \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig" \
+        --config-path "$WORK_DIR/image-paired-etc/config.json" >/dev/null
+jq -e '
+  .agent.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: agent\n" and
+  .node.kubelet.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: kubelet\n"
+' "$WORK_DIR/image-paired-etc/config.json" >/dev/null || fail "paired kubeconfigs were not embedded with an installed agent"
+[[ "$(sort -u "$WORK_DIR/image-paired-calls.path")" == "$WORK_DIR/image-agent-bin/aks-flex-node" ]] ||
+    fail "paired bootstrap with an installed agent ran $(sort -u "$WORK_DIR/image-paired-calls.path" | tr '\n' ' ')"
+[[ "$(sha256sum /opt/unbounded/agent/bin/aks-flex-node 2>/dev/null || echo none)" == "$host_agent_before" ]] ||
+    fail "paired bootstrap with an installed agent put an agent on the host"
+
 for missing in "$WORK_DIR/no-image-agent-bin/aks-flex-node" "image-agent-bin/aks-flex-node" "$WORK_DIR/image-agent-bin"; do
     status=0
     BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-image-agent-calls" \

@@ -81,6 +81,22 @@ storage:
     #   overwrite: true
     #   contents:
     #     local: sp-client-secret
+    # For paired kubeconfigs, uncomment these, and set AKS_FLEX_NODE_AGENT_KUBECONFIG
+    # and AKS_FLEX_NODE_KUBELET_KUBECONFIG in bootstrap.env to their paths. Keep
+    # those paths: bootstrap embeds them in the agent's config, and the bootstrap
+    # unit removes them with bootstrap.env. An agent kubeconfig whose exec command
+    # names /opt/unbounded/agent/bin/aks-flex-node, as documented for hosts, runs
+    # the agent's image there.
+    # - path: /etc/aks-flex-node/agent.kubeconfig
+    #   mode: 0600
+    #   overwrite: true
+    #   contents:
+    #     local: agent.kubeconfig
+    # - path: /etc/aks-flex-node/kubelet.kubeconfig
+    #   mode: 0600
+    #   overwrite: true
+    #   contents:
+    #     local: kubelet.kubeconfig
 systemd:
   units:
     - name: aks-flex-node-bootstrap.service
@@ -146,11 +162,11 @@ systemd:
         # Bootstrap's inputs can carry a bootstrap token, and the agent's config
         # has what it needs, so they go once bootstrap succeeds. A service
         # principal's credential stays: the agent reads it.
-        ExecStartPost=/bin/rm -f /etc/aks-flex-node/bootstrap.env /etc/aks-flex-node/base-config.json
+        ExecStartPost=/bin/rm -f /etc/aks-flex-node/bootstrap.env /etc/aks-flex-node/base-config.json /etc/aks-flex-node/agent.kubeconfig /etc/aks-flex-node/kubelet.kubeconfig
         # Once the agent's unit exists no retry can succeed, and a start that
         # failed after installing it exits with 78, so ExecStartPost never runs.
         # They go then too, but not after other failures, whose retry needs them.
-        ExecStopPost=/bin/sh -c 'test ! -e /etc/systemd/system/aks-flex-node-agent.service || rm -f /etc/aks-flex-node/bootstrap.env /etc/aks-flex-node/base-config.json'
+        ExecStopPost=/bin/sh -c 'test ! -e /etc/systemd/system/aks-flex-node-agent.service || rm -f /etc/aks-flex-node/bootstrap.env /etc/aks-flex-node/base-config.json /etc/aks-flex-node/agent.kubeconfig /etc/aks-flex-node/kubelet.kubeconfig'
 
         [Install]
         WantedBy=multi-user.target

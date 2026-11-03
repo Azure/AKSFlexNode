@@ -90,7 +90,7 @@ they run before the agent is installed and after it's removed.
 | File | Holds | Written by | After a reset |
 |---|---|---|---|
 | `/etc/sysconfig/aks-flex-node-container` | The install's settings: `AKS_FLEX_NODE_IMAGE`, and optional pull and snapshotter flags | Ignition | Kept |
-| `/etc/aks-flex-node/bootstrap.env`, `base-config.json` | Bootstrap's inputs, one `AKS_FLEX_NODE_*` variable a line, and the base config they name | Ignition, or whatever provisions a rejoin | Removed once bootstrap succeeds, or fails with the agent's unit installed |
+| `/etc/aks-flex-node/bootstrap.env`, `base-config.json`, `agent.kubeconfig`, `kubelet.kubeconfig` | Bootstrap's inputs, one `AKS_FLEX_NODE_*` variable a line, and the base config and paired kubeconfigs they name | Ignition, or whatever provisions a rejoin | Removed once bootstrap succeeds, or fails with the agent's unit installed |
 | `/etc/aks-flex-node/credentials/` | A service principal's credential, which the agent reads | Ignition, or whatever provisions a rejoin | Removed |
 | `/etc/aks-flex-node/agent-image.env` | The image selection: `AKS_FLEX_NODE_IMAGE`, with `AKS_FLEX_NODE_LAST_GOOD_IMAGE` after an upgrade | `AgentUpgrade`, or whatever provisions a rejoin | Removed |
 | `/etc/aks-flex-node/agent-upgrade-signal.json` | A pending `AgentUpgrade` | The daemon | Removed |
@@ -131,7 +131,7 @@ The agent's unit restarts on failure, and starts its recovery unit through
 | Its image | Pulled at every run, so a tag names its current image. If the pull fails, an image already on the host, such as the install's after a reset, runs as it is. |
 | Its inputs | `bootstrap.env`, which the image's [`aks-flex-node-bootstrap`](../../scripts/agent-image/aks-flex-node-bootstrap) reads: one `AKS_FLEX_NODE_*=value` a line, not evaluated as shell. It ignores, with a warning, the variables the image sets: where the agent and its config go, and which agent to download. Secrets go in files the inputs name. |
 | What it runs | `bootstrap.sh --installed-agent`, naming the image's agent: it renders `/etc/aks-flex-node/config.json`, runs preflight, and runs `start`. |
-| Success | It removes `bootstrap.env` and `base-config.json`. A service principal's credential stays. |
+| Success | It removes `bootstrap.env`, `base-config.json`, and the paired kubeconfigs, which the agent's config embeds. A service principal's credential stays. |
 | A failure | Retried for as long as it takes, backing off from 10 seconds to 5 minutes. |
 | Exit status 78 | Not retried: a setting that can't work, or a `start` that failed after changing the host. The unit stays failed until new inputs and a start. |
 | A reset | The reset unit stops it first, and a bootstrap started during a reset waits for the reset. |
@@ -169,7 +169,9 @@ Every container runs
    `/etc/unbounded`, `/var/lib/machines`, `/var/lib/unbounded`,
    `/var/log/aks-flex-node`, `/run`, and `/opt/unbounded`
 3. mounts the install's settings read-only at their own path
-4. logs the agent's version, the host, its SELinux context, and its PID
+4. on a host with Arc, mounts `/var/opt/azcmagent/tokens` read-only at its own
+   path, for the challenge files Arc's identity endpoint has its clients read
+5. logs the agent's version, the host, its SELinux context, and its PID
    namespace, and checks that the host's `machinectl` answers over D-Bus
 
 Each host path resolves within the host's root, so a host symlink, such as
@@ -180,8 +182,8 @@ image, so it changes with the agent rather than with the host's provisioning.
 ### The host's tools
 
 The image links `machinectl`, `systemctl`, `systemd-run`, `systemd-nspawn`,
-`journalctl`, `ip`, `nft`, `sysctl`, `modprobe`, `swapoff`, `udevadm`, `mount`,
-`umount`, `mountpoint`, and `ctr` to
+`journalctl`, `resolvectl`, `ip`, `nft`, `sysctl`, `modprobe`, `swapoff`,
+`udevadm`, `mount`, `umount`, `mountpoint`, `ctr`, and `azcmagent` to
 [`host-exec`](../../scripts/agent-image/host-exec), and the agent runs them by
 name. `host-exec` runs most of them as `chroot /host /usr/bin/env PATH=... TOOL
 ARGS`, so:
@@ -212,6 +214,7 @@ install, nothing sets it, and every switch takes the binary install's path:
 | `PreflightChecks`, in `preflight` | Every check | Leaves out `host-packages`, which would check the image's packages, and `containerd-active`, which warns that bootstrap disables containerd |
 | An `AgentUpgrade`'s `downloadURL` | A release archive's, HTTP or HTTPS | An image's, `oci://` |
 | `CredentialPlugin`, for the agent's own clients with a managed identity or a service principal | The host's agent | The image's binary, which is running |
+| An embedded agent kubeconfig whose exec command names the host's agent, `/opt/unbounded/agent/bin/aks-flex-node` | Runs it, which bootstrap places there | Runs the image's binary, and bootstrap places nothing |
 | The steps for `/opt/unbounded/agent`, in `start`, the daemon, and `nspawn-lifecycle pre-start`: migrating, preparing, and populating it, and removing what earlier releases left in `/usr/local` | Run | Skipped |
 | Direct activation, `agent-upgrade` | Switches the binary layout | Refused |
 | `UninstallService`, in reset | Removes the first-boot unit, `aks-flex-node-bootstrap.service` | Keeps it: the unit of that name is the install's bootstrap unit, which joins the node again |
