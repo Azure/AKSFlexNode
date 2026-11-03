@@ -49,7 +49,7 @@ const (
 // AgentConfig. The resulting struct can be passed to goalstates.ResolveMachine
 // to produce goal states for the nspawn-based bootstrap phases.
 //
-// cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
+// cfg must be validated so the API server and CA include any kubeconfig overrides.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	kubeletConfig := kubeletConfiguration(cfg)
 
@@ -113,6 +113,13 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
+	ac.NSpawnLifecycle = nspawnLifecycleHooks()
+
+	if cfg.UsesKubeconfigCredentials() {
+		ac.Kubelet.KubeconfigData = []byte(cfg.Node.Kubelet.KubeconfigData)
+		return ac
+	}
+
 	switch {
 	case cfg.IsBootstrapTokenConfigured():
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
@@ -143,8 +150,6 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
 	}
-
-	ac.NSpawnLifecycle = nspawnLifecycleHooks()
 
 	return ac
 }

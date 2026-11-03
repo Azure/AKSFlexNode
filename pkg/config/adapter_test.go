@@ -632,22 +632,35 @@ func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 	t.Parallel()
 
-	ac := ToAgentConfig(&Config{}, goalstates.NSpawnMachineKube1)
-	want := &agentconfig.NSpawnLifecycleConfig{
-		PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
-		PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
+	tests := map[string]*Config{
+		"default credentials": {},
+		"paired kubeconfigs": {
+			Agent: AgentConfig{KubeconfigData: validEmbeddedKubeconfig},
+			Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: validEmbeddedKubeconfig}},
+		},
 	}
-	if ac.NSpawnLifecycle == nil || *ac.NSpawnLifecycle != *want {
-		t.Fatalf("NSpawnLifecycle = %+v, want %+v", ac.NSpawnLifecycle, want)
-	}
-	if err := agentconfig.ValidateNSpawnLifecycle(ac.NSpawnLifecycle); err != nil {
-		t.Fatalf("unbounded rejects the hooks' commands: %v", err)
-	}
-	rootFS, err := goalstates.ResolveNSpawnConfig(ac, goalstates.NSpawnMachineKube1)
-	if err != nil {
-		t.Fatalf("ResolveNSpawnConfig: %v", err)
-	}
-	if rootFS.UsesLifecycleHelper() {
-		t.Fatal("the machine's hooks would still run the lifecycle helper")
+	for name, cfg := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ac := ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
+			want := &agentconfig.NSpawnLifecycleConfig{
+				PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
+				PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
+			}
+			if ac.NSpawnLifecycle == nil || *ac.NSpawnLifecycle != *want {
+				t.Fatalf("NSpawnLifecycle = %+v, want %+v", ac.NSpawnLifecycle, want)
+			}
+			if err := agentconfig.ValidateNSpawnLifecycle(ac.NSpawnLifecycle); err != nil {
+				t.Fatalf("unbounded rejects the hooks' commands: %v", err)
+			}
+			rootFS, err := goalstates.ResolveNSpawnConfig(ac, goalstates.NSpawnMachineKube1)
+			if err != nil {
+				t.Fatalf("ResolveNSpawnConfig: %v", err)
+			}
+			if rootFS.UsesLifecycleHelper() {
+				t.Fatal("the machine's hooks would still run the lifecycle helper")
+			}
+		})
 	}
 }

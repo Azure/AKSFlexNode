@@ -178,6 +178,14 @@ The suite validates five join paths and one real ARM Machine registration path. 
 | `vm-e2e-kubeadm-*` | Bootstrap Token | Kubeadm-style bootstrap resources plus generated config and `aks-flex-node start` flow. |
 | `vm-e2e-arc-*` | Azure Arc Identity + Bootstrap Token | Converts an Azure VM into an official Arc evaluation server, fetches bootstrap data through Arc HIMDS, reconciles through the E2E in-cluster Machine endpoint, and validates the `himdsd.service` dependency. |
 
+These join paths do **not** exercise paired `agent.kubeconfigData` and
+`node.kubelet.kubeconfigData`. Configuration, host preflight, credential
+retirement, and raw kubeconfig handling have local regression coverage, but a
+green standard E2E run is not paired-mode validation. An Arc-TPM-based paired
+E2E scenario is deferred until the required feature is registered in the E2E
+subscription. That scenario must validate node readiness, workload networking,
+agent and kubelet permissions, and credential persistence after daemon restart.
+
 Before these controller-backed joins, the suite temporarily configures the MSI
 VM with `agent.machineClient.mode: "arm"` and a distinct node name. It verifies
 that the target pool has no Machine with that name, runs bootstrap, reads the

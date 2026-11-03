@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Support separate embedded kubeconfigs for host-agent and kubelet Kubernetes authentication ([#312](https://github.com/Azure/AKSFlexNode/pull/312)).
+
 - Support for Azure Container Linux and other hosts with a read-only `/usr`, and a Butane config, `scripts/aks-flex-node-bootstrap.bu`, that bootstraps a host provisioned by Ignition ([#323](https://github.com/Azure/AKSFlexNode/pull/323)).
 
 ### Changed

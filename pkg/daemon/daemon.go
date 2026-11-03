@@ -61,6 +61,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err := removeDaemonLegacySeed(log); err != nil {
 		log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 	}
+	if cfg.UsesKubeconfigCredentials() {
+		if err := retireDaemonCredentials(); err != nil {
+			return err
+		}
+	}
 	restCfg, stopCredentials, err := daemonRESTConfig(ctx, cfg)
 	if err != nil {
 		return err
@@ -208,7 +213,7 @@ func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, fu
 	if err != nil {
 		return nil, nil, err
 	}
-	if !cfg.IsBootstrapTokenConfigured() {
+	if cfg.UsesKubeconfigCredentials() || !cfg.IsBootstrapTokenConfigured() {
 		return bootstrapRestCfg, func() {}, nil
 	}
 	credentials, stop, err := daemonRESTConfigProvider(ctx, cfg, bootstrapRestCfg)
@@ -240,6 +245,17 @@ func daemonControllerCertificateOptions(credentialDir string) daemoncred.Control
 		CredentialDir: credentialDir,
 		WaitTimeout:   2 * time.Minute,
 	}
+}
+
+func retireDaemonCredentials() error {
+	return retireDaemonCredentialsAt(filepath.Join(config.ConfigDir, daemonCredentialDir))
+}
+
+func retireDaemonCredentialsAt(credentialDir string) error {
+	if err := os.RemoveAll(credentialDir); err != nil {
+		return fmt.Errorf("remove retired daemon credential directory: %w", err)
+	}
+	return nil
 }
 
 // bootstrapCredentialRESTConfig builds the client the daemon uses until its own
