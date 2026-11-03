@@ -26,7 +26,7 @@ users:
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1
-      command: /usr/local/bin/aks-flex-node
+      command: /opt/unbounded/agent/bin/aks-flex-node
       args: ["token", "arc"]
       interactiveMode: Never
     as: system:node:flex-node
@@ -110,7 +110,7 @@ func TestValidateEmbeddedKubeconfig(t *testing.T) {
 			wantErr: "validate kubeconfig TLS material",
 		},
 		"relative exec command": {
-			data:    strings.Replace(validEmbeddedKubeconfig, "command: /usr/local/bin/aks-flex-node", "command: aks-flex-node", 1),
+			data:    strings.Replace(validEmbeddedKubeconfig, "command: /opt/unbounded/agent/bin/aks-flex-node", "command: aks-flex-node", 1),
 			wantErr: "exec command must be an absolute path",
 		},
 		"missing exec API version": {
@@ -124,7 +124,7 @@ func TestValidateEmbeddedKubeconfig(t *testing.T) {
 		"external token file": {
 			data: strings.Replace(
 				validEmbeddedKubeconfig,
-				"    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: /usr/local/bin/aks-flex-node\n      args: [\"token\", \"arc\"]\n      interactiveMode: Never",
+				"    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: /opt/unbounded/agent/bin/aks-flex-node\n      args: [\"token\", \"arc\"]\n      interactiveMode: Never",
 				"    tokenFile: /run/token",
 				1,
 			),
@@ -352,6 +352,23 @@ func TestLoadPairedKubeconfigConsistency(t *testing.T) {
 		wantErr   string
 	}{
 		"matching pair": {},
+		"retiring host exec path": {
+			configure: func(_ *Config, agent, _ *clientcmdapi.Config) {
+				agent.AuthInfos["identity"].Exec.Command = "/usr/local/bin/aks-flex-node"
+			},
+			wantErr: "is retired during host startup; use /opt/unbounded/agent/bin/aks-flex-node instead",
+		},
+		"unclean retiring host exec path": {
+			configure: func(_ *Config, agent, _ *clientcmdapi.Config) {
+				agent.AuthInfos["identity"].Exec.Command = "/usr/local/bin/../bin/aks-flex-node"
+			},
+			wantErr: "is retired during host startup; use /opt/unbounded/agent/bin/aks-flex-node instead",
+		},
+		"kubelet container exec path": {
+			configure: func(_ *Config, _, kubelet *clientcmdapi.Config) {
+				kubelet.AuthInfos["identity"].Exec.Command = "/usr/local/bin/aks-flex-node"
+			},
+		},
 		"node name mismatch": {
 			configure: func(cfg *Config, _, _ *clientcmdapi.Config) { cfg.Agent.NodeName = "different-node" },
 			wantErr:   "must match system:node:different-node",

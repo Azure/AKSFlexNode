@@ -23,6 +23,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -1122,6 +1123,10 @@ func (c *Config) validateKubeconfigPair() error {
 	agent, err := clientcmd.RESTConfigFromKubeConfig([]byte(c.Agent.KubeconfigData))
 	if err != nil {
 		return fmt.Errorf("load agent kubeconfig: %w", err)
+	}
+	if agent.ExecProvider != nil && filepath.Clean(agent.ExecProvider.Command) == filepath.Join(hostroot.LegacyPath, hostBinaryRelativePath) {
+		return fmt.Errorf("agent kubeconfig exec command %q is retired during host startup; use %s instead",
+			agent.ExecProvider.Command, filepath.Join(hostroot.Path, hostBinaryRelativePath))
 	}
 	kubelet, err := clientcmd.RESTConfigFromKubeConfig([]byte(c.Node.Kubelet.KubeconfigData))
 	if err != nil {

@@ -45,6 +45,13 @@ contexts:
     user: node
 `, server.URL, ca)
 	tests := map[string]func(*config.Config){
+		"retiring host exec path": func(cfg *config.Config) {
+			cfg.Agent.KubeconfigData = strings.Replace(kubeconfig, "    token: test-token",
+				`    exec:
+      apiVersion: client.authentication.k8s.io/v1
+      command: /usr/local/bin/aks-flex-node
+      interactiveMode: Never`, 1)
+		},
 		"node name": func(cfg *config.Config) { cfg.Agent.NodeName = "different-node" },
 		"API server": func(cfg *config.Config) {
 			cfg.Agent.KubeconfigData = strings.Replace(kubeconfig, server.URL, "https://different.example", 1)

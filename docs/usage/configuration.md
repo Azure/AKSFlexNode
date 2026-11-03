@@ -267,7 +267,7 @@ In this mode:
 - Kubelet TLS bootstrap and the daemon client-certificate provider are bypassed; the kubeconfig exec credentials remain authoritative. Any previously issued daemon client certificate and private key are removed when the daemon enters this mode.
 - Arc can remain enabled for ARM authentication and makes the agent service depend on `himdsd.service`.
 
-The kubeconfigs must be self-contained: use embedded CA, client certificate, and client key data rather than file references. Both active clusters must include matching CA data; unused clusters need not embed a CA. Token-file references are rejected. Exec commands must be absolute and available in the host for the agent kubeconfig or inside nspawn for the kubelet kubeconfig. Host preflight checks the active agent exec command without running it and does not try to execute or locate the kubelet's container-only plugin.
+The kubeconfigs must be self-contained: use embedded CA, client certificate, and client key data rather than file references. Both active clusters must include matching CA data; unused clusters need not embed a CA. Token-file references are rejected. Exec commands must be absolute and available in the host for the agent kubeconfig or inside nspawn for the kubelet kubeconfig. The agent exec command must not use `/usr/local/bin/aks-flex-node`: host startup retires that seed binary. Use `/opt/unbounded/agent/bin/aks-flex-node` instead; the kubelet can still use `/usr/local/bin/aks-flex-node` inside nspawn. Host preflight checks the active agent exec command without running it and does not try to execute or locate the kubelet's container-only plugin.
 
 The kubelet's `clientCAFile` also uses this CA to authenticate incoming API-server connections. This assumes the API endpoint's trust CA is the AKS cluster CA. An API proxy signed by a different CA can make `kubectl logs` and `kubectl exec` fail even if kubelet can connect to the proxy; that topology requires separate trust configuration and is not supported by these paired kubeconfig settings alone.
 
@@ -360,8 +360,38 @@ also grant the principal `get`, `list`, and `watch` on
 `unbounded-cloud.io/machineoperations/status`, as shown in
 [`hack/controller-deployment/rbac.yaml`](../../hack/controller-deployment/rbac.yaml).
 Set `<agent-principal-username>` and `<kubelet-sami-principal-username>` to the
-exact usernames returned by `kubectl --context <context> --namespace kube-system auth whoami`
-using each credential. For an Arc SAMI, this is normally its principal object ID.
+underlying authenticated usernames, not the impersonated `system:node:<node-name>`
+user. `auth whoami` honors kubeconfig impersonation and can fail before the
+impersonation role is bound. Discover each principal with impersonation removed
+from a protected temporary copy, leaving the source kubeconfigs unchanged.
+For an Arc SAMI, the username is normally its principal object ID.
+
+Run the following for each source kubeconfig, setting `<credential-context>` to
+its active context. This uses the host's persistent agent binary for the kubelet
+excerpt's exec command; stage that binary first and ensure the host can access
+the same HIMDS endpoint and challenge files. Other credential plugins must
+likewise be available where discovery runs.
+
+```bash
+(
+  set -euo pipefail
+  umask 077
+  principal_dir=$(mktemp -d)
+  principal_kubeconfig="$principal_dir/kubeconfig"
+  trap 'rm -f -- "$principal_kubeconfig"; rmdir -- "$principal_dir"' EXIT
+  kubectl --kubeconfig <source-kubeconfig> \
+    --context <credential-context> --namespace kube-system \
+    config view --raw --minify --flatten -o json |
+    jq '.users[].user |= (
+      del(.as, ."as-uid", ."as-groups", ."as-user-extra") |
+      if .exec.command == "/usr/local/bin/aks-flex-node" then
+        .exec.command = "/opt/unbounded/agent/bin/aks-flex-node"
+      else . end
+    )' > "$principal_kubeconfig"
+  kubectl --kubeconfig "$principal_kubeconfig" \
+    --context <credential-context> --namespace kube-system auth whoami
+)
+```
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
