@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Update Unbounded to v0.21.0, refreshing default worker rootfs images to v20261031 and exposing the host udev database read-only to NVIDIA workers.
 - **Breaking change:** The agent's binaries and helpers move to `/opt/unbounded/agent`, and `aks-flex-node` is no longer on the default `PATH`; run `/opt/unbounded/agent/bin/aks-flex-node`. Hosts installed by an earlier release move there on their own after AgentUpgrades. `/opt` must allow running programs. `bootstrap.sh --install-dir` and `AKS_FLEX_NODE_INSTALL_DIR` are deprecated and ignored ([#323](https://github.com/Azure/AKSFlexNode/pull/323)).
 - **Breaking change:** `AgentUpgrade` MachineOperations now require `parameters.sha256`, the SHA-256 of the compressed release archive. Requests with missing, blank, or malformed digests fail with `InvalidParameters`; mismatched digests fail before extraction or candidate execution. Update upgrade controllers and scripts to supply the digest for each target version and architecture from the release's `checksums.txt` before deploying agents with this requirement.
 
