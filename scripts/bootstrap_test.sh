@@ -439,6 +439,56 @@ for report in "$no_deployment" ""; do
     [[ "$status" == 7 ]] || fail "a start that left no deployment exited $status, want start's 7, with preflight report '$report'"
 done
 
+# In the agent's image, the agent is already installed: bootstrap runs it in
+# place. The agent URL points nowhere, so a download would fail.
+install -d -m 0755 "$WORK_DIR/image-agent-bin"
+install -m 0755 "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" "$WORK_DIR/image-agent-bin/aks-flex-node"
+installed_sum=$(sha256sum < "$WORK_DIR/image-agent-bin/aks-flex-node")
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/image-agent-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" \
+    bash "$SCRIPT" --installed-agent "$WORK_DIR/image-agent-bin/aks-flex-node" \
+        --config-path "$WORK_DIR/image-agent-etc/config.json" >/dev/null
+[[ $(sha256sum < "$WORK_DIR/image-agent-bin/aks-flex-node") == "$installed_sum" ]] || \
+    fail "the installed agent was replaced"
+jq -e '.node.labels == {"base":"true"}' "$WORK_DIR/image-agent-etc/config.json" >/dev/null
+grep -Fx "preflight --config $WORK_DIR/image-agent-etc/config.json --output text" "$WORK_DIR/image-agent-calls" >/dev/null
+grep -Fx "start --config $WORK_DIR/image-agent-etc/config.json" "$WORK_DIR/image-agent-calls" >/dev/null
+
+# With paired kubeconfigs too, the installed agent runs where it is, and nothing is put on the host
+# for their exec command: in the agent's image, the agent's clients run the image's agent there.
+host_agent_before=$(sha256sum /opt/unbounded/agent/bin/aks-flex-node 2>/dev/null || echo none)
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/image-paired-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" \
+    bash "$SCRIPT" --installed-agent "$WORK_DIR/image-agent-bin/aks-flex-node" \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig" \
+        --config-path "$WORK_DIR/image-paired-etc/config.json" >/dev/null
+jq -e '
+  .agent.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: agent\n" and
+  .node.kubelet.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: kubelet\n"
+' "$WORK_DIR/image-paired-etc/config.json" >/dev/null || fail "paired kubeconfigs were not embedded with an installed agent"
+[[ "$(sort -u "$WORK_DIR/image-paired-calls.path")" == "$WORK_DIR/image-agent-bin/aks-flex-node" ]] ||
+    fail "paired bootstrap with an installed agent ran $(sort -u "$WORK_DIR/image-paired-calls.path" | tr '\n' ' ')"
+[[ "$(sha256sum /opt/unbounded/agent/bin/aks-flex-node 2>/dev/null || echo none)" == "$host_agent_before" ]] ||
+    fail "paired bootstrap with an installed agent put an agent on the host"
+
+for missing in "$WORK_DIR/no-image-agent-bin/aks-flex-node" "image-agent-bin/aks-flex-node" "$WORK_DIR/image-agent-bin"; do
+    status=0
+    BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-image-agent-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_INSTALLED_AGENT="$missing" \
+        bash "$SCRIPT" \
+            --config-path "$WORK_DIR/no-image-agent-etc/config.json" \
+            >"$WORK_DIR/no-image-agent.log" 2>&1 || status=$?
+    # A setting that can't work, which the first-boot unit doesn't retry.
+    [[ "$status" == 78 ]] || fail "bootstrap with --installed-agent $missing exited $status, want 78"
+    grep -q 'must be the absolute path of an executable file' "$WORK_DIR/no-image-agent.log" || \
+        fail "--installed-agent $missing was not reported"
+done
+[[ ! -s "$WORK_DIR/no-image-agent-calls" ]] || fail "an agent ran without a usable --installed-agent"
+
 command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
 cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'
 import base64

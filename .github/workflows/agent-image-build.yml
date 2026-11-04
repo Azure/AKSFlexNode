@@ -1,0 +1,173 @@
+# Builds the AKS Flex Node agent's image for Azure Container Linux, Dockerfile.aks-flex-node-agent,
+# for linux/amd64 and linux/arm64. release.yml publishes it with each release, and ACL Container
+# Checks builds it without pushing. Published, it's pushed by digest, its build provenance is
+# attested, and only then is it tagged with the version and the commit, so a tag only ever names an
+# attested image. The build is reproducible: a commit's image has one digest, so a release that's
+# run again tags the image it published before.
+name: Build AKS Flex Node Agent Image
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Git ref or commit to build"
+        required: true
+        type: string
+      version:
+        description: "Version used for image tags and build metadata"
+        required: true
+        type: string
+      push_image:
+        description: "Push, attest, and tag the image in GHCR"
+        required: true
+        type: boolean
+    outputs:
+      image:
+        description: "The image's repository"
+        value: ${{ jobs.build.outputs.image }}
+      digest:
+        description: "The published image index's digest, or empty when it isn't pushed"
+        value: ${{ jobs.build.outputs.digest }}
+
+env:
+  IMAGE_PACKAGE: aks-flex-node-agent
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  build:
+    name: Build agent image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The image's last stage installs packages for each platform: arm64's runs under QEMU on
+      # the amd64 runner. Its Go build cross-compiles, on the runner's own platform. The
+      # emulators run every arm64 step of the published image, so they're pinned by digest, and
+      # pulled rather than restored from a cache.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
+
+      # BuildKit builds the published image, so it's pinned by digest too.
+      - name: Configure Docker Buildx
+        run: |
+          set -euo pipefail
+          docker buildx create --name aks-flex-builder --use \
+            --driver-opt image=docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          docker buildx inspect --bootstrap
+
+      - name: Login to GHCR
+        if: inputs.push_image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build image
+        id: build
+        env:
+          IMAGE_VERSION: ${{ inputs.version }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+        run: |
+          set -euo pipefail
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/${IMAGE_PACKAGE}"
+          commit_sha="$(git rev-parse HEAD)"
+          short_sha="${commit_sha:0:12}"
+          # The commit's time, not the clock's, for every timestamp in the image, and for the
+          # packages it installs: those published by then.
+          source_date_epoch="$(git log -1 --format=%ct)"
+          build_time="$(date -u -d "@${source_date_epoch}" +"%Y-%m-%dT%H:%M:%SZ")"
+
+          labels=(
+            "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            "org.opencontainers.image.revision=${commit_sha}"
+            "org.opencontainers.image.created=${build_time}"
+            "org.opencontainers.image.title=aks-flex-node-agent"
+            "org.opencontainers.image.description=The AKS Flex Node agent as privileged containers on Azure Container Linux"
+            "org.opencontainers.image.version=${IMAGE_VERSION}"
+          )
+
+          # An index of one plain manifest per platform, without buildx's own attestations,
+          # which containerd pulls by digest as it is; the provenance step attests the index.
+          build_args=(
+            --file Dockerfile.aks-flex-node-agent
+            --platform "${PLATFORMS}"
+            --provenance=false
+            --sbom=false
+            --build-arg "VERSION=${IMAGE_VERSION}"
+            --build-arg "GIT_COMMIT=${short_sha}"
+            --build-arg "BUILD_TIME=${build_time}"
+            --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}"
+          )
+          for label in "${labels[@]}"; do
+            build_args+=(--label "${label}")
+          done
+
+          # Pushed by digest only: the tags move once it's attested.
+          if [[ "${PUSH_IMAGE}" == "true" ]]; then
+            build_args+=(
+              --output "type=image,name=${image},push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true"
+              --metadata-file metadata.json
+            )
+          fi
+
+          docker buildx build "${build_args[@]}" .
+
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          if [[ "${PUSH_IMAGE}" == "true" ]]; then
+            digest="$(jq -r '."containerimage.digest"' metadata.json)"
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Unexpected image digest: ${digest}" >&2
+              exit 1
+            fi
+            echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Attest build provenance
+        if: inputs.push_image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          # The attestation is what operators verify. A storage record, for the organization's
+          # inventory of where artifacts are stored, would need artifact-metadata: write too.
+          create-storage-record: false
+
+      - name: Tag the attested image
+        if: inputs.push_image
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          short_sha="$(git rev-parse HEAD | cut -c1-12)"
+          tags=("${IMAGE_VERSION}" "sha-${short_sha}")
+          # The attested index itself under each tag, as it is.
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=(--tag "${IMAGE}:${tag}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${IMAGE}@${DIGEST}"
+          for tag in "${tags[@]}"; do
+            resolved="$(docker buildx imagetools inspect "${IMAGE}:${tag}" | awk '$1 == "Digest:" {print $2; exit}')"
+            if [[ "${resolved}" != "${DIGEST}" ]]; then
+              echo "${IMAGE}:${tag} resolves to ${resolved:-nothing}, not the attested ${DIGEST}" >&2
+              exit 1
+            fi
+          done

@@ -9,7 +9,7 @@ This section collects scenario-focused guides for installing, joining, operating
 - [Joining Nodes](usage/joining-nodes.md) - Join a host to AKS using bootstrap token, managed identity, Azure Arc, or service principal authentication.
 - [Operations](usage/operations.md) - Start, inspect, reset, uninstall, and troubleshoot a Flex Node host.
 - [Migrating to `/opt/unbounded/agent`](usage/migration.md) - How a host an earlier release installed under `/usr/local` moves to `/opt/unbounded/agent`.
-- [Azure Container Linux](usage/azure-container-linux.md) - What differs on an Azure Container Linux host once it has joined.
+- [Azure Container Linux](usage/azure-container-linux.md) - Experimental: run the agent on Azure Container Linux, in containers of its image.
 - [Command-line Reference](usage/cli.md) - Operator commands, flags, compatibility aliases, and internal service commands.
 - [Configuration](usage/configuration.md) - Configuration file structure, required fields, defaults, and authentication mode selection.
 - [NVIDIA GPU Flex Node setup](labs/gpu-node-setup.md) - NVIDIA host image and driver contract, cluster GPU stack, validation, and troubleshooting.

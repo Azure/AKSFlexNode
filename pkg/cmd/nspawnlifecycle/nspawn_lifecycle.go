@@ -29,12 +29,17 @@ type lifecycleFactory func(*slog.Logger) (lifecycle, error)
 // NewCommand returns the application-owned wrapper for Unbounded's nspawn
 // lifecycle operations. The machines' hooks run it through the agent's nspawn
 // lifecycle units, and hooks an earlier release wrote run it as the lifecycle
-// helper, a link to the agent's binary.
+// helper, a link to the agent's binary. In the agent's container, which has no
+// install on the host, no phase migrates the host root.
 func NewCommand() *cobra.Command {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	migrate := daemon.MigrateHostRoot
+	if daemon.Containerized() {
+		migrate = nil
+	}
 	return newCommand(log, func(log *slog.Logger) (lifecycle, error) {
 		return newLifecycle(log, persistedConfigPath)
-	}, daemon.MigrateHostRoot)
+	}, migrate)
 }
 
 // newCommand builds the phases. Only pre-start migrates the host root: it

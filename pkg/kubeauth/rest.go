@@ -21,12 +21,18 @@ func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
 }
 
 // BootstrapRESTConfigWithPlugin is BootstrapRESTConfig with the exec
-// credential plugin named by the caller.
+// credential plugin named by the caller. In the agent's container, that's the
+// image's agent, as the host has none: an embedded agent kubeconfig whose exec
+// command names the host's agent runs it too.
 func BootstrapRESTConfigWithPlugin(cfg *config.Config, plugin string) (*rest.Config, error) {
 	if cfg.UsesKubeconfigCredentials() {
 		restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(cfg.Agent.KubeconfigData))
 		if err != nil {
 			return nil, fmt.Errorf("build Kubernetes REST config from agent kubeconfig: %w", err)
+		}
+		if restCfg.ExecProvider != nil && plugin != "" && plugin != config.HostBinaryPath() &&
+			config.IsHostBinaryPath(restCfg.ExecProvider.Command) {
+			restCfg.ExecProvider.Command = plugin
 		}
 		if restCfg.ExecProvider != nil && !utilio.IsExecutable(restCfg.ExecProvider.Command) {
 			return nil, fmt.Errorf("agent kubeconfig exec credential plugin %s is not executable on the host", restCfg.ExecProvider.Command)

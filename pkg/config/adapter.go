@@ -249,6 +249,14 @@ func HostBinaryPath() string {
 	return filepath.Join(hostroot.Resolve(), hostBinaryRelativePath)
 }
 
+// IsHostBinaryPath reports whether path names the host's aks-flex-node: as HostBinaryPath
+// resolves it, or as an operator writes it, under hostroot.Path, such as in an embedded
+// kubeconfig's exec command.
+func IsHostBinaryPath(path string) bool {
+	path = filepath.Clean(path)
+	return path == HostBinaryPath() || path == filepath.Join(hostroot.Path, hostBinaryRelativePath)
+}
+
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node
 // binary as a credential plugin. The binary's `token kubelogin` subcommand
 // uses kubelogin to obtain an Azure AD token for the AKS API server.

@@ -316,6 +316,24 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       push_image: false
 
+  agent-image-dry-run:
+    name: Build agent image (dry run)
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish != 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.build.result == 'success'
+    needs:
+      - prepare
+      - build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent-image-build.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.target_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      push_image: false
+
   dry-run-complete:
     name: Complete dry run
     if: >-
@@ -323,11 +341,13 @@ jobs:
       needs.prepare.outputs.publish != 'true' &&
       needs.prepare.result == 'success' &&
       needs.build.result == 'success' &&
-      needs.controller-image-dry-run.result == 'success'
+      needs.controller-image-dry-run.result == 'success' &&
+      needs.agent-image-dry-run.result == 'success'
     needs:
       - prepare
       - build
       - controller-image-dry-run
+      - agent-image-dry-run
     runs-on: ubuntu-latest
     steps:
       - name: Report dry run
@@ -352,6 +372,28 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       push_image: true
 
+  # Azure Container Linux runs the agent as privileged containers of this image.
+  agent-image:
+    name: Publish agent image
+    if: >-
+      always() &&
+      needs.prepare.outputs.publish == 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.tag.result == 'success'
+    needs:
+      - prepare
+      - tag
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/agent-image-build.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.target_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      push_image: true
+
   release:
     name: Publish GitHub Release
     if: >-
@@ -360,12 +402,14 @@ jobs:
       needs.prepare.result == 'success' &&
       needs.build.result == 'success' &&
       needs.tag.result == 'success' &&
-      needs.controller-image.result == 'success'
+      needs.controller-image.result == 'success' &&
+      needs.agent-image.result == 'success'
     needs:
       - prepare
       - build
       - tag
       - controller-image
+      - agent-image
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -419,8 +463,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          AGENT_IMAGE: ${{ needs.agent-image.outputs.image }}
+          AGENT_IMAGE_DIGEST: ${{ needs.agent-image.outputs.digest }}
         run: |
           set -euo pipefail
+          if [[ ! "${AGENT_IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unexpected agent image digest: ${AGENT_IMAGE_DIGEST}" >&2
+            exit 1
+          fi
           changelog_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/CHANGELOG.md"
           cat > release-notes.md <<EOF
           ## AKS Flex Node ${RELEASE_VERSION}
@@ -449,6 +499,24 @@ jobs:
           - **Ubuntu 22.04 LTS (AMD64)**: \`aks-flex-node-linux-amd64.tar.gz\`
           - **Ubuntu 22.04 LTS (ARM64)**: \`aks-flex-node-linux-arm64.tar.gz\`
           - **Ubuntu 24.04 LTS**: Compatible with AMD64 and ARM64 binaries above
+          - **Azure Container Linux** (experimental): the agent's image, below
+
+          ### Azure Container Linux (experimental)
+
+          Azure Container Linux support is experimental and not for production nodes; see the guide linked below for what it needs and what isn't supported yet. On Azure Container Linux, the agent runs as privileged containers of its image, for \`linux/amd64\` and \`linux/arm64\`. Name it pinned by digest in the install's settings, as \`AKS_FLEX_NODE_IMAGE\`:
+
+          \`\`\`
+          ${AGENT_IMAGE}:${RELEASE_VERSION}@${AGENT_IMAGE_DIGEST}
+          \`\`\`
+
+          To upgrade a node's agent to it, use an \`AgentUpgrade\` MachineOperation with these parameters:
+
+          \`\`\`yaml
+          downloadURL: oci://${AGENT_IMAGE}:${RELEASE_VERSION}
+          sha256: ${AGENT_IMAGE_DIGEST#sha256:}
+          \`\`\`
+
+          Verify its build provenance with \`gh attestation verify oci://${AGENT_IMAGE}@${AGENT_IMAGE_DIGEST} --repo ${GITHUB_REPOSITORY}\`. See [Azure Container Linux](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_VERSION}/docs/usage/azure-container-linux.md).
 
           ### Verification
 

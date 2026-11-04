@@ -47,6 +47,9 @@ func TestPairedKubeconfigChecksReplaceUpstreamReachability(t *testing.T) {
 	}
 	if host, ok := checks[len(checks)-1].(agentKubeconfigChecker); !ok || host.cfg != cfg {
 		t.Fatal("host agent credential check was not registered")
+	} else if host.plugin != config.HostBinaryPath() {
+		// On a host; in the agent's container, the image's agent, as start's clients run.
+		t.Fatalf("host agent credential check's plugin = %q, want %q", host.plugin, config.HostBinaryPath())
 	}
 }
 
@@ -77,13 +80,17 @@ func TestAgentKubeconfigChecker(t *testing.T) {
 		missing   bool
 		directory bool
 		tokenOnly bool
+		// hostAgent names the host's agent in the kubeconfig, and the plugin in the checker, as
+		// in the agent's container, which runs the image's agent there.
+		hostAgent bool
 		wantError bool
 	}{
-		"executable without invocation": {mode: 0o700},
-		"missing executable":            {missing: true, wantError: true},
-		"not executable":                {mode: 0o600, wantError: true},
-		"directory":                     {directory: true, wantError: true},
-		"no exec provider":              {tokenOnly: true},
+		"executable without invocation":       {mode: 0o700},
+		"the host's agent, run as the plugin": {mode: 0o700, hostAgent: true},
+		"missing executable":                  {missing: true, wantError: true},
+		"not executable":                      {mode: 0o600, wantError: true},
+		"directory":                           {directory: true, wantError: true},
+		"no exec provider":                    {tokenOnly: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -105,6 +112,11 @@ func TestAgentKubeconfigChecker(t *testing.T) {
       apiVersion: client.authentication.k8s.io/v1
       command: %s
       interactiveMode: Never`, plugin)
+			checker := agentKubeconfigChecker{}
+			if tt.hostAgent {
+				credential = strings.Replace(credential, plugin, "/opt/unbounded/agent/bin/aks-flex-node", 1)
+				checker.plugin = plugin
+			}
 			if tt.tokenOnly {
 				credential = "token: test-token"
 			}
@@ -131,7 +143,8 @@ contexts:
 					KubeconfigData: strings.Replace(data, plugin, filepath.Join(dir, "container-only-plugin"), 1),
 				}},
 			}
-			results := (agentKubeconfigChecker{cfg: cfg}).Check(t.Context())
+			checker.cfg = cfg
+			results := checker.Check(t.Context())
 			if len(results) != 1 || results[0].Name != checkAgentKubeconfigName {
 				t.Fatalf("Check() = %#v, want one host agent result", results)
 			}

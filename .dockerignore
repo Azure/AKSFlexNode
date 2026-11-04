@@ -11,3 +11,4 @@ aks-flex-node-*
 aks-flex-controller
 e2ehelper
 test_hbc.kubeconfig
+.vm
