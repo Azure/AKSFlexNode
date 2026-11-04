@@ -8,8 +8,8 @@ on:
         required: true
         type: string
       target_sha:
-        description: "Full commit SHA validated by both the dry-run and publishing runs"
-        required: true
+        description: "Optional full commit SHA; defaults to the selected branch commit. Reuse the dry-run SHA when publishing."
+        required: false
         type: string
       dry_run:
         description: "Validate and build without creating a tag or publishing"
@@ -39,7 +39,7 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ inputs.target_sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -69,7 +69,7 @@ jobs:
           fi
 
           requested_target_sha="${REQUESTED_TARGET_SHA}"
-          if [[ ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ -n "${requested_target_sha}" && ! "${requested_target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "target_sha must be a full 40-character lowercase commit SHA" >&2
             exit 1
           fi
