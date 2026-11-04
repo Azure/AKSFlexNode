@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
 ### Added
 
 - Support separate embedded kubeconfigs for host-agent and kubelet Kubernetes authentication ([#312](https://github.com/Azure/AKSFlexNode/pull/312)).
@@ -41,5 +43,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Made release publishing safe to rerun for an existing tag ([#304](https://github.com/Azure/AKSFlexNode/pull/304)).
 
-[Unreleased]: https://github.com/Azure/AKSFlexNode/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Azure/AKSFlexNode/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Azure/AKSFlexNode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Azure/AKSFlexNode/compare/v0.1.11...v0.2.0
