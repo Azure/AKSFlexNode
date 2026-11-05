@@ -77,7 +77,10 @@ with the Node's current condition on each Machine read and writes when they diff
 so external edits are repaired and transition times survive agent restarts. An
 unchanged condition's `lastHeartbeatTime` is refreshed once per Machine poll
 interval (default 10 minutes), including while a failed enable waits to retry, so
-an older heartbeat means the agent isn't updating it. Every node running this agent shows it, `Disabled` by default:
+an older heartbeat means the agent isn't updating it. Every node running this agent shows it, `Disabled` by default.
+The write uses the agent's Kubernetes credential, so with paired kubeconfigs the
+agent principal needs `patch` on its own `nodes/status` (see
+[configuration](../usage/configuration.md)); without it, the write fails with a warning.
 
 | Status | Reason | Meaning |
 | --- | --- | --- |
