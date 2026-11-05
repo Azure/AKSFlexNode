@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 )
 
 func TestEnsureAgentUpgradeLayoutMigratesLegacyBinaryIdempotently(t *testing.T) {
@@ -185,5 +187,82 @@ func assertResolvedPath(t *testing.T, path, want string) {
 	}
 	if got != want {
 		t.Fatalf("resolved %s = %s, want %s", path, got, want)
+	}
+}
+
+// TestFlattenAgentLayout: reset leaves the agent's binary a regular file, the binary the layout
+// ran, and no layout, so the aks-flex-node command still works and the next start seeds a new
+// layout from the binary that runs it.
+func TestFlattenAgentLayout(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		layout       bool
+		breakCurrent bool
+		lockHeld     bool
+		wantBinary   string
+		wantLayout   bool
+		wantErr      error
+	}{
+		"a layout becomes its binary": {layout: true, wantBinary: "agent"},
+		// The last good binary, when current leads nowhere.
+		"a broken current falls back to last-good": {layout: true, breakCurrent: true, wantBinary: "agent"},
+		"no layout is left alone":                  {wantBinary: "direct agent"},
+		// It never runs beside an activation's switch.
+		"an activation in progress keeps the layout": {layout: true, lockHeld: true, wantLayout: true, wantErr: agentbinary.ErrActivationInProgress},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := testAgentUpgradePaths(t)
+			lockPath := filepath.Join(t.TempDir(), "agent-upgrade.lock")
+			if err := os.MkdirAll(filepath.Dir(paths.BinaryPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.layout {
+				writeExecutable(t, paths.BinaryPath, "agent")
+				if err := ensureAgentUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
+					t.Fatalf("ensureAgentUpgradeLayout: %v", err)
+				}
+				if tc.breakCurrent {
+					if err := os.Remove(paths.CurrentPath); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), paths.CurrentPath); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else {
+				writeExecutable(t, paths.BinaryPath, "direct agent")
+			}
+			if tc.lockHeld {
+				lock, err := agentbinary.AcquireHostActivationLock(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = lock.Close() })
+			}
+
+			for range 2 {
+				err := flattenAgentLayout(discardLogger(), paths, lockPath)
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("flattenAgentLayout() error = %v, want %v", err, tc.wantErr)
+				}
+			}
+			_, err := os.Lstat(filepath.Dir(paths.CurrentPath))
+			if layout := err == nil; layout != tc.wantLayout {
+				t.Fatalf("layout kept = %v, want %v", layout, tc.wantLayout)
+			}
+			if tc.wantLayout {
+				return
+			}
+			info, err := os.Lstat(paths.BinaryPath)
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+				t.Fatalf("%s is %v, %v; want a regular executable file", paths.BinaryPath, info, err)
+			}
+			if got, err := os.ReadFile(paths.BinaryPath); err != nil || string(got) != tc.wantBinary {
+				t.Fatalf("%s holds %q, %v; want %q", paths.BinaryPath, got, err, tc.wantBinary)
+			}
+		})
 	}
 }

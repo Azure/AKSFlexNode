@@ -15,7 +15,11 @@ set -euo pipefail
 umask 077
 
 readonly DEFAULT_REPOSITORY="Azure/AKSFlexNode"
-readonly DEFAULT_INSTALL_DIR="/usr/local/bin"
+# Where the agent keeps its files, and where releases before it did; see
+# resolve_install_dir. Must match hostroot.Path in the agent library. The rest
+# of /opt/unbounded belongs to the host, which may stage files there.
+readonly HOST_ROOT="/opt/unbounded/agent"
+readonly LEGACY_ROOT="/usr/local"
 readonly DEFAULT_CONFIG_PATH="/etc/aks-flex-node/config.json"
 # TODO: move to 2026-10-02-preview (returns disconnect-tolerance intent) once ARM accepts it.
 readonly DEFAULT_BOOTSTRAP_DATA_API_VERSION="2026-05-02-preview"
@@ -45,11 +49,19 @@ SP_CLIENT_CERTIFICATE_FILE="${AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE:-}"
 AGENT_URL="${AKS_FLEX_NODE_AGENT_URL:-}"
 AGENT_VERSION="${AKS_FLEX_NODE_AGENT_VERSION:-}"
 AGENT_SHA256="${AKS_FLEX_NODE_AGENT_SHA256:-}"
-INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+INSTALLED_AGENT="${AKS_FLEX_NODE_INSTALLED_AGENT:-}"
+# Deprecated: the installer chooses the install directory. Kept only to warn
+# that a different one is ignored.
+REQUESTED_INSTALL_DIR="${AKS_FLEX_NODE_INSTALL_DIR:-}"
+INSTALL_DIR=""
+# The agent bootstrap runs: the one it installed, or --installed-agent's.
+AGENT_BIN=""
 CONFIG_PATH="${AKS_FLEX_NODE_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
 ENV_CONFIG_OVERRIDES="${AKS_FLEX_NODE_CONFIG_OVERRIDES:-}"
 BOOTSTRAP_OCI_IMAGE="${AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE:-}"
 BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="${AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE:-}"
+AGENT_KUBECONFIG="${AKS_FLEX_NODE_AGENT_KUBECONFIG:-}"
+KUBELET_KUBECONFIG="${AKS_FLEX_NODE_KUBELET_KUBECONFIG:-}"
 CLUSTER_RESOURCE_ID="${AKS_FLEX_NODE_CLUSTER_RESOURCE_ID:-}"
 AGENT_POOL_NAME="${AKS_FLEX_NODE_AGENT_POOL_NAME:-}"
 RESOURCE_MANAGER_ENDPOINT="${AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT:-}"
@@ -66,11 +78,12 @@ CONFIG_OVERRIDES=()
 unset \
     AKS_FLEX_NODE_SP_CLIENT_SECRET \
     AKS_FLEX_NODE_AGENT_URL \
+    AKS_FLEX_NODE_AGENT_KUBECONFIG \
+    AKS_FLEX_NODE_KUBELET_KUBECONFIG \
     AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
     AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
     AKS_FLEX_NODE_CONFIG_OVERRIDES || true
 TEMP_DIR=""
-MANAGED_BINARY_DIR=""
 
 log() {
     printf 'bootstrap: %s\n' "$*" >&2
@@ -79,6 +92,17 @@ log() {
 fatal() {
     printf 'bootstrap: error: %s\n' "$*" >&2
     exit 1
+}
+
+# The exit status of a failure that running bootstrap again, unchanged, can't fix: a setting that
+# can't work, or a start that failed after changing the host, which preflight then refuses until
+# the node is reset. The first-boot unit, scripts/aks-flex-node-bootstrap.bu, doesn't retry it.
+# EX_CONFIG in sysexits.h; nothing else this script runs exits with it unchecked.
+readonly PERMANENT_FAILURE_STATUS=78
+
+fatal_permanent() {
+    printf 'bootstrap: error: %s\n' "$*" >&2
+    exit "$PERMANENT_FAILURE_STATUS"
 }
 
 usage() {
@@ -100,6 +124,8 @@ Options:
   --agent-url URL                Exact agent tar.gz URL; may contain a SAS
   --agent-version VERSION        Version used with the default GitHub release URL
   --agent-sha256 SHA256          Expected SHA-256 of the downloaded tar.gz
+  --installed-agent PATH         Run the agent at PATH, an absolute path, instead
+                                 of installing one, as in the agent's image
   --fetch-bootstrap-data         Fetch and merge fresh AKS RP bootstrap data
   --bootstrap-data-api-version V API version for listBootstrapData
   --cluster-resource-id ID       Target AKS managed-cluster resource ID
@@ -109,9 +135,11 @@ Options:
   --bootstrap-oci-image SOURCE   Override bootstrap.ociImage
   --bootstrap-offline-artifacts-source SOURCE
                                  Override bootstrap.offlineArtifacts.source
+  --agent-kubeconfig PATH        Protected kubeconfig embedded for host agent clients
+  --kubelet-kubeconfig PATH      Protected kubeconfig embedded verbatim for kubelet
   --config-overrides JSON        JSON object deep-merged into the base config;
                                  repeatable and not suitable for secrets
-  --install-dir PATH             Binary destination directory
+  --install-dir PATH             Deprecated and ignored; the installer chooses it
   --config-path PATH             Rendered config destination
   -h, --help                     Show this help
 
@@ -126,6 +154,7 @@ Environment overrides:
   AKS_FLEX_NODE_AGENT_URL
   AKS_FLEX_NODE_AGENT_VERSION
   AKS_FLEX_NODE_AGENT_SHA256
+  AKS_FLEX_NODE_INSTALLED_AGENT
   AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA
   AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION
   AKS_FLEX_NODE_AUTHORITY_HOST
@@ -134,6 +163,8 @@ Environment overrides:
   AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT
   AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE
   AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE
+  AKS_FLEX_NODE_AGENT_KUBECONFIG
+  AKS_FLEX_NODE_KUBELET_KUBECONFIG
   AKS_FLEX_NODE_CONFIG_OVERRIDES
   AKS_FLEX_NODE_INSTALL_DIR
   AKS_FLEX_NODE_CONFIG_PATH
@@ -142,19 +173,23 @@ A CLI credential-file flag overrides credential values inherited from the
 environment. When invoking through sudo, explicitly preserve the required
 environment variables. The script requires preinstalled bash, curl, tar, jq, and
 flock. The aks-flex-node binary owns MSI, secret, and certificate authentication.
+
+Exit status 78 means running the script again, unchanged, can't succeed: a
+setting can't work, or start failed after changing the host, now or in an
+earlier run, which then needs 'aks-flex-node reset' first.
 EOF
 }
 
 require_value() {
     local option="$1"
     local value="${2:-}"
-    [[ -n "$value" ]] || fatal "$option requires a value"
+    [[ -n "$value" ]] || fatal_permanent "$option requires a value"
 }
 
 parse_args() {
     while (($# > 0)); do
         case "$1" in
-            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--config-overrides|--install-dir|--config-path)
+            --auth|--msi-client-id|--sp-tenant-id|--sp-client-id|--sp-client-secret-file|--sp-client-certificate-file|--agent-url|--agent-version|--agent-sha256|--bootstrap-data-api-version|--cluster-resource-id|--agent-pool-name|--resource-manager-endpoint|--bootstrap-oci-image|--bootstrap-offline-artifacts-source|--agent-kubeconfig|--kubelet-kubeconfig|--config-overrides|--install-dir|--installed-agent|--config-path)
                 require_value "$1" "${2:-}"
                 case "$1" in
                     --auth) AUTH_MODE="$2" ;;
@@ -180,8 +215,11 @@ parse_args() {
                     --resource-manager-endpoint) RESOURCE_MANAGER_ENDPOINT="$2" ;;
                     --bootstrap-oci-image) BOOTSTRAP_OCI_IMAGE="$2" ;;
                     --bootstrap-offline-artifacts-source) BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE="$2" ;;
+                    --agent-kubeconfig) AGENT_KUBECONFIG="$2" ;;
+                    --kubelet-kubeconfig) KUBELET_KUBECONFIG="$2" ;;
                     --config-overrides) CONFIG_OVERRIDES+=("$2") ;;
-                    --install-dir) INSTALL_DIR="$2" ;;
+                    --install-dir) REQUESTED_INSTALL_DIR="$2" ;;
+                    --installed-agent) INSTALLED_AGENT="$2" ;;
                     --config-path) CONFIG_PATH="$2" ;;
                 esac
                 shift 2
@@ -198,10 +236,10 @@ parse_args() {
                 shift
                 break
                 ;;
-            *) fatal "unknown option: $1" ;;
+            *) fatal_permanent "unknown option: $1" ;;
         esac
     done
-    (($# == 0)) || fatal "unexpected positional arguments: $*"
+    (($# == 0)) || fatal_permanent "unexpected positional arguments: $*"
 }
 
 cleanup() {
@@ -227,7 +265,7 @@ check_prerequisites() {
 write_base_config() {
     local output="$1"
     if [[ -n "$BASE_CONFIG_FILE" ]]; then
-        [[ -f "$BASE_CONFIG_FILE" ]] || fatal "base config file not found: $BASE_CONFIG_FILE"
+        [[ -f "$BASE_CONFIG_FILE" ]] || fatal_permanent "base config file not found: $BASE_CONFIG_FILE"
         install -m 0600 "$BASE_CONFIG_FILE" "$output"
         return
     fi
@@ -239,7 +277,7 @@ write_base_config() {
             log "embedded base config is not populated; starting from an empty config"
             printf '{}\n' > "$output"
         else
-            fatal "embedded base config is not populated; use a generated script, a base config file, or --fetch-bootstrap-data"
+            fatal_permanent "embedded base config is not populated; use a generated script, a base config file, or --fetch-bootstrap-data"
         fi
     fi
 }
@@ -252,7 +290,7 @@ merge_config_override() {
     local merged="$TEMP_DIR/config-merged.json"
 
     printf '%s' "$raw" > "$override"
-    jq -e 'type == "object"' "$override" >/dev/null || fatal "$label must be a JSON object"
+    jq -e 'type == "object"' "$override" >/dev/null || fatal_permanent "$label must be a JSON object"
     jq -s '.[0] * .[1]' "$current" "$override" > "$merged"
     mv -f "$merged" "$current"
 }
@@ -261,14 +299,14 @@ check_credential_file_permissions() {
     local path="$1"
     local label="${2:-credential}"
     local permissions
-    [[ "$path" == /* ]] || fatal "service-principal $label file path must be absolute"
-    [[ ! -L "$path" ]] || fatal "service-principal $label file must not be a symlink"
-    [[ -f "$path" ]] || fatal "service-principal $label file must be a regular file"
+    [[ "$path" == /* ]] || fatal_permanent "$label file path must be absolute"
+    [[ ! -L "$path" ]] || fatal_permanent "$label file must not be a symlink"
+    [[ -f "$path" ]] || fatal_permanent "$label file must be a regular file"
     permissions=$(stat -c '%a' "$path")
     if (((8#$permissions & 077) != 0)); then
-        fatal "service-principal $label file must not be accessible by group or other users"
+        fatal_permanent "$label file must not be accessible by group or other users"
     fi
-    [[ -s "$path" ]] || fatal "service-principal $label file is empty"
+    [[ -s "$path" ]] || fatal_permanent "$label file is empty"
 }
 
 check_secret_file_permissions() {
@@ -287,7 +325,21 @@ validate_sp_credential_selection() {
     [[ -n "$SP_CLIENT_SECRET" ]] && ((count += 1))
     [[ -n "$SP_CLIENT_SECRET_FILE" ]] && ((count += 1))
     [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]] && ((count += 1))
-    ((count <= 1)) || fatal "configure only one service-principal secret, secret file, or certificate file"
+    ((count <= 1)) || fatal_permanent "configure only one service-principal secret, secret file, or certificate file"
+}
+
+validate_kubeconfig_selection() {
+    if [[ -n "$AGENT_KUBECONFIG" && -z "$KUBELET_KUBECONFIG" ]] ||
+       [[ -z "$AGENT_KUBECONFIG" && -n "$KUBELET_KUBECONFIG" ]]; then
+        fatal_permanent "--agent-kubeconfig and --kubelet-kubeconfig must be configured together"
+    fi
+}
+
+check_kubeconfig_file_permissions() {
+    if [[ -n "$AGENT_KUBECONFIG" ]]; then
+        check_credential_file_permissions "$AGENT_KUBECONFIG" "agent kubeconfig"
+        check_credential_file_permissions "$KUBELET_KUBECONFIG" "kubelet kubeconfig"
+    fi
 }
 
 is_true() {
@@ -333,7 +385,7 @@ fetch_latest_bootstrap_data() {
         elif jq -e '.azure.servicePrincipal != null' "$current" >/dev/null; then
             mode=service-principal
         else
-            fatal "fetching bootstrap data requires Arc, MSI, or service-principal authentication"
+            fatal_permanent "fetching bootstrap data requires Arc, MSI, or service-principal authentication"
         fi
     }
 
@@ -376,15 +428,15 @@ fetch_latest_bootstrap_data() {
                 if [[ -n "$credential_file" ]]; then
                     args+=(--sp-client-credential-file "$credential_file")
                 else
-                    fatal "service-principal bootstrap-data fetch requires a credential file"
+                    fatal_permanent "service-principal bootstrap-data fetch requires a credential file"
                 fi
             fi
             ;;
-        *) fatal "fetching bootstrap data does not support auth mode: $mode" ;;
+        *) fatal_permanent "fetching bootstrap data does not support auth mode: $mode" ;;
     esac
 
     log "fetching fresh bootstrap data from AKS RP"
-    "$INSTALL_DIR/aks-flex-node" "${args[@]}" || fatal "failed to fetch AKS bootstrap data"
+    "$AGENT_BIN" "${args[@]}" || fatal "failed to fetch AKS bootstrap data"
     jq -s '.[0] * .[1]' "$current" "$response" > "$merged"
     mv -f "$merged" "$current"
 }
@@ -443,7 +495,7 @@ apply_auth_override() {
             ' "$current" > "$rendered"
             ;;
         sp|service-principal)
-            [[ -n "$SP_CLIENT_ID" ]] || fatal "service-principal auth requires --sp-client-id or AKS_FLEX_NODE_SP_CLIENT_ID"
+            [[ -n "$SP_CLIENT_ID" ]] || fatal_permanent "service-principal auth requires --sp-client-id or AKS_FLEX_NODE_SP_CLIENT_ID"
             if [[ -n "$SP_CLIENT_CERTIFICATE_FILE" ]]; then
                 check_certificate_file_permissions "$SP_CLIENT_CERTIFICATE_FILE"
                 jq --arg clientID "$SP_CLIENT_ID" --arg tenantID "$SP_TENANT_ID" --arg clientSecretFile "$SP_CLIENT_CERTIFICATE_FILE" '
@@ -484,11 +536,27 @@ apply_auth_override() {
                     }
                 ' "$current" > "$rendered"
             else
-                fatal "service-principal auth requires a protected secret file, certificate file, or AKS_FLEX_NODE_SP_CLIENT_SECRET"
+                fatal_permanent "service-principal auth requires a protected secret file, certificate file, or AKS_FLEX_NODE_SP_CLIENT_SECRET"
             fi
             ;;
-        *) fatal "unsupported auth mode: $AUTH_MODE (expected arc, msi, or service-principal)" ;;
+        *) fatal_permanent "unsupported auth mode: $AUTH_MODE (expected arc, msi, or service-principal)" ;;
     esac
+    mv -f "$rendered" "$current"
+}
+
+apply_kubeconfig_overrides() {
+    local current="$1"
+    local rendered="$TEMP_DIR/config-kubeconfigs.json"
+    if [[ -z "$AGENT_KUBECONFIG" ]]; then
+        return 0
+    fi
+    jq --rawfile agentKubeconfig "$AGENT_KUBECONFIG" --rawfile kubeletKubeconfig "$KUBELET_KUBECONFIG" '
+        .agent = (.agent // {}) |
+        .node = (.node // {}) |
+        .node.kubelet = (.node.kubelet // {}) |
+        .agent.kubeconfigData = $agentKubeconfig |
+        .node.kubelet.kubeconfigData = $kubeletKubeconfig
+    ' "$current" > "$rendered"
     mv -f "$rendered" "$current"
 }
 
@@ -499,7 +567,7 @@ render_config() {
     local node_name
 
     write_base_config "$current"
-    jq -e 'type == "object"' "$current" >/dev/null || fatal "embedded base config must be a JSON object"
+    jq -e 'type == "object"' "$current" >/dev/null || fatal_permanent "embedded base config must be a JSON object"
     apply_target_overrides "$current"
 
     if is_true "$FETCH_BOOTSTRAP_DATA"; then
@@ -525,6 +593,7 @@ render_config() {
     mv -f "$rendered" "$current"
 
     apply_auth_override "$current"
+    apply_kubeconfig_overrides "$current"
     jq -e . "$current" > "$output"
     chmod 0600 "$output"
 }
@@ -542,7 +611,7 @@ resolve_agent_url() {
     local archive="aks-flex-node-linux-${arch}.tar.gz"
     local url="$AGENT_URL"
     if [[ -z "$url" ]]; then
-        [[ -n "$AGENT_VERSION" ]] || fatal "set --agent-url/AKS_FLEX_NODE_AGENT_URL or --agent-version/AKS_FLEX_NODE_AGENT_VERSION"
+        [[ -n "$AGENT_VERSION" ]] || fatal_permanent "set --agent-url/AKS_FLEX_NODE_AGENT_URL or --agent-version/AKS_FLEX_NODE_AGENT_VERSION"
         url="https://github.com/${DEFAULT_REPOSITORY}/releases/download/${AGENT_VERSION}/${archive}"
     fi
     url="${url//\{\{OS\}\}/linux}"
@@ -562,27 +631,44 @@ validate_archive_paths() {
     done < "$listing"
 }
 
-is_managed_binary_link() {
-    local target_path="$1"
-    local current_path="$MANAGED_BINARY_DIR/aks-flex-node-current"
-    local link_target resolved_target
+# resolve_install_dir picks where to install the agent without running it:
+# under the host root on a host already installed there, since reset leaves the
+# binary there; in /usr/local/bin where that is writable, as earlier releases
+# were, so one of them finds itself there, while a newer agent copies itself
+# under the host root when it starts; and under the host root otherwise, as on
+# Azure Container Linux, where /usr/local is read-only. The agent keeps its
+# blue/green layout under the same root.
+resolve_install_dir() {
+    local root="$HOST_ROOT" probe
 
-    link_target=$(readlink -- "$target_path") || return 1
-    [[ "$link_target" == "$current_path" ]] || return 1
-    resolved_target=$(readlink -e -- "$target_path") || return 1
-    [[ "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-blue" ||
-       "$resolved_target" == "$MANAGED_BINARY_DIR/aks-flex-node-green" ]] &&
-        [[ -f "$resolved_target" && -x "$resolved_target" ]]
+    if [[ ! -d "$HOST_ROOT" || -L "$HOST_ROOT" ]] &&
+        { [[ -d "$LEGACY_ROOT/bin" ]] || install -d -o root -g root -m 0755 "$LEGACY_ROOT/bin" 2>/dev/null; } &&
+        probe=$(mktemp "$LEGACY_ROOT/bin/.aks-flex-node.XXXXXX" 2>/dev/null); then
+        rm -f "$probe"
+        root="$LEGACY_ROOT"
+    fi
+
+    INSTALL_DIR="$root/bin"
+
+    # Ignored rather than refused: callers that pass the old default,
+    # /usr/local/bin, would otherwise fail on every host installed under the
+    # host root, including any rejoin after a reset.
+    if [[ -n "$REQUESTED_INSTALL_DIR" ]]; then
+        if [[ "${REQUESTED_INSTALL_DIR%/}" == "$INSTALL_DIR" ]]; then
+            log "warning: --install-dir is deprecated; the installer chooses the install directory"
+        else
+            log "warning: --install-dir is deprecated and ignored; installing in $INSTALL_DIR, where this host keeps the agent, not $REQUESTED_INSTALL_DIR"
+        fi
+    fi
 }
 
 install_agent_binary() {
     local candidate="$1"
     local target="$INSTALL_DIR/aks-flex-node"
 
-    install -d -o root -g root -m 0755 "$INSTALL_DIR"
-    # The agent keeps its blue/green binary layout beside the bin directory;
-    # with the default install dir that is /usr/local/lib/aks-flex-node.
-    MANAGED_BINARY_DIR="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
+    # Created only when missing: an existing directory belongs to the image.
+    { [[ -d "$INSTALL_DIR" ]] || install -d -o root -g root -m 0755 "$INSTALL_DIR"; } ||
+        fatal "cannot write to $INSTALL_DIR"
 
     # errexit does not apply inside a subshell on the left of ||, so every
     # step checks its own status.
@@ -598,23 +684,26 @@ install_agent_binary() {
             fatal "agent binary activation is in progress; retry"
         fi
 
-        if [[ -L "$target" ]]; then
-            # Once the agent has started, this path links into the managed
-            # blue/green layout. Replacing it here would bypass the upgrade
-            # flow's activation locking and rollback.
-            is_managed_binary_link "$target" ||
-                fatal "refusing to replace the unexpected symbolic link at $target; inspect and remove the link before rerunning, and do not execute it as AKS Flex Node"
-            if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
-                systemctl is-active --quiet "$SERVICE_UNIT"; then
-                fatal "refusing to replace the managed symbolic link at $target while the agent service is installed or active; use the agent upgrade flow, or run '$target reset' before rerunning this script"
-            fi
+        # While the agent is installed, this path is a link into its blue/green
+        # layout, which only the agent's upgrade flow switches. The message doesn't
+        # say to run the link, which may not be the agent's.
+        agent_installed=false
+        if [[ -e "$SERVICE_UNIT_PATH" || -L "$SERVICE_UNIT_PATH" ]] ||
+            systemctl is-active --quiet "$SERVICE_UNIT"; then
+            agent_installed=true
+        fi
+        if [[ -L "$target" ]] && [[ "$agent_installed" == true ]]; then
+            fatal "refusing to replace the agent binary link at $target while the agent service is installed or active; use the agent upgrade flow, or reset the node, before rerunning this script"
+        fi
 
-            # Reset removes the service but keeps this layout, and on start the
-            # agent would point $target back at the retained binary. Remove the
-            # layout so start seeds it again from the downloaded binary.
-            log "removing the managed binary layout retained after reset"
-            rm -f -- "$target" || fatal "failed to remove $target"
-            rm -rf -- "$MANAGED_BINARY_DIR" || fatal "failed to remove $MANAGED_BINARY_DIR"
+        # Otherwise a blue/green layout is what a reset by an earlier release kept.
+        # The link at this path is replaced like any other file, and the layout
+        # goes: an agent from before start removes such a layout itself would point
+        # this path back at the layout's binary rather than run this one.
+        layout="$(dirname "$INSTALL_DIR")/lib/aks-flex-node"
+        if [[ "$agent_installed" == false && ( -e "$layout" || -L "$layout" ) ]]; then
+            log "removing the agent's blue/green binary layout a reset kept"
+            rm -rf -- "$layout" || fatal "failed to remove $layout"
         fi
 
         staged=$(mktemp "$INSTALL_DIR/.aks-flex-node.XXXXXX") ||
@@ -628,6 +717,22 @@ install_agent_binary() {
     log "installed agent at $target"
 }
 
+install_paired_agent_binary() {
+    local paired candidate
+    paired=$(jq -r '
+        (.agent.kubeconfigData // "") != "" and
+        (.node.kubelet.kubeconfigData // "") != ""
+    ' "$CONFIG_PATH") || fatal "failed to inspect paired kubeconfig configuration"
+    if [[ "$paired" != true || "$INSTALL_DIR" == "$HOST_ROOT/bin" ]]; then
+        return 0
+    fi
+    # Paired exec credentials already name the final host path before start
+    # creates its managed binary layout.
+    candidate="$INSTALL_DIR/aks-flex-node"
+    INSTALL_DIR="$HOST_ROOT/bin"
+    install_agent_binary "$candidate"
+}
+
 download_and_install_agent() {
     local arch="$1"
     local url archive extract_dir expected candidate
@@ -637,12 +742,15 @@ download_and_install_agent() {
     expected="aks-flex-node-linux-${arch}"
 
     log "downloading AKS Flex Node agent (URL redacted)"
-    curl -fsSL --retry 3 --retry-delay 2 -o "$archive" "$url" || fatal "failed to download AKS Flex Node agent"
+    # Bounded, so a stalled connection fails and is retried instead of hanging the
+    # first boot.
+    curl -fsSL --connect-timeout 30 --max-time 600 --retry 3 --retry-delay 2 -o "$archive" "$url" ||
+        fatal "failed to download AKS Flex Node agent"
 
     if [[ -n "$AGENT_SHA256" ]]; then
         local actual
         actual=$(sha256sum "$archive" | awk '{print $1}')
-        [[ "${actual,,}" == "${AGENT_SHA256,,}" ]] || fatal "agent archive SHA-256 mismatch"
+        [[ "${actual,,}" == "${AGENT_SHA256,,}" ]] || fatal_permanent "agent archive SHA-256 mismatch"
     fi
 
     validate_archive_paths "$archive"
@@ -651,6 +759,7 @@ download_and_install_agent() {
     candidate=$(find "$extract_dir" -type f \( -name "$expected" -o -name aks-flex-node \) -print -quit)
     [[ -n "$candidate" ]] || fatal "agent binary not found in archive"
 
+    resolve_install_dir
     install_agent_binary "$candidate"
 }
 
@@ -660,6 +769,8 @@ clear_bootstrap_environment() {
     SP_CLIENT_CERTIFICATE_FILE=""
     AGENT_URL=""
     ENV_CONFIG_OVERRIDES=""
+    AGENT_KUBECONFIG=""
+    KUBELET_KUBECONFIG=""
     unset \
         AKS_FLEX_NODE_AUTH \
         AKS_FLEX_NODE_MSI_CLIENT_ID \
@@ -671,6 +782,7 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_AGENT_URL \
         AKS_FLEX_NODE_AGENT_VERSION \
         AKS_FLEX_NODE_AGENT_SHA256 \
+        AKS_FLEX_NODE_INSTALLED_AGENT \
         AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA \
         AKS_FLEX_NODE_BOOTSTRAP_DATA_API_VERSION \
         AKS_FLEX_NODE_AUTHORITY_HOST \
@@ -681,6 +793,8 @@ clear_bootstrap_environment() {
         AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT \
         AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE \
         AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE \
+        AKS_FLEX_NODE_AGENT_KUBECONFIG \
+        AKS_FLEX_NODE_KUBELET_KUBECONFIG \
         AKS_FLEX_NODE_CONFIG_OVERRIDES \
         AKS_FLEX_NODE_INSTALL_DIR \
         AKS_FLEX_NODE_CONFIG_PATH || true
@@ -700,7 +814,9 @@ install_config() {
 main() {
     parse_args "$@"
     validate_sp_credential_selection
+    validate_kubeconfig_selection
     [[ $EUID -eq 0 ]] || fatal "run this script as root"
+    check_kubeconfig_file_permissions
     check_prerequisites
 
     TEMP_DIR=$(mktemp -d)
@@ -710,16 +826,55 @@ main() {
     local arch rendered_config
     arch=$(detect_architecture)
     rendered_config="$TEMP_DIR/config.json"
-    download_and_install_agent "$arch"
+    if [[ -n "$INSTALLED_AGENT" ]]; then
+        [[ "$INSTALLED_AGENT" == /* && -f "$INSTALLED_AGENT" && -x "$INSTALLED_AGENT" ]] ||
+            fatal_permanent "--installed-agent must be the absolute path of an executable file: $INSTALLED_AGENT"
+        AGENT_BIN="$INSTALLED_AGENT"
+        log "using the installed agent at $AGENT_BIN"
+    else
+        download_and_install_agent "$arch"
+        AGENT_BIN="$INSTALL_DIR/aks-flex-node"
+    fi
     render_config "$rendered_config"
     install_config "$rendered_config"
+    # The agent this script installed moves to where paired kubeconfigs name it. An installed
+    # agent, such as the one in the agent's image, stays where it is, and nothing is put on the
+    # host.
+    if [[ -z "$INSTALLED_AGENT" ]]; then
+        install_paired_agent_binary
+        AGENT_BIN="$INSTALL_DIR/aks-flex-node"
+    fi
     clear_bootstrap_environment
 
     log "running preflight"
-    "$INSTALL_DIR/aks-flex-node" preflight --config "$CONFIG_PATH" --output text
+    local status=0
+    "$AGENT_BIN" preflight --config "$CONFIG_PATH" --output text || status=$?
+    if ((status != 0)); then
+        # As a bootstrap after one whose start failed after changing the host finds it, such
+        # as the first-boot unit's at the next boot.
+        if deployment_on_host; then
+            fatal_permanent "the host has a node deployment already, such as one a failed start left; reset the node with 'aks-flex-node reset' before bootstrapping it again"
+        fi
+        exit "$status"
+    fi
     log "starting AKS Flex Node"
     umask 022
-    "$INSTALL_DIR/aks-flex-node" start --config "$CONFIG_PATH"
+    "$AGENT_BIN" start --config "$CONFIG_PATH" || status=$?
+    if ((status != 0)); then
+        if deployment_on_host; then
+            fatal_permanent "start failed after changing the host; reset the node with 'aks-flex-node reset' before bootstrapping it again"
+        fi
+        exit "$status"
+    fi
+}
+
+# deployment_on_host reports whether preflight refuses a node deployment on the host, which no
+# bootstrap gets past until the node is reset: one a failed start just left, or an earlier one
+# left. A preflight that can't tell counts as no.
+deployment_on_host() {
+    local report
+    report=$("$AGENT_BIN" preflight --config "$CONFIG_PATH" --output json 2>/dev/null) || true
+    jq -e 'any(.checks[]?; .name == "existing-deployment" and .severity == "error")' <<<"$report" >/dev/null 2>&1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

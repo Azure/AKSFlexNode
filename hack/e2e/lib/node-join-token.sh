@@ -16,10 +16,12 @@ readonly _E2E_NODE_JOIN_TOKEN_LOADED=1
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ---------------------------------------------------------------------------
-# node_join_token - Join the Token VM
+# node_join_token - Join the Token VM, with the build under test or, given a
+# release tag, with that release
 # ---------------------------------------------------------------------------
 node_join_token() {
-  log_section "Joining Token Node"
+  local release="${1:-}"
+  log_section "Joining Token Node${release:+ with ${release}}"
   local start
   start=$(timer_start)
 
@@ -96,7 +98,7 @@ node_join_token() {
 
   # Step 3: Publish the AKS Machine goal and deploy the agent.
   machine_configmap_upsert "$(state_get token_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
-  _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-token"
+  _deploy_and_start_agent "${vm_ip}" "${config_file}" "aks-flex-node-token" "${release}"
 
   log_success "Token node joined in $(timer_elapsed "${start}")s"
 }
