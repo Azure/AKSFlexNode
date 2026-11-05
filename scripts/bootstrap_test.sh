@@ -2,18 +2,51 @@
 
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
-    exec sudo -E bash "$0" "$@"
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# Build before sudo to keep compilation in the invoking user's context.
+if [[ "${1:-}" != --run-privileged ]]; then
+    BUILD_DIR=$(mktemp -d)
+    trap 'rm -f "$BUILD_DIR/aks-flex-node"; rmdir "$BUILD_DIR"' EXIT
+    (
+        cd "$REPO_ROOT"
+        go build -o "$BUILD_DIR/aks-flex-node" ./cmd/aks-flex-node
+    )
+    if [[ $EUID -eq 0 ]]; then
+        bash "$0" --run-privileged "$BUILD_DIR/aks-flex-node" "$@"
+    else
+        sudo -E bash "$0" --run-privileged "$BUILD_DIR/aks-flex-node" "$@"
+    fi
+    exit
+fi
+[[ $EUID -eq 0 && $# -ge 2 ]] || { echo "bootstrap_test: privileged phase requires root and the test binary" >&2; exit 1; }
+REAL_AGENT_BINARY="$2"
+shift 2
+
+# Every case installs a stub agent as root, under /usr/local/bin or /opt/unbounded/agent. Run in a private
+# mount namespace so both can be overlaid below, and no case can replace a real binary on the host.
+# Whether this is one is read from the namespace itself rather than from a variable a shell could
+# have inherited: in the host's, the overlays would be visible host-wide, and the cleanup would
+# unmount the host's /usr/local and /opt.
+if [[ "$(readlink /proc/self/ns/mnt)" == "$(readlink /proc/1/ns/mnt)" ]]; then
+    command -v unshare >/dev/null || { echo "bootstrap_test: unshare is required" >&2; exit 1; }
+    exec unshare --mount --propagation private bash "$0" --run-privileged "$REAL_AGENT_BINARY" "$@"
 fi
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$REPO_ROOT/scripts/bootstrap.sh"
 WORK_DIR=$(mktemp -d)
 SERVER_PID=""
+NON_ROOT_SCRIPT=""
 cleanup() {
     if [[ -n "$SERVER_PID" ]]; then
         kill "$SERVER_PID" 2>/dev/null || true
     fi
+    umount "$WORK_DIR/noexec-tmp" 2>/dev/null || true
+    umount /opt 2>/dev/null || true
+    # Twice: a failed read-only case leaves its bind over the overlay.
+    umount /usr/local 2>/dev/null || true
+    umount /usr/local 2>/dev/null || true
+    [[ -z "$NON_ROOT_SCRIPT" ]] || rm -f -- "$NON_ROOT_SCRIPT"
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -23,8 +56,27 @@ fail() {
     exit 1
 }
 
+cd "$WORK_DIR"
+
+# Writes to /usr/local and /opt land in the overlays' upper dirs.
+USR_LOCAL_WRITES="$WORK_DIR/usr-local/upper"
+[[ -d /opt ]] || fail "/opt is required"
+for dir in usr-local opt; do
+    mkdir -p "$WORK_DIR/$dir/upper" "$WORK_DIR/$dir/work"
+done
+mount -t overlay overlay \
+    -o "lowerdir=/usr/local,upperdir=$USR_LOCAL_WRITES,workdir=$WORK_DIR/usr-local/work" /usr/local ||
+    fail "could not overlay /usr/local"
+mount -t overlay overlay \
+    -o "lowerdir=/opt,upperdir=$WORK_DIR/opt/upper,workdir=$WORK_DIR/opt/work" /opt ||
+    fail "could not overlay /opt"
+# Start from a fresh host whatever this one has installed.
+rm -rf /opt/unbounded /usr/local/bin/aks-flex-node
+
 command -v jq >/dev/null || fail "jq is required"
 bash -n "$SCRIPT"
+grep -qx 'readonly HOST_ROOT="/opt/unbounded/agent"' "$SCRIPT" ||
+    fail "HOST_ROOT in bootstrap.sh is not the agent library's hostroot.Path"
 
 case "$(uname -m)" in
     x86_64) ARCH=amd64 ;;
@@ -38,6 +90,7 @@ make_agent_archive() {
     cat > "$dir/aks-flex-node-linux-$ARCH" <<'AGENT'
 #!/bin/bash
 printf '%s\n' "$*" >> "${BOOTSTRAP_TEST_CALLS:?}"
+printf '%s\n' "$0" >> "${BOOTSTRAP_TEST_CALLS}.path"
 if [[ "${1:-}" == fetch-bootstrap-data ]]; then
     output=""
     while (($# > 0)); do
@@ -45,15 +98,29 @@ if [[ "${1:-}" == fetch-bootstrap-data ]]; then
         shift
     done
     [[ -n "$output" ]] || exit 24
-    cat > "$output" <<'JSON'
+    if [[ -n "${BOOTSTRAP_TEST_FETCH_RESPONSE:-}" ]]; then
+        printf '%s\n' "$BOOTSTRAP_TEST_FETCH_RESPONSE" > "$output"
+    else
+        cat > "$output" <<'JSON'
 {"azure":{"bootstrapToken":{"token":"fresh1.0123456789abcdef"}},"components":{"kubernetes":"1.35.6"},"networking":{"dnsServiceIP":"10.0.0.10","cniVersion":"stale-cni"}}
 JSON
+    fi
     chmod 0600 "$output"
     exit 0
 fi
-for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
+for variable in AKS_FLEX_NODE_AGENT_URL AKS_FLEX_NODE_SP_CLIENT_SECRET AKS_FLEX_NODE_CONFIG_OVERRIDES AKS_FLEX_NODE_FETCH_BOOTSTRAP_DATA AKS_FLEX_NODE_AUTHORITY_HOST AKS_FLEX_NODE_IMDS_ENDPOINT AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS AKS_FLEX_NODE_CLUSTER_RESOURCE_ID AKS_FLEX_NODE_AGENT_POOL_NAME AKS_FLEX_NODE_RESOURCE_MANAGER_ENDPOINT AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE AKS_FLEX_NODE_AGENT_KUBECONFIG AKS_FLEX_NODE_KUBELET_KUBECONFIG AKS_FLEX_NODE_SP_CLIENT_CERTIFICATE_FILE; do
     [[ -z "${!variable+x}" ]] || exit 23
 done
+case "${1:-}" in
+    start) exit "${BOOTSTRAP_TEST_START_STATUS:-0}" ;;
+    preflight)
+        if [[ " $* " == *" --output json "* ]]; then
+            printf '%s\n' "${BOOTSTRAP_TEST_PREFLIGHT_JSON:-}"
+        else
+            exit "${BOOTSTRAP_TEST_PREFLIGHT_STATUS:-0}"
+        fi
+        ;;
+esac
 AGENT
     chmod 0755 "$dir/aks-flex-node-linux-$ARCH"
     tar -C "$dir" -czf "$dir/agent.tar.gz" "aks-flex-node-linux-$ARCH"
@@ -80,6 +147,24 @@ cat > "$WORK_DIR/base.json" <<'JSON'
 JSON
 chmod 0600 "$WORK_DIR/base.json"
 
+cat > "$WORK_DIR/environment-agent.kubeconfig" <<'EOF'
+environment-agent
+EOF
+cat > "$WORK_DIR/environment-kubelet.kubeconfig" <<'EOF'
+environment-kubelet
+EOF
+cat > "$WORK_DIR/cli-agent.kubeconfig" <<'EOF'
+apiVersion: v1
+kind: Config
+current-context: agent
+EOF
+cat > "$WORK_DIR/cli-kubelet.kubeconfig" <<'EOF'
+apiVersion: v1
+kind: Config
+current-context: kubelet
+EOF
+chmod 0600 "$WORK_DIR"/*.kubeconfig
+
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/msi-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
 AKS_FLEX_NODE_AUTH=service-principal \
@@ -89,13 +174,16 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
 AKS_FLEX_NODE_AGENT_SHA256="$AGENT_SHA256" \
 AKS_FLEX_NODE_BOOTSTRAP_OCI_IMAGE='https://environment.example/rootfs.tar.gz' \
 AKS_FLEX_NODE_BOOTSTRAP_OFFLINE_ARTIFACTS_SOURCE='https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz' \
+AKS_FLEX_NODE_AGENT_KUBECONFIG="$WORK_DIR/environment-agent.kubeconfig" \
+AKS_FLEX_NODE_KUBELET_KUBECONFIG="$WORK_DIR/environment-kubelet.kubeconfig" \
 AKS_FLEX_NODE_CONFIG_OVERRIDES='{"node":{"labels":{"environment":"true"}}}' \
     bash "$SCRIPT" \
         --auth msi \
         --msi-client-id cli-msi \
         --bootstrap-oci-image 'https://cli.example/rootfs.tar.gz' \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig" \
         --config-overrides '{"node":{"labels":{"cli":"true"}},"bootstrap":{"offlineArtifacts":{"source":"https://generic-cli.example/ignored.tar.gz"}}}' \
-        --install-dir "$WORK_DIR/msi-bin" \
         --config-path "$WORK_DIR/msi-etc/config.json" >/dev/null
 
 jq -e '
@@ -104,12 +192,113 @@ jq -e '
   .azure.arc.enabled == false and
   .bootstrap.ociImage == "https://cli.example/rootfs.tar.gz" and
   .bootstrap.offlineArtifacts.source == "https://environment.example/bootstrap-k8s-{{ .KubernetesVersion }}.tar.gz" and
+  .agent.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: agent\n" and
+  .node.kubelet.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: kubelet\n" and
   .node.labels == {"base":"true", "environment":"true", "cli":"true"} and
   (.agent.nodeName | length > 0)
 ' "$WORK_DIR/msi-etc/config.json" >/dev/null
 [[ $(stat -c '%a' "$WORK_DIR/msi-etc/config.json") == 600 ]] || fail "MSI config mode is not 0600"
 grep -Fx "preflight --config $WORK_DIR/msi-etc/config.json --output text" "$WORK_DIR/msi-calls" >/dev/null
 grep -Fx "start --config $WORK_DIR/msi-etc/config.json" "$WORK_DIR/msi-calls" >/dev/null
+[[ "$(sort -u "$WORK_DIR/msi-calls.path")" == /opt/unbounded/agent/bin/aks-flex-node ]] ||
+    fail "paired bootstrap did not install the host credential binary before preflight"
+[[ -x /opt/unbounded/agent/bin/aks-flex-node ]] || fail "paired host credential binary is not executable"
+
+cp /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair"
+cp /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/missing-pair-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    bash "$SCRIPT" \
+        --auth msi \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --agent-url "$AGENT_URL" \
+        --config-path "$WORK_DIR/missing-pair-config.json" >"$WORK_DIR/missing-pair.out" 2>&1; then
+    fail "bootstrap accepted an unpaired agent kubeconfig"
+else
+    missing_pair_status=$?
+fi
+[[ "$missing_pair_status" == 78 ]] || fail "unpaired kubeconfig did not report a permanent configuration failure"
+grep -F "must be configured together" "$WORK_DIR/missing-pair.out" >/dev/null
+[[ ! -e "$WORK_DIR/missing-pair-calls" ]] || fail "unpaired kubeconfig reached the agent"
+cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
+    fail "unpaired kubeconfig replaced the agent"
+cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair" ||
+    fail "unpaired kubeconfig replaced the paired agent"
+[[ ! -e "$WORK_DIR/missing-pair-config.json" ]] || fail "unpaired kubeconfig installed the config"
+
+command -v setpriv >/dev/null || fail "setpriv is required"
+# The runner's checkout may be inaccessible to nobody; expose only the script,
+# not the credential fixtures in the private work directory.
+NON_ROOT_SCRIPT=$(mktemp /tmp/aks-flex-node-bootstrap-non-root.XXXXXX)
+install -m 0644 "$SCRIPT" "$NON_ROOT_SCRIPT"
+for selection in paired unpaired; do
+    selection_args=(--agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig")
+    expected_status=78
+    expected_message="must be configured together"
+    if [[ "$selection" == paired ]]; then
+        selection_args+=(--kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig")
+        expected_status=1
+        expected_message="run this script as root"
+    fi
+    non_root_status=0
+    setpriv --reuid=65534 --regid=65534 --clear-groups \
+        bash "$NON_ROOT_SCRIPT" "${selection_args[@]}" \
+            --config-path "$WORK_DIR/non-root-$selection-config.json" >"$WORK_DIR/non-root-$selection.log" 2>&1 ||
+        non_root_status=$?
+    [[ "$non_root_status" == "$expected_status" ]] ||
+        fail "non-root $selection input exited $non_root_status, want $expected_status: $(cat "$WORK_DIR/non-root-$selection.log")"
+    grep -F "$expected_message" "$WORK_DIR/non-root-$selection.log" >/dev/null ||
+        fail "non-root $selection input lost its diagnostic"
+    [[ ! -e "$WORK_DIR/non-root-$selection-config.json" ]] || fail "non-root bootstrap installed the config"
+    cmp -s /usr/local/bin/aks-flex-node "$WORK_DIR/agent-before-missing-pair" ||
+        fail "non-root bootstrap replaced the agent"
+    cmp -s /opt/unbounded/agent/bin/aks-flex-node "$WORK_DIR/paired-agent-before-missing-pair" ||
+        fail "non-root bootstrap replaced the paired agent"
+done
+
+# Exercise the real CLI's validation exit status, not a stub's configured response.
+mkdir "$WORK_DIR/real-agent"
+cp "$REAL_AGENT_BINARY" "$WORK_DIR/real-agent/aks-flex-node-linux-$ARCH"
+tar -C "$WORK_DIR/real-agent" -czf "$WORK_DIR/real-agent/agent.tar.gz" "aks-flex-node-linux-$ARCH"
+printf 'apiVersion: [\n' > "$WORK_DIR/malformed.kubeconfig"
+printf '\n' > "$WORK_DIR/whitespace.kubeconfig"
+chmod 0600 "$WORK_DIR/malformed.kubeconfig" "$WORK_DIR/whitespace.kubeconfig"
+cat > "$WORK_DIR/paired-base.json" <<'JSON'
+{"azure":{"targetCluster":{"resourceId":"/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster","location":"eastus"}}}
+JSON
+for invalid in malformed whitespace; do
+    invalid_status=0
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/paired-base.json" \
+        bash "$SCRIPT" \
+            --agent-url "file://$WORK_DIR/real-agent/agent.tar.gz" \
+            --agent-kubeconfig "$WORK_DIR/$invalid.kubeconfig" \
+            --kubelet-kubeconfig "$WORK_DIR/$invalid.kubeconfig" \
+            --config-path "$WORK_DIR/$invalid-etc/config.json" >"$WORK_DIR/$invalid.log" 2>&1 ||
+        invalid_status=$?
+    [[ "$invalid_status" == 78 ]] ||
+        fail "$invalid kubeconfig exited $invalid_status, want 78: $(cat "$WORK_DIR/$invalid.log")"
+    grep -F "invalid agent.kubeconfigData:" "$WORK_DIR/$invalid.log" >/dev/null ||
+        fail "$invalid kubeconfig did not preserve validation diagnostics"
+    if grep -F "starting AKS Flex Node" "$WORK_DIR/$invalid.log" >/dev/null; then
+        fail "$invalid kubeconfig reached start"
+    fi
+done
+
+rm -rf /opt/unbounded/agent
+rmdir /opt/unbounded
+embedded_pair_overrides=$(jq -n \
+    --rawfile agent "$WORK_DIR/cli-agent.kubeconfig" \
+    --rawfile kubelet "$WORK_DIR/cli-kubelet.kubeconfig" \
+    '{agent:{kubeconfigData:$agent},node:{kubelet:{kubeconfigData:$kubelet}}}')
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/embedded-pair-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+AKS_FLEX_NODE_CONFIG_OVERRIDES="$embedded_pair_overrides" \
+    bash "$SCRIPT" --auth msi --config-path "$WORK_DIR/embedded-pair-etc/config.json" >/dev/null
+[[ "$(sort -u "$WORK_DIR/embedded-pair-calls.path")" == /opt/unbounded/agent/bin/aks-flex-node ]] ||
+    fail "JSON-configured paired bootstrap did not stage the host credential binary"
+rm -rf /opt/unbounded/agent
+rmdir /opt/unbounded
 
 BOOTSTRAP_TEST_CALLS="$WORK_DIR/arc-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
@@ -119,7 +308,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --fetch-bootstrap-data \
         --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
         --agent-pool-name aksflexnodes \
-        --install-dir "$WORK_DIR/arc-bin" \
         --config-path "$WORK_DIR/arc-etc/config.json" >/dev/null
 
 jq -e '
@@ -129,6 +317,10 @@ jq -e '
   .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
 ' "$WORK_DIR/arc-etc/config.json" >/dev/null
 grep -E '^fetch-bootstrap-data .*--auth arc( |$)' "$WORK_DIR/arc-calls" >/dev/null
+# Every command, including the bootstrap-data fetch, runs the installed binary. Running it from
+# the temp dir would fail on hosts that mount /tmp noexec.
+[[ "$(sort -u "$WORK_DIR/arc-calls.path")" == /usr/local/bin/aks-flex-node ]] ||
+    fail "agent ran from $(sort -u "$WORK_DIR/arc-calls.path" | tr '\n' ' '), want the installed binary"
 
 printf 's"e\\cret\n' > "$WORK_DIR/client-secret"
 chmod 0600 "$WORK_DIR/client-secret"
@@ -140,7 +332,6 @@ AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
         --sp-client-secret-file "$WORK_DIR/client-secret" \
         --agent-url "$AGENT_URL" \
         --agent-sha256 "$AGENT_SHA256" \
-        --install-dir "$WORK_DIR/sp-bin" \
         --config-path "$WORK_DIR/sp-etc/config.json" >/dev/null
 
 jq -e --arg secretFile "$WORK_DIR/client-secret" '
@@ -160,7 +351,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
         --auth service-principal \
         --sp-client-id inline-client \
-        --install-dir "$WORK_DIR/sp-inline-bin" \
         --config-path "$WORK_DIR/sp-inline-etc/config.json" >/dev/null
 jq -e '
   .azure.servicePrincipal.clientId == "inline-client" and
@@ -175,7 +365,6 @@ if BOOTSTRAP_TEST_CALLS="$WORK_DIR/sp-link-calls" \
         bash "$SCRIPT" --auth service-principal \
             --sp-client-id link-client \
             --sp-client-secret-file "$WORK_DIR/client-secret-link" \
-            --install-dir "$WORK_DIR/sp-link-bin" \
             --config-path "$WORK_DIR/sp-link-etc/config.json" \
             >"$WORK_DIR/sp-link.log" 2>&1; then
     fail "symlink client-secret file was accepted"
@@ -183,97 +372,122 @@ fi
 grep -q 'client-secret file must not be a symlink' "$WORK_DIR/sp-link.log" || \
     fail "symlink client-secret rejection was not reported"
 
-# The cases about the layout reset keeps run bootstrap.sh with the agent unit and the upgrade lock
-# pointed at the test's own files, so they don't depend on whether this host runs the agent.
-TEST_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-bootstrap-test.service"
-mkdir -p "$(dirname "$TEST_UNIT_PATH")"
-run_with_test_unit() {
-    BOOTSTRAP_TEST_UNIT_PATH="$TEST_UNIT_PATH" \
-    BOOTSTRAP_TEST_LOCK_PATH="$WORK_DIR/run/agent-upgrade.lock" \
-        bash -c 'source "$1"; shift
-            SERVICE_UNIT="$(basename "$BOOTSTRAP_TEST_UNIT_PATH")"
-            SERVICE_UNIT_PATH="$BOOTSTRAP_TEST_UNIT_PATH"
-            AGENT_UPGRADE_LOCK_PATH="$BOOTSTRAP_TEST_LOCK_PATH"
-            main "$@"' bootstrap.sh "$SCRIPT" "$@"
+# bootstrap_status NAME [VARIABLE=value...] -- [option...] runs bootstrap with the test agent, and
+# prints its exit status.
+bootstrap_status() {
+    local name="$1" status=0
+    local variables=()
+    shift
+    while [[ "$1" != -- ]]; do
+        variables+=("$1")
+        shift
+    done
+    shift
+    env BOOTSTRAP_TEST_CALLS="$WORK_DIR/$name-calls" \
+        AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+        AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        "${variables[@]}" \
+        bash "$SCRIPT" --config-path "$WORK_DIR/$name-etc/config.json" "$@" >"$WORK_DIR/$name.log" 2>&1 ||
+        status=$?
+    printf '%s' "$status"
 }
 
-# make_retained_layout ROOT lays out what reset keeps: the bin link into the blue/green layout,
-# whose current and last-good slots are an earlier binary.
-make_retained_layout() {
-    local root="$1"
-    mkdir -p "$root/bin" "$root/lib/aks-flex-node"
-    printf '#!/bin/sh\nexit 0\n# retained after reset\n' > "$root/lib/aks-flex-node/aks-flex-node-blue"
-    chmod 0755 "$root/lib/aks-flex-node/aks-flex-node-blue"
-    ln -s "$root/lib/aks-flex-node/aks-flex-node-blue" "$root/lib/aks-flex-node/aks-flex-node-current"
-    ln -s "$root/lib/aks-flex-node/aks-flex-node-blue" "$root/lib/aks-flex-node/aks-flex-node-last-good"
-    ln -s "$root/lib/aks-flex-node/aks-flex-node-current" "$root/bin/aks-flex-node"
-}
+# A failure that running bootstrap again, unchanged, can't fix exits with 78, which the first-boot
+# unit doesn't retry: a setting that can't work.
+for setting in "auth:AKS_FLEX_NODE_AUTH=kerberos" \
+    "sha:AKS_FLEX_NODE_AGENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000" \
+    "override:AKS_FLEX_NODE_CONFIG_OVERRIDES=[]"; do
+    status=$(bootstrap_status "setting-${setting%%:*}" "${setting#*:}" --)
+    [[ "$status" == 78 ]] || fail "bootstrap with ${setting#*:} exited $status, want 78: $(cat "$WORK_DIR/setting-${setting%%:*}.log")"
+    [[ ! -s "$WORK_DIR/setting-${setting%%:*}-calls" ]] ||
+        fail "bootstrap with ${setting#*:} ran the agent: $(cat "$WORK_DIR/setting-${setting%%:*}-calls")"
+done
+status=$(bootstrap_status setting-option -- --no-such-option)
+[[ "$status" == 78 ]] || fail "bootstrap with an unknown option exited $status, want 78"
 
-# Reset removes the agent service but keeps the managed blue/green layout. A
-# rerun must install the downloaded agent instead of leaving the retained slot
-# for start to link back into place.
-RESET_ROOT="$WORK_DIR/reset-root"
-make_retained_layout "$RESET_ROOT"
-BOOTSTRAP_TEST_CALLS="$WORK_DIR/reset-calls" \
+# A download that fails may work on a retry.
+status=$(bootstrap_status download AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" --)
+[[ "$status" == 1 ]] || fail "bootstrap with a failed download exited $status, want 1"
+
+# A start that fails after changing the host can't succeed on a retry either: the retry's preflight
+# refuses the deployment it left. Bootstrap asks preflight, and exits with 78 only when it does.
+deployment_left='{"status":"error","checks":[{"name":"existing-deployment","target":"/var/lib/machines/kube1","severity":"error","message":"existing node deployment artifact detected","ignored":false}]}'
+status=$(bootstrap_status start-left BOOTSTRAP_TEST_START_STATUS=7 BOOTSTRAP_TEST_PREFLIGHT_JSON="$deployment_left" --)
+[[ "$status" == 78 ]] || fail "a start that left a deployment exited $status, want 78: $(cat "$WORK_DIR/start-left.log")"
+grep -Fx "preflight --config $WORK_DIR/start-left-etc/config.json --output json" "$WORK_DIR/start-left-calls" >/dev/null ||
+    fail "bootstrap did not ask preflight about a failed start: $(cat "$WORK_DIR/start-left-calls")"
+grep -q "aks-flex-node reset" "$WORK_DIR/start-left.log" || fail "a start that left a deployment didn't say to reset"
+
+no_deployment='{"status":"error","checks":[{"name":"existing-deployment","target":"","severity":"ok","message":"no existing node deployment was detected","ignored":false},{"name":"api-server-reachable","target":"api","severity":"error","message":"unreachable","ignored":false}]}'
+
+# A bootstrap after one whose start failed after changing the host, such as the first-boot unit's
+# at the next boot, finds the deployment in its own preflight, before it runs start: 78 again.
+status=$(bootstrap_status preflight-left BOOTSTRAP_TEST_PREFLIGHT_STATUS=5 BOOTSTRAP_TEST_PREFLIGHT_JSON="$deployment_left" --)
+[[ "$status" == 78 ]] || fail "a preflight that found a deployment exited $status, want 78: $(cat "$WORK_DIR/preflight-left.log")"
+! grep -q '^start ' "$WORK_DIR/preflight-left-calls" || fail "bootstrap ran start after its preflight failed"
+grep -q "aks-flex-node reset" "$WORK_DIR/preflight-left.log" || fail "a preflight that found a deployment didn't say to reset"
+
+# A preflight that fails for anything else keeps its own status, and the unit retries.
+status=$(bootstrap_status preflight-clean BOOTSTRAP_TEST_PREFLIGHT_STATUS=5 BOOTSTRAP_TEST_PREFLIGHT_JSON="$no_deployment" --)
+[[ "$status" == 5 ]] || fail "a preflight that found no deployment exited $status, want its own 5"
+! grep -q '^start ' "$WORK_DIR/preflight-clean-calls" || fail "bootstrap ran start after its preflight failed"
+
+# Otherwise start's own status stands, and the unit retries: when preflight reports no deployment,
+# whatever else fails, or when it can't tell.
+for report in "$no_deployment" ""; do
+    status=$(bootstrap_status start-clean BOOTSTRAP_TEST_START_STATUS=7 BOOTSTRAP_TEST_PREFLIGHT_JSON="$report" --)
+    [[ "$status" == 7 ]] || fail "a start that left no deployment exited $status, want start's 7, with preflight report '$report'"
+done
+
+# In the agent's image, the agent is already installed: bootstrap runs it in
+# place. The agent URL points nowhere, so a download would fail.
+install -d -m 0755 "$WORK_DIR/image-agent-bin"
+install -m 0755 "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" "$WORK_DIR/image-agent-bin/aks-flex-node"
+installed_sum=$(sha256sum < "$WORK_DIR/image-agent-bin/aks-flex-node")
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/image-agent-calls" \
 AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-    run_with_test_unit --auth msi \
-        --install-dir "$RESET_ROOT/bin" \
-        --config-path "$WORK_DIR/reset-etc/config.json" >/dev/null
-[[ -f "$RESET_ROOT/bin/aks-flex-node" && ! -L "$RESET_ROOT/bin/aks-flex-node" ]] || \
-    fail "rerun after reset did not install a regular agent binary"
-installed_sha256=$(sha256sum "$RESET_ROOT/bin/aks-flex-node" | awk '{print $1}')
-downloaded_sha256=$(sha256sum "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" | awk '{print $1}')
-[[ "$installed_sha256" == "$downloaded_sha256" ]] || \
-    fail "rerun after reset did not install the downloaded agent"
-[[ ! -e "$RESET_ROOT/lib/aks-flex-node" ]] || fail "rerun after reset retained the managed binary layout"
-grep -Fx "preflight --config $WORK_DIR/reset-etc/config.json --output text" "$WORK_DIR/reset-calls" >/dev/null || \
-    fail "rerun after reset did not run preflight with the downloaded agent"
-grep -Fx "start --config $WORK_DIR/reset-etc/config.json" "$WORK_DIR/reset-calls" >/dev/null || \
-    fail "rerun after reset did not start the downloaded agent"
+AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" \
+    bash "$SCRIPT" --installed-agent "$WORK_DIR/image-agent-bin/aks-flex-node" \
+        --config-path "$WORK_DIR/image-agent-etc/config.json" >/dev/null
+[[ $(sha256sum < "$WORK_DIR/image-agent-bin/aks-flex-node") == "$installed_sum" ]] || \
+    fail "the installed agent was replaced"
+jq -e '.node.labels == {"base":"true"}' "$WORK_DIR/image-agent-etc/config.json" >/dev/null
+grep -Fx "preflight --config $WORK_DIR/image-agent-etc/config.json --output text" "$WORK_DIR/image-agent-calls" >/dev/null
+grep -Fx "start --config $WORK_DIR/image-agent-etc/config.json" "$WORK_DIR/image-agent-calls" >/dev/null
 
-# While the agent unit is installed, the layout belongs to the upgrade flow, so a rerun on a live
-# node leaves it alone and runs nothing.
-LIVE_ROOT="$WORK_DIR/live-root"
-make_retained_layout "$LIVE_ROOT"
-printf '[Unit]\n' > "$TEST_UNIT_PATH"
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/live-calls" \
-    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        run_with_test_unit --auth msi \
-            --install-dir "$LIVE_ROOT/bin" \
-            --config-path "$WORK_DIR/live-etc/config.json" \
-            >"$WORK_DIR/live.log" 2>&1; then
-    fail "the managed link was replaced while the agent unit is installed"
-fi
-rm -f "$TEST_UNIT_PATH"
-grep -q 'while the agent service is installed or active' "$WORK_DIR/live.log" || \
-    fail "refusing to replace the managed link of an installed agent was not reported"
-[[ "$(readlink "$LIVE_ROOT/bin/aks-flex-node")" == "$LIVE_ROOT/lib/aks-flex-node/aks-flex-node-current" &&
-   -x "$LIVE_ROOT/lib/aks-flex-node/aks-flex-node-blue" ]] || \
-    fail "the managed layout of an installed agent changed"
-[[ ! -s "$WORK_DIR/live-calls" ]] || fail "the agent was run on a node whose agent unit is installed"
+# With paired kubeconfigs too, the installed agent runs where it is, and nothing is put on the host
+# for their exec command: in the agent's image, the agent's clients run the image's agent there.
+host_agent_before=$(sha256sum /opt/unbounded/agent/bin/aks-flex-node 2>/dev/null || echo none)
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/image-paired-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="file://$WORK_DIR/missing/agent.tar.gz" \
+    bash "$SCRIPT" --installed-agent "$WORK_DIR/image-agent-bin/aks-flex-node" \
+        --agent-kubeconfig "$WORK_DIR/cli-agent.kubeconfig" \
+        --kubelet-kubeconfig "$WORK_DIR/cli-kubelet.kubeconfig" \
+        --config-path "$WORK_DIR/image-paired-etc/config.json" >/dev/null
+jq -e '
+  .agent.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: agent\n" and
+  .node.kubelet.kubeconfigData == "apiVersion: v1\nkind: Config\ncurrent-context: kubelet\n"
+' "$WORK_DIR/image-paired-etc/config.json" >/dev/null || fail "paired kubeconfigs were not embedded with an installed agent"
+[[ "$(sort -u "$WORK_DIR/image-paired-calls.path")" == "$WORK_DIR/image-agent-bin/aks-flex-node" ]] ||
+    fail "paired bootstrap with an installed agent ran $(sort -u "$WORK_DIR/image-paired-calls.path" | tr '\n' ' ')"
+[[ "$(sha256sum /opt/unbounded/agent/bin/aks-flex-node 2>/dev/null || echo none)" == "$host_agent_before" ]] ||
+    fail "paired bootstrap with an installed agent put an agent on the host"
 
-# Any other link at the binary path is not the agent's layout; leave it for the
-# operator to inspect.
-mkdir -p "$WORK_DIR/odd-root/bin"
-printf '#!/bin/sh\nexit 0\n' > "$WORK_DIR/odd-target"
-chmod 0755 "$WORK_DIR/odd-target"
-ln -s "$WORK_DIR/odd-target" "$WORK_DIR/odd-root/bin/aks-flex-node"
-if BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-calls" \
+for missing in "$WORK_DIR/no-image-agent-bin/aks-flex-node" "image-agent-bin/aks-flex-node" "$WORK_DIR/image-agent-bin"; do
+    status=0
+    BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-image-agent-calls" \
     AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
-    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
-        run_with_test_unit --auth msi \
-            --install-dir "$WORK_DIR/odd-root/bin" \
-            --config-path "$WORK_DIR/odd-etc/config.json" \
-            >"$WORK_DIR/odd.log" 2>&1; then
-    fail "unexpected agent binary symlink was replaced"
-fi
-grep -q 'refusing to replace the unexpected symbolic link' "$WORK_DIR/odd.log" || \
-    fail "unexpected agent binary symlink rejection was not reported"
-[[ -L "$WORK_DIR/odd-root/bin/aks-flex-node" &&
-   $(readlink "$WORK_DIR/odd-root/bin/aks-flex-node") == "$WORK_DIR/odd-target" ]] || \
-    fail "unexpected agent binary symlink changed"
+    AKS_FLEX_NODE_INSTALLED_AGENT="$missing" \
+        bash "$SCRIPT" \
+            --config-path "$WORK_DIR/no-image-agent-etc/config.json" \
+            >"$WORK_DIR/no-image-agent.log" 2>&1 || status=$?
+    # A setting that can't work, which the first-boot unit doesn't retry.
+    [[ "$status" == 78 ]] || fail "bootstrap with --installed-agent $missing exited $status, want 78"
+    grep -q 'must be the absolute path of an executable file' "$WORK_DIR/no-image-agent.log" || \
+        fail "--installed-agent $missing was not reported"
+done
+[[ ! -s "$WORK_DIR/no-image-agent-calls" ]] || fail "an agent ran without a usable --installed-agent"
 
 command -v python3 >/dev/null || fail "python3 is required by the bootstrap-data test"
 cat > "$WORK_DIR/bootstrap-data-server.py" <<'PY'
@@ -379,7 +593,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --agent-pool-name aksflexnodes \
         --resource-manager-endpoint "http://127.0.0.1:${port}" \
         --config-overrides '{"azure":{"targetCluster":{"resourceId":"/subscriptions/wrong/resourceGroups/wrong/providers/Microsoft.ContainerService/managedClusters/wrong"},"targetAgentPoolName":"wrongpool"},"node":{"labels":{"fresh":"true"}}}' \
-        --install-dir "$WORK_DIR/fetch-bin" \
         --config-path "$WORK_DIR/fetch-etc/config.json" >/dev/null
 
 jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
@@ -408,7 +621,6 @@ AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
         --agent-pool-name aksflexnodes \
         --resource-manager-endpoint "http://127.0.0.1:${port}" \
-        --install-dir "$WORK_DIR/fetch-empty-base-bin" \
         --config-path "$WORK_DIR/fetch-empty-base-etc/config.json" >/dev/null
 
 jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
@@ -424,7 +636,6 @@ jq -e --arg armEndpoint "http://127.0.0.1:${port}" '
 if BOOTSTRAP_TEST_CALLS="$WORK_DIR/no-base-calls" \
     AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
         bash "$SCRIPT" --auth msi \
-            --install-dir "$WORK_DIR/no-base-bin" \
             --config-path "$WORK_DIR/no-base-etc/config.json" \
             >"$WORK_DIR/no-base.log" 2>&1; then
     fail "unpopulated embedded config was accepted without bootstrap-data fetch"
@@ -464,7 +675,6 @@ AKS_FLEX_NODE_AUTHORITY_HOST="http://127.0.0.1:${port}" \
 AKS_FLEX_NODE_ALLOW_INSECURE_TEST_ENDPOINTS=true \
 AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
     bash "$SCRIPT" \
-        --install-dir "$WORK_DIR/fetch-sp-bin" \
         --config-path "$WORK_DIR/fetch-sp-etc/config.json" >/dev/null
 
 jq -e --arg secretFile "$WORK_DIR/fetch-sp-secret" '
@@ -505,7 +715,6 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
             --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
             --agent-pool-name aksflexnodes \
             --resource-manager-endpoint "http://127.0.0.1:${port}" \
-            --install-dir "$WORK_DIR/fetch-cert-bin" \
             --config-path "$WORK_DIR/fetch-cert-etc/config.json" >/dev/null
 
     jq -e --arg certificateFile "$WORK_DIR/client-certificate" '
@@ -536,11 +745,254 @@ command -v openssl >/dev/null || fail "openssl is required by the certificate bo
             --cluster-resource-id '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster' \
             --agent-pool-name aksflexnodes \
             --resource-manager-endpoint "http://127.0.0.1:${port}" \
-            --install-dir "$WORK_DIR/fetch-pfx-bin" \
             --config-path "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
     jq -e --arg certificateFile "$WORK_DIR/client-certificate.pfx" '
       .azure.servicePrincipal.clientSecretFile == $certificateFile and
       .azure.bootstrapToken.token == "fresh1.0123456789abcdef"
     ' "$WORK_DIR/fetch-pfx-etc/config.json" >/dev/null
+
+# assert_ran_from checks that every recorded call of a case ran the binary it installed.
+assert_ran_from() {
+    local calls="$1" want="$2"
+    [[ "$(sort -u "$calls.path")" == "$want" ]] ||
+        fail "agent ran from $(sort -u "$calls.path" | tr '\n' ' '), want $want"
+}
+
+# Every case above ran on a fresh host with a writable /usr/local/bin, so the binary went there, as
+# earlier releases did. The agent copies itself under the host root when it starts.
+grep -q BOOTSTRAP_TEST_CALLS "$USR_LOCAL_WRITES/bin/aks-flex-node" ||
+    fail "the agent was not installed at /usr/local/bin"
+[[ ! -e /opt/unbounded ]] || fail "bootstrap created /opt/unbounded on a host with a writable /usr/local"
+
+# /opt/unbounded belongs to the host, which may stage files there, such as offline artifacts. On its
+# own it is not an installation, so a writable /usr/local is still used, and it is left alone.
+mkdir -p /opt/unbounded/artifacts
+chmod 0750 /opt/unbounded
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/staged-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/staged-etc/config.json" >/dev/null
+assert_ran_from "$WORK_DIR/staged-calls" /usr/local/bin/aks-flex-node
+[[ ! -e /opt/unbounded/agent ]] || fail "bootstrap created /opt/unbounded/agent on a host with a writable /usr/local"
+[[ $(stat -c '%a' /opt/unbounded) == 750 && -d /opt/unbounded/artifacts ]] ||
+    fail "bootstrap changed the host's /opt/unbounded"
+
+# /usr/local/bin belongs to the image, so its mode is left as the image set it.
+legacy_bin_mode=$(stat -c '%a' /usr/local/bin)
+chmod 0750 /usr/local/bin
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/mode-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/mode-etc/config.json" >/dev/null
+[[ $(stat -c '%a' /usr/local/bin) == 750 ]] || fail "the mode of an existing /usr/local/bin was changed"
+chmod "$legacy_bin_mode" /usr/local/bin
+
+# The agent runs from where it was installed, never from the temp dir, which may be noexec.
+mkdir -p "$WORK_DIR/noexec-tmp"
+mount -t tmpfs -o noexec,mode=0700 tmpfs "$WORK_DIR/noexec-tmp" || fail "could not mount a noexec temp dir"
+TMPDIR="$WORK_DIR/noexec-tmp" \
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/noexec-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/noexec-etc/config.json" >/dev/null ||
+    fail "bootstrap failed with a noexec temp dir"
+umount "$WORK_DIR/noexec-tmp"
+assert_ran_from "$WORK_DIR/noexec-calls" /usr/local/bin/aks-flex-node
+
+# A host linked to /usr/local by an earlier release keeps its files there.
+ln -s /usr/local /opt/unbounded/agent
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/linked-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/linked-etc/config.json" >/dev/null
+assert_ran_from "$WORK_DIR/linked-calls" /usr/local/bin/aks-flex-node
+rm /opt/unbounded/agent
+
+# With a read-only /usr/local the binary goes under the host root, inside the host's /opt/unbounded,
+# whose mode and files are left as they are.
+{ mount --bind /usr/local /usr/local && mount -o remount,bind,ro /usr/local; } || fail "could not make /usr/local read-only"
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/readonly-staged-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/readonly-staged-etc/config.json" >/dev/null ||
+    fail "bootstrap failed with a read-only /usr/local beside staged files"
+umount /usr/local || fail "could not make /usr/local writable again"
+assert_ran_from "$WORK_DIR/readonly-staged-calls" /opt/unbounded/agent/bin/aks-flex-node
+[[ $(stat -c '%a' /opt/unbounded) == 750 && -d /opt/unbounded/artifacts ]] ||
+    fail "bootstrap changed the host's /opt/unbounded"
+rm -rf /opt/unbounded
+
+# Where /usr/local is read-only, as on Azure Container Linux, the binary goes under the host root, in
+# directories created 0755 even under the script's umask, so systemd and the agent can reach it. A
+# read-only bind over the overlay, since overlayfs cannot be remounted read-only.
+{ mount --bind /usr/local /usr/local && mount -o remount,bind,ro /usr/local; } || fail "could not make /usr/local read-only"
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/readonly-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/readonly-etc/config.json" >/dev/null ||
+    fail "bootstrap failed with a read-only /usr/local"
+umount /usr/local || fail "could not make /usr/local writable again"
+assert_ran_from "$WORK_DIR/readonly-calls" /opt/unbounded/agent/bin/aks-flex-node
+for dir in /opt/unbounded /opt/unbounded/agent /opt/unbounded/agent/bin; do
+    [[ $(stat -c '%a' "$dir") == 755 ]] || fail "new directory $dir is not 0755"
+done
+
+# A host installed under the host root keeps it, whatever /usr/local allows: reset leaves the layout
+# there.
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/installed-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc --config-path "$WORK_DIR/installed-etc/config.json" >/dev/null
+assert_ran_from "$WORK_DIR/installed-calls" /opt/unbounded/agent/bin/aks-flex-node
+
+# --install-dir is deprecated. A matching one is accepted with a warning, and any other is ignored
+# with one, so callers that pass the old default keep working on hosts installed under the host root.
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/matching-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    bash "$SCRIPT" --auth arc \
+        --install-dir /opt/unbounded/agent/bin/ \
+        --config-path "$WORK_DIR/matching-etc/config.json" >"$WORK_DIR/matching.log" 2>&1 ||
+    fail "a matching --install-dir was rejected"
+grep -q "deprecated" "$WORK_DIR/matching.log" || fail "--install-dir did not warn that it is deprecated"
+
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/mismatch-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+AKS_FLEX_NODE_INSTALL_DIR="$WORK_DIR/elsewhere" \
+    bash "$SCRIPT" --auth arc \
+        --config-path "$WORK_DIR/mismatch-etc/config.json" >"$WORK_DIR/mismatch.log" 2>&1 ||
+    fail "an --install-dir that disagrees with the installer was refused"
+grep -q "deprecated and ignored; installing in /opt/unbounded/agent/bin" "$WORK_DIR/mismatch.log" ||
+    fail "ignoring a mismatched --install-dir was not explained"
+[[ ! -e "$WORK_DIR/elsewhere" ]] || fail "the ignored --install-dir was created"
+assert_ran_from "$WORK_DIR/mismatch-calls" /opt/unbounded/agent/bin/aks-flex-node
+
+# An earlier release's reset removed the agent's unit but kept its blue/green layout, with the binary
+# path a link into it. A rerun replaces the link with the downloaded agent, which start runs from
+# there, and removes the layout, which an agent from before start removes it would point the link
+# back at; it has to leave both alone while the agent unit is installed. These cases run bootstrap.sh with the agent unit and the
+# upgrade lock pointed at the test's own files, so they don't depend on whether this host runs the
+# agent.
+TEST_UNIT_PATH="$WORK_DIR/systemd/aks-flex-node-agent-bootstrap-test.service"
+mkdir -p "$(dirname "$TEST_UNIT_PATH")"
+run_with_test_unit() {
+    BOOTSTRAP_TEST_UNIT_PATH="$TEST_UNIT_PATH" \
+    BOOTSTRAP_TEST_LOCK_PATH="$WORK_DIR/run/agent-upgrade.lock" \
+        bash -c 'source "$1"; shift
+            SERVICE_UNIT="$(basename "$BOOTSTRAP_TEST_UNIT_PATH")"
+            SERVICE_UNIT_PATH="$BOOTSTRAP_TEST_UNIT_PATH"
+            AGENT_UPGRADE_LOCK_PATH="$BOOTSTRAP_TEST_LOCK_PATH"
+            main "$@"' bootstrap.sh "$SCRIPT" "$@"
+}
+
+# clear_installation leaves the overlays as a fresh host: nothing under the host root or /usr/local.
+clear_installation() {
+    rm -rf /opt/unbounded /usr/local/lib/aks-flex-node
+    rm -f /usr/local/bin/aks-flex-node
+}
+
+# make_retained_layout ROOT lays out what reset keeps under ROOT: the bin link into the blue/green
+# layout, whose current and last-good slots are an earlier binary. The links are absolute, as the
+# agent writes them.
+make_retained_layout() {
+    local root="$1"
+    mkdir -p "$root/bin" "$root/lib/aks-flex-node"
+    printf '#!/bin/sh\nexit 0\n# retained after reset\n' > "$root/lib/aks-flex-node/aks-flex-node-blue"
+    chmod 0755 "$root/lib/aks-flex-node/aks-flex-node-blue"
+    ln -s "$root/lib/aks-flex-node/aks-flex-node-blue" "$root/lib/aks-flex-node/aks-flex-node-current"
+    ln -s "$root/lib/aks-flex-node/aks-flex-node-blue" "$root/lib/aks-flex-node/aks-flex-node-last-good"
+    ln -s "$root/lib/aks-flex-node/aks-flex-node-current" "$root/bin/aks-flex-node"
+}
+
+# assert_reinstalled ROOT CALLS checks a rerun replaced the retained layout under ROOT with the
+# downloaded agent, and ran it from there.
+assert_reinstalled() {
+    local root="$1" calls="$2" installed downloaded
+    [[ -f "$root/bin/aks-flex-node" && ! -L "$root/bin/aks-flex-node" ]] ||
+        fail "rerun after reset under $root did not install a regular agent binary"
+    installed=$(sha256sum "$root/bin/aks-flex-node" | awk '{print $1}')
+    downloaded=$(sha256sum "$WORK_DIR/agent/aks-flex-node-linux-$ARCH" | awk '{print $1}')
+    [[ "$installed" == "$downloaded" ]] || fail "rerun after reset under $root did not install the downloaded agent"
+    [[ ! -e "$root/lib/aks-flex-node" ]] || fail "rerun after reset under $root kept the layout an earlier agent would run"
+    assert_ran_from "$calls" "$root/bin/aks-flex-node"
+    grep -q '^start ' "$calls" || fail "rerun after reset under $root did not start the downloaded agent"
+}
+
+# Under the host root, as reset leaves a host installed there, such as Azure Container Linux.
+clear_installation
+make_retained_layout /opt/unbounded/agent
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/reset-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    run_with_test_unit --auth arc --config-path "$WORK_DIR/reset-etc/config.json" >/dev/null ||
+    fail "rerun after reset under the host root failed"
+assert_reinstalled /opt/unbounded/agent "$WORK_DIR/reset-calls"
+
+# Under /usr/local, as an earlier release's reset leaves it, without the host root.
+clear_installation
+make_retained_layout /usr/local
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/legacy-reset-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    run_with_test_unit --auth arc --config-path "$WORK_DIR/legacy-reset-etc/config.json" >/dev/null ||
+    fail "rerun after an earlier release's reset failed"
+assert_reinstalled /usr/local "$WORK_DIR/legacy-reset-calls"
+[[ ! -e /opt/unbounded ]] || fail "rerun after an earlier release's reset created /opt/unbounded"
+
+# While the agent unit is installed, the layout belongs to the upgrade flow, so a rerun on a live node
+# leaves it alone and runs nothing.
+clear_installation
+make_retained_layout /opt/unbounded/agent
+printf '[Unit]\n' > "$TEST_UNIT_PATH"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/live-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        run_with_test_unit --auth arc --config-path "$WORK_DIR/live-etc/config.json" \
+            >"$WORK_DIR/live.log" 2>&1; then
+    fail "the managed link was replaced while the agent unit is installed"
+fi
+rm -f "$TEST_UNIT_PATH"
+grep -q 'while the agent service is installed or active' "$WORK_DIR/live.log" ||
+    fail "refusing to replace the managed link of an installed agent was not reported"
+[[ "$(readlink /opt/unbounded/agent/bin/aks-flex-node)" == /opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current &&
+   -x /opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-blue ]] ||
+    fail "the managed layout of an installed agent changed"
+[[ ! -s "$WORK_DIR/live-calls" ]] || fail "the agent was run on a node whose agent unit is installed"
+
+# Any other link at the binary path is replaced too, once no agent is installed, which leaves what it
+# led to alone.
+clear_installation
+mkdir -p /opt/unbounded/agent/bin
+printf '#!/bin/sh\nexit 0\n' > "$WORK_DIR/odd-target"
+chmod 0755 "$WORK_DIR/odd-target"
+ln -s "$WORK_DIR/odd-target" /opt/unbounded/agent/bin/aks-flex-node
+BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-calls" \
+AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+    run_with_test_unit --auth arc --config-path "$WORK_DIR/odd-etc/config.json" >/dev/null ||
+    fail "rerun over another link at the binary path failed"
+assert_reinstalled /opt/unbounded/agent "$WORK_DIR/odd-calls"
+[[ "$(cat "$WORK_DIR/odd-target")" == $'#!/bin/sh\nexit 0' ]] || fail "the rerun changed what another link led to"
+
+# While the agent unit is installed, any link is refused, and the message doesn't say to run it, as it
+# may not be the agent's.
+clear_installation
+mkdir -p /opt/unbounded/agent/bin
+ln -s "$WORK_DIR/odd-target" /opt/unbounded/agent/bin/aks-flex-node
+printf '[Unit]\n' > "$TEST_UNIT_PATH"
+if BOOTSTRAP_TEST_CALLS="$WORK_DIR/odd-live-calls" \
+    AKS_FLEX_NODE_BASE_CONFIG_FILE="$WORK_DIR/base.json" \
+    AKS_FLEX_NODE_AGENT_URL="$AGENT_URL" \
+        run_with_test_unit --auth arc --config-path "$WORK_DIR/odd-live-etc/config.json" \
+            >"$WORK_DIR/odd-live.log" 2>&1; then
+    fail "another link was replaced while the agent unit is installed"
+fi
+rm -f "$TEST_UNIT_PATH"
+! grep -q "/opt/unbounded/agent/bin/aks-flex-node reset" "$WORK_DIR/odd-live.log" ||
+    fail "the refusal said to run a link that may not be the agent's"
+[[ "$(readlink /opt/unbounded/agent/bin/aks-flex-node)" == "$WORK_DIR/odd-target" ]] ||
+    fail "a refused link changed"
+[[ ! -s "$WORK_DIR/odd-live-calls" ]] || fail "the agent was run on a node whose agent unit is installed"
 
 echo "bootstrap script tests passed"

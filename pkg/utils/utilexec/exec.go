@@ -147,6 +147,13 @@ func SystemdRun() func(context.Context) *exec.Cmd {
 	}
 }
 
+// Ctr returns a command factory for containerd's ctr.
+func Ctr() func(context.Context) *exec.Cmd {
+	return func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "ctr") // #nosec G204 -- fixed binary
+	}
+}
+
 // Azcmagent returns a command factory for azcmagent.
 func Azcmagent() func(context.Context) *exec.Cmd {
 	return func(ctx context.Context) *exec.Cmd {

@@ -35,6 +35,15 @@ Flex node pool bootstrap data includes a short-lived Kubernetes bootstrap token,
 
 After TLS bootstrap, kubelet uses its issued client certificate for ongoing Kubernetes API access. The daemon uses a separate Kubernetes credential for lifecycle operations.
 
+As an alternative to bootstrap credentials, configure paired `agent.kubeconfigData` and
+`node.kubelet.kubeconfigData` values to configure renewable Kubernetes credentials
+separately. The agent and kubelet identities may be the same or separate, but
+kubelet must use the node's system-assigned managed identity (SAMI). Sharing
+that identity also shares its impersonation permissions. See
+[Embedded Agent And Kubelet Kubeconfigs](configuration.md#embedded-agent-and-kubelet-kubeconfigs)
+for credential requirements and the fresh-token requirement when switching back
+to bootstrap mode.
+
 ## Managed identity
 
 Use managed identity when the Flex node host is an Azure VM. Use the system-assigned identity when it belongs to one VM, or a user-assigned identity when it must be managed or reused separately.

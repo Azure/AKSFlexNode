@@ -1,0 +1,36 @@
+[Unit]
+Description=AKS Flex Node nspawn post-start for machine %i
+# The machine's unit starts it, through systemctl start from ExecStartPost=,
+# once the machine has started: the agent's nspawn-lifecycle post-start, in a
+# container of the agent's image, rewires NVIDIA devices into it.
+#
+# The machine's start timeout bounds it, as on a host: if the machine's start
+# fails or times out, systemd stops this unit with it. No After= on the
+# machine: the machine's start waits for this unit.
+BindsTo=systemd-nspawn@%i.service
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+# No RemainAfterExit=: each start of the machine runs it again.
+Type=oneshot
+Environment=AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS=
+# The image the agent's unit runs, which is here, so it's not pulled.
+EnvironmentFile=/etc/sysconfig/aks-flex-node-container
+EnvironmentFile=-/etc/aks-flex-node/agent-image.env
+# containerd.service reports started before containerd answers.
+ExecStartPre=/bin/sh -c 'until /usr/bin/ctr version >/dev/null 2>&1; do sleep 1; done'
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex task delete --force aks-flex-node-nspawn-post-start-%i
+ExecStartPre=-/usr/bin/ctr --namespace aks-flex container delete aks-flex-node-nspawn-post-start-%i
+# In a scope systemd tracks, set up as the agent's unit sets up its container's.
+ExecStart=/usr/bin/ctr --namespace aks-flex run --rm $AKS_FLEX_NODE_SNAPSHOTTER_RUN_ARGS \
+  --runc-systemd-cgroup --cgroup system-aksflex.slice:aks-flex:nspawn-post-start-%i \
+  --annotation "org.systemd.property.BindsTo=['%n']" \
+  --annotation "org.systemd.property.TimeoutStopUSec=uint64 30000000" \
+  --annotation "org.systemd.property.CollectMode='inactive-or-failed'" \
+  --privileged --net-host --with-ns pid:/proc/1/ns/pid \
+  --mount type=bind,src=/,dst=/host,options=rbind:rslave \
+  --env=AKS_FLEX_NODE_IMAGE=${AKS_FLEX_NODE_IMAGE} \
+  ${AKS_FLEX_NODE_IMAGE} aks-flex-node-nspawn-post-start-%i \
+  flex-agent-entrypoint aks-flex-node nspawn-lifecycle post-start %i
+TimeoutStartSec=infinity
