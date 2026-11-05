@@ -1,59 +1,44 @@
-name: Fork PR E2E Notice
+name: E2E Fork Gate
 
 on:
-  # zizmor: ignore[dangerous-triggers] This workflow only comments on fork PRs and never checks out or executes PR code.
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  comment:
-    name: Comment on fork PRs
-    if: github.event.pull_request.head.repo.full_name != github.repository
+  e2e-fork-gate:
+    name: E2E Fork Gate
     runs-on: ubuntu-latest
     steps:
-      - name: Upsert E2E fork notice
+      - name: Verify E2E eligibility
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          marker="<!-- aks-flex-node-fork-e2e-notice -->"
-          body_file="${RUNNER_TEMP}/fork-e2e-notice.md"
-          cat > "${body_file}" <<'EOF'
-          <!-- aks-flex-node-fork-e2e-notice -->
-          Thanks for the contribution! This pull request comes from a fork, so the Azure E2E workflow is intentionally skipped for security reasons.
+          if [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "::error title=Azure E2E Required::Fork PRs cannot run Azure E2E with OIDC credentials. A maintainer must review the changes and run E2E from a trusted repository branch."
 
-          Merge will remain blocked until the E2E tests have been run from a branch in the `Azure/AKSFlexNode` repository by a maintainer/contributor with access to this repo.
+            cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Azure E2E validation required
 
-          Maintainer options:
-          1. Review the fork changes.
-          2. Push the trusted commit to a branch in `Azure/AKSFlexNode`.
-          3. Run the `E2E Tests` workflow from that same-repository branch, or open a same-repository PR so the workflow can run automatically.
+          This PR originates from a fork. Azure E2E tests cannot
+          run directly because they require Azure OIDC credentials.
 
-          We do not run Azure E2E directly from fork PR code because it requires Azure OIDC access.
+          **Maintainer action required:**
+          1. Review the proposed changes.
+          2. Push the trusted commit to an Azure/AKSFlexNode branch.
+          3. Run the `E2E Tests` workflow from that branch, or open a
+             same-repository PR so the workflow can run automatically.
+
+          This PR cannot merge until the required E2E validation
+          policy is satisfied.
           EOF
 
-          existing_comment_id="$(gh api \
-            --paginate \
-            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${marker}\"))) | .id" \
-            | head -n 1)"
-
-          if [[ -n "${existing_comment_id}" ]]; then
-            gh api \
-              --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_comment_id}" \
-              --field "body=@${body_file}" \
-              >/dev/null
-          else
-            gh api \
-              --method POST \
-              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              --field "body=@${body_file}" \
-              >/dev/null
+            exit 1
           fi
+
+          echo "PR originates from the base repository."

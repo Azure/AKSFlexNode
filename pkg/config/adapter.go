@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"runtime"
+	"strings"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -17,6 +20,16 @@ const (
 	// the nspawn rootfs. The start task copies the binary here before
 	// starting the kubelet so that exec credential plugins can invoke it.
 	flexNodeBinaryPath = "/usr/local/bin/aks-flex-node"
+
+	// hostBinaryRelativePath is the host's aks-flex-node, relative to the host
+	// root; see HostBinaryPath.
+	hostBinaryRelativePath = "bin/aks-flex-node"
+
+	// NSpawnPreStartUnit and NSpawnPostStartUnit are the template units that
+	// run the agent's nspawn-lifecycle phases for a machine, its name the
+	// instance. The machines' hooks start them; see ToAgentConfig.
+	NSpawnPreStartUnit  = "aks-flex-node-nspawn-pre-start@.service"
+	NSpawnPostStartUnit = "aks-flex-node-nspawn-post-start@.service"
 
 	// aksAADServerID is the Azure AD server application ID for AKS.
 	aksAADServerID = "6dae42f8-4368-4678-94ff-3960e28e3630"
@@ -36,7 +49,7 @@ const (
 // AgentConfig. The resulting struct can be passed to goalstates.ResolveMachine
 // to produce goal states for the nspawn-based bootstrap phases.
 //
-// cfg.Node.Kubelet.ClusterFQDN and cfg.Node.Kubelet.CACertData must be populated.
+// cfg must be validated so the API server and CA include any kubeconfig overrides.
 func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	kubeletConfig := kubeletConfiguration(cfg)
 
@@ -100,6 +113,13 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
+	ac.NSpawnLifecycle = nspawnLifecycleHooks()
+
+	if cfg.UsesKubeconfigCredentials() {
+		ac.Kubelet.KubeconfigData = []byte(cfg.Node.Kubelet.KubeconfigData)
+		return ac
+	}
+
 	switch {
 	case cfg.IsBootstrapTokenConfigured():
 		ac.Kubelet.Auth.BootstrapToken = cfg.Azure.BootstrapToken.Token
@@ -132,6 +152,23 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	}
 
 	return ac
+}
+
+// nspawnLifecycleHooks returns the commands the machines' hooks run at every
+// start of a machine, in place of the lifecycle helper unbounded would copy
+// onto the host. They start the agent's template units, which run the current
+// agent's nspawn-lifecycle phase for the machine, %i, and fail the hook if it
+// fails. Starting a unit, rather than running the agent, leaves how the agent
+// runs to the units: the agent writes them, and converges them as it changes.
+func nspawnLifecycleHooks() *agentconfig.NSpawnLifecycleConfig {
+	start := func(template string) string {
+		return "/usr/bin/systemctl start " + strings.Replace(template, "@.", "@%i.", 1)
+	}
+
+	return &agentconfig.NSpawnLifecycleConfig{
+		PreStartCommand:  start(NSpawnPreStartUnit),
+		PostStartCommand: start(NSpawnPostStartUnit),
+	}
 }
 
 func kubeletConfiguration(cfg *Config) map[string]any {
@@ -201,6 +238,23 @@ func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config,
 	}
 
 	return agentCfg, gs, containerImageArchives, nil
+}
+
+// HostBinaryPath returns the host's aks-flex-node, under the resolved host
+// root: on an installed host, the managed link to aks-flex-node-current, and
+// before the binary layout exists, the plain copy start makes. Clients that run
+// on the host, rather than the kubelet inside the machine, invoke the exec
+// credential plugin through it.
+func HostBinaryPath() string {
+	return filepath.Join(hostroot.Resolve(), hostBinaryRelativePath)
+}
+
+// IsHostBinaryPath reports whether path names the host's aks-flex-node: as HostBinaryPath
+// resolves it, or as an operator writes it, under hostroot.Path, such as in an embedded
+// kubeconfig's exec command.
+func IsHostBinaryPath(path string) bool {
+	path = filepath.Clean(path)
+	return path == HostBinaryPath() || path == filepath.Join(hostroot.Path, hostBinaryRelativePath)
 }
 
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node

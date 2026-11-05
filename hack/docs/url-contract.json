@@ -409,6 +409,20 @@
       ]
     },
     {
+      "path": "docs/usage/azure-container-linux.md",
+      "protectAnchors": true,
+      "anchors": [
+        "azure-container-linux",
+        "checking-the-agent",
+        "install-and-join",
+        "os-updates",
+        "requirements",
+        "reset-and-rejoining",
+        "the-agent-on-the-host",
+        "upgrading-the-agent"
+      ]
+    },
+    {
       "path": "docs/usage/cli.md",
       "protectAnchors": false,
       "anchors": [
@@ -476,6 +490,7 @@
         "bootstrap-token-expired",
         "clean-up",
         "flow",
+        "hosts-provisioned-by-ignition",
         "operator-guide-bootstrap-an-aks-flex-node",
         "preflight-reports-insufficient-disk-space",
         "prerequisites",
@@ -500,6 +515,17 @@
       ]
     },
     {
+      "path": "docs/usage/migration.md",
+      "protectAnchors": true,
+      "anchors": [
+        "earlier-releases",
+        "how-an-existing-host-moves",
+        "migrating-to-optunboundedagent",
+        "reset-and-uninstall",
+        "what-changed"
+      ]
+    },
+    {
       "path": "docs/usage/operations.md",
       "protectAnchors": true,
       "anchors": [
@@ -517,6 +543,36 @@
       ]
     },
     {
+      "path": "hack/acl-container/README.md",
+      "protectAnchors": false,
+      "anchors": [
+        "azure-container-linux-harness-the-agent-in-a-container",
+        "files",
+        "inside-the-agents-container",
+        "on-the-vm",
+        "quick-start",
+        "requirements",
+        "settings",
+        "tested-environment",
+        "the-acl-image",
+        "troubleshooting",
+        "what-check-covers",
+        "working-with-the-node"
+      ]
+    },
+    {
+      "path": "hack/acl/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "azure-container-linux-harness",
+        "image",
+        "requirements",
+        "settings",
+        "troubleshooting",
+        "usage"
+      ]
+    },
+    {
       "path": "hack/e2e/README.md",
       "protectAnchors": true,
       "anchors": [
@@ -524,6 +580,7 @@
         "aks-flex-node-e2e-tests",
         "commands",
         "github-actions-policy",
+        "host-root-migration-validation",
         "iterative-development",
         "join-modes",
         "makefile-targets",

@@ -77,6 +77,13 @@ go test ./pkg/config/
 go test ./pkg/logger/
 ```
 
+`make test`, and so `make check`, first runs `make test-install`, the tests of
+the install, uninstall, and bootstrap scripts. `scripts/bootstrap_test.sh`
+re-runs itself as root through `sudo`, so expect a password prompt unless sudo
+has cached your credentials. It then needs `unshare` and mount privileges: it
+runs in a private mount namespace and overlays `/usr/local` and `/opt`, so that
+no case changes the host's files.
+
 ### Pre-commit Workflow
 
 Before committing changes, ensure all checks pass:

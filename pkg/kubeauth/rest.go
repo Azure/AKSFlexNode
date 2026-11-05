@@ -5,14 +5,48 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/transport"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 // BootstrapRESTConfig builds a Kubernetes REST config from the bootstrap or
 // exec-credential material in the FlexNode config. It is used before the daemon
 // client certificate is available, including during bootstrap Machine reads.
+// An exec credential runs the host's aks-flex-node, config.HostBinaryPath.
 func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
+	return BootstrapRESTConfigWithPlugin(cfg, config.HostBinaryPath())
+}
+
+// BootstrapRESTConfigWithPlugin is BootstrapRESTConfig with the exec
+// credential plugin named by the caller. In the agent's container, that's the
+// image's agent, as the host has none: an embedded agent kubeconfig whose exec
+// command names the host's agent runs it too.
+func BootstrapRESTConfigWithPlugin(cfg *config.Config, plugin string) (*rest.Config, error) {
+	if cfg.UsesKubeconfigCredentials() {
+		restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(cfg.Agent.KubeconfigData))
+		if err != nil {
+			return nil, fmt.Errorf("build Kubernetes REST config from agent kubeconfig: %w", err)
+		}
+		if restCfg.ExecProvider != nil && plugin != "" && plugin != config.HostBinaryPath() &&
+			config.IsHostBinaryPath(restCfg.ExecProvider.Command) {
+			restCfg.ExecProvider.Command = plugin
+		}
+		if restCfg.ExecProvider != nil && !utilio.IsExecutable(restCfg.ExecProvider.Command) {
+			return nil, fmt.Errorf("agent kubeconfig exec credential plugin %s is not executable on the host", restCfg.ExecProvider.Command)
+		}
+		transportCfg, err := restCfg.TransportConfig()
+		if err != nil {
+			return nil, fmt.Errorf("validate agent kubeconfig transport: %w", err)
+		}
+		if _, err := transport.TLSConfigFor(transportCfg); err != nil {
+			return nil, fmt.Errorf("validate agent kubeconfig TLS material: %w", err)
+		}
+		return restCfg, nil
+	}
+
 	apiServerURL := cfg.APIServerURL()
 	if apiServerURL == "" {
 		return nil, fmt.Errorf("kubernetes API server URL is empty")
@@ -38,6 +72,14 @@ func BootstrapRESTConfig(cfg *config.Config) (*rest.Config, error) {
 	if agentCfg.Kubelet.Auth.ExecCredential == nil {
 		return nil, fmt.Errorf("kubernetes client requires bootstrap token or exec credential")
 	}
+	// Here rather than at the first request, where client-go would report it
+	// as a failed credential.
+	if !utilio.IsExecutable(plugin) {
+		return nil, fmt.Errorf("exec credential plugin %s is not installed; aks-flex-node start installs it under the host root", plugin)
+	}
 	restCfg.ExecProvider = agentCfg.Kubelet.Auth.ExecCredential.DeepCopy()
+	// The agent config's credential is the kubelet's, and names the binary
+	// inside the machine. This client runs on the host.
+	restCfg.ExecProvider.Command = plugin
 	return restCfg, nil
 }

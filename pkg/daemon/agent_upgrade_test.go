@@ -72,6 +72,18 @@ func TestParseAgentUpgradeRequest(t *testing.T) {
 			},
 			wantErr: "64 hexadecimal",
 		},
+		// Which URLs an agent takes is its executor's to check; see
+		// TestAgentUpgradeExecutorsTakeTheirOwnKindOfRequest.
+		"an image": {
+			parameters: map[string]string{
+				agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent",
+				agentUpgradeSHA256Parameter:      "sha256:" + strings.Repeat("a", 64),
+			},
+		},
+		"an image without its digest": {
+			parameters: map[string]string{agentUpgradeDownloadURLParameter: "oci://registry.example/aks-flex-node-agent"},
+			wantErr:    agentUpgradeSHA256Parameter,
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -106,6 +118,32 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 	}
 	if err := executor.RecordPending(t.Context(), "operation-2"); err == nil || !strings.Contains(err.Error(), "operation-1") {
 		t.Fatalf("competing RecordPending error = %v", err)
+	}
+}
+
+// TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst: a host that would
+// hand a release before the host root a binary under /usr/local is refused
+// before anything is staged, so the operation fails with nothing to roll back.
+func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
+	t.Parallel()
+
+	paths := testAgentUpgradePaths(t)
+	guardErr := errors.New("/usr/local/bin/aks-flex-node leads to an executable")
+	executor := &hostAgentUpgradeExecutor{
+		log:             slog.New(slog.DiscardHandler),
+		paths:           paths,
+		signals:         agentUpgradeSignalStore{path: paths.SignalPath},
+		guardLegacySeed: func() error { return guardErr },
+	}
+
+	err := executor.Stage(t.Context(), agentUpgradeRequest{downloadURL: "https://example.test/agent.tar.gz"})
+	if !errors.Is(err, guardErr) {
+		t.Fatalf("Stage() error = %v, want %v", err, guardErr)
+	}
+	for _, path := range []string{paths.CurrentPath, paths.LastGoodPath, paths.BluePath, paths.GreenPath} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Stage() changed %s before the guard passed: %v", path, err)
+		}
 	}
 }
 
@@ -175,7 +213,9 @@ func TestHostAgentUpgradeExecutorSchedulesRestartOutsideService(t *testing.T) {
 			calls = append(calls, "systemd-run "+joined)
 			for _, expected := range []string{
 				"--collect",
-				"--on-active=1s",
+				"--on-active=1000ms",
+				// Without it, systemd fires the timer up to a minute late.
+				"--timer-property=AccuracySec=100ms",
 				"--unit=aks-flex-node-agent-upgrade-restart-",
 				"/usr/bin/systemctl restart " + ServiceUnitName,
 			} {
@@ -214,6 +254,19 @@ func TestHostAgentUpgradeExecutorRestartsThoughItCantResetTheStartLimit(t *testi
 	}
 	if !scheduled {
 		t.Fatal("the restart wasn't scheduled after reset-failed failed")
+	}
+}
+
+func TestHostAgentUpgradeExecutorRestartReportsAFailedRestart(t *testing.T) {
+	t.Parallel()
+
+	scheduleErr := errors.New("systemd-run failed")
+	executor := &hostAgentUpgradeExecutor{
+		systemctl:     func(context.Context, ...string) error { return nil },
+		runSystemdRun: func(context.Context, ...string) error { return scheduleErr },
+	}
+	if err := executor.Restart(t.Context()); !errors.Is(err, scheduleErr) {
+		t.Fatalf("Restart() = %v, want %v", err, scheduleErr)
 	}
 }
 
@@ -544,5 +597,67 @@ func TestFilesHaveEqualSHA256(t *testing.T) {
 	equal, err = filesHaveEqualSHA256(first, second)
 	if err != nil || equal {
 		t.Fatalf("filesHaveEqualSHA256 = %v, %v", equal, err)
+	}
+}
+
+// TestAgentUpgradePathsUnder covers the host layout used by agent upgrade.
+//
+// Under the legacy root it must reproduce the absolute paths released versions
+// used. A migrated host resolves the host root to the legacy root, and the
+// links and units those versions wrote name these paths.
+func TestAgentUpgradePathsUnder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		root         string
+		wantBinary   string
+		wantBlue     string
+		wantCurrent  string
+		wantLastGood string
+	}{
+		{
+			name:         "host root",
+			root:         "/opt/unbounded/agent",
+			wantBinary:   "/opt/unbounded/agent/bin/aks-flex-node",
+			wantBlue:     "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-blue",
+			wantCurrent:  "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-current",
+			wantLastGood: "/opt/unbounded/agent/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+		{
+			name:         "legacy root keeps the released layout",
+			root:         "/usr/local",
+			wantBinary:   "/usr/local/bin/aks-flex-node",
+			wantBlue:     "/usr/local/lib/aks-flex-node/aks-flex-node-blue",
+			wantCurrent:  "/usr/local/lib/aks-flex-node/aks-flex-node-current",
+			wantLastGood: "/usr/local/lib/aks-flex-node/aks-flex-node-last-good",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			paths := agentUpgradePathsUnder(tt.root)
+			if paths.BinaryPath != tt.wantBinary {
+				t.Errorf("BinaryPath = %q, want %q", paths.BinaryPath, tt.wantBinary)
+			}
+			if paths.BluePath != tt.wantBlue {
+				t.Errorf("BluePath = %q, want %q", paths.BluePath, tt.wantBlue)
+			}
+			if paths.CurrentPath != tt.wantCurrent {
+				t.Errorf("CurrentPath = %q, want %q", paths.CurrentPath, tt.wantCurrent)
+			}
+			if paths.LastGoodPath != tt.wantLastGood {
+				t.Errorf("LastGoodPath = %q, want %q", paths.LastGoodPath, tt.wantLastGood)
+			}
+
+			// The signal must stay on a filesystem that is writable even when
+			// /usr is read-only, and survive a rollback to a binary that
+			// predates the host root, so it does not move with the root.
+			if paths.SignalPath != "/etc/aks-flex-node/agent-upgrade-signal.json" {
+				t.Errorf("SignalPath = %q, want it to stay under /etc", paths.SignalPath)
+			}
+		})
 	}
 }

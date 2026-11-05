@@ -82,7 +82,7 @@ The primary command is:
 aks-flex-node start --config /etc/aks-flex-node/config.json
 ```
 
-`start` performs host bootstrap and installs the long-running systemd service. `bootstrap` remains an alias for compatibility, but new docs should use `start`.
+`start` performs host bootstrap and installs the long-running systemd service. `bootstrap` remains an alias for compatibility, but new docs should use `start`. On the host, the binary lives under `/opt/unbounded/agent/bin`, which is not on the default `PATH`; see [Where the agent is installed](usage/operations.md#where-the-agent-is-installed).
 
 Other commands include the non-mutating `preflight` check, protected bootstrap-data retrieval, reset, version reporting, and service integration commands. Some lifecycle commands are hidden from top-level help because systemd or a managed workflow invokes them rather than an operator.
 
@@ -101,7 +101,7 @@ The agent reads a JSON config file with these top-level sections:
 - `node` - kubelet settings, labels, taints, maximum pods, and node IP.
 - `npd` - Node Problem Detector version.
 
-At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap; Arc requires bootstrap data fetched from AKS RP.
+At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap. Alternatively, paired embedded agent and kubelet kubeconfigs configure renewable Kubernetes credentials separately. The identities can be the same or separate, but kubelet must use the node's system-assigned managed identity (SAMI); Arc can remain responsible for ARM access without requiring Kubernetes bootstrap data.
 
 See [Configuration](usage/configuration.md) for the option reference and sample configs.
 
@@ -189,7 +189,7 @@ AKS Flex Node uses separate Azure and Kubernetes credentials.
 | Service principal | `azure.servicePrincipal` | Authenticate a host that can't use managed identity. Prefer a protected certificate file. |
 | Kubernetes bootstrap token | `azure.bootstrapToken` | Establish initial kubelet and daemon trust with the Kubernetes API server. |
 
-Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access.
+Configure at most one durable Azure identity. The pool bootstrap-data response can add a short-lived Kubernetes bootstrap token, API server address, and CA data alongside that identity. After TLS bootstrap, kubelet and the daemon use issued certificates for Kubernetes API access. Paired embedded kubeconfigs instead carry matching API server and CA settings and separately configured exec credentials. The host agent can share the kubelet's SAMI or use a separate identity, while the kubelet kubeconfig impersonates the matching `system:node:<node-name>` user in the `system:nodes` group. Sharing a principal also shares its impersonation permissions; different kubeconfigs alone do not enforce isolation.
 
 A bootstrap-token-only config is available for repository evaluation flows, where Machine registration is best effort by default. The primary Azure Machine workflow requires a durable Azure identity. Authentication doesn't change lifecycle ownership: host mutation remains local and privileged, while AKS or the operator owns workload disruption such as cordon and drain.
 
