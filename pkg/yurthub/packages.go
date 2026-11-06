@@ -118,7 +118,16 @@ func installBinary(ctx context.Context, root *os.Root, packages []hubPackage, ar
 		return "", fmt.Errorf("%w: no hub package for worker image %s %s on %s", ErrUnsupportedWorker, id, versionID, arch)
 	}
 	if installedSHA256(root) == pkg.BinarySHA256 {
-		return pkg.Package.Version, nil
+		// The pinned content alone isn't enough: systemd can't run it without the
+		// execute bits, and nothing else would repair them.
+		if info, err := root.Lstat(installedBinary); err == nil && info.Mode().IsRegular() {
+			if info.Mode().Perm() != 0o755 {
+				if err := root.Chmod(installedBinary, 0o755); err != nil {
+					return "", fmt.Errorf("repair hub binary permissions: %w", err)
+				}
+			}
+			return pkg.Package.Version, nil
+		}
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()

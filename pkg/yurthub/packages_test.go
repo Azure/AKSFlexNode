@@ -178,6 +178,17 @@ func TestInstallBinary(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o755 {
 		t.Fatalf("installed binary mode = %v, %v", info, err)
 	}
+	// A pinned binary that lost its execute bits is repaired without a download.
+	if err := os.Chmod(filepath.Join(dir, installedBinary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	offline := func(context.Context, string) ([]byte, error) { return nil, errors.New("offline") }
+	if _, err := installBinary(t.Context(), root, packages, "amd64", offline); err != nil {
+		t.Fatalf("mode repair: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, installedBinary)); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("binary mode not repaired: %v, %v", info, err)
+	}
 	// A stale or tampered binary is replaced with the pinned one.
 	if err := os.WriteFile(filepath.Join(dir, installedBinary), []byte("stale"), 0o755); err != nil {
 		t.Fatal(err)
