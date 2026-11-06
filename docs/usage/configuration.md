@@ -349,7 +349,8 @@ Azure authorizer instead, so this pattern requires
 `aadProfile.enableAzureRbac=false`.
 
 The following per-node example grants the agent principal direct read/watch
-access to its own Node and lets the kubelet SAMI impersonate only the matching
+access to its own Node, and patch access to its status for the agent's
+`DisconnectTolerance` condition, and lets the kubelet SAMI impersonate only the matching
 `system:node:<node-name>` user and `system:nodes` group. When both placeholders
 identify the same principal, the host agent's credential can also impersonate
 the node: the Node-only direct permissions are not an isolation boundary.
@@ -403,6 +404,10 @@ rules:
   resources: ["nodes"]
   resourceNames: ["<node-name>"]
   verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes/status"]
+  resourceNames: ["<node-name>"]
+  verbs: ["patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
