@@ -65,8 +65,8 @@ binaries (build tag plus a fetch step in the release job). That removes the PMC
 egress requirement but grows the agent from about 57 MB to 119 MB, because the
 Dalec builds are per-distro (dynamically linked).
 
-Every worker gets a dormant, disabled `aks-flex-yurthub.service` and
-`/var/lib/yurthub/{cache,pki}` (0700) during provisioning. Worker-rootfs writes use
+Nothing is staged at join; Prepare writes `aks-flex-yurthub.service` and
+`/var/lib/yurthub/{cache,pki}` (0700) when it enables Hub. Worker-rootfs writes use
 root-confined file operations so image symlinks can't redirect them onto the host.
 
 ## Node condition
@@ -197,7 +197,7 @@ NodePools, `yurt-hub-cfg` itself and the upstream Hub ClusterRole aren't needed.
 
 ## Validation
 
-Unit tests cover staging, journal recovery at every step, intent decoding, package
+Unit tests cover unit and directory staging, journal recovery at every step, intent decoding, package
 download and extraction, each operation, Converge drift and Node condition
 reporting against a fake worker and Node API. The extractor was also checked
 against the real pinned PMC packages, and a live download installed the Azure Linux
