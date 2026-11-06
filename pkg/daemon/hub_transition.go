@@ -103,12 +103,7 @@ func (r *hubTransition) Reconcile(ctx context.Context, scope string, intent *boo
 		if !*intent {
 			// Acceptance is journaled before any operation runs, so a missing
 			// journal means this worker never started an agent-owned transition.
-			// Record disabled without teardown: with omitted=false, every existing
-			// node reads false before RP enables DT, and that must be a no-op.
-			disabled, applied := false, false
-			if err := r.store.Save(ctx, &hubTransitionState{Version: 2, Scope: scope, Accepted: &disabled, Applied: &applied}); err != nil {
-				return fmt.Errorf("record hub disabled: %w", err)
-			}
+			// Every node reads false until RP enables DT; write nothing.
 			return nil
 		}
 		state = &hubTransitionState{Version: 2, Scope: scope}

@@ -96,9 +96,8 @@ func TestHubTransitionInitialFalseIsNoop(t *testing.T) {
 	if len(ops.calls) != 0 {
 		t.Fatalf("never-enabled worker ran teardown: %v", ops.calls)
 	}
-	state, err := file.Load(t.Context())
-	if err != nil || state == nil || state.Phase != "" || state.Applied == nil || *state.Applied {
-		t.Fatalf("disabled state not recorded: %+v, %v", state, err)
+	if state, err := file.Load(t.Context()); err != nil || state != nil {
+		t.Fatalf("never-enabled worker wrote a journal: %+v, %v", state, err)
 	}
 	if err := r.Reconcile(t.Context(), "scope", ptr.To(true)); err != nil {
 		t.Fatal(err)
@@ -264,9 +263,10 @@ func TestHubTransitionOptionalBool(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if input.Enabled == nil {
+			if input.Enabled == nil || !*input.Enabled {
+				// Absent intent keeps state; false on a never-enabled worker writes nothing.
 				if state != nil || len(ops.calls) != 0 {
-					t.Fatal("absent bool changed state")
+					t.Fatalf("%s changed state: %+v, %v", name, state, ops.calls)
 				}
 			} else if state == nil || state.Applied == nil || *state.Applied != *input.Enabled {
 				t.Fatalf("explicit bool was not applied: %+v", state)
@@ -287,9 +287,10 @@ func TestHubTransitionDisableAfterInterruptedReenable(t *testing.T) {
 	if err := r.Reconcile(t.Context(), "scope", ptr.To(true)); !errors.Is(err, errHubTest) {
 		t.Fatal(err)
 	}
+	// The never-enabled worker has no completed state yet, only the resumable enable.
 	state, err := file.Load(t.Context())
-	if err != nil || state.Applied == nil || *state.Applied || state.Phase != hubVerify {
-		t.Fatalf("last completed disable lost: %+v, %v", state, err)
+	if err != nil || state == nil || state.Applied != nil || state.Phase != hubVerify {
+		t.Fatalf("interrupted enable not journaled: %+v, %v", state, err)
 	}
 	ops.fail, ops.calls = "", nil
 	if err := r.Reconcile(t.Context(), "scope", ptr.To(false)); err != nil {

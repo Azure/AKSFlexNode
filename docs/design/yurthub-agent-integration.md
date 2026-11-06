@@ -74,10 +74,12 @@ root-confined file operations so image symlinks can't redirect them onto the hos
 The agent reports DT state as a `DisconnectTolerance` Node condition (merged by
 type, so kubelet's and NPD's conditions are kept). The agent compares its result
 with the Node's current condition on each Machine read and writes when they differ,
-so external edits are repaired and transition times survive agent restarts. An
-unchanged condition's `lastHeartbeatTime` is refreshed once per Machine poll
+so external edits are repaired and transition times survive agent restarts. Every
+node running this agent shows it, `Disabled` by default. `Disabled` is written only
+when it changes, so DT-off nodes cost no extra Node writes or Machine reads. Any
+other unchanged condition's `lastHeartbeatTime` is refreshed once per Machine poll
 interval (default 10 minutes), including while a failed enable waits to retry, so
-an older heartbeat means the agent isn't updating it. Every node running this agent shows it, `Disabled` by default.
+an older heartbeat means the agent isn't updating it.
 The write uses the agent's Kubernetes credential, so with paired kubeconfigs the
 agent principal needs `patch` on its own `nodes/status` (see
 [configuration](../usage/configuration.md)); without it, the write fails with a warning.
@@ -110,9 +112,9 @@ until the new worker's first read.
 engine (`hub_transition.go`). Its journal lives in the worker rootfs
 (`/var/lib/aks-flex-node/hub-transition.json`), so repave and reset discard it with
 the worker. Acceptance is journaled before any step and each step checkpoints the
-next, so every step is idempotent and a crash resumes where it left off. An initial
-false with no journal is a no-op, so upgrading the agent doesn't touch existing
-nodes.
+next, so every step is idempotent and a crash resumes where it left off. False with
+no journal is a no-op: no journal is written and no Hub settings are checked, so
+upgrading the agent doesn't touch existing nodes.
 
 | Step | Effect |
 | --- | --- |
@@ -181,8 +183,9 @@ NodePools, `yurt-hub-cfg` itself and the upstream Hub ClusterRole aren't needed.
 - **Queue time:** one Hub attempt can hold the daemon queue for several minutes
   (3-minute download, 2-minute readiness wait, bounded Node calls); there's no
   overall cap.
-- **Heartbeat cost:** each heartbeat write is a Node update, which also triggers a
-  Machine read, so every node does one extra status patch and ARM read per poll.
+- **Heartbeat cost:** while DT is on, each heartbeat write is a Node update, which
+  also triggers a Machine read, so those nodes do one extra status patch and ARM read
+  per poll.
 - **Verify failures:** if Verify keeps failing after Route, kubelet stays on Hub; there
   is no automatic fallback.
 - **Kubelet re-bootstrap:** routing keeps `--bootstrap-kubeconfig`, so kubelet can

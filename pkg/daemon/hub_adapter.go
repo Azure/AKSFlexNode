@@ -42,7 +42,8 @@ type hubMachineAdapter struct {
 	// setCondition writes the Node's DT condition; nil disables reporting.
 	setCondition func(context.Context, corev1.NodeCondition) error
 	last         *corev1.NodeCondition // last result, reported again while waiting to retry
-	// heartbeat refreshes an unchanged condition so readers can tell it's current.
+	// heartbeat refreshes an unchanged condition, except Disabled, so readers can
+	// tell it's current.
 	heartbeat time.Duration
 
 	retryAfter   time.Time
@@ -167,16 +168,20 @@ func nodeConditionWriter(nodes typedcorev1.NodeInterface, name string) func(cont
 }
 
 // reportCondition writes the condition when it differs from the Node's, or when the
-// Node's heartbeat is older than a.heartbeat (or in the future). Comparing against
-// the live Node (not memory) repairs external edits and keeps the transition time
-// across agent restarts. A failed write is logged, never fails the reconcile, and
-// is retried on the next read.
+// Node's heartbeat is older than a.heartbeat (or in the future). A steady Disabled
+// condition gets no heartbeat, so nodes with DT off cost no extra Node writes or
+// Machine reads. Comparing against the live Node (not memory) repairs external edits
+// and keeps the transition time across agent restarts. A failed write is logged,
+// never fails the reconcile, and is retried on the next read.
 func (a *hubMachineAdapter) reportCondition(ctx context.Context, current *corev1.NodeCondition, condition corev1.NodeCondition) {
 	if a.setCondition == nil {
 		return
 	}
 	now := a.now()
 	if current != nil && current.Status == condition.Status && current.Reason == condition.Reason && current.Message == condition.Message {
+		if condition.Reason == hubReasonDisabled {
+			return
+		}
 		if age := now.Sub(current.LastHeartbeatTime.Time); age >= 0 && age < a.heartbeat {
 			return
 		}
@@ -202,6 +207,8 @@ func currentHubCondition(node *corev1.Node) *corev1.NodeCondition {
 	return nil
 }
 
+const hubReasonDisabled = "Disabled"
+
 // hubConditionHelp leads to troubleshooting steps for each condition reason.
 // TODO: replace with the aka.ms link once it exists.
 const hubConditionHelp = "aka.ms/TODO"
@@ -215,7 +222,7 @@ func hubCondition(intent bool, err error) corev1.NodeCondition {
 	case err == nil && intent:
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionTrue, "Enabled", "YurtHub is serving kubelet."
 	case err == nil:
-		condition.Status, condition.Reason, condition.Message = corev1.ConditionFalse, "Disabled", "Disconnect tolerance is not enabled."
+		condition.Status, condition.Reason, condition.Message = corev1.ConditionFalse, hubReasonDisabled, "Disconnect tolerance is not enabled."
 	case errors.Is(err, yurthub.ErrUnsupportedWorker):
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionFalse, "Unsupported", "Disconnect tolerance is not supported on this node."+see
 	case errors.Is(err, yurthub.ErrPackageDownload):
@@ -250,6 +257,14 @@ func (a *hubMachineAdapter) backoff(key string, fixed time.Duration, err error) 
 
 func (a *hubMachineAdapter) reconcile(ctx context.Context, machine string, intent *bool) error {
 	machineDir := filepath.Join(a.machinesDir, machine)
+	store := fileHubTransitionStore{root: machineDir, path: hubWorkerJournal}
+	// A worker that never started a transition has nothing to disable. Skip
+	// building operations, which validate settings only enabling needs.
+	if !*intent {
+		if state, err := store.Load(ctx); err == nil && state == nil {
+			return nil
+		}
+	}
 	ops, err := a.operations(machineDir)
 	if err != nil {
 		return fmt.Errorf("create hub operations: %w", err)
@@ -257,7 +272,7 @@ func (a *hubMachineAdapter) reconcile(ctx context.Context, machine string, inten
 	if ops == nil {
 		return fmt.Errorf("hub operations are nil")
 	}
-	transition, err := newHubTransition(fileHubTransitionStore{root: machineDir, path: hubWorkerJournal}, ops)
+	transition, err := newHubTransition(store, ops)
 	if err != nil {
 		return err
 	}

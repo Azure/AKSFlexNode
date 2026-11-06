@@ -175,6 +175,46 @@ func TestHubAdapterFalseWithoutWorkerIsNoop(t *testing.T) {
 	}
 }
 
+// TestHubAdapterFalseWithoutJournalSkipsOperations: a worker that never started a
+// transition reports Disabled without building operations (which validate settings
+// only enabling needs) or writing anything, even if those settings are invalid or the
+// worker rootfs is missing.
+func TestHubAdapterFalseWithoutJournalSkipsOperations(t *testing.T) {
+	t.Parallel()
+	for name, machine := range map[string]string{"existing worker": "kube1", "missing worker rootfs": "kube2"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			adapter, machinesDir := newTestHubAdapter(t, &testHubOperations{})
+			if machine == "kube2" {
+				if err := os.RemoveAll(filepath.Join(machinesDir, machine)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			built := 0
+			adapter.operations = func(string) (hubTransitionOperations, error) {
+				built++
+				return nil, errors.New("invalid hub settings")
+			}
+			node, writes := liveNode(adapter)
+			disable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(false)}
+			for range 2 {
+				if err := adapter.ReconcileHub(t.Context(), disable, &State{ActiveMachine: machine}, node); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if built != 0 {
+				t.Fatalf("built hub operations %d times for a DT-off worker", built)
+			}
+			if len(*writes) != 1 || (*writes)[0].Reason != hubReasonDisabled {
+				t.Fatalf("condition writes = %+v, want one Disabled", *writes)
+			}
+			if _, err := os.Stat(filepath.Join(machinesDir, machine, hubWorkerJournal)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("DT-off worker got a journal: %v", err)
+			}
+		})
+	}
+}
+
 func TestHubAdapterRejectsInvalidState(t *testing.T) {
 	t.Parallel()
 	for name, state := range map[string]*State{"missing": nil, "invalid machine": {ActiveMachine: "kube3"}} {
@@ -256,12 +296,19 @@ func TestHubAdapterReportsNodeCondition(t *testing.T) {
 	if !written[1].LastTransitionTime.Equal(&written[0].LastTransitionTime) {
 		t.Fatal("transition time moved without a status change")
 	}
-	// After the heartbeat interval the same condition is refreshed, keeping its transition time.
+	// A steady Disabled condition gets no heartbeat, so DT-off nodes add no writes.
 	clock = clock.Add(adapter.heartbeat)
 	reconcile(false)
+	if written = *writes; len(written) != len(steps) {
+		t.Fatalf("Disabled condition refreshed: %+v", written[len(steps):])
+	}
+	// Enabled is refreshed after the heartbeat interval, keeping its transition time.
+	reconcile(true)
+	clock = clock.Add(adapter.heartbeat)
+	reconcile(true)
 	written = *writes
 	last, prev := written[len(written)-1], written[len(written)-2]
-	if len(written) != len(steps)+1 || !last.LastHeartbeatTime.After(prev.LastHeartbeatTime.Time) || !last.LastTransitionTime.Equal(&prev.LastTransitionTime) {
+	if len(written) != len(steps)+2 || last.Reason != "Enabled" || !last.LastHeartbeatTime.After(prev.LastHeartbeatTime.Time) || !last.LastTransitionTime.Equal(&prev.LastTransitionTime) {
 		t.Fatalf("heartbeat not refreshed correctly: %+v", written)
 	}
 }
@@ -455,10 +502,13 @@ func TestHubAdapterHeartbeatEdgeCases(t *testing.T) {
 		clock := time.Unix(1000, 0)
 		adapter.now = func() time.Time { return clock }
 		node, writes := liveNode(adapter)
+		enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
+		state := &State{ActiveMachine: "kube1"}
+		_ = adapter.ReconcileHub(t.Context(), enable, state, node)
+		*writes = nil
 		future := metav1.NewTime(clock.Add(time.Hour))
-		node.Status.Conditions = []corev1.NodeCondition{{Type: hubConditionType, Status: corev1.ConditionFalse, Reason: "Disabled",
-			Message: hubCondition(false, nil).Message, LastHeartbeatTime: future, LastTransitionTime: future}}
-		_ = adapter.ReconcileHub(t.Context(), aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(false)}, &State{ActiveMachine: "kube1"}, node)
+		node.Status.Conditions[0].LastHeartbeatTime, node.Status.Conditions[0].LastTransitionTime = future, future
+		_ = adapter.ReconcileHub(t.Context(), enable, state, node)
 		if len(*writes) != 1 || !(*writes)[0].LastHeartbeatTime.Time.Equal(clock) {
 			t.Fatalf("future heartbeat not corrected: %+v", *writes)
 		}
