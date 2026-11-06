@@ -23,10 +23,9 @@ import (
 )
 
 const (
-	agentUpgradeBinaryMode      = 0o755
-	agentUpgradeMaxArchiveBytes = 256 << 20
-	agentUpgradeMaxBinaryBytes  = 256 << 20
-	agentUpgradeLockPath        = "/run/aks-flex-node-agent-upgrade.lock"
+	agentUpgradeBinaryMode     = 0o755
+	agentUpgradeMaxBinaryBytes = 256 << 20
+	agentUpgradeLockPath       = "/run/aks-flex-node-agent-upgrade.lock"
 )
 
 type agentUpgradePaths struct {
@@ -243,14 +242,12 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 		return agentbinary.InstallOptions{}, err
 	}
 	return agentbinary.InstallOptions{
-		DownloadURL:       rawURL,
-		ExpectedSHA256:    expectedDigest,
-		ExpectedMember:    member,
-		Mode:              agentUpgradeBinaryMode,
-		MaxArchiveBytes:   agentUpgradeMaxArchiveBytes,
-		MaxExtractedBytes: agentUpgradeMaxBinaryBytes,
-		ExactMember:       true,
-		HTTPClient:        &http.Client{Timeout: 10 * time.Minute},
+		DownloadURL:    rawURL,
+		ExpectedSHA256: expectedDigest,
+		ExpectedMember: member,
+		Mode:           agentUpgradeBinaryMode,
+		ExactMember:    true,
+		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 

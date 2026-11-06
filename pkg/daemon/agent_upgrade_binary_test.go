@@ -80,9 +80,6 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if opts.ExpectedMember != wantMember {
 		t.Fatalf("ExpectedMember = %q, want %q", opts.ExpectedMember, wantMember)
 	}
-	if opts.MaxArchiveBytes != agentUpgradeMaxArchiveBytes || opts.MaxExtractedBytes != agentUpgradeMaxBinaryBytes {
-		t.Fatalf("size limits = %d, %d", opts.MaxArchiveBytes, opts.MaxExtractedBytes)
-	}
 	if !opts.ExactMember {
 		t.Fatal("ExactMember = false")
 	}
