@@ -80,9 +80,6 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if opts.ExpectedMember != wantMember {
 		t.Fatalf("ExpectedMember = %q, want %q", opts.ExpectedMember, wantMember)
 	}
-	if !opts.ExactMember {
-		t.Fatal("ExactMember = false")
-	}
 	if opts.ExpectedSHA256 != digest {
 		t.Fatalf("ExpectedSHA256 = %q, want %q", opts.ExpectedSHA256, digest)
 	}

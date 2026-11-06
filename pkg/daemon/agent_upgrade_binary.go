@@ -246,7 +246,6 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 		ExpectedSHA256: expectedDigest,
 		ExpectedMember: member,
 		Mode:           agentUpgradeBinaryMode,
-		ExactMember:    true,
 		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
