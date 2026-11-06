@@ -3,53 +3,18 @@ package yurthub
 
 import (
 	"bytes"
-	"context"
 	_ "embed"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
-	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const servicePath = "etc/systemd/system/aks-flex-yurthub.service"
 
 //go:embed assets/aks-flex-yurthub.service
 var serviceUnit []byte
-
-type stageTask struct {
-	machineDir string
-}
-
-// Stage installs dormant service assets in an already provisioned worker rootfs.
-// The Hub binary is downloaded only when RP enables disconnect tolerance (see
-// Operations.Prepare). This task performs no downloads, service operations, or
-// kubelet/Node changes.
-func Stage(machineDir string) phases.Task {
-	return &stageTask{machineDir: machineDir}
-}
-
-func (t *stageTask) Name() string { return "stage-yurthub" }
-
-func (t *stageTask) Do(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if !filepath.IsAbs(t.machineDir) {
-		return fmt.Errorf("yurthub worker rootfs must be an absolute path")
-	}
-	root, err := os.OpenRoot(t.machineDir)
-	if err != nil {
-		return fmt.Errorf("open yurthub worker rootfs: %w", err)
-	}
-	defer root.Close() //nolint:errcheck // read-only directory handle
-	if err := ensureStateDirs(root); err != nil {
-		return err
-	}
-	return stageService(root)
-}
 
 // ensureStateDirs creates Hub's state in this worker generation; repave starts
 // with a new rootfs, so cache and credentials never carry over.

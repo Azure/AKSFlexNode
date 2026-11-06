@@ -2,7 +2,6 @@ package yurthub
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,9 +31,8 @@ func TestStage(t *testing.T) {
 				writeFixture(t, filepath.Join(dir, path), content)
 			}
 
-			task := Stage(dir)
 			for range 2 {
-				if err := task.Do(t.Context()); err != nil {
+				if err := stageFiles(dir); err != nil {
 					t.Fatalf("Stage: %v", err)
 				}
 			}
@@ -99,7 +97,7 @@ func TestStageRejectsServiceConflict(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := Stage(dir).Do(t.Context()); err == nil {
+			if err := stageFiles(dir); err == nil {
 				t.Fatal("expected service conflict")
 			}
 			switch name {
@@ -123,7 +121,7 @@ func TestStageUpdatesOwnedService(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, filepath.Join(dir, servicePath), "previous Flex service version")
 	writeFixture(t, filepath.Join(dir, "etc/systemd/system/yurthub.service"), "independent service")
-	if err := Stage(dir).Do(t.Context()); err != nil {
+	if err := stageFiles(dir); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, servicePath))
@@ -145,7 +143,7 @@ func TestStageConfinesWritesToWorker(t *testing.T) {
 			if err := os.Symlink(outside, filepath.Join(dir, link)); err != nil {
 				t.Fatal(err)
 			}
-			if err := Stage(dir).Do(t.Context()); err == nil {
+			if err := stageFiles(dir); err == nil {
 				t.Fatal("expected rootfs escape rejection")
 			}
 			entries, err := os.ReadDir(outside)
@@ -161,7 +159,7 @@ func TestStageWorkerGenerationIsolation(t *testing.T) {
 	oldWorker, newWorker := t.TempDir(), t.TempDir()
 	writeFixture(t, filepath.Join(oldWorker, "var/lib/yurthub/cache/old-pod"), "old pod")
 	writeFixture(t, filepath.Join(oldWorker, "var/lib/yurthub/pki/old-cert"), "old certificate")
-	if err := Stage(newWorker).Do(t.Context()); err != nil {
+	if err := stageFiles(newWorker); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"var/lib/yurthub/cache", "var/lib/yurthub/pki"} {
@@ -172,24 +170,10 @@ func TestStageWorkerGenerationIsolation(t *testing.T) {
 	}
 }
 
-func TestStageCancelled(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := Stage(dir).Do(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Stage error = %v, want cancellation", err)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("cancelled staging wrote files: %v, %v", entries, err)
-	}
-}
-
 func TestServiceRequiresActivationConfiguration(t *testing.T) {
 	t.Parallel()
-	// Keep the dormant unit safe to stage on images that lack Hub and prevent
-	// accidentally baking a bootstrap token or network-dependent boot helper.
+	// The unit must not start before Prepare writes its configuration, and must
+	// not bake in a bootstrap token or a network-dependent boot helper.
 	unit := string(serviceUnit)
 	for _, required := range []string{
 		"ConditionPathExists=/etc/aks-flex-node/yurthub.env",
@@ -218,4 +202,17 @@ func writeFixture(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// stageFiles runs the staging Prepare does before it writes Hub's configuration.
+func stageFiles(dir string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck // directory handle
+	if err := ensureStateDirs(root); err != nil {
+		return err
+	}
+	return stageService(root)
 }

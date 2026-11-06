@@ -248,9 +248,9 @@ func TestOperationsPrepareRejectsMissingPrerequisites(t *testing.T) {
 	}
 }
 
-// TestOperationsDisableAfterEarlyFailure covers a worker provisioned by an
-// older agent (no staged unit) that receives true, fails before staging, then
-// receives false. The steps run in the engine's order.
+// TestOperationsDisableAfterEarlyFailure covers a worker without a staged unit
+// that receives true, fails before Prepare stages it, then receives false. The
+// steps run in the engine's order.
 func TestOperationsDisableAfterEarlyFailure(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(dir string) error{
