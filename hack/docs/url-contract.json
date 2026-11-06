@@ -154,6 +154,10 @@
       ]
     },
     {
+      "path": "docs/design/yurthub-agent-integration.md",
+      "protectAnchors": false
+    },
+    {
       "path": "docs/development.md",
       "protectAnchors": true,
       "anchors": [

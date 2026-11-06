@@ -1,0 +1,18 @@
+[Unit]
+Description=AKS Flex YurtHub
+Documentation=https://openyurt.io/docs/
+# Written by the agent when it enables Hub, after it installs the binary and
+# writes the configuration below.
+ConditionPathExists=/etc/aks-flex-node/yurthub.env
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aks-flex-node/yurthub.env
+ExecStart=/usr/local/bin/aks-flex-yurthub --root-dir=/var/lib/yurthub --disk-cache-path=/var/lib/yurthub/cache $YURTHUB_ARGS
+Restart=always
+RestartSec=5s
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

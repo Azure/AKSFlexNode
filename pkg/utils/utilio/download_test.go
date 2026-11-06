@@ -508,3 +508,34 @@ func TestDownloadToLocalFile_errorContainsWrappedMessage(t *testing.T) {
 		t.Fatalf("expected file not to exist after failed download")
 	}
 }
+
+func TestDownloadBytes(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, "12345")
+	}))
+	t.Cleanup(srv.Close)
+	tests := map[string]struct {
+		path    string
+		max     int64
+		want    string
+		wantErr bool
+	}{
+		"within limit": {path: "/", max: 5, want: "12345"},
+		"over limit":   {path: "/", max: 4, wantErr: true},
+		"bad status":   {path: "/missing", max: 5, wantErr: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := DownloadBytes(t.Context(), srv.URL+tt.path, tt.max)
+			if (err != nil) != tt.wantErr || string(got) != tt.want {
+				t.Fatalf("DownloadBytes = %q, %v; want %q, wantErr %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
