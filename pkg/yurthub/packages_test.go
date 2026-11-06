@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -188,6 +189,22 @@ func TestInstallBinary(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(dir, installedBinary)); err != nil || info.Mode().Perm() != 0o755 {
 		t.Fatalf("binary mode not repaired: %v, %v", info, err)
+	}
+	// A FIFO at the path neither blocks nor counts as installed.
+	if err := os.Remove(filepath.Join(dir, installedBinary)); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, installedBinary), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := installedSHA256(root); got != "" {
+		t.Fatalf("FIFO hashed as %q", got)
+	}
+	if _, err := installBinary(t.Context(), root, packages, "amd64", counted); err != nil {
+		t.Fatalf("replace FIFO: %v", err)
+	}
+	if info, err := os.Lstat(filepath.Join(dir, installedBinary)); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("FIFO not replaced: %v, %v", info, err)
 	}
 	// A stale or tampered binary is replaced with the pinned one.
 	if err := os.WriteFile(filepath.Join(dir, installedBinary), []byte("stale"), 0o755); err != nil {
