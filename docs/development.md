@@ -317,16 +317,16 @@ After the release pull request is merged, run the **Release** workflow from the 
 - Stable: `v0.3.0`
 - Prerelease: `v0.3.0-alpha.1`, `v0.3.0-beta.1`, or `v0.3.0-rc.1`
 
-Record the full commit SHA from an up-to-date `main` branch, then supply that same `target_sha` to both workflow runs:
+`target_sha` is optional. When omitted, the workflow builds the selected branch's commit at dispatch time (`main` for publishing), not a later branch tip. To select a commit explicitly, record its full SHA from an up-to-date `main` branch:
 
 ```bash
 git fetch origin main
 git rev-parse origin/main
 ```
 
-Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled and the same version and `target_sha`. The publishing run:
+Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, copy the full **Commit** SHA from its **Release validation** summary into `target_sha` for the publishing run, disable `dry_run`, and keep the same version. Omitting `target_sha` again resolves the branch commit independently and can select a different commit if `main` has advanced. The publishing run:
 
-1. Checks out the explicitly selected commit, verifies it is reachable from `main`, or verifies that an existing tag points to that commit when resuming a release.
+1. Checks out the resolved commit and verifies it is reachable from `main`. When resuming a release, it also verifies that the existing tag points to that commit.
 2. Validates the version and changelog.
 3. Verifies that the required build, test, lint, security, and code-quality checks passed for the selected commit.
 4. Builds release artifacts.
