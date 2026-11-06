@@ -11,9 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/flexcontroller"
 )
 
 func TestClusterEndpointClientGet(t *testing.T) {
@@ -299,4 +303,32 @@ func newTestClusterEndpointClient(t *testing.T, host, nodeName string) *clusterE
 		t.Fatalf("newClusterEndpointClient() error = %v", err)
 	}
 	return client
+}
+
+// Intent stored in the in-cluster controller's ConfigMap must survive the
+// controller's response, even though the SDK Machine model lacks the field.
+func TestClusterEndpointClientReadsIntentThroughController(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"true": true, "false": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			kube := fake.NewClientset(&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: flexcontroller.DefaultMachineConfigMapName, Namespace: flexcontroller.DefaultMachineConfigMapNamespace},
+				Data: map[string]string{"node1.json": `{"name":"node1","properties":{"eTag":"42","kubernetes":{"orchestratorVersion":"1.34.0"},` +
+					`"flexNodesProfile":{"disconnectTolerance":{"enabled":` + name + `}}}}`},
+			})
+			store := flexcontroller.NewConfigMapMachineStore(kube, flexcontroller.DefaultMachineConfigMapNamespace, flexcontroller.DefaultMachineConfigMapName)
+			controller := flexcontroller.NewServer(nil, store)
+			server := httptest.NewServer(http.StripPrefix("/api/v1/namespaces/kube-system/services/http:aks-flex-controller:80/proxy", controller.Handler()))
+			t.Cleanup(server.Close)
+
+			machine, err := newTestClusterEndpointClient(t, server.URL, "node1").Get(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := machine.Goal.DisconnectToleranceEnabled; got == nil || *got != want {
+				t.Fatalf("DisconnectToleranceEnabled = %v, want %v", got, want)
+			}
+		})
+	}
 }
