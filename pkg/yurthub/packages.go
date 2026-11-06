@@ -16,6 +16,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -292,13 +293,17 @@ func readLimited(r io.Reader, size int64) ([]byte, error) {
 }
 
 // installedSHA256 streams the installed binary so routine checks don't hold a
-// second copy in memory. Empty means absent or unreadable.
+// second copy in memory. Empty means absent, unreadable or not a regular file.
+// O_NONBLOCK keeps a FIFO at the path from blocking the daemon queue on open.
 func installedSHA256(root *os.Root) string {
-	f, err := root.Open(installedBinary)
+	f, err := root.OpenFile(installedBinary, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return ""
 	}
 	defer f.Close() //nolint:errcheck // read-only
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
 	h := sha256.New()
 	if _, err := io.Copy(h, io.LimitReader(f, maxBinaryBytes+1)); err != nil {
 		return ""
