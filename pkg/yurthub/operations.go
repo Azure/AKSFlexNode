@@ -198,14 +198,28 @@ func (o *Operations) Prepare(ctx context.Context) error {
 // Converge brings an enabled Hub's binary, arguments and unit up to this agent
 // and restarts Hub only if they differ from what it was last started with;
 // otherwise it checks readiness. It never touches kubelet or Node metadata.
+// If a newer pinned binary can't be downloaded, the running Hub keeps its
+// binary and Converge returns the download error once Hub is ready, so the
+// failed update is reported (Degraded) and retried with backoff.
 func (o *Operations) Converge(ctx context.Context) error {
+	updateErr, err := o.converge(ctx)
+	if err != nil {
+		return err
+	}
+	return updateErr
+}
+
+// converge does Converge's work. updateErr is a tolerated failure to install a
+// newer pin while the running Hub's files are intact; Route and Verify ignore it
+// so an update can't stall an enable in progress.
+func (o *Operations) converge(ctx context.Context) (updateErr, err error) {
 	root, err := os.OpenRoot(o.cfg.MachineDir)
 	if err != nil {
-		return fmt.Errorf("open worker rootfs: %w", err)
+		return nil, fmt.Errorf("open worker rootfs: %w", err)
 	}
 	defer root.Close() //nolint:errcheck // directory handle
 	if err := invalidateDriftedStart(root); err != nil {
-		return err
+		return nil, err
 	}
 	version, err := installBinary(ctx, root, o.packages, o.arch, o.fetch)
 	if errors.Is(err, ErrUnsupportedWorker) || errors.Is(err, ErrPackageDownload) {
@@ -213,29 +227,37 @@ func (o *Operations) Converge(ctx context.Context) error {
 		// binary may be missing or corrupt. Restarting would stop a Hub that
 		// still runs from the old file, so wait for a successful repair.
 		if !startedWithCurrentFiles(root) {
-			return fmt.Errorf("hub files changed and the binary could not be repaired: %w", err)
+			return nil, fmt.Errorf("hub files changed and the binary could not be repaired: %w", err)
 		}
 		o.cfg.Log.Warn("keeping the installed hub binary", "machine", o.machine, "reason", err.Error())
+		// No pin for this worker never downloads, so only a failed download is
+		// reported and paced.
+		if errors.Is(err, ErrPackageDownload) {
+			updateErr = fmt.Errorf("update hub binary: %w", err)
+		}
 	} else if err != nil {
-		return err
+		return nil, err
 	}
 	if err := o.ensureEnv(root); err != nil {
-		return err
+		return nil, err
 	}
 	if err := stageService(root); err != nil {
-		return err
+		return nil, err
 	}
 	if startedWithCurrentFiles(root) {
 		if err := o.waitReadyFor(ctx, o.probeTimeout); err != nil {
-			return fmt.Errorf("enabled hub is not ready: %w", err)
+			return nil, fmt.Errorf("enabled hub is not ready: %w", err)
 		}
-		return nil
+		return updateErr, nil
 	}
 	o.cfg.Log.Info("updating enabled hub", "machine", o.machine, "package", version)
 	if err := o.restartHub(ctx, root); err != nil {
-		return err
+		return nil, err
 	}
-	return o.waitReadyFor(ctx, o.readyTimeout)
+	if err := o.waitReadyFor(ctx, o.readyTimeout); err != nil {
+		return nil, err
+	}
+	return updateErr, nil
 }
 
 // restartHub reloads systemd, restarts Hub (starting it if stopped) and records
@@ -309,7 +331,7 @@ func (o *Operations) ensureEnv(root *os.Root) error {
 // converges Hub's files and checks Hub is ready and forwards a kubelet request:
 // a crash, retry or agent upgrade can resume at Route long after Prepare ran.
 func (o *Operations) Route(ctx context.Context) error {
-	if err := o.Converge(ctx); err != nil {
+	if _, err := o.converge(ctx); err != nil {
 		return fmt.Errorf("hub is not ready before routing kubelet: %w", err)
 	}
 	if err := o.getNodeThroughHub(ctx); err != nil {
@@ -325,7 +347,7 @@ func (o *Operations) Route(ctx context.Context) error {
 // Node metadata once. It is a connected check, not an initial-sync Ready gate.
 func (o *Operations) Verify(ctx context.Context) error {
 	// Converge first so a Verify resumed by a newer agent runs current files.
-	if err := o.Converge(ctx); err != nil {
+	if _, err := o.converge(ctx); err != nil {
 		return err
 	}
 	if err := o.expectKubeletArg(ctx, proxyKubeconfigArg); err != nil {

@@ -223,13 +223,15 @@ func hubCondition(intent bool, err error) corev1.NodeCondition {
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionTrue, "Enabled", "YurtHub is serving kubelet."
 	case err == nil:
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionFalse, hubReasonDisabled, "Disconnect tolerance is not enabled."
+	case errors.Is(err, errHubConverge):
+		// Hub was enabled and kubelet still routes through it, even if a repair
+		// or update download failed. Checked first so that isn't reported as an
+		// activation failure.
+		condition.Status, condition.Reason, condition.Message = corev1.ConditionTrue, "Degraded", "YurtHub is enabled but isn't healthy or up to date."+see
 	case errors.Is(err, yurthub.ErrUnsupportedWorker):
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionFalse, "Unsupported", "Disconnect tolerance is not supported on this node."+see
 	case errors.Is(err, yurthub.ErrPackageDownload):
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionFalse, "PackageDownloadFailed", "Could not download YurtHub from packages.microsoft.com."+see
-	case errors.Is(err, errHubConverge):
-		// Hub was enabled and kubelet still routes through it.
-		condition.Status, condition.Reason, condition.Message = corev1.ConditionTrue, "Degraded", "YurtHub is enabled but isn't healthy or up to date."+see
 	case intent:
 		condition.Status, condition.Reason, condition.Message = corev1.ConditionUnknown, "EnableFailed", "Enabling disconnect tolerance failed."+see
 	default:
