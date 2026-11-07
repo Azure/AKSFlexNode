@@ -7,11 +7,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -306,5 +309,33 @@ func TestInstallBinaryBoundsDownload(t *testing.T) {
 	}
 	if _, err := installBinary(t.Context(), root, packages, "amd64", bounded); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestPackageDownloadCancelsStalledResponseBody: headers arrive, then the body stalls;
+// the download deadline still ends it.
+func TestPackageDownloadCancelsStalledResponseBody(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); server.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := downloadPackage(ctx, server.URL)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled download returned %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("stalled download took %v", elapsed)
 	}
 }
