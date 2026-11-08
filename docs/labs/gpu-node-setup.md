@@ -7,9 +7,15 @@ How to add an NVIDIA GPU host to an AKS cluster as an AKS Flex Node.
 >
 > **Status:** Validated evaluation scenario
 >
-> **Last validated:** 2026-09-23 with `Standard_NC24ads_A100_v4` in `westus2`
+> **Last validated:** 2026-11-08 with a non-zonal `Standard_NC24ads_A100_v4` VM in `eastus2`
 >
-> **Version scope:** This lab pins AKS Flex Node `v0.2.0`. The host image, driver, kernel, and cluster GPU stack must be validated as one combination.
+> **Validated versions:** AKS `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, worker rootfs `v20261031`, NVIDIA driver `580.178.04`, and GPU Operator `v26.7.1`
+>
+> **Validated scope:** Host driver/MIG checks, managed-identity bootstrap, Azure Machine registration, Node readiness, GPU Operator/NFD health, one allocatable A100, a successful `nvidia-smi` Pod, reset, GPU-stack removal, and GPU VM/resource-group removal passed.
+>
+> **Validation toolchain:** Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, kubectl `1.36.2`, and Helm `3.19.0`
+>
+> **Version scope:** This procedure pins AKS Flex Node `v0.3.0` and GPU Operator `v26.7.1`. Validate the host image, driver, kernel, worker rootfs, and cluster GPU stack as one combination.
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -49,7 +55,7 @@ If the image has no driver, you own driver installation, signing for Secure Boot
 ### Image options
 
 1. **Ubuntu HPC marketplace image.** Use an Ubuntu 24.04 SKU and validate the selected image version in the target region and GPU family:
-   - `microsoft-dsvm/ubuntu-hpc/2404` — validated on `Standard_NC24ads_A100_v4` with image `24.04-v100:24.04.2026092201` and NVIDIA driver `580.178.04`.
+   - `microsoft-dsvm/ubuntu-hpc/2404-v100` — used on `Standard_NC24ads_A100_v4` with image version `24.04.2026092201` and NVIDIA driver `580.178.04`.
    - `microsoft-dsvm/ubuntu-hpc/2404-gb` — Grace/Blackwell variant; validate only with compatible hardware.
 2. **Custom prebaked image.** Bake the NVIDIA driver, Fabric Manager (multi-GPU SXM), and any required signed kernel modules. Most portable fallback because you own the contract.
 3. **Other GPU marketplace or partner images.** Treat as candidates to validate.
@@ -60,7 +66,7 @@ List and pin candidate Ubuntu HPC versions:
 
 ```bash
 az vm image list-skus --publisher microsoft-dsvm --offer ubuntu-hpc --location <region> --output table
-az vm image list --publisher microsoft-dsvm --offer ubuntu-hpc --sku "2404" --location <region> --all --output table
+az vm image list --publisher microsoft-dsvm --offer ubuntu-hpc --sku "2404-v100" --location <region> --all --output table
 ```
 
 ## Cluster GPU stack (manual)
@@ -75,8 +81,10 @@ After the Flex node is `Ready`, **you must install the cluster GPU stack yoursel
 AKS Flex Node already installs the NVIDIA container toolkit inside the nspawn worker. Disable both driver and toolkit management in GPU Operator:
 
 ```bash
+GPU_OPERATOR_VERSION="v26.7.1"
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
-helm install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
+helm upgrade --install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
+  --version "$GPU_OPERATOR_VERSION" \
   --set driver.enabled=false \
   --set toolkit.enabled=false \
   --set devicePlugin.enabled=true \
@@ -95,7 +103,7 @@ kubectl get clusterpolicy -o jsonpath='{.items[0].spec.driver.enabled}'  # expec
 kubectl get clusterpolicy -o jsonpath='{.items[0].spec.toolkit.enabled}' # expect: false
 ```
 
-If you skip this step, the node will be `Ready` but pods will not get GPUs.
+If you skip this step, the node will be `Ready` but pods will not get GPUs. Node Feature Discovery can also schedule on CPU nodes; restricted workers need mirrors for every GPU-stack image scheduled there, not just the CUDA workload image.
 
 > **Optional:** NVIDIA DRA driver exposes GPUs through Kubernetes Dynamic Resource Allocation (`DeviceClass` names such as `gpu.nvidia.com`, `mig.nvidia.com`). In DRA clusters, a node can have GPU labels and DRA devices even when legacy `nvidia.com/gpu` capacity is `0`. Install only if your workloads use DRA.
 
@@ -157,7 +165,7 @@ sudo -i
 
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export FLEX_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.2.0"
+export AKS_FLEX_NODE_VERSION="v0.3.0"
 
 install -d -m 0700 /run/aks-flex-node-bootstrap
 
@@ -166,13 +174,20 @@ curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
 
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+curl -fsSLo /run/aks-flex-node-bootstrap/checksums.txt \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+AGENT_SHA256="$(awk '$2 == "aks-flex-node-linux-amd64.tar.gz" {print $1}' /run/aks-flex-node-bootstrap/checksums.txt)"
+[[ "$AGENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
 
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --auth msi \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$FLEX_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION"
+  --agent-version "$AKS_FLEX_NODE_VERSION" \
+  --agent-sha256 "$AGENT_SHA256"
+
+rm -f /run/aks-flex-node-bootstrap/bootstrap.sh /run/aks-flex-node-bootstrap/checksums.txt
 ```
 
 Use `--msi-client-id` for a user-assigned identity. Use the corresponding Arc or service-principal command from the operator guide for a host that doesn't use Azure VM managed identity.
@@ -190,8 +205,11 @@ Before installing GPU Operator, confirm that the bootstrap output reports succes
 From your workstation:
 
 ```bash
+GPU_NODE_NAME="<gpu-flex-node-name>"
+kubectl wait --for=create "node/${GPU_NODE_NAME}" --timeout=60s
+kubectl wait --for=condition=Ready "node/${GPU_NODE_NAME}" --timeout=60s
 kubectl get nodes -o wide
-kubectl describe node <gpu-flex-node-name>
+kubectl describe node "$GPU_NODE_NAME"
 ```
 
 Continue when the node is `Ready`. Then install the cluster GPU stack from the **Cluster GPU stack (manual)** section. The host driver is local to the node; GPU Operator, Device Plugin, GFD, and optional DRA are cluster components.
@@ -230,16 +248,25 @@ spec:
         nvidia.com/gpu: 1
 ```
 
+Save the manifest as `nvidia-smi-validation.yaml`, replace the node name, and apply it from your Bash environment:
+
+```bash
+kubectl apply -f nvidia-smi-validation.yaml
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/nvidia-smi-validation --timeout=120s
+kubectl logs nvidia-smi-validation
+kubectl delete pod nvidia-smi-validation --wait=true --timeout=60s
+```
+
 Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels present, `nvidia.com/gpu: 1` allocatable, the validation Pod succeeds, and `nvidia-smi` lists the GPU.
 
 <a id="current-validation-blockers"></a>
 ## Validation result
 
-The successful 2026-09-23 run used:
+The successful 2026-11-08 run used:
 
-- AKS `1.36.2`, Unbounded `v0.8.0`, and AKS Flex Node `v0.2.0`;
-- `Standard_NC24ads_A100_v4` in `westus2`;
-- Ubuntu HPC `24.04-v100:24.04.2026092201` with NVIDIA driver `580.178.04`;
+- AKS `1.36.2`, Unbounded `v0.21.0`, and AKS Flex Node `v0.3.0`;
+- a non-zonal `Standard_NC24ads_A100_v4` in `eastus2`; family quota and the regional SKU offering were verified before allocation;
+- Ubuntu HPC `microsoft-dsvm:ubuntu-hpc:2404-v100:24.04.2026092201`, kernel `6.8.0-1067-azure`, and NVIDIA driver `580.178.04`;
 - a 256 GiB OS disk;
 - MIG disabled before bootstrap;
 - managed-identity online bootstrap;
@@ -271,4 +298,4 @@ The Flex Node became `Ready`, GPU Feature Discovery labeled the node as `NVIDIA-
 
 Remove validation workloads created for this lab. If the GPU stack was installed only for evaluation, remove it by following the NVIDIA operator or plugin documentation for the exact version you installed.
 
-To detach the Flex node, follow [Reset and uninstall](../usage/operations.md#reset-and-uninstall). Don't remove a shared cluster GPU stack while other GPU nodes depend on it.
+To detach the Flex node, follow [Reset and uninstall](../usage/operations.md#reset-and-uninstall). Delete an Azure GPU VM or its dedicated resource group after host cleanup to stop compute charges, and verify deletion. Don't remove a shared cluster GPU stack while other GPU nodes depend on it.

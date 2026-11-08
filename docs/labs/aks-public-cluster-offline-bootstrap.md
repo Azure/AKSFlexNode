@@ -1,80 +1,72 @@
 # AKS Flex Node With Offline Bootstrap Artifacts
 
-This lab shows how to join a Flex Node when the bootstrap binaries are served from an offline artifact source instead of public upstream URLs. The walkthrough uses a public AKS API server and the [public AKS + unbounded-net + VNet peering lab](aks-public-cluster-unbounded-net-vnet-peering.md) as the network and cluster base, but the same offline artifact flow also works with a private AKS cluster when the target VM can resolve and reach the private API endpoint.
+Join a Flex node using filesystem or local OCI bootstrap artifacts instead of public artifact endpoints. Use the [public VNet-peering lab](aks-public-cluster-unbounded-net-vnet-peering.md) for the cluster, Flex pool, host identity, and private Layer 3 underlay. The same artifact flow can use a private API endpoint when the host and your Bash environment can resolve and reach it.
 
 > [!IMPORTANT]
 > This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
 >
 > **Status:** Validated evaluation scenario
 >
-> **Last validated:** 2026-09-20
+> **Last validated:** 2026-11-08
 >
-> **Validated versions:** AKS Kubernetes `1.35.0`, Unbounded `v0.8.0`, and Ubuntu `24.04`
+> **Validated versions:** AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, rootfs `v20261031`, Ubuntu `24.04`, ORAS `1.3.2`, and registry `2.8.3`
 >
-> **Validated scope:** Prebuilt artifact download and checksum validation, filesystem bootstrap, VM-local OCI registry publication and bootstrap, Node readiness, local-registry workload smoke test, unjoin, and rejoin passed. Operator-managed runtime image mirroring remains scenario-specific and should be rechecked when image names change.
+> **Validated scope:** Filesystem and local OCI bootstrap, checksum/sandbox-image verification, pre-staged agent use, ARM identity access during artifact lockdown, canonical runtime pulls through loopback port `15000`, healthy networking/Gantry pods, Node readiness, bidirectional pod/ClusterIP/DNS traffic, exec/logs callbacks, unjoin/rejoin with new Node UIDs, smoke cleanup, and Azure resource-group removal passed. Public GitHub, GHCR, MCR, and Kubernetes artifact endpoints remained blocked on the Flex host.
 >
-> **Operator flow revalidated:** 2026-09-23 with AKS Kubernetes `1.35.8`, AKS Flex Node `v0.2.0`, and Unbounded `v0.8.0`; canonical GHCR and MCR pulls through the worker-local mirror and bidirectional cross-node pod traffic passed.
+> **Validation toolchain:** Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, and kubectl `1.36.2`
 >
 > **Host OS:** Ubuntu 24.04
 >
 > **Architecture:** amd64
 
-The lab changes the Flex VM bootstrap flow to use:
+Offline artifacts don't make the host air-gapped. Managed-identity bootstrap and the running daemon still need Azure Resource Manager (ARM), IMDS, and the AKS API. Install host packages, stage the agent and bootstrap script, and mirror runtime images before restricting artifact egress. Node Problem Detector is skipped when `bootstrap.offlineArtifacts.source` is set because the upstream bundle doesn't contain NPD.
 
-- Host prerequisites installed before the node is isolated.
-- A mirrored rootfs OCI image, either as a local OCI layout or in a registry reachable from the target VM.
-- A mirrored Unbounded bootstrap artifact bundle, either:
-  - as files on the target VM, or
-  - as an OCI artifact in a local registry running on the target VM.
-- `bootstrap.offlineArtifacts.source` in the AKS Flex Node config.
-- The Unbounded operator, with containerd registry mirrors on the offline Flex worker so operator-managed workloads keep their canonical GHCR and MCR image references.
-- An NSG allowlist that remains active throughout bootstrap and denies all other outbound destinations.
-
-The goal is to prove that bootstrap does not fetch Kubernetes, CRI, CNI, crictl, or required Flex-site runtime images from public upstream endpoints such as `dl.k8s.io`, GHCR, or MCR. The local registry in this lab intentionally uses plain HTTP on loopback for short-lived testing. Because the Flex worker's nspawn machine shares the host network namespace, containerd can reach that registry after registry-host `hosts.toml` files are installed in the active nspawn rootfs. This override is a temporary lab mechanism, not a recommended production registry configuration.
+The Unbounded operator retains ownership of networking, Gantry, and managed kube-proxy workloads. Keep their canonical image references; redirect this worker's pulls through containerd configuration rather than copying or patching DaemonSets.
 
 ## Prerequisites
 
-Start with the base public VNet-peered lab through these sections:
+Prepare the base lab through:
 
-1. [Create Resource Groups And Networks](aks-public-cluster-unbounded-net-vnet-peering.md#create-resource-groups-and-networks)
-2. [Create A Public No-CNI AKS Cluster](aks-public-cluster-unbounded-net-vnet-peering.md#create-a-public-no-cni-aks-cluster)
-3. [Create The Flex VM](aks-public-cluster-unbounded-net-vnet-peering.md#create-the-flex-vm) and verify SSH access.
+1. [Create resource groups and networks](aks-public-cluster-unbounded-net-vnet-peering.md#create-resource-groups-and-networks).
+2. [Create a public no-CNI AKS cluster](aks-public-cluster-unbounded-net-vnet-peering.md#create-a-public-no-cni-aks-cluster).
+3. [Create the Flex node pool](aks-public-cluster-unbounded-net-vnet-peering.md#create-the-flex-node-pool).
+4. [Create the Flex VM](aks-public-cluster-unbounded-net-vnet-peering.md#create-the-flex-vm), assign its pool-scoped role, and verify SSH access.
 
-Install and retain the Unbounded operator. It owns the networking controller, node DaemonSet, and managed kube-proxy workloads. The offline Flex worker redirects their canonical image references to its loopback registry through containerd `hosts.toml`; don't copy or replace operator-managed DaemonSets.
+Don't bootstrap the host yet. If you already joined it, [cordon, drain, and reset it](../usage/operations.md#reset-and-uninstall), then remove its Kubernetes Node before this bootstrap. Keep its ARM Machine and identity for rejoin.
 
-You also need the following tools in the connected preparation environment. The preparation environment can be the target VM before egress is restricted, or a separate staging host that can copy files into the target VM.
+Your Bash environment needs Azure CLI, `kubectl`, `jq`, SSH/SCP, `curl`, and `tar`. The connected preparation environment needs ORAS; local-registry mode also needs Podman or Docker on the target VM. Use a fresh or reset Ubuntu 24.04 amd64 host with root access.
 
-- `az`, `kubectl`, `jq`, `ssh`, `scp`
-- `aks-flex-node` installed on the target VM
-- `oras` for copying OCI images/artifacts and pulling filesystem artifacts.
-- `podman` or Docker on the target VM if using the local registry mode.
-
-This lab uses these example artifact versions:
+In your Bash environment, retrieve the pool's accepted patch version without printing bootstrap data:
 
 ```bash
 AKS_RG="<aks-resource-group>"
 CLUSTER_NAME="<aks-cluster-name>"
-AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
-KUBERNETES_VERSION="$(az aks nodepool show \
-  --resource-group "$AKS_RG" \
-  --cluster-name "$CLUSTER_NAME" \
-  --name "$AGENT_POOL_NAME" \
-  --query orchestratorVersion \
-  --output tsv)"
-KUBERNETES_VERSION_V="v${KUBERNETES_VERSION#v}"
-ROOTFS_IMAGE_UPSTREAM="ghcr.io/azure/agent-ubuntu2404:v20260619"
-ARTIFACT_TAG="v20260708-k8s-${KUBERNETES_VERSION_V}"
-ARTIFACT_BUNDLE_UPSTREAM="ghcr.io/azure/unbounded/bootstrap-artifacts:${ARTIFACT_TAG}"
-UNBOUNDED_VERSION="v0.8.0"
-UNBOUNDED_NODE_IMAGE_UPSTREAM="ghcr.io/azure/unbounded-net-node:${UNBOUNDED_VERSION}"
+AGENT_POOL_NAME="aksflexnodes"
+KUBERNETES_VERSION=$(az aks nodepool show -g "$AKS_RG" \
+  --cluster-name "$CLUSTER_NAME" --name "$AGENT_POOL_NAME" \
+  --query orchestratorVersion -o tsv)
+printf 'Pool Kubernetes version: %s\n' "$KUBERNETES_VERSION"
 ```
 
-Use a bundle tag that matches the Kubernetes version you configure for the Flex Node. AKS Flex Node accepts `components.kubernetes` with or without a leading `v`; the offline artifact template expands `.KubernetesVersion` with the leading `v`. In offline mode, the artifact manifest supplies the artifact versions used by bootstrap.
+Set these nonsecret artifact values in the preparation environment and on the target VM. Copy the pool version printed above:
+
+```bash
+KUBERNETES_VERSION="1.36.2"
+KUBERNETES_VERSION_V="v${KUBERNETES_VERSION#v}"
+UNBOUNDED_VERSION="v0.21.0"
+AKS_FLEX_NODE_VERSION="v0.3.0"
+ROOTFS_TAG="v20261031"
+ROOTFS_IMAGE_UPSTREAM="ghcr.io/azure/agent-ubuntu2404:${ROOTFS_TAG}"
+ARTIFACT_TAG="${UNBOUNDED_VERSION}-k8s-${KUBERNETES_VERSION_V}"
+ARTIFACT_BUNDLE_UPSTREAM="ghcr.io/azure/unbounded/bootstrap-artifacts:${ARTIFACT_TAG}"
+```
+
+The bundle must match the pool's full Kubernetes patch version. The agent expands `.KubernetesVersion` with a leading `v`; the bundle manifest supplies the bootstrap binary versions and checksums.
 
 <a id="install-unbounded-net-with-site-scoped-node-daemonsets"></a>
 ## Install The Unbounded Operator
 
-Install the versioned `kubectl-unbounded` plugin and let the operator own all generated workloads:
+In your API-connected Bash environment, install the versioned plugin:
 
 ```bash
 case "$(uname -m)" in
@@ -82,142 +74,127 @@ case "$(uname -m)" in
   aarch64|arm64) UNBOUNDED_ARCH=arm64 ;;
   *) echo "unsupported architecture" >&2; exit 1 ;;
 esac
-
 curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
   "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
+curl -fsSLo /tmp/unbounded-checksums.txt \
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt"
+(cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
+  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict)
 tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
 sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
+kubectl unbounded version
+kubectl unbounded install --timeout 60s
 
-kubectl unbounded install --timeout 5m
+kubectl unbounded site init --name flex-site \
+  --cluster-node-cidr 10.91.0.0/16 --cluster-pod-cidr 10.93.0.0/16 \
+  --node-cidr 10.92.0.0/16 --pod-cidr 10.95.0.0/16
 
-kubectl unbounded site init \
-  --name flex-site \
-  --cluster-node-cidr 10.91.0.0/16 \
-  --cluster-pod-cidr 10.93.0.0/16 \
-  --node-cidr 10.92.0.0/16 \
-  --pod-cidr 10.95.0.0/16
-```
+# site init creates gateway defaults; this topology uses node mesh instead.
+kubectl delete sitegatewaypoolassignments cluster flex-site
+kubectl delete gatewaypool gw-main
 
-Create private-L3 peering between the operator-created `cluster` Site and the Flex Site:
-
-```bash
 kubectl apply -f - <<'EOF'
 apiVersion: net.unbounded-cloud.io/v1alpha1
 kind: SitePeering
 metadata:
   name: cluster-flex-private-l3
 spec:
-  sites:
-  - cluster
-  - flex-site
+  sites: [cluster, flex-site]
   meshNodes: true
   tunnelProtocol: Auto
 EOF
 
-kubectl -n unbounded-system rollout status \
-  deployment/unbounded-net-controller --timeout=5m
-kubectl -n unbounded-system rollout status \
-  daemonset/unbounded-net-node --timeout=5m
+kubectl -n unbounded-system wait --for=create deployment/unbounded-net-controller --timeout=60s
+kubectl -n unbounded-system get pods -o wide
+kubectl -n unbounded-system rollout status deployment/unbounded-net-controller --timeout=60s
+kubectl -n unbounded-system rollout status daemonset/unbounded-net-node --timeout=60s
 kubectl get nodes -L unbounded-cloud.io/site -o wide
 ```
 
-At this point the existing AKS node pulls the canonical Unbounded-Net image from GHCR. When the Flex node joins, the same operator-managed DaemonSet targets it. Configure the Flex worker's registry mirrors after bootstrap so that containerd resolves the canonical GHCR and MCR references through the VM-local registry.
+The managed AKS node should become `Ready`. If a rollout stalls, inspect pods, events, and container logs before waiting again; use `--previous` for restarted containers.
 
 ## Install Host Prerequisites On The Target VM
 
-Offline artifact mode treats missing host packages as fatal during preflight because bootstrap cannot rely on public package repositories after the host is isolated. Install the host prerequisites while the target VM still has package repository access, or install them from your own internal package mirror.
-
-On the target VM:
+On the target VM, while package repositories remain reachable:
 
 ```bash
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  systemd-container \
-  curl \
-  nftables \
-  util-linux
-```
+  systemd-container curl tar jq nftables util-linux podman
 
-Install lab tooling separately. `jq` is used to patch the generated config, and local registry mode needs a container runtime such as `podman`:
-
-```bash
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y jq podman
-```
-
-Install `oras` if it is not already available. This lab uses `oras` for both the rootfs image copy and the bootstrap artifact bundle copy/pull, so `skopeo` is not required:
-
-```bash
 ORAS_VERSION="1.3.2"
-curl -fsSL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
-  -o /tmp/oras.tar.gz
-sudo tar -C /usr/local/bin -xzf /tmp/oras.tar.gz oras
+curl -fsSLo /tmp/oras_1.3.2_linux_amd64.tar.gz \
+  "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+curl -fsSLo /tmp/oras_1.3.2_checksums.txt \
+  "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt"
+(cd /tmp && awk '$2 == "oras_1.3.2_linux_amd64.tar.gz"' oras_1.3.2_checksums.txt | sha256sum --check --strict)
+sudo tar -C /usr/local/bin -xzf /tmp/oras_1.3.2_linux_amd64.tar.gz oras
 oras version
 ```
 
 <a id="generate-a-baseline-aks-flex-node-config"></a>
 ## Prepare The Host Identity
 
-Use the managed identity and Flex node pool from the base lab. Assign the VM principal Azure Kubernetes Service Flex Node Agent Role at the target ARM agent-pool scope and allow propagation before disconnecting public egress. The versioned bootstrap script retrieves fresh pool-issued bootstrap data; no client-side bootstrap RBAC or baseline config is required.
+Keep the VM's managed identity and pool-scoped Azure Kubernetes Service Flex Node Agent Role from the base lab. Allow role propagation before lockdown. Fresh `listBootstrapData` retrieval replaces client-side bootstrap RBAC and rendered baseline configuration.
 
-Record these values for the bootstrap step:
+As root on a fresh or reset target VM, stage the verified agent archive and bootstrap script before restricting egress:
 
 ```bash
+sudo -i
 AKS_RESOURCE_ID="<full-aks-resource-id>"
-AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
-AKS_FLEX_NODE_VERSION="v0.2.0"
+AGENT_POOL_NAME="aksflexnodes"
+AKS_FLEX_NODE_VERSION="v0.3.0"
+STAGE=/run/aks-flex-node-bootstrap
+install -d -m 0700 "$STAGE"
+
+curl -fsSLo "$STAGE/bootstrap.sh" \
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
+chmod 0700 "$STAGE/bootstrap.sh"
+bash -n "$STAGE/bootstrap.sh"
+curl -fsSLo "$STAGE/aks-flex-node-linux-amd64.tar.gz" \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/aks-flex-node-linux-amd64.tar.gz"
+curl -fsSLo "$STAGE/checksums.txt" \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+(cd "$STAGE" && awk '$2 == "aks-flex-node-linux-amd64.tar.gz"' checksums.txt | sha256sum --check --strict)
+tar -xzf "$STAGE/aks-flex-node-linux-amd64.tar.gz" -C "$STAGE"
+AGENT_BIN="$STAGE/aks-flex-node-linux-amd64"
+chmod 0700 "$AGENT_BIN"
+"$AGENT_BIN" version
 ```
+
+If a matching agent is already installed, retain it after reset, stage only `bootstrap.sh`, and set `AGENT_BIN=/opt/unbounded/agent/bin/aks-flex-node`. Don't overwrite an active managed binary layout. Both modes use `--installed-agent "$AGENT_BIN"`, avoiding archive downloads after lockdown; successful bootstrap installs the durable managed layout under `/opt/unbounded/agent`.
 
 ## Option A: Use A Filesystem Bootstrap Artifact Bundle
 
-In filesystem mode, the target VM reads bootstrap artifacts from a local directory or `file://` URL. The rootfs is also staged on the filesystem as a local OCI image layout and referenced with `oci-layout://`.
-
-This choice covers bootstrap artifacts only. Operator-managed networking pods still need a runtime image mirror. Complete **Start The Local Registry** and mirror the Unbounded-Net and kube-proxy images from Option B before restricting egress; you can omit Option B's rootfs and bootstrap-bundle copies.
-
-This mode makes bootstrap offline, but a permanently locked-down Flex node still needs a source for the Unbounded-Net and kube-proxy container images. Use the local registry runtime-image steps from Option B, or preload those images into containerd through another controlled mechanism.
+Filesystem mode reads bootstrap binaries from `file://` and the rootfs from a local OCI layout. Runtime networking and workload images still need the local mirror configured in Option B; you can omit Option B's rootfs and bootstrap-bundle copies.
 
 ### Stage The Rootfs Image As A Local OCI Layout
 
-Mirror the rootfs image into a local OCI layout while the VM still has egress, or perform this on a connected staging host and copy the OCI layout directory into the VM.
-
-On the target VM:
+On the connected preparation host or target VM before lockdown:
 
 ```bash
-ROOTFS_LAYOUT_DIR="/opt/aks-flex-node/offline/images/agent-ubuntu2404"
-ROOTFS_IMAGE_LOCAL="oci-layout://${ROOTFS_LAYOUT_DIR}:v20260619"
-
+ROOTFS_LAYOUT_DIR=/opt/aks-flex-node/offline/images/agent-ubuntu2404
+ROOTFS_TAG=v20261031
 sudo mkdir -p "$(dirname "$ROOTFS_LAYOUT_DIR")"
 sudo chown "$(id -u):$(id -g)" "$(dirname "$ROOTFS_LAYOUT_DIR")"
-
-oras copy \
-  --to-oci-layout \
-  "$ROOTFS_IMAGE_UPSTREAM" \
-  "${ROOTFS_LAYOUT_DIR}:v20260619"
+oras copy --to-oci-layout "$ROOTFS_IMAGE_UPSTREAM" "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}"
+oras manifest fetch --oci-layout "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}" >/dev/null
 ```
 
 ### Pull The Bootstrap Artifact Bundle To Files
 
-Pull the Unbounded bootstrap artifact bundle into the directory that the agent will read. The directory name is versioned so the config can use the `.KubernetesVersion` template value.
-
 ```bash
-ARTIFACTS_ROOT="/opt/aks-flex-node/offline/bootstrap-artifacts"
-ARTIFACTS_DIR="${ARTIFACTS_ROOT}/${KUBERNETES_VERSION_V}"
-
+ARTIFACTS_DIR="/opt/aks-flex-node/offline/bootstrap-artifacts/${KUBERNETES_VERSION_V}"
 sudo mkdir -p "$ARTIFACTS_DIR"
 sudo chown "$(id -u):$(id -g)" "$ARTIFACTS_DIR"
-
-oras pull \
-  --output "$ARTIFACTS_DIR" \
-  "$ARTIFACT_BUNDLE_UPSTREAM"
-
-find "$ARTIFACTS_DIR" -maxdepth 4 -type f | sort | head -50
+oras pull --output "$ARTIFACTS_DIR" "$ARTIFACT_BUNDLE_UPSTREAM"
+test -f "$ARTIFACTS_DIR/manifest.json"
+jq -e '.containerImages | length > 0' "$ARTIFACTS_DIR/manifest.json"
 ```
 
-The directory should contain `manifest.json` and the paths referenced by that manifest, such as Kubernetes binaries, checksums, containerd, runc, CNI, and crictl artifacts.
+Retain every file referenced by the manifest, including checksums and sandbox image archives. If you stage elsewhere, copy the complete directories to these paths on the target VM.
 
-<a id="patch-the-config-for-filesystem-mode"></a>
 ## Option B: Use A Local OCI Registry For Bootstrap And Flex-Site Runtime Artifacts
-
-In OCI registry mode, the rootfs image, bootstrap artifact bundle, Unbounded-Net node image, and Flex-site kube-proxy image are mirrored into an unauthenticated registry on the target VM. The first two are read by the host bootstrap process. The runtime images are pulled by containerd inside the nspawn worker after its loopback registry configuration is installed.
 
 ### Start The Local Registry
 
@@ -225,449 +202,294 @@ On the target VM:
 
 ```bash
 sudo podman run -d --name aks-flex-offline-registry --restart=always \
-  --network host \
-  -e REGISTRY_HTTP_ADDR=127.0.0.1:5000 \
+  --network host -e REGISTRY_HTTP_ADDR=127.0.0.1:15000 \
   docker.io/library/registry:2
-
-curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
+curl -fsS http://127.0.0.1:15000/v2/ >/dev/null
 ```
+
+Use port **15000**, not **5000**. Unbounded `v0.21.0` deploys Gantry's read-only mirror through host port `127.0.0.1:5000`; its CNI port mapping can intercept requests even when another process listens there. Uploads sent to Gantry return HTTP 405, and noncanonical manifest requests can return HTTP 503. Don't disable Gantry or replace operator-managed workloads to work around the conflict.
 
 <a id="mirror-bootstrap-and-flex-site-runtime-artifacts"></a>
 ### Mirror Bootstrap And Operator-Managed Runtime Artifacts
 
-On the workstation, obtain the exact kube-proxy image selected by the Unbounded-Net controller:
+In your Bash environment, capture the exact runtime references:
 
 ```bash
-KUBE_PROXY_IMAGE_UPSTREAM="$(kubectl -n unbounded-system get ds unbounded-net-kube-proxy-flex-site \
-  -o jsonpath='{.spec.template.spec.containers[?(@.name=="kube-proxy")].image}')"
-echo "$KUBE_PROXY_IMAGE_UPSTREAM"
+UNBOUNDED_NODE_IMAGE_UPSTREAM=$(kubectl -n unbounded-system get ds unbounded-net-node \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="node")].image}')
+KUBE_PROXY_IMAGE_UPSTREAM=$(kubectl -n unbounded-system get ds unbounded-net-kube-proxy-flex-site \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="kube-proxy")].image}')
+GANTRY_IMAGE_UPSTREAM=$(kubectl -n unbounded-system get ds gantry \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="gantry")].image}')
+printf '%s\n' "$UNBOUNDED_NODE_IMAGE_UPSTREAM" "$KUBE_PROXY_IMAGE_UPSTREAM" "$GANTRY_IMAGE_UPSTREAM"
 ```
 
-While the target VM still has egress to the public artifact sources, mirror all required content:
+Export those nonsecret references on the target VM, then mirror them while upstream registries remain reachable:
 
 ```bash
-KUBE_PROXY_IMAGE_UPSTREAM="<value printed by the workstation command above>"
-ROOTFS_IMAGE_LOCAL="127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619"
-ARTIFACT_BUNDLE_LOCAL="127.0.0.1:5000/aks-flex/bootstrap-artifacts:${ARTIFACT_TAG}"
-# Preserve the canonical repository paths. Containerd replaces only the
-# registry host when it resolves these images through the local mirror.
-UNBOUNDED_NODE_IMAGE_LOCAL="127.0.0.1:5000/${UNBOUNDED_NODE_IMAGE_UPSTREAM#*/}"
-KUBE_PROXY_IMAGE_LOCAL="127.0.0.1:5000/${KUBE_PROXY_IMAGE_UPSTREAM#*/}"
+UNBOUNDED_NODE_IMAGE_UPSTREAM="<captured-node-image>"
+KUBE_PROXY_IMAGE_UPSTREAM="<captured-kube-proxy-image>"
+GANTRY_IMAGE_UPSTREAM="<captured-gantry-image>"
+ROOTFS_IMAGE_LOCAL=127.0.0.1:15000/aks-flex/rootfs/agent-ubuntu2404:v20261031
+ARTIFACT_BUNDLE_LOCAL="127.0.0.1:15000/aks-flex/bootstrap-artifacts:${ARTIFACT_TAG}"
 
+# Omit these two copies when using filesystem bootstrap artifacts.
 oras copy --to-plain-http "$ROOTFS_IMAGE_UPSTREAM" "$ROOTFS_IMAGE_LOCAL"
 oras copy --to-plain-http "$ARTIFACT_BUNDLE_UPSTREAM" "$ARTIFACT_BUNDLE_LOCAL"
-oras copy --to-plain-http "$UNBOUNDED_NODE_IMAGE_UPSTREAM" "$UNBOUNDED_NODE_IMAGE_LOCAL"
-oras copy --to-plain-http "$KUBE_PROXY_IMAGE_UPSTREAM" "$KUBE_PROXY_IMAGE_LOCAL"
 
-for ref in \
-  "$ROOTFS_IMAGE_LOCAL" \
-  "$ARTIFACT_BUNDLE_LOCAL" \
-  "$UNBOUNDED_NODE_IMAGE_LOCAL" \
-  "$KUBE_PROXY_IMAGE_LOCAL"; do
-  oras manifest fetch --plain-http "$ref" >/dev/null
-  echo "mirrored $ref"
+# Preserve each canonical repository path; containerd replaces only its host.
+for image in "$UNBOUNDED_NODE_IMAGE_UPSTREAM" "$KUBE_PROXY_IMAGE_UPSTREAM" \
+  "$GANTRY_IMAGE_UPSTREAM" docker.io/library/busybox:1.36; do
+  local_image="127.0.0.1:15000/${image#*/}"
+  oras copy --to-plain-http "$image" "$local_image"
+  oras manifest fetch --plain-http "$local_image" >/dev/null
 done
 ```
 
-The offline bundle manifest should include the sandbox image archive required by containerd. Verify it before lockdown:
+If the VM never has public artifact access, copy complete OCI layouts from a connected staging host with `oras copy --to-oci-layout`, transfer them to the VM, and publish with `oras copy --from-oci-layout --to-plain-http`. Don't copy partial OCI blobs or change operator image references.
 
-```bash
-rm -rf /tmp/bootstrap-artifacts-check
-oras pull --plain-http \
-  --output /tmp/bootstrap-artifacts-check \
-  "$ARTIFACT_BUNDLE_LOCAL"
-
-jq '.containerImages' /tmp/bootstrap-artifacts-check/manifest.json
-```
-
-If the target VM is never allowed to reach public registries, perform the mirror in a connected staging environment, move the registry contents or exported OCI artifacts into the target network, and restore them into the local registry before continuing.
-
-<a id="patch-the-config-for-local-registry-mode"></a>
 ## Restrict Egress After Staging
 
-After the host packages, bootstrap content, and Flex-site runtime images are staged locally, apply the outbound lockdown before running preflight or bootstrap. Use NSG rules, Azure Firewall, UDRs, or equivalent subnet-level controls that remain active while `aks-flex-node start` runs.
-
-The target VM still needs to reach:
-
-- The AKS API server over HTTPS 443.
-- Any control-plane or node networking paths required by the base VNet peering lab.
-- The local registry on `127.0.0.1:5000` if using local registry mode.
-- The local rootfs OCI layout path if using filesystem mode.
-
-For a strict validation, block public artifact endpoints such as:
-
-```text
-dl.k8s.io
-github.com
-objects.githubusercontent.com
-github-releases.githubusercontent.com
-pkg-containers.githubusercontent.com
-ghcr.io
-storage.googleapis.com
-packages.microsoft.com
-mcr.microsoft.com
-registry.k8s.io
-```
+Allow the AKS API, ARM, IMDS, Azure platform DNS, and the base lab's private node underlay. Deny other artifact destinations before bootstrap. Loopback registry traffic doesn't traverse an Azure NSG.
 
 ### Preflight-Only Host-Level Block With nftables
 
-For a quick preflight-only sanity check, add temporary host firewall rules on the target VM after all packages, images, and artifacts are staged. This blocks the currently resolved IPs for common public artifact hosts while leaving the AKS API server and the loopback registry reachable.
-
-Do not rely on these host-level `nftables` rules as the strict bootstrap isolation mechanism. During `start`, AKS Flex Node installs and starts an nftables reset unit that runs `flush ruleset`, so rules created before bootstrap are intentionally removed. Use the NSG or Azure Firewall option below for isolation that remains in effect during bootstrap.
+Host-level rules are useful only for a preflight sanity check: bootstrap starts an nftables reset unit that flushes them. Don't use them to claim persistent isolation. On the target VM, create this temporary table only when it doesn't already exist:
 
 ```bash
 BLOCKED_ARTIFACT_HOSTS=(
-  dl.k8s.io
-  github.com
-  objects.githubusercontent.com
-  github-releases.githubusercontent.com
-  pkg-containers.githubusercontent.com
-  ghcr.io
-  storage.googleapis.com
-  packages.microsoft.com
-  mcr.microsoft.com
-  registry.k8s.io
+  dl.k8s.io github.com objects.githubusercontent.com
+  github-releases.githubusercontent.com pkg-containers.githubusercontent.com
+  ghcr.io storage.googleapis.com packages.microsoft.com
+  mcr.microsoft.com registry.k8s.io
 )
-
-sudo nft add table inet aksflex_offline 2>/dev/null || true
-sudo nft 'add set inet aksflex_offline blocked_v4 { type ipv4_addr; flags interval; }' 2>/dev/null || true
-sudo nft 'add chain inet aksflex_offline output { type filter hook output priority 0; policy accept; }' 2>/dev/null || true
-sudo nft 'add rule inet aksflex_offline output ip daddr @blocked_v4 tcp dport { 80, 443 } reject' 2>/dev/null || true
-
+sudo nft add table inet aksflex_offline
+sudo nft 'add set inet aksflex_offline blocked_v4 { type ipv4_addr; flags interval; }'
+sudo nft 'add chain inet aksflex_offline output { type filter hook output priority 0; policy accept; }'
+sudo nft 'add rule inet aksflex_offline output ip daddr @blocked_v4 tcp dport { 80, 443 } reject'
 for host in "${BLOCKED_ARTIFACT_HOSTS[@]}"; do
-  getent ahostsv4 "$host" | awk '{print $1}' | sort -u | while read -r ip; do
-    sudo nft add element inet aksflex_offline blocked_v4 "{ ${ip} }" 2>/dev/null || true
-  done
+  getent ahostsv4 "$host"
+done | awk '{print $1}' | sort -u | while read -r ip; do
+  sudo nft add element inet aksflex_offline blocked_v4 "{ ${ip} }"
 done
-
 sudo nft list table inet aksflex_offline
 ```
 
-These rules are intentionally temporary and IP-based. Public artifact hostnames often use CDNs, so DNS answers can change. Re-run the resolver loop if the validation runs much later. For strict bootstrap validation, use subnet-level controls such as NSG rules or Azure Firewall application rules.
-
-Remove the temporary rules with:
-
-```bash
-sudo nft delete table inet aksflex_offline
-```
+CDN addresses can change, and different hosts can share an address. Remove the table with `sudo nft delete table inet aksflex_offline` before recreating it. Use the NSG controls below for complete bootstrap and workload isolation.
 
 ### Persistent Lockdown With NSG Rules
 
-NSGs cannot filter arbitrary FQDNs. For a strict lab validation, allow only the AKS API, the AKS VNet underlay, and required Azure platform addresses, then deny every other destination. A final `Deny *` is stricter than denying only the `Internet` service tag, which can have unintuitive behavior for public addresses hosted in Azure.
-
-Confirm that the NSG is associated with the Flex VM NIC or subnet before relying on these rules. The following creates and attaches a NIC-level NSG when the VM does not already have one:
+Run Azure commands in your Bash environment. Use the NSG actually attached to the target VM, not an unrelated name:
 
 ```bash
 VM_RG="<vm-resource-group>"
 VM_NAME="<flex-vm-name>"
-NSG_NAME="<flex-vm-nsg-name>"
-NIC_ID="$(az vm show -g "$VM_RG" -n "$VM_NAME" \
-  --query 'networkProfile.networkInterfaces[0].id' -o tsv)"
-
-if [[ -z "$(az network nic show --ids "$NIC_ID" --query networkSecurityGroup.id -o tsv)" ]]; then
-  az network nsg create -g "$VM_RG" -n "$NSG_NAME"
-  az network nic update --ids "$NIC_ID" --network-security-group "$NSG_NAME"
+NIC_ID=$(az vm show -g "$VM_RG" -n "$VM_NAME" \
+  --query 'networkProfile.networkInterfaces[0].id' -o tsv)
+NSG_ID=$(az network nic show --ids "$NIC_ID" --query networkSecurityGroup.id -o tsv)
+if [[ -z "$NSG_ID" ]]; then
+  NSG_NAME=aks-flex-offline-nsg
+  az network nsg create -g "$VM_RG" -n "$NSG_NAME" --output none
+  az network nic update --ids "$NIC_ID" --network-security-group "$NSG_NAME" --output none
+  NSG_RG="$VM_RG"
+else
+  NSG_NAME="${NSG_ID##*/}"
+  NSG_RG=$(printf '%s' "$NSG_ID" | cut -d/ -f5)
 fi
-
 az network nic list-effective-nsg --ids "$NIC_ID" -o table
-```
 
-Resolve every current IPv4 address for the public AKS API and add them to the allow rule:
-
-```bash
-AKS_VNET_CIDR="10.91.0.0/16"
-AKS_API_FQDN="$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query fqdn -o tsv)"
+AKS_API_FQDN=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query fqdn -o tsv)
 mapfile -t AKS_API_IPS < <(getent ahostsv4 "$AKS_API_FQDN" | awk '{print $1}' | sort -u)
+[[ ${#AKS_API_IPS[@]} -gt 0 ]] || exit 1
 
-az network nsg rule create \
-  -g "$VM_RG" --nsg-name "$NSG_NAME" -n allow-aks-api \
+az network nsg rule create -g "$NSG_RG" --nsg-name "$NSG_NAME" -n allow-aks-api \
   --priority 300 --direction Outbound --access Allow --protocol Tcp \
   --source-address-prefixes '*' --source-port-ranges '*' \
-  --destination-address-prefixes "${AKS_API_IPS[@]}" \
-  --destination-port-ranges 443
-
-az network nsg rule create \
-  -g "$VM_RG" --nsg-name "$NSG_NAME" -n allow-aks-vnet \
+  --destination-address-prefixes "${AKS_API_IPS[@]}" --destination-port-ranges 443
+az network nsg rule create -g "$NSG_RG" --nsg-name "$NSG_NAME" -n allow-aks-vnet \
   --priority 310 --direction Outbound --access Allow --protocol '*' \
   --source-address-prefixes '*' --source-port-ranges '*' \
-  --destination-address-prefixes "$AKS_VNET_CIDR" \
-  --destination-port-ranges '*'
-
-# Azure DNS and VM agent wire-server endpoint.
-az network nsg rule create \
-  -g "$VM_RG" --nsg-name "$NSG_NAME" -n allow-azure-platform \
+  --destination-address-prefixes 10.91.0.0/16 --destination-port-ranges '*'
+az network nsg rule create -g "$NSG_RG" --nsg-name "$NSG_NAME" -n allow-azure-platform \
   --priority 320 --direction Outbound --access Allow --protocol '*' \
   --source-address-prefixes '*' --source-port-ranges '*' \
-  --destination-address-prefixes 168.63.129.16 \
-  --destination-port-ranges '*'
-
-# Azure Instance Metadata Service.
-az network nsg rule create \
-  -g "$VM_RG" --nsg-name "$NSG_NAME" -n allow-imds \
+  --destination-address-prefixes 168.63.129.16 --destination-port-ranges '*'
+az network nsg rule create -g "$NSG_RG" --nsg-name "$NSG_NAME" -n allow-imds \
   --priority 330 --direction Outbound --access Allow --protocol '*' \
   --source-address-prefixes '*' --source-port-ranges '*' \
-  --destination-address-prefixes 169.254.169.254 \
-  --destination-port-ranges '*'
-
-az network nsg rule create \
-  -g "$VM_RG" --nsg-name "$NSG_NAME" -n deny-all-egress \
+  --destination-address-prefixes 169.254.169.254 --destination-port-ranges '*'
+az network nsg rule create -g "$NSG_RG" --nsg-name "$NSG_NAME" -n allow-arm \
+  --priority 340 --direction Outbound --access Allow --protocol Tcp \
+  --source-address-prefixes '*' --source-port-ranges '*' \
+  --destination-address-prefixes AzureResourceManager --destination-port-ranges 443
+az network nsg rule create -g "$NSG_RG" --nsg-name "$NSG_NAME" -n deny-all-egress \
   --priority 4000 --direction Outbound --access Deny --protocol '*' \
   --source-address-prefixes '*' --source-port-ranges '*' \
-  --destination-address-prefixes '*' \
-  --destination-port-ranges '*'
+  --destination-address-prefixes '*' --destination-port-ranges '*'
+az network nsg rule list -g "$NSG_RG" --nsg-name "$NSG_NAME" -o table
 ```
 
-The local registry uses loopback and does not traverse the NSG. Preserve any additional explicit allows required by your Azure environment. Public AKS API addresses can change; this IP allowlist is suitable for a bounded lab. Use Azure Firewall FQDN rules for a durable public-API deployment. For a private AKS cluster, allow the private API and required VNet/private-endpoint ranges instead.
+Retain approved SSH access and any additional platform allows required by your environment. For a private cluster, allow its private API/underlay ranges instead. Public API addresses can change; use an FQDN-aware firewall for durable public-endpoint policy.
 
-After NSG propagation, verify from the target VM that the API and local registry remain reachable while public registries are blocked:
+After propagation, test from the target VM:
 
 ```bash
-curl -k -sS --connect-timeout 10 -o /dev/null -w 'AKS API: %{http_code}\n' \
-  "https://${AKS_API_FQDN}:443"
-curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
-
+AKS_API_FQDN="<public-aks-fqdn>"
+curl -k -sS --connect-timeout 10 --max-time 15 -o /dev/null \
+  -w 'AKS API: %{http_code}\n' "https://${AKS_API_FQDN}:443"
+curl -fsS http://127.0.0.1:15000/v2/ >/dev/null
 for url in https://dl.k8s.io https://ghcr.io https://mcr.microsoft.com https://github.com; do
-  if curl -fsS --connect-timeout 5 --max-time 8 "$url" >/dev/null; then
-    echo "unexpectedly reachable: $url"
+  if curl -sS --connect-timeout 5 --max-time 8 -o /dev/null "$url"; then
+    echo "unexpectedly reachable: $url" >&2
     exit 1
   fi
   echo "blocked: $url"
 done
 ```
 
-An unauthenticated AKS API response is normally HTTP 401 and proves network reachability.
+The API should return HTTP 401 without credentials. Artifact requests must fail to connect; an HTTP 401 or 403 from a registry still proves reachability, so don't use `curl -f` for this blocked-egress check.
 
 <a id="install-the-config-and-run-preflight"></a>
 <a id="bootstrap-the-node"></a>
 ## Bootstrap The Node With Offline Overrides
 
-On the target VM, download the version-matched bootstrap script before enforcing the artifact egress restrictions, or transfer the reviewed script from the connected staging environment:
+As root on the target VM, choose one source:
+
+<a id="patch-the-config-for-filesystem-mode"></a>
 
 ```bash
-sudo -i
-
-export AKS_RESOURCE_ID="<full-aks-resource-id>"
-export AGENT_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.2.0"
-
-install -d -m 0700 /run/aks-flex-node-bootstrap
-curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
-  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
-chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
-bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+# Filesystem rootfs and bootstrap binaries:
+bash /run/aks-flex-node-bootstrap/bootstrap.sh \
+  --installed-agent "$AGENT_BIN" \
+  --auth msi --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" --agent-pool-name "$AGENT_POOL_NAME" \
+  --agent-version v0.3.0 \
+  --bootstrap-oci-image 'oci-layout:///opt/aks-flex-node/offline/images/agent-ubuntu2404:v20261031' \
+  --bootstrap-offline-artifacts-source 'file:///opt/aks-flex-node/offline/bootstrap-artifacts/{{ .KubernetesVersion }}'
 ```
 
-For filesystem bootstrap artifacts, run:
+<a id="patch-the-config-for-local-registry-mode"></a>
+
+Or use the local registry for both:
 
 ```bash
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
-  --auth msi \
-  --fetch-bootstrap-data \
-  --cluster-resource-id "$AKS_RESOURCE_ID" \
-  --agent-pool-name "$AGENT_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION" \
-  --bootstrap-oci-image "oci-layout:///opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619" \
-  --bootstrap-offline-artifacts-source "file:///opt/aks-flex-node/offline/bootstrap-artifacts/{{ .KubernetesVersion }}"
+  --installed-agent "$AGENT_BIN" \
+  --auth msi --fetch-bootstrap-data \
+  --cluster-resource-id "$AKS_RESOURCE_ID" --agent-pool-name "$AGENT_POOL_NAME" \
+  --agent-version v0.3.0 \
+  --bootstrap-oci-image '127.0.0.1:15000/aks-flex/rootfs/agent-ubuntu2404:v20261031' \
+  --bootstrap-offline-artifacts-source 'oci://127.0.0.1:15000/aks-flex/bootstrap-artifacts:v0.21.0-k8s-{{ .KubernetesVersion }}'
 ```
 
-For local-registry bootstrap artifacts, run:
-
-```bash
-bash /run/aks-flex-node-bootstrap/bootstrap.sh \
-  --auth msi \
-  --fetch-bootstrap-data \
-  --cluster-resource-id "$AKS_RESOURCE_ID" \
-  --agent-pool-name "$AGENT_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION" \
-  --bootstrap-oci-image "127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619" \
-  --bootstrap-offline-artifacts-source "oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-{{ .KubernetesVersion }}"
-```
-
-The script fetches fresh AKS pool data, applies the offline artifact overrides, runs preflight, registers the Machine, provisions the nspawn worker, and starts the node. Remove the transient script after successful bootstrap:
-
-```bash
-rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
-```
+Bootstrap retrieves pool data through ARM, performs preflight, ensures the Machine, provisions the worker, and starts the daemon. The Node can remain `NotReady` until its runtime mirror is configured below.
 
 <a id="configure-nspawn-containerd-for-the-temporary-local-http-registry"></a>
 ## Configure Nspawn Containerd To Use The Local Mirror
 
-> **Testing only:** The `hosts.toml` files below permit plain-HTTP image pulls from a loopback registry. Use them only for this isolated, short-lived lab. Production environments should use an HTTPS registry whose certificate is already trusted by the nspawn rootfs.
+> [!WARNING]
+> Plain HTTP is for this isolated loopback test only. Use a trusted HTTPS registry and durable worker provisioning outside the lab.
 
-The nspawn worker shares the host network namespace, including loopback, but has its own filesystem and containerd configuration. Confirm the namespace relationship and registry reachability on the target VM:
-
-```bash
-MACHINE="$(machinectl list --no-legend --no-pager | awk '$1 ~ /^kube[12]$/ {print $1; exit}')"
-LEADER="$(machinectl show "$MACHINE" -p Leader --value)"
-
-echo "host netns:    $(readlink /proc/1/ns/net)"
-echo "machine netns: $(readlink "/proc/${LEADER}/ns/net")"
-
-sudo nsenter -t "$LEADER" -n -m -u -i \
-  curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
-```
-
-Containerd is already configured with `config_path = "/etc/containerd/certs.d"`. Redirect the canonical runtime registry hosts to the loopback mirror while preserving each image's repository path and tag:
+The worker shares the host network namespace but has a separate filesystem. On the target VM, find the active machine and set per-registry mirrors:
 
 ```bash
-for registry in ghcr.io mcr.microsoft.com; do
-  CERTS_DIR="/var/lib/machines/${MACHINE}/etc/containerd/certs.d/${registry}"
+MACHINE=$(sudo jq -r .activeMachine /etc/aks-flex-node/daemon-state.json)
+case "$MACHINE" in kube1|kube2) ;; *) exit 1 ;; esac
+LEADER=$(machinectl show "$MACHINE" -p Leader --value)
+for registry in ghcr.io mcr.microsoft.com docker.io; do
+  CERTS_DIR="/proc/${LEADER}/root/etc/containerd/certs.d/${registry}"
   sudo install -d -m 0755 "$CERTS_DIR"
-  sudo tee "$CERTS_DIR/hosts.toml" >/dev/null <<'EOF'
-server = "https://REGISTRY_HOST"
-
-[host."http://127.0.0.1:5000"]
-  capabilities = ["pull", "resolve"]
-EOF
-  sudo sed -i "s/REGISTRY_HOST/${registry}/g" "$CERTS_DIR/hosts.toml"
+  printf 'server = "https://%s"\n\n[host."http://127.0.0.1:15000"]\n  capabilities = ["pull", "resolve"]\n' "$registry" | \
+    sudo tee "$CERTS_DIR/hosts.toml" >/dev/null
 done
-
 sudo systemctl -M "$MACHINE" restart containerd
 sudo systemctl -M "$MACHINE" is-active containerd
-```
 
-Validate canonical pulls through CRI. These commands retain the operator-managed image references; the worker-local `hosts.toml` files redirect only this worker to the mirror:
-
-```bash
-KUBE_PROXY_IMAGE_UPSTREAM="<value captured before egress lockdown>"
-
-sudo machinectl shell "$MACHINE" \
+sudo systemd-run --machine="$MACHINE" --pipe --wait --collect \
   /usr/local/bin/crictl pull "$UNBOUNDED_NODE_IMAGE_UPSTREAM"
-sudo machinectl shell "$MACHINE" \
+sudo systemd-run --machine="$MACHINE" --pipe --wait --collect \
   /usr/local/bin/crictl pull "$KUBE_PROXY_IMAGE_UPSTREAM"
+sudo systemd-run --machine="$MACHINE" --pipe --wait --collect \
+  /usr/local/bin/crictl pull "$GANTRY_IMAGE_UPSTREAM"
 ```
+
+Per-registry files take precedence over Gantry's default containerd mirror. This configuration belongs only to the active rootfs; repave doesn't copy it to the new side. Recreate it for lab rejoin or use durable provisioning with a trusted mirror.
 
 <a id="deploy-the-offline-flex-site-networking-daemonsets"></a>
-The operator reconciles a single `unbounded-net-node` DaemonSet and its managed site kube-proxy DaemonSet. Do not copy, rename, or patch those workloads. Once the mirrored pulls succeed, kubelet retries any pods that entered `ImagePullBackOff` before the mirror was configured:
+In your Bash environment, verify convergence without patching DaemonSets:
 
 ```bash
-kubectl -n unbounded-system rollout status \
-  daemonset/unbounded-net-node --timeout=5m
-kubectl -n unbounded-system rollout status \
-  daemonset/unbounded-net-kube-proxy-flex-site --timeout=5m
-
-kubectl -n unbounded-system get daemonsets,pods -o wide
-kubectl get nodes -L unbounded-cloud.io/site -o wide
+FLEX_NODE_NAME="<flex-node-name>"
+kubectl wait --for=create "node/${FLEX_NODE_NAME}" --timeout=60s
+kubectl wait --for=condition=Ready "node/${FLEX_NODE_NAME}" --timeout=60s
+kubectl -n unbounded-system get pods -o wide
+kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=60s
+kubectl -n unbounded-system rollout status ds/unbounded-net-kube-proxy-flex-site --timeout=60s
+kubectl -n unbounded-system rollout status ds/gantry --timeout=60s
 ```
-
-This configuration belongs only to the active `kube1` or `kube2` rootfs. A blue-green repave does not carry it to the new side. Recreate it only when repeating this plain-HTTP test; use a trusted HTTPS mirror and durable provisioning for production.
 
 ## Validate That Offline Artifacts Were Used
 
-On the target VM, inspect the agent log:
+Check preflight/bootstrap output for the selected local rootfs and artifact source, successful checksum verification and sandbox image import, and the offline NPD warning. Don't print the credential-bearing runtime configuration.
 
-```bash
-sudo grep -E 'pulling OCI image|downloading (kubernetes|cri-tools)|bootstrap-artifacts|dl.k8s.io|kubernetes-sigs' \
-  /var/log/aks-flex-node/aks-flex-node.log
-```
-
-Expected evidence for local registry mode includes URLs like:
-
-```text
-pulling OCI image image=127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619
-downloading kubernetes binary url=oci://127.0.0.1:5000/aks-flex/bootstrap-artifacts:v20260708-k8s-v1.35.0#kubernetes/v1.35.0/bin/linux/amd64/kubelet
-```
-
-Expected evidence for filesystem mode includes log lines and URLs like:
-
-```text
-using local OCI layout image image=oci-layout:///opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619 layout=/opt/aks-flex-node/offline/images/agent-ubuntu2404
-downloading kubernetes binary url=file:///opt/aks-flex-node/offline/bootstrap-artifacts/v1.35.0/kubernetes/v1.35.0/bin/linux/amd64/kubelet
-```
-
-There should be no bootstrap downloads from public upstream artifact URLs:
-
-```bash
-if sudo grep -E 'https://dl.k8s.io|https://github.com/kubernetes-sigs/cri-tools' \
-  /var/log/aks-flex-node/aks-flex-node.log; then
-  echo "unexpected public artifact download"
-  exit 1
-fi
-```
-
-For local registry mode, verify that containerd—not just the host-side ORAS client—requested the mirrored runtime images:
+Inspect local-registry request paths on the host:
 
 ```bash
 sudo podman logs aks-flex-offline-registry 2>&1 | \
-  grep -E '/v2/(azure/unbounded-net-node|oss/v2/kubernetes/kube-proxy)/'
-
-sudo machinectl shell "$MACHINE" /usr/local/bin/crictl images | \
-  grep -E '127.0.0.1:5000|pause'
+  grep -E '/v2/(aks-flex|azure/unbounded-net-node|azure/gantry|oss/v2/kubernetes/kube-proxy|library/busybox)/'
 ```
 
-The registry log should contain successful manifest or blob requests for the mirrored canonical repository paths. The CRI image list should contain the Unbounded-Net, kube-proxy, and sandbox images.
+Expect successful manifest/blob requests for canonical runtime repositories. Run the [base lab's bidirectional pod, exec, and logs checks](aks-public-cluster-unbounded-net-vnet-peering.md#verify); the mirrored BusyBox image also permits workload validation while public registries remain blocked. Re-run the blocked-egress checks after the workloads pass.
+
+For rejoin validation, cordon/drain the Node, run `/opt/unbounded/agent/bin/aks-flex-node reset` as root, delete the Kubernetes Node, and repeat the selected bootstrap and mirror steps. Keep the NSG restrictions active throughout. Require a new Node UID, `Ready`, healthy networking pods, and successful cross-node traffic again.
+
+After the final successful bootstrap, remove transient staging scripts and archives from `/run/aks-flex-node-bootstrap`. Keep the offline artifact directories and local registry until validation finishes.
 
 ## Troubleshooting
 
 ### Preflight Fails `host-packages`
 
-Install the required host packages before isolating the VM from package repositories:
-
-```bash
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y systemd-container curl nftables util-linux
-```
+Install required packages before isolation; offline preflight doesn't use public apt repositories to repair the host.
 
 ### Preflight Fails `oci-image-reachable`
 
-For filesystem mode, check that the local OCI layout exists and has the expected tag:
+For filesystem mode, check the layout and exact tag:
 
 ```bash
-test -f /opt/aks-flex-node/offline/images/agent-ubuntu2404/oci-layout
-oras manifest fetch --oci-layout /opt/aks-flex-node/offline/images/agent-ubuntu2404:v20260619 >/dev/null
+oras manifest fetch --oci-layout /opt/aks-flex-node/offline/images/agent-ubuntu2404:v20261031 >/dev/null
 ```
 
-For local registry mode, check the rootfs image reference and local registry health:
+For registry mode:
 
 ```bash
-curl -fsS http://127.0.0.1:5000/v2/ >/dev/null
-oras manifest fetch --plain-http 127.0.0.1:5000/aks-flex/rootfs/agent-ubuntu2404:v20260619 >/dev/null
+curl -fsS http://127.0.0.1:15000/v2/ >/dev/null
+oras manifest fetch --plain-http 127.0.0.1:15000/aks-flex/rootfs/agent-ubuntu2404:v20261031 >/dev/null
 ```
 
 ### Flex-Site Pods Fail With HTTPS Or `ImagePullBackOff`
 
-Confirm the active machine has the plain-HTTP registry configuration and that containerd loaded it:
-
-```bash
-MACHINE="$(machinectl list --no-legend --no-pager | awk '$1 ~ /^kube[12]$/ {print $1; exit}')"
-sudo cat "/var/lib/machines/${MACHINE}/etc/containerd/certs.d/ghcr.io/hosts.toml"
-sudo cat "/var/lib/machines/${MACHINE}/etc/containerd/certs.d/mcr.microsoft.com/hosts.toml"
-sudo systemctl -M "$MACHINE" restart containerd
-sudo machinectl shell "$MACHINE" /usr/local/bin/crictl pull \
-  "$UNBOUNDED_NODE_IMAGE_UPSTREAM"
-sudo machinectl shell "$MACHINE" /usr/local/bin/crictl pull \
-  "$KUBE_PROXY_IMAGE_UPSTREAM"
-```
-
-If the machine changed from `kube1` to `kube2`, recreate both `hosts.toml` files only to continue this temporary HTTP-registry test. The operator-managed DaemonSets keep their canonical GHCR and MCR references; don't patch them to loopback URLs. For a durable deployment, replace the local HTTP registry with a trusted HTTPS mirror and provision its configuration on every new worker rootfs.
+Inspect pod status, events, and containerd logs before extending rollout waits. Check the active rootfs's per-registry `hosts.toml` files and repeat CRI pulls through port 15000. An error targeting port 5000 is targeting Gantry, not this lab's standalone registry. HTTP 405 on publication usually indicates the same port conflict.
 
 ### Preflight Fails Artifact Checks
 
-For local registry mode, verify the OCI artifact is present:
+Check the full pool version, leading `v`, manifest and referenced checksum/archive paths. For local registry mode:
 
 ```bash
-oras manifest fetch --plain-http "127.0.0.1:5000/aks-flex/bootstrap-artifacts:${ARTIFACT_TAG}" >/dev/null
+oras manifest fetch --plain-http "127.0.0.1:15000/aks-flex/bootstrap-artifacts:${ARTIFACT_TAG}" >/dev/null
 ```
 
-For filesystem mode, verify `manifest.json` and expected artifact paths exist:
-
-```bash
-sudo test -f "/opt/aks-flex-node/offline/bootstrap-artifacts/${KUBERNETES_VERSION_V}/manifest.json"
-sudo find "/opt/aks-flex-node/offline/bootstrap-artifacts/${KUBERNETES_VERSION_V}" -maxdepth 4 -type f | sort | head -50
-```
+A missing agent after lockdown means staging was incomplete. Restore approved artifact access or transfer the reviewed archive and script from the connected preparation environment; don't disable identity or registration checks.
 
 ## Clean up
 
-Remove temporary firewall rules or local registry configuration created by the selected path. Then delete the Azure resource groups inherited from the base lab:
+Remove smoke workloads and temporary host firewall tables, then delete the two resource groups inherited from the base lab:
 
 ```bash
+kubectl delete pod flex-exec-smoke aks-peering-smoke flex-peering-smoke --ignore-not-found --wait=false
 az group delete --name "$AKS_RG" --yes --no-wait
 az group delete --name "$VM_RG" --yes --no-wait
-```
-
-Confirm both commands eventually return `false`:
-
-```bash
 az group exists --name "$AKS_RG"
 az group exists --name "$VM_RG"
 ```
+
+Both existence checks should eventually return `false`; also verify the AKS-managed node resource group is removed. If you retain the VM instead, drain/reset it, remove the lab's local registry and mirror files, and remove only the NSG rules you created.

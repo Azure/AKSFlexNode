@@ -7,9 +7,9 @@ How to add an AMD Instinct GPU host to an AKS cluster as an AKS Flex Node.
 >
 > **Status:** Experimental; AMD GPU support is under active validation.
 >
-> **Last validation attempt:** 2026-09-20; skipped because the required MI300X VM family quota was `0` in the validation subscription
+> **Last validation attempt:** 2026-11-08; prerequisite checks found the documented MI300X family (`standardNDISv5MI300XFamily`) quota `0` across 10 accessible corporate AKS E2E subscriptions in `eastus2`, `westus2`, `westus3`, `southcentralus`, and `francecentral`. No GPU VM was created and no quota increase was requested.
 >
-> **Version scope:** This lab records the validated MI300X kernel, ROCm, AMDGPU, and agent versions in the procedure. Revalidate the complete combination before reuse.
+> **Version scope:** The evidence below covers MI300X host preparation, not a complete Flex node join. The next-attempt procedure pins AKS Flex Node `v0.3.0`; its combination with the recorded kernel, ROCm, AMDGPU, operator, and workload image still requires end-to-end validation.
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -61,6 +61,7 @@ Treat other combinations as separate validation targets. Do not assume this exac
 - Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, and SSH/SCP tooling on your workstation.
 - An AMD Instinct GPU host with root or sudo access and outbound reach to the AKS API server.
+- Regional and MI300X family quota sufficient for the selected SKU (96 vCPUs for the documented VM), plus a regional SKU offering without an applicable subscription restriction.
 - `curl` and GnuPG (`gpg`) installed on the GPU host for the example ROCm repository setup.
 - A host image or host preparation script that installs and validates ROCm.
 - Non-overlapping network ranges for the AKS cluster, host network, pods, services, and any connected networks.
@@ -332,20 +333,27 @@ sudo -i
 
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export AGENT_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.2.0"
+export AKS_FLEX_NODE_VERSION="v0.3.0"
 
 install -d -m 0700 /run/aks-flex-node-bootstrap
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+curl -fsSLo /run/aks-flex-node-bootstrap/checksums.txt \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+AGENT_SHA256="$(awk '$2 == "aks-flex-node-linux-amd64.tar.gz" {print $1}' /run/aks-flex-node-bootstrap/checksums.txt)"
+[[ "$AGENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
 
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --auth msi \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$AGENT_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION"
+  --agent-version "$AKS_FLEX_NODE_VERSION" \
+  --agent-sha256 "$AGENT_SHA256"
+
+rm -f /run/aks-flex-node-bootstrap/bootstrap.sh /run/aks-flex-node-bootstrap/checksums.txt
 ```
 
 For a user-assigned identity, also pass `--msi-client-id "<client-id>"`. From the workstation, continue when the node reports `Ready`, then install the AMD GPU stack from the **Cluster GPU stack (manual)** section.
