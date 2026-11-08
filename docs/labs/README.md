@@ -58,6 +58,6 @@ When you update a lab:
 - Keep its existing file path and scenario identity.
 - Preserve existing heading anchors when possible. If a heading changes, retain the old anchor with an explicit HTML anchor.
 - Update its status and validation information only after the complete scenario passes.
-- Pin or record the versions used for validation. Check regional Kubernetes/SKU availability and remaining family/total vCPU quota before provisioning; quota alone doesn't establish SKU availability.
+- Pin or record the versions used for validation.
 - Verify that cleanup removes resources created by the lab.
 - Don't print or commit bootstrap data, kubeconfig content, private keys, service principal credentials, or signed URLs.
