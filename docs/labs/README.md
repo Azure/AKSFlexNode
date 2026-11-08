@@ -7,7 +7,7 @@ Use these hands-on labs to evaluate AKS Flex Node in end-to-end Azure scenarios.
 
 Existing files under `docs/labs/` are stable public documentation paths. Update labs in place so links from Microsoft Learn, issues, and external content continue to work.
 
-The current procedure baseline is AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, and worker rootfs `v20261031`. Validation used Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, kubectl `1.36.2`, and Helm `3.19.0` where required. Review each lab's dated scope; AMD remains experimental because the documented MI300X family has no available quota in the checked environments.
+The refreshed networking and NVIDIA procedures use AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, and worker rootfs `v20261031`. Validation used Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, kubectl `1.36.2`, and Helm `3.19.0` where required. Review each lab's dated version scope.
 
 ## Common Prerequisites
 
@@ -26,7 +26,7 @@ A lab can require additional tools and permissions. Complete its `Before you beg
 | Lab | API access | Node connectivity | Networking or hardware | Status |
 | --- | --- | --- | --- | --- |
 | [NVIDIA GPU Flex Node setup](gpu-node-setup.md) | Determined by the base cluster | Determined by the base cluster | NVIDIA GPU | A100 validated, 2026-11-08 |
-| [AMD GPU Flex Node setup](amd-gpu-node-setup.md) | Determined by the base cluster | Determined by the base cluster | AMD Instinct GPU | Experimental; quota check blocked, 2026-11-08 |
+| [AMD GPU Flex Node setup](amd-gpu-node-setup.md) | Determined by the base cluster | Determined by the base cluster | AMD Instinct GPU | Experimental |
 | [Private AKS cluster with unmanaged Cilium and a cross-region Flex node](aks-private-cluster-cilium.md) | Private | Cross-region VNet peering | Unmanaged Cilium with VXLAN | Cilium `1.20.2` validated, 2026-11-08 |
 | [Private AKS cluster with Unbounded-Net and a cross-region Flex node](aks-private-cluster-unbounded-net.md) | Private | Cross-region VNet peering | Unbounded-Net private Layer 3 peering | `v0.21.0` validated, 2026-11-08 |
 | [Public AKS cluster with Unbounded-Net and a cross-region VNet-peered Flex node](aks-public-cluster-unbounded-net-vnet-peering.md) | Public | Cross-region VNet peering | Unbounded-Net private Layer 3 peering | `v0.21.0` validated, 2026-11-08 |

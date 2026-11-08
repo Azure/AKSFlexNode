@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Refresh supplemental networking, offline-artifact, and NVIDIA GPU labs for AKS Flex Node `v0.3.0` and Unbounded `v0.21.0`, with recorded validation scopes and an explicit AMD quota blocker. Correct offline agent staging, ARM egress, Gantry's loopback port conflict, and WireGuard host-port syntax.
+- Refresh supplemental networking, offline-artifact, and NVIDIA GPU labs for AKS Flex Node `v0.3.0` and Unbounded `v0.21.0`, with recorded validation scopes. Correct offline agent staging, ARM egress, Gantry's loopback port conflict, and WireGuard host-port syntax.
 
 ## [0.3.0] - 2026-11-04
 
