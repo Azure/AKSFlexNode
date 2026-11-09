@@ -75,13 +75,13 @@ case "$(uname -m)" in
   *) echo "unsupported architecture" >&2; exit 1 ;;
 esac
 curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" || exit 1
 curl -fsSLo /tmp/unbounded-checksums.txt \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt"
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt" || exit 1
 (cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
   '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
-tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
-sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
+tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp || exit 1
+sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded || exit 1
 kubectl unbounded version
 kubectl unbounded install --timeout 60s
 
@@ -124,11 +124,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 
 ORAS_VERSION="1.3.2"
 curl -fsSLo /tmp/oras_1.3.2_linux_amd64.tar.gz \
-  "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+  "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" || exit 1
 curl -fsSLo /tmp/oras_1.3.2_checksums.txt \
-  "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt"
+  "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt" || exit 1
 (cd /tmp && awk '$2 == "oras_1.3.2_linux_amd64.tar.gz"' oras_1.3.2_checksums.txt | sha256sum --check --strict) || exit 1
-sudo tar -C /usr/local/bin -xzf /tmp/oras_1.3.2_linux_amd64.tar.gz oras
+sudo tar -C /usr/local/bin -xzf /tmp/oras_1.3.2_linux_amd64.tar.gz oras || exit 1
 oras version
 ```
 
@@ -156,18 +156,18 @@ AGENT_STAGE=/opt/aks-flex-node/bootstrap-agent
 install -d -m 0700 "$STAGE" "$AGENT_STAGE"
 
 curl -fsSLo "$STAGE/bootstrap.sh" \
-  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
-chmod 0700 "$STAGE/bootstrap.sh"
-bash -n "$STAGE/bootstrap.sh"
+  "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh" || exit 1
+chmod 0700 "$STAGE/bootstrap.sh" || exit 1
+bash -n "$STAGE/bootstrap.sh" || exit 1
 curl -fsSLo "$STAGE/aks-flex-node-linux-amd64.tar.gz" \
-  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/aks-flex-node-linux-amd64.tar.gz"
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/aks-flex-node-linux-amd64.tar.gz" || exit 1
 curl -fsSLo "$STAGE/checksums.txt" \
-  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt" || exit 1
 (cd "$STAGE" && awk '$2 == "aks-flex-node-linux-amd64.tar.gz"' checksums.txt | sha256sum --check --strict) || exit 1
 tar -xzf "$STAGE/aks-flex-node-linux-amd64.tar.gz" -C "$AGENT_STAGE" || exit 1
 AGENT_BIN="$AGENT_STAGE/aks-flex-node-linux-amd64"
-chmod 0700 "$AGENT_BIN"
-"$AGENT_BIN" version
+chmod 0700 "$AGENT_BIN" || exit 1
+"$AGENT_BIN" version || exit 1
 ```
 
 The executable is staged under `/opt`, which must allow execution, rather than `/run`, which can be mounted `noexec`. Scripts and archives remain in `/run` and the script is invoked through Bash.
@@ -187,8 +187,8 @@ ROOTFS_LAYOUT_DIR=/opt/aks-flex-node/offline/images/agent-ubuntu2404
 ROOTFS_TAG=v20261031
 sudo mkdir -p "$(dirname "$ROOTFS_LAYOUT_DIR")"
 sudo chown "$(id -u):$(id -g)" "$(dirname "$ROOTFS_LAYOUT_DIR")"
-oras copy --to-oci-layout "$ROOTFS_IMAGE_UPSTREAM" "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}"
-oras manifest fetch --oci-layout "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}" >/dev/null
+oras copy --to-oci-layout "$ROOTFS_IMAGE_UPSTREAM" "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}" || exit 1
+oras manifest fetch --oci-layout "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}" >/dev/null || exit 1
 ```
 
 ### Pull The Bootstrap Artifact Bundle To Files
@@ -197,9 +197,9 @@ oras manifest fetch --oci-layout "${ROOTFS_LAYOUT_DIR}:${ROOTFS_TAG}" >/dev/null
 ARTIFACTS_DIR="/opt/aks-flex-node/offline/bootstrap-artifacts/${KUBERNETES_VERSION_V}"
 sudo mkdir -p "$ARTIFACTS_DIR"
 sudo chown "$(id -u):$(id -g)" "$ARTIFACTS_DIR"
-oras pull --output "$ARTIFACTS_DIR" "$ARTIFACT_BUNDLE_UPSTREAM"
-test -f "$ARTIFACTS_DIR/manifest.json"
-jq -e '.containerImages | length > 0' "$ARTIFACTS_DIR/manifest.json"
+oras pull --output "$ARTIFACTS_DIR" "$ARTIFACT_BUNDLE_UPSTREAM" || exit 1
+test -f "$ARTIFACTS_DIR/manifest.json" || exit 1
+jq -e '.containerImages | length > 0' "$ARTIFACTS_DIR/manifest.json" || exit 1
 ```
 
 Retain every file referenced by the manifest, including checksums and sandbox image archives. If you stage elsewhere, copy the complete directories to these paths on the target VM.
@@ -213,8 +213,8 @@ On the target VM:
 ```bash
 sudo podman run -d --name aks-flex-offline-registry --restart=always \
   --network host -e REGISTRY_HTTP_ADDR=127.0.0.1:15000 \
-  docker.io/library/registry:2
-curl -fsS http://127.0.0.1:15000/v2/ >/dev/null
+  docker.io/library/registry:2 || exit 1
+curl -fsS http://127.0.0.1:15000/v2/ >/dev/null || exit 1
 ```
 
 Use port **15000**, not **5000**. Unbounded `v0.21.0` deploys Gantry's read-only mirror through host port `127.0.0.1:5000`; its CNI port mapping can intercept requests even when another process listens there. Uploads sent to Gantry return HTTP 405, and noncanonical manifest requests can return HTTP 503. Don't disable Gantry or replace operator-managed workloads to work around the conflict.
@@ -244,15 +244,15 @@ ROOTFS_IMAGE_LOCAL=127.0.0.1:15000/aks-flex/rootfs/agent-ubuntu2404:v20261031
 ARTIFACT_BUNDLE_LOCAL="127.0.0.1:15000/aks-flex/bootstrap-artifacts:${ARTIFACT_TAG}"
 
 # Omit these two copies when using filesystem bootstrap artifacts.
-oras copy --to-plain-http "$ROOTFS_IMAGE_UPSTREAM" "$ROOTFS_IMAGE_LOCAL"
-oras copy --to-plain-http "$ARTIFACT_BUNDLE_UPSTREAM" "$ARTIFACT_BUNDLE_LOCAL"
+oras copy --to-plain-http "$ROOTFS_IMAGE_UPSTREAM" "$ROOTFS_IMAGE_LOCAL" || exit 1
+oras copy --to-plain-http "$ARTIFACT_BUNDLE_UPSTREAM" "$ARTIFACT_BUNDLE_LOCAL" || exit 1
 
 # Preserve each canonical repository path; containerd replaces only its host.
 for image in "$UNBOUNDED_NODE_IMAGE_UPSTREAM" "$KUBE_PROXY_IMAGE_UPSTREAM" \
   "$GANTRY_IMAGE_UPSTREAM" docker.io/library/busybox:1.36; do
   local_image="127.0.0.1:15000/${image#*/}"
-  oras copy --to-plain-http "$image" "$local_image"
-  oras manifest fetch --plain-http "$local_image" >/dev/null
+  oras copy --to-plain-http "$image" "$local_image" || exit 1
+  oras manifest fetch --plain-http "$local_image" >/dev/null || exit 1
 done
 ```
 
@@ -349,15 +349,22 @@ curl -k -sS --connect-timeout 10 --max-time 15 -o /dev/null \
   -w 'AKS API: %{http_code}\n' "https://${AKS_API_FQDN}:443"
 curl -fsS http://127.0.0.1:15000/v2/ >/dev/null
 for url in https://dl.k8s.io https://ghcr.io https://mcr.microsoft.com https://github.com; do
-  if curl -sS --connect-timeout 5 --max-time 8 -o /dev/null "$url"; then
-    echo "unexpectedly reachable: $url" >&2
+  host="${url#https://}"
+  address=$(getent ahostsv4 "$host" | awk 'NR == 1 {print $1}')
+  [[ -n "$address" ]] || { echo "DNS lookup failed: $host" >&2; exit 1; }
+  status=0
+  remote_ip=$(curl -sS --resolve "$host:443:$address" \
+    --connect-timeout 5 --max-time 8 -o /dev/null -w '%{remote_ip}' "$url") || status=$?
+  if [[ -z "$remote_ip" && ( "$status" == 7 || "$status" == 28 ) ]]; then
+    echo "TCP connection blocked: $host ($address)"
+  else
+    echo "Connection succeeded or probe failed for another reason: $host (curl $status)" >&2
     exit 1
   fi
-  echo "blocked: $url"
 done
 ```
 
-The API should return HTTP 401 without credentials. Artifact requests must fail to connect; an HTTP 401 or 403 from a registry still proves reachability, so don't use `curl -f` for this blocked-egress check.
+The API should return HTTP 401 without credentials. The artifact check requires a resolved IPv4 destination and a connection failure or timeout before TCP connects. DNS, TLS, and post-connect failures don't count as blocked egress. An HTTP 401 or 403 still proves reachability, so don't use `curl -f` for this check.
 
 <a id="install-the-config-and-run-preflight"></a>
 <a id="bootstrap-the-node"></a>

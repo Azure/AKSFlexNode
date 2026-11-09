@@ -252,10 +252,12 @@ Save the manifest as `nvidia-smi-validation.yaml`, replace the node name, and ap
 
 ```bash
 kubectl apply -f nvidia-smi-validation.yaml
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/nvidia-smi-validation --timeout=120s
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/nvidia-smi-validation --timeout=120s || exit 1
 kubectl logs nvidia-smi-validation
 kubectl delete pod nvidia-smi-validation --wait=true --timeout=60s
 ```
+
+If the wait fails, retain the Pod and inspect its status, events, and logs before cleanup.
 
 Expect: node `Ready`, `nvidia.com/gpu.product` and `nvidia.com/gpu.count` labels present, `nvidia.com/gpu: 1` allocatable, the validation Pod succeeds, and `nvidia-smi` lists the GPU.
 

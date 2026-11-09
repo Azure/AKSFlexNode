@@ -263,13 +263,13 @@ case "$(uname -m)" in
 esac
 
 curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" || exit 1
 curl -fsSLo /tmp/unbounded-checksums.txt \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt"
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt" || exit 1
 (cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
   '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
-tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
-sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
+tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp || exit 1
+sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded || exit 1
 
 kubectl unbounded version
 kubectl unbounded install --timeout 60s

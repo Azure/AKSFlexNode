@@ -637,11 +637,16 @@ If pods schedule on the Flex node but cannot reach pods on AKS nodes, check Cili
 
 ## Clean up
 
-Delete the validation workloads described in this lab, and then delete both resource groups:
+From the private-API-connected Bash environment or admin VM, delete the validation workloads:
 
 ```bash
 kubectl delete pod cilium-smoke-aks cilium-smoke-flex --ignore-not-found --wait=false
 kubectl delete svc cilium-smoke-flex --ignore-not-found
+```
+
+Return to the original Azure CLI environment that created the lab resources, then delete both resource groups:
+
+```bash
 az group delete --name "$AKS_RG" --yes --no-wait
 az group delete --name "$VM_RG" --yes --no-wait
 ```

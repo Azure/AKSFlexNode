@@ -367,13 +367,13 @@ case "$(uname -m)" in
 esac
 
 curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" || exit 1
 curl -fsSLo /tmp/unbounded-checksums.txt \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt"
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt" || exit 1
 (cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
   '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
-tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
-sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
+tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp || exit 1
+sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded || exit 1
 
 kubectl unbounded version
 kubectl unbounded install --timeout 60s
@@ -637,12 +637,16 @@ If pod traffic between AKS and Flex pods fails, verify the `SitePeering` has `me
 
 ## Clean up
 
-Delete the validation pod if it still exists, and then delete both resource groups from your Bash environment:
+From the private-API-connected Bash environment or admin VM, delete the validation pods:
 
 ```bash
 kubectl delete pod flex-exec-smoke aks-peering-smoke flex-peering-smoke \
   --ignore-not-found --wait=false
+```
 
+Return to the original Azure CLI environment that created the lab resources, then delete both resource groups:
+
+```bash
 az group delete --name "$AKS_RG" --yes --no-wait
 az group delete --name "$VM_RG" --yes --no-wait
 ```
