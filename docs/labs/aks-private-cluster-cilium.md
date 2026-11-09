@@ -344,7 +344,9 @@ Install Cilium with cluster-pool IPAM and VXLAN tunnel mode. Run these commands 
 
 ```bash
 CILIUM_VERSION="1.20.2"
-CILIUM_API_FQDN=$(az aks show -g "$AKS_RG" -n "$CLUSTER_NAME" --query privateFqdn -o tsv)
+CILIUM_API_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}') || exit 1
+CILIUM_API_FQDN="${CILIUM_API_URL#https://}"
+CILIUM_API_FQDN="${CILIUM_API_FQDN%:443}"
 
 helm repo add cilium https://helm.cilium.io/
 helm repo update

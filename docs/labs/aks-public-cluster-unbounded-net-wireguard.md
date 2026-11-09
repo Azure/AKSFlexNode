@@ -334,7 +334,7 @@ curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
 curl -fsSLo /tmp/unbounded-checksums.txt \
   "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt"
 (cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
-  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict)
+  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
 tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
 sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
 

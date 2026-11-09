@@ -48,7 +48,7 @@ KUBERNETES_VERSION=$(az aks nodepool show -g "$AKS_RG" \
 printf 'Pool Kubernetes version: %s\n' "$KUBERNETES_VERSION"
 ```
 
-Set these nonsecret artifact values in the preparation environment and on the target VM. Copy the pool version printed above:
+Set these nonsecret artifact values in your API-connected Bash environment and in any separate connected preparation environment. Copy the pool version printed above. The target VM's root-shell values are initialized separately in **Prepare The Host Identity**:
 
 ```bash
 KUBERNETES_VERSION="1.36.2"
@@ -79,7 +79,7 @@ curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
 curl -fsSLo /tmp/unbounded-checksums.txt \
   "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt"
 (cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
-  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict)
+  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
 tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
 sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
 kubectl unbounded version
@@ -127,7 +127,7 @@ curl -fsSLo /tmp/oras_1.3.2_linux_amd64.tar.gz \
   "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
 curl -fsSLo /tmp/oras_1.3.2_checksums.txt \
   "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt"
-(cd /tmp && awk '$2 == "oras_1.3.2_linux_amd64.tar.gz"' oras_1.3.2_checksums.txt | sha256sum --check --strict)
+(cd /tmp && awk '$2 == "oras_1.3.2_linux_amd64.tar.gz"' oras_1.3.2_checksums.txt | sha256sum --check --strict) || exit 1
 sudo tar -C /usr/local/bin -xzf /tmp/oras_1.3.2_linux_amd64.tar.gz oras
 oras version
 ```
@@ -137,15 +137,23 @@ oras version
 
 Keep the VM's managed identity and pool-scoped Azure Kubernetes Service Flex Node Agent Role from the base lab. Allow role propagation before lockdown. Fresh `listBootstrapData` retrieval replaces client-side bootstrap RBAC and rendered baseline configuration.
 
-As root on a fresh or reset target VM, stage the verified agent archive and bootstrap script before restricting egress:
+On a fresh or reset target VM, open a root shell and reinitialize the nonsecret values after `sudo -i`. Use the pool version retrieved in your Bash environment. Keep this shell for all subsequent target-VM steps:
 
 ```bash
 sudo -i
 AKS_RESOURCE_ID="<full-aks-resource-id>"
 AGENT_POOL_NAME="aksflexnodes"
+KUBERNETES_VERSION="1.36.2"
+KUBERNETES_VERSION_V="v${KUBERNETES_VERSION#v}"
+UNBOUNDED_VERSION="v0.21.0"
 AKS_FLEX_NODE_VERSION="v0.3.0"
+ROOTFS_TAG="v20261031"
+ROOTFS_IMAGE_UPSTREAM="ghcr.io/azure/agent-ubuntu2404:${ROOTFS_TAG}"
+ARTIFACT_TAG="${UNBOUNDED_VERSION}-k8s-${KUBERNETES_VERSION_V}"
+ARTIFACT_BUNDLE_UPSTREAM="ghcr.io/azure/unbounded/bootstrap-artifacts:${ARTIFACT_TAG}"
 STAGE=/run/aks-flex-node-bootstrap
-install -d -m 0700 "$STAGE"
+AGENT_STAGE=/opt/aks-flex-node/bootstrap-agent
+install -d -m 0700 "$STAGE" "$AGENT_STAGE"
 
 curl -fsSLo "$STAGE/bootstrap.sh" \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
@@ -155,12 +163,14 @@ curl -fsSLo "$STAGE/aks-flex-node-linux-amd64.tar.gz" \
   "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/aks-flex-node-linux-amd64.tar.gz"
 curl -fsSLo "$STAGE/checksums.txt" \
   "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
-(cd "$STAGE" && awk '$2 == "aks-flex-node-linux-amd64.tar.gz"' checksums.txt | sha256sum --check --strict)
-tar -xzf "$STAGE/aks-flex-node-linux-amd64.tar.gz" -C "$STAGE"
-AGENT_BIN="$STAGE/aks-flex-node-linux-amd64"
+(cd "$STAGE" && awk '$2 == "aks-flex-node-linux-amd64.tar.gz"' checksums.txt | sha256sum --check --strict) || exit 1
+tar -xzf "$STAGE/aks-flex-node-linux-amd64.tar.gz" -C "$AGENT_STAGE" || exit 1
+AGENT_BIN="$AGENT_STAGE/aks-flex-node-linux-amd64"
 chmod 0700 "$AGENT_BIN"
 "$AGENT_BIN" version
 ```
+
+The executable is staged under `/opt`, which must allow execution, rather than `/run`, which can be mounted `noexec`. Scripts and archives remain in `/run` and the script is invoked through Bash.
 
 If a matching agent is already installed, retain it after reset, stage only `bootstrap.sh`, and set `AGENT_BIN=/opt/unbounded/agent/bin/aks-flex-node`. Don't overwrite an active managed binary layout. Both modes use `--installed-agent "$AGENT_BIN"`, avoiding archive downloads after lockdown; successful bootstrap installs the durable managed layout under `/opt/unbounded/agent`.
 
@@ -353,7 +363,7 @@ The API should return HTTP 401 without credentials. Artifact requests must fail 
 <a id="bootstrap-the-node"></a>
 ## Bootstrap The Node With Offline Overrides
 
-As root on the target VM, choose one source:
+In the same target-VM root shell, choose one source. If you opened a new shell, rerun the nonsecret declarations in **Prepare The Host Identity** and set `AGENT_BIN` to the verified executable under `/opt/aks-flex-node/bootstrap-agent` or the matching installed agent under `/opt/unbounded/agent/bin`:
 
 <a id="patch-the-config-for-filesystem-mode"></a>
 
@@ -443,7 +453,7 @@ Expect successful manifest/blob requests for canonical runtime repositories. Run
 
 For rejoin validation, cordon/drain the Node, run `/opt/unbounded/agent/bin/aks-flex-node reset` as root, delete the Kubernetes Node, and repeat the selected bootstrap and mirror steps. Keep the NSG restrictions active throughout. Require a new Node UID, `Ready`, healthy networking pods, and successful cross-node traffic again.
 
-After the final successful bootstrap, remove transient staging scripts and archives from `/run/aks-flex-node-bootstrap`. Keep the offline artifact directories and local registry until validation finishes.
+After the final successful bootstrap, remove transient scripts and archives from `/run/aks-flex-node-bootstrap` and the staging directory `/opt/aks-flex-node/bootstrap-agent`. Keep the installed managed agent under `/opt/unbounded/agent`, the offline artifact directories, and the local registry until validation finishes.
 
 ## Troubleshooting
 

@@ -78,19 +78,19 @@ After the Flex node is `Ready`, **you must install the cluster GPU stack yoursel
 - **GPU Feature Discovery (GFD)** — labels nodes with GPU product, driver, and count.
 - **NVIDIA DRA Driver** — optional, only if your workloads use Dynamic Resource Allocation.
 
-AKS Flex Node already installs the NVIDIA container toolkit inside the nspawn worker. Disable both driver and toolkit management in GPU Operator:
+AKS Flex Node already installs the NVIDIA container toolkit inside the nspawn worker. The following command installs a new GPU Operator release with driver and toolkit management disabled. If the cluster already has a GPU stack, review its configuration with its owner instead of installing a second stack or changing a shared release:
 
 ```bash
 GPU_OPERATOR_VERSION="v26.7.1"
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
-helm upgrade --install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
+helm install --create-namespace -n gpu-operator gpu-operator nvidia/gpu-operator \
   --version "$GPU_OPERATOR_VERSION" \
   --set driver.enabled=false \
   --set toolkit.enabled=false \
   --set devicePlugin.enabled=true \
   --set gfd.enabled=true \
   --set 'validator.toolkit.env[0].name=NVIDIA_VISIBLE_DEVICES' \
-  --set 'validator.toolkit.env[0].value=nvidia.com/gpu=all'
+  --set 'validator.toolkit.env[0].value=nvidia.com/gpu=all' || exit 1
 ```
 
 The CDI-qualified validator value makes GPU Operator validate the runtime integration already supplied by AKS Flex Node instead of attempting legacy toolkit injection. Use your preferred NVIDIA path to install the optional DRA driver only when workloads request DRA `DeviceClass` resources.
