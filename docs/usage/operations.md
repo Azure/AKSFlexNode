@@ -62,6 +62,8 @@ aks-flex-node preflight \
 
 When `bootstrap.offlineArtifacts.source` is configured, missing host packages are fatal because offline bootstrap cannot rely on package installation during `start`.
 
+The `machines-target` check fails if `machines.target` is missing or masked. A disabled target produces a warning: the installed daemon unit declares `Wants=machines.target`, so workers start at boot even on hosts whose systemd preset disables the target.
+
 ## Start
 
 Start installs host components, starts the nspawn-backed worker, installs the systemd unit, and starts the agent daemon.
@@ -73,6 +75,8 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 `bootstrap` is currently an alias for `start`, but new docs should prefer `start`.
 
 ## Agent service
+
+Before reporting an already-applied goal as successful, the daemon checks that the active nspawn worker is running. If it is stopped, the daemon restarts that worker without repaving it. Inspection or recovery failures are returned as reconcile errors in the service journal instead of reporting success.
 
 Check the long-running agent service:
 

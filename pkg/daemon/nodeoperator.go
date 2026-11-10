@@ -22,6 +22,7 @@ type activeMachine struct {
 
 type nodeOperator interface {
 	LoadState(ctx context.Context) (*State, error)
+	NodeRunning(ctx context.Context, log *slog.Logger) (bool, error)
 	ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error)
 	RestartNode(ctx context.Context, log *slog.Logger) error
 	// ResetNode removes nspawn node runtime and persisted daemon state but must
@@ -60,6 +61,7 @@ type nspawnNodeOperator struct {
 	cfg                    *config.Config
 	state                  stateStore
 	bootstrapDataRefresher bootstrapDataRefresher
+	registeredMachine      func(context.Context, *slog.Logger, string) (bool, error)
 }
 
 func newNSpawnNodeOperator(cfg *config.Config, state stateStore) (*nspawnNodeOperator, error) {
@@ -70,11 +72,24 @@ func newNSpawnNodeOperator(cfg *config.Config, state stateStore) (*nspawnNodeOpe
 		cfg:                    cfg,
 		state:                  state,
 		bootstrapDataRefresher: bootstrapDataRefresherForConfig(cfg),
+		registeredMachine:      reset.RegisteredMachine,
 	}, nil
 }
 
 func (o *nspawnNodeOperator) LoadState(ctx context.Context) (*State, error) {
 	return o.state.Load(ctx)
+}
+
+func (o *nspawnNodeOperator) NodeRunning(ctx context.Context, log *slog.Logger) (bool, error) {
+	active, err := o.findActiveMachine(ctx)
+	if err != nil {
+		return false, err
+	}
+	running, err := o.registeredMachine(ctx, log, active.Name)
+	if err != nil {
+		return false, fmt.Errorf("inspect active machine %s: %w", active.Name, err)
+	}
+	return running, nil
 }
 
 func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*activeMachine, error) {
