@@ -8,8 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add a `machines-target` preflight check; missing `machines.target` warns for online bootstrap and fails for offline bootstrap, while a masked target is fatal.
 - Disconnect tolerance: when AKS enables it for a node, the agent downloads and runs OpenYurt YurtHub in the worker and routes kubelet through it, so workloads keep running while the node is disconnected from the API server. Enabling it requires outbound HTTPS to `packages.microsoft.com`; joining does not. State is reported as a `DisconnectTolerance` Node condition on every node; with paired agent and kubelet kubeconfigs, grant the agent principal `patch` on its own `nodes/status` ([#390](https://github.com/Azure/AKSFlexNode/pull/390), [#391](https://github.com/Azure/AKSFlexNode/pull/391), [#392](https://github.com/Azure/AKSFlexNode/pull/392)).
 - `agent.machineClient.apiVersion` overrides the ARM Machine API version ([#390](https://github.com/Azure/AKSFlexNode/pull/390)).
+
+### Fixed
+
+- Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
 
 ## [0.3.0] - 2026-11-04
 

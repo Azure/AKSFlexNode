@@ -84,7 +84,7 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 
 	checks := daemon.PreflightChecks(preflight.Flatten(
-		[]preflight.Checker{daemon.CheckMachinesTarget(log)},
+		[]preflight.Checker{daemon.CheckMachinesTarget(log, strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "")},
 		arc.Preflight(cfg, log),
 		host.Preflight(log, *agentCfg, gs),
 		nodeChecks,
