@@ -65,44 +65,6 @@ func TestFindActiveMachine(t *testing.T) {
 	}
 }
 
-func TestNodeRunning(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		machine string
-		running bool
-		err     error
-		wantErr bool
-	}{
-		"kube1 running":   {machine: "kube1", running: true},
-		"kube2 running":   {machine: "kube2", running: true},
-		"stopped":         {machine: "kube1"},
-		"inspect failure": {machine: "kube1", err: errors.New("machinectl failed"), wantErr: true},
-		"missing machine": {wantErr: true},
-		"invalid machine": {machine: "kube3", wantErr: true},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			o, err := newNSpawnNodeOperator(nil, &testStateStore{state: &State{ActiveMachine: tt.machine}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			o.registeredMachine = func(_ context.Context, _ *slog.Logger, machine string) (bool, error) {
-				if !validActiveMachine(machine) || machine != tt.machine {
-					t.Fatalf("unexpected machine %q", machine)
-				}
-				return tt.running, tt.err
-			}
-			got, err := o.NodeRunning(t.Context(), slog.Default())
-			if (err != nil) != tt.wantErr || got != tt.running {
-				t.Fatalf("NodeRunning() = %v, %v; want %v, error %v", got, err, tt.running, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 	t.Parallel()
 

@@ -90,66 +90,6 @@ func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 	}
 }
 
-func TestRepaveReconcilerChecksActiveMachine(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		notRunning bool
-		runningErr error
-		restartErr error
-		staysDown  bool
-		wantErr    bool
-		restarted  bool
-	}{
-		"running":            {},
-		"stopped":            {notRunning: true, restarted: true},
-		"inspection fails":   {runningErr: errors.New("inventory unavailable"), wantErr: true},
-		"restart fails":      {notRunning: true, restartErr: errors.New("start failed"), wantErr: true, restarted: true},
-		"restart stays down": {notRunning: true, staysDown: true, wantErr: true, restarted: true},
-	}
-	for name, tt := range tests {
-		for _, nodeExists := range []bool{false, true} {
-			nodeName := "absent node"
-			if nodeExists {
-				nodeName = "present node"
-			}
-			t.Run(name+"/"+nodeName, func(t *testing.T) {
-				t.Parallel()
-
-				machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
-				operator := &fakeNodeOperator{
-					state:      &State{AppliedSettingsVersion: "42", ActiveMachine: "kube1"},
-					notRunning: tt.notRunning,
-					runningErr: tt.runningErr,
-					restartErr: tt.restartErr,
-					staysDown:  tt.staysDown,
-				}
-				kubeClient := fakeClient()
-				if nodeExists {
-					kubeClient = fakeClient(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}})
-				}
-				r := newTestRepaveReconciler(t, machines, kubeClient, operator)
-				for range 2 {
-					err := r.reconcileOnce(t.Context())
-					if (err != nil) != tt.wantErr {
-						t.Fatalf("reconcileOnce() error = %v, want error %v", err, tt.wantErr)
-					}
-					wantStatus := aksmachine.ProvisioningStateSucceeded
-					if tt.wantErr {
-						wantStatus = aksmachine.ProvisioningStateFailed
-					}
-					if machines.status.ProvisioningState != wantStatus || machines.status.ObservedSettingsVersion != "42" {
-						t.Fatalf("status = %#v, want %s at version 42", machines.status, wantStatus)
-					}
-				}
-				if operator.restarted != tt.restarted || operator.applied {
-					t.Fatalf("restarted = %v, applied = %v; want restarted %v without repave", operator.restarted, operator.applied, tt.restarted)
-				}
-			})
-		}
-	}
-}
-
 func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator nodeOperator) *repaveReconciler {
 	t.Helper()
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
@@ -196,9 +136,6 @@ type fakeNodeOperator struct {
 	newState   *State
 	err        error
 	restartErr error
-	runningErr error
-	notRunning bool
-	staysDown  bool
 	resetErr   error
 	stopErr    error
 	applied    bool
@@ -209,10 +146,6 @@ type fakeNodeOperator struct {
 
 func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
 	return f.state, f.err
-}
-
-func (f *fakeNodeOperator) NodeRunning(context.Context, *slog.Logger) (bool, error) {
-	return !f.notRunning, f.runningErr
 }
 
 func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error) {
@@ -226,9 +159,6 @@ func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmach
 
 func (f *fakeNodeOperator) RestartNode(context.Context, *slog.Logger) error {
 	f.restarted = true
-	if f.restartErr == nil && !f.staysDown {
-		f.notRunning = false
-	}
 	return f.restartErr
 }
 

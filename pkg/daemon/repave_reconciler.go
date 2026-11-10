@@ -178,12 +178,6 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	}
 
 	decision := decide(machineSnap, nodeSnap, state)
-	if decision.Kind == decisionReportSucceeded {
-		if err := r.ensureNodeRunning(ctx); err != nil {
-			_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
-			return err
-		}
-	}
 	r.log.Info("daemon reconcile decision", "decision", decision.Kind, "reason", decision.Reason)
 
 	switch decision.Kind {
@@ -205,28 +199,6 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 	default:
 		return fmt.Errorf("unsupported daemon decision %q", decision.Kind)
 	}
-}
-
-func (r *repaveReconciler) ensureNodeRunning(ctx context.Context) error {
-	running, err := r.operator.NodeRunning(ctx, r.log)
-	if err != nil {
-		return fmt.Errorf("check active machine: %w", err)
-	}
-	if running {
-		return nil
-	}
-	r.log.Warn("active machine is not running; restarting node")
-	if err := r.operator.RestartNode(ctx, r.log); err != nil {
-		return fmt.Errorf("restart stopped active machine: %w", err)
-	}
-	running, err = r.operator.NodeRunning(ctx, r.log)
-	if err != nil {
-		return fmt.Errorf("verify active machine after restart: %w", err)
-	}
-	if !running {
-		return fmt.Errorf("active machine is not running after restart")
-	}
-	return nil
 }
 
 // reconcileHub applies DT intent in place while the Node exists, including while

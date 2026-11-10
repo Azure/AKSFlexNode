@@ -76,8 +76,6 @@ aks-flex-node start --config /etc/aks-flex-node/config.json
 
 ## Agent service
 
-Before reporting an already-applied goal as successful, the daemon checks that the active nspawn worker is running. If it is stopped, the daemon restarts that worker without repaving it. Inspection or recovery failures are returned as reconcile errors in the service journal instead of reporting success.
-
 Check the long-running agent service:
 
 ```bash
