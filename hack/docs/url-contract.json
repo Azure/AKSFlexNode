@@ -519,6 +519,25 @@
       ]
     },
     {
+      "path": "docs/usage/managed-acr.md",
+      "protectAnchors": true,
+      "anchors": [
+        "an-http-proxy-does-not-replace-the-token-proxy-route",
+        "attach-your-registry",
+        "before-you-begin",
+        "clean-up",
+        "containerd-routing-does-not-change-kubelets-image-match",
+        "during-an-image-pull",
+        "during-attachment",
+        "how-authentication-works",
+        "operate-and-troubleshoot",
+        "pull-private-acr-images-on-flex-nodes",
+        "related-guidance",
+        "understand-proxy-and-mirror-limits",
+        "verify-private-image-pulls"
+      ]
+    },
+    {
       "path": "docs/usage/migration.md",
       "protectAnchors": true,
       "anchors": [

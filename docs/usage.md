@@ -8,6 +8,7 @@ This section collects scenario-focused guides for installing, joining, operating
 
 - [Joining Nodes](usage/joining-nodes.md) - Join a host to AKS using bootstrap token, managed identity, Azure Arc, or service principal authentication.
 - [Operations](usage/operations.md) - Start, inspect, reset, uninstall, and troubleshoot a Flex Node host.
+- [Private ACR image pulls](usage/managed-acr.md) - Configure AKS identity-binding authentication, verify secretless pulls and Gantry peer transfer, and understand HTTP proxy and registry-mirror limits.
 - [Migrating to `/opt/unbounded/agent`](usage/migration.md) - How a host an earlier release installed under `/usr/local` moves to `/opt/unbounded/agent`.
 - [Azure Container Linux](usage/azure-container-linux.md) - Experimental: run the agent on Azure Container Linux, in containers of its image.
 - [Command-line Reference](usage/cli.md) - Operator commands, flags, compatibility aliases, and internal service commands.
