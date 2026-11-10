@@ -59,6 +59,52 @@ func TestCheckMachinesTarget(t *testing.T) {
 	}
 }
 
+func TestCheckMachinesTargetBootstrapModes(t *testing.T) {
+	t.Parallel()
+
+	modes := map[string]struct {
+		containerized bool
+		offline       bool
+		wantMissing   preflight.Severity
+	}{
+		"native online":         {wantMissing: preflight.SeverityWarning},
+		"native offline":        {offline: true, wantMissing: preflight.SeverityError},
+		"containerized online":  {containerized: true, wantMissing: preflight.SeverityError},
+		"containerized offline": {containerized: true, offline: true, wantMissing: preflight.SeverityError},
+	}
+	for name, mode := range modes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, state := range []string{"", "not-found", "masked", "masked-runtime"} {
+				t.Run("state="+state, func(t *testing.T) {
+					t.Parallel()
+
+					check, ok := CheckMachinesTarget(slog.Default(), mode.containerized || mode.offline).(machinesTargetChecker)
+					if !ok {
+						t.Fatal("CheckMachinesTarget() returned an unexpected checker type")
+					}
+					check.output = func(context.Context, *slog.Logger, string, ...string) (string, error) {
+						return state, nil
+					}
+					want := preflight.SeverityError
+					if state == "" || state == "not-found" {
+						want = mode.wantMissing
+					}
+					results := check.Check(t.Context())
+					if len(results) != 1 || results[0].Severity != want {
+						t.Fatalf("Check() = %#v, want severity %s", results, want)
+					}
+					if (state == "" || state == "not-found") && want == preflight.SeverityError &&
+						!strings.Contains(results[0].Message, "install systemd-container on the host") {
+						t.Fatalf("Check() message = %q, want host package provisioning guidance", results[0].Message)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestDaemonUnitsWantMachinesTarget(t *testing.T) {
 	t.Parallel()
 

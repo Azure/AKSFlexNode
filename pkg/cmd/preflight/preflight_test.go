@@ -61,31 +61,6 @@ func TestNormalizeOutput(t *testing.T) {
 	}
 }
 
-func TestFailForMissingMachinesTarget(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		containerized              bool
-		offlineArtifactsConfigured bool
-		want                       bool
-	}{
-		"native online bootstrap":         {},
-		"native offline bootstrap":        {offlineArtifactsConfigured: true, want: true},
-		"containerized online bootstrap":  {containerized: true, want: true},
-		"containerized offline bootstrap": {containerized: true, offlineArtifactsConfigured: true, want: true},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := failForMissingMachinesTarget(tt.containerized, tt.offlineArtifactsConfigured); got != tt.want {
-				t.Fatalf("failForMissingMachinesTarget(%t, %t) = %t, want %t",
-					tt.containerized, tt.offlineArtifactsConfigured, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestWriteText(t *testing.T) {
 	t.Parallel()
 
