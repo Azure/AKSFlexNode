@@ -19,6 +19,7 @@ func TestCheckMachinesTarget(t *testing.T) {
 		err            error
 		failForMissing bool
 		want           preflight.Severity
+		wantMessage    string
 	}{
 		"enabled":               {state: "enabled\n", want: preflight.SeverityOK},
 		"static":                {state: "static", want: preflight.SeverityOK},
@@ -26,9 +27,12 @@ func TestCheckMachinesTarget(t *testing.T) {
 		"runtime only":          {state: "enabled-runtime", want: preflight.SeverityWarning},
 		"masked":                {state: "masked", want: preflight.SeverityError},
 		"runtime masked":        {state: "masked-runtime", want: preflight.SeverityError},
-		"missing online":        {want: preflight.SeverityWarning},
-		"missing offline":       {failForMissing: true, want: preflight.SeverityError},
+		"masked strict":         {state: "masked", failForMissing: true, want: preflight.SeverityError},
+		"runtime masked strict": {state: "masked-runtime", failForMissing: true, want: preflight.SeverityError},
+		"missing online":        {want: preflight.SeverityWarning, wantMessage: "may be installed by online bootstrap with systemd-container"},
+		"missing strict":        {failForMissing: true, want: preflight.SeverityError, wantMessage: "install systemd-container on the host before offline or containerized bootstrap"},
 		"not found online":      {state: "not-found", want: preflight.SeverityWarning},
+		"not found strict":      {state: "not-found", failForMissing: true, want: preflight.SeverityError, wantMessage: "install systemd-container on the host before offline or containerized bootstrap"},
 		"unexpected unit state": {state: "linked", want: preflight.SeverityError},
 		"inspect failure":       {err: errors.New("systemd unavailable"), want: preflight.SeverityError},
 	}
@@ -53,6 +57,9 @@ func TestCheckMachinesTarget(t *testing.T) {
 				}
 				if tt.state == "linked" && !strings.Contains(results[0].Message, tt.state) {
 					t.Fatalf("Check() message = %q, want it to include UnitFileState %q", results[0].Message, tt.state)
+				}
+				if !strings.Contains(results[0].Message, tt.wantMessage) {
+					t.Fatalf("Check() message = %q, want it to include %q", results[0].Message, tt.wantMessage)
 				}
 			}
 		})
