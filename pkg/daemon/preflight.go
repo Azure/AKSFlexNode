@@ -10,15 +10,15 @@ import (
 )
 
 type machinesTargetChecker struct {
-	log              *slog.Logger
-	offlineArtifacts bool
-	output           func(context.Context, *slog.Logger, string, ...string) (string, error)
+	log            *slog.Logger
+	failForMissing bool
+	output         func(context.Context, *slog.Logger, string, ...string) (string, error)
 }
 
 // CheckMachinesTarget checks that systemd can start nspawn workers at boot.
 // TODO: Move this check to Unbounded's host preflight checks.
-func CheckMachinesTarget(log *slog.Logger, offlineArtifacts bool) preflight.Checker {
-	return machinesTargetChecker{log: log, offlineArtifacts: offlineArtifacts, output: utilexec.OutputCmd}
+func CheckMachinesTarget(log *slog.Logger, failForMissing bool) preflight.Checker {
+	return machinesTargetChecker{log: log, failForMissing: failForMissing, output: utilexec.OutputCmd}
 }
 
 func (machinesTargetChecker) Name() string { return "machines-target" }
@@ -35,7 +35,7 @@ func (c machinesTargetChecker) Check(ctx context.Context) []preflight.Result {
 	case "disabled", "enabled-runtime":
 		return preflight.ResultsWarning(c.Name(), target, "machines.target is not enabled persistently; bootstrap installs a daemon Wants=machines.target dependency to start workers at boot")
 	case "", "not-found":
-		if c.offlineArtifacts {
+		if c.failForMissing {
 			return preflight.ResultsError(c.Name(), target, "machines.target is missing; install systemd-container before offline bootstrap")
 		}
 		return preflight.ResultsWarning(c.Name(), target, "machines.target is missing and may be installed by online bootstrap with systemd-container")

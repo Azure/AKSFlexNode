@@ -15,10 +15,10 @@ func TestCheckMachinesTarget(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		state            string
-		err              error
-		offlineArtifacts bool
-		want             preflight.Severity
+		state          string
+		err            error
+		failForMissing bool
+		want           preflight.Severity
 	}{
 		"enabled":               {state: "enabled\n", want: preflight.SeverityOK},
 		"static":                {state: "static", want: preflight.SeverityOK},
@@ -27,7 +27,7 @@ func TestCheckMachinesTarget(t *testing.T) {
 		"masked":                {state: "masked", want: preflight.SeverityError},
 		"runtime masked":        {state: "masked-runtime", want: preflight.SeverityError},
 		"missing online":        {want: preflight.SeverityWarning},
-		"missing offline":       {offlineArtifacts: true, want: preflight.SeverityError},
+		"missing offline":       {failForMissing: true, want: preflight.SeverityError},
 		"not found online":      {state: "not-found", want: preflight.SeverityWarning},
 		"unexpected unit state": {state: "linked", want: preflight.SeverityError},
 		"inspect failure":       {err: errors.New("systemd unavailable"), want: preflight.SeverityError},
@@ -37,8 +37,8 @@ func TestCheckMachinesTarget(t *testing.T) {
 			t.Parallel()
 
 			check := machinesTargetChecker{
-				log:              slog.Default(),
-				offlineArtifacts: tt.offlineArtifacts,
+				log:            slog.Default(),
+				failForMissing: tt.failForMissing,
 				output: func(_ context.Context, _ *slog.Logger, command string, args ...string) (string, error) {
 					if command != "systemctl" || !slices.Equal(args, []string{"show", "--property=UnitFileState", "--value", "machines.target"}) {
 						t.Fatalf("unexpected command: %s %v", command, args)
