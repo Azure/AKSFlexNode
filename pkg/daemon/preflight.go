@@ -15,6 +15,7 @@ type machinesTargetChecker struct {
 }
 
 // CheckMachinesTarget checks that systemd can start nspawn workers at boot.
+// TODO: Move this check to Unbounded's host preflight checks.
 func CheckMachinesTarget(log *slog.Logger) preflight.Checker {
 	return machinesTargetChecker{log: log, output: utilexec.OutputCmd}
 }
