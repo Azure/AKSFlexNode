@@ -9,7 +9,7 @@ Use [AKS identity bindings](https://learn.microsoft.com/azure/aks/identity-bindi
 >
 > **Validated versions:** Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded plugin/operator `v0.23.0`, stock ACR credential provider `v1.36.0`, Ubuntu `24.04`, amd64
 >
-> **Validated scope:** Private image pulls and Gantry peer transfer on two Azure-hosted Flex workers, idempotent reattachment, and new-worker inheritance. The AKS API was public; workers used private Layer 3 connectivity and a Premium ACR private endpoint with public registry networking disabled. Canonical-host mirrors failed as described below.
+> **Validated scope:** Private image pulls with a dedicated ServiceAccount, Gantry peer transfer on two Azure-hosted Flex workers, idempotent reattachment, and new-worker inheritance. The AKS API was public; workers used private Layer 3 connectivity and a Premium ACR private endpoint with public registry networking disabled. Canonical-host mirrors failed as described below.
 
 ## How authentication works
 
