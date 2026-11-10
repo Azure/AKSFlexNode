@@ -9,7 +9,7 @@ Use [AKS identity bindings](https://learn.microsoft.com/azure/aks/identity-bindi
 >
 > **Validated versions:** Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded plugin/operator `v0.23.0`, stock ACR credential provider `v1.36.0`, Ubuntu `24.04`, amd64
 >
-> **Validated scope:** Private image pulls and Gantry peer transfer on two Azure-hosted Flex workers, idempotent reattachment, and new-worker inheritance. The AKS API was public; workers used private Layer 3 connectivity and a Premium ACR private endpoint with public registry networking disabled. Proxy-only token exchange and canonical-host mirrors failed as described below.
+> **Validated scope:** Private image pulls and Gantry peer transfer on two Azure-hosted Flex workers, idempotent reattachment, and new-worker inheritance. The AKS API was public; workers used private Layer 3 connectivity and a Premium ACR private endpoint with public registry networking disabled. Canonical-host mirrors failed as described below.
 
 ## How authentication works
 
@@ -92,7 +92,7 @@ Authentication and image delivery require different network paths:
 | Gantry peer → peer | TCP/QUIC 4001 for discovery, HTTP/2 5001 for transfer, TLS 5002 for coordinated origin pulls; restrict these paths to trusted peers. |
 | Containerd → local Gantry | Loopback mirror on port 5000. |
 
-Check the ACR and token-proxy routes separately. Workers do not need a separate direct connection to `login.microsoftonline.com` for the identity-binding exchange, but they must reach the discovered AKS token proxy directly, even when you configure an HTTP proxy.
+Check the ACR and token-proxy routes separately. Workers do not need a separate direct connection to `login.microsoftonline.com` for the identity-binding exchange, but they must reach the discovered AKS token proxy directly.
 
 For current AKS identity-binding prerequisites and availability, see:
 https://learn.microsoft.com/azure/aks/identity-bindings
@@ -138,7 +138,32 @@ kubectl unbounded gantry attach-acr \
   --auth-mode aks-identity-binding \
   --cluster-resource-id "$AKS_ID" \
   --timeout 8m
+```
 
+The command uses your existing AKS cluster and ACR. It creates or reuses the Azure resources below, then saves a policy for the operator to reconcile the Kubernetes resources:
+
+| Resource | Location / name | Purpose |
+| --- | --- | --- |
+| User-assigned managed identity | AKS resource group: `gantry-pull-<cluster-hash>` | Shared pull identity; the name is derived from the AKS resource ID. |
+| AKS identity binding | Under the AKS cluster: `gantry-pull-<cluster-hash>` | Associates the pull identity with AKS. AKS creates or reuses the identity's federated identity credential. |
+| Azure role assignment | Selected ACR scope | Grants the pull identity `AcrPull`, or `Container Registry Repository Reader` for ABAC. |
+| ConfigMap | `unbounded-system/gantry-config` | Updates `config.yaml` with the ACR upstream and `node-auth.yaml` with the managed-auth policy. |
+| Discovery ServiceAccount | `unbounded-system/gantry-acr-discovery` | Supplies identity annotations for admission discovery. The discovery Pod is dry-run only and is not retained. |
+| Installer DaemonSet and ServiceAccount | `unbounded-system/gantry-acr-auth` | Reconciles provider installation on eligible Linux Flex nodes. |
+| Identity-use ClusterRole and ClusterRoleBinding | `gantry-acr-pull` | Allows `system:serviceaccounts` to use the selected pull identity. |
+| Token-audience ClusterRole and ClusterRoleBindings | `gantry-acr-kubelet-token-audience` and binding shards with that prefix | Allows eligible Flex node identities to request ServiceAccount tokens for the discovered audience. |
+
+On each targeted worker, the installer manages the provider binary/configuration under `/opt/unbounded/registry-auth`, its CA at `/etc/kubernetes/certs/ca.crt`, and the kubelet systemd drop-in `90-unbounded-registry-auth.conf`. It restarts kubelet when installation changes require it. These files are inside the active nspawn worker, not a credential configuration you add to application Pods.
+
+Inspect resource metadata and installer readiness:
+
+```bash
+kubectl --kubeconfig "$KUBECONFIG_PATH" -n unbounded-system \
+  get configmap gantry-config
+kubectl --kubeconfig "$KUBECONFIG_PATH" -n unbounded-system \
+  get serviceaccount gantry-acr-discovery gantry-acr-auth
+kubectl --kubeconfig "$KUBECONFIG_PATH" \
+  get clusterrole gantry-acr-pull gantry-acr-kubelet-token-audience
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n unbounded-system \
   get ds gantry gantry-acr-auth
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n unbounded-system \
@@ -166,11 +191,13 @@ az acr repository show --subscription "$SUBSCRIPTION_ID" \
   -n "$ACR_NAME" --image "$TEST_IMAGE" --query digest -o tsv
 ```
 
-Create a new namespace to avoid reusing a default ServiceAccount with existing pull secrets. Cluster-wide admission policies can still modify the test Pods, so inspect the resulting objects.
+Create a dedicated namespace and ServiceAccount for the test. The ServiceAccount needs no identity annotations or pull secrets.
 
 ```bash
 TEST_NAMESPACE="flex-acr-check-$TEST_TAG"
 kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace "$TEST_NAMESPACE"
+kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TEST_NAMESPACE" \
+  create serviceaccount private-pull-check
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TEST_NAMESPACE" apply -f - <<EOF
 apiVersion: apps/v1
 kind: DaemonSet
@@ -185,6 +212,7 @@ spec:
       labels:
         app: private-pull-check
     spec:
+      serviceAccountName: private-pull-check
       nodeSelector:
         kubernetes.azure.com/nodepool-type: FlexNodes
         kubernetes.io/os: linux
@@ -206,33 +234,20 @@ kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TEST_NAMESPACE" \
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TEST_NAMESPACE" \
   rollout status ds/private-pull-check --timeout=60s
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TEST_NAMESPACE" \
-  get pods -o custom-columns='NAME:.metadata.name,NODE:.spec.nodeName,IMAGE:.status.containerStatuses[0].imageID,PULL_SECRETS:.spec.imagePullSecrets[*].name'
+  get pods -o custom-columns='NAME:.metadata.name,NODE:.spec.nodeName,SERVICEACCOUNT:.spec.serviceAccountName,IMAGE:.status.containerStatuses[0].imageID,PULL_SECRETS:.spec.imagePullSecrets[*].name'
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TEST_NAMESPACE" \
-  get serviceaccount default -o jsonpath='{.imagePullSecrets[*].name}{"\n"}'
+  get serviceaccount private-pull-check -o jsonpath='{.imagePullSecrets[*].name}{"\n"}'
 ```
 
-Expect a Running Pod per eligible node, the expected image digest, and no Pod or ServiceAccount pull secrets. Admission policies can change the resulting Pod; inspect the actual objects, not just the submitted manifest. A successful `ctr pull` or `crictl pull` is not an equivalent test because it does not exercise kubelet's Pod-token credential-provider flow.
+Expect a Running Pod per eligible node, the expected image digest, the `private-pull-check` ServiceAccount, and no Pod or ServiceAccount pull secrets. Admission policies can change the resulting Pod; inspect the actual objects, not just the submitted manifest. A successful `ctr pull` or `crictl pull` is not an equivalent test because it does not exercise kubelet's Pod-token credential-provider flow.
 
 If a rollout fails, inspect Pod status, events, and relevant installer/kubelet logs before retrying or extending waits. Do not collect credential-provider request/response bodies, token files, complete environments/configurations, kubeconfigs, or signed URLs.
 
 A fresh tag and `Always` exercise registry resolution but do not guarantee cold layers. To verify Gantry distribution, use an image with a new layer on at least two workers and compare before/after metrics: `p2p_peer_fetch_total{outcome="hit"}`, `gantry_peer_fetch_bytes_total`, origin bytes, and `p2p_origin_fallback_total`. Warm-cache startup alone proves neither authentication nor peer transfer. The validation run transferred a unique 32 MiB layer from one Flex node to another, with zero origin fallbacks.
 
-## Understand proxy and mirror limits
+## Understand registry mirror limits
 
-| Configuration | Behavior in the validated releases |
-| --- | --- |
-| Direct ACR reference, direct token-proxy connectivity | Passed private pulls, including ACR private-endpoint access with public registry networking disabled. |
-| Explicit kubelet HTTPS proxy, direct token-proxy connectivity retained | Private pull passed; identity-binding exchange bypassed the HTTP proxy. |
-| Token proxy reachable only through a working CONNECT relay | Private pull failed when new direct connections were blocked; removing the block restored success. |
-| Canonical `mcr.microsoft.com/...` reference mirrored to private ACR by containerd | Failed to fetch an anonymous token with HTTP 401, while the direct ACR reference worked on the same node. |
-
-### An HTTP proxy does not replace the token-proxy route
-
-The stock provider's identity-binding transport sets `Proxy=nil` and dials the discovered endpoint directly. `HTTPS_PROXY` cannot redirect this exchange, and `NO_PROXY` cannot create a missing route. The test verified TLS through a controlled CONNECT relay while direct connections were blocked; the provider still attempted a direct connection and the private pull failed.
-
-This limit concerns the AKS token exchange. ACR authentication, containerd registry traffic, and Gantry origin traffic have separate transports and proxy settings. Host shell exports are not automatic configuration for nested kubelet/containerd services or Gantry Pods. The validation retained direct private ACR routing; it did not certify an end-to-end enterprise-proxy deployment.
-
-### Containerd routing does not change kubelet's image match
+In the validation run, a canonical `mcr.microsoft.com/...` reference routed to private ACR by containerd failed to fetch an anonymous token with HTTP 401. The direct ACR reference worked on the same node.
 
 Kubelet chooses a credential provider using the original image reference, before containerd resolves [`hosts.toml` mirrors](https://github.com/containerd/containerd/blob/v2.1.8/docs/hosts.md). Managed attachment matches only the selected ACR login host. For `mcr.microsoft.com/repository:tag`, that provider is not selected just because containerd later connects to ACR.
 
@@ -265,7 +280,7 @@ kubectl --kubeconfig "$KUBECONFIG_PATH" delete namespace "$TEST_NAMESPACE" --wai
 kubectl --kubeconfig "$KUBECONFIG_PATH" get namespace "$TEST_NAMESPACE" --ignore-not-found
 ```
 
-The namespace should eventually be absent. This removes the verification workload, not the imported ACR image or managed authentication.
+The namespace should eventually be absent. This removes the verification workload and its ServiceAccount, not the imported ACR image or managed authentication.
 
 Do not use `attach-acr --auth-mode external` as a disable command: it preserves the existing managed policy. Removing authentication requires separate reconciliation of the node policy/files and cleanup of the Azure identity binding, federated credential, pull identity, and role assignment. Keep the installer available for node cleanup; deleting it first does not restore node files. This guide does not provide an in-place authentication rollback procedure.
 
