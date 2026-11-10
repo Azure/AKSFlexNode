@@ -32,7 +32,7 @@ The command:
 4. Grants the pull identity one of the [ACR built-in roles](https://learn.microsoft.com/azure/container-registry/container-registry-rbac-built-in-roles-overview): `AcrPull` at registry scope for a legacy-permissions registry, or `Container Registry Repository Reader` for an [ABAC-enabled registry](https://learn.microsoft.com/azure/container-registry/container-registry-rbac-abac-repository-permissions).
 5. Saves the Gantry upstream and managed-auth policy. The operator installs the provider on Linux Flex nodes, grants the required token-audience permissions to those node identities, and grants use of the shared pull identity to ServiceAccounts.
 
-The installer targets nodes labeled `kubernetes.azure.com/nodepool-type=FlexNodes`. It does not install this provider on native AKS nodes or take over conflicting customer-owned credential providers. New eligible Flex nodes inherit the policy without running attachment again.
+The installer targets Flex nodes only. New eligible Flex nodes inherit the policy without running attachment again.
 
 ### During an image pull
 
@@ -59,9 +59,9 @@ sequenceDiagram
     G-->>C: Manifests and layers
 ```
 
-Kubelet obtains the Pod-bound token for its credential-provider request; your application does not need to request or mount an extra token. Application Pods and ServiceAccounts need no identity annotations or pull secrets.
+Kubelet obtains the Pod-bound ServiceAccount token for image pulling and passes it to the credential provider. Application Pods and ServiceAccounts need no identity annotations or pull secrets.
 
-Gantry accelerates content distribution; it does not replace kubelet authentication. Containerd answers Gantry's registry challenge using the credentials supplied by kubelet and verifies content digests. Gantry carries request-scoped authorization to a selected origin puller and discards it after the request. Tag resolution still reaches ACR.
+Gantry accelerates image distribution by sharing content between peers. Containerd uses kubelet-supplied credentials to answer Gantry's registry challenge and verifies content digests. Gantry forwards request-scoped authorization to the selected origin puller and discards it after the request. Containerd resolves image tags through ACR.
 
 **This is shared registry access, not tenant isolation.** The managed identity-use binding covers `system:serviceaccounts`, and the default grant is registry-wide pull access. Do not treat namespace boundaries as separate registry authorization boundaries in this configuration.
 
