@@ -1,6 +1,6 @@
 # Pull private ACR images on Flex nodes
 
-Use AKS identity bindings to pull private Azure Container Registry (ACR) images on Linux Flex nodes without registry passwords or `imagePullSecrets`. Unbounded's Gantry attachment command configures a shared, pull-only managed identity and installs the stock ACR kubelet credential provider. Your workloads use direct image references such as `<registry>.azurecr.io/<repository>:<tag>`.
+Use [AKS identity bindings](https://learn.microsoft.com/azure/aks/identity-bindings-concepts) to pull private [Azure Container Registry (ACR)](https://learn.microsoft.com/azure/container-registry/container-registry-intro) images on Linux Flex nodes without registry passwords or `imagePullSecrets`. Unbounded's [Gantry](https://github.com/Azure/unbounded/blob/v0.23.0/docs/content/guides/gantry.md) attachment command configures a shared, pull-only [managed identity](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/overview) and installs the stock ACR [kubelet credential provider](https://kubernetes.io/docs/tasks/administer-cluster/kubelet-credential-provider/). Your workloads use direct image references such as `<registry>.azurecr.io/<repository>:<tag>`.
 
 > [!IMPORTANT]
 > AKS Flex Node is a preview feature. Review the prerequisites and limitations before enabling managed image-pull authentication.
@@ -20,16 +20,16 @@ There are two separate identities:
 | Host onboarding identity | Authorizes the Flex agent to register and operate its machine in the AKS Flex node pool. It can be a VM/Arc managed identity or a service principal. |
 | Gantry pull identity | A separate user-assigned managed identity created by attachment, authorized to pull from the selected ACR. Current and future eligible Flex kubelets use it through AKS identity bindings. |
 
-The pull identity is separate from both the host onboarding identity and the native AKS kubelet identity. Its identity-binding exchange does not use the Flex host's Azure Instance Metadata Service (IMDS).
+The pull identity is separate from both the host onboarding identity and the native AKS kubelet identity. Its identity-binding exchange does not use the Flex host's [Azure Instance Metadata Service (IMDS)](https://learn.microsoft.com/azure/virtual-machines/instance-metadata-service).
 
 ### During attachment
 
 The command:
 
 1. Checks that your selected kubeconfig matches the requested AKS cluster and that AKS and ACR are in the same subscription.
-2. Enables the AKS OIDC issuer and workload identity if necessary, then creates or reuses a pull identity named `gantry-pull-<cluster-hash>` in the AKS resource group and an AKS identity binding for it.
-3. Uses an admission dry-run Pod to discover the token proxy address, TLS server name, CA, and ServiceAccount token audience. It does not schedule that Pod or collect a ServiceAccount token.
-4. Grants the pull identity `AcrPull` at registry scope for a legacy-permissions registry, or `Container Registry Repository Reader` for an ABAC-enabled registry.
+2. Enables the AKS [OIDC issuer](https://learn.microsoft.com/azure/aks/use-oidc-issuer) and [workload identity](https://learn.microsoft.com/azure/aks/workload-identity-overview) if necessary, then creates or reuses a pull identity named `gantry-pull-<cluster-hash>` in the AKS resource group and an AKS identity binding for it.
+3. Uses an admission dry-run Pod to discover the token proxy address, TLS server name, CA, and [ServiceAccount token](https://kubernetes.io/docs/concepts/security/service-accounts/) audience. It does not schedule that Pod or collect a ServiceAccount token.
+4. Grants the pull identity one of the [ACR built-in roles](https://learn.microsoft.com/azure/container-registry/container-registry-rbac-built-in-roles-overview): `AcrPull` at registry scope for a legacy-permissions registry, or `Container Registry Repository Reader` for an [ABAC-enabled registry](https://learn.microsoft.com/azure/container-registry/container-registry-rbac-abac-repository-permissions).
 5. Saves the Gantry upstream and managed-auth policy. The operator installs the provider on Linux Flex nodes, grants the required token-audience permissions to those node identities, and grants use of the shared pull identity to ServiceAccounts.
 
 The installer targets nodes labeled `kubernetes.azure.com/nodepool-type=FlexNodes`. It does not install this provider on native AKS nodes or take over conflicting customer-owned credential providers. New eligible Flex nodes inherit the policy without running attachment again.
@@ -75,12 +75,12 @@ You need:
 - Matching Unbounded `v0.23.0` plugin, operator, and component images, and AKS Flex Node `v0.3.0` for the validated baseline.
 - At least one Ready Linux Flex worker; use at least two when checking peer transfer.
 - Kubelet `>=1.34` with `KubeletServiceAccountTokenForCredentialProviders` enabled. The installer checks the gate but does not enable it for you.
-- AKS identity bindings available in your subscription and region; OIDC and workload identity enabled or permission to enable them. API-server VNet integration is unsupported.
+- AKS identity bindings available in your subscription and region; OIDC and workload identity enabled or permission to enable them. [API-server VNet integration](https://learn.microsoft.com/azure/aks/api-server-vnet-integration) is unsupported.
 - Administrative Kubernetes access and Azure permissions to read/update AKS, create identity bindings and a user-assigned identity, configure federated identity credentials, and create the registry role assignment. Resource-group Contributor alone does not grant role-assignment creation.
 - No conflicting customer-owned provider configuration, kubelet command-line override, or CA file at the paths the installer owns.
 - Containerd's registry `config_path` set to `/etc/containerd/certs.d`, its socket available at `/run/containerd/containerd.sock`, and reachable public or prefetched operator/Gantry installation images. Do not make installation depend on the private credentials you are about to install.
 
-An ACR private endpoint is optional for managed authentication; it controls network access, not identity. The validated private-endpoint configuration additionally restricted where registry traffic could go.
+An [ACR private endpoint](https://learn.microsoft.com/azure/container-registry/container-registry-private-link) is optional for managed authentication; it controls network access, not identity. The validated private-endpoint configuration additionally restricted where registry traffic could go.
 
 Authentication and image delivery require different network paths:
 
@@ -234,7 +234,7 @@ This limit concerns the AKS token exchange. ACR authentication, containerd regis
 
 ### Containerd routing does not change kubelet's image match
 
-Kubelet chooses a credential provider using the original image reference, before containerd resolves `hosts.toml` mirrors. Managed attachment matches only the selected ACR login host. For `mcr.microsoft.com/repository:tag`, that provider is not selected just because containerd later connects to ACR.
+Kubelet chooses a credential provider using the original image reference, before containerd resolves [`hosts.toml` mirrors](https://github.com/containerd/containerd/blob/v2.1.8/docs/hosts.md). Managed attachment matches only the selected ACR login host. For `mcr.microsoft.com/repository:tag`, that provider is not selected just because containerd later connects to ACR.
 
 The stock provider has a separate `--registry-mirror` feature, but managed attachment does not configure it or broaden `matchImages`. Manually changing generated provider configuration is not a durable fix: reconciliation owns those files. A customer-owned credential-provider/mirror integration is a separate configuration, not a validated extension of this managed mode.
 
