@@ -36,7 +36,7 @@ func (c machinesTargetChecker) Check(ctx context.Context) []preflight.Result {
 		return preflight.ResultsWarning(c.Name(), target, "machines.target is not enabled persistently; bootstrap installs a daemon Wants=machines.target dependency to start workers at boot")
 	case "", "not-found":
 		if c.failForMissing {
-			return preflight.ResultsError(c.Name(), target, "machines.target is missing; install systemd-container before offline bootstrap")
+			return preflight.ResultsError(c.Name(), target, "machines.target is missing; install systemd-container on the host before offline or containerized bootstrap")
 		}
 		return preflight.ResultsWarning(c.Name(), target, "machines.target is missing and may be installed by online bootstrap with systemd-container")
 	case "masked", "masked-runtime":

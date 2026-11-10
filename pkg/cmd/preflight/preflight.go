@@ -84,7 +84,13 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 
 	checks := daemon.PreflightChecks(preflight.Flatten(
-		[]preflight.Checker{daemon.CheckMachinesTarget(log, strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "")},
+		[]preflight.Checker{daemon.CheckMachinesTarget(
+			log,
+			failForMissingMachinesTarget(
+				daemon.Containerized(),
+				strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "",
+			),
+		)},
 		arc.Preflight(cfg, log),
 		host.Preflight(log, *agentCfg, gs),
 		nodeChecks,
@@ -111,6 +117,10 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 
 	return report.Err(h.failOnWarnings)
+}
+
+func failForMissingMachinesTarget(containerized, offlineArtifactsConfigured bool) bool {
+	return containerized || offlineArtifactsConfigured
 }
 
 func normalizeOutput(output string) (string, error) {

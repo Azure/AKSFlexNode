@@ -62,7 +62,7 @@ aks-flex-node preflight \
 
 When `bootstrap.offlineArtifacts.source` is configured, missing host packages are fatal because offline bootstrap cannot rely on package installation during `start`.
 
-The `machines-target` check warns when `machines.target` is missing on an online-bootstrap host because bootstrap can install `systemd-container`; the same condition is fatal when offline artifacts are configured. A masked target, or a failure to inspect the target, is always fatal. A disabled target produces a warning: the installed daemon unit declares `Wants=machines.target`, so workers start at boot even on hosts whose systemd preset disables the target.
+The `machines-target` check warns when `machines.target` is missing during native online bootstrap because bootstrap can install `systemd-container`. A missing target is fatal when offline artifacts are configured or the agent runs in a container, because neither mode can install host packages; provision `systemd-container` on the host first. A masked target, or a failure to inspect the target, is always fatal. A disabled target produces a warning: the installed daemon unit declares `Wants=machines.target`, so workers start at boot even on hosts whose systemd preset disables the target.
 
 ## Start
 
