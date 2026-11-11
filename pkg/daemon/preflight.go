@@ -30,10 +30,12 @@ func (c machinesTargetChecker) Check(ctx context.Context) []preflight.Result {
 		return preflight.ResultsError(c.Name(), target, "failed to inspect machines.target")
 	}
 	switch strings.TrimSpace(state) {
-	case "enabled", "static":
+	case "enabled", "static", "linked":
 		return preflight.ResultsOK(c.Name(), target, "machines.target is available for worker startup")
 	case "disabled", "enabled-runtime":
 		return preflight.ResultsWarning(c.Name(), target, "machines.target is not enabled persistently; bootstrap installs a daemon Wants=machines.target dependency to start workers at boot")
+	case "linked-runtime":
+		return preflight.ResultsWarning(c.Name(), target, "machines.target is linked only at runtime; make the link persistent for workers to start at boot")
 	case "", "not-found":
 		if c.failForMissing {
 			return preflight.ResultsError(c.Name(), target, "machines.target is missing; install systemd-container on the host before offline or containerized bootstrap")
@@ -42,6 +44,6 @@ func (c machinesTargetChecker) Check(ctx context.Context) []preflight.Result {
 	case "masked", "masked-runtime":
 		return preflight.ResultsError(c.Name(), target, "machines.target is masked; unmask it before bootstrap")
 	default:
-		return preflight.ResultsError(c.Name(), target, "machines.target has unexpected UnitFileState %q", strings.TrimSpace(state))
+		return preflight.ResultsWarning(c.Name(), target, "machines.target has unrecognized UnitFileState %q; verify that it is available and persistent", strings.TrimSpace(state))
 	}
 }

@@ -21,20 +21,22 @@ func TestCheckMachinesTarget(t *testing.T) {
 		want           preflight.Severity
 		wantMessage    string
 	}{
-		"enabled":               {state: "enabled\n", want: preflight.SeverityOK},
-		"static":                {state: "static", want: preflight.SeverityOK},
-		"disabled":              {state: "disabled", want: preflight.SeverityWarning},
-		"runtime only":          {state: "enabled-runtime", want: preflight.SeverityWarning},
-		"masked":                {state: "masked", want: preflight.SeverityError},
-		"runtime masked":        {state: "masked-runtime", want: preflight.SeverityError},
-		"masked strict":         {state: "masked", failForMissing: true, want: preflight.SeverityError},
-		"runtime masked strict": {state: "masked-runtime", failForMissing: true, want: preflight.SeverityError},
-		"missing online":        {want: preflight.SeverityWarning, wantMessage: "may be installed by online bootstrap with systemd-container"},
-		"missing strict":        {failForMissing: true, want: preflight.SeverityError, wantMessage: "install systemd-container on the host before offline or containerized bootstrap"},
-		"not found online":      {state: "not-found", want: preflight.SeverityWarning},
-		"not found strict":      {state: "not-found", failForMissing: true, want: preflight.SeverityError, wantMessage: "install systemd-container on the host before offline or containerized bootstrap"},
-		"unexpected unit state": {state: "linked", want: preflight.SeverityError},
-		"inspect failure":       {err: errors.New("systemd unavailable"), want: preflight.SeverityError},
+		"enabled":                 {state: "enabled\n", want: preflight.SeverityOK},
+		"static":                  {state: "static", want: preflight.SeverityOK},
+		"linked":                  {state: "linked", want: preflight.SeverityOK},
+		"disabled":                {state: "disabled", want: preflight.SeverityWarning},
+		"runtime only":            {state: "enabled-runtime", want: preflight.SeverityWarning},
+		"runtime linked":          {state: "linked-runtime", want: preflight.SeverityWarning, wantMessage: "make the link persistent"},
+		"masked":                  {state: "masked", want: preflight.SeverityError},
+		"runtime masked":          {state: "masked-runtime", want: preflight.SeverityError},
+		"masked strict":           {state: "masked", failForMissing: true, want: preflight.SeverityError},
+		"runtime masked strict":   {state: "masked-runtime", failForMissing: true, want: preflight.SeverityError},
+		"missing online":          {want: preflight.SeverityWarning, wantMessage: "may be installed by online bootstrap with systemd-container"},
+		"missing strict":          {failForMissing: true, want: preflight.SeverityError, wantMessage: "install systemd-container on the host before offline or containerized bootstrap"},
+		"not found online":        {state: "not-found", want: preflight.SeverityWarning},
+		"not found strict":        {state: "not-found", failForMissing: true, want: preflight.SeverityError, wantMessage: "install systemd-container on the host before offline or containerized bootstrap"},
+		"unrecognized unit state": {state: "future-state", want: preflight.SeverityWarning, wantMessage: "future-state"},
+		"inspect failure":         {err: errors.New("systemd unavailable"), want: preflight.SeverityError},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -54,9 +56,6 @@ func TestCheckMachinesTarget(t *testing.T) {
 				results := check.Check(t.Context())
 				if len(results) != 1 || results[0].Severity != tt.want || results[0].Name != "machines-target" {
 					t.Fatalf("Check() = %#v, want severity %s", results, tt.want)
-				}
-				if tt.state == "linked" && !strings.Contains(results[0].Message, tt.state) {
-					t.Fatalf("Check() message = %q, want it to include UnitFileState %q", results[0].Message, tt.state)
 				}
 				if !strings.Contains(results[0].Message, tt.wantMessage) {
 					t.Fatalf("Check() message = %q, want it to include %q", results[0].Message, tt.wantMessage)
