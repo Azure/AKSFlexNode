@@ -3,7 +3,7 @@ Description=AKS Flex Node Agent
 # Arc's identity service, on a host with Arc, as a host's agent unit with Arc
 # enabled has: the agent's credentials may come from it. Without it, systemd
 # ignores both.
-Wants=network-online.target himdsd.service
+Wants=network-online.target machines.target himdsd.service
 # A restart after a failure waits for a recovery the failure started, so it runs
 # the image recovery restores rather than the one that failed: recovery starts a
 # container, which takes longer than RestartSec.

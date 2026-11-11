@@ -83,7 +83,12 @@ func (h *handler) execute(ctx context.Context) error {
 		}
 	}
 
+	failMachinesTargetForMissing := daemon.Containerized() || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
 	checks := daemon.PreflightChecks(preflight.Flatten(
+		[]preflight.Checker{daemon.CheckMachinesTarget(
+			log,
+			failMachinesTargetForMissing,
+		)},
 		arc.Preflight(cfg, log),
 		host.Preflight(log, *agentCfg, gs),
 		nodeChecks,

@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Refresh supplemental networking, offline-artifact, and NVIDIA GPU labs for AKS Flex Node `v0.3.0` and Unbounded `v0.21.0`, with recorded validation scopes. Correct offline agent staging, ARM egress, Gantry's loopback port conflict, and WireGuard host-port syntax.
 
+### Fixed
+
+- Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
+- Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added
