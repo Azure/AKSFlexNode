@@ -7,7 +7,7 @@ Use these hands-on labs to evaluate AKS Flex Node in end-to-end Azure scenarios.
 
 Existing files under `docs/labs/` are stable public documentation paths. Update labs in place so links from Microsoft Learn, issues, and external content continue to work.
 
-The current refresh baseline is Unbounded `v0.8.0`, AKS Flex Node `v0.2.0`, Azure CLI `2.90.0` or later, and `aks-preview` `22.0.0b8` where Flex node pool commands are required. A lab's status block records any scenario-specific exception or incomplete validation.
+The refreshed networking and NVIDIA procedures use AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, and worker rootfs `v20261031`. Validation used Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, kubectl `1.36.2`, and Helm `3.19.0` where required. Review each lab's dated version scope.
 
 ## Common Prerequisites
 
@@ -25,13 +25,13 @@ A lab can require additional tools and permissions. Complete its `Before you beg
 
 | Lab | API access | Node connectivity | Networking or hardware | Status |
 | --- | --- | --- | --- | --- |
-| [NVIDIA GPU Flex Node setup](gpu-node-setup.md) | Determined by the base cluster | Determined by the base cluster | NVIDIA GPU | Validated with A100 |
+| [NVIDIA GPU Flex Node setup](gpu-node-setup.md) | Determined by the base cluster | Determined by the base cluster | NVIDIA GPU | A100 validated, 2026-11-08 |
 | [AMD GPU Flex Node setup](amd-gpu-node-setup.md) | Determined by the base cluster | Determined by the base cluster | AMD Instinct GPU | Experimental |
-| [Private AKS cluster with unmanaged Cilium and a cross-region Flex node](aks-private-cluster-cilium.md) | Private | Cross-region VNet peering | Unmanaged Cilium with VXLAN | Validated with Cilium `1.20.2` |
-| [Private AKS cluster with Unbounded-Net and a cross-region Flex node](aks-private-cluster-unbounded-net.md) | Private | Cross-region VNet peering | Unbounded-Net private Layer 3 peering | Partially validated with `v0.8.0` |
-| [Public AKS cluster with Unbounded-Net and a cross-region VNet-peered Flex node](aks-public-cluster-unbounded-net-vnet-peering.md) | Public | Cross-region VNet peering | Unbounded-Net private Layer 3 peering | Validated with `v0.8.0` |
-| [AKS Flex Node with offline bootstrap artifacts](aks-public-cluster-offline-bootstrap.md) | Public in the walkthrough | Cross-region VNet peering | Filesystem or local-registry artifacts | Filesystem and local OCI registry paths validated with `v0.8.0` |
-| [Public AKS cluster with an Unbounded-Net WireGuard Flex node](aks-public-cluster-unbounded-net-wireguard.md) | Public | No VNet peering | Unbounded-Net public WireGuard gateway | Validated with `v0.8.0` |
+| [Private AKS cluster with unmanaged Cilium and a cross-region Flex node](aks-private-cluster-cilium.md) | Private | Cross-region VNet peering | Unmanaged Cilium with VXLAN | Cilium `1.20.2` validated, 2026-11-08 |
+| [Private AKS cluster with Unbounded-Net and a cross-region Flex node](aks-private-cluster-unbounded-net.md) | Private | Cross-region VNet peering | Unbounded-Net private Layer 3 peering | `v0.21.0` validated, 2026-11-08 |
+| [Public AKS cluster with Unbounded-Net and a cross-region VNet-peered Flex node](aks-public-cluster-unbounded-net-vnet-peering.md) | Public | Cross-region VNet peering | Unbounded-Net private Layer 3 peering | `v0.21.0` validated, 2026-11-08 |
+| [AKS Flex Node with offline bootstrap artifacts](aks-public-cluster-offline-bootstrap.md) | Public in the walkthrough | Cross-region VNet peering | Filesystem or local-registry artifacts | Both artifact modes validated with `v0.21.0`, 2026-11-08 |
+| [Public AKS cluster with an Unbounded-Net WireGuard Flex node](aks-public-cluster-unbounded-net-wireguard.md) | Public | No VNet peering | Unbounded-Net public WireGuard gateway | `v0.21.0` validated, 2026-11-08 |
 
 ## Topic Matrix
 

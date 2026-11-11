@@ -5,15 +5,17 @@ This guide shows how to create a private AKS cluster with no built-in CNI, insta
 > [!IMPORTANT]
 > This lab covers an additional configuration for evaluation. Review its status, prerequisites, and version scope before use.
 >
-> **Status:** Partially validated evaluation scenario
+> **Status:** Validated evaluation scenario
 >
-> **Last validated:** 2026-09-23
+> **Last validated:** 2026-11-08
 >
-> **Validated versions:** AKS Kubernetes `1.35.8`, AKS Flex Node `v0.2.0`, and Unbounded `v0.8.0`
+> **Validated versions:** AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, Ubuntu `24.04`, and worker rootfs `v20261031`
 >
-> **Validated scope:** Private API access, Site assignment, node readiness, workload startup, `kubectl exec`, and `kubectl logs` passed. Managed-identity Azure Machine registration and reconciliation passed in the shared E2E lifecycle matrix.
+> **Validated scope:** Private DNS/API access and managed-identity admin access, VNet peering, Site assignment, pool-scoped Azure Machine registration, Node readiness, bidirectional pod traffic, ClusterIP access, DNS, kubelet exec/logs callbacks, smoke cleanup, and Azure resource-group removal passed.
 >
-> **Host OS:** Ubuntu 24.04.4
+> **Validation toolchain:** Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, and kubectl `1.36.2`
+>
+> **Host OS:** Ubuntu 24.04
 >
 > **Architecture:** amd64
 
@@ -23,7 +25,8 @@ For unbounded-net concepts, custom resources, and operations, see the [Unbounded
 
 ## Prerequisites
 
-- An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and the bootstrap RBAC needed by AKS Flex Node.
+- An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and pool-scoped Azure role assignments.
+- Register the preview features and verify the Flex Node Agent Role before creating resources, following the [operator prerequisites](../usage/getting-started.md#prerequisites).
 - Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, `curl`, `tar`, `python3`, and SSH/SCP tools in the Bash environment or admin VM that runs the lab commands.
 - A command runner that can resolve and reach the private AKS API endpoint. If your workstation cannot, use the admin VM described below.
@@ -159,9 +162,10 @@ AKS_VNET="<aks-vnet-name>"
 FLEX_VNET="<flex-vnet-name>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 AKS_PREVIEW_VERSION="22.0.0b8"
+AKS_VERSION="1.36.2"
 AKS_NODE_VM_SIZE="${AKS_NODE_VM_SIZE:-Standard_D4s_v6}"
-ADMIN_VM_SIZE="${ADMIN_VM_SIZE:-Standard_D4s_v5}"
-FLEX_VM_SIZE="${FLEX_VM_SIZE:-Standard_D4s_v5}"
+ADMIN_VM_SIZE="${ADMIN_VM_SIZE:-Standard_D4s_v6}"
+FLEX_VM_SIZE="${FLEX_VM_SIZE:-Standard_D4s_v6}"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -196,14 +200,16 @@ az network vnet peering create \
   --vnet-name "$AKS_VNET" \
   -n aks-to-flex \
   --remote-vnet "$FLEX_VNET_ID" \
-  --allow-vnet-access
+  --allow-vnet-access \
+  --allow-forwarded-traffic
 
 az network vnet peering create \
   -g "$VM_RG" \
   --vnet-name "$FLEX_VNET" \
   -n flex-to-aks \
   --remote-vnet "$AKS_VNET_ID" \
-  --allow-vnet-access
+  --allow-vnet-access \
+  --allow-forwarded-traffic
 ```
 
 ## Create A Private No-CNI AKS Cluster
@@ -222,6 +228,7 @@ az aks create \
   -n "$CLUSTER_NAME" \
   -l "$AKS_REGION" \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
+  --kubernetes-version "$AKS_VERSION" \
   --enable-private-cluster \
   --network-plugin none \
   --pod-cidr 10.73.0.0/16 \
@@ -240,7 +247,8 @@ Create the Flex node pool used for Azure Machine registration. Before continuing
 az extension add --name aks-preview --allow-preview true \
   --version "$AKS_PREVIEW_VERSION" --upgrade
 
-while true; do
+DEADLINE=$((SECONDS + 900))
+while (( SECONDS < DEADLINE )); do
   if ! STATUS=$(az aks operation show-latest -g "$AKS_RG" -n "$CLUSTER_NAME" \
     --query status -o tsv 2>/dev/null); then
     echo "Failed to query the latest AKS operation" >&2
@@ -259,6 +267,10 @@ while true; do
       ;;
   esac
 done
+if [[ "$STATUS" != Succeeded ]]; then
+  echo "AKS operation did not finish within 15 minutes" >&2
+  exit 1
+fi
 
 az aks nodepool add -g "$AKS_RG" --cluster-name "$CLUSTER_NAME" \
   --name "$AGENT_POOL_NAME" --vm-set-type FlexNodes --mode User \
@@ -340,14 +352,14 @@ az aks get-credentials \
 kubectl get nodes -o wide
 ```
 
-Run the remaining Azure CLI and `kubectl` commands from this admin VM. Allow time for the role assignment to propagate if credential retrieval initially returns an authorization error.
+Run the remaining `kubectl` commands and Unbounded installation from the admin VM. Keep Azure resource creation and role assignment commands in your original Bash environment: the admin VM's role only permits retrieving cluster credentials. Re-export nonsecret lab variables in each environment that uses them. Allow time for the role assignment to propagate if credential retrieval initially returns an authorization error.
 
 ## Install Unbounded-Net
 
 Install the versioned `kubectl-unbounded` plugin and bootstrap the operator:
 
 ```bash
-UNBOUNDED_VERSION="v0.8.0"
+UNBOUNDED_VERSION="v0.21.0"
 case "$(uname -m)" in
   x86_64) UNBOUNDED_ARCH=amd64 ;;
   aarch64|arm64) UNBOUNDED_ARCH=arm64 ;;
@@ -355,11 +367,16 @@ case "$(uname -m)" in
 esac
 
 curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
-tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
-sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" || exit 1
+curl -fsSLo /tmp/unbounded-checksums.txt \
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt" || exit 1
+(cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
+  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
+tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp || exit 1
+sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded || exit 1
 
-kubectl unbounded install --timeout 5m
+kubectl unbounded version
+kubectl unbounded install --timeout 60s
 ```
 
 ## Create Sites And Mesh Peering
@@ -373,6 +390,10 @@ kubectl unbounded site init \
   --cluster-pod-cidr 10.73.0.0/16 \
   --node-cidr 10.72.0.0/16 \
   --pod-cidr 10.75.0.0/16
+
+# site init creates gateway defaults; this topology uses node mesh instead.
+kubectl delete sitegatewaypoolassignments cluster flex-southcentralus
+kubectl delete gatewaypool gw-main
 
 kubectl apply -f - <<'EOF'
 apiVersion: net.unbounded-cloud.io/v1alpha1
@@ -391,8 +412,9 @@ EOF
 Wait for the controller and node agent:
 
 ```bash
-kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout=5m
-kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=5m
+kubectl -n unbounded-system get pods -o wide
+kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout=60s
+kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=60s
 ```
 
 This topology does not need a public `GatewayPool`, and neither site needs a gateway pool assignment. AKS control-plane-to-Flex-kubelet traffic should use the VNet peering path, while pod-to-pod traffic is handled by the `unbounded-net` mesh selected by `tunnelProtocol: Auto`.
@@ -470,22 +492,27 @@ sudo -i
 
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export AGENT_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.2.0"
+export AKS_FLEX_NODE_VERSION="v0.3.0"
 
 install -d -m 0700 /run/aks-flex-node-bootstrap
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+curl -fsSLo /run/aks-flex-node-bootstrap/checksums.txt \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+AGENT_SHA256="$(awk '$2 == "aks-flex-node-linux-amd64.tar.gz" {print $1}' /run/aks-flex-node-bootstrap/checksums.txt)"
+[[ "$AGENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
 
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --auth msi \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$AGENT_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION"
+  --agent-version "$AKS_FLEX_NODE_VERSION" \
+  --agent-sha256 "$AGENT_SHA256"
 
-rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
+rm -f /run/aks-flex-node-bootstrap/bootstrap.sh /run/aks-flex-node-bootstrap/checksums.txt
 ```
 
 Use the cluster resource ID and pool name created earlier in this lab. For a user-assigned managed identity, also pass `--msi-client-id "<client-id>"`.
@@ -504,9 +531,12 @@ Do not add `kubernetes.azure.com/cluster=<cluster-name>` for this unbounded-net 
 
 ## Verify
 
-Check nodes:
+Run these commands in your private-API-connected Bash environment. Wait for registration before checking readiness:
 
 ```bash
+FLEX_NODE_NAME="<flex-vm-node-name>"
+kubectl wait --for=create "node/${FLEX_NODE_NAME}" --timeout=60s
+kubectl wait --for=condition=Ready "node/${FLEX_NODE_NAME}" --timeout=60s
 kubectl get nodes -o wide
 ```
 
@@ -514,17 +544,18 @@ Expected result:
 
 ```text
 NAME                                STATUS   VERSION   INTERNAL-IP
-aks-nodepool1-...                   Ready    v1.34.x   <aks-node-ip>
-<flex-vm-node-name>                 Ready    v1.34.x   <flex-vm-private-ip>
+aks-nodepool1-...                   Ready    v1.36.2   <aks-node-ip>
+<flex-vm-node-name>                 Ready    v1.36.2   <flex-vm-private-ip>
 ```
 
 Check sites and slices:
 
 ```bash
 kubectl get sites,sitenodeslices,sitepeerings -o wide
+kubectl get gatewaypools,sitegatewaypoolassignments
 ```
 
-Expected result:
+The gateway query should return no resources. Expected Site state:
 
 ```text
 site.unbounded-cloud.io/cluster               ...   NODES   1   SLICES   1
@@ -566,15 +597,13 @@ Expected log output:
 hello-from-flex
 ```
 
+Verify bidirectional cross-node pod traffic using the [VNet-peering smoke test](aks-public-cluster-unbounded-net-vnet-peering.md#verify), selecting the AKS node from the `cluster` Site and the Flex node from `flex-southcentralus`. Node readiness and kubelet callbacks alone don't verify the pod datapath.
+
 ## Troubleshooting
 
-Check the nspawn worker:
+Inspect the [active nspawn worker](../usage/operations.md#nspawn-worker) on the flex node host; don't assume `kube1` after repave. The installed agent is `/opt/unbounded/agent/bin/aks-flex-node`.
 
-```bash
-machinectl list
-systemctl status systemd-nspawn@kube1
-journalctl -M kube1 -u kubelet -f
-```
+For failed rollouts, inspect [Unbounded pods, events, and logs](aks-public-cluster-unbounded-net-vnet-peering.md#troubleshooting) before retrying.
 
 Check private API reachability from the VM:
 
@@ -608,11 +637,16 @@ If pod traffic between AKS and Flex pods fails, verify the `SitePeering` has `me
 
 ## Clean up
 
-Delete the validation pod if it still exists, and then delete both resource groups from your Bash environment:
+From the private-API-connected Bash environment or admin VM, delete the validation pods:
 
 ```bash
-kubectl delete pod flex-exec-smoke --ignore-not-found --wait=false
+kubectl delete pod flex-exec-smoke aks-peering-smoke flex-peering-smoke \
+  --ignore-not-found --wait=false
+```
 
+Return to the original Azure CLI environment that created the lab resources, then delete both resource groups:
+
+```bash
 az group delete --name "$AKS_RG" --yes --no-wait
 az group delete --name "$VM_RG" --yes --no-wait
 ```
