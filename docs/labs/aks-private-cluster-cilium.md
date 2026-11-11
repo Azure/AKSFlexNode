@@ -7,11 +7,13 @@ This guide shows how to create a private AKS cluster with no built-in CNI, insta
 >
 > **Status:** Validated evaluation scenario
 >
-> **Last validated:** 2026-09-23
+> **Last validated:** 2026-11-08
 >
-> **Validated versions:** AKS Kubernetes `1.35.8`, AKS Flex Node `v0.2.0`, Cilium `1.20.2`, and Ubuntu `24.04.4`
+> **Validated versions:** AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Cilium `1.20.2`, Ubuntu `24.04`, and worker rootfs `v20261031`
 >
-> **Validated scope:** Private API access, Cilium installation on the AKS and Flex nodes, Flex Node readiness, Cilium rollout on both nodes, and bidirectional cross-node pod traffic passed.
+> **Validated scope:** Private DNS/API access and managed-identity admin access, pool-scoped Azure Machine registration, Node readiness, Cilium/Envoy rollout on both nodes, bidirectional pod traffic, ClusterIP access, DNS, kubelet exec/logs callbacks, smoke cleanup, and Azure resource-group removal passed.
+>
+> **Validation toolchain:** Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, kubectl `1.36.2`, and Helm `3.19.0`
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -23,7 +25,8 @@ For Cilium concepts and operations, see the [Cilium documentation](https://docs.
 
 ## Prerequisites
 
-- An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and the bootstrap RBAC needed by AKS Flex Node.
+- An Azure subscription where you can create resource groups, VNets, VMs, a private AKS cluster, private DNS links, and pool-scoped Azure role assignments.
+- Register the preview features and verify the Flex Node Agent Role before creating resources, following the [operator prerequisites](../usage/getting-started.md#prerequisites).
 - Azure CLI 2.90.0 or later, signed in to the target subscription.
 - `kubectl`, Helm, `curl`, `python3`, and SSH/SCP tooling on the workstation or admin VM that will run the lab commands.
 - A command runner that can resolve and reach the private AKS API endpoint. If your workstation cannot, use the admin VM described below.
@@ -151,6 +154,7 @@ AKS_VNET="<aks-vnet-name>"
 FLEX_VNET="<flex-vnet-name>"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 AKS_PREVIEW_VERSION="22.0.0b8"
+AKS_VERSION="1.36.2"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -185,14 +189,16 @@ az network vnet peering create \
   --vnet-name "$AKS_VNET" \
   -n aks-to-flex \
   --remote-vnet "$FLEX_VNET_ID" \
-  --allow-vnet-access
+  --allow-vnet-access \
+  --allow-forwarded-traffic
 
 az network vnet peering create \
   -g "$VM_RG" \
   --vnet-name "$FLEX_VNET" \
   -n flex-to-aks \
   --remote-vnet "$AKS_VNET_ID" \
-  --allow-vnet-access
+  --allow-vnet-access \
+  --allow-forwarded-traffic
 ```
 
 ## Create A Private No-CNI AKS Cluster
@@ -211,6 +217,7 @@ az aks create \
   -n "$CLUSTER_NAME" \
   -l "$AKS_REGION" \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
+  --kubernetes-version "$AKS_VERSION" \
   --enable-private-cluster \
   --network-plugin none \
   --pod-cidr 10.83.0.0/16 \
@@ -229,7 +236,8 @@ Create the Flex node pool used for Azure Machine registration. Before continuing
 az extension add --name aks-preview --allow-preview true \
   --version "$AKS_PREVIEW_VERSION" --upgrade
 
-while true; do
+DEADLINE=$((SECONDS + 900))
+while (( SECONDS < DEADLINE )); do
   if ! STATUS=$(az aks operation show-latest -g "$AKS_RG" -n "$CLUSTER_NAME" \
     --query status -o tsv 2>/dev/null); then
     echo "Failed to query the latest AKS operation" >&2
@@ -248,6 +256,10 @@ while true; do
       ;;
   esac
 done
+if [[ "$STATUS" != Succeeded ]]; then
+  echo "AKS operation did not finish within 15 minutes" >&2
+  exit 1
+fi
 
 az aks nodepool add -g "$AKS_RG" --cluster-name "$CLUSTER_NAME" \
   --name "$AGENT_POOL_NAME" --vm-set-type FlexNodes --mode User \
@@ -282,7 +294,7 @@ az vm create \
   -n "$ADMIN_VM_NAME" \
   -l "$VM_REGION" \
   --image Ubuntu2404 \
-  --size Standard_D4s_v5 \
+  --size Standard_D4s_v6 \
   --vnet-name "$FLEX_VNET" \
   --subnet flex-subnet \
   --admin-username azureuser \
@@ -324,12 +336,17 @@ az aks get-credentials -g "$AKS_RG" -n "$CLUSTER_NAME" --admin \
 kubectl get nodes -o wide
 ```
 
+Run the remaining Helm and `kubectl` commands from this admin VM. Keep Azure resource creation and role assignments in your original Bash environment: the admin VM's role only permits retrieving cluster credentials. Re-export nonsecret lab variables where you use them.
+
 ## Install Unmanaged Cilium
 
 Install Cilium with cluster-pool IPAM and VXLAN tunnel mode. Run these commands from a machine that can reach the private AKS API endpoint.
 
 ```bash
 CILIUM_VERSION="1.20.2"
+CILIUM_API_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}') || exit 1
+CILIUM_API_FQDN="${CILIUM_API_URL#https://}"
+CILIUM_API_FQDN="${CILIUM_API_FQDN%:443}"
 
 helm repo add cilium https://helm.cilium.io/
 helm repo update
@@ -342,14 +359,17 @@ helm upgrade --install cilium cilium/cilium \
   --set ipam.operator.clusterPoolIPv4MaskSize=24 \
   --set routingMode=tunnel \
   --set tunnelProtocol=vxlan \
-  --set kubeProxyReplacement=true
+  --set kubeProxyReplacement=true \
+  --set k8sServiceHost="$CILIUM_API_FQDN" \
+  --set k8sServicePort=443
 ```
 
 Wait for Cilium and the AKS node:
 
 ```bash
-kubectl -n kube-system rollout status ds/cilium --timeout=5m
-kubectl -n kube-system rollout status ds/cilium-envoy --timeout=5m
+kubectl -n kube-system get pods -o wide
+kubectl -n kube-system rollout status ds/cilium --timeout=60s
+kubectl -n kube-system rollout status ds/cilium-envoy --timeout=60s
 kubectl get nodes -o wide
 ```
 
@@ -370,7 +390,7 @@ az vm create \
   -n "$VM_NAME" \
   -l "$VM_REGION" \
   --image Ubuntu2404 \
-  --size Standard_D4s_v5 \
+  --size Standard_D4s_v6 \
   --vnet-name "$FLEX_VNET" \
   --subnet flex-subnet \
   --admin-username azureuser \
@@ -428,22 +448,27 @@ sudo -i
 
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export AGENT_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.2.0"
+export AKS_FLEX_NODE_VERSION="v0.3.0"
 
 install -d -m 0700 /run/aks-flex-node-bootstrap
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+curl -fsSLo /run/aks-flex-node-bootstrap/checksums.txt \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+AGENT_SHA256="$(awk '$2 == "aks-flex-node-linux-amd64.tar.gz" {print $1}' /run/aks-flex-node-bootstrap/checksums.txt)"
+[[ "$AGENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
 
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --auth msi \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$AGENT_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION"
+  --agent-version "$AKS_FLEX_NODE_VERSION" \
+  --agent-sha256 "$AGENT_SHA256"
 
-rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
+rm -f /run/aks-flex-node-bootstrap/bootstrap.sh /run/aks-flex-node-bootstrap/checksums.txt
 ```
 
 Use the cluster resource ID and pool name created earlier in this lab. For a user-assigned managed identity, also pass `--msi-client-id "<client-id>"`.
@@ -454,9 +479,15 @@ The Cilium DaemonSet and Cilium Envoy DaemonSet should schedule on the Flex node
 
 ## Verify
 
-Check nodes:
+Run these commands in your private-API-connected Bash environment:
 
 ```bash
+FLEX_NODE_NAME="<flex-vm-node-name>"
+kubectl wait --for=create "node/${FLEX_NODE_NAME}" --timeout=60s
+kubectl wait --for=condition=Ready "node/${FLEX_NODE_NAME}" --timeout=60s
+kubectl -n kube-system get pods -o wide
+kubectl -n kube-system rollout status ds/cilium --timeout=60s
+kubectl -n kube-system rollout status ds/cilium-envoy --timeout=60s
 kubectl get nodes -o wide
 ```
 
@@ -464,8 +495,8 @@ Expected result:
 
 ```text
 NAME                                STATUS   VERSION   INTERNAL-IP
-aks-nodepool1-...                   Ready    v1.34.x   <aks-node-ip>
-<flex-vm-node-name>                 Ready    v1.34.x   <flex-vm-private-ip>
+aks-nodepool1-...                   Ready    v1.36.2   <aks-node-ip>
+<flex-vm-node-name>                 Ready    v1.36.2   <flex-vm-private-ip>
 ```
 
 Check Cilium pods:
@@ -578,11 +609,9 @@ kubectl delete svc cilium-smoke-flex
 
 ## Troubleshooting
 
-Check the kubelet logs in the nspawn worker:
+Inspect the [active nspawn worker](../usage/operations.md#nspawn-worker) on the flex node host; don't assume `kube1` after repave. The installed agent is `/opt/unbounded/agent/bin/aks-flex-node`.
 
-```bash
-journalctl -M kube1 -u kubelet -f
-```
+If a Cilium rollout fails or times out, inspect pod status, events, and container logs before retrying. Use `kubectl logs <pod> --previous` for a restarted container.
 
 Check private API reachability from the VM:
 
@@ -608,7 +637,14 @@ If pods schedule on the Flex node but cannot reach pods on AKS nodes, check Cili
 
 ## Clean up
 
-Delete the validation workloads described in this lab, and then delete both resource groups:
+From the private-API-connected Bash environment or admin VM, delete the validation workloads:
+
+```bash
+kubectl delete pod cilium-smoke-aks cilium-smoke-flex --ignore-not-found --wait=false
+kubectl delete svc cilium-smoke-flex --ignore-not-found
+```
+
+Return to the original Azure CLI environment that created the lab resources, then delete both resource groups:
 
 ```bash
 az group delete --name "$AKS_RG" --yes --no-wait

@@ -7,11 +7,13 @@ This guide shows how to create a public AKS cluster with no built-in CNI, instal
 >
 > **Status:** Validated evaluation scenario
 >
-> **Last validated:** 2026-09-23
+> **Last validated:** 2026-11-08
 >
-> **Validated versions:** AKS Kubernetes `1.35.8`, AKS Flex Node `v0.2.0`, Unbounded `v0.8.0`, and Ubuntu `24.04.4`
+> **Validated versions:** AKS Kubernetes `1.36.2`, AKS Flex Node `v0.3.0`, Unbounded `v0.21.0`, Ubuntu `24.04`, and worker rootfs `v20261031`
 >
-> **Validated scope:** Public gateway pool creation, external gateway IP and WireGuard key publication, Flex Node readiness, Flex Site assignment, active WireGuard handshake, and bidirectional cross-site pod traffic passed. API-server callbacks to the Flex kubelet remain dependent on a separate reachable path, as described in this lab.
+> **Validated scope:** Public gateway pool creation, gateway IP/key publication, pool-scoped Azure Machine registration, Node readiness, Site assignment, active WireGuard handshake, bidirectional pod traffic, ClusterIP access, DNS, kubelet exec/logs callbacks over gateway node-CIDR routing, smoke cleanup, and Azure resource-group removal passed.
+>
+> **Validation toolchain:** Azure CLI `2.92.0`, `aks-preview` `22.0.0b8`, and kubectl `1.36.2`
 >
 > **Host OS:** Ubuntu 24.04
 >
@@ -24,13 +26,14 @@ The validated shape is intentionally different from the private-L3 lab:
 - `unbounded-net` provides CNI on AKS and Flex nodes.
 - Cross-site pod traffic uses WireGuard through a public AKS gateway pool.
 
-This lab focuses on kubelet-to-API-server join traffic and pod-to-pod connectivity. Kubernetes API server callbacks to the Flex kubelet, such as `kubectl logs`, `kubectl exec`, and `kubectl port-forward`, still require API-server-to-kubelet network reachability and may need separate routing or proxy support.
+Kubernetes API server callbacks to the Flex kubelet, such as `kubectl logs`, `kubectl exec`, and `kubectl port-forward`, require a route to the Flex node IP, not just its pods. Gateway node-CIDR routing carried exec/logs callbacks during the recorded run. Verify that path explicitly; public API access and Node readiness alone don't establish it.
 
 For unbounded-net architecture details, see the [Unbounded networking architecture](https://unbounded-cloud.io/reference/networking/architecture/), [routing flows](https://unbounded-cloud.io/reference/networking/routing-flows/), and [custom resources](https://unbounded-cloud.io/reference/networking/custom-resources/). The cluster shape is a no-CNI AKS cluster plus a dedicated AKS gateway node pool with per-node public IPs and WireGuard host ports open.
 
 ## Prerequisites
 
 - Azure CLI 2.90.0 or later, signed in to the target subscription.
+- Permission to create the lab resources and pool-scoped role assignments. Register the preview features and verify the Flex Node Agent Role before creating resources, following the [operator prerequisites](../usage/getting-started.md#prerequisites).
 - `kubectl`, `curl`, `tar`, `jq`, `python3`, and SSH/SCP tools in the Bash environment that runs the lab commands.
 - `wireguard-tools` on the flex node host when you use `wg show` for validation.
 
@@ -111,6 +114,7 @@ AKS_VNET="aks-public-unbounded-vnet"
 FLEX_VNET="flex-public-unbounded-vnet"
 AGENT_POOL_NAME="${AGENT_POOL_NAME:-aksflexnodes}"
 AKS_PREVIEW_VERSION="22.0.0b8"
+AKS_VERSION="1.36.2"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -154,6 +158,7 @@ az aks create \
   -n "$CLUSTER_NAME" \
   -l "$AKS_REGION" \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
+  --kubernetes-version "$AKS_VERSION" \
   --network-plugin none \
   --pod-cidr 10.83.0.0/16 \
   --service-cidr 10.84.0.0/16 \
@@ -178,7 +183,8 @@ Create the Flex node pool used for Azure Machine registration. Before continuing
 az extension add --name aks-preview --allow-preview true \
   --version "$AKS_PREVIEW_VERSION" --upgrade
 
-while true; do
+DEADLINE=$((SECONDS + 900))
+while (( SECONDS < DEADLINE )); do
   if ! STATUS=$(az aks operation show-latest -g "$AKS_RG" -n "$CLUSTER_NAME" \
     --query status -o tsv 2>/dev/null); then
     echo "Failed to query the latest AKS operation" >&2
@@ -197,6 +203,10 @@ while true; do
       ;;
   esac
 done
+if [[ "$STATUS" != Succeeded ]]; then
+  echo "AKS operation did not finish within 15 minutes" >&2
+  exit 1
+fi
 
 az aks nodepool add -g "$AKS_RG" --cluster-name "$CLUSTER_NAME" \
   --name "$AGENT_POOL_NAME" --vm-set-type FlexNodes --mode User \
@@ -218,7 +228,7 @@ az aks nodepool add \
   --node-vm-size Standard_D4s_v6 \
   --vnet-subnet-id "$AKS_SUBNET_ID" \
   --enable-node-public-ip \
-  --allowed-host-ports 51820-51899/UDP \
+  --allowed-host-ports 51820-51899/udp \
   --labels net.unbounded-cloud.io/gateway=aks-public
 ```
 
@@ -228,7 +238,7 @@ Verify that the gateway node has an external IP:
 kubectl get nodes -l net.unbounded-cloud.io/gateway=aks-public -o wide
 ```
 
-The `--allowed-host-ports 51820-51899/UDP` setting creates the node pool with the WireGuard gateway ports exposed.
+The `--allowed-host-ports 51820-51899/udp` setting creates the node pool with the WireGuard gateway ports exposed.
 
 Allow WireGuard on every AKS-side NSG that can affect the gateway node pool, including the AKS subnet NSG and the AKS-managed node resource group NSG:
 
@@ -263,7 +273,7 @@ if [ -n "$AKS_SUBNET_NSG_ID" ]; then
     --protocol Udp \
     --source-address-prefixes Internet \
     --source-port-ranges '*' \
-    --destination-port-ranges 51820-51899 || true
+    --destination-port-ranges 51820-51899
 fi
 
 if [ -n "$AKS_AGENT_NSG" ]; then
@@ -277,7 +287,7 @@ if [ -n "$AKS_AGENT_NSG" ]; then
     --protocol Udp \
     --source-address-prefixes Internet \
     --source-port-ranges '*' \
-    --destination-port-ranges 51820-51899 || true
+    --destination-port-ranges 51820-51899
 fi
 ```
 
@@ -303,7 +313,7 @@ if [ -n "$FLEX_SUBNET_NSG_ID" ]; then
     --protocol Udp \
     --source-address-prefixes Internet \
     --source-port-ranges '*' \
-    --destination-port-ranges 51820-51899 || true
+    --destination-port-ranges 51820-51899
 fi
 ```
 
@@ -312,7 +322,7 @@ fi
 Install the versioned `kubectl-unbounded` plugin and bootstrap the operator:
 
 ```bash
-UNBOUNDED_VERSION="v0.8.0"
+UNBOUNDED_VERSION="v0.21.0"
 case "$(uname -m)" in
   x86_64) UNBOUNDED_ARCH=amd64 ;;
   aarch64|arm64) UNBOUNDED_ARCH=arm64 ;;
@@ -320,11 +330,16 @@ case "$(uname -m)" in
 esac
 
 curl -fsSLo /tmp/kubectl-unbounded.tar.gz \
-  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz"
-tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp
-sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" || exit 1
+curl -fsSLo /tmp/unbounded-checksums.txt \
+  "https://github.com/Azure/unbounded/releases/download/${UNBOUNDED_VERSION}/checksums.txt" || exit 1
+(cd /tmp && awk -v archive="kubectl-unbounded-linux-${UNBOUNDED_ARCH}.tar.gz" \
+  '$2 == archive {print $1 "  kubectl-unbounded.tar.gz"}' unbounded-checksums.txt | sha256sum --check --strict) || exit 1
+tar -xzf /tmp/kubectl-unbounded.tar.gz -C /tmp || exit 1
+sudo install -m 0755 /tmp/kubectl-unbounded /usr/local/bin/kubectl-unbounded || exit 1
 
-kubectl unbounded install --timeout 5m
+kubectl unbounded version
+kubectl unbounded install --timeout 60s
 ```
 
 The operator deploys Unbounded-Net after the first Site is created in the next section.
@@ -398,10 +413,11 @@ EOF
 Wait for the controller and node agent:
 
 ```bash
-kubectl -n unbounded-system wait --for=create deploy/unbounded-net-controller --timeout=5m
-kubectl -n unbounded-system wait --for=create ds/unbounded-net-node --timeout=5m
-kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout=5m
-kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=5m
+kubectl -n unbounded-system wait --for=create deploy/unbounded-net-controller --timeout=60s
+kubectl -n unbounded-system wait --for=create ds/unbounded-net-node --timeout=60s
+kubectl -n unbounded-system get pods -o wide
+kubectl -n unbounded-system rollout status deploy/unbounded-net-controller --timeout=60s
+kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=60s
 ```
 
 Verify the AKS site and gateway pool:
@@ -423,7 +439,7 @@ az vm create \
   -n "$VM_NAME" \
   -l "$VM_REGION" \
   --image Ubuntu2404 \
-  --size Standard_D4s_v5 \
+  --size Standard_D4s_v6 \
   --vnet-name "$FLEX_VNET" \
   --subnet flex-subnet \
   --admin-username azureuser \
@@ -483,7 +499,7 @@ if [ -n "$FLEX_NIC_NSG_ID" ]; then
     --protocol Udp \
     --source-address-prefixes Internet \
     --source-port-ranges '*' \
-    --destination-port-ranges 51820-51899 || true
+    --destination-port-ranges 51820-51899
 fi
 ```
 
@@ -500,22 +516,27 @@ sudo -i
 
 export AKS_RESOURCE_ID="<full-aks-resource-id>"
 export AGENT_POOL_NAME="aksflexnodes"
-export AKS_FLEX_NODE_VERSION="v0.2.0"
+export AKS_FLEX_NODE_VERSION="v0.3.0"
 
 install -d -m 0700 /run/aks-flex-node-bootstrap
 curl -fsSLo /run/aks-flex-node-bootstrap/bootstrap.sh \
   "https://raw.githubusercontent.com/Azure/AKSFlexNode/${AKS_FLEX_NODE_VERSION}/scripts/bootstrap.sh"
 chmod 0700 /run/aks-flex-node-bootstrap/bootstrap.sh
 bash -n /run/aks-flex-node-bootstrap/bootstrap.sh
+curl -fsSLo /run/aks-flex-node-bootstrap/checksums.txt \
+  "https://github.com/Azure/AKSFlexNode/releases/download/${AKS_FLEX_NODE_VERSION}/checksums.txt"
+AGENT_SHA256="$(awk '$2 == "aks-flex-node-linux-amd64.tar.gz" {print $1}' /run/aks-flex-node-bootstrap/checksums.txt)"
+[[ "$AGENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
 
 bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --auth msi \
   --fetch-bootstrap-data \
   --cluster-resource-id "$AKS_RESOURCE_ID" \
   --agent-pool-name "$AGENT_POOL_NAME" \
-  --agent-version "$AKS_FLEX_NODE_VERSION"
+  --agent-version "$AKS_FLEX_NODE_VERSION" \
+  --agent-sha256 "$AGENT_SHA256"
 
-rm -f /run/aks-flex-node-bootstrap/bootstrap.sh
+rm -f /run/aks-flex-node-bootstrap/bootstrap.sh /run/aks-flex-node-bootstrap/checksums.txt
 ```
 
 Use the cluster resource ID and pool name created earlier in this lab. For a user-assigned managed identity, also pass `--msi-client-id "<client-id>"`.
@@ -525,6 +546,8 @@ Use the cluster resource ID and pool name created earlier in this lab. For a use
 Return to your workstation shell after the node starts. Verify that the Flex Node has joined, received the Flex site label, and has a WireGuard public key annotation:
 
 ```bash
+kubectl wait --for=create "node/${VM_NAME}" --timeout=60s
+kubectl wait --for=condition=Ready "node/${VM_NAME}" --timeout=60s
 kubectl get node "$VM_NAME" \
   -L unbounded-cloud.io/site \
   -o wide
@@ -561,6 +584,8 @@ On the Flex VM, inspect WireGuard and routes:
 ssh azureuser@"$VM_PUBLIC_IP"
 
 sudo wg show
+sudo wg show all latest-handshakes
+sudo wg show all transfer
 sudo ip link show unbounded0
 sudo ip route | grep -E '10\.83\.|10\.85\.|unbounded0|wg'
 ```
@@ -571,7 +596,7 @@ Check nodes and pod CIDRs:
 
 ```bash
 kubectl get nodes -o wide
-kubectl get nodes -o custom-columns=NAME:.metadata.name,SITE:.metadata.labels.net\.unbounded-cloud\.io/site,PODCIDR:.spec.podCIDR,INTERNAL:.status.addresses[?\(@.type=="InternalIP"\)].address,EXTERNAL:.status.addresses[?\(@.type=="ExternalIP"\)].address
+kubectl get nodes -o 'custom-columns=NAME:.metadata.name,SITE:.metadata.labels.unbounded-cloud\.io/site,PODCIDR:.spec.podCIDR,INTERNAL:.status.addresses[?(@.type=="InternalIP")].address,EXTERNAL:.status.addresses[?(@.type=="ExternalIP")].address'
 ```
 
 Create a test pod on the Flex Node:
@@ -645,13 +670,9 @@ kubectl -n unbounded-system get pods -o wide
 kubectl -n unbounded-system logs <unbounded-net-node-pod-on-gateway> --tail=200
 ```
 
-Check the nspawn worker:
+Inspect the [active nspawn worker](../usage/operations.md#nspawn-worker) on the flex node host; don't assume `kube1` after repave. The installed agent is `/opt/unbounded/agent/bin/aks-flex-node`.
 
-```bash
-machinectl list
-systemctl status systemd-nspawn@kube1
-journalctl -M kube1 -u kubelet -f
-```
+For failed rollouts, inspect pod status, events, and container logs before retrying. Use `kubectl logs <pod> --previous` for a restarted container.
 
 If the Flex Node is `Ready` but pod traffic fails:
 
@@ -663,7 +684,7 @@ If the Flex Node is `Ready` but pod traffic fails:
 
 Some environments apply platform or policy-managed network security rules to subnets. In the environment used to validate this lab, the AKS subnet had an NSG containing `NRMS-...` rules in addition to the AKS node resource group NSG.
 
-This lab was validated in an environment where the AKS gateway node pool was created correctly with `--allowed-host-ports 51820-51899/UDP`, and the AKS node resource group NSG contained the expected generated allow rule. WireGuard still did not handshake because the AKS subnet's NRMS-policy NSG did not allow UDP `51820-51899`.
+The earlier validation used an AKS gateway node pool with the WireGuard host-port range enabled, and the AKS node resource group NSG contained the expected generated allow rule. WireGuard still did not handshake because the AKS subnet's NRMS-policy NSG did not allow UDP `51820-51899`.
 
 Symptoms looked like this on the Flex Node:
 
@@ -705,7 +726,7 @@ if [ -n "$AKS_SUBNET_NSG_ID" ]; then
     --protocol Udp \
     --source-address-prefixes Internet \
     --source-port-ranges '*' \
-    --destination-port-ranges 51820-51899 || true
+    --destination-port-ranges 51820-51899
 fi
 ```
 
@@ -716,6 +737,7 @@ After that rule was added, the Flex Node established a WireGuard handshake with 
 Delete the validation workloads described in this lab, and then delete both resource groups:
 
 ```bash
+kubectl delete pod aks-wireguard-smoke flex-wireguard-smoke --ignore-not-found --wait=false
 az group delete --name "$AKS_RG" --yes --no-wait
 az group delete --name "$VM_RG" --yes --no-wait
 ```
