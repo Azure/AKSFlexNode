@@ -55,8 +55,9 @@ Joining never needs PMC; enabling Hub does. Hosts need outbound HTTPS to
 environment. The download is bounded to 3 minutes. If it fails or the checksums
 don't match, Prepare fails and the adapter retries on later reads while kubelet stays
 on the direct API. On an enabled Hub, a failed download for a new pin keeps the
-running binary; if the installed binary itself is missing or damaged, Hub isn't
-restarted until a download repairs it. Unsupported images or architectures, and exec-credential-only joins
+running binary and reports `Degraded`, retrying with the adapter's backoff; if the
+installed binary itself is missing or damaged, Hub isn't restarted until a download
+repairs it. Unsupported images or architectures, and exec-credential-only joins
 (SP, MSI, Arc; Hub needs a kubelet client certificate) log a warning instead,
 re-checked at most every 15 minutes.
 

@@ -451,6 +451,49 @@ func TestHubAdapterConditionNewNodeAndRetriedWrites(t *testing.T) {
 	}
 }
 
+// TestHubAdapterPacesFailedHubUpdate: an enabled Hub whose newer pin can't be
+// downloaded stays Degraded, and reads inside the backoff don't call Converge
+// (and so don't download) again.
+func TestHubAdapterPacesFailedHubUpdate(t *testing.T) {
+	t.Parallel()
+	ops := &testHubOperations{}
+	adapter, _ := newTestHubAdapter(t, ops)
+	clock := time.Unix(1000, 0)
+	adapter.now = func() time.Time { return clock }
+	node, writes := liveNode(adapter)
+	enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
+	state := &State{ActiveMachine: "kube1"}
+	if err := adapter.ReconcileHub(t.Context(), enable, state, node); err != nil {
+		t.Fatal(err)
+	}
+	ops.calls, ops.fail = nil, hubConverge
+	ops.failErr = fmt.Errorf("update hub binary: %w", yurthub.ErrPackageDownload)
+	if err := adapter.ReconcileHub(t.Context(), enable, state, node); !errors.Is(err, yurthub.ErrPackageDownload) {
+		t.Fatalf("failed update = %v", err)
+	}
+	if last := (*writes)[len(*writes)-1]; last.Status != corev1.ConditionTrue || last.Reason != "Degraded" {
+		t.Fatalf("failed update reported %s/%s, want True/Degraded", last.Status, last.Reason)
+	}
+	// Node events and polls inside the backoff don't retry the download.
+	for range 3 {
+		clock = clock.Add(10 * time.Second)
+		if err := adapter.ReconcileHub(t.Context(), enable, state, node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(ops.calls) != 1 {
+		t.Fatalf("converge calls inside backoff = %v, want one", ops.calls)
+	}
+	clock = clock.Add(hubRetryMin)
+	ops.fail = ""
+	if err := adapter.ReconcileHub(t.Context(), enable, state, node); err != nil || len(ops.calls) != 2 {
+		t.Fatalf("retry after backoff: %v, calls=%v", err, ops.calls)
+	}
+	if last := (*writes)[len(*writes)-1]; last.Reason != "Enabled" {
+		t.Fatalf("recovered update reported %s, want Enabled", last.Reason)
+	}
+}
+
 func TestHubConditionReasons(t *testing.T) {
 	t.Parallel()
 	// Error text carrying a URL must not reach the Node.
@@ -466,8 +509,10 @@ func TestHubConditionReasons(t *testing.T) {
 		"download failure":              {true, fmt.Errorf("prepare: %w: %w", yurthub.ErrPackageDownload, detail), corev1.ConditionFalse, "PackageDownloadFailed"},
 		"unsupported":                   {true, fmt.Errorf("prepare: %w", yurthub.ErrUnsupportedWorker), corev1.ConditionFalse, "Unsupported"},
 		"converge failure keeps hub on": {true, fmt.Errorf("%w: %w", errHubConverge, detail), corev1.ConditionTrue, "Degraded"},
-		"enable failure":                {true, detail, corev1.ConditionUnknown, "EnableFailed"},
-		"disable failure":               {false, detail, corev1.ConditionUnknown, "DisableFailed"},
+		// Repair or update download failures on an enabled Hub aren't activation failures.
+		"enabled hub download failure": {true, fmt.Errorf("%w: %w", errHubConverge, yurthub.ErrPackageDownload), corev1.ConditionTrue, "Degraded"},
+		"enable failure":               {true, detail, corev1.ConditionUnknown, "EnableFailed"},
+		"disable failure":              {false, detail, corev1.ConditionUnknown, "DisableFailed"},
 	} {
 		got := hubCondition(tt.intent, tt.err)
 		if got.Status != tt.wantStatus || got.Reason != tt.wantReason || got.Message == "" || len(got.Message) > 100 || strings.Contains(got.Message, "x.deb") {

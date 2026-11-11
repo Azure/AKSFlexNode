@@ -18,13 +18,16 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 )
 
 type fakeWorker struct {
@@ -397,7 +400,13 @@ func TestOperationsConverge(t *testing.T) {
 			mutate(t, ops, worker.dir)
 			worker.commands = nil
 			for range 2 {
-				if err := ops.Converge(t.Context()); err != nil {
+				err := ops.Converge(t.Context())
+				// A failed update keeps the running Hub but is reported.
+				if name == "new package unreachable" {
+					if !errors.Is(err, ErrPackageDownload) {
+						t.Fatalf("failed update returned %v, want ErrPackageDownload", err)
+					}
+				} else if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -562,6 +571,31 @@ func TestOperationsRouteConvergesResumedEnable(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(worker.dir, installedBinary)); err != nil || string(got) != "newer hub binary" {
 		t.Fatalf("binary = %q, %v", got, err)
+	}
+}
+
+// TestOperationsResumedEnableToleratesUnreachableUpdate: a newer agent resumes an
+// enable at Route while PMC is down. Route and Verify finish on the running Hub's
+// binary; the steady Converge after them reports the failed update.
+func TestOperationsResumedEnableToleratesUnreachableUpdate(t *testing.T) {
+	t.Parallel()
+	worker := newFakeWorker(t)
+	ops, _, _ := newTestOperations(t, worker, true)
+	if err := ops.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ops.packages, _ = testPackages(t, []byte("newer hub binary"))
+	ops.fetch = func(context.Context, string) ([]byte, error) { return nil, errors.New("offline") }
+	for _, step := range []func(context.Context) error{ops.Route, ops.Verify} {
+		if err := step(t.Context()); err != nil {
+			t.Fatalf("enable blocked by an unreachable update: %v", err)
+		}
+	}
+	if err := ops.Converge(t.Context()); !errors.Is(err, ErrPackageDownload) {
+		t.Fatalf("steady Converge = %v, want ErrPackageDownload", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(worker.dir, installedBinary)); err != nil || string(got) != "fake hub binary" {
+		t.Fatalf("running binary replaced: %q, %v", got, err)
 	}
 }
 
@@ -750,4 +784,137 @@ func containsCommand(commands []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestOperationsRoutingRetryWithLiveProcessState models kubelet's live arguments apart
+// from disk: a failed restart leaves the old process running, and Route/Restore retries
+// converge.
+func TestOperationsRoutingRetryWithLiveProcessState(t *testing.T) {
+	t.Parallel()
+	worker := newFakeWorker(t)
+	ops, _, _ := newTestOperations(t, worker, true)
+	liveArg := directKubeconfigArg
+	failRestart := false
+	ops.machineRun = func(ctx context.Context, args ...string) (string, error) {
+		cmd := strings.Join(args, " ")
+		if cmd == "cat /proc/123/cmdline" {
+			return "/usr/local/bin/kubelet\x00" + bootstrapKubeconfigArg + "\x00" + liveArg + "\x00", nil
+		}
+		if cmd == "systemctl restart kubelet.service" {
+			if failRestart {
+				failRestart = false
+				return "", fmt.Errorf("injected kubelet restart failure")
+			}
+			liveArg = directKubeconfigArg
+			if _, err := os.Stat(filepath.Join(worker.dir, routingDropIn)); err == nil {
+				liveArg = proxyKubeconfigArg
+			}
+		}
+		return worker.run(ctx, args...)
+	}
+	if err := ops.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	failRestart = true
+	if err := ops.Route(t.Context()); err == nil || liveArg != directKubeconfigArg {
+		t.Fatalf("failed Route: err=%v, live=%q", err, liveArg)
+	}
+	if _, err := os.Stat(filepath.Join(worker.dir, routingDropIn)); err != nil {
+		t.Fatalf("Route did not stage routing before restart: %v", err)
+	}
+	if err := ops.Route(t.Context()); err != nil || liveArg != proxyKubeconfigArg {
+		t.Fatalf("Route retry: err=%v, live=%q", err, liveArg)
+	}
+	failRestart = true
+	if err := ops.Restore(t.Context()); err == nil || liveArg != proxyKubeconfigArg {
+		t.Fatalf("failed Restore: err=%v, live=%q", err, liveArg)
+	}
+	if _, err := os.Stat(filepath.Join(worker.dir, routingDropIn)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Restore did not remove routing before restart: %v", err)
+	}
+	if err := ops.Restore(t.Context()); err != nil || liveArg != directKubeconfigArg {
+		t.Fatalf("Restore retry: err=%v, live=%q", err, liveArg)
+	}
+	if worker.hubState != "active" {
+		t.Fatal("routing recovery stopped Hub prematurely")
+	}
+}
+
+// TestOperationsVerifyDeadlineCancelsMetadataPatch: a stalled real client-go PATCH is
+// cancelled at the Node API bound, and Restore still works afterwards.
+func TestOperationsVerifyDeadlineCancelsMetadataPatch(t *testing.T) {
+	t.Parallel()
+	worker := newFakeWorker(t)
+	ops, _, _ := newTestOperations(t, worker, true)
+	if err := ops.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.Route(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var patches atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch {
+			patches.Add(1)
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+			return
+		}
+		_, _ = w.Write([]byte(`{"apiVersion":"v1","kind":"Node","metadata":{"name":"node1","uid":"uid1","resourceVersion":"1"}}`))
+	}))
+	t.Cleanup(func() { close(release); server.Close() })
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops.cfg.Nodes = client.CoreV1().Nodes()
+	ops.nodeAPITimeout = 200 * time.Millisecond
+	started := time.Now()
+	err = ops.Verify(t.Context())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Verify returned %v, want deadline exceeded", err)
+	}
+	if patches.Load() != 1 {
+		t.Fatalf("received %d PATCH requests, want one", patches.Load())
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("metadata PATCH held Verify for %v", elapsed)
+	}
+	if err := ops.Restore(t.Context()); err != nil {
+		t.Fatalf("local restore after timed-out Verify: %v", err)
+	}
+}
+
+// TestOperationsConvergeReportsFailedUpdate: a newer pin that can't be downloaded
+// leaves the running Hub alone, tries once, and returns the error for Degraded and backoff.
+func TestOperationsConvergeReportsFailedUpdate(t *testing.T) {
+	t.Parallel()
+	worker := newFakeWorker(t)
+	ops, _, _ := newTestOperations(t, worker, true)
+	for _, step := range []func(context.Context) error{ops.Prepare, ops.Route, ops.Verify} {
+		if err := step(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ops.packages, _ = testPackages(t, []byte("newer hub binary"))
+	var attempts int
+	ops.fetch = func(context.Context, string) ([]byte, error) {
+		attempts++
+		return nil, errors.New("PMC unavailable")
+	}
+	worker.commands = nil
+	err := ops.Converge(t.Context())
+	if worker.hubState != "active" || countCommand(worker.commands, "systemctl restart "+serviceName) != 0 {
+		t.Fatal("failed download disturbed running Hub")
+	}
+	if attempts != 1 {
+		t.Fatalf("fetch attempts = %d", attempts)
+	}
+	if !errors.Is(err, ErrPackageDownload) {
+		t.Fatalf("failed upgrade returned %v; want package error for Degraded reporting and retry backoff", err)
+	}
 }
