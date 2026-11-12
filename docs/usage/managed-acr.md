@@ -75,7 +75,7 @@ You need:
 - Matching Unbounded `v0.23.0` plugin, operator, and component images, and AKS Flex Node `v0.3.0` for the validated baseline.
 - At least one Ready Linux Flex worker; use at least two when checking peer transfer.
 - Kubelet `>=1.34` with `KubeletServiceAccountTokenForCredentialProviders` enabled. The installer checks the gate but does not enable it for you.
-- AKS identity bindings available in your subscription and region; OIDC and workload identity enabled or permission to enable them. [API-server VNet integration](https://learn.microsoft.com/azure/aks/api-server-vnet-integration) is unsupported.
+- [AKS identity bindings](https://learn.microsoft.com/en-us/azure/aks/identity-bindings) available in your subscription and region; OIDC and workload identity enabled or permission to enable them. [API-server VNet integration](https://learn.microsoft.com/azure/aks/api-server-vnet-integration) is unsupported.
 - Administrative Kubernetes access and Azure permissions to read/update AKS, create identity bindings and a user-assigned identity, configure federated identity credentials, and create the registry role assignment. Resource-group Contributor alone does not grant role-assignment creation.
 - No conflicting customer-owned provider configuration, kubelet command-line override, or CA file at the paths the installer owns.
 - Containerd's registry `config_path` set to `/etc/containerd/certs.d`, its socket available at `/run/containerd/containerd.sock`, and reachable public or prefetched operator/Gantry installation images. Do not make installation depend on the private credentials you are about to install.
