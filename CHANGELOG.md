@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Experimental host-native worker mode with `bootstrap.isolation: "none"`: run containerd, kubelet, and NPD as host services without nspawn, with mode-aware preflight, reset, repave, and resumable startup. Requires the host-installed agent and a host without unmanaged kubelet or containerd; changing isolation requires reset and bootstrap. Nspawn remains the default.
 - Disconnect tolerance: when AKS enables it for a node, the agent downloads and runs OpenYurt YurtHub in the worker and routes kubelet through it, so workloads keep running while the node is disconnected from the API server. Enabling it requires outbound HTTPS to `packages.microsoft.com`; joining does not. State is reported as a `DisconnectTolerance` Node condition on every node; with paired agent and kubelet kubeconfigs, grant the agent principal `patch` on its own `nodes/status` ([#390](https://github.com/Azure/AKSFlexNode/pull/390), [#391](https://github.com/Azure/AKSFlexNode/pull/391), [#392](https://github.com/Azure/AKSFlexNode/pull/392)).
 - `agent.machineClient.apiVersion` overrides the ARM Machine API version ([#390](https://github.com/Azure/AKSFlexNode/pull/390)).
 

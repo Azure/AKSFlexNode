@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_IMAGE_VERSION=1.26.10-1
+ARG GO_IMAGE_VERSION=1.27.4-1
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:${GO_IMAGE_VERSION}-bookworm AS build
 
@@ -12,7 +12,7 @@ ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
-# Microsoft Go defaults to systemcrypto, which requires cgo on Go 1.26 Linux.
+# Microsoft Go defaults to systemcrypto, which requires cgo on Linux.
 # Select its cgo-less OpenSSL backend so cross-platform builds can keep cgo off.
 ENV CGO_ENABLED=0 \
     GOEXPERIMENT=ms_nocgo_opensslcrypto

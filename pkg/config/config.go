@@ -24,6 +24,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -217,6 +218,9 @@ type GantryConfig struct {
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component
 // versions.
 type BootstrapConfig struct {
+	// Isolation selects nspawn (the default) or host-native none mode.
+	Isolation string `json:"isolation,omitempty"`
+
 	// OCIImage is the nspawn rootfs OCI image used by the shared agent library.
 	// When empty, the agent uses its built-in default image selection.
 	OCIImage string `json:"ociImage,omitempty"`
@@ -935,7 +939,28 @@ func (c *BootstrapTokenConfig) validate() error {
 	return nil
 }
 
+// IsolationMode returns the validated node-stack isolation mode.
+func (c *BootstrapConfig) IsolationMode() isolation.Mode {
+	if c.Isolation == "" {
+		return isolation.ModeNSpawn
+	}
+	return isolation.Mode(c.Isolation)
+}
+
 func (c *BootstrapConfig) validate() error {
+	if mode := c.IsolationMode(); mode != isolation.ModeNSpawn && mode != isolation.ModeNone {
+		return fmt.Errorf("invalid bootstrap.isolation %q: supported modes are nspawn and none", c.Isolation)
+	}
+	if c.IsolationMode() == isolation.ModeNone {
+		if c.OCIImage != "" {
+			return fmt.Errorf("bootstrap.ociImage requires nspawn isolation")
+		}
+		for _, mount := range c.AdditionalHostMounts {
+			if mount.Target != "" && mount.Target != mount.Source {
+				return fmt.Errorf("bootstrap.additionalHostMounts cannot remap paths in none isolation")
+			}
+		}
+	}
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
 	}

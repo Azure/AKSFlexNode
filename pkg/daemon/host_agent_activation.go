@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -36,6 +37,9 @@ func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candida
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
+	if err := checkInstalledNodeIsolation(ctx, candidatePath); err != nil {
+		return agentbinary.ActivationPlan{}, err
+	}
 	return agentbinary.PreflightHostDaemonActivation(ctx, hostAgentActivationOptions(paths, candidatePath), service)
 }
 
@@ -53,6 +57,9 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if os.Geteuid() != 0 {
 		return agentbinary.ActivationResult{}, fmt.Errorf("host agent upgrade requires root privileges")
 	}
+	if err := checkInstalledNodeIsolation(ctx, candidatePath); err != nil {
+		return agentbinary.ActivationResult{}, err
+	}
 	if err := MigrateHostRoot(log); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
@@ -69,6 +76,21 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 		return agentbinary.ActivationResult{}, err
 	}
 	return agentbinary.ActivateHostDaemon(ctx, log, hostAgentActivationOptions(paths, candidatePath), service)
+}
+
+func checkInstalledNodeIsolation(ctx context.Context, candidate string) error {
+	store, err := NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	state, err := store.Load(ctx)
+	if err != nil || state == nil || state.isolationMode() != isolation.ModeNone {
+		return err
+	}
+	if err := agentbinary.Verify(ctx, candidate); err != nil {
+		return err
+	}
+	return checkAgentIsolation(ctx, candidate, isolation.ModeNone)
 }
 
 func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) agentbinary.ActivationOptions {
@@ -278,7 +300,7 @@ func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("load active nspawn state: %w", err)
 	}
-	if state == nil {
+	if state == nil || state.isolationMode() == isolation.ModeNone {
 		s.log.Info("activated host agent without active nspawn synchronization")
 		return nil
 	}

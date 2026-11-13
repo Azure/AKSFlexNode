@@ -21,7 +21,7 @@ func NewCommand() *cobra.Command {
 		Use:     "start",
 		Aliases: []string{"bootstrap"},
 		Short:   "Bootstrap the node and start the agent service",
-		Long:    "Install the systemd unit, bootstrap the nspawn-based AKS worker node, then enable and start the agent daemon through systemd.",
+		Long:    "Install the systemd unit, bootstrap the AKS worker node in its configured isolation mode, then enable and start the agent daemon through systemd.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.LoadConfig(configPath)
 			if err != nil {
@@ -50,6 +50,9 @@ func NewCommand() *cobra.Command {
 }
 
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+	if err := daemon.CheckBootstrapIsolation(ctx, cfg, logger); err != nil {
+		return fmt.Errorf("bootstrap isolation: %w", err)
+	}
 	// In its container the agent keeps nothing on the host: the image carries
 	// it, and its clients' credential plugin is the running binary.
 	containerized := daemon.Containerized()

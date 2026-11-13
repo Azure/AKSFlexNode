@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/noneops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
@@ -18,6 +19,10 @@ import (
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
 func ResetNode(log *slog.Logger) phases.Task {
+	teardown := &noneops.Teardown{Log: log}
+	if teardown.Present() {
+		return resetNoneNode(log, teardown)
+	}
 	return phases.Serial(log,
 		phases.Parallel(log,
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),

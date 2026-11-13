@@ -24,6 +24,7 @@ import (
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -76,13 +77,14 @@ func agentUpgradeDigest(sha256Parameter string) (string, error) {
 }
 
 type agentUpgradeSignal struct {
-	OperationName            string `json:"operationName"`
-	ActiveMachine            string `json:"activeMachine,omitempty"`
-	CandidatePath            string `json:"candidatePath,omitempty"`
-	InitiatingDaemonInstance string `json:"initiatingDaemonInstance,omitempty"`
-	SwitchCommitted          bool   `json:"switchCommitted,omitempty"`
-	RecoveryRequired         bool   `json:"recoveryRequired,omitempty"`
-	Failure                  string `json:"failure,omitempty"`
+	OperationName            string         `json:"operationName"`
+	ActiveMachine            string         `json:"activeMachine,omitempty"`
+	Isolation                isolation.Mode `json:"isolation,omitempty"`
+	CandidatePath            string         `json:"candidatePath,omitempty"`
+	InitiatingDaemonInstance string         `json:"initiatingDaemonInstance,omitempty"`
+	SwitchCommitted          bool           `json:"switchCommitted,omitempty"`
+	RecoveryRequired         bool           `json:"recoveryRequired,omitempty"`
+	Failure                  string         `json:"failure,omitempty"`
 	// In the agent's container, the image an upgrade switches to and the one it switches from.
 	CandidateImage string `json:"candidateImage,omitempty"`
 	PreviousImage  string `json:"previousImage,omitempty"`
@@ -320,13 +322,13 @@ func recordPendingAgentUpgrade(
 	if err != nil {
 		return fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
 	}
-	if loaded == nil || !validNspawnMachine(loaded.ActiveMachine) {
-		return fmt.Errorf("no valid active nspawn machine for AgentUpgrade")
+	if loaded == nil || loaded.isolationMode() != isolation.ModeNone && !validNspawnMachine(loaded.ActiveMachine) {
+		return fmt.Errorf("no valid active node for AgentUpgrade")
 	}
-	if err := signals.recordPending(operationName, loaded.ActiveMachine, instanceID); err != nil {
-		return err
-	}
-	return nil
+	return signals.write(agentUpgradeSignal{
+		OperationName: operationName, ActiveMachine: loaded.ActiveMachine,
+		Isolation: loaded.isolationMode(), InitiatingDaemonInstance: instanceID,
+	})
 }
 
 func (e *hostAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error {
@@ -373,7 +375,14 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if err := e.signals.recordCandidate(candidate); err != nil {
 		return err
 	}
-	if err := installAndSwitchAgentBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths); err != nil {
+	pending, err := e.signals.read()
+	if err != nil {
+		return err
+	}
+	if pending == nil {
+		return fmt.Errorf("no pending AgentUpgrade signal")
+	}
+	if err := installAndSwitchAgentBinaryForIsolation(ctx, e.log, request.downloadURL, request.sha256, e.paths, pending.Isolation); err != nil {
 		return err
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
@@ -384,7 +393,13 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if err != nil {
 		return e.rollbackAfterStage(ctx, err)
 	}
-	if signal == nil || !validNspawnMachine(signal.ActiveMachine) {
+	if signal == nil {
+		return e.rollbackAfterStage(ctx, fmt.Errorf("pending AgentUpgrade signal is missing"))
+	}
+	if signal.Isolation == isolation.ModeNone {
+		return nil
+	}
+	if !validNspawnMachine(signal.ActiveMachine) {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("pending AgentUpgrade signal has no valid active machine"))
 	}
 	current, err = resolvedExecutable(e.paths.CurrentPath)
@@ -719,6 +734,9 @@ func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSi
 	if current != signal.CandidatePath {
 		return fmt.Errorf("AgentUpgrade was interrupted before switching the candidate binary")
 	}
+	if signal.Isolation == isolation.ModeNone {
+		return nil
+	}
 	if !validNspawnMachine(signal.ActiveMachine) {
 		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
 	}
@@ -766,7 +784,7 @@ func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSign
 	if err := replaceSymlink(paths.CurrentPath, lastGood); err != nil {
 		return fmt.Errorf("restore last-good agent binary: %w", err)
 	}
-	if validNspawnMachine(signal.ActiveMachine) {
+	if signal.Isolation != isolation.ModeNone && validNspawnMachine(signal.ActiveMachine) {
 		if err := synchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
 			return err
 		}
