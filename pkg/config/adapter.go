@@ -12,6 +12,7 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -54,6 +55,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	kubeletConfig := kubeletConfiguration(cfg)
 
 	ac := &agentconfig.AgentConfig{
+		Isolation:             string(cfg.Bootstrap.IsolationMode()),
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
@@ -85,6 +87,10 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		},
 	}
 
+	if cfg.Bootstrap.ExperimentalContainerIsolation {
+		ac.Experimental = &agentconfig.ExperimentalConfig{ContainerIsolation: true}
+	}
+
 	if profile := cfg.Networking.LocalDNS; profile != nil {
 		corefile, _ := profile.CorefileTemplate() // Config validation runs before adaptation.
 		ac.LocalDNS = &agentconfig.AgentLocalDNSConfig{
@@ -113,7 +119,9 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
-	ac.NSpawnLifecycle = nspawnLifecycleHooks()
+	if cfg.Bootstrap.IsolationMode() == isolation.ModeNSpawn {
+		ac.NSpawnLifecycle = nspawnLifecycleHooks()
+	}
 
 	if cfg.UsesKubeconfigCredentials() {
 		ac.Kubelet.KubeconfigData = []byte(cfg.Node.Kubelet.KubeconfigData)
@@ -151,6 +159,10 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
 	}
 
+	if ac.Kubelet.Auth.ExecCredential != nil && cfg.Bootstrap.IsolationMode() == isolation.ModeNone {
+		// Keep the command stable if the managed host-root symlink is migrated.
+		ac.Kubelet.Auth.ExecCredential.Command = filepath.Join(hostroot.Path, hostBinaryRelativePath)
+	}
 	return ac
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -109,6 +110,16 @@ func (a *hubMachineAdapter) ReconcileHub(ctx context.Context, goal aksmachine.Go
 	// mapped to false by the Machine client, per the agreed contract.
 	intent := goal.DisconnectToleranceEnabled
 	if intent == nil {
+		return nil
+	}
+	if state != nil && state.isolationMode() != isolation.ModeNSpawn {
+		var err error
+		if *intent {
+			err = yurthub.ErrUnsupportedWorker
+		}
+		// Hub currently manages files and kubelet inside an nspawn worker.
+		// Report the limitation without blocking node reconciliation.
+		a.reportCondition(ctx, currentHubCondition(node), hubCondition(*intent, err))
 		return nil
 	}
 	machine := ""

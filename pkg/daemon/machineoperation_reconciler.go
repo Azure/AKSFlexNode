@@ -130,7 +130,7 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 	store daemon.MachineOperationStore[int64],
 	op daemon.MachineOperation,
 ) (ctrl.Result, error) {
-	if err := store.MarkInProgress(ctx, op, "restarting active nspawn node"); err != nil {
+	if err := store.MarkInProgress(ctx, op, "restarting active node"); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark NodeReboot MachineOperation in progress: %w", err)
 	}
 	if err := h.operator.RestartNode(ctx, h.log); err != nil {
@@ -253,7 +253,7 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	if err := store.MarkInProgress(
 		ctx,
 		op,
-		"resetting local nspawn node runtime",
+		"resetting local node runtime",
 	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}

@@ -79,7 +79,8 @@ The default `all` command runs:
 11. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
 12. Reinstall the bootstrap-token node with an earlier release, and validate its upgrade and move into `/opt/unbounded/agent`; see [Host Root Migration Validation](#host-root-migration-validation).
 13. Run controller-machine-driven repave validation after the agent upgrade.
-14. Collect logs and clean up Azure resources.
+14. Reset and reuse the bootstrap-token VM for the `none` and experimental `container` isolation suites.
+15. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -87,7 +88,7 @@ The default `all` command runs:
 
 | Command | Description |
 |---------|-------------|
-| `all` | Full flow: build, infra, ARM registration, join, validate, unjoin, validate absent, rejoin, lifecycle, agent upgrade, host root migration, repave, logs, cleanup. |
+| `all` | Full flow: build, infra, ARM registration, join, validate, unjoin, validate absent, rejoin, lifecycle, agent upgrade, host root migration, repave, none/container isolation, logs, cleanup. |
 | `infra` | Deploy AKS, four standard VMs, the Arc VM, Unbounded-Net CNI, the local registry, and the in-cluster controller. |
 | `arm-registration` | Use the MSI VM to register a previously absent ARM Machine, verify the resource and Node, then reset the host. |
 | `join` | Join all Flex Node VMs. |
@@ -109,6 +110,9 @@ The default `all` command runs:
 | `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
 | `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local`, that a noexec `/opt` keeps it linked, the move into `/opt/unbounded/agent`, that the nspawn machine restarts after the move, and that an AgentUpgrade back to the earlier release cannot install it under `/usr/local`. |
 | `upgrade-drift` | Validate controller-machine-driven repave to the alternate nspawn side. |
+| `isolation-modes` | Run both new isolation suites on the bootstrap-token VM, resetting between modes. |
+| `isolation-none` | Run only the `none` isolation suite. |
+| `isolation-container` | Run only the experimental `container` isolation suite. |
 | `logs` | Collect logs from VMs. |
 | `cleanup` | Collect logs and delete Azure resources. |
 | `status` | Print the current E2E state file. |
@@ -209,6 +213,51 @@ kubelet configuration applied inside the nspawn machine and asserts the node's
 allocatable CPU, memory, and pod capacity reflect the applied reservations.
 
 Each join path uploads the locally built binary and renders a config file. Fresh hosts install it through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`; rejoin hosts with an existing managed layout invoke the uploaded candidate's `agent-upgrade` command before bootstrap. The node starts through a transient systemd unit, and the installed agent service is then validated with systemd checks.
+
+## Worker Isolation Validation
+
+The existing five join paths use the default `nspawn` isolation. After their
+lifecycle tests, `all` reuses the bootstrap-token VM for `none`, then `container`;
+no additional VMs are provisioned. Each suite drains and resets that VM before
+selecting its mode. The container config explicitly enables
+`bootstrap.experimentalContainerIsolation`.
+
+Each mode exercises:
+
+- Ready registration with the expected InternalIP and actual runtime topology:
+  host systemd services for `none`, or one OCI worker for `container`.
+- Running kubelet, containerd, and NPD processes, not just successful systemctl
+  commands.
+- Native-to-Flex and Flex-to-native pod HTTP, ClusterIP HTTP, cluster DNS, and
+  `kubectl exec` callbacks.
+- Soft restart through `NodeReboot`, verified by a new runtime start epoch,
+  followed by runtime and workload validation.
+- A settings-only goal update that must leave the live Node and core processes
+  unchanged until Node deletion authorizes repave. Completion requires the
+  expected applied generation, a new Node UID, and a fresh registration label
+  matching persisted state;
+  container mode must switch slots.
+- Two resets, mode-owned runtime cleanup, retained agent binaries, and rejoin.
+  Container reset must preserve sentinels in host-private CNI, IPAM, and
+  containerd directories.
+
+The runtime probes read both legacy nspawn state and checksummed non-nspawn
+state. Diagnostics and snapshots exclude persisted configurations and credentials.
+
+Run against infrastructure created by `infra` (these commands reset the token VM):
+
+```bash
+./hack/e2e/run.sh isolation-modes
+./hack/e2e/run.sh isolation-none
+./hack/e2e/run.sh isolation-container
+```
+
+`go test ./hack/e2e` runs offline probe/config/sequence regression tests and shell
+syntax checks; it does not provision infrastructure. The GitHub E2E workflow runs
+these before Azure login, then runs the full live suite. The isolation suites use
+bootstrap-token authentication; the existing nspawn cases retain MSI, Arc,
+offline-artifact, and kubeadm coverage. GPU, LocalDNS, ARM64 runtime, physical
+hosts, and preparation-time power cuts are not covered by these suites.
 
 ## Agent Upgrade Validation
 

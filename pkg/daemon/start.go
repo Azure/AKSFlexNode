@@ -7,6 +7,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
@@ -18,6 +19,12 @@ func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
 }
 
 func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
+	switch cfg.Bootstrap.IsolationMode() {
+	case isolation.ModeNone:
+		return setupNoneHost(cfg, log)
+	case isolation.ModeContainer:
+		return setupContainerHost(cfg, log)
+	}
 	var tasks []phases.Task
 	// In a container, the package manager on PATH is the image's, so it would install into the
 	// container rather than the host.
@@ -52,6 +59,12 @@ func StartNode(
 	store stateStore,
 	state *State,
 ) phases.Task {
+	switch cfg.Bootstrap.IsolationMode() {
+	case isolation.ModeNone:
+		return startNoneNode(cfg, log, gs, containerImageArchives, store, state)
+	case isolation.ModeContainer:
+		return startContainerNode(cfg, log, machineName, gs, containerImageArchives, store, state)
+	}
 	return phases.Serial(log,
 		// Before anything starts the machine: its hooks start these units.
 		EnsureNSpawnLifecycleUnits(log),

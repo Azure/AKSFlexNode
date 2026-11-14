@@ -16,6 +16,8 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
@@ -204,6 +206,41 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		return err
 	}
 
+	applied, err := state.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if applied != nil && applied.isolationMode() == isolation.ModeNone {
+		if applied.NodeConfig == nil {
+			return fmt.Errorf("none node has no applied configuration")
+		}
+		nodeConfig := applied.NodeConfig
+		startup, err := newNoneRuntime(noneops.Params{Log: log}).PendingStartup()
+		if err != nil {
+			return err
+		}
+		if startup != nil {
+			// A move must rewrite helpers for the prepared runtime, not the
+			// still-uncommitted configuration in the applied state file.
+			nodeConfig = startup.Config
+		}
+		gs, err := newNoneRuntime(noneops.Params{Log: log, Config: nodeConfig}).GoalState()
+		if err != nil {
+			return err
+		}
+		if gs.NodeStart.LocalDNS.Enabled {
+			if err := nodestart.WriteLocalDNSNetworkFiles(gs.NodeStart); err != nil {
+				return err
+			}
+		}
+		if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+			return err
+		}
+		return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())))
+	}
+	if applied != nil && applied.isolationMode() == isolation.ModeContainer {
+		return rewriteContainerHostRootUnits(ctx, log, cfg, applied)
+	}
 	active, err := activeMachineFromStore(ctx, state)
 	if err != nil {
 		return err

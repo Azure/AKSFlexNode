@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilhost"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/artifactsource"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
@@ -56,6 +57,7 @@ type downloadTask struct {
 	cfg        *config.Config
 	version    string
 	machineDir string
+	root       isolation.NodeRoot
 }
 
 // Download returns a task that downloads the node-problem-detector binary
@@ -73,11 +75,24 @@ func Download(log *slog.Logger, cfg *config.Config, machineDir string) phases.Ta
 	return &downloadTask{cfg: cfg, version: version, machineDir: machineDir}
 }
 
+// DownloadToRoot installs NPD through the node's filesystem view.
+func DownloadToRoot(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot) phases.Task {
+	task := Download(log, cfg, "")
+	if download, ok := task.(*downloadTask); ok {
+		download.root = root
+	}
+	return task
+}
+
 func (t *downloadTask) Name() string { return "download-npd" }
 
 func (t *downloadTask) Do(ctx context.Context) error {
 	hostBinaryPath := filepath.Join(t.machineDir, npdBinaryPath)
 	hostConfigPath := filepath.Join(t.machineDir, npdConfigPath)
+	if t.root != nil {
+		hostBinaryPath = t.root.Path("/usr/local/bin/node-problem-detector")
+		hostConfigPath = t.root.Path(npdConfigPath)
+	}
 
 	if versionMatch(hostBinaryPath, t.version) {
 		return nil // already installed at correct version

@@ -14,7 +14,7 @@ aks-flex-node <command> --help
 | Command | Purpose |
 | --- | --- |
 | `preflight` | Validate the configuration, host, API server, rootfs image, and bootstrap artifact sources without changing the host. |
-| `start` | Bootstrap the nspawn worker, install the agent systemd unit, and start the daemon. |
+| `start` | Bootstrap the worker in its configured isolation mode, install the agent systemd unit, and start the daemon. |
 | `fetch-bootstrap-data` | Retrieve current FlexNodes join data from the AKS resource provider and write it to a protected file. |
 | `reset` | Remove AKS Flex Node runtime state while preserving externally managed Azure Arc state. |
 | `version` | Print the build version, commit, and build time. |
@@ -120,6 +120,10 @@ The following table is generated from the Cobra command tree. Run `make docs-cli
 | `aks-flex-node daemon [flags]` | Run the AKS Flex Node daemon | `agent` | listed | `--config` (required) |
 | `aks-flex-node fetch-bootstrap-data [flags]` | Fetch current FlexNodes join data from AKS RP | — | listed | `--agent-pool-name` (required); `--api-version` (default: `2026-05-02-preview`); `--auth` (required); `--authority-host` (default: `https://login.microsoftonline.com`); `--cluster-resource-id` (required); `--msi-client-id`; `--output`, `-o` (required); `--resource-manager-endpoint` (default: `https://management.azure.com`); `--sp-client-certificate-file`; `--sp-client-credential-file`; `--sp-client-id`; `--sp-client-secret-file`; `--sp-tenant-id` |
 | `aks-flex-node help [command]` | Help about any command | — | listed | — |
+| `aks-flex-node node-lifecycle` | Run internal node lifecycle hooks | — | hidden | — |
+| `aks-flex-node node-lifecycle post-start SLOT` |  | — | hidden | — |
+| `aks-flex-node node-lifecycle pre-start SLOT` |  | — | hidden | — |
+| `aks-flex-node node-lifecycle reconcile SLOT` |  | — | hidden | — |
 | `aks-flex-node nspawn-lifecycle` | Run internal nspawn lifecycle hooks | — | hidden | — |
 | `aks-flex-node nspawn-lifecycle post-start MACHINE` | Reconcile in-machine state after machine start | — | hidden | — |
 | `aks-flex-node nspawn-lifecycle pre-start MACHINE` | Refresh host-side nspawn state before machine start | — | hidden | — |
@@ -128,6 +132,7 @@ The following table is generated from the Cobra command tree. Run `make docs-cli
 | `aks-flex-node recover-agent-upgrade [flags]` | Restore the last-known-good agent after a failed upgrade | — | hidden | `--message` |
 | `aks-flex-node reset` | Remove AKS node configuration | `unbootstrap` | listed | — |
 | `aks-flex-node start [flags]` | Bootstrap the node and start the agent service | `bootstrap` | listed | `--config` (required) |
+| `aks-flex-node supports-isolation MODE` | Check whether the agent supports a node isolation mode | — | hidden | — |
 | `aks-flex-node token` | Kubernetes exec based authentication provider. | — | listed | — |
 | `aks-flex-node token kubelogin [flags]` | Retrieves token via Azure/kubelogin. | — | listed | `--client-certificate-file`; `--pop-claims`; `--pop-enabled`; `--server-id` (default: `6dae42f8-4368-4678-94ff-3960e28e3630`) |
 | `aks-flex-node version` | Show version information | — | listed | — |

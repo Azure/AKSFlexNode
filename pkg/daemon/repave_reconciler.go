@@ -177,6 +177,29 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 		return err
 	}
 
+	// Reset/deletion signals take precedence over starting a prepared worker.
+	// Completion may bypass Node absence, but never authorizes a newer goal.
+	if completion, ok := r.operator.(interface {
+		ResumeRepave(context.Context, *slog.Logger, *corev1.Node) (bool, error)
+	}); ok && !machineSnap.notFound && machineSnap.machine != nil &&
+		(nodeSnap.node == nil || !hasDeletionSignal(nodeSnap.node.Spec.Taints)) {
+		handled, err := completion.ResumeRepave(ctx, r.log, nodeSnap.node)
+		if err != nil {
+			_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
+			return err
+		}
+		if handled {
+			state, err = r.operator.LoadState(ctx)
+			if err != nil {
+				return err
+			}
+			if goalApplied(machineSnap.machine.Goal, state) {
+				return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, state.AppliedSettingsVersion, "node startup completed")
+			}
+			return nil
+		}
+	}
+
 	decision := decide(machineSnap, nodeSnap, state)
 	r.log.Info("daemon reconcile decision", "decision", decision.Kind, "reason", decision.Reason)
 
