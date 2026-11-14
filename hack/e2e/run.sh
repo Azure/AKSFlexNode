@@ -9,7 +9,8 @@
 #   all           Run the full E2E flow (default): build, infra, CNI, controller,
 #                 ARM registration, join/validate/smoke, unjoin/absence,
 #                 rejoin/validate/smoke, nspawn lifecycle, agent upgrade,
-#                 host root migration, upgrade drift, logs, and cleanup
+#                 host root migration, upgrade drift, none/container isolation,
+#                 logs, and cleanup
 #   infra         Deploy infrastructure, CNI, and controller (AKS + 5 VMs)
 #   arm-registration Validate MSI-based registration through the ARM Machine API
 #   join          Join all nodes to the cluster (requires prior infra)
@@ -31,6 +32,9 @@
 #   agent-upgrade Validate managed binary upgrade, rollback, and retry
 #   host-root-migration Upgrade a token node installed by a release before the host root
 #   upgrade-drift Run controller-machine Kubernetes version drift repave test
+#   isolation-modes Run none and container lifecycle suites on the token VM
+#   isolation-none Run only the none isolation suite on the token VM
+#   isolation-container Run only the experimental container isolation suite
 #   logs          Collect logs from VMs
 #   cleanup       Tear down Azure resources
 #   runner-cleanup Reclaim local disk on the self-hosted runner
@@ -120,6 +124,8 @@ source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/agent-upgrade.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/isolation-modes.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/cleanup.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/runner.sh"
@@ -144,7 +150,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|arm-registration|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|host-root-migration|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|infra|arm-registration|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|host-root-migration|upgrade-drift|isolation-modes|isolation-none|isolation-container|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -227,6 +233,10 @@ cmd_all() {
 
   # ── Controller-backed machine repave after agent upgrade ───────────────
   upgrade_drift_all
+
+  # Preserve the token VM's nspawn evidence before resetting it for other modes.
+  _collect_vm_logs "$(state_get token_vm_ip)" "token-nspawn" || true
+  isolation_modes_all
 
   # Collect logs (always, even if tests fail)
   collect_logs || true
@@ -368,6 +378,15 @@ main() {
       ensure_binary
       ensure_cluster_dependencies
       upgrade_drift_all
+      ;;
+    isolation-modes|isolation-none|isolation-container)
+      ensure_binary
+      ensure_cluster_dependencies
+      if [[ "${COMMAND}" == "isolation-modes" ]]; then
+        isolation_modes_all
+      else
+        isolation_modes_mode "${COMMAND#isolation-}"
+      fi
       ;;
     logs)
       collect_logs

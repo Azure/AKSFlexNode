@@ -16,12 +16,22 @@ readonly _E2E_NODE_JOIN_TOKEN_LOADED=1
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ---------------------------------------------------------------------------
-# node_join_token - Join the Token VM, with the build under test or, given a
-# release tag, with that release
+# node_join_token [release] [isolation] - Join the Token VM. New isolation modes
+# use the build under test; the release argument serves host-root migration.
 # ---------------------------------------------------------------------------
 node_join_token() {
-  local release="${1:-}"
-  log_section "Joining Token Node${release:+ with ${release}}"
+  local release="${1:-}" isolation="${2:-nspawn}"
+  case "${isolation}" in
+    nspawn) ;;
+    none|container)
+      if [[ -n "${release}" ]]; then
+        log_error "Isolation ${isolation} requires the build under test, not a legacy release"
+        return 1
+      fi
+      ;;
+    *) log_error "Unsupported isolation mode: ${isolation}"; return 1 ;;
+  esac
+  log_section "Joining Token Node (${isolation})${release:+ with ${release}}"
   local start
   start=$(timer_start)
 
@@ -72,6 +82,7 @@ node_join_token() {
   jq \
     --arg nodeIP "${vm_private_ip}" \
     --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
+    --arg isolation "${isolation}" \
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
     --arg runcVersion "${E2E_RUNC_VERSION}" \
@@ -92,7 +103,12 @@ node_join_token() {
       | .components.kubernetes = $kubernetesVersion
       | .components.containerd = $containerdVersion
       | .components.runc = $runcVersion
-      | del(.kubernetes, .containerd, .runc)' \
+      | del(.kubernetes, .containerd, .runc)
+      | if $isolation == "nspawn" then . else
+          .bootstrap.isolation = $isolation
+          | .bootstrap.experimentalContainerIsolation = ($isolation == "container")
+          | .agent.machineReconcileInterval = "5s"
+        end' \
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
 

@@ -1,7 +1,8 @@
 name: E2E Tests
 
 # End-to-end tests for ARM Machine registration plus MSI, bootstrap-token,
-# Arc, and kubeadm-style join flows.
+# Arc, and kubeadm-style join flows; none/container isolation lifecycle suites
+# reuse the bootstrap-token VM after the default nspawn cases.
 #
 # Security note: this workflow uses GitHub OIDC to obtain Azure access. Trusted
 # pushes and same-repository PRs use e2e-testing. Dependabot PRs use the
@@ -72,7 +73,7 @@ jobs:
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     # Environment approvals cannot be conditional within one environment. Route
     # only Dependabot-authored PRs through the required-reviewer environment so
     # pushes and maintainer PRs retain the existing automatic behavior.
@@ -90,6 +91,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Test E2E harness without Azure access
+        run: go test ./hack/e2e
+
       - name: Azure login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
@@ -97,7 +101,7 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run E2E tests, including ARM Machine registration
+      - name: Run E2E tests, including ARM registration and worker isolation
         env:
           E2E_SKIP_CLEANUP: "1"  # Cleanup handled in dedicated step below
         run: |
