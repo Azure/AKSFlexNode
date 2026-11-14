@@ -11,8 +11,8 @@ import (
 	"reflect"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/noneops"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
 	corev1 "k8s.io/api/core/v1"
 )
 

@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -34,7 +35,7 @@ type startTask struct {
 	log            *slog.Logger
 	apiServer      string
 	kubeconfigPath string
-	machineDir     string
+	root           isolation.NodeRoot
 	nodeName       string
 	unit           string
 	forceRestart   bool
@@ -54,14 +55,15 @@ func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart
 		log:            log,
 		apiServer:      nodeStart.Kubelet.APIServer,
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
-		machineDir:     nodeStart.MachineDir,
+		root:           nodeStart.Root(),
 		nodeName:       nodeStart.NodeName,
 		run:            nodeStart.Exec,
 	}
 	if nodeStart.HostNative() {
-		task.machineDir = nodeStart.Root().Path("/")
 		task.unit = HostUnitNPD
 		task.binaryPath = filepath.Join(none.Layout{}.BinDir(), "node-problem-detector")
+	} else if nodeStart.InContainer {
+		task.binaryPath = "/usr/local/bin/node-problem-detector"
 	}
 	return task
 }
@@ -102,7 +104,7 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 		return false, fmt.Errorf("render npd service template: %w", err)
 	}
 
-	hostServicePath := filepath.Join(t.machineDir, "etc/systemd/system", t.unit)
+	hostServicePath := t.root.Path(filepath.Join("/etc/systemd/system", t.unit))
 
 	current, err := os.ReadFile(hostServicePath) //nolint:gosec // path is constructed, not user input
 	switch {

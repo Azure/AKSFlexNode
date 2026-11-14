@@ -8,17 +8,16 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/noneops"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-// The orchestration in Unbounded's cmd/agent/internal cannot be imported by
-// an embedding agent. internal/noneops composes its public backend and phases
-// with Flex-owned persistence; the AKS goal and credential refresh stay here.
+// Unbounded owns the transactional host lifecycle. Flex supplies AKS goal
+// generations, application artifacts and durable applied-state persistence.
 type noneNode interface {
 	PendingStartup() (*noneops.Startup, error)
 	PendingUpgrade() (bool, error)
@@ -56,15 +55,18 @@ func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) 
 	if state != nil && state.isolationMode() != cfg.Bootstrap.IsolationMode() {
 		return nil, fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", cfg.Bootstrap.IsolationMode(), state.isolationMode())
 	}
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeNSpawn {
+	switch cfg.Bootstrap.IsolationMode() {
+	case isolation.ModeNSpawn:
 		return base, nil
+	case isolation.ModeContainer:
+		return newContainerNodeOperator(base, state)
 	}
 	if state == nil || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return nil, fmt.Errorf("none node has no valid applied configuration")
 	}
 	return &noneNodeOperator{
 		nspawnNodeOperator: base,
-		newNode:            func(p noneops.Params) noneNode { return noneops.New(p) },
+		newNode:            func(p noneops.Params) noneNode { return newNoneRuntime(p) },
 		resolve:            config.ResolveMachineGoalState,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
 			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)

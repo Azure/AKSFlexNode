@@ -218,8 +218,9 @@ type GantryConfig struct {
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component
 // versions.
 type BootstrapConfig struct {
-	// Isolation selects nspawn (the default) or host-native none mode.
-	Isolation string `json:"isolation,omitempty"`
+	// Isolation selects nspawn (the default), none, or experimental container mode.
+	Isolation                      string `json:"isolation,omitempty"`
+	ExperimentalContainerIsolation bool   `json:"experimentalContainerIsolation,omitempty"`
 
 	// OCIImage is the nspawn rootfs OCI image used by the shared agent library.
 	// When empty, the agent uses its built-in default image selection.
@@ -948,12 +949,15 @@ func (c *BootstrapConfig) IsolationMode() isolation.Mode {
 }
 
 func (c *BootstrapConfig) validate() error {
-	if mode := c.IsolationMode(); mode != isolation.ModeNSpawn && mode != isolation.ModeNone {
-		return fmt.Errorf("invalid bootstrap.isolation %q: supported modes are nspawn and none", c.Isolation)
+	if mode := c.IsolationMode(); mode != isolation.ModeNSpawn && mode != isolation.ModeNone && mode != isolation.ModeContainer {
+		return fmt.Errorf("invalid bootstrap.isolation %q: supported modes are nspawn, none and container", c.Isolation)
+	}
+	if c.IsolationMode() == isolation.ModeContainer && !c.ExperimentalContainerIsolation {
+		return fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
 	}
 	if c.IsolationMode() == isolation.ModeNone {
 		if c.OCIImage != "" {
-			return fmt.Errorf("bootstrap.ociImage requires nspawn isolation")
+			return fmt.Errorf("bootstrap.ociImage requires nspawn or container isolation")
 		}
 		for _, mount := range c.AdditionalHostMounts {
 			if mount.Target != "" && mount.Target != mount.Source {

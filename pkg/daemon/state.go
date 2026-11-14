@@ -179,8 +179,8 @@ func (s *fileStateStore) loadNoneRecord(data []byte) (*State, error) {
 	if err := json.Unmarshal(record.Payload, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state payload %s: %w", s.path, err)
 	}
-	if state.isolationMode() != isolation.ModeNone {
-		return nil, fmt.Errorf("daemon state record %s requires none isolation", s.path)
+	if state.isolationMode() != isolation.ModeNone && state.isolationMode() != isolation.ModeContainer {
+		return nil, fmt.Errorf("daemon state record %s requires none or container isolation", s.path)
 	}
 	return &state, nil
 }
@@ -211,7 +211,7 @@ func (s *fileStateStore) Save(_ context.Context, state *State) error {
 	if state == nil {
 		return fmt.Errorf("daemon state is nil")
 	}
-	if state.isolationMode() == isolation.ModeNone {
+	if state.isolationMode() == isolation.ModeNone || state.isolationMode() == isolation.ModeContainer {
 		return s.saveNoneRecord(state)
 	}
 	data, err := json.MarshalIndent(state, "", "  ")

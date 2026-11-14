@@ -17,7 +17,9 @@ func TestBootstrapIsolation(t *testing.T) {
 		{name: "default", want: isolation.ModeNSpawn},
 		{name: "nspawn", bootstrap: BootstrapConfig{Isolation: "nspawn"}, want: isolation.ModeNSpawn},
 		{name: "none", bootstrap: BootstrapConfig{Isolation: "none"}, want: isolation.ModeNone},
-		{name: "container not supported", bootstrap: BootstrapConfig{Isolation: "container"}, wantErr: true},
+		{name: "container requires opt in", bootstrap: BootstrapConfig{Isolation: "container"}, wantErr: true},
+		{name: "container enabled", bootstrap: BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}, want: isolation.ModeContainer},
+		{name: "container custom image", bootstrap: BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true, OCIImage: "oci://rootfs"}, want: isolation.ModeContainer},
 		{name: "unknown", bootstrap: BootstrapConfig{Isolation: "invalid"}, wantErr: true},
 		{name: "none ignores no rootfs", bootstrap: BootstrapConfig{Isolation: "none", OCIImage: "oci://rootfs"}, wantErr: true},
 		{name: "none rejects mount remapping", bootstrap: BootstrapConfig{Isolation: "none", AdditionalHostMounts: []AdditionalHostMount{{Source: "/srv/data", Target: "/data"}}}, wantErr: true},
@@ -37,15 +39,15 @@ func TestBootstrapIsolation(t *testing.T) {
 
 func TestIsolationAdapter(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"nspawn", "none"} {
+	for _, mode := range []string{"nspawn", "none", "container"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			cfg := &Config{Bootstrap: BootstrapConfig{Isolation: mode}, Azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}}}
+			cfg := &Config{Bootstrap: BootstrapConfig{Isolation: mode, ExperimentalContainerIsolation: mode == "container"}, Azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}}}
 			ac := ToAgentConfig(cfg, "kube1")
 			if ac.Isolation != mode {
 				t.Fatalf("isolation = %q", ac.Isolation)
 			}
-			if (ac.NSpawnLifecycle == nil) != (mode == "none") {
+			if (ac.NSpawnLifecycle != nil) != (mode == "nspawn") {
 				t.Fatal("incorrect nspawn lifecycle selection")
 			}
 			want := flexNodeBinaryPath
@@ -55,8 +57,11 @@ func TestIsolationAdapter(t *testing.T) {
 			if ac.Kubelet.Auth.ExecCredential == nil || ac.Kubelet.Auth.ExecCredential.Command != want {
 				t.Fatalf("exec plugin must use %s", want)
 			}
-			if cfg.DeepCopy().Bootstrap.Isolation != mode {
-				t.Fatal("deep copy lost isolation")
+			if cfg.DeepCopy().Bootstrap.Isolation != mode || cfg.DeepCopy().Bootstrap.ExperimentalContainerIsolation != (mode == "container") {
+				t.Fatal("deep copy lost isolation or experimental opt-in")
+			}
+			if (ac.Experimental != nil && ac.Experimental.ContainerIsolation) != (mode == "container") {
+				t.Fatal("adapter lost experimental opt-in")
 			}
 		})
 	}

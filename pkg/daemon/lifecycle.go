@@ -175,12 +175,17 @@ func ensureAgentUpgradeServiceAssetsAt(
 }
 
 type agentServiceOptions struct {
-	ARCEnabled    bool
-	NoneIsolation bool
+	ARCEnabled         bool
+	NoneIsolation      bool
+	ContainerIsolation bool
 }
 
 func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
-	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled(), NoneIsolation: cfg.Bootstrap.IsolationMode() == isolation.ModeNone}
+	return agentServiceOptions{
+		ARCEnabled:         cfg.IsARCEnabled(),
+		NoneIsolation:      cfg.Bootstrap.IsolationMode() == isolation.ModeNone,
+		ContainerIsolation: cfg.Bootstrap.IsolationMode() == isolation.ModeContainer,
+	}
 }
 
 type agentServiceAsset struct {
@@ -304,15 +309,17 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
 	}
 	return agentServiceOptions{
-		ARCEnabled:    bytes.Contains(content, []byte(arcSystemdDependency)),
-		NoneIsolation: bytes.Contains(content, []byte("# Node isolation: none")),
+		ARCEnabled:         bytes.Contains(content, []byte(arcSystemdDependency)),
+		NoneIsolation:      bytes.Contains(content, []byte("# Node isolation: none")),
+		ContainerIsolation: bytes.Contains(content, []byte("# Node isolation: container")),
 	}, nil
 }
 
 type agentServiceTemplateData struct {
-	CurrentBinaryPath string
-	Dependencies      []string
-	NoneIsolation     bool
+	CurrentBinaryPath  string
+	Dependencies       []string
+	NoneIsolation      bool
+	ContainerIsolation bool
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -323,9 +330,10 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
-		CurrentBinaryPath: currentBinaryPath,
-		Dependencies:      dependencies,
-		NoneIsolation:     serviceOptions.NoneIsolation,
+		CurrentBinaryPath:  currentBinaryPath,
+		Dependencies:       dependencies,
+		NoneIsolation:      serviceOptions.NoneIsolation,
+		ContainerIsolation: serviceOptions.ContainerIsolation,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}

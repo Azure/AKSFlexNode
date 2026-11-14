@@ -16,7 +16,7 @@ func NewCommand() *cobra.Command {
 		Args:   cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			switch args[0] {
-			case "nspawn", "none":
+			case "nspawn", "none", "container":
 				return nil
 			default:
 				return fmt.Errorf("unsupported node isolation %q", args[0])

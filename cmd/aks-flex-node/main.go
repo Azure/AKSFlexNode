@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/cmd/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/cmd/nodelifecycle"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/nspawnlifecycle"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/preflight"
 	"github.com/Azure/AKSFlexNode/pkg/cmd/reset"
@@ -57,6 +58,7 @@ func newRootCommand() *cobra.Command {
 
 	rootCmd.AddCommand(start.NewCommand())
 	rootCmd.AddCommand(supportsisolation.NewCommand())
+	rootCmd.AddCommand(nodelifecycle.NewCommand())
 	rootCmd.AddCommand(bootstrapdata.NewCommand())
 	rootCmd.AddCommand(preflight.NewCommand())
 	rootCmd.AddCommand(daemon.NewCommands()...)

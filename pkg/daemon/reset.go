@@ -5,8 +5,10 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/noneops"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
@@ -19,7 +21,10 @@ import (
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
 func ResetNode(log *slog.Logger) phases.Task {
-	teardown := &noneops.Teardown{Log: log}
+	if teardown := (&containerops.Teardown{Log: log}); teardown.Present() || utilio.FileExists(defaultContainerStartupStore().path) {
+		return resetContainerNode(log, teardown)
+	}
+	teardown := &noneops.Teardown{Log: log, StateDir: config.ConfigDir}
 	if teardown.Present() {
 		return resetNoneNode(log, teardown)
 	}

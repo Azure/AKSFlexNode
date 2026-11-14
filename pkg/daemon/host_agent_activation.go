@@ -84,13 +84,13 @@ func checkInstalledNodeIsolation(ctx context.Context, candidate string) error {
 		return err
 	}
 	state, err := store.Load(ctx)
-	if err != nil || state == nil || state.isolationMode() != isolation.ModeNone {
+	if err != nil || state == nil || state.isolationMode() == isolation.ModeNSpawn {
 		return err
 	}
 	if err := agentbinary.Verify(ctx, candidate); err != nil {
 		return err
 	}
-	return checkAgentIsolation(ctx, candidate, isolation.ModeNone)
+	return checkAgentIsolation(ctx, candidate, state.isolationMode())
 }
 
 func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) agentbinary.ActivationOptions {
@@ -257,7 +257,7 @@ func (s *flexDaemonActivationService) Restart(ctx context.Context) error {
 }
 
 // WaitHealthy preserves an inactive service during reset/reinstall. Otherwise,
-// it synchronizes the active nspawn exec credential only after systemd is
+// it synchronizes the active node exec credential only after systemd is
 // stably running the expected host binary. Shared rollback calls this again
 // with last-good.
 func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedBinaryPath string) error {
@@ -268,7 +268,7 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 		return fmt.Errorf("resolve expected daemon binary: %w", err)
 	}
 	if !s.serviceWasActive {
-		return s.synchronizeActiveNspawn(healthCtx, expected)
+		return s.synchronizeActiveNode(healthCtx, expected)
 	}
 	var healthySince time.Time
 	ticker := time.NewTicker(hostAgentHealthPoll)
@@ -279,7 +279,7 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 			if healthySince.IsZero() {
 				healthySince = time.Now()
 			} else if time.Since(healthySince) >= hostAgentStableDuration {
-				return s.synchronizeActiveNspawn(healthCtx, expected)
+				return s.synchronizeActiveNode(healthCtx, expected)
 			}
 		} else {
 			healthySince = time.Time{}
@@ -295,20 +295,20 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 	}
 }
 
-func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Context, expected string) error {
+func (s *flexDaemonActivationService) synchronizeActiveNode(ctx context.Context, expected string) error {
 	state, err := s.state.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("load active nspawn state: %w", err)
+		return fmt.Errorf("load active node state: %w", err)
 	}
 	if state == nil || state.isolationMode() == isolation.ModeNone {
-		s.log.Info("activated host agent without active nspawn synchronization")
+		s.log.Info("activated host agent without active node binary synchronization")
 		return nil
 	}
 	if !validNspawnMachine(state.ActiveMachine) {
-		return fmt.Errorf("no valid active nspawn machine for agent activation")
+		return fmt.Errorf("no valid active node slot for agent activation")
 	}
-	if err := synchronizeNspawnAgentBinary(expected, state.ActiveMachine); err != nil {
-		return fmt.Errorf("synchronize active nspawn agent binary: %w", err)
+	if err := synchronizeNodeAgentBinary(expected, state.isolationMode(), state.ActiveMachine); err != nil {
+		return fmt.Errorf("synchronize active node agent binary: %w", err)
 	}
 	return nil
 }

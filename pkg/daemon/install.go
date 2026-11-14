@@ -7,17 +7,23 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 type installBinaryTask struct {
-	machineDir string
+	root isolation.NodeRoot
 }
 
 // InstallBinary returns a task that copies the current process binary into
 // the nspawn rootfs at /usr/local/bin/aks-flex-node.
 func InstallBinary(machineDir string) phases.Task {
-	return &installBinaryTask{machineDir: machineDir}
+	return InstallBinaryToRoot(isolation.DirRoot{Dir: machineDir})
+}
+
+// InstallBinaryToRoot installs the credential helper in the node's filesystem.
+func InstallBinaryToRoot(root isolation.NodeRoot) phases.Task {
+	return &installBinaryTask{root: root}
 }
 
 func (t *installBinaryTask) Name() string { return "install-binary-in-rootfs" }
@@ -28,7 +34,7 @@ func (t *installBinaryTask) Do(_ context.Context) error {
 		return fmt.Errorf("resolve self executable: %w", err)
 	}
 
-	destPath := filepath.Join(t.machineDir, "usr", "local", "bin", "aks-flex-node")
+	destPath := t.root.Path("/usr/local/bin/aks-flex-node")
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil { //nolint:gosec // directory needs to be traversable
 		return fmt.Errorf("create destination directory: %w", err)
 	}

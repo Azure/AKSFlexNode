@@ -257,7 +257,7 @@ func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, 
 }
 
 func checkAgentIsolation(ctx context.Context, candidate string, mode isolation.Mode) error {
-	if mode != isolation.ModeNone {
+	if mode != isolation.ModeNone && mode != isolation.ModeContainer {
 		return nil
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)

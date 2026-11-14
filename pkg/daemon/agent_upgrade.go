@@ -25,6 +25,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
 const (
@@ -175,6 +176,11 @@ func (s agentUpgradeSignalStore) read() (*agentUpgradeSignal, error) {
 	if signal.OperationName == "" {
 		return nil, fmt.Errorf("AgentUpgrade signal has no operation name")
 	}
+	switch signal.Isolation {
+	case "", isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer:
+	default:
+		return nil, fmt.Errorf("AgentUpgrade signal has unsupported isolation %q", signal.Isolation)
+	}
 	if signal.ActiveMachine != "" && !validNspawnMachine(signal.ActiveMachine) {
 		return nil, fmt.Errorf("AgentUpgrade signal has invalid active machine %q", signal.ActiveMachine)
 	}
@@ -272,7 +278,6 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		},
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
 		runningExecutable:      runningAgentExecutable,
-		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
 		guardLegacySeed: func() error {
 			return guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, runningFrom)
 		},
@@ -409,8 +414,8 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if current != candidate {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("staged agent binary resolved to unexpected slot"))
 	}
-	if err := synchronizeNspawnAgentBinary(current, signal.ActiveMachine); err != nil {
-		return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize active nspawn agent binary: %w", err))
+	if err := synchronizeNodeAgentBinary(current, signal.Isolation, signal.ActiveMachine); err != nil {
+		return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize active node agent binary: %w", err))
 	}
 	return nil
 }
@@ -515,17 +520,6 @@ const agentRestartTimerAccuracy = "100ms"
 
 func validNspawnMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
-}
-
-func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
-	if !validNspawnMachine(machine) {
-		return fmt.Errorf("invalid nspawn machine %q", machine)
-	}
-	destination := filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
-	if err := copyExecutable(sourcePath, destination); err != nil {
-		return fmt.Errorf("copy agent binary to %s: %w", machine, err)
-	}
-	return nil
 }
 
 // RecoverAgentUpgrade records failure and restores both host and active nspawn
@@ -662,7 +656,7 @@ func (e *hostAgentUpgradeExecutor) daemonInstance() string { return e.instanceID
 func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
 	nspawnBinaryPath := e.nspawnBinaryPath
 	if nspawnBinaryPath == nil {
-		nspawnBinaryPath = activeNspawnAgentBinaryPath
+		nspawnBinaryPath = func(slot string) string { return activeNodeAgentBinaryPath(signal.Isolation, slot) }
 	}
 	return validateStartedAgentUpgrade(e.paths, signal, nspawnBinaryPath)
 }
@@ -766,6 +760,27 @@ func activeNspawnAgentBinaryPath(machine string) string {
 	return filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 }
 
+func activeNodeAgentBinaryPath(mode isolation.Mode, slot string) string {
+	if mode == isolation.ModeContainer {
+		return filepath.Join(container.Layout{}.RootfsDir(slot), "usr/local/bin/aks-flex-node")
+	}
+	return activeNspawnAgentBinaryPath(slot)
+}
+
+func synchronizeNodeAgentBinary(source string, mode isolation.Mode, slot string) error {
+	switch mode {
+	case isolation.ModeNone:
+		return nil
+	case "", isolation.ModeNSpawn, isolation.ModeContainer:
+		if !validActiveMachine(slot) {
+			return fmt.Errorf("invalid active node slot %q", slot)
+		}
+		return copyExecutable(source, activeNodeAgentBinaryPath(mode, slot))
+	default:
+		return fmt.Errorf("unsupported node isolation %q", mode)
+	}
+}
+
 func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal) error {
 	if signal == nil {
 		return nil
@@ -785,7 +800,7 @@ func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSign
 		return fmt.Errorf("restore last-good agent binary: %w", err)
 	}
 	if signal.Isolation != isolation.ModeNone && validNspawnMachine(signal.ActiveMachine) {
-		if err := synchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
+		if err := synchronizeNodeAgentBinary(lastGood, signal.Isolation, signal.ActiveMachine); err != nil {
 			return err
 		}
 	}

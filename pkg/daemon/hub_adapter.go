@@ -112,13 +112,13 @@ func (a *hubMachineAdapter) ReconcileHub(ctx context.Context, goal aksmachine.Go
 	if intent == nil {
 		return nil
 	}
-	if state != nil && state.isolationMode() == isolation.ModeNone {
+	if state != nil && state.isolationMode() != isolation.ModeNSpawn {
 		var err error
 		if *intent {
 			err = yurthub.ErrUnsupportedWorker
 		}
 		// Hub currently manages files and kubelet inside an nspawn worker.
-		// Report the limitation without blocking none-mode node reconciliation.
+		// Report the limitation without blocking node reconciliation.
 		a.reportCondition(ctx, currentHubCondition(node), hubCondition(*intent, err))
 		return nil
 	}

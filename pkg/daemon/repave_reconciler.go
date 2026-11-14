@@ -194,7 +194,7 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 				return err
 			}
 			if goalApplied(machineSnap.machine.Goal, state) {
-				return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, state.AppliedSettingsVersion, "none startup completed")
+				return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, state.AppliedSettingsVersion, "node startup completed")
 			}
 			return nil
 		}

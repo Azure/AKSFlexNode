@@ -13,12 +13,13 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/hostnode"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/noneops"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
+	basenone "github.com/Azure/unbounded/pkg/agent/noneops"
+	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -55,10 +56,12 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	f := &completionFixture{active: make(map[string]bool)}
 	root := t.TempDir()
 	f.params = noneops.Params{
-		Overrides: noneops.Overrides{
+		StateDir: config.ConfigDir,
+		ReapPods: func() error { f.reaps++; return nil },
+		Overrides: basenone.Overrides{
 			Layout: none.Layout{Base: filepath.Join(root, "node")}, SystemdDir: filepath.Join(root, "etc/systemd/system"), Proc: filepath.Join(root, "proc"),
 			ImageArchiveDir: filepath.Join(root, "images"), Download: func(context.Context) error { return nil },
-			WaitKubelet: func(context.Context) error { return nil }, ReapPods: func() error { f.reaps++; return nil },
+			WaitKubelet: func(context.Context) error { return nil },
 			Run: func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
 				f.calls = append(f.calls, name+" "+strings.Join(args, " "))
 				if name == "systemctl" && len(args) > 1 {
@@ -86,7 +89,7 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	ac := config.ToAgentConfig(cfg, noneops.Slot)
 	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
 	factory := func(p noneops.Params) noneNode {
-		p.Overrides, p.Hooks = f.params.Overrides, f.params.Hooks
+		p.Overrides, p.Hooks, p.ReapPods = f.params.Overrides, f.params.Hooks, f.params.ReapPods
 		p.Resolve = func(string) (*goalstates.MachineGoalState, error) { return completionGoal(p.Config), nil }
 		if p.Previous != nil {
 			p.PreviousGoalState = completionGoal(p.Previous)
@@ -95,11 +98,11 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 			t.Fatal("resolved goal lost the stamped registration label")
 		}
 		p.Install = nil // Artifact downloads are outside this reconciliation fixture.
-		return noneops.New(p)
+		return newNoneRuntime(p)
 	}
 	oldParams := f.params
 	oldParams.Log, oldParams.Config, oldParams.GoalState = discardLogger(), ac, completionGoal(ac)
-	if err := noneops.New(oldParams).Provision(t.Context()); err != nil {
+	if err := newNoneRuntime(oldParams).Provision(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	f.op = &noneNodeOperator{

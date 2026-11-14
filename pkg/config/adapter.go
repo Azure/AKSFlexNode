@@ -87,6 +87,10 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		},
 	}
 
+	if cfg.Bootstrap.ExperimentalContainerIsolation {
+		ac.Experimental = &agentconfig.ExperimentalConfig{ContainerIsolation: true}
+	}
+
 	if profile := cfg.Networking.LocalDNS; profile != nil {
 		corefile, _ := profile.CorefileTemplate() // Config validation runs before adaptation.
 		ac.LocalDNS = &agentconfig.AgentLocalDNSConfig{

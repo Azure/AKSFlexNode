@@ -75,7 +75,7 @@ func Download(log *slog.Logger, cfg *config.Config, machineDir string) phases.Ta
 	return &downloadTask{cfg: cfg, version: version, machineDir: machineDir}
 }
 
-// DownloadToRoot installs NPD alongside the host-native node binaries.
+// DownloadToRoot installs NPD through the node's filesystem view.
 func DownloadToRoot(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot) phases.Task {
 	task := Download(log, cfg, "")
 	if download, ok := task.(*downloadTask); ok {

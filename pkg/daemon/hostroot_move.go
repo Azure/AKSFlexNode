@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/noneops"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
@@ -215,7 +215,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 			return fmt.Errorf("none node has no applied configuration")
 		}
 		nodeConfig := applied.NodeConfig
-		startup, err := noneops.New(noneops.Params{Log: log}).PendingStartup()
+		startup, err := newNoneRuntime(noneops.Params{Log: log}).PendingStartup()
 		if err != nil {
 			return err
 		}
@@ -224,7 +224,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 			// still-uncommitted configuration in the applied state file.
 			nodeConfig = startup.Config
 		}
-		gs, err := noneops.New(noneops.Params{Log: log, Config: nodeConfig}).GoalState()
+		gs, err := newNoneRuntime(noneops.Params{Log: log, Config: nodeConfig}).GoalState()
 		if err != nil {
 			return err
 		}
@@ -237,6 +237,9 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 			return err
 		}
 		return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())))
+	}
+	if applied != nil && applied.isolationMode() == isolation.ModeContainer {
+		return rewriteContainerHostRootUnits(ctx, log, cfg, applied)
 	}
 	active, err := activeMachineFromStore(ctx, state)
 	if err != nil {

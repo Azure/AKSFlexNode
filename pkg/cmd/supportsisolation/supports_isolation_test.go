@@ -11,7 +11,7 @@ func TestSupportedModes(t *testing.T) {
 	}{
 		{name: "none", args: []string{"none"}},
 		{name: "nspawn", args: []string{"nspawn"}},
-		{name: "container", args: []string{"container"}, wantErr: true},
+		{name: "container", args: []string{"container"}},
 		{name: "unknown", args: []string{"invalid"}, wantErr: true},
 		{name: "missing argument", wantErr: true},
 	} {
