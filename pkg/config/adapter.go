@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
@@ -46,6 +47,21 @@ const (
 	userNodeMode          = "user"
 )
 
+func nodeHostMounts(cfg *Config) []agentconfig.AdditionalHostMount {
+	mounts := slices.Clone(cfg.Bootstrap.AdditionalHostMounts)
+	if cfg.Bootstrap.IsolationMode() != isolation.ModeNSpawn || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "" {
+		return mounts
+	}
+	// The upstream nspawn /dev/kmsg -> /dev/console workaround satisfies
+	// kubelet's path check, but NPD's kernel monitor needs the real device.
+	for _, mount := range mounts {
+		if mount.Target == "/dev/kmsg" || mount.Target == "" && mount.Source == "/dev/kmsg" {
+			return mounts
+		}
+	}
+	return append(mounts, agentconfig.AdditionalHostMount{Source: "/dev/kmsg", ReadOnly: true})
+}
+
 // ToAgentConfig converts a FlexNode Config to the shared agent library's
 // AgentConfig. The resulting struct can be passed to goalstates.ResolveMachine
 // to produce goal states for the nspawn-based bootstrap phases.
@@ -60,7 +76,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
-		AdditionalHostMounts:  cfg.Bootstrap.AdditionalHostMounts,
+		AdditionalHostMounts:  nodeHostMounts(cfg),
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,

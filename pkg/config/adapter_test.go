@@ -578,14 +578,17 @@ func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
 	}
 
 	ac := ToAgentConfig(cfg, "kube1")
-	if len(ac.AdditionalHostMounts) != 2 {
-		t.Fatalf("AdditionalHostMounts=%#v, want 2 entries", ac.AdditionalHostMounts)
+	if len(ac.AdditionalHostMounts) != 3 {
+		t.Fatalf("AdditionalHostMounts=%#v, want 2 caller mounts and the NPD kernel log mount", ac.AdditionalHostMounts)
 	}
 	if got := ac.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
 		t.Fatalf("AdditionalHostMounts[0]=%#v", got)
 	}
 	if got := ac.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
 		t.Fatalf("AdditionalHostMounts[1]=%#v", got)
+	}
+	if got := ac.AdditionalHostMounts[2]; got.Source != "/dev/kmsg" || !got.ReadOnly || len(got.DeviceAllow) != 0 {
+		t.Fatalf("NPD kernel log mount=%#v, want a read-only bind without broad device permissions", got)
 	}
 }
 

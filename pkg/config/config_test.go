@@ -969,14 +969,17 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 	if agentCfg.CRI.Runc.Version != "1.2.3" {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
 	}
-	if len(agentCfg.AdditionalHostMounts) != 2 {
-		t.Fatalf("Agent AdditionalHostMounts = %#v, want 2 entries", agentCfg.AdditionalHostMounts)
+	if len(agentCfg.AdditionalHostMounts) != 3 {
+		t.Fatalf("Agent AdditionalHostMounts = %#v, want 2 caller mounts and the NPD kernel log mount", agentCfg.AdditionalHostMounts)
 	}
 	if got := agentCfg.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
 		t.Fatalf("Agent AdditionalHostMounts[0] = %#v", got)
 	}
 	if got := agentCfg.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
 		t.Fatalf("Agent AdditionalHostMounts[1] = %#v", got)
+	}
+	if got := agentCfg.AdditionalHostMounts[2]; got.Source != "/dev/kmsg" || !got.ReadOnly || len(got.DeviceAllow) != 0 {
+		t.Fatalf("Agent NPD kernel log mount = %#v", got)
 	}
 	if len(cfg.Bootstrap.AdditionalRequiredServices) != 1 || cfg.Bootstrap.AdditionalRequiredServices[0] != "ib_rdma_configure.service" {
 		t.Fatalf("Bootstrap.AdditionalRequiredServices = %#v", cfg.Bootstrap.AdditionalRequiredServices)

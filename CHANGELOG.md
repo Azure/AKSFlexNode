@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Give online nspawn NPD access to the real host kernel log through a read-only `/dev/kmsg` bind and device-controller grant, fixing startup failure with pipe-console workers.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
 - Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
 

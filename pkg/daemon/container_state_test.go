@@ -116,6 +116,10 @@ func TestContainerStartupRecord(t *testing.T) {
 
 func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
 	t.Parallel()
+	fixture, err := filepath.Abs("testdata/agent_isolation.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeContainer} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
@@ -144,9 +148,10 @@ func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			candidate := filepath.Join(t.TempDir(), "agent")
-			script := "#!/bin/sh\n[ \"$1\" = supports-isolation ] && [ \"$2\" = " + tc.supported + " ]\n"
-			if err := os.WriteFile(candidate, []byte(script), 0o700); err != nil {
+			// An immutable script avoids ETXTBUSY from overlapping fixture
+			// writes and process forks in parallel tests.
+			candidate := filepath.Join(t.TempDir(), tc.supported)
+			if err := os.Symlink(fixture, candidate); err != nil {
 				t.Fatal(err)
 			}
 			if err := checkAgentIsolation(t.Context(), candidate, isolation.ModeContainer); (err != nil) != tc.wantErr {
