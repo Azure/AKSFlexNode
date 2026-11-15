@@ -114,6 +114,7 @@ done
 case "${1:-}" in
     start) exit "${BOOTSTRAP_TEST_START_STATUS:-0}" ;;
     preflight)
+        umask > "${BOOTSTRAP_TEST_CALLS}.umask"
         if [[ " $* " == *" --output json "* ]]; then
             printf '%s\n' "${BOOTSTRAP_TEST_PREFLIGHT_JSON:-}"
         else
@@ -836,6 +837,8 @@ assert_ran_from "$WORK_DIR/readonly-calls" /opt/unbounded/agent/bin/aks-flex-nod
 for dir in /opt/unbounded /opt/unbounded/agent /opt/unbounded/agent/bin; do
     [[ $(stat -c '%a' "$dir") == 755 ]] || fail "new directory $dir is not 0755"
 done
+[[ "$(<"$WORK_DIR/readonly-calls.umask")" == 0077 ]] || fail "directory creation changed the private preflight umask"
+[[ $(stat -c '%a' "$WORK_DIR/readonly-etc/config.json") == 600 ]] || fail "directory creation widened configuration permissions"
 
 # A host installed under the host root keeps it, whatever /usr/local allows: reset leaves the layout
 # there.
