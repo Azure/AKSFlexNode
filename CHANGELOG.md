@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Wait for kubelet TLS bootstrap credentials before starting NPD, preventing bootstrap-token startup races with its client certificate.
 - Create missing bootstrap host-root directories with traversable permissions under a private umask, without changing existing directories or credential-file permissions.
 - Give online nspawn NPD access to the real host kernel log through a read-only `/dev/kmsg` bind and device-controller grant, fixing startup failure with pipe-console workers.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.

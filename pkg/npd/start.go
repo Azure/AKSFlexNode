@@ -12,10 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -25,8 +27,9 @@ import (
 var serviceTemplate string
 
 const (
-	systemdUnitNPD = "node-problem-detector.service"
-	HostUnitNPD    = "aks-flex-node-npd.service"
+	systemdUnitNPD               = "node-problem-detector.service"
+	HostUnitNPD                  = "aks-flex-node-npd.service"
+	kubeletClientCertificatePath = hostnode.KubeletClientPKIDir + "/kubelet-client-current.pem"
 )
 
 var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
@@ -39,6 +42,7 @@ type startTask struct {
 	nodeName       string
 	unit           string
 	forceRestart   bool
+	tlsBootstrap   bool
 	binaryPath     string
 	run            func(context.Context, *slog.Logger, ...string) (string, error)
 }
@@ -58,6 +62,7 @@ func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart
 		root:           nodeStart.Root(),
 		nodeName:       nodeStart.NodeName,
 		run:            nodeStart.Exec,
+		tlsBootstrap:   len(nodeStart.Kubelet.KubeconfigData) == 0 && nodeStart.Kubelet.ExecCredential == nil && nodeStart.Kubelet.BootstrapToken != "",
 	}
 	if nodeStart.HostNative() {
 		task.unit = HostUnitNPD
@@ -81,6 +86,11 @@ func Restart(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeSta
 func (t *startTask) Name() string { return "start-npd" }
 
 func (t *startTask) Do(ctx context.Context) error {
+	if t.tlsBootstrap {
+		if err := t.waitForKubeletCredentials(ctx); err != nil {
+			return err
+		}
+	}
 	serviceUpdated, err := t.ensureServiceFile()
 	if err != nil {
 		return fmt.Errorf("ensure npd service file: %w", err)
@@ -90,6 +100,42 @@ func (t *startTask) Do(ctx context.Context) error {
 		return err
 	}
 	return t.verifyRunning(ctx)
+}
+
+func (t *startTask) waitForKubeletCredentials(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	// Kubelet can be active and write its kubeconfig before TLS bootstrap
+	// publishes the PEM it references. NPD loads both at process startup.
+	t.log.Info("waiting for kubelet TLS bootstrap credentials before NPD")
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("wait for kubelet TLS bootstrap credentials before NPD: %w", err)
+		}
+		ready := true
+		for _, path := range []string{t.kubeconfigPath, kubeletClientCertificatePath} {
+			// Probe in the node: an absolute kubelet certificate symlink must
+			// resolve inside its filesystem, not relative to the host root.
+			if _, err := t.run(ctx, t.log, "test", "-s", path); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return fmt.Errorf("wait for kubelet TLS bootstrap credentials before NPD: %w", err)
+				}
+				ready = false
+				break
+			}
+		}
+		if ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for kubelet TLS bootstrap credentials before NPD: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (t *startTask) ensureServiceFile() (updated bool, err error) {
