@@ -12,9 +12,10 @@ import (
 	"text/template"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -23,6 +24,7 @@ var serviceTemplate string
 
 const (
 	systemdUnitNPD = "node-problem-detector.service"
+	HostUnitNPD    = "aks-flex-node-npd.service"
 )
 
 var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
@@ -31,27 +33,45 @@ type startTask struct {
 	log            *slog.Logger
 	apiServer      string
 	kubeconfigPath string
-	machineDir     string
-	machineName    string
+	root           isolation.NodeRoot
 	nodeName       string
+	unit           string
+	binaryPath     string
+	forceRestart   bool
+	run            func(context.Context, *slog.Logger, ...string) (string, error)
 }
 
-// Start returns a task that renders the NPD systemd unit file into the
-// nspawn machine rootfs and ensures the service is running inside the
-// container via systemd-run --machine.
+// Start renders and starts NPD through the node's filesystem and executor.
 func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart) phases.Task {
 	if disabledForOfflineArtifacts(cfg) {
 		return disabledTask{name: "start-npd", log: log}
 	}
 
-	return &startTask{
+	task := &startTask{
 		log:            log,
 		apiServer:      nodeStart.Kubelet.APIServer,
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
-		machineDir:     nodeStart.MachineDir,
-		machineName:    nodeStart.MachineName,
+		root:           nodeStart.Root(),
 		nodeName:       nodeStart.NodeName,
+		unit:           systemdUnitNPD,
+		binaryPath:     npdBinaryPath,
+		run:            nodeStart.Exec,
 	}
+	if nodeStart.HostNative() {
+		task.unit = HostUnitNPD
+		task.binaryPath = filepath.Join(none.Layout{}.BinDir(), "node-problem-detector")
+	}
+	return task
+}
+
+// Restart makes the service pick up the active version's binary even when its
+// unit text is unchanged after a host-native version-directory switch.
+func Restart(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart) phases.Task {
+	task := Start(log, cfg, nodeStart)
+	if start, ok := task.(*startTask); ok {
+		start.forceRestart = true
+	}
+	return task
 }
 
 func (t *startTask) Name() string { return "start-npd" }
@@ -62,13 +82,13 @@ func (t *startTask) Do(ctx context.Context) error {
 		return fmt.Errorf("ensure npd service file: %w", err)
 	}
 
-	return t.ensureSystemdUnit(ctx, serviceUpdated)
+	return t.ensureSystemdUnit(ctx, serviceUpdated || t.forceRestart)
 }
 
 func (t *startTask) ensureServiceFile() (updated bool, err error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, map[string]any{
-		"NPDBinaryPath":  npdBinaryPath,
+		"NPDBinaryPath":  t.binaryPath,
 		"APIServerURL":   t.apiServer,
 		"KubeconfigPath": t.kubeconfigPath,
 		"NPDConfigPath":  npdConfigPath,
@@ -77,7 +97,7 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 		return false, fmt.Errorf("render npd service template: %w", err)
 	}
 
-	hostServicePath := filepath.Join(t.machineDir, "etc/systemd/system", systemdUnitNPD)
+	hostServicePath := t.root.Path(filepath.Join("/etc/systemd/system", t.unit))
 
 	current, err := os.ReadFile(hostServicePath) //nolint:gosec // path is constructed, not user input
 	switch {
@@ -98,27 +118,22 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 }
 
 func (t *startTask) ensureSystemdUnit(ctx context.Context, restart bool) error {
-	// Check if the unit is already active inside the container.
-	_, err := utilexec.MachineRun(ctx, t.log, t.machineName,
-		"systemctl", "is-active", systemdUnitNPD)
+	_, err := t.run(ctx, t.log, "systemctl", "is-active", t.unit)
 
 	switch {
 	case err != nil:
 		// Unit not active (or not loaded). Reload and start.
-		if _, reloadErr := utilexec.MachineRun(ctx, t.log, t.machineName,
-			"systemctl", "daemon-reload"); reloadErr != nil {
-			return fmt.Errorf("daemon-reload in machine %s: %w", t.machineName, reloadErr)
+		if _, reloadErr := t.run(ctx, t.log, "systemctl", "daemon-reload"); reloadErr != nil {
+			return fmt.Errorf("reload NPD unit %s: %w", t.unit, reloadErr)
 		}
-		if _, startErr := utilexec.MachineRun(ctx, t.log, t.machineName,
-			"systemctl", "enable", "--now", systemdUnitNPD); startErr != nil {
-			return fmt.Errorf("start npd in machine %s: %w", t.machineName, startErr)
+		if _, startErr := t.run(ctx, t.log, "systemctl", "enable", "--now", t.unit); startErr != nil {
+			return fmt.Errorf("start NPD unit %s: %w", t.unit, startErr)
 		}
 		return nil
 	default:
 		if restart {
-			if _, restartErr := utilexec.MachineRun(ctx, t.log, t.machineName,
-				"systemctl", "restart", systemdUnitNPD); restartErr != nil {
-				return fmt.Errorf("restart npd in machine %s: %w", t.machineName, restartErr)
+			if _, restartErr := t.run(ctx, t.log, "systemctl", "restart", t.unit); restartErr != nil {
+				return fmt.Errorf("restart NPD unit %s: %w", t.unit, restartErr)
 			}
 		}
 		return nil
