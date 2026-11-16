@@ -351,14 +351,38 @@ func TestAgentActivationDoesNotValidateMatchingStoppedSource(t *testing.T) {
 	}
 }
 
-func TestHostAgentActivationRequiresDependencies(t *testing.T) {
+func TestRecordPendingAgentUpgradeRejectsMissingActiveNode(t *testing.T) {
 	t.Parallel()
-	if _, err := newHostAgentUpgradeExecutor(nil, &fakeNodeOperator{}); err == nil {
-		t.Fatal("accepted nil logger")
+	for _, tc := range []struct {
+		name  string
+		state *State
+	}{
+		{name: "missing state"},
+		{name: "default without slot", state: &State{}},
+		{name: "default invalid slot", state: &State{ActiveMachine: "../escape"}},
+		{name: "nspawn without slot", state: &State{Isolation: isolation.ModeNSpawn}},
+		{name: "nspawn invalid slot", state: &State{Isolation: isolation.ModeNSpawn, ActiveMachine: "../escape"}},
+		{name: "container without slot", state: &State{Isolation: isolation.ModeContainer}},
+		{name: "container invalid slot", state: &State{Isolation: isolation.ModeContainer, ActiveMachine: "../escape"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			signals := agentUpgradeSignalStore{path: filepath.Join(t.TempDir(), "upgrade.json")}
+			for range 2 {
+				err := recordPendingAgentUpgrade(t.Context(), signals, &fakeNodeOperator{state: tc.state}, "upgrade", "daemon")
+				if err == nil || err.Error() != "no valid active node for AgentUpgrade" {
+					t.Fatalf("RecordPending error = %v, want no valid active node", err)
+				}
+				if signal, err := signals.read(); err != nil || signal != nil {
+					t.Fatalf("rejected upgrade recorded signal: %+v, %v", signal, err)
+				}
+			}
+		})
 	}
-	if _, err := newHostAgentUpgradeExecutor(discardLogger(), nil); err == nil {
-		t.Fatal("accepted nil state loader")
-	}
+}
+
+func TestDirectAgentActivationRequiresLogger(t *testing.T) {
+	t.Parallel()
 	if _, _, err := newFlexDaemonActivationService(nil, func() string { t.Fatal("resolved root without logger"); return "" }); err == nil {
 		t.Fatal("accepted nil direct activation logger")
 	}

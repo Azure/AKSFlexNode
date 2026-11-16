@@ -26,9 +26,6 @@ func preparedContainerPaths(node containerNode) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if gs == nil || gs.RootFS == nil {
-		return nil, fmt.Errorf("container has no prepared root goal state")
-	}
 	root, ok := gs.RootFS.Root().(container.Root)
 	if !ok || !filepath.IsAbs(root.Dir) || root.Dir == "/" {
 		return nil, fmt.Errorf("container has no private prepared root")

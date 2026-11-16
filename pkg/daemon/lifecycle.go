@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -45,7 +46,9 @@ const (
 //go:embed assets/aks-flex-node-agent.service
 var serviceUnitContent []byte
 
-var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Parse(string(serviceUnitContent)))
+var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Funcs(template.FuncMap{
+	"join": strings.Join,
+}).Parse(string(serviceUnitContent)))
 
 //go:embed assets/aks-flex-node-agent-recovery.service
 var recoveryServiceUnitContent []byte
@@ -318,6 +321,7 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 type agentServiceTemplateData struct {
 	CurrentBinaryPath  string
 	Dependencies       []string
+	WantedTargets      []string
 	NoneIsolation      bool
 	ContainerIsolation bool
 }
@@ -327,11 +331,17 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	if serviceOptions.ARCEnabled {
 		dependencies = append(dependencies, arcSystemdDependency)
 	}
+	wantedTargets := []string{"network-online.target", "systemd-udev-settle.service"}
+	if !serviceOptions.NoneIsolation && !serviceOptions.ContainerIsolation {
+		wantedTargets = append(wantedTargets, "machines.target")
+	}
+	wantedTargets = append(wantedTargets, dependencies...)
 
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
 		CurrentBinaryPath:  currentBinaryPath,
 		Dependencies:       dependencies,
+		WantedTargets:      wantedTargets,
 		NoneIsolation:      serviceOptions.NoneIsolation,
 		ContainerIsolation: serviceOptions.ContainerIsolation,
 	}); err != nil {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -42,7 +43,7 @@ func TestNoneUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
 			sum := sha256.Sum256(archive)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) }))
 			defer server.Close()
-			err := installAndSwitchAgentBinaryForIsolation(t.Context(), discardLogger(), server.URL, hex.EncodeToString(sum[:]), paths, isolation.ModeNone)
+			err := installAndSwitchAgentBinary(t.Context(), discardLogger(), server.URL, hex.EncodeToString(sum[:]), paths, isolation.ModeNone)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("install = %v", err)
 			}
@@ -51,6 +52,45 @@ func TestNoneUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
 				want = paths.BluePath
 			}
 			assertResolvedPath(t, paths.CurrentPath, want)
+		})
+	}
+}
+
+func TestAgentUpgradeSignalIsolation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode    isolation.Mode
+		wantErr bool
+	}{
+		{mode: ""},
+		{mode: isolation.ModeNSpawn},
+		{mode: isolation.ModeNone},
+		{mode: isolation.ModeContainer},
+		{mode: "unknown", wantErr: true},
+		{mode: "NONE", wantErr: true},
+		{mode: " none ", wantErr: true},
+	} {
+		t.Run("isolation="+string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			store := agentUpgradeSignalStore{path: filepath.Join(t.TempDir(), "signal.json")}
+			if err := store.write(agentUpgradeSignal{OperationName: "upgrade", Isolation: tc.mode}); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				signal, err := store.read()
+				if tc.wantErr {
+					if err == nil || !strings.Contains(err.Error(), "AgentUpgrade signal isolation") || !strings.Contains(err.Error(), "unsupported isolation mode") {
+						t.Fatalf("read error = %v, want invalid signal isolation", err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if signal == nil || signal.Isolation != tc.mode {
+					t.Fatalf("signal = %+v, want isolation %q unchanged", signal, tc.mode)
+				}
+			}
 		})
 	}
 }

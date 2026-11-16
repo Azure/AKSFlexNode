@@ -410,6 +410,48 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	}
 }
 
+func TestAgentServiceWantedTargets(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		options agentServiceOptions
+		wanted  []string
+	}{
+		{name: "nspawn", wanted: []string{"network-online.target", "systemd-udev-settle.service", "machines.target"}},
+		{name: "none", options: agentServiceOptions{NoneIsolation: true}, wanted: []string{"network-online.target", "systemd-udev-settle.service"}},
+		{name: "container", options: agentServiceOptions{ContainerIsolation: true}, wanted: []string{"network-online.target", "systemd-udev-settle.service"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, arc := range []bool{false, true} {
+				options := tc.options
+				options.ARCEnabled = arc
+				wanted := slices.Clone(tc.wanted)
+				if arc {
+					wanted = append(wanted, arcSystemdDependency)
+				}
+				unit, err := renderAgentServiceUnit("/agent", options)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var directives []string
+				for _, line := range strings.Split(string(unit), "\n") {
+					if value, ok := strings.CutPrefix(line, "Wants="); ok {
+						directives = append(directives, value)
+					}
+				}
+				if len(directives) != 1 || directives[0] != strings.Join(wanted, " ") {
+					t.Fatalf("Arc=%t: Wants directives = %v, want %v", arc, directives, wanted)
+				}
+				header, _, _ := strings.Cut(string(unit), "\n\n[Service]")
+				if strings.Contains(header, "\n\n") {
+					t.Fatalf("conditional template left an empty line in the unit header:\n%s", unit)
+				}
+			}
+		})
+	}
+}
+
 func TestInstalledAgentServiceOptions(t *testing.T) {
 	t.Parallel()
 

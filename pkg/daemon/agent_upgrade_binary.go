@@ -252,10 +252,6 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 	}, nil
 }
 
-func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths) error {
-	return installAndSwitchAgentBinaryForIsolation(ctx, log, rawURL, expectedDigest, paths, isolation.ModeNSpawn)
-}
-
 func checkAgentIsolation(ctx context.Context, candidate string, mode isolation.Mode) error {
 	if mode != isolation.ModeNone && mode != isolation.ModeContainer {
 		return nil
@@ -268,7 +264,7 @@ func checkAgentIsolation(ctx context.Context, candidate string, mode isolation.M
 	return nil
 }
 
-func installAndSwitchAgentBinaryForIsolation(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, mode isolation.Mode) error {
+func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, mode isolation.Mode) error {
 	opts, err := secureAgentInstallOptions(rawURL, expectedDigest)
 	if err != nil {
 		return err

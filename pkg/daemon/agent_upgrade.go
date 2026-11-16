@@ -176,10 +176,8 @@ func (s agentUpgradeSignalStore) read() (*agentUpgradeSignal, error) {
 	if signal.OperationName == "" {
 		return nil, fmt.Errorf("AgentUpgrade signal has no operation name")
 	}
-	switch signal.Isolation {
-	case "", isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer:
-	default:
-		return nil, fmt.Errorf("AgentUpgrade signal has unsupported isolation %q", signal.Isolation)
+	if _, err := isolation.ParseMode(string(signal.Isolation)); err != nil {
+		return nil, fmt.Errorf("validate AgentUpgrade signal isolation: %w", err)
 	}
 	if signal.ActiveMachine != "" && !validNspawnMachine(signal.ActiveMachine) {
 		return nil, fmt.Errorf("AgentUpgrade signal has invalid active machine %q", signal.ActiveMachine)
@@ -261,12 +259,6 @@ type hostAgentUpgradeExecutor struct {
 }
 
 func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader) (*hostAgentUpgradeExecutor, error) {
-	if log == nil {
-		return nil, fmt.Errorf("logger is nil")
-	}
-	if state == nil {
-		return nil, fmt.Errorf("agent upgrade state loader is nil")
-	}
 	paths := defaultAgentUpgradePaths()
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
@@ -338,12 +330,18 @@ func recordPendingAgentUpgrade(
 	if err != nil {
 		return fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
 	}
-	if loaded == nil || loaded.isolationMode() != isolation.ModeNone && !validNspawnMachine(loaded.ActiveMachine) {
+	if loaded == nil {
 		return fmt.Errorf("no valid active node for AgentUpgrade")
+	}
+	mode := loaded.isolationMode()
+	if mode != isolation.ModeNone {
+		if !validNspawnMachine(loaded.ActiveMachine) {
+			return fmt.Errorf("no valid active node for AgentUpgrade")
+		}
 	}
 	return signals.write(agentUpgradeSignal{
 		OperationName: operationName, ActiveMachine: loaded.ActiveMachine,
-		Isolation: loaded.isolationMode(), InitiatingDaemonInstance: instanceID,
+		Isolation: mode, InitiatingDaemonInstance: instanceID,
 	})
 }
 
@@ -401,7 +399,7 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if pending == nil {
 		return fmt.Errorf("no pending AgentUpgrade signal")
 	}
-	if err := installAndSwitchAgentBinaryForIsolation(ctx, e.log, request.downloadURL, request.sha256, e.paths, pending.Isolation); err != nil {
+	if err := installAndSwitchAgentBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths, pending.Isolation); err != nil {
 		return err
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
