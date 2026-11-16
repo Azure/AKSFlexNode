@@ -1,6 +1,10 @@
 package supportsisolation
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+)
 
 func TestSupportedModes(t *testing.T) {
 	t.Parallel()
@@ -9,11 +13,15 @@ func TestSupportedModes(t *testing.T) {
 		args    []string
 		wantErr bool
 	}{
-		{name: "none", args: []string{"none"}},
-		{name: "nspawn", args: []string{"nspawn"}},
-		{name: "container", args: []string{"container"}},
+		{name: "none", args: []string{string(isolation.ModeNone)}},
+		{name: "nspawn", args: []string{string(isolation.ModeNSpawn)}},
+		{name: "container", args: []string{string(isolation.ModeContainer)}},
 		{name: "unknown", args: []string{"invalid"}, wantErr: true},
+		{name: "empty argument", args: []string{""}, wantErr: true},
+		{name: "whitespace", args: []string{" "}, wantErr: true},
+		{name: "wrong case", args: []string{"NSPAWN"}, wantErr: true},
 		{name: "missing argument", wantErr: true},
+		{name: "extra argument", args: []string{string(isolation.ModeNSpawn), "extra"}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

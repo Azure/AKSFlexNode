@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	sharedlifecycle "github.com/Azure/unbounded/pkg/agent/nspawnlifecycle"
 )
 
@@ -68,8 +69,8 @@ func newCommand(log *slog.Logger, factory lifecycleFactory, migrate func(*slog.L
 	return cmd
 }
 
-// newPhaseCommand runs a lifecycle phase, migrating the host root first unless
-// migrate is nil. When the host root cannot be migrated, the phase is skipped
+// newPhaseCommand skips disabled lifecycles before migrating the host root.
+// When the host root cannot be migrated, the phase is skipped
 // and the machine starts with the config it has, rather than not at all. The
 // daemon refuses to start on such a host, which is where the problem is
 // reported.
@@ -90,6 +91,14 @@ func newPhaseCommand(
 				return err
 			}
 
+			lifecycle, err := factory(log)
+			if err != nil {
+				return fmt.Errorf("create nspawn lifecycle: %w", err)
+			}
+			if lifecycle == nil {
+				return nil
+			}
+
 			if migrate != nil {
 				if err := migrate(log); err != nil {
 					log.Warn("not running the nspawn lifecycle phase: the host root cannot be migrated; the machine keeps its config",
@@ -99,17 +108,22 @@ func newPhaseCommand(
 				}
 			}
 
-			lifecycle, err := factory(log)
-			if err != nil {
-				return fmt.Errorf("create nspawn lifecycle: %w", err)
-			}
-
 			return run(cmd.Context(), lifecycle, args[0])
 		},
 	}
 }
 
-func newLifecycle(log *slog.Logger, configPath string) (*sharedlifecycle.Lifecycle, error) {
+func newLifecycle(log *slog.Logger, configPath string) (lifecycle, error) {
+	cfg, err := flexconfig.LoadConfig(configPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
+	}
+	if err == nil && cfg.Bootstrap.Isolation != isolation.ModeNSpawn {
+		return nil, nil
+	}
+
+	// Missing config is an initial bootstrap window: post-start must still
+	// repair GPU state. Gate here because not every shared phase loads config.
 	return sharedlifecycle.New(log, sharedlifecycle.Hooks{
 		LoadConfig: configLoader(configPath),
 	})

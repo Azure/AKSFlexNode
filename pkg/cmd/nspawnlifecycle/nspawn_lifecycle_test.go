@@ -3,10 +3,12 @@ package nspawnlifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -59,19 +61,24 @@ func TestCommandRegistersLifecycleOperations(t *testing.T) {
 func TestCommandValidatesMachine(t *testing.T) {
 	t.Parallel()
 
-	factoryCalled := false
-	cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
-		factoryCalled = true
-		return &fakeLifecycle{}, nil
-	}, migrated)
-	cmd.SetArgs([]string{"pre-start", "not-a-machine"})
+	for _, phase := range []string{"pre-start", "post-start", "reconcile"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
 
-	err := cmd.ExecuteContext(context.Background())
-	if err == nil || err.Error() != `unknown nspawn machine "not-a-machine"` {
-		t.Fatalf("ExecuteContext() error = %v, want unknown-machine error", err)
-	}
-	if factoryCalled {
-		t.Fatal("lifecycle factory called for invalid machine")
+			cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
+				t.Fatal("lifecycle factory called for invalid machine")
+				return nil, nil
+			}, func(*slog.Logger) error {
+				t.Fatal("host root migrated for invalid machine")
+				return nil
+			})
+			cmd.SetArgs([]string{phase, "not-a-machine"})
+
+			err := cmd.ExecuteContext(context.Background())
+			if err == nil || err.Error() != `unknown nspawn machine "not-a-machine"` {
+				t.Fatalf("ExecuteContext() error = %v, want unknown-machine error", err)
+			}
+		})
 	}
 }
 
@@ -217,4 +224,120 @@ func TestCommandStartsTheMachineWhenTheHostRootCannotBeMigrated(t *testing.T) {
 	}
 }
 
-func migrated(*slog.Logger) error { return nil }
+func TestCommandSkipsDisabledLifecycle(t *testing.T) {
+	t.Parallel()
+
+	for _, phase := range []string{"pre-start", "post-start", "reconcile"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+
+			factoryCalls := 0
+			cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
+				factoryCalls++
+				return nil, nil
+			}, func(*slog.Logger) error {
+				t.Fatal("host root migrated for disabled lifecycle")
+				return nil
+			})
+			cmd.SetArgs([]string{phase, "kube1"})
+
+			for range 2 {
+				// Dispatching any phase with a nil lifecycle would panic.
+				if err := cmd.ExecuteContext(context.Background()); err != nil {
+					t.Fatalf("ExecuteContext() error = %v", err)
+				}
+			}
+			if factoryCalls != 2 {
+				t.Errorf("factory called %d times, want 2", factoryCalls)
+			}
+		})
+	}
+}
+
+func TestCommandRejectsFactoryErrorBeforeMigration(t *testing.T) {
+	t.Parallel()
+
+	factoryErr := errors.New("invalid persisted config")
+	for _, phase := range []string{"pre-start", "post-start", "reconcile"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := newCommand(slog.New(slog.DiscardHandler), func(*slog.Logger) (lifecycle, error) {
+				return nil, factoryErr
+			}, func(*slog.Logger) error {
+				t.Fatal("host root migrated despite factory error")
+				return nil
+			})
+			cmd.SetArgs([]string{phase, "kube1"})
+
+			if err := cmd.ExecuteContext(context.Background()); !errors.Is(err, factoryErr) {
+				t.Fatalf("ExecuteContext() error = %v, want %v", err, factoryErr)
+			}
+		})
+	}
+}
+
+func TestNewLifecycleChecksPersistedMode(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name      string
+		bootstrap string
+		wantNil   bool
+		wantErr   bool
+	}{
+		{name: "default", bootstrap: `{}`},
+		{name: "empty mode", bootstrap: `{"isolation":""}`},
+		{name: "nspawn", bootstrap: `{"isolation":"nspawn"}`},
+		{name: "none", bootstrap: `{"isolation":"none"}`, wantNil: true},
+		{name: "container", bootstrap: `{"isolation":"container","experimentalContainerIsolation":true}`, wantNil: true},
+		{name: "container without opt in", bootstrap: `{"isolation":"container"}`, wantNil: true, wantErr: true},
+		{name: "unknown mode", bootstrap: `{"isolation":"invalid"}`, wantNil: true, wantErr: true},
+		{name: "malformed config", bootstrap: `{`, wantNil: true, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			data := fmt.Sprintf(`{
+				"azure": {
+					"managedIdentity": {},
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+					}
+				},
+				"agent": {"nodeName":"lifecycle-test-node"},
+				"bootstrap": %s
+			}`, tt.bootstrap)
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			for range 2 {
+				got, err := newLifecycle(slog.New(slog.DiscardHandler), path)
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("newLifecycle() error = %v, want error = %v", err, tt.wantErr)
+				}
+				if err != nil && !strings.Contains(err.Error(), "load persisted AKS Flex config "+path) {
+					t.Errorf("newLifecycle() error = %v, want persisted config path", err)
+				}
+				if (got == nil) != tt.wantNil {
+					t.Fatalf("newLifecycle() = %T, want nil = %v", got, tt.wantNil)
+				}
+			}
+		})
+	}
+}
+
+func TestNewLifecyclePreservesBootstrapWithoutConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "missing.json")
+	got, err := newLifecycle(slog.New(slog.DiscardHandler), path)
+	if err != nil {
+		t.Fatalf("newLifecycle() error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("missing config must allow the initial bootstrap GPU post-start phase")
+	}
+}

@@ -56,12 +56,13 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	kubeletConfig := kubeletConfiguration(cfg)
 
 	ac := &agentconfig.AgentConfig{
-		Isolation:             string(cfg.Bootstrap.IsolationMode()),
+		Isolation:             string(cfg.Bootstrap.Isolation),
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
 		AdditionalHostDevices: cfg.Bootstrap.AdditionalHostDevices,
 		AdditionalHostMounts:  slices.Clone(cfg.Bootstrap.AdditionalHostMounts),
+		NSpawnLifecycle:       nspawnLifecycleHooks(),
 		Cluster: agentconfig.AgentClusterConfig{
 			CaCertBase64: cfg.Node.Kubelet.CACertData,
 			ClusterDNS:   cfg.Networking.DNSServiceIP,
@@ -120,10 +121,6 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 	}
 
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeNSpawn {
-		ac.NSpawnLifecycle = nspawnLifecycleHooks()
-	}
-
 	if cfg.UsesKubeconfigCredentials() {
 		ac.Kubelet.KubeconfigData = []byte(cfg.Node.Kubelet.KubeconfigData)
 		return ac
@@ -160,7 +157,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
 	}
 
-	if ac.Kubelet.Auth.ExecCredential != nil && cfg.Bootstrap.IsolationMode() == isolation.ModeNone {
+	if ac.Kubelet.Auth.ExecCredential != nil && cfg.Bootstrap.Isolation == isolation.ModeNone {
 		// Keep the command stable if the managed host-root symlink is migrated.
 		ac.Kubelet.Auth.ExecCredential.Command = filepath.Join(hostroot.Path, hostBinaryRelativePath)
 	}

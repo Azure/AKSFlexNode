@@ -49,10 +49,10 @@ func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) 
 	if err != nil {
 		return nil, err
 	}
-	if state != nil && state.isolationMode() != cfg.Bootstrap.IsolationMode() {
-		return nil, fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", cfg.Bootstrap.IsolationMode(), state.isolationMode())
+	if state != nil && state.isolationMode() != cfg.Bootstrap.Isolation {
+		return nil, fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", cfg.Bootstrap.Isolation, state.isolationMode())
 	}
-	switch cfg.Bootstrap.IsolationMode() {
+	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNSpawn:
 		return base, nil
 	case isolation.ModeContainer:

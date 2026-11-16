@@ -33,14 +33,14 @@ func ValidateIsolationEnvironment(cfg *config.Config) error {
 }
 
 func validateIsolationEnvironment(cfg *config.Config, containerized bool) error {
-	switch cfg.Bootstrap.IsolationMode() {
+	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNSpawn:
 		return nil
 	case isolation.ModeNone, isolation.ModeContainer:
 		if containerized {
-			return fmt.Errorf("%s isolation requires the host-installed agent; the containerized agent requires host containerd", cfg.Bootstrap.IsolationMode())
+			return fmt.Errorf("%s isolation requires the host-installed agent; the containerized agent requires host containerd", cfg.Bootstrap.Isolation)
 		}
-		if cfg.Bootstrap.IsolationMode() == isolation.ModeContainer && !cfg.Bootstrap.ExperimentalContainerIsolation {
+		if cfg.Bootstrap.Isolation == isolation.ModeContainer && !cfg.Bootstrap.ExperimentalContainerIsolation {
 			return fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
 		}
 		return nil
@@ -63,7 +63,7 @@ func CheckBootstrapIsolation(ctx context.Context, cfg *config.Config, log *slog.
 	if err != nil {
 		return err
 	}
-	if applied != nil && applied.isolationMode() != cfg.Bootstrap.IsolationMode() {
+	if applied != nil && applied.isolationMode() != cfg.Bootstrap.Isolation {
 		return fmt.Errorf("host has an applied %s node; reset it before changing isolation", applied.isolationMode())
 	}
 	if (&noneops.Teardown{Log: log}).Present() || applied != nil && applied.isolationMode() == isolation.ModeNone {
@@ -72,10 +72,10 @@ func CheckBootstrapIsolation(ctx context.Context, cfg *config.Config, log *slog.
 	if containerops.Present() || utilio.FileExists(defaultContainerStartupStore().path) || applied != nil && applied.isolationMode() == isolation.ModeContainer {
 		return fmt.Errorf("host contains an installed or partially reset container node; reset it before bootstrapping")
 	}
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeNSpawn {
+	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 		return nil
 	}
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeContainer {
+	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
 		return checkContainerBootstrap(ctx, log)
 	}
 	if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNone); err != nil {
@@ -93,10 +93,10 @@ func ResolveNodeGoalState(ctx context.Context, log *slog.Logger, cfg *config.Con
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeNone {
+	if cfg.Bootstrap.Isolation == isolation.ModeNone {
 		gs, err = newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs}).GoalState()
 	}
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeContainer {
+	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
 		gs, err = newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot}).GoalState()
 	}
 	return ac, gs, archives, err

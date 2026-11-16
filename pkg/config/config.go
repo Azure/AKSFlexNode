@@ -940,11 +940,6 @@ func (c *BootstrapTokenConfig) validate() error {
 	return nil
 }
 
-// IsolationMode returns the validated node-stack isolation mode.
-func (c *BootstrapConfig) IsolationMode() isolation.Mode {
-	return c.Isolation
-}
-
 func (c *BootstrapConfig) validateIsolationMode() error {
 	mode, err := isolation.ParseMode(string(c.Isolation))
 	if err != nil {

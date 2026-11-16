@@ -183,8 +183,8 @@ type agentServiceOptions struct {
 func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
 	return agentServiceOptions{
 		ARCEnabled:         cfg.IsARCEnabled(),
-		NoneIsolation:      cfg.Bootstrap.IsolationMode() == isolation.ModeNone,
-		ContainerIsolation: cfg.Bootstrap.IsolationMode() == isolation.ModeContainer,
+		NoneIsolation:      cfg.Bootstrap.Isolation == isolation.ModeNone,
+		ContainerIsolation: cfg.Bootstrap.Isolation == isolation.ModeContainer,
 	}
 }
 

@@ -89,7 +89,7 @@ func (h *handler) execute(ctx context.Context) error {
 
 	failMachinesTargetForMissing := daemon.Containerized() || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
 	var runtimeChecks []preflight.Checker
-	if cfg.Bootstrap.IsolationMode() == isolation.ModeNSpawn {
+	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 		runtimeChecks = append(runtimeChecks, daemon.CheckMachinesTarget(log, failMachinesTargetForMissing))
 	}
 	checks := daemon.PreflightChecks(preflight.Flatten(

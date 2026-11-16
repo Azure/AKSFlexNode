@@ -40,27 +40,14 @@ func TestBootstrapIsolation(t *testing.T) {
 			if tc.wantErr {
 				return
 			}
-			if tc.bootstrap.Isolation != tc.want || tc.bootstrap.IsolationMode() != tc.want {
-				t.Fatalf("stored mode = %q, getter = %q, want %q", tc.bootstrap.Isolation, tc.bootstrap.IsolationMode(), tc.want)
+			if tc.bootstrap.Isolation != tc.want {
+				t.Fatalf("stored mode = %q, want %q", tc.bootstrap.Isolation, tc.want)
 			}
 			if err := tc.bootstrap.validate(); err != nil {
 				t.Fatalf("second validate: %v", err)
 			}
 			if tc.bootstrap.Isolation != tc.want {
 				t.Fatalf("second validate changed mode to %q, want %q", tc.bootstrap.Isolation, tc.want)
-			}
-		})
-	}
-}
-
-func TestIsolationModeReturnsStoredValue(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []isolation.Mode{"", isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer, "invalid"} {
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			bootstrap := BootstrapConfig{Isolation: mode}
-			if got := bootstrap.IsolationMode(); got != mode {
-				t.Fatalf("IsolationMode() = %q, want stored value %q", got, mode)
 			}
 		})
 	}
@@ -106,8 +93,8 @@ func TestLoadConfigIsolation(t *testing.T) {
 			if tc.wantErr {
 				return
 			}
-			if cfg.Bootstrap.Isolation != tc.want || cfg.Bootstrap.IsolationMode() != tc.want {
-				t.Fatalf("stored mode = %q, getter = %q, want %q", cfg.Bootstrap.Isolation, cfg.Bootstrap.IsolationMode(), tc.want)
+			if cfg.Bootstrap.Isolation != tc.want {
+				t.Fatalf("stored mode = %q, want %q", cfg.Bootstrap.Isolation, tc.want)
 			}
 
 			encoded, err := json.Marshal(cfg)
@@ -126,7 +113,7 @@ func TestLoadConfigIsolation(t *testing.T) {
 				t.Fatalf("JSON isolation = %q, want %q", public.Bootstrap.Isolation, tc.want)
 			}
 			copiedCfg := cfg.DeepCopy()
-			if copiedCfg == nil || copiedCfg.Bootstrap.Isolation != tc.want || copiedCfg.Bootstrap.IsolationMode() != tc.want ||
+			if copiedCfg == nil || copiedCfg.Bootstrap.Isolation != tc.want ||
 				copiedCfg.Bootstrap.ExperimentalContainerIsolation != cfg.Bootstrap.ExperimentalContainerIsolation {
 				t.Fatal("deep copy lost isolation or experimental opt-in")
 			}
@@ -135,8 +122,8 @@ func TestLoadConfigIsolation(t *testing.T) {
 			if ac.Isolation != string(tc.want) {
 				t.Fatalf("isolation = %q, want %q", ac.Isolation, tc.want)
 			}
-			if (ac.NSpawnLifecycle != nil) != (tc.want == isolation.ModeNSpawn) {
-				t.Fatal("incorrect nspawn lifecycle selection")
+			if ac.NSpawnLifecycle == nil {
+				t.Fatal("adapter did not preserve nspawn lifecycle configuration")
 			}
 			want := flexNodeBinaryPath
 			if tc.want == isolation.ModeNone {

@@ -656,12 +656,11 @@ func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name      string
-		mode      isolation.Mode
-		wantHooks bool
+		name string
+		mode isolation.Mode
 	}{
-		{name: "default", wantHooks: true},
-		{name: "nspawn", mode: isolation.ModeNSpawn, wantHooks: true},
+		{name: "default"},
+		{name: "nspawn", mode: isolation.ModeNSpawn},
 		{name: "none", mode: isolation.ModeNone},
 		{name: "container", mode: isolation.ModeContainer},
 	} {
@@ -687,12 +686,9 @@ func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					var want *agentconfig.NSpawnLifecycleConfig
-					if tc.wantHooks {
-						want = &agentconfig.NSpawnLifecycleConfig{
-							PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
-							PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
-						}
+					want := &agentconfig.NSpawnLifecycleConfig{
+						PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
+						PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
 					}
 					for range 2 {
 						ac := ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
@@ -709,7 +705,7 @@ func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 						if !reflect.DeepEqual(rootFS.NSpawnLifecycle, want) {
 							t.Fatalf("resolved NSpawnLifecycle = %+v, want %+v", rootFS.NSpawnLifecycle, want)
 						}
-						if want != nil && rootFS.UsesLifecycleHelper() {
+						if rootFS.UsesLifecycleHelper() {
 							t.Fatal("the machine's hooks would still run the lifecycle helper")
 						}
 					}

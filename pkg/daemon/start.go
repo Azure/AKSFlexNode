@@ -19,7 +19,7 @@ func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
 }
 
 func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
-	switch cfg.Bootstrap.IsolationMode() {
+	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNone:
 		return setupNoneHost(cfg, log)
 	case isolation.ModeContainer:
@@ -59,7 +59,7 @@ func StartNode(
 	store stateStore,
 	state *State,
 ) phases.Task {
-	switch cfg.Bootstrap.IsolationMode() {
+	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNone:
 		return startNoneNode(cfg, log, gs, containerImageArchives, store, state)
 	case isolation.ModeContainer:

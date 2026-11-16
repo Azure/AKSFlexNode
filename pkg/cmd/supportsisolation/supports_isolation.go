@@ -1,8 +1,9 @@
 package supportsisolation
 
 import (
-	"fmt"
+	"errors"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/spf13/cobra"
 )
 
@@ -15,12 +16,11 @@ func NewCommand() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			switch args[0] {
-			case "nspawn", "none", "container":
-				return nil
-			default:
-				return fmt.Errorf("unsupported node isolation %q", args[0])
+			if args[0] == "" {
+				return errors.New("no isolation mode named")
 			}
+			_, err := isolation.ParseMode(args[0])
+			return err
 		},
 	}
 }
