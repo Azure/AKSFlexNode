@@ -1,6 +1,10 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -21,46 +25,127 @@ func TestBootstrapIsolation(t *testing.T) {
 		{name: "container enabled", bootstrap: BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}, want: isolation.ModeContainer},
 		{name: "container custom image", bootstrap: BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true, OCIImage: "oci://rootfs"}, want: isolation.ModeContainer},
 		{name: "unknown", bootstrap: BootstrapConfig{Isolation: "invalid"}, wantErr: true},
-		{name: "none ignores no rootfs", bootstrap: BootstrapConfig{Isolation: "none", OCIImage: "oci://rootfs"}, wantErr: true},
+		{name: "case sensitive", bootstrap: BootstrapConfig{Isolation: "NSpawn"}, wantErr: true},
+		{name: "whitespace rejected", bootstrap: BootstrapConfig{Isolation: " nspawn "}, wantErr: true},
+		{name: "none rejects rootfs", bootstrap: BootstrapConfig{Isolation: "none", OCIImage: "oci://rootfs"}, wantErr: true},
 		{name: "none rejects mount remapping", bootstrap: BootstrapConfig{Isolation: "none", AdditionalHostMounts: []AdditionalHostMount{{Source: "/srv/data", Target: "/data"}}}, wantErr: true},
 		{name: "none permits native mount", bootstrap: BootstrapConfig{Isolation: "none", AdditionalHostMounts: []AdditionalHostMount{{Source: "/srv/data", Target: "/srv/data"}}}, want: isolation.ModeNone},
+		{name: "none permits omitted mount target", bootstrap: BootstrapConfig{Isolation: "none", AdditionalHostMounts: []AdditionalHostMount{{Source: "/srv/data"}}}, want: isolation.ModeNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if err := tc.bootstrap.validate(); (err != nil) != tc.wantErr {
 				t.Fatalf("validate = %v, wantErr %v", err, tc.wantErr)
 			}
-			if !tc.wantErr && tc.bootstrap.IsolationMode() != tc.want {
-				t.Fatalf("mode = %s, want %s", tc.bootstrap.IsolationMode(), tc.want)
+			if tc.wantErr {
+				return
+			}
+			if tc.bootstrap.Isolation != tc.want || tc.bootstrap.IsolationMode() != tc.want {
+				t.Fatalf("stored mode = %q, getter = %q, want %q", tc.bootstrap.Isolation, tc.bootstrap.IsolationMode(), tc.want)
+			}
+			if err := tc.bootstrap.validate(); err != nil {
+				t.Fatalf("second validate: %v", err)
+			}
+			if tc.bootstrap.Isolation != tc.want {
+				t.Fatalf("second validate changed mode to %q, want %q", tc.bootstrap.Isolation, tc.want)
 			}
 		})
 	}
 }
 
-func TestIsolationAdapter(t *testing.T) {
+func TestIsolationModeReturnsStoredValue(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"nspawn", "none", "container"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []isolation.Mode{"", isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer, "invalid"} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			cfg := &Config{Bootstrap: BootstrapConfig{Isolation: mode, ExperimentalContainerIsolation: mode == "container"}, Azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}}}
-			ac := ToAgentConfig(cfg, "kube1")
-			if ac.Isolation != mode {
-				t.Fatalf("isolation = %q", ac.Isolation)
+			bootstrap := BootstrapConfig{Isolation: mode}
+			if got := bootstrap.IsolationMode(); got != mode {
+				t.Fatalf("IsolationMode() = %q, want stored value %q", got, mode)
 			}
-			if (ac.NSpawnLifecycle != nil) != (mode == "nspawn") {
+		})
+	}
+}
+
+func TestLoadConfigIsolation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		bootstrap string
+		want      isolation.Mode
+		wantErr   bool
+	}{
+		{name: "default", bootstrap: `{}`, want: isolation.ModeNSpawn},
+		{name: "empty", bootstrap: `{"isolation":""}`, want: isolation.ModeNSpawn},
+		{name: "nspawn", bootstrap: `{"isolation":"nspawn"}`, want: isolation.ModeNSpawn},
+		{name: "none", bootstrap: `{"isolation":"none"}`, want: isolation.ModeNone},
+		{name: "container enabled", bootstrap: `{"isolation":"container","experimentalContainerIsolation":true}`, want: isolation.ModeContainer},
+		{name: "container requires opt in", bootstrap: `{"isolation":"container"}`, wantErr: true},
+		{name: "unknown", bootstrap: `{"isolation":"invalid"}`, wantErr: true},
+		{name: "non-string", bootstrap: `{"isolation":42}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			data := fmt.Sprintf(`{
+				"azure": {
+					"managedIdentity": {},
+					"targetCluster": {
+						"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/test-rg/providers/Microsoft.ContainerService/managedClusters/test-cluster"
+					}
+				},
+				"agent": {"nodeName":"isolation-test-node"},
+				"bootstrap": %s
+			}`, tc.bootstrap)
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("LoadConfig = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if cfg.Bootstrap.Isolation != tc.want || cfg.Bootstrap.IsolationMode() != tc.want {
+				t.Fatalf("stored mode = %q, getter = %q, want %q", cfg.Bootstrap.Isolation, cfg.Bootstrap.IsolationMode(), tc.want)
+			}
+
+			encoded, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var public struct {
+				Bootstrap struct {
+					Isolation string `json:"isolation"`
+				} `json:"bootstrap"`
+			}
+			if err := json.Unmarshal(encoded, &public); err != nil {
+				t.Fatal(err)
+			}
+			if public.Bootstrap.Isolation != string(tc.want) {
+				t.Fatalf("JSON isolation = %q, want %q", public.Bootstrap.Isolation, tc.want)
+			}
+			copiedCfg := cfg.DeepCopy()
+			if copiedCfg == nil || copiedCfg.Bootstrap.Isolation != tc.want || copiedCfg.Bootstrap.IsolationMode() != tc.want ||
+				copiedCfg.Bootstrap.ExperimentalContainerIsolation != cfg.Bootstrap.ExperimentalContainerIsolation {
+				t.Fatal("deep copy lost isolation or experimental opt-in")
+			}
+
+			ac := ToAgentConfig(copiedCfg, "kube1")
+			if ac.Isolation != string(tc.want) {
+				t.Fatalf("isolation = %q, want %q", ac.Isolation, tc.want)
+			}
+			if (ac.NSpawnLifecycle != nil) != (tc.want == isolation.ModeNSpawn) {
 				t.Fatal("incorrect nspawn lifecycle selection")
 			}
 			want := flexNodeBinaryPath
-			if mode == "none" {
+			if tc.want == isolation.ModeNone {
 				want = HostBinaryPath()
 			}
 			if ac.Kubelet.Auth.ExecCredential == nil || ac.Kubelet.Auth.ExecCredential.Command != want {
 				t.Fatalf("exec plugin must use %s", want)
 			}
-			if cfg.DeepCopy().Bootstrap.Isolation != mode || cfg.DeepCopy().Bootstrap.ExperimentalContainerIsolation != (mode == "container") {
-				t.Fatal("deep copy lost isolation or experimental opt-in")
-			}
-			if (ac.Experimental != nil && ac.Experimental.ContainerIsolation) != (mode == "container") {
+			if (ac.Experimental != nil && ac.Experimental.ContainerIsolation) != (tc.want == isolation.ModeContainer) {
 				t.Fatal("adapter lost experimental opt-in")
 			}
 		})

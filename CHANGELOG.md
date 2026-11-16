@@ -23,7 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop and disable host-native NPD when a repave selects offline artifacts, including retries after partial disablement.
 - Let systemd retry transient NPD startup failures and require a stable active/running process before completion, with bounded readiness waits and cancellation.
 - Create missing bootstrap host-root directories with traversable permissions under a private umask, without changing existing directories or credential-file permissions.
-- Give online nspawn NPD access to the real host kernel log through a read-only `/dev/kmsg` bind and device-controller grant, including lifecycle configuration regeneration after legacy upgrades, fixing startup failure with pipe-console workers.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
 - Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
 

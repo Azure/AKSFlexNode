@@ -20,24 +20,16 @@ type configureNSpawnDependenciesTask struct {
 	log               *slog.Logger
 	serviceDropInPath string
 	requiredServices  []string
-	readKernelLog     bool
 	reload            func(context.Context, *slog.Logger) error
 }
 
 // ConfigureNSpawnDependencies orders the machine after host services that
 // must finish changing host devices before nspawn starts.
 func ConfigureNSpawnDependencies(log *slog.Logger, rootFS *goalstates.RootFS, requiredServices []string) phases.Task {
-	readKernelLog := false
-	for _, mount := range rootFS.AdditionalHostMounts {
-		if mount.Source == "/dev/kmsg" && (mount.Target == "" || mount.Target == "/dev/kmsg") {
-			readKernelLog = true
-		}
-	}
 	return &configureNSpawnDependenciesTask{
 		log:               log,
 		serviceDropInPath: filepath.Join(filepath.Dir(rootFS.ServiceOverrideFile), nspawnDependenciesDropIn),
 		requiredServices:  requiredServices,
-		readKernelLog:     readKernelLog,
 		reload:            utilexec.ReloadSystemd,
 	}
 }
@@ -55,12 +47,6 @@ func (t *configureNSpawnDependenciesTask) Do(ctx context.Context) error {
 		services := strings.Join(t.requiredServices, " ")
 		fmt.Fprintf(&content, "Requires=%s\n", services)
 		fmt.Fprintf(&content, "After=%s\n", services)
-	}
-
-	if t.readKernelLog {
-		// A read-only bind does not itself restrict device writes. Limit the
-		// automatic NPD grant to reads in the machine's device controller.
-		content.WriteString("\n[Service]\nDeviceAllow=/dev/kmsg r\n")
 	}
 
 	if err := utilio.WriteFile(t.serviceDropInPath, content.Bytes(), 0o644); err != nil {

@@ -219,8 +219,8 @@ type GantryConfig struct {
 // versions.
 type BootstrapConfig struct {
 	// Isolation selects nspawn (the default), none, or experimental container mode.
-	Isolation                      string `json:"isolation,omitempty"`
-	ExperimentalContainerIsolation bool   `json:"experimentalContainerIsolation,omitempty"`
+	Isolation                      isolation.Mode `json:"isolation,omitempty"`
+	ExperimentalContainerIsolation bool           `json:"experimentalContainerIsolation,omitempty"`
 
 	// OCIImage is the nspawn rootfs OCI image used by the shared agent library.
 	// When empty, the agent uses its built-in default image selection.
@@ -942,20 +942,18 @@ func (c *BootstrapTokenConfig) validate() error {
 
 // IsolationMode returns the validated node-stack isolation mode.
 func (c *BootstrapConfig) IsolationMode() isolation.Mode {
-	if c.Isolation == "" {
-		return isolation.ModeNSpawn
-	}
-	return isolation.Mode(c.Isolation)
+	return c.Isolation
 }
 
-func (c *BootstrapConfig) validate() error {
-	if mode := c.IsolationMode(); mode != isolation.ModeNSpawn && mode != isolation.ModeNone && mode != isolation.ModeContainer {
-		return fmt.Errorf("invalid bootstrap.isolation %q: supported modes are nspawn, none and container", c.Isolation)
+func (c *BootstrapConfig) validateIsolationMode() error {
+	mode, err := isolation.ParseMode(string(c.Isolation))
+	if err != nil {
+		return fmt.Errorf("invalid bootstrap.isolation: %w", err)
 	}
-	if c.IsolationMode() == isolation.ModeContainer && !c.ExperimentalContainerIsolation {
+	if mode == isolation.ModeContainer && !c.ExperimentalContainerIsolation {
 		return fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
 	}
-	if c.IsolationMode() == isolation.ModeNone {
+	if mode == isolation.ModeNone {
 		if c.OCIImage != "" {
 			return fmt.Errorf("bootstrap.ociImage requires nspawn or container isolation")
 		}
@@ -964,6 +962,14 @@ func (c *BootstrapConfig) validate() error {
 				return fmt.Errorf("bootstrap.additionalHostMounts cannot remap paths in none isolation")
 			}
 		}
+	}
+	c.Isolation = mode
+	return nil
+}
+
+func (c *BootstrapConfig) validate() error {
+	if err := c.validateIsolationMode(); err != nil {
+		return err
 	}
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)

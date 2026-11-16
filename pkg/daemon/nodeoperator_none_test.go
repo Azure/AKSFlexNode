@@ -129,16 +129,16 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 func TestNodeOperatorIsolationSelection(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, configured string
-		applied          isolation.Mode
-		missingConfig    bool
-		wantErr          bool
+		name                string
+		configured, applied isolation.Mode
+		missingConfig       bool
+		wantErr             bool
 	}{
-		{name: "default nspawn"},
+		{name: "nspawn", configured: isolation.ModeNSpawn},
 		{name: "none", configured: "none", applied: isolation.ModeNone},
 		{name: "none requires applied configuration", configured: "none", applied: isolation.ModeNone, missingConfig: true, wantErr: true},
 		{name: "none cannot adopt nspawn", configured: "none", wantErr: true},
-		{name: "nspawn cannot adopt none", applied: isolation.ModeNone, wantErr: true},
+		{name: "nspawn cannot adopt none", configured: isolation.ModeNSpawn, applied: isolation.ModeNone, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -165,12 +165,13 @@ func TestNodeOperatorIsolationSelection(t *testing.T) {
 func TestIsolationEnvironment(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, mode             string
+		name                   string
+		mode                   isolation.Mode
 		containerized, wantErr bool
 	}{
 		{name: "host none", mode: "none"},
 		{name: "host nspawn", mode: "nspawn"},
-		{name: "container nspawn", containerized: true},
+		{name: "container nspawn", mode: isolation.ModeNSpawn, containerized: true},
 		{name: "container none refused", mode: "none", containerized: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

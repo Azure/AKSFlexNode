@@ -220,8 +220,8 @@ func TestContainerInterruptedSDKUpgradeFailsClosed(t *testing.T) {
 func TestContainerSelectionAndEnvironment(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, configured              string
-		applied                       isolation.Mode
+		name                          string
+		configured, applied           isolation.Mode
 		optIn, containerized, wantErr bool
 	}{
 		{name: "container opted in", configured: "container", applied: isolation.ModeContainer, optIn: true},
@@ -229,7 +229,7 @@ func TestContainerSelectionAndEnvironment(t *testing.T) {
 		{name: "containerized agent refused", configured: "container", applied: isolation.ModeContainer, optIn: true, containerized: true, wantErr: true},
 		{name: "container cannot migrate nspawn", configured: "container", optIn: true, wantErr: true},
 		{name: "container cannot migrate none", configured: "container", applied: isolation.ModeNone, optIn: true, wantErr: true},
-		{name: "nspawn cannot adopt container", applied: isolation.ModeContainer, wantErr: true},
+		{name: "nspawn cannot adopt container", configured: isolation.ModeNSpawn, applied: isolation.ModeContainer, wantErr: true},
 		{name: "none cannot adopt container", configured: "none", applied: isolation.ModeContainer, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
