@@ -321,7 +321,6 @@ _im_lifecycle() {
   # Mode selection occurs only after the previous runtime and Node are gone.
   node_join_token '' "${im_mode}" || return
   _im_wait_ready "${previous_uid}" "${E2E_KUBERNETES_VERSION}" || return
-  if [[ "${im_mode}" == none ]]; then runtime_on "${im_ip}" boot-guard none || return; fi
   _im_network || return
   _im_reboot || return
   _im_network || return

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -12,18 +11,12 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
-	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 )
 
-// Unbounded owns the transactional host lifecycle. Flex supplies AKS goal
-// generations, application artifacts and durable applied-state persistence.
+// The SDK journals host changes and rolls back failures. Flex persists the
+// applied configuration before committing that journal.
 type noneNode interface {
-	PendingStartup() (*noneops.Startup, error)
-	PendingUpgrade() (bool, error)
-	ResumeStartup(context.Context) error
-	FinishStartup() error
-	ClearStartup() error
 	RecoverUpgrade(context.Context) error
 	Restart(context.Context) error
 	Upgrade(context.Context) error
@@ -34,10 +27,14 @@ type noneNode interface {
 
 type noneNodeOperator struct {
 	*nspawnNodeOperator
-	newNode  func(noneops.Params) noneNode
-	stage    func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
-	startNPD func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
-	resolve  func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
+	newNode      func(noneops.Params) noneNode
+	stage        func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
+	dependencies func(context.Context, *slog.Logger, *config.Config) error
+	installNPD   func(context.Context, *slog.Logger, *config.Config, *goalstates.MachineGoalState) error
+	startNPD     func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
+	resolve      func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
+	// Reconciliation and MachineOperations share a serialized queue.
+	recovered bool
 }
 
 func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) (nodeOperator, error) {
@@ -68,6 +65,8 @@ func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) 
 		nspawnNodeOperator: base,
 		newNode:            func(p noneops.Params) noneNode { return newNoneRuntime(p) },
 		resolve:            config.ResolveMachineGoalState,
+		dependencies:       prepareNoneDependencies,
+		installNPD:         installNoneNPD,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
 			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
@@ -82,67 +81,53 @@ func (o *noneNodeOperator) applied(ctx context.Context) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if state == nil || state.isolationMode() != isolation.ModeNone || state.NodeConfig == nil {
+	if state == nil || state.isolationMode() != isolation.ModeNone || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return nil, fmt.Errorf("none node has no applied configuration")
 	}
 	return state, nil
 }
 
 func (o *noneNodeOperator) recover(ctx context.Context, log *slog.Logger) error {
+	if o.recovered {
+		return nil
+	}
 	state, err := o.applied(ctx)
 	if err != nil {
 		return err
 	}
-	completion, err := json.Marshal(state)
-	if err != nil {
+	if err := o.dependencies(ctx, log, o.cfg); err != nil {
 		return err
 	}
-	node := o.newNode(noneops.Params{
-		Log: log, Config: state.NodeConfig, Generation: state.AppliedSettingsVersion,
-		ArtifactVersion: state.NPDVersion, Completion: completion,
-	})
+	// Do not stamp a new nonce here: the SDK compares the applied config's
+	// digest with its journal, including for settings-only repaves.
+	node := o.newNode(noneops.Params{Log: log, Config: state.NodeConfig})
 	if err := node.RecoverUpgrade(ctx); err != nil {
 		return err
 	}
-	if startup, err := node.PendingStartup(); err != nil || startup != nil {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("none startup must finish reconciliation before another operation")
+	gs, err := node.GoalState()
+	if err != nil {
+		return err
 	}
+	cfg := noneNPDConfig(state)
+	if err := o.installNPD(ctx, log, cfg, gs); err != nil {
+		return err
+	}
+	if err := o.startNPD(ctx, log, cfg, gs.NodeStart); err != nil {
+		return err
+	}
+	o.recovered = true
 	return nil
 }
 
 func (o *noneNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) error {
+	if err := o.recover(ctx, log); err != nil {
+		return fmt.Errorf("recover none node before restart: %w", err)
+	}
 	state, err := o.applied(ctx)
 	if err != nil {
 		return err
 	}
-	pendingNode := o.newNode(noneops.Params{Log: log, Config: state.NodeConfig,
-		Generation: state.AppliedSettingsVersion, ArtifactVersion: state.NPDVersion})
-	if startup, err := pendingNode.PendingStartup(); err != nil || startup != nil {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("none startup must complete before soft reboot")
-	}
-	if pending, err := pendingNode.PendingUpgrade(); err != nil || pending {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("none preparation must recover before soft reboot")
-	}
-	if err := o.recover(ctx, log); err != nil {
-		return fmt.Errorf("recover none node before restart: %w", err)
-	}
-	state, err = o.applied(ctx)
-	if err != nil {
-		return err
-	}
-	node := o.newNode(noneops.Params{
-		Log: log, Config: state.NodeConfig, Generation: state.AppliedSettingsVersion,
-		ArtifactVersion: state.NPDVersion,
-	})
+	node := o.newNode(noneops.Params{Log: log, Config: state.NodeConfig})
 	if err := node.Restart(ctx); err != nil {
 		return fmt.Errorf("restart none node: %w", err)
 	}
@@ -174,23 +159,17 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	next = noneRegistrationState(next)
 	ac = next.NodeConfig
 	gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
-	previous := noneRegistrationState(state)
-	completion, err := json.Marshal(next)
-	if err != nil {
-		return nil, err
-	}
-	previousCompletion, err := json.Marshal(previous)
-	if err != nil {
-		return nil, err
-	}
 	node := o.newNode(noneops.Params{
-		Log: log, Config: ac, GoalState: gs, Previous: previous.NodeConfig,
-		Generation: goal.SettingsVersion, Install: noneArtifacts(cfg, log),
-		Stage:           func(ctx context.Context) error { return o.stage(ctx, log, archives) },
-		ArtifactVersion: noneNPDVersion(cfg), PreviousArtifactVersion: state.NPDVersion,
-		Completion: completion, PreviousCompletion: previousCompletion,
-		PreviousGeneration: state.AppliedSettingsVersion,
+		Log: log, Config: ac, GoalState: gs, Previous: state.NodeConfig,
 	})
+	if err := o.stage(ctx, log, archives); err != nil {
+		return nil, err
+	}
+	// Upgrade and RecoverUpgrade can start kubelet internally.
+	if err := o.dependencies(ctx, log, cfg); err != nil {
+		return nil, err
+	}
+	o.recovered = false
 	if err := node.Upgrade(ctx); err != nil {
 		return nil, fmt.Errorf("upgrade none node: %w", err)
 	}
@@ -198,11 +177,13 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	if err != nil {
 		return nil, err
 	}
+	if err := o.installNPD(ctx, log, noneNPDConfig(next), gs); err != nil {
+		return nil, err
+	}
 	if err := o.startNPD(ctx, log, noneNPDConfig(next), gs.NodeStart); err != nil {
 		return nil, err
 	}
-	// Persistence precedes Commit: startup checks the applied generation and
-	// config digest to distinguish a completed upgrade from an interrupted one.
+	// Until this save succeeds, recovery restores the source configuration.
 	if err := o.state.Save(ctx, next); err != nil {
 		return nil, fmt.Errorf("persist none node: %w", err)
 	}
@@ -210,22 +191,11 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 		log.Warn("none upgrade cleanup will be retried at startup", "error", err)
 		return next, nil
 	}
-	if err := node.FinishStartup(); err != nil {
-		return next, fmt.Errorf("record none completion: %w", err)
-	}
+	o.recovered = true
 	if err := node.PruneVersions(); err != nil {
 		log.Warn("could not prune previous node binaries", "error", err)
 	}
 	return next, nil
-}
-
-func noneArtifacts(cfg *config.Config, log *slog.Logger) func(context.Context, *goalstates.MachineGoalState) error {
-	return func(ctx context.Context, gs *goalstates.MachineGoalState) error {
-		return phases.Serial(log,
-			npd.DownloadToRoot(log, cfg, gs.RootFS.Root()),
-			configureNoneDependencies(log, noneRequiredServices(cfg)),
-		).Do(ctx)
-	}
 }
 
 func seedNoneState(state *State, cfg *agentconfig.AgentConfig, npdVersion string) {

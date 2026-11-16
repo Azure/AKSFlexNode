@@ -25,6 +25,7 @@ reset_fixture() {
   echo null >"${case_dir}/goal"
   unset FAIL_EXEC FAIL_RESET FAIL_VALIDATE STALE_GOAL EARLY_REPAVE STUCK_GOAL REBOOT_DELAY LOSE_SENTINEL REUSE_INNER_PIDS STALE_EPOCH FAIL_CLEANUP NAMESPACE_DELAY
   unset REUSE_RESET_NONCE WRONG_REBOOT_VERSION UNHEALTHY_EXISTING FAIL_MODE INITIAL_CONTAINER_SLOT
+  unset FAIL_SNAPSHOT FAIL_REBOOT_VALIDATE
 }
 
 state_get() {
@@ -129,12 +130,14 @@ runtime_on() {
       [[ "${FAIL_MODE:-0}" != 1 ]] || return 41
       jq '{mode}' "${case_dir}/runtime" ;;
     snapshot)
+      [[ "${FAIL_SNAPSHOT:-0}" != 1 ]] || return 41
       if [[ "${UNHEALTHY_EXISTING:-0}" == 1 ]] && ! grep -q ' reset$' "${case_dir}/trace"; then return 41; fi
       printf '%s\n' "$(<"${case_dir}/runtime")" ;;
-    validate) [[ "${FAIL_VALIDATE:-0}" != 1 ]] ;;
+    validate)
+      [[ "${FAIL_VALIDATE:-0}" != 1 ]] || return 41
+      if [[ "${FAIL_REBOOT_VALIDATE:-0}" == 1 && -e "${case_dir}/reboot-done" ]]; then return 41; fi ;;
     validate-reset) [[ "$(<"${case_dir}/runtime")" == null ]] ;;
     diagnostics) echo '{"sanitized":true}' ;;
-    boot-guard) [[ "$*" == none ]] ;;
     exec)
       case "$*" in
         '-- cat /proc/1/stat')
@@ -277,7 +280,6 @@ both_modes() {
   reset_fixture both
   isolation_modes_all
   [[ "$(grep '^join ' "${case_dir}/trace")" == $'join none\njoin none\njoin container\njoin container' ]]
-  [[ "$(grep -c '^runtime boot-guard none' "${case_dir}/trace")" == 1 ]]
   [[ "$(grep -c '^runtime validate-reset' "${case_dir}/trace")" == 6 ]]
   [[ "$(grep -c '^kubectl exec ' "${case_dir}/trace")" == 16 ]]
   assert_absent 'FORBIDDEN|upgrade|goal token-vm [^1]'
@@ -482,6 +484,30 @@ reset_rejoin_registration() {
   [[ "$(grep -c '^ready token-vm$' "${case_dir}/trace")" == 4 ]] || fail 'same-slot rejoin did not become Ready'
 }
 
+runtime_health_fences() {
+  local mode probe
+  for mode in none container; do
+    for probe in snapshot validate; do
+      reset_fixture "unhealthy-bootstrap-${mode}-${probe}"
+      if [[ "${probe}" == snapshot ]]; then FAIL_SNAPSHOT=1; else FAIL_VALIDATE=1; fi
+      E2E_NODE_JOIN_TIMEOUT=10
+      if isolation_modes_mode "${mode}"; then fail "accepted unhealthy ${mode} ${probe}"; fi
+      [[ "$(grep -c '^join ' "${case_dir}/trace")" == 1 ]]
+      assert_contains "^runtime ${probe}"
+      assert_absent '^kubectl get nodes |^ready token-vm$|^goal .*settings$'
+      [[ ! -e "${case_dir}/reboot-start" ]]
+    done
+    reset_fixture "unhealthy-reboot-${mode}"
+    FAIL_REBOOT_VALIDATE=1
+    E2E_NODE_JOIN_TIMEOUT=10
+    if isolation_modes_mode "${mode}"; then fail "accepted unhealthy ${mode} after Complete NodeReboot"; fi
+    [[ -e "${case_dir}/reboot-done" && "$(<"${case_dir}/epoch")" == 10100 ]]
+    [[ "$(grep -c '^join ' "${case_dir}/trace")" == 1 ]]
+    [[ "$(grep -c '^kubectl exec ' "${case_dir}/trace")" == 2 ]]
+    assert_absent '^goal .*settings$'
+  done
+}
+
 reboot_version_fence() {
   local mode
   for mode in none container; do
@@ -517,7 +543,7 @@ early_log_routing() {
 }
 
 failed=0
-for test in mode_validation both_modes existing_mode failure_propagation cleanup_exit_codes namespace_cleanup_budget reset_fences assertion_contracts live_generation_fence container_host_ownership container_reboot_budget reset_rejoin_registration reboot_version_fence early_log_routing; do
+for test in mode_validation both_modes existing_mode failure_propagation cleanup_exit_codes namespace_cleanup_budget reset_fences assertion_contracts live_generation_fence container_host_ownership container_reboot_budget reset_rejoin_registration runtime_health_fences reboot_version_fence early_log_routing; do
   set +e
   (set -e; "${test}") >"${work}/${test}.log" 2>&1
   rc=$?

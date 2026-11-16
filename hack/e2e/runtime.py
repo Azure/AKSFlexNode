@@ -10,7 +10,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 
 
 MODES = ("none", "container", "nspawn")
@@ -20,9 +19,13 @@ CONFIG = "/etc/aks-flex-node/config.json"
 RUNC = "/opt/unbounded/runtime/runc"
 DAEMON = "aks-flex-node-agent.service"
 LABEL = "kubernetes.azure.com/flex-runtime-generation"
-MARKERS = tuple("/etc/aks-flex-node/" + name for name in (
-    "none-reset", "none-startup.json", "none-upgrade-journal.json",
-    "none-upgrade-config", "container-startup.json", "container-upgrade-config"))
+# The SDK's none journal sits beside Flex's ConfigSnapshotDir override.
+MARKERS = (
+    "/etc/aks-flex-node/none-upgrade-journal.json",
+    "/etc/aks-flex-node/none-upgrade-config",
+    "/etc/aks-flex-node/container-startup.json",
+    "/etc/aks-flex-node/container-upgrade-config",
+)
 NONE_UNITS = ("unbounded-kubelet.service", "unbounded-containerd.service",
               "unbounded-localdns.service", "aks-flex-node-npd.service")
 PROPERTIES = ("LoadState", "UnitFileState", "ActiveState", "SubState", "MainPID")
@@ -376,26 +379,6 @@ class Runtime:
                     "installed agent binary was not kept")
         return {"mode": expected, "reset": True}
 
-    def boot_guard(self, expected):
-        require(expected == "none", "boot-guard requires none mode")
-        require(self.mode(self.state()) == "none", "state isolation differs from none")
-        helper = str(self.path("/opt/unbounded/node/.check-startup"))
-        require(os.access(helper, os.X_OK), "installed boot guard is missing or not executable")
-        with tempfile.TemporaryDirectory(prefix="flex-e2e-guard-") as directory:
-            paths = [Path(directory) / name for name in ("reset", "journal", "startup")]
-            for reset, journal, startup in ((False, False, False), (False, True, False),
-                                            (False, True, True), (True, False, False),
-                                            (True, True, True), (False, False, True)):
-                for path, present in zip(paths, (reset, journal, startup)):
-                    if present:
-                        path.touch()
-                    elif path.exists():
-                        path.unlink()
-                result = self.command([helper] + [str(p) for p in paths], checked=False)
-                wanted = 1 if reset or (journal and not startup) else 0
-                require(result.returncode == wanted, "installed boot guard violated preparation boundary")
-        return {"mode": "none", "bootGuard": True}
-
     def diagnostics(self, expected=None):
         summary = {"paths": {p: self.exists(p) for p in (STATE,) + MARKERS + (
             "/opt/unbounded/node/current", "/var/lib/unbounded/containers/kube1",
@@ -449,7 +432,7 @@ def main(argv=None):
     actions.add_parser("mode", help="read integrity-checked state without runtime health probes")
     execute = actions.add_parser("exec")
     execute.add_argument("command", nargs=argparse.REMAINDER)
-    for name in ("validate", "validate-reset", "boot-guard", "diagnostics"):
+    for name in ("validate", "validate-reset", "diagnostics"):
         action = actions.add_parser(name)
         action.add_argument("mode", choices=MODES, **({"nargs": "?"} if name == "diagnostics" else {}))
         if name == "validate-reset":
@@ -472,8 +455,6 @@ def main(argv=None):
             result = runtime.validate(args.mode)
         elif args.action == "validate-reset":
             result = runtime.validate_reset(args.mode, args.allow_missing_agent)
-        else:
-            result = runtime.boot_guard(args.mode)
         print(json.dumps(result, sort_keys=True))
         return 0
     except ProbeError as exc:

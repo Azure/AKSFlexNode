@@ -13,7 +13,7 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 )
 
 type noneTestStore struct {
@@ -36,7 +36,6 @@ func (s *noneTestStore) Delete(context.Context) error { s.state = nil; return ni
 type fakeNoneNode struct {
 	events *[]string
 	fail   string
-	stage  func(context.Context) error
 }
 
 func (n fakeNoneNode) call(name string) error {
@@ -46,24 +45,11 @@ func (n fakeNoneNode) call(name string) error {
 	}
 	return nil
 }
-func (n fakeNoneNode) PendingStartup() (*noneops.Startup, error) { return nil, nil }
-func (n fakeNoneNode) PendingUpgrade() (bool, error)             { return false, nil }
-func (n fakeNoneNode) ResumeStartup(context.Context) error       { return n.call("resume") }
-func (n fakeNoneNode) FinishStartup() error                      { return nil }
-func (n fakeNoneNode) ClearStartup() error                       { return nil }
-func (n fakeNoneNode) RecoverUpgrade(context.Context) error      { return n.call("recover") }
-func (n fakeNoneNode) Restart(context.Context) error             { return n.call("restart") }
-func (n fakeNoneNode) Upgrade(ctx context.Context) error {
-	if err := n.call("upgrade"); err != nil {
-		return err
-	}
-	if n.stage != nil {
-		return n.stage(ctx)
-	}
-	return nil
-}
-func (n fakeNoneNode) Commit() error        { return n.call("commit") }
-func (n fakeNoneNode) PruneVersions() error { return n.call("prune") }
+func (n fakeNoneNode) RecoverUpgrade(context.Context) error { return n.call("recover") }
+func (n fakeNoneNode) Restart(context.Context) error        { return n.call("restart") }
+func (n fakeNoneNode) Upgrade(context.Context) error        { return n.call("upgrade") }
+func (n fakeNoneNode) Commit() error                        { return n.call("commit") }
+func (n fakeNoneNode) PruneVersions() error                 { return n.call("prune") }
 func (n fakeNoneNode) GoalState() (*goalstates.MachineGoalState, error) {
 	return &goalstates.MachineGoalState{NodeStart: &goalstates.NodeStart{}}, nil
 }
@@ -76,40 +62,48 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 		wantErr    bool
 		want       []string
 	}{
-		{name: "healthy", want: []string{"recover", "upgrade", "stage", "npd", "persist", "commit", "prune"}},
-		{name: "failed recovery", fail: "recover", wantErr: true, want: []string{"recover"}},
-		{name: "failed upgrade", fail: "upgrade", wantErr: true, want: []string{"recover", "upgrade"}},
-		{name: "failed persistence keeps journal", failSave: true, wantErr: true, want: []string{"recover", "upgrade", "stage", "npd", "persist"}},
-		{name: "failed commit must not prune rollback artifacts", fail: "commit", want: []string{"recover", "upgrade", "stage", "npd", "persist", "commit"}},
+		{name: "healthy", want: []string{"dependencies", "recover", "artifacts", "npd", "stage", "dependencies", "upgrade", "artifacts", "npd", "persist", "commit", "prune"}},
+		{name: "failed dependencies", fail: "dependencies", wantErr: true, want: []string{"dependencies"}},
+		{name: "failed recovery", fail: "recover", wantErr: true, want: []string{"dependencies", "recover"}},
+		{name: "failed staging", fail: "stage", wantErr: true, want: []string{"dependencies", "recover", "artifacts", "npd", "stage"}},
+		{name: "failed upgrade", fail: "upgrade", wantErr: true, want: []string{"dependencies", "recover", "artifacts", "npd", "stage", "dependencies", "upgrade"}},
+		{name: "failed persistence keeps journal", failSave: true, wantErr: true, want: []string{"dependencies", "recover", "artifacts", "npd", "stage", "dependencies", "upgrade", "artifacts", "npd", "persist"}},
+		{name: "failed commit must not prune rollback artifacts", fail: "commit", want: []string{"dependencies", "recover", "artifacts", "npd", "stage", "dependencies", "upgrade", "artifacts", "npd", "persist", "commit"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var events []string
 			previous := &agentconfig.AgentConfig{Isolation: "none"}
 			previous.Cluster.Version = "1.35.0"
+			previous.Kubelet.Labels = map[string]string{noneGenerationLabel: "source-nonce"}
 			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old", NPDVersion: "v1.35.1"}}
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 			op := &noneNodeOperator{
 				nspawnNodeOperator: &nspawnNodeOperator{cfg: cfg, state: store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}},
 				newNode: func(p noneops.Params) noneNode {
 					if p.Previous != nil {
-						if p.Previous.Cluster.Version != previous.Cluster.Version || p.PreviousArtifactVersion != "v1.35.1" {
-							t.Error("repave lost the applied configuration or artifact identity")
+						if p.Previous != previous {
+							t.Error("repave replaced the original applied configuration")
 						}
-						if p.ArtifactVersion != "v1.36.0" || p.Generation != "new" {
-							t.Error("repave did not use the requested artifact identity and generation")
+						if p.Config.Cluster.Version != "1.36.2" || p.Config.Kubelet.Labels[noneGenerationLabel] == "source-nonce" {
+							t.Error("repave lost the target version or fresh nonce")
 						}
-					} else if p.ArtifactVersion != "v1.35.1" || p.Generation != "old" {
-						t.Error("recovery did not use the applied artifact identity and generation")
+					} else if p.Config != previous {
+						t.Error("recovery replaced the original applied configuration")
 					}
-					return fakeNoneNode{events: &events, fail: tc.fail, stage: p.Stage}
+					return fakeNoneNode{events: &events, fail: tc.fail}
 				},
 				resolve: func(_ context.Context, _ *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 					return config.ToAgentConfig(cfg, slot), &goalstates.MachineGoalState{NodeStart: &goalstates.NodeStart{}}, nil, nil
 				},
 				stage: func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error {
-					events = append(events, "stage")
-					return nil
+					return (fakeNoneNode{events: &events, fail: tc.fail}).call("stage")
+				},
+				dependencies: func(context.Context, *slog.Logger, *config.Config) error {
+					return (fakeNoneNode{events: &events, fail: tc.fail}).call("dependencies")
+				},
+				installNPD: func(context.Context, *slog.Logger, *config.Config, *goalstates.MachineGoalState) error {
+					return (fakeNoneNode{events: &events, fail: tc.fail}).call("artifacts")
 				},
 				startNPD: func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error {
 					events = append(events, "npd")

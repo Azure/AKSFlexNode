@@ -34,7 +34,6 @@ type fakeContainerNode struct {
 	events  *[]string
 	fail    string
 	backend container.Backend
-	journal containerStartupStore
 }
 
 func (n *fakeContainerNode) call(event string) error {
@@ -59,24 +58,12 @@ func (n *fakeContainerNode) Start(_ context.Context, running, cri, kubelet bool)
 }
 func (n *fakeContainerNode) Restart(context.Context) error { return n.call("restart") }
 func (n *fakeContainerNode) Destroy(context.Context) error { return n.call("destroy-" + n.params.Slot) }
-func (n *fakeContainerNode) CommitUpgrade() error          { return n.call("commit") }
-func (n *fakeContainerNode) UpgradeWithStartup(ctx context.Context, _ containerNode, publish func(context.Context) error) error {
-	for _, event := range []string{"target-cleanup", "prepare", "source-stop", "configure"} {
-		if err := n.call(event); err != nil {
-			return err
-		}
-	}
-	if err := publish(ctx); err != nil {
+func (n *fakeContainerNode) Upgrade(context.Context, containerNode) error {
+	if err := n.call("upgrade"); err != nil {
 		return err
 	}
-	startup, err := n.journal.Load()
-	if err != nil || startup == nil || startup.Phase != "starting" {
-		return errors.New("kubelet exposed without durable startup")
-	}
-	if n.params.Config.Kubelet.Labels[noneGenerationLabel] != startup.Next.NodeConfig.Kubelet.Labels[noneGenerationLabel] {
-		return errors.New("published generation differs from kubelet configuration")
-	}
-	return n.call("start")
+	*n.events = append(*n.events, "source-stop", "start")
+	return nil
 }
 
 func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*containerNodeOperator, *[]string, *noneTestStore) {
@@ -92,7 +79,7 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	op.startup = containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
 	op.activationLockPath = filepath.Join(t.TempDir(), "activation.lock")
 	op.newNode = func(p containerops.Params) containerNode {
-		return &fakeContainerNode{params: p, events: events, fail: fail, journal: op.startup}
+		return &fakeContainerNode{params: p, events: events, fail: fail}
 	}
 	op.syncPrepared = func(context.Context, containerNode) error {
 		*events = append(*events, "sync-prepared")
@@ -118,22 +105,19 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	return op, events, store
 }
 
-func TestContainerRepavePublicationAndCleanup(t *testing.T) {
+func TestContainerRepaveCompletionAndCleanup(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, fail, phase string
 		failSave, wantErr bool
 		want              []string
 	}{
-		{name: "healthy", phase: "finished", want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd", "sync-prepared", "persist", "destroy-kube1", "commit"}},
-		{name: "target cleanup fails closed", fail: "target-cleanup", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup"}},
-		{name: "prepare retains source", fail: "prepare", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup", "prepare"}},
-		{name: "source stop fails closed", fail: "source-stop", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop"}},
-		{name: "sync failure prevents publication", fail: "sync-prepared", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared"}},
-		{name: "start retryable", fail: "start", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start"}},
-		{name: "NPD retryable", fail: "npd", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd"}},
-		{name: "state failure keeps source", failSave: true, phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd", "sync-prepared", "persist"}},
-		{name: "source cleanup failure fenced", fail: "destroy-kube1", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd", "sync-prepared", "persist", "destroy-kube1"}},
+		{name: "healthy", phase: "finished", want: []string{"stage", "upgrade", "source-stop", "start", "sync-prepared", "npd", "sync-prepared", "persist", "destroy-kube1"}},
+		{name: "SDK error fails closed", fail: "upgrade", phase: "preparing", wantErr: true, want: []string{"stage", "upgrade"}},
+		{name: "NPD retryable", fail: "npd", phase: "starting", wantErr: true, want: []string{"stage", "upgrade", "source-stop", "start", "sync-prepared", "npd"}},
+		{name: "post-SDK sync failure fails closed", fail: "sync-prepared", phase: "preparing", wantErr: true, want: []string{"stage", "upgrade", "source-stop", "start", "sync-prepared"}},
+		{name: "state failure keeps source", failSave: true, phase: "starting", wantErr: true, want: []string{"stage", "upgrade", "source-stop", "start", "sync-prepared", "npd", "sync-prepared", "persist"}},
+		{name: "source cleanup failure fenced", fail: "destroy-kube1", phase: "starting", wantErr: true, want: []string{"stage", "upgrade", "source-stop", "start", "sync-prepared", "npd", "sync-prepared", "persist", "destroy-kube1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -197,7 +181,7 @@ func TestContainerStartupResumeFrozenAndFenced(t *testing.T) {
 					t.Fatal("startup fence cleared early")
 				}
 			}
-			if !slices.Equal(*events, []string{"resume-start", "npd", "sync-prepared", "persist", "destroy-kube1", "commit"}) {
+			if !slices.Equal(*events, []string{"resume-start", "npd", "sync-prepared", "persist", "destroy-kube1"}) {
 				t.Fatalf("resume changed shared configuration: %v", *events)
 			}
 			if !reflect.DeepEqual(store.state, frozen) {
@@ -216,7 +200,7 @@ func TestContainerStartupResumeFrozenAndFenced(t *testing.T) {
 	}
 }
 
-func TestContainerPreExposureRecoveryFailsClosed(t *testing.T) {
+func TestContainerInterruptedSDKUpgradeFailsClosed(t *testing.T) {
 	t.Parallel()
 	op, events, store := containerOperatorFixture(t, "", false)
 	if err := op.startup.Save(t.Context(), &containerStartup{Phase: "preparing", Next: containerTestState("kube2", "next"), Previous: store.state}); err != nil {

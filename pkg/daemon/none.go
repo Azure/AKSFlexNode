@@ -20,8 +20,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
-	basenone "github.com/Azure/unbounded/pkg/agent/noneops"
-	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
@@ -67,7 +66,7 @@ func CheckBootstrapIsolation(ctx context.Context, cfg *config.Config, log *slog.
 	if applied != nil && applied.isolationMode() != cfg.Bootstrap.IsolationMode() {
 		return fmt.Errorf("host has an applied %s node; reset it before changing isolation", applied.isolationMode())
 	}
-	if (&basenone.Teardown{Log: log, StateDir: config.ConfigDir}).Present() || applied != nil && applied.isolationMode() == isolation.ModeNone {
+	if (&noneops.Teardown{Log: log}).Present() || applied != nil && applied.isolationMode() == isolation.ModeNone {
 		return fmt.Errorf("host contains an installed or partially reset none node; reset it before bootstrapping")
 	}
 	if containerops.Present() || utilio.FileExists(defaultContainerStartupStore().path) || applied != nil && applied.isolationMode() == isolation.ModeContainer {
@@ -95,9 +94,7 @@ func ResolveNodeGoalState(ctx context.Context, log *slog.Logger, cfg *config.Con
 		return nil, nil, nil, err
 	}
 	if cfg.Bootstrap.IsolationMode() == isolation.ModeNone {
-		gs, err = newNoneRuntime(noneops.Params{
-			Log: log, Config: ac, GoalState: gs, ArtifactVersion: noneNPDVersion(cfg),
-		}).GoalState()
+		gs, err = newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs}).GoalState()
 	}
 	if cfg.Bootstrap.IsolationMode() == isolation.ModeContainer {
 		gs, err = newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot}).GoalState()
@@ -108,7 +105,7 @@ func ResolveNodeGoalState(ctx context.Context, log *slog.Logger, cfg *config.Con
 func setupNoneHost(cfg *config.Config, log *slog.Logger) phases.Task {
 	return phases.Serial(log,
 		host.InstallPackagesFor(log, isolation.ModeNone),
-		basenone.LoadKernelModules(log, nil),
+		noneops.LoadKernelModules(log, nil),
 		phases.Parallel(log,
 			host.ConfigureOS(log), host.ConfigureNFTablesFor(log, isolation.ModeNone),
 			host.DisableDocker(log), host.DisableSwap(log), host.RemoveAPTHardening(log),
@@ -124,10 +121,7 @@ func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineG
 		registration.NodeConfig = ac
 		ac = noneRegistrationState(&registration).NodeConfig
 		gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
-		node := newNoneRuntime(noneops.Params{
-			Log: log, Config: ac, GoalState: gs, Generation: state.AppliedSettingsVersion,
-			ArtifactVersion: noneNPDVersion(cfg), Install: noneArtifacts(cfg, log),
-		})
+		node := newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs})
 		if err := stageContainerImageArchiveBindSource(log, archives).Do(ctx); err != nil {
 			return err
 		}
@@ -138,11 +132,17 @@ func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineG
 		if err != nil {
 			return err
 		}
+		if err := prepareNoneDependencies(ctx, log, cfg); err != nil {
+			return err
+		}
 		if err := node.Start(ctx, false, containerdChanged, kubeletChanged); err != nil {
 			return err
 		}
 		gs, err := node.GoalState()
 		if err != nil {
+			return err
+		}
+		if err := installNoneNPD(ctx, log, cfg, gs); err != nil {
 			return err
 		}
 		if err := npd.Start(log, cfg, gs.NodeStart).Do(ctx); err != nil {
@@ -153,7 +153,7 @@ func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineG
 	})
 }
 
-func resetNoneNode(log *slog.Logger, teardown *basenone.Teardown) phases.Task {
+func resetNoneNode(log *slog.Logger, teardown *noneops.Teardown) phases.Task {
 	return phases.Serial(log,
 		removeNoneHostUnit(log, npd.HostUnitNPD),
 		teardown.Stop(),

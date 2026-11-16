@@ -24,7 +24,7 @@ func ResetNode(log *slog.Logger) phases.Task {
 	if teardown := (&containerops.Teardown{Log: log}); teardown.Present() || utilio.FileExists(defaultContainerStartupStore().path) {
 		return resetContainerNode(log, teardown)
 	}
-	teardown := &noneops.Teardown{Log: log, StateDir: config.ConfigDir}
+	teardown := &noneops.Teardown{Log: log}
 	if teardown.Present() {
 		return resetNoneNode(log, teardown)
 	}

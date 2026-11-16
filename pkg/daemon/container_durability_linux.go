@@ -97,7 +97,7 @@ func openPreparedPath(path string) (*os.File, error) {
 			return f, err
 		}
 		// An absent optional path or removed identity still needs its parent's
-		// directory entries persisted before startup can be published.
+		// directory entries persisted before Flex completion is recorded.
 		path = filepath.Dir(path)
 	}
 }

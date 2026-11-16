@@ -13,7 +13,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
-	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 )
 
 func TestNoneNPDVersion(t *testing.T) {
@@ -75,7 +75,7 @@ func TestNoneOperatorForcesNPDRefresh(t *testing.T) {
 	}
 }
 
-func TestNoneRestartUsesAppliedArtifactVersion(t *testing.T) {
+func TestNoneRestartUsesAppliedNPDVersion(t *testing.T) {
 	t.Parallel()
 	var events []string
 	state := &State{
@@ -88,12 +88,23 @@ func TestNoneRestartUsesAppliedArtifactVersion(t *testing.T) {
 			cfg: &config.Config{Npd: config.NPDConfig{Version: "v1.36.0"}}, state: store,
 		},
 		newNode: func(p noneops.Params) noneNode {
-			if p.ArtifactVersion != state.NPDVersion || p.Generation != state.AppliedSettingsVersion {
-				t.Error("restart replaced the applied identity with desired artifacts")
+			if p.Config != state.NodeConfig {
+				t.Error("restart replaced the applied configuration")
 			}
 			return fakeNoneNode{events: &events}
 		},
-		startNPD: func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error {
+		dependencies: func(context.Context, *slog.Logger, *config.Config) error { return nil },
+		installNPD: func(_ context.Context, _ *slog.Logger, cfg *config.Config, _ *goalstates.MachineGoalState) error {
+			if cfg.Npd.Version != state.NPDVersion {
+				t.Error("recovery installed desired NPD instead of applied NPD")
+			}
+			events = append(events, "artifacts")
+			return nil
+		},
+		startNPD: func(_ context.Context, _ *slog.Logger, cfg *config.Config, _ *goalstates.NodeStart) error {
+			if cfg.Npd.Version != state.NPDVersion {
+				t.Error("restart selected desired NPD instead of applied NPD")
+			}
 			events = append(events, "npd")
 			return nil
 		},
@@ -101,7 +112,7 @@ func TestNoneRestartUsesAppliedArtifactVersion(t *testing.T) {
 	if err := op.RestartNode(t.Context(), discardLogger()); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(events, []string{"recover", "restart", "npd"}) {
+	if !slices.Equal(events, []string{"recover", "artifacts", "npd", "restart", "npd"}) {
 		t.Fatalf("restart events = %v", events)
 	}
 	if state.NPDVersion != "v1.35.1" {

@@ -17,7 +17,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
@@ -214,17 +214,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		if applied.NodeConfig == nil {
 			return fmt.Errorf("none node has no applied configuration")
 		}
-		nodeConfig := applied.NodeConfig
-		startup, err := newNoneRuntime(noneops.Params{Log: log}).PendingStartup()
-		if err != nil {
-			return err
-		}
-		if startup != nil {
-			// A move must rewrite helpers for the prepared runtime, not the
-			// still-uncommitted configuration in the applied state file.
-			nodeConfig = startup.Config
-		}
-		gs, err := newNoneRuntime(noneops.Params{Log: log, Config: nodeConfig}).GoalState()
+		gs, err := newNoneRuntime(noneops.Params{Log: log, Config: applied.NodeConfig}).GoalState()
 		if err != nil {
 			return err
 		}

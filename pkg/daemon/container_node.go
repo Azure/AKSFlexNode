@@ -73,6 +73,27 @@ func containerArtifacts(cfg *config.Config, log *slog.Logger) func(context.Conte
 	}
 }
 
+// Upgrade calls Prepare internally. Wrap the SDK's bound unpacker so Flex's
+// credential helper and NPD are present before provisioning can enable kubelet.
+func wrapContainerArtifactUnpack(node containerNode, install func(context.Context, *goalstates.MachineGoalState) error) error {
+	gs, err := node.GoalState()
+	if err != nil {
+		return err
+	}
+	backend := node.Backend()
+	unpack := backend.Unpack
+	backend.Unpack = func(ctx context.Context, spec isolation.NodeSpec, dir string) error {
+		if err := unpack(ctx, spec, dir); err != nil {
+			return err
+		}
+		if err := install(ctx, gs); err != nil {
+			return fmt.Errorf("install Flex container artifacts: %w", err)
+		}
+		return nil
+	}
+	return nil
+}
+
 func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
 	return hostnode.Func("start-container-node", func(ctx context.Context) error {
 		registration := *state
@@ -80,7 +101,10 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 		registration.NodeConfig = config.ToAgentConfig(cfg, slot)
 		ac := noneRegistrationState(&registration).NodeConfig
 		gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
-		node := newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot, Install: containerArtifacts(cfg, log)})
+		node := newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
+		if err := wrapContainerArtifactUnpack(managedContainerNode{node}, containerArtifacts(cfg, log)); err != nil {
+			return err
+		}
 		resolved, err := node.GoalState()
 		if err != nil {
 			return err

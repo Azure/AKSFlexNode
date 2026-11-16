@@ -114,8 +114,8 @@ func TestContainerCompletionSyncFailureKeepsStartupAndSource(t *testing.T) {
 	if err != nil || startup == nil || startup.Phase != "starting" {
 		t.Fatalf("published startup was cleared on failed persistence: %+v %v", startup, err)
 	}
-	if store.state.ActiveMachine != "kube1" || slices.Contains(*events, "destroy-kube1") || slices.Contains(*events, "commit") {
-		t.Fatalf("failed completion retired rollback data/source or published target: %v", *events)
+	if store.state.ActiveMachine != "kube1" || slices.Contains(*events, "destroy-kube1") {
+		t.Fatalf("failed completion retired source or published target: %v", *events)
 	}
 }
 

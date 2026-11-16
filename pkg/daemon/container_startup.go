@@ -14,9 +14,10 @@ import (
 
 const containerStartupFileName = "container-startup.json"
 
-// A preparing record fences crashes before the backend can expose the target
-// kubelet. Only its pre-start publication callback may advance it to starting.
-// Finished stays until Kubernetes observes this exact registration.
+// Preparing fences agent activation during the SDK upgrade. An interruption or
+// SDK error requires operator recovery; the record cannot identify a safe slot.
+// Starting records a successful SDK return with Flex completion still pending,
+// not a pre-kubelet publication. Finished waits for this exact registration.
 type containerStartup struct {
 	Phase    string `json:"phase"`
 	Next     *State `json:"next"`

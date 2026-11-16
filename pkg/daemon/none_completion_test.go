@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,24 +20,21 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
-	basenone "github.com/Azure/unbounded/pkg/agent/noneops"
-	noneops "github.com/Azure/unbounded/pkg/agent/noneops/transaction"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 type completionFixture struct {
-	op       *noneNodeOperator
-	store    *noneTestStore
-	params   noneops.Params
-	active   map[string]bool
-	calls    []string
-	reaps    int
-	cleanups int
-	resolves int
-	npdCalls int
-	failNPD  bool
+	op          *noneNodeOperator
+	store       *noneTestStore
+	params      noneops.Params
+	active      map[string]bool
+	calls       []string
+	npdVersions []string
+	cleanups    int
+	prepared    bool
+	fail        string
 }
 
 func completionGoal(cfg *agentconfig.AgentConfig) *goalstates.MachineGoalState {
@@ -51,17 +50,28 @@ func completionGoal(cfg *agentconfig.AgentConfig) *goalstates.MachineGoalState {
 	}
 }
 
+type noneCommitFailure struct{ noneNode }
+
+func (noneCommitFailure) Commit() error { return errors.New("commit interrupted") }
+
 func newCompletionFixture(t *testing.T) *completionFixture {
 	t.Helper()
 	f := &completionFixture{active: make(map[string]bool)}
 	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	if err := os.Mkdir(proc, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	f.params = noneops.Params{
-		StateDir: config.ConfigDir,
-		ReapPods: func() error { f.reaps++; return nil },
-		Overrides: basenone.Overrides{
-			Layout: none.Layout{Base: filepath.Join(root, "node")}, SystemdDir: filepath.Join(root, "etc/systemd/system"), Proc: filepath.Join(root, "proc"),
+		Overrides: noneops.Overrides{
+			Layout: none.Layout{Base: filepath.Join(root, "node")}, SystemdDir: filepath.Join(root, "etc/systemd/system"), Proc: proc,
 			ImageArchiveDir: filepath.Join(root, "images"), Download: func(context.Context) error { return nil },
-			WaitKubelet: func(context.Context) error { return nil },
+			WaitKubelet: func(context.Context) error {
+				if f.fail == "kubelet" {
+					return errors.New("target kubelet unavailable")
+				}
+				return nil
+			},
 			Run: func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
 				f.calls = append(f.calls, name+" "+strings.Join(args, " "))
 				if name == "systemctl" && len(args) > 1 {
@@ -73,6 +83,9 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 						}
 						return "active", nil
 					case "enable", "restart":
+						if unit == none.UnitKubelet && !f.prepared {
+							t.Error("SDK started kubelet before Flex installed host dependencies")
+						}
 						f.active[unit] = true
 					case "stop":
 						delete(f.active, unit)
@@ -81,15 +94,16 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 				return "", nil
 			},
 		},
-		Hooks: hostnode.Hooks{HostRoot: root,
+		Hooks: hostnode.Hooks{HostRoot: root, ConfigSnapshotDir: filepath.Join(root, config.ConfigDir, "none-upgrade-config"),
 			SetupNetwork: func(context.Context) error { return nil }, CleanupNetwork: func(context.Context) error { f.cleanups++; return nil }},
 	}
 	var events []string
-	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Components: config.ComponentsConfig{Kubernetes: "1.34.1"}}
+	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Components: config.ComponentsConfig{Kubernetes: "1.34.1"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 	ac := config.ToAgentConfig(cfg, noneops.Slot)
-	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
+	ac.Kubelet.Labels = map[string]string{noneGenerationLabel: "source-nonce"}
+	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, NPDVersion: "v1.35.1", AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
 	factory := func(p noneops.Params) noneNode {
-		p.Overrides, p.Hooks, p.ReapPods = f.params.Overrides, f.params.Hooks, f.params.ReapPods
+		p.Overrides, p.Hooks = f.params.Overrides, f.params.Hooks
 		p.Resolve = func(string) (*goalstates.MachineGoalState, error) { return completionGoal(p.Config), nil }
 		if p.Previous != nil {
 			p.PreviousGoalState = completionGoal(p.Previous)
@@ -97,25 +111,43 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 		if p.GoalState != nil && p.GoalState.NodeStart.Kubelet.NodeLabels[noneGenerationLabel] != p.Config.Kubelet.Labels[noneGenerationLabel] {
 			t.Fatal("resolved goal lost the stamped registration label")
 		}
-		p.Install = nil // Artifact downloads are outside this reconciliation fixture.
-		return newNoneRuntime(p)
+		node := newNoneRuntime(p)
+		if f.fail == "commit" {
+			return noneCommitFailure{node}
+		}
+		return node
 	}
 	oldParams := f.params
 	oldParams.Log, oldParams.Config, oldParams.GoalState = discardLogger(), ac, completionGoal(ac)
-	if err := newNoneRuntime(oldParams).Provision(t.Context()); err != nil {
+	old := newNoneRuntime(oldParams)
+	if err := old.Provision(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := old.Configure(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	f.op = &noneNodeOperator{
 		nspawnNodeOperator: &nspawnNodeOperator{cfg: cfg, state: f.store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}}, newNode: factory,
 		resolve: func(_ context.Context, _ *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
-			f.resolves++
 			ac := config.ToAgentConfig(cfg, slot)
 			return ac, completionGoal(ac), nil, nil
 		},
-		stage: func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error { return nil },
-		startNPD: func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error {
-			f.npdCalls++
-			if f.failNPD {
+		stage:        func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error { return nil },
+		dependencies: func(context.Context, *slog.Logger, *config.Config) error { f.prepared = true; return nil },
+		installNPD: func(_ context.Context, _ *slog.Logger, cfg *config.Config, gs *goalstates.MachineGoalState) error {
+			if f.fail == "artifacts" && cfg.Npd.Version == "v1.36.0" {
+				return errors.New("NPD install interrupted")
+			}
+			// Simulate different NPD versions sharing an SDK binary directory.
+			path := gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(path, []byte(cfg.Npd.Version), 0o600)
+		},
+		startNPD: func(_ context.Context, _ *slog.Logger, cfg *config.Config, _ *goalstates.NodeStart) error {
+			f.npdVersions = append(f.npdVersions, cfg.Npd.Version)
+			if f.fail == "npd" && cfg.Npd.Version == "v1.36.0" {
 				return errors.New("NPD start interrupted")
 			}
 			return nil
@@ -124,238 +156,154 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	return f
 }
 
-func (f *completionFixture) assertNondestructive(t *testing.T, calls, reaps, cleanups int) {
+func (f *completionFixture) journalPath() string {
+	return filepath.Join(filepath.Dir(f.params.SnapshotDir("none-upgrade-config")), "none-upgrade-journal.json")
+}
+
+func (f *completionFixture) assertCommitted(t *testing.T) {
 	t.Helper()
-	if f.reaps != reaps || f.cleanups != cleanups {
-		t.Fatal("completion repeated pod/network cleanup")
-	}
-	for _, call := range f.calls[calls:] {
-		if strings.Contains(call, "systemctl stop") || strings.Contains(call, "systemctl restart") {
-			t.Fatalf("completion disturbed running services: %s", call)
+	for _, path := range []string{f.journalPath(), f.params.SnapshotDir("none-upgrade-config")} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("SDK recovery artifacts remain at %s: %v", path, err)
 		}
 	}
 }
 
-func completionNode(state *State, generation string) *corev1.Node {
-	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", UID: types.UID(generation), Labels: state.NodeConfig.Kubelet.Labels}}
+func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
+	t.Helper()
+	p := f.params
+	p.Log, p.Config, p.GoalState = discardLogger(), state.NodeConfig, completionGoal(state.NodeConfig)
+	node := noneops.New(p)
+	want, err := node.Version()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := p.Layout.Current()
+	if err != nil || current != want {
+		t.Fatalf("active runtime = %q, want %q: %v", current, want, err)
+	}
+	gs, err := node.GoalState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector"))
+	if err != nil || string(binary) != state.NPDVersion {
+		t.Fatalf("active NPD = %q, want %q: %v", binary, state.NPDVersion, err)
+	}
+	if len(f.npdVersions) == 0 || f.npdVersions[len(f.npdVersions)-1] != state.NPDVersion {
+		t.Fatal("NPD restart did not select applied version")
+	}
+	args, err := os.ReadFile(filepath.Join(f.params.SystemdDir, none.UnitKubelet+".d", "20-node-config.conf"))
+	if err != nil || !strings.Contains(string(args), noneGenerationLabel+"="+state.NodeConfig.Kubelet.Labels[noneGenerationLabel]) {
+		t.Fatalf("running kubelet configuration does not match applied nonce: %v", err)
+	}
 }
 
-func TestNoneRegistrationFenceChangesOnSourceRestart(t *testing.T) {
+func TestNoneRegistrationFenceChangesOnEveryRepave(t *testing.T) {
 	t.Parallel()
 	state := &State{AppliedSettingsVersion: "41", NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
 	first, second := noneRegistrationState(state), noneRegistrationState(state)
 	if first.NodeConfig.Kubelet.Labels[noneGenerationLabel] == second.NodeConfig.Kubelet.Labels[noneGenerationLabel] {
-		t.Fatal("re-exposing the same source generation reused its old registration fence")
+		t.Fatal("reapplying the same settings reused its old registration nonce")
 	}
 	if state.NodeConfig.Kubelet.Labels[noneGenerationLabel] != "" {
 		t.Fatal("registration preparation mutated the applied state")
 	}
 }
 
-func TestNoneCompletionAfterRecreatedNode(t *testing.T) {
+func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"npd", "state save"} {
-		t.Run(failure, func(t *testing.T) {
-			t.Parallel()
-			f := newCompletionFixture(t)
-			f.failNPD, f.store.failSave = failure == "npd", failure == "state save"
-			goal := aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.2"}
-			if _, err := f.op.ApplyGoalState(t.Context(), discardLogger(), goal); err == nil {
-				t.Fatal("expected post-start failure")
-			}
-			node := f.op.newNode(noneops.Params{Log: discardLogger(), Config: f.store.state.NodeConfig})
-			s, err := node.PendingStartup()
-			if err != nil || s == nil {
-				t.Fatalf("missing startup intent: %v", err)
-			}
-			var frozen State
-			if err := json.Unmarshal(s.Completion, &frozen); err != nil {
-				t.Fatal(err)
-			}
-			args, err := os.ReadFile(filepath.Join(f.params.SystemdDir, none.UnitKubelet+".d", "20-node-config.conf"))
-			if err != nil || !strings.Contains(string(args), noneGenerationLabel+"="+frozen.NodeConfig.Kubelet.Labels[noneGenerationLabel]) {
-				t.Fatalf("frozen registration fence did not reach rendered kubelet arguments: %v", err)
-			}
-			info, err := os.Stat(filepath.Join(f.params.HostRoot, "etc/aks-flex-node/none-startup.json"))
-			if err != nil || info.Mode().Perm() != 0o600 {
-				t.Fatalf("startup permissions: %v", err)
-			}
-			kube := fakeClient(completionNode(&frozen, "recreated"))
-			machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: goal}}
-			r := newTestRepaveReconciler(t, machines, kube, f.op)
-			beforeCalls, beforeReaps, beforeCleanups := len(f.calls), f.reaps, f.cleanups
-			f.failNPD, f.store.failSave = false, false
-			// Simulate daemon replacement using the on-disk frozen record, not
-			// the configuration that a newer process happens to desire.
-			restarted := *f.op
-			r.operator = &restarted
-			for range 2 {
-				if err := r.reconcileOnce(t.Context()); err != nil {
+	for _, version := range []string{"1.34.1", "1.34.2"} {
+		for _, failure := range []string{"", "kubelet", "artifacts", "npd", "state save", "commit"} {
+			t.Run(version+"/"+failure, func(t *testing.T) {
+				t.Parallel()
+				f := newCompletionFixture(t)
+				source, err := json.Marshal(f.store.state)
+				if err != nil {
 					t.Fatal(err)
 				}
-			}
-			f.assertNondestructive(t, beforeCalls, beforeReaps, beforeCleanups)
-			if f.resolves != 1 || f.store.state.AppliedSettingsVersion != "42" || f.store.state.AppliedKubernetesVersion != "1.34.2" {
-				t.Fatal("completion reapplied or lost the frozen goal")
-			}
-			if s, err := node.PendingStartup(); err != nil || s != nil {
-				t.Fatalf("completed startup not cleared: %v", err)
-			}
-		})
-	}
-}
-
-func TestNoneCompletionFailsClosedOnChangedIntent(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		change func(*noneops.Startup)
-	}{
-		{name: "record version", change: func(s *noneops.Startup) { s.RecordVersion = 2 }},
-		{name: "active version mismatch", change: func(s *noneops.Startup) { s.Version = "not-active" }},
-		{name: "frozen config mismatch", change: func(s *noneops.Startup) { s.Config.NodeName = "another-worker" }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			f := newCompletionFixture(t)
-			f.failNPD = true
-			if _, err := f.op.ApplyGoalState(t.Context(), discardLogger(), aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.2"}); err == nil {
-				t.Fatal("expected incomplete startup")
-			}
-			path := filepath.Join(f.params.HostRoot, "etc/aks-flex-node/none-startup.json")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var s noneops.Startup
-			if err := json.Unmarshal(data, &s); err != nil {
-				t.Fatal(err)
-			}
-			tc.change(&s)
-			data, err = json.Marshal(s)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, data, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			calls, reaps, cleanups := len(f.calls), f.reaps, f.cleanups
-			if _, err := f.op.ResumeRepave(t.Context(), discardLogger(), nil); err == nil {
-				t.Fatal("changed startup intent was accepted")
-			}
-			f.assertNondestructive(t, calls, reaps, cleanups)
-			if len(f.calls) != calls || f.store.state.AppliedSettingsVersion != "41" {
-				t.Fatal("invalid intent caused service operations or state publication")
-			}
-		})
-	}
-}
-
-func TestNoneCompletionRequiresFreshGenerationBeforeNewerGoal(t *testing.T) {
-	t.Parallel()
-	f := newCompletionFixture(t)
-	f.failNPD = true
-	oldGoal := aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.2"}
-	if _, err := f.op.ApplyGoalState(t.Context(), discardLogger(), oldGoal); err == nil {
-		t.Fatal("expected interrupted completion")
-	}
-	f.failNPD = false
-	newGoal := aksmachine.GoalState{SettingsVersion: "43", KubernetesVersion: "1.34.3"}
-	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: newGoal}}
-	staleState := noneRegistrationState(f.store.state)
-	stale := completionNode(staleState, "stale-old-node")
-	kube := fakeClient(stale)
-	r := newTestRepaveReconciler(t, machines, kube, f.op)
-	calls, reaps, cleanups := len(f.calls), f.reaps, f.cleanups
-	if err := r.reconcileOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := kube.Delete(t.Context(), stale); err != nil {
-		t.Fatal(err)
-	}
-	// The cached old Node must not release the barrier, even if a subsequent
-	// read reports the original absence while a newer goal is already pending.
-	for range 2 {
-		if err := r.reconcileOnce(t.Context()); err != nil {
-			t.Fatal(err)
+				f.fail, f.store.failSave = failure, failure == "state save"
+				goal := aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: version}
+				next, err := f.op.ApplyGoalState(t.Context(), discardLogger(), goal)
+				wantErr := failure != "" && failure != "commit"
+				if (err != nil) != wantErr {
+					t.Fatalf("ApplyGoalState error = %v, wantErr %t", err, wantErr)
+				}
+				if failure == "kubelet" && !strings.Contains(err.Error(), "rolled back") {
+					t.Fatalf("expected SDK rollback: %v", err)
+				}
+				if failure == "" || failure == "commit" {
+					if next.AppliedSettingsVersion != "42" || next.NodeConfig.Kubelet.Labels[noneGenerationLabel] == "source-nonce" {
+						t.Fatal("repave did not publish new settings and a fresh registration nonce")
+					}
+				} else {
+					applied, err := json.Marshal(f.store.state)
+					if err != nil || !bytes.Equal(applied, source) {
+						t.Fatal("failed repave changed applied source configuration")
+					}
+				}
+				if failure == "artifacts" || failure == "npd" || failure == "state save" || failure == "commit" {
+					info, err := os.Stat(f.journalPath())
+					if err != nil || info.Mode().Perm() != 0o600 {
+						t.Fatalf("SDK journal missing or not private: %v", err)
+					}
+					data, err := os.ReadFile(f.journalPath())
+					if err != nil || strings.Contains(string(data), "fixture-token") {
+						t.Fatal("SDK journal exposed bootstrap credentials")
+					}
+				} else {
+					f.assertCommitted(t)
+				}
+				// A replacement daemon recovers solely from the original applied
+				// config. Before Save this restores source, after Save it commits.
+				f.fail, f.store.failSave = "", false
+				restarted := *f.op
+				restarted.recovered = false
+				f.op = &restarted
+				cleanups := f.cleanups
+				if handled, err := f.op.ResumeRepave(t.Context(), discardLogger(), nil); err != nil || handled {
+					t.Fatalf("ResumeRepave = %t, %v", handled, err)
+				}
+				if failure == "" || failure == "commit" || failure == "kubelet" {
+					if f.cleanups != cleanups {
+						t.Fatal("recovery rolled back a completed upgrade or repeated a completed rollback")
+					}
+				} else if f.cleanups != cleanups+1 {
+					t.Fatal("uncommitted upgrade did not use base rollback")
+				}
+				f.assertCommitted(t)
+				f.assertAppliedRuntime(t, f.store.state)
+				calls, npdCalls := len(f.calls), len(f.npdVersions)
+				if _, err := f.op.ResumeRepave(t.Context(), discardLogger(), nil); err != nil {
+					t.Fatal(err)
+				}
+				if len(f.calls) != calls || len(f.npdVersions) != npdCalls {
+					t.Fatal("completed recovery repeated host or NPD work")
+				}
+			})
 		}
 	}
-	f.assertNondestructive(t, calls, reaps, cleanups)
-	if f.resolves != 1 || f.store.state.AppliedSettingsVersion != "42" {
-		t.Fatal("newer goal consumed the previous deletion signal")
-	}
-	fresh := completionNode(f.store.state, "fresh-node")
-	if err := kube.Create(t.Context(), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reconcileOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reconcileOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if f.resolves != 1 {
-		t.Fatal("newer goal repaved an existing fresh Node")
-	}
-	if err := kube.Delete(t.Context(), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reconcileOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if f.resolves != 2 || f.store.state.AppliedSettingsVersion != "43" {
-		t.Fatal("fresh RP deletion did not authorize the newer goal")
-	}
 }
 
-func TestNonePreExposureRecoveryWaitsForRPDeletion(t *testing.T) {
+func TestNoneBaseRecoveryRejectsCorruptJournal(t *testing.T) {
 	t.Parallel()
 	f := newCompletionFixture(t)
-	run := f.params.Run
-	f.params.Run = func(ctx context.Context, log *slog.Logger, name string, args ...string) (string, error) {
-		if name == "systemctl" && len(args) > 1 && args[0] == "enable" && args[len(args)-1] == none.UnitContainerd {
-			return "", errors.New("both runtime starts are unavailable")
-		}
-		return run(ctx, log, name, args...)
-	}
-	goal := aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.2"}
-	if _, err := f.op.ApplyGoalState(t.Context(), discardLogger(), goal); err == nil {
-		t.Fatal("expected pre-exposure failure")
-	}
-	old := completionNode(f.store.state, "already-recreated")
-	kube := fakeClient(old)
-	r := newTestRepaveReconciler(t, &fakeMachineClient{machine: &aksmachine.Machine{Goal: goal}}, kube, f.op)
-	calls, reaps, cleanups := len(f.calls), f.reaps, f.cleanups
-	if err := r.reconcileOnce(t.Context()); err == nil {
-		t.Fatal("destructive recovery was allowed while a Node exists")
-	}
-	f.assertNondestructive(t, calls, reaps, cleanups)
-	f.params.Run = run
-	if err := kube.Delete(t.Context(), old); err != nil {
+	if err := os.MkdirAll(filepath.Dir(f.journalPath()), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.reconcileOnce(t.Context()); err != nil {
+	if err := os.WriteFile(f.journalPath(), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if f.store.state.AppliedSettingsVersion != "41" {
-		t.Fatal("source restoration was reported as the requested goal")
+	before := slices.Clone(f.calls)
+	if _, err := f.op.ResumeRepave(t.Context(), discardLogger(), nil); err == nil {
+		t.Fatal("unreadable SDK journal was accepted")
 	}
-	source := completionNode(f.store.state, "restored-source")
-	if err := kube.Create(t.Context(), source); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reconcileOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reconcileOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if f.resolves != 1 {
-		t.Fatal("restored source was automatically repaved")
+	if !slices.Equal(before, f.calls) || len(f.npdVersions) != 0 {
+		t.Fatal("corrupt journal changed services or selected NPD")
 	}
 }
 
-// Reset must not be coupled to a failed startup or its health dependencies.
+// Reset must not depend on upgrade recovery or its health dependencies.
 type resetCompletionOperator struct {
 	*fakeNodeOperator
 	resumed bool
@@ -363,7 +311,7 @@ type resetCompletionOperator struct {
 
 func (o *resetCompletionOperator) ResumeRepave(context.Context, *slog.Logger, *corev1.Node) (bool, error) {
 	o.resumed = true
-	return true, errors.New("startup unavailable")
+	return true, errors.New("recovery unavailable")
 }
 
 func TestNoneCompletionRespectsDeletePrecedence(t *testing.T) {
@@ -379,7 +327,7 @@ func TestNoneCompletionRespectsDeletePrecedence(t *testing.T) {
 				t.Fatal(err)
 			}
 			if op.resumed || op.reset != removed || op.stopped != removed {
-				t.Fatal("startup completion bypassed RP deletion/reset precedence")
+				t.Fatal("recovery bypassed RP deletion/reset precedence")
 			}
 		})
 	}

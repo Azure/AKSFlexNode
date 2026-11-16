@@ -22,20 +22,19 @@ type containerNode interface {
 	Start(context.Context, bool, bool, bool) error
 	Restart(context.Context) error
 	Destroy(context.Context) error
-	CommitUpgrade() error
-	UpgradeWithStartup(context.Context, containerNode, func(context.Context) error) error
+	Upgrade(context.Context, containerNode) error
 	GoalState() (*goalstates.MachineGoalState, error)
 	Backend() *container.Backend
 }
 
 type managedContainerNode struct{ *containerops.Node }
 
-func (n managedContainerNode) UpgradeWithStartup(ctx context.Context, old containerNode, publish func(context.Context) error) error {
+func (n managedContainerNode) Upgrade(ctx context.Context, old containerNode) error {
 	source, ok := old.(managedContainerNode)
 	if !ok {
 		return fmt.Errorf("invalid source container operations")
 	}
-	return n.Node.UpgradeWithStartup(ctx, source.Node, publish)
+	return n.Node.Upgrade(ctx, source.Node)
 }
 
 type containerNodeOperator struct {
@@ -115,14 +114,14 @@ func (o *containerNodeOperator) RestartNode(ctx context.Context, log *slog.Logge
 }
 
 func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
-	if err := o.requireNoStartup(); err != nil {
-		return nil, err
-	}
 	unlock, err := o.lockAgentActivation(log)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	if err := o.requireNoStartup(); err != nil {
+		return nil, err
+	}
 	state, err := o.applied(ctx)
 	if err != nil {
 		return nil, err
@@ -140,8 +139,8 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeContainer, ac, noneNPDVersion(cfg)
 	next = noneRegistrationState(next)
 	gs.NodeStart.Kubelet.NodeLabels = next.NodeConfig.Kubelet.Labels
-	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot, Install: containerArtifacts(cfg, log)})
-	if _, err := node.GoalState(); err != nil {
+	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
+	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
 		return nil, err
 	}
 	node.Backend().UnitRequires = append(node.Backend().UnitRequires, noneRequiredServices(cfg)...)
@@ -153,17 +152,19 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err := o.startup.Save(ctx, startup); err != nil {
 		return nil, err
 	}
-	// The shared recipe prepares beside the source, stops it, resets shared
-	// identity and configures the target. Publication precedes all exposure of
-	// target kubelet, including the supervising unit's post-start hook.
-	if err := node.UpgradeWithStartup(ctx, old, func(ctx context.Context) error {
-		if err := o.syncPrepared(ctx, node); err != nil {
-			return fmt.Errorf("persist prepared container before startup: %w", err)
-		}
-		startup.Phase = "starting"
-		return o.startup.Save(ctx, startup)
-	}); err != nil {
+	// Upgrade owns preparation, activation and rollback on failure. A crash or
+	// error leaves preparing fenced: it cannot establish which slot is safe.
+	if err := node.Upgrade(ctx, old); err != nil {
 		return nil, fmt.Errorf("upgrade container node: %w", err)
+	}
+	// The SDK has already started the target and discarded its shared snapshot.
+	// Persist that target before journaling Flex's remaining completion work.
+	if err := o.syncPrepared(ctx, node); err != nil {
+		return nil, fmt.Errorf("persist upgraded container before completion journal: %w", err)
+	}
+	startup.Phase = "starting"
+	if err := o.startup.Save(ctx, startup); err != nil {
+		return nil, err
 	}
 	if err := o.finishStartup(ctx, log, startup); err != nil {
 		return nil, err
@@ -171,8 +172,8 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	return next, nil
 }
 
-// ResumeRepave never resolves a newer goal or rewrites shared configuration.
-// A published startup may safely retry Start even after the Node has appeared.
+// ResumeRepave retries Flex completion only after a recorded successful SDK
+// upgrade. It never infers recovery from the slots left by a failed upgrade.
 func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logger, observed *corev1.Node) (bool, error) {
 	startup, err := o.startup.Load()
 	if err != nil || startup == nil {
@@ -191,12 +192,12 @@ func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logg
 		return true, fmt.Errorf("container startup does not match applied source or target state")
 	}
 	if startup.Phase == "preparing" {
-		return true, fmt.Errorf("interrupted container preparation requires operator recovery or reset; source and snapshot retained")
+		return true, fmt.Errorf("container SDK upgrade did not record successful completion; operator recovery or reset required")
 	}
 	if startup.Phase == "starting" {
 		node := o.newNode(containerops.Params{Log: log, Config: startup.Next.NodeConfig, Slot: startup.Next.ActiveMachine})
 		if err := node.Start(ctx, false, false, false); err != nil {
-			return true, fmt.Errorf("resume frozen container startup: %w", err)
+			return true, fmt.Errorf("start upgraded container for completion: %w", err)
 		}
 		if err := o.finishStartup(ctx, log, startup); err != nil {
 			return true, err
@@ -234,8 +235,8 @@ func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Log
 	if err := o.startNPD(ctx, log, noneNPDConfig(startup.Next), gs.NodeStart); err != nil {
 		return err
 	}
-	// Startup also enables the host supervisor and in-node NPD. Persist their
-	// boot state before committing completion or retiring the source slot.
+	// Persist the supervisor and NPD boot state before recording Flex completion
+	// or retiring the stopped source. The SDK's rollback snapshot is already gone.
 	if err := o.syncPrepared(ctx, node); err != nil {
 		return fmt.Errorf("persist started container before completion: %w", err)
 	}
@@ -245,9 +246,6 @@ func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Log
 	old := o.newNode(containerops.Params{Log: log, Config: startup.Previous.NodeConfig, Slot: startup.Previous.ActiveMachine})
 	if err := old.Destroy(ctx); err != nil {
 		return fmt.Errorf("retire source container slot: %w", err)
-	}
-	if err := node.CommitUpgrade(); err != nil {
-		return err
 	}
 	startup.Phase = "finished"
 	return o.startup.Save(ctx, startup)

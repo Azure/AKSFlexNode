@@ -1,26 +1,28 @@
 package daemon
 
 import (
+	"context"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/noneops/transaction"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 )
 
-// Flex owns applied state and NPD configuration; the shared transaction engine
-// owns worker preparation, boot gating, startup and recovery.
-func newNoneRuntime(p transaction.Params) *transaction.Node {
-	p.StateDir = config.ConfigDir
-	p.ExtraSnapshotPaths = append(p.ExtraSnapshotPaths,
-		"/etc/node-problem-detector/kernel-monitor.json",
-		filepath.Join(goalstates.SystemdSystemDir, npd.HostUnitNPD),
-		filepath.Join(goalstates.SystemdSystemDir, npd.HostUnitNPD+".d"),
-		filepath.Join(goalstates.SystemdSystemDir, "static-routes.service"),
-		filepath.Join(goalstates.SystemdSystemDir, "check-route-overlap.service"),
-		filepath.Join(config.ConfigDir, "static-routes.sh"),
-		filepath.Join(config.ConfigDir, "check-route-overlap.sh"),
-	)
-	return transaction.New(p)
+func newNoneRuntime(p noneops.Params) *noneops.Node {
+	// Keep the SDK's journal and snapshot within Flex's reset ownership.
+	p.ConfigSnapshotDir = filepath.Join(p.HostRoot, config.ConfigDir, "none-upgrade-config")
+	return noneops.New(p)
+}
+
+func prepareNoneDependencies(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
+	return configureNoneDependencies(log, noneRequiredServices(cfg)).Do(ctx)
+}
+
+// NPD is installed after the SDK selects a healthy runtime. Recovery can select
+// the source again, including for a settings-only repave sharing its binaries.
+func installNoneNPD(ctx context.Context, log *slog.Logger, cfg *config.Config, gs *goalstates.MachineGoalState) error {
+	return npd.DownloadToRoot(log, cfg, gs.RootFS.Root()).Do(ctx)
 }

@@ -513,6 +513,34 @@ class ValidationTests(unittest.TestCase):
                         with self.assertRaises(runtime.ProbeError):
                             fixture.probe.validate(mode)
 
+    def test_health_cli_checks_core_services_without_mutating_state(self):
+        for mode in runtime.MODES:
+            for action in (["snapshot"], ["validate", mode]):
+                with self.subTest(mode=mode, action=action), tempfile.TemporaryDirectory() as directory:
+                    fixture = Fixture(directory, mode, localdns_enabled=True)
+                    before = fixture.path(runtime.STATE).read_bytes()
+                    stdout = io.StringIO()
+                    with mock.patch.object(runtime, "Runtime", return_value=fixture.probe), \
+                            contextlib.redirect_stdout(stdout):
+                        self.assertEqual(runtime.main(action), 0)
+                    result = json.loads(stdout.getvalue())
+                    self.assertEqual(result["mode"], mode)
+                    self.assertEqual(len(result["corePids"]), 4)
+                    self.assertNotIn("DO-NOT-PRINT", stdout.getvalue())
+                    for unit in fixture.probe.units(fixture.probe.state()):
+                        fixture.overrides = {unit: {"ActiveState": "failed", "MainPID": "0"}}
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        with self.subTest(unit=unit), \
+                                mock.patch.object(runtime, "Runtime", return_value=fixture.probe), \
+                                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                            self.assertNotEqual(runtime.main(action), 0)
+                        self.assertEqual(stdout.getvalue(), "")
+                        self.assertIn(unit + " not running", stderr.getvalue())
+                        self.assertNotIn("DO-NOT-PRINT", stderr.getvalue())
+                    self.assertEqual(fixture.path(runtime.STATE).read_bytes(), before)
+                    self.assertTrue(all(argv[0] in ("systemctl", "systemd-run", runtime.RUNC, "machinectl")
+                                        for argv, _ in fixture.calls))
+
     def test_daemon_must_be_installed_enabled_and_active(self):
         for values in ({"LoadState": "not-found"}, {"UnitFileState": "disabled"},
                        {"ActiveState": "inactive"}, {"MainPID": "0"}):
@@ -536,6 +564,35 @@ class ValidationTests(unittest.TestCase):
                 with self.subTest(marker=marker), self.assertRaisesRegex(runtime.ProbeError, "residual path"):
                     fixture.probe.validate("none")
                 fixture.path(marker).unlink()
+
+    def test_sdk_none_upgrade_artifacts_block_completion_and_reset(self):
+        paths = ("/etc/aks-flex-node/none-upgrade-journal.json",
+                 "/etc/aks-flex-node/none-upgrade-config")
+        for path in paths:
+            self.assertIn(path, runtime.MARKERS)
+            for reset in (False, True):
+                for kind in ("file", "empty-directory", "snapshot-directory", "symlink"):
+                    with self.subTest(path=path, reset=reset, kind=kind), \
+                            tempfile.TemporaryDirectory() as directory:
+                        fixture = Fixture(directory, "none", reset=reset)
+                        artifact = fixture.path(path)
+                        artifact.parent.mkdir(parents=True, exist_ok=True)
+                        if kind == "file":
+                            fixture.put(path, "DO-NOT-PRINT-UPGRADE-CREDENTIALS")
+                        elif kind in ("empty-directory", "snapshot-directory"):
+                            artifact.mkdir()
+                            if kind == "snapshot-directory":
+                                fixture.put(path + "/manifest.json", "DO-NOT-PRINT-UPGRADE-CREDENTIALS")
+                        else:
+                            artifact.symlink_to("missing-snapshot")
+                        validate = fixture.probe.validate_reset if reset else fixture.probe.validate
+                        with self.assertRaisesRegex(runtime.ProbeError, "residual path: " + path) as error:
+                            validate("none")
+                        self.assertNotIn("DO-NOT-PRINT", str(error.exception))
+                        self.assertTrue(fixture.probe.exists(path))
+                        diagnostics = fixture.probe.diagnostics("none")
+                        self.assertIs(diagnostics["paths"][path], True)
+                        self.assertNotIn("DO-NOT-PRINT", json.dumps(diagnostics))
 
     def test_container_upgrade_snapshot_blocks_completion_and_reset(self):
         snapshot = "/etc/aks-flex-node/container-upgrade-config"
@@ -689,7 +746,7 @@ class DiagnosticsTests(unittest.TestCase):
         for mode in runtime.MODES:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 fixture = Fixture(directory, mode)
-                fixture.put(runtime.MARKERS[1], "DO-NOT-PRINT-STARTUP")
+                fixture.put("/etc/aks-flex-node/container-startup.json", "DO-NOT-PRINT-STARTUP")
                 result = fixture.probe.diagnostics(mode)
                 self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
                 self.assertEqual(result["mode"], mode)
@@ -739,21 +796,6 @@ class DiagnosticsTests(unittest.TestCase):
                             contextlib.redirect_stderr(io.StringIO()):
                         self.assertNotEqual(runtime.main(["exec", "--", "journalctl", "-u", "kubelet.service"]), 0)
                     self.assertEqual(fixture.calls, [])
-
-    def test_boot_guard_uses_only_temporary_markers(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fixture = Fixture(directory)
-            fixture.put("/opt/unbounded/node/.check-startup", '#!/bin/sh\nset -eu\n'
-                        '[ ! -e "$1" ] || exit 1\n[ ! -e "$2" ] || [ -e "$3" ]\n', executable=True)
-            original_state = fixture.path(runtime.STATE).read_bytes()
-            fixture.put(runtime.MARKERS[1], "real startup untouched")
-            fixture.probe.runner = subprocess.run
-            self.assertTrue(fixture.probe.boot_guard("none")["bootGuard"])
-            self.assertEqual(fixture.path(runtime.STATE).read_bytes(), original_state)
-            self.assertEqual(fixture.path(runtime.MARKERS[1]).read_text(), "real startup untouched")
-            fixture.put("/opt/unbounded/node/.check-startup", "#!/bin/sh\nexit 0\n", executable=True)
-            with self.assertRaisesRegex(runtime.ProbeError, "boundary"):
-                fixture.probe.boot_guard("none")
 
 
 class TransportTests(unittest.TestCase):
