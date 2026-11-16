@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Clean up host-native CNI/IPAM state after successful runtime destruction and retain applied-mode routing for retries after partial reset.
 - Persist container boot enablement before recording applied state; serialize agent activation with container repave and fence activation while AKS completion is pending.
 - Stop and disable host-native NPD when a repave selects offline artifacts, including retries after partial disablement.
 - Retry ARM Machine creation rejected by an explicit concurrent pool operation with bounded backoff, while leaving unrelated conflicts and authorization failures fatal.

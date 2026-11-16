@@ -156,9 +156,7 @@ func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineG
 func resetNoneNode(log *slog.Logger, teardown *noneops.Teardown) phases.Task {
 	return phases.Serial(log,
 		removeNoneHostUnit(log, npd.HostUnitNPD),
-		teardown.Stop(),
-		teardown.Destroy(),
-		teardown.RemoveConfig(),
+		resetNoneRuntime(log, teardown, hostnode.ResetCNIState),
 		reset.CleanupNetwork(log),
 		reset.RemoveWireGuardKeys(log),
 		reset.RemoveNFTablesFlush(log),
@@ -170,6 +168,24 @@ func resetNoneNode(log *slog.Logger, teardown *noneops.Teardown) phases.Task {
 		}),
 		reset.ReloadSystemd(log),
 		config.RemoveRuntimeDirs(log),
+	)
+}
+
+func resetNoneRuntime(log *slog.Logger, teardown *noneops.Teardown, resetCNI func(string) error) phases.Task {
+	return phases.Serial(log,
+		teardown.Stop(),
+		teardown.Destroy(),
+		hostnode.Func("remove-none-cni-state", func(ctx context.Context) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			// Destroy ends shims and pod cgroups before their IPAM reservations go.
+			if err := resetCNI(teardown.Root); err != nil {
+				return fmt.Errorf("reset none CNI state: %w", err)
+			}
+			return nil
+		}),
+		teardown.RemoveConfig(),
 	)
 }
 

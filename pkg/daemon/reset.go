@@ -2,12 +2,15 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
@@ -21,14 +24,15 @@ import (
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
 func ResetNode(log *slog.Logger) phases.Task {
-	if teardown := (&containerops.Teardown{Log: log}); teardown.Present() || utilio.FileExists(defaultContainerStartupStore().path) {
-		return resetContainerNode(log, teardown)
+	containerTeardown := &containerops.Teardown{Log: log}
+	if containerTeardown.Present() || utilio.FileExists(defaultContainerStartupStore().path) {
+		return resetContainerNode(log, containerTeardown)
 	}
 	teardown := &noneops.Teardown{Log: log}
 	if teardown.Present() {
 		return resetNoneNode(log, teardown)
 	}
-	return phases.Serial(log,
+	legacy := phases.Serial(log,
 		phases.Parallel(log,
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube2),
@@ -48,6 +52,46 @@ func ResetNode(log *slog.Logger) phases.Task {
 		reset.ReloadSystemd(log),
 		config.RemoveRuntimeDirs(log),
 	)
+	return resetNodeFromState(log, func(ctx context.Context) (*State, error) {
+		store, err := NewFileStateStore()
+		if err != nil {
+			return nil, err
+		}
+		return store.Load(ctx)
+	}, resetNoneNode(log, teardown), resetContainerNode(log, containerTeardown), legacy)
+}
+
+func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, error), noneTask, containerTask, legacy phases.Task) phases.Task {
+	// Destroy can remove all SDK footprints before a later cleanup fails. Flex's
+	// applied state survives until RemoveRuntimeDirs, retaining reset ownership.
+	return hostnode.Func("resume-applied-reset-or-"+legacy.Name(), func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		applied, err := load(ctx)
+		if err != nil {
+			return fmt.Errorf("load applied state for reset: %w", err)
+		}
+		task := legacy
+		if applied != nil {
+			switch applied.isolationMode() {
+			case isolation.ModeNone:
+				if applied.NodeConfig == nil || applied.NodeConfig.Isolation != string(isolation.ModeNone) {
+					return fmt.Errorf("none node has no valid applied configuration for reset")
+				}
+				task = noneTask
+			case isolation.ModeContainer:
+				if !validContainerState(applied) {
+					return fmt.Errorf("container node has no valid applied configuration for reset")
+				}
+				task = containerTask
+			case isolation.ModeNSpawn:
+			default:
+				return fmt.Errorf("unsupported applied isolation %q for reset", applied.Isolation)
+			}
+		}
+		return phases.ExecuteTask(ctx, log, task)
+	})
 }
 
 // hostHelperPaths returns every location the agent library may have installed
