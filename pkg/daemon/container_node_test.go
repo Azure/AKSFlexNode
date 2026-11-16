@@ -90,8 +90,16 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 		t.Fatal(err)
 	}
 	op.startup = containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
+	op.activationLockPath = filepath.Join(t.TempDir(), "activation.lock")
 	op.newNode = func(p containerops.Params) containerNode {
 		return &fakeContainerNode{params: p, events: events, fail: fail, journal: op.startup}
+	}
+	op.syncPrepared = func(context.Context, containerNode) error {
+		*events = append(*events, "sync-prepared")
+		if fail == "sync-prepared" {
+			return errors.New("prepared filesystem could not be persisted")
+		}
+		return nil
 	}
 	op.resolve = func(_ context.Context, _ *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 		return config.ToAgentConfig(cfg, slot), &goalstates.MachineGoalState{NodeStart: &goalstates.NodeStart{}}, nil, nil
@@ -117,14 +125,15 @@ func TestContainerRepavePublicationAndCleanup(t *testing.T) {
 		failSave, wantErr bool
 		want              []string
 	}{
-		{name: "healthy", phase: "finished", want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "start", "npd", "persist", "destroy-kube1", "commit"}},
+		{name: "healthy", phase: "finished", want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd", "sync-prepared", "persist", "destroy-kube1", "commit"}},
 		{name: "target cleanup fails closed", fail: "target-cleanup", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup"}},
 		{name: "prepare retains source", fail: "prepare", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup", "prepare"}},
 		{name: "source stop fails closed", fail: "source-stop", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop"}},
-		{name: "start retryable", fail: "start", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "start"}},
-		{name: "NPD retryable", fail: "npd", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "start", "npd"}},
-		{name: "state failure keeps source", failSave: true, phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "start", "npd", "persist"}},
-		{name: "source cleanup failure fenced", fail: "destroy-kube1", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "start", "npd", "persist", "destroy-kube1"}},
+		{name: "sync failure prevents publication", fail: "sync-prepared", phase: "preparing", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared"}},
+		{name: "start retryable", fail: "start", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start"}},
+		{name: "NPD retryable", fail: "npd", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd"}},
+		{name: "state failure keeps source", failSave: true, phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd", "sync-prepared", "persist"}},
+		{name: "source cleanup failure fenced", fail: "destroy-kube1", phase: "starting", wantErr: true, want: []string{"stage", "target-cleanup", "prepare", "source-stop", "configure", "sync-prepared", "start", "npd", "sync-prepared", "persist", "destroy-kube1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -188,7 +197,7 @@ func TestContainerStartupResumeFrozenAndFenced(t *testing.T) {
 					t.Fatal("startup fence cleared early")
 				}
 			}
-			if !slices.Equal(*events, []string{"resume-start", "npd", "persist", "destroy-kube1", "commit"}) {
+			if !slices.Equal(*events, []string{"resume-start", "npd", "sync-prepared", "persist", "destroy-kube1", "commit"}) {
 				t.Fatalf("resume changed shared configuration: %v", *events)
 			}
 			if !reflect.DeepEqual(store.state, frozen) {

@@ -22,6 +22,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/runtime.sh"
 _collect_vm_logs() {
   local vm_ip="$1"
   local prefix="$2"
+  local -a mode_args=()
+  if [[ -n "${3:-}" ]]; then mode_args=("$3"); fi
 
   log_info "Collecting logs from ${vm_ip} (${prefix})..."
 
@@ -42,8 +44,19 @@ _collect_vm_logs() {
     > "${E2E_LOG_DIR}/${prefix}-nspawn-journal.log" 2>&1 || true
 
   runtime_install "${vm_ip}" || true
-  runtime_on "${vm_ip}" diagnostics \
+  runtime_on "${vm_ip}" diagnostics "${mode_args[@]}" \
     > "${E2E_LOG_DIR}/${prefix}-runtime.json" 2>&1 || true
+
+  # Bootstrap can fail before applied state exists; these units are host-owned.
+  remote_exec "${vm_ip}" \
+    "sudo -n timeout 30 journalctl --no-pager -n 500 -u unbounded-kubelet.service" \
+    > "${E2E_LOG_DIR}/${prefix}-host-kubelet.log" 2>&1 || true
+  remote_exec "${vm_ip}" \
+    "sudo -n timeout 30 journalctl --no-pager -n 200 -u unbounded-containerd.service" \
+    > "${E2E_LOG_DIR}/${prefix}-host-containerd.log" 2>&1 || true
+  remote_exec "${vm_ip}" \
+    "sudo -n timeout 30 journalctl --no-pager -n 500 -u aks-flex-node-npd.service" \
+    > "${E2E_LOG_DIR}/${prefix}-host-npd.log" 2>&1 || true
 
   # Route journals through the recorded active runtime, including kube2.
   runtime_on "${vm_ip}" exec -- journalctl --no-pager -n 500 \

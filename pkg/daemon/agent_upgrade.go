@@ -247,6 +247,7 @@ type hostAgentUpgradeExecutor struct {
 	log                    *slog.Logger
 	paths                  agentUpgradePaths
 	state                  agentUpgradeStateLoader
+	startup                containerStartupReader
 	signals                agentUpgradeSignalStore
 	systemctl              func(context.Context, ...string) error
 	runSystemdRun          func(context.Context, ...string) error
@@ -260,6 +261,12 @@ type hostAgentUpgradeExecutor struct {
 }
 
 func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader) (*hostAgentUpgradeExecutor, error) {
+	if log == nil {
+		return nil, fmt.Errorf("logger is nil")
+	}
+	if state == nil {
+		return nil, fmt.Errorf("agent upgrade state loader is nil")
+	}
 	paths := defaultAgentUpgradePaths()
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
@@ -269,6 +276,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		log:     log,
 		paths:   paths,
 		state:   state,
+		startup: defaultContainerStartupStore(),
 		signals: agentUpgradeSignalStore{path: paths.SignalPath},
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
@@ -304,7 +312,10 @@ func (e *hostAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
 }
 
 func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {
-	return recordPendingAgentUpgrade(ctx, e.signals, e.state, operationName, e.instanceID)
+	// Existing signals are handled before this loader runs so a pending node
+	// startup cannot block an AgentUpgrade's recovery handoff.
+	state := agentActivationStateLoader{startup: e.startup, load: e.state.LoadState}
+	return recordPendingAgentUpgrade(ctx, e.signals, state, operationName, e.instanceID)
 }
 
 func recordPendingAgentUpgrade(
@@ -361,6 +372,9 @@ func (e *hostAgentUpgradeExecutor) RecordFailure(message string) error {
 }
 
 func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgradeRequest) error {
+	if err := requireNoContainerStartupForAgentActivation(e.startup); err != nil {
+		return err
+	}
 	if e.guardLegacySeed != nil {
 		if err := e.guardLegacySeed(); err != nil {
 			return err
@@ -654,6 +668,11 @@ var _ agentUpgrader = (*hostAgentUpgradeExecutor)(nil)
 func (e *hostAgentUpgradeExecutor) daemonInstance() string { return e.instanceID }
 
 func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
+	// Older daemons may have recorded the stopped source during a repave.
+	// Reject success, but leave rollback and failure publication unfenced.
+	if err := requireNoContainerStartupForAgentActivation(e.startup); err != nil {
+		return err
+	}
 	nspawnBinaryPath := e.nspawnBinaryPath
 	if nspawnBinaryPath == nil {
 		nspawnBinaryPath = func(slot string) string { return activeNodeAgentBinaryPath(signal.Isolation, slot) }

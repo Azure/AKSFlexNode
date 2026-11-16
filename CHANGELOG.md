@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Persist prepared container filesystems before publishing startup intent and persist boot enablement before completion; fence agent activation while container startup is pending.
+- Stop and disable host-native NPD when a repave selects offline artifacts, including retries after partial disablement.
 - Retry ARM Machine creation rejected by an explicit concurrent pool operation with bounded backoff, while leaving unrelated conflicts and authorization failures fatal.
 - Let systemd retry transient NPD startup failures and require a stable active/running process before completion, with bounded readiness waits and cancellation.
 - Create missing bootstrap host-root directories with traversable permissions under a private umask, without changing existing directories or credential-file permissions.

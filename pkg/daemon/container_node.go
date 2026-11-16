@@ -108,6 +108,9 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 		if err := npd.Start(log, cfg, resolved.NodeStart).Do(ctx); err != nil {
 			return err
 		}
+		if err := syncContainerFilesystems(ctx, managedContainerNode{node}); err != nil {
+			return fmt.Errorf("persist bootstrapped container: %w", err)
+		}
 		state.Isolation, state.ActiveMachine, state.NodeConfig = isolation.ModeContainer, slot, ac
 		state.NPDVersion = noneNPDVersion(cfg)
 		return saveState(store, state).Do(ctx)

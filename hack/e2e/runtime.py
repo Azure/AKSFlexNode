@@ -22,7 +22,7 @@ DAEMON = "aks-flex-node-agent.service"
 LABEL = "kubernetes.azure.com/flex-runtime-generation"
 MARKERS = tuple("/etc/aks-flex-node/" + name for name in (
     "none-reset", "none-startup.json", "none-upgrade-journal.json",
-    "none-upgrade-config", "container-startup.json"))
+    "none-upgrade-config", "container-startup.json", "container-upgrade-config"))
 NONE_UNITS = ("unbounded-kubelet.service", "unbounded-containerd.service",
               "unbounded-localdns.service", "aks-flex-node-npd.service")
 PROPERTIES = ("LoadState", "UnitFileState", "ActiveState", "SubState", "MainPID")
@@ -446,6 +446,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
     actions.add_parser("snapshot")
+    actions.add_parser("mode", help="read integrity-checked state without runtime health probes")
     execute = actions.add_parser("exec")
     execute.add_argument("command", nargs=argparse.REMAINDER)
     for name in ("validate", "validate-reset", "boot-guard", "diagnostics"):
@@ -463,6 +464,8 @@ def main(argv=None):
             return result.returncode
         if args.action == "snapshot":
             result = runtime.snapshot()
+        elif args.action == "mode":
+            result = {"mode": runtime.mode(runtime.state())}
         elif args.action == "diagnostics":
             result = runtime.diagnostics(args.mode)
         elif args.action == "validate":

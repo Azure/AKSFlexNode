@@ -32,7 +32,7 @@ _im_diagnostics() {
   local phase="$1"
   mkdir -p "${im_logs}"
   {
-    runtime_on "${im_ip}" diagnostics || true
+    runtime_on "${im_ip}" diagnostics "${im_mode}" || true
     _im_k get node "${im_name}" -o wide || true
     _im_k -n "${im_ns}" get pods,services -l "${im_selector}" -o wide || true
     _im_k -n "${im_ns}" describe pods -l "${im_selector}" || true
@@ -41,7 +41,7 @@ _im_diagnostics() {
     _im_k get machineoperations -l "${im_selector}" \
       -o custom-columns=NAME:.metadata.name,PHASE:.status.phase || true
   } >"${im_logs}/${phase}.log" 2>&1
-  _collect_vm_logs "${im_ip}" "${im_owner}-${phase}" >/dev/null || true
+  _collect_vm_logs "${im_ip}" "${im_owner}-${phase}" "${im_mode}" >/dev/null || true
   log_info "Isolation diagnostics: ${im_logs}/${phase}.log"
 }
 
@@ -118,11 +118,12 @@ PY
 }
 
 # Pure assertions are shared by the live poller and offline contract tests.
+# Reset may reuse a slot; only repave requires rotation as well as a fresh nonce.
 _im_assert_ready() {
-  local mode="$1" old_uid="$2" generation="$3" before="$4" snapshot="$5" node="$6"
+  local mode="$1" old_uid="$2" generation="$3" before="$4" snapshot="$5" node="$6" repave="${7:-false}"
   jq -en --arg mode "${mode}" --arg old "${old_uid}" --arg generation "${generation}" \
     --arg version "${E2E_KUBERNETES_VERSION#v}" --argjson before "${before}" \
-    --argjson s "${snapshot}" --argjson n "${node}" '
+    --argjson s "${snapshot}" --argjson n "${node}" --argjson repave "${repave}" '
     $s.mode == $mode and $s.generation == $generation and
     ($s.kubeletVersion | ltrimstr("v")) == $version and
     ($s.identity | type == "string" and length > 0) and
@@ -135,7 +136,7 @@ _im_assert_ready() {
     ($before == null or $s.registration != $before.registration) and
     (if $mode == "container" then
        ($s.slot == "kube1" or $s.slot == "kube2") and
-       ($before == null or ($s.slot != $before.slot and $s.identity != $before.identity))
+       ($repave == false or ($before != null and $s.slot != $before.slot and $s.identity != $before.identity))
      else $s.slot == "" end)' >/dev/null
 }
 
@@ -146,16 +147,17 @@ _im_assert_stable() {
     ($a | del(.corePids)) == ($b | del(.corePids)) and
     ($reboot or $a.corePids == $b.corePids) and
     $n.metadata.uid == $uid and
+    ($n.status.nodeInfo.kubeletVersion | ltrimstr("v")) == ($a.kubeletVersion | ltrimstr("v")) and
     $n.metadata.labels["kubernetes.azure.com/flex-runtime-generation"] == $a.registration and
     any($n.status.conditions[]; .type == "Ready" and .status == "True")' >/dev/null
 }
 
 _im_wait_ready() {
-  local old_uid="$1" generation="$2" before="${3:-null}" snapshot node
+  local old_uid="$1" generation="$2" before="${3:-null}" repave="${4:-false}" snapshot node
   local deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
   while (( SECONDS < deadline )); do
     if snapshot="$(runtime_on "${im_ip}" snapshot)" && node="$(_im_node)" &&
-      _im_assert_ready "${im_mode}" "${old_uid}" "${generation}" "${before}" "${snapshot}" "${node}" &&
+      _im_assert_ready "${im_mode}" "${old_uid}" "${generation}" "${before}" "${snapshot}" "${node}" "${repave}" &&
       runtime_on "${im_ip}" validate "${im_mode}"; then
       validate_node_joined "${im_name}" || return
       validate_node_ip "${im_name}" "${im_private_ip}" || return
@@ -285,18 +287,18 @@ _im_repave() {
   _im_diagnostics pre-repave || return
   _im_drain || return
   _im_delete || return
-  _im_wait_ready "${uid}" "${generation}" "${before}"
+  _im_wait_ready "${uid}" "${generation}" "${before}" true
 }
 
 _im_lifecycle() {
-  local previous_uid node present previous_mode=none previous
+  local previous_uid node present previous_mode=none previous before_reset
   runtime_install "${im_ip}" || return
   remote_copy "${E2E_BINARY}" "${im_ip}" /tmp/aks-flex-node-e2e-reset || return
   remote_exec "${im_ip}" 'sudo -n timeout 15 chmod 0755 /tmp/aks-flex-node-e2e-reset' || return
   present="$(remote_exec "${im_ip}" 'sudo -n timeout 15 python3 -c '\''import os; print("present" if os.path.exists("/etc/aks-flex-node/daemon-state.json") else "absent")'\''')" || return
   case "${present}" in
     present)
-      previous="$(runtime_on "${im_ip}" snapshot)" || return
+      previous="$(runtime_on "${im_ip}" mode)" || return
       previous_mode="$(jq -er '.mode' <<<"${previous}")" || return ;;
     absent) ;;
     *) _im_fail 'Cannot determine previous token VM runtime'; return 1 ;;
@@ -325,6 +327,7 @@ _im_lifecycle() {
   _im_network || return
   _im_repave || return
   _im_network || return
+  before_reset="$(runtime_on "${im_ip}" snapshot)" || return
   node="$(_im_node)" || return
   previous_uid="$(jq -er '.metadata.uid' <<<"${node}")" || return
   _im_diagnostics pre-reset || return
@@ -340,7 +343,7 @@ _im_lifecycle() {
   node="$(_im_node)" || return
   [[ "${node}" == null ]] || { _im_fail 'Node reappeared after reset'; return 1; }
   node_join_token '' "${im_mode}" || return
-  _im_wait_ready "${previous_uid}" "${E2E_KUBERNETES_VERSION}" || return
+  _im_wait_ready "${previous_uid}" "${E2E_KUBERNETES_VERSION}" "${before_reset}" || return
   _im_network || return
   _im_diagnostics complete
 }

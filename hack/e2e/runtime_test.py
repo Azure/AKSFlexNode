@@ -118,6 +118,36 @@ class Fixture:
 
 
 class StateTests(unittest.TestCase):
+    def assert_mode_rejected(self, fixture):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(runtime, "Runtime", return_value=fixture.probe), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertNotEqual(runtime.main(["mode"]), 0)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertNotIn("DO-NOT-PRINT", stderr.getvalue())
+        self.assertEqual(fixture.calls, [])
+
+    def test_mode_cli_needs_only_valid_state_not_healthy_services_or_layout(self):
+        for mode in runtime.MODES:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, mode)
+                for unit in fixture.probe.units(fixture.probe.state()):
+                    fixture.overrides[unit] = {"ActiveState": "failed", "MainPID": "0"}
+                with self.assertRaisesRegex(runtime.ProbeError, "not running"):
+                    fixture.probe.snapshot()
+                if mode == "none":
+                    fixture.path("/opt/unbounded/node/current").unlink()
+                fixture.path(runtime.CONFIG).unlink()
+                fixture.calls.clear()
+                before = fixture.path(runtime.STATE).read_bytes()
+                stdout = io.StringIO()
+                with mock.patch.object(runtime, "Runtime", return_value=fixture.probe), \
+                        contextlib.redirect_stdout(stdout):
+                    self.assertEqual(runtime.main(["mode"]), 0)
+                self.assertEqual(json.loads(stdout.getvalue()), {"mode": mode})
+                self.assertEqual(fixture.calls, [])
+                self.assertEqual(fixture.path(runtime.STATE).read_bytes(), before)
+
     def test_state_formats_and_legacy_default(self):
         for mode in runtime.MODES:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
@@ -142,6 +172,7 @@ class StateTests(unittest.TestCase):
                     '"appliedSettingsVersion": "generation-1"', '"appliedSettingsVersion":"generation-1"'))
                 with self.assertRaisesRegex(runtime.ProbeError, "checksum mismatch"):
                     fixture.probe.state()
+                self.assert_mode_rejected(fixture)
 
     def test_corrupt_records_never_use_legacy_sidecar(self):
         cases = {
@@ -164,6 +195,7 @@ class StateTests(unittest.TestCase):
                     fixture.put(runtime.STATE + ".sha256", hashlib.sha256(text.encode()).hexdigest())
                     with self.assertRaises(runtime.ProbeError):
                         fixture.probe.state()
+                    self.assert_mode_rejected(fixture)
 
     def test_invalid_state_and_node_contract(self):
         changes = {
@@ -195,6 +227,7 @@ class StateTests(unittest.TestCase):
                         payload, hashlib.sha256(payload.encode()).hexdigest()))
                     with self.assertRaises(runtime.ProbeError):
                         fixture.probe.state()
+                    self.assert_mode_rejected(fixture)
 
     def test_missing_and_malformed_state_fail_closed(self):
         for text in (None, "not-json DO-NOT-PRINT", "null", "[]", '{"payload": {}, "payload": {}}'):
@@ -208,6 +241,7 @@ class StateTests(unittest.TestCase):
                     fixture.probe.state()
                 self.assertNotIn("DO-NOT-PRINT", str(error.exception))
                 self.assertEqual(fixture.calls, [])
+                self.assert_mode_rejected(fixture)
 
     def test_legacy_requires_valid_checksum(self):
         for failure in ("missing", "bad", "changed payload"):
@@ -221,6 +255,7 @@ class StateTests(unittest.TestCase):
                     fixture.put(runtime.STATE, fixture.path(runtime.STATE).read_text() + "\n")
                 with self.assertRaises(runtime.ProbeError):
                     fixture.probe.state()
+                self.assert_mode_rejected(fixture)
 
     def test_legacy_minimal_state_needs_no_config(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -258,6 +293,7 @@ class StateTests(unittest.TestCase):
                 with self.assertRaises(runtime.ProbeError) as error:
                     fixture.probe.state()
                 self.assertNotIn("DO-NOT-PRINT", str(error.exception))
+                self.assert_mode_rejected(fixture)
 
     def test_state_envelopes_cannot_be_interchanged(self):
         for mode in runtime.MODES:
@@ -273,6 +309,7 @@ class StateTests(unittest.TestCase):
                 fixture.put(runtime.STATE + ".sha256", hashlib.sha256(text.encode()).hexdigest())
                 with self.assertRaisesRegex(runtime.ProbeError, "atomic"):
                     fixture.probe.state()
+                self.assert_mode_rejected(fixture)
 
 
 class RoutingTests(unittest.TestCase):
@@ -500,6 +537,24 @@ class ValidationTests(unittest.TestCase):
                     fixture.probe.validate("none")
                 fixture.path(marker).unlink()
 
+    def test_container_upgrade_snapshot_blocks_completion_and_reset(self):
+        snapshot = "/etc/aks-flex-node/container-upgrade-config"
+        self.assertIn(snapshot, runtime.MARKERS)
+        for mode in runtime.MODES:
+            for reset in (False, True):
+                for manifest in (False, True):
+                    with self.subTest(mode=mode, reset=reset, manifest=manifest), \
+                            tempfile.TemporaryDirectory() as directory:
+                        fixture = Fixture(directory, mode, reset=reset)
+                        fixture.path(snapshot).mkdir(parents=True, exist_ok=True)
+                        if manifest:
+                            fixture.put(snapshot + "/manifest.json", "DO-NOT-PRINT-CREDENTIAL-SNAPSHOT")
+                        validate = fixture.probe.validate_reset if reset else fixture.probe.validate
+                        with self.assertRaisesRegex(runtime.ProbeError, "residual path: " + snapshot) as error:
+                            validate(mode)
+                        self.assertNotIn("DO-NOT-PRINT", str(error.exception))
+                        self.assertTrue(fixture.path(snapshot).is_dir())
+
     def test_worker_topology_failures(self):
         cases = [
             ("none", "machine"), ("none", "oci"), ("none", "private"),
@@ -660,17 +715,30 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
 
     def test_missing_or_corrupt_state_keeps_explicit_mode_and_errors(self):
-        for corrupt in (False, True):
-            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
-                fixture = Fixture(directory)
-                if corrupt:
-                    fixture.put(runtime.STATE, '{"token":"DO-NOT-PRINT"')
-                else:
-                    fixture.path(runtime.STATE).unlink()
-                result = fixture.probe.diagnostics("container")
-                self.assertEqual(result["mode"], "container")
-                self.assertTrue(result["errors"])
-                self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+        for mode in runtime.MODES:
+            for corrupt in (False, True):
+                with self.subTest(mode=mode, corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
+                    fixture = Fixture(directory, mode)
+                    if corrupt:
+                        fixture.put(runtime.STATE, '{"token":"DO-NOT-PRINT"')
+                    else:
+                        fixture.path(runtime.STATE).unlink()
+                    stdout = io.StringIO()
+                    with mock.patch.object(runtime, "Runtime", return_value=fixture.probe), \
+                            contextlib.redirect_stdout(stdout):
+                        self.assertEqual(runtime.main(["diagnostics", mode]), 0)
+                    result = json.loads(stdout.getvalue())
+                    self.assertEqual(result["mode"], mode)
+                    self.assertTrue(result["errors"])
+                    self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+                    if mode == "none":
+                        self.assertTrue(set(runtime.NONE_UNITS).issubset(result["units"]))
+                    self.assertTrue(all(argv[0] in ("systemctl", "journalctl") for argv, _ in fixture.calls))
+                    fixture.calls.clear()
+                    with mock.patch.object(runtime, "Runtime", return_value=fixture.probe), \
+                            contextlib.redirect_stderr(io.StringIO()):
+                        self.assertNotEqual(runtime.main(["exec", "--", "journalctl", "-u", "kubelet.service"]), 0)
+                    self.assertEqual(fixture.calls, [])
 
     def test_boot_guard_uses_only_temporary_markers(self):
         with tempfile.TemporaryDirectory() as directory:

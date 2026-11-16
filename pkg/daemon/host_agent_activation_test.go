@@ -20,6 +20,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	recoveryScript := filepath.Join(t.TempDir(), "recovery.sh")
 	service := &flexDaemonActivationService{
 		log:            slog.Default(),
+		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		paths:          paths,
 		systemdDir:     systemdDir,
 		recoveryScript: recoveryScript,
@@ -49,8 +50,9 @@ func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	service := &flexDaemonActivationService{
-		log:   slog.Default(),
-		state: &testStateStore{},
+		log:     slog.Default(),
+		state:   &testStateStore{},
+		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 	}
 	if err := service.Restart(t.Context()); err != nil {
 		t.Fatalf("Restart: %v", err)
@@ -64,7 +66,8 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 	t.Parallel()
 
 	service := &flexDaemonActivationService{
-		log: slog.Default(),
+		log:     slog.Default(),
+		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 			return false, errors.New("systemd unavailable")
 		},
@@ -111,6 +114,7 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 				resolveRoot:    func() string { return tt.now },
 				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
 				paths:          paths,
+				startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
@@ -143,6 +147,7 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 	service := &flexDaemonActivationService{
 		log:            slog.Default(),
 		paths:          paths,
+		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		systemdDir:     t.TempDir(),
 		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {

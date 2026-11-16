@@ -83,7 +83,8 @@ func checkInstalledNodeIsolation(ctx context.Context, candidate string) error {
 	if err != nil {
 		return err
 	}
-	state, err := store.Load(ctx)
+	loader := agentActivationStateLoader{startup: defaultContainerStartupStore(), load: store.Load}
+	state, err := loader.LoadState(ctx)
 	if err != nil || state == nil || state.isolationMode() == isolation.ModeNSpawn {
 		return err
 	}
@@ -113,6 +114,7 @@ type flexDaemonActivationService struct {
 	moveUnfinished   func() (bool, error)
 	paths            agentUpgradePaths
 	state            stateStore
+	startup          containerStartupReader
 	systemdDir       string
 	recoveryScript   string
 	serviceOptions   agentServiceOptions
@@ -122,7 +124,7 @@ type flexDaemonActivationService struct {
 
 func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentUpgradePaths, error) {
 	if log == nil {
-		log = slog.Default()
+		return nil, agentUpgradePaths{}, fmt.Errorf("logger is nil")
 	}
 	root := resolveRoot()
 	state, err := NewFileStateStore()
@@ -141,6 +143,7 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 		moveUnfinished: hostRootMoveUnfinishedHere,
 		paths:          paths,
 		state:          state,
+		startup:        defaultContainerStartupStore(),
 		systemdDir:     systemdSystemDir,
 		recoveryScript: recoveryScriptPathUnder(root),
 		serviceOptions: serviceOptions,
@@ -176,6 +179,9 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 			return agentbinary.ServicePlan{}, fmt.Errorf("the move of the agent's files to %s has not finished; restart %s, which finishes it, then retry",
 				hostroot.Path, ServiceUnitName)
 		}
+	}
+	if err := requireNoContainerStartupForAgentActivation(s.startup); err != nil {
+		return agentbinary.ServicePlan{}, err
 	}
 	inspectService := s.inspectService
 	if inspectService == nil {
@@ -235,6 +241,11 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 }
 
 func (s *flexDaemonActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
+	// Candidate verification can take time after Preflight. Recheck before
+	// the shared activator switches the host's current link.
+	if err := requireNoContainerStartupForAgentActivation(s.startup); err != nil {
+		return err
+	}
 	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
 }
 
@@ -296,7 +307,8 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 }
 
 func (s *flexDaemonActivationService) synchronizeActiveNode(ctx context.Context, expected string) error {
-	state, err := s.state.Load(ctx)
+	loader := agentActivationStateLoader{startup: s.startup, load: s.state.Load}
+	state, err := loader.LoadState(ctx)
 	if err != nil {
 		return fmt.Errorf("load active node state: %w", err)
 	}

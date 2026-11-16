@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
+	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -39,11 +40,13 @@ func (n managedContainerNode) UpgradeWithStartup(ctx context.Context, old contai
 
 type containerNodeOperator struct {
 	*nspawnNodeOperator
-	startup  containerStartupStore
-	newNode  func(containerops.Params) containerNode
-	resolve  func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
-	stage    func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
-	startNPD func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
+	startup            containerStartupStore
+	activationLockPath string
+	newNode            func(containerops.Params) containerNode
+	resolve            func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
+	stage              func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
+	startNPD           func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
+	syncPrepared       func(context.Context, containerNode) error
 }
 
 func validContainerState(state *State) bool {
@@ -57,9 +60,10 @@ func newContainerNodeOperator(base *nspawnNodeOperator, state *State) (*containe
 		return nil, fmt.Errorf("container node has no valid applied configuration or slot")
 	}
 	return &containerNodeOperator{
-		nspawnNodeOperator: base, startup: defaultContainerStartupStore(),
-		newNode: func(p containerops.Params) containerNode { return managedContainerNode{newContainerNode(p)} },
-		resolve: config.ResolveMachineGoalState,
+		nspawnNodeOperator: base, startup: defaultContainerStartupStore(), activationLockPath: agentUpgradeLockPath,
+		newNode:      func(p containerops.Params) containerNode { return managedContainerNode{newContainerNode(p)} },
+		resolve:      config.ResolveMachineGoalState,
+		syncPrepared: syncContainerFilesystems,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
 			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
@@ -114,6 +118,11 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err := o.requireNoStartup(); err != nil {
 		return nil, err
 	}
+	unlock, err := o.lockAgentActivation(log)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	state, err := o.applied(ctx)
 	if err != nil {
 		return nil, err
@@ -148,6 +157,9 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	// identity and configures the target. Publication precedes all exposure of
 	// target kubelet, including the supervising unit's post-start hook.
 	if err := node.UpgradeWithStartup(ctx, old, func(ctx context.Context) error {
+		if err := o.syncPrepared(ctx, node); err != nil {
+			return fmt.Errorf("persist prepared container before startup: %w", err)
+		}
 		startup.Phase = "starting"
 		return o.startup.Save(ctx, startup)
 	}); err != nil {
@@ -166,6 +178,11 @@ func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logg
 	if err != nil || startup == nil {
 		return err != nil, err
 	}
+	unlock, err := o.lockAgentActivation(log)
+	if err != nil {
+		return true, err
+	}
+	defer unlock()
 	state, err := o.applied(ctx)
 	if err != nil {
 		return true, err
@@ -194,6 +211,20 @@ func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logg
 	return true, nil
 }
 
+// Direct agent activation is a separate process. Share its nonblocking lock so
+// it cannot pass a startup check immediately before a repave publishes intent.
+func (o *containerNodeOperator) lockAgentActivation(log *slog.Logger) (func(), error) {
+	lock, err := agentbinary.AcquireHostActivationLock(o.activationLockPath)
+	if err != nil {
+		return nil, fmt.Errorf("serialize container repave with agent activation: %w", err)
+	}
+	return func() {
+		if err := lock.Close(); err != nil {
+			log.Warn("release container repave activation lock", "error", err)
+		}
+	}, nil
+}
+
 func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Logger, startup *containerStartup) error {
 	node := o.newNode(containerops.Params{Log: log, Config: startup.Next.NodeConfig, Slot: startup.Next.ActiveMachine})
 	gs, err := node.GoalState()
@@ -202,6 +233,11 @@ func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Log
 	}
 	if err := o.startNPD(ctx, log, noneNPDConfig(startup.Next), gs.NodeStart); err != nil {
 		return err
+	}
+	// Startup also enables the host supervisor and in-node NPD. Persist their
+	// boot state before committing completion or retiring the source slot.
+	if err := o.syncPrepared(ctx, node); err != nil {
+		return fmt.Errorf("persist started container before completion: %w", err)
 	}
 	if err := o.state.Save(ctx, startup.Next); err != nil {
 		return fmt.Errorf("persist frozen container state: %w", err)

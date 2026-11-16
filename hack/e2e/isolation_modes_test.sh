@@ -24,6 +24,7 @@ reset_fixture() {
   echo null >"${case_dir}/runtime"
   echo null >"${case_dir}/goal"
   unset FAIL_EXEC FAIL_RESET FAIL_VALIDATE STALE_GOAL EARLY_REPAVE STUCK_GOAL REBOOT_DELAY LOSE_SENTINEL REUSE_INNER_PIDS STALE_EPOCH FAIL_CLEANUP NAMESPACE_DELAY
+  unset REUSE_RESET_NONCE WRONG_REBOOT_VERSION UNHEALTHY_EXISTING FAIL_MODE INITIAL_CONTAINER_SLOT
 }
 
 state_get() {
@@ -43,6 +44,9 @@ remote_exec() {
       local count
       count="$(grep -c ' reset$' "${case_dir}/trace")"
       if [[ "${FAIL_RESET:-}" == "${count}" ]]; then return 42; fi
+      if [[ "$(<"${case_dir}/runtime")" != null ]]; then
+        cp "${case_dir}/runtime" "${case_dir}/before-reset"
+      fi
       echo null >"${case_dir}/runtime"
       if [[ "${LOSE_SENTINEL:-0}" == 1 && "$2" == *'/opt/unbounded/agent/bin/'* ]]; then
         find "${case_dir}/host" -name '*.aks-flex-node-e2e-preserve' -delete
@@ -61,6 +65,9 @@ for path in ("/etc/cni/net.d", "/var/lib/cni", "/var/lib/containerd"):
     source = source.replace(path, root + path)
 sys.argv = [script, owner, action]
 exec(compile(source, script, "exec"))' "${case_dir}/sentinel.py" "${owner}" "${action}" "${case_dir}/host" ;;
+    *'sudo -n timeout 30 journalctl --no-pager -n '*'-u unbounded-kubelet.service') echo host-kubelet-journal ;;
+    *'sudo -n timeout 30 journalctl --no-pager -n '*'-u unbounded-containerd.service') echo host-containerd-journal ;;
+    *'sudo -n timeout 30 journalctl --no-pager -n '*'-u aks-flex-node-npd.service') echo host-npd-journal ;;
     *chmod*) ;;
     *) fail "unexpected remote command" ;;
   esac
@@ -86,8 +93,19 @@ node_join_token() {
   [[ "$(<"${case_dir}/runtime")" == null && "$(<"${case_dir}/node")" == null ]] || { fail 'live mode flip'; return 1; }
   record "join $2"
   machine_configmap_upsert token-vm "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
-  local slot=""; [[ "$2" != container ]] || slot=kube1
+  local slot="" registration
+  if [[ "$2" == container ]]; then
+    slot=kube1
+    if [[ "$(grep -c '^join container$' "${case_dir}/trace")" == 1 ]]; then slot="${INITIAL_CONTAINER_SLOT:-kube1}"; fi
+  fi
   make_node "$2" "${E2E_KUBERNETES_VERSION}" "${slot}"
+  if [[ "${REUSE_RESET_NONCE:-0}" == 1 && -f "${case_dir}/before-reset" ]]; then
+    registration="$(jq -r '.registration' "${case_dir}/before-reset")"
+    jq --arg reg "${registration}" '.registration=$reg' "${case_dir}/runtime" >"${case_dir}/tmp"
+    mv "${case_dir}/tmp" "${case_dir}/runtime"
+    jq --arg reg "${registration}" '.metadata.labels["kubernetes.azure.com/flex-runtime-generation"]=$reg' "${case_dir}/node" >"${case_dir}/tmp"
+    mv "${case_dir}/tmp" "${case_dir}/node"
+  fi
 }
 machine_configmap_upsert() {
   record "goal $*"
@@ -107,7 +125,12 @@ runtime_on() {
   [[ "${ip}" == 192.0.2.10 ]] || return 91
   record "runtime ${action} $*"
   case "${action}" in
-    snapshot) printf '%s\n' "$(<"${case_dir}/runtime")" ;;
+    mode)
+      [[ "${FAIL_MODE:-0}" != 1 ]] || return 41
+      jq '{mode}' "${case_dir}/runtime" ;;
+    snapshot)
+      if [[ "${UNHEALTHY_EXISTING:-0}" == 1 ]] && ! grep -q ' reset$' "${case_dir}/trace"; then return 41; fi
+      printf '%s\n' "$(<"${case_dir}/runtime")" ;;
     validate) [[ "${FAIL_VALIDATE:-0}" != 1 ]] ;;
     validate-reset) [[ "$(<"${case_dir}/runtime")" == null ]] ;;
     diagnostics) echo '{"sanitized":true}' ;;
@@ -194,6 +217,10 @@ kubectl() {
           mv "${case_dir}/tmp" "${case_dir}/runtime"
         fi
         [[ "${STALE_EPOCH:-0}" == 1 ]] || echo $(( $(<"${case_dir}/epoch") + 100 )) >"${case_dir}/epoch"
+        if [[ "${WRONG_REBOOT_VERSION:-0}" == 1 ]]; then
+          jq '.status.nodeInfo.kubeletVersion="v1.99.0"' "${case_dir}/node" >"${case_dir}/tmp"
+          mv "${case_dir}/tmp" "${case_dir}/node"
+        fi
         touch "${case_dir}/reboot-done"
       fi
       echo Complete ;;
@@ -262,11 +289,36 @@ both_modes() {
 }
 
 existing_mode() {
-  reset_fixture existing
-  make_node nspawn 1.35.0 kube1
-  isolation_modes_mode none
-  assert_contains '^runtime validate-reset nspawn$'
-  [[ "$(head -n1 <(grep '^join ' "${case_dir}/trace"))" == 'join none' ]]
+  local previous mode slot
+  for previous in fresh nspawn none container; do
+    for mode in none container; do
+      reset_fixture "existing-${previous}-to-${mode}"
+      if [[ "${previous}" != fresh ]]; then
+        slot=kube1; [[ "${previous}" != none ]] || slot=''
+        make_node "${previous}" 1.35.0 "${slot}"
+        UNHEALTHY_EXISTING=1
+      fi
+      isolation_modes_mode "${mode}"
+      if [[ "${previous}" == fresh ]]; then
+        assert_absent '^runtime mode( |$)'
+        assert_contains "^runtime validate-reset ${mode} --allow-missing-agent$"
+      else
+        assert_contains '^runtime mode $'
+        assert_contains "^runtime validate-reset ${previous}$"
+        assert_absent 'allow-missing-agent'
+        awk '/remote .* reset$/{reset=1} /runtime snapshot/{if (!reset) exit 1}' "${case_dir}/trace"
+      fi
+      [[ "$(grep -c 'remote .* reset$' "${case_dir}/trace")" == 3 ]]
+      [[ "$(head -n1 <(grep '^join ' "${case_dir}/trace"))" == "join ${mode}" ]]
+    done
+  done
+  reset_fixture unreadable-mode
+  make_node none 1.35.0
+  FAIL_MODE=1
+  local rc=0
+  isolation_modes_mode container || rc=$?
+  [[ "${rc}" == 41 ]] || fail "lost state-only failure: ${rc}"
+  assert_absent 'remote .* reset$|^join '
 }
 
 failure_propagation() {
@@ -333,19 +385,23 @@ assertion_contracts() {
   before="$(<"${case_dir}/runtime")"
   make_node container expected kube2
   after="$(<"${case_dir}/runtime")"; node="$(<"${case_dir}/node")"
-  _im_assert_ready container uid-1 expected "${before}" "${after}" "${node}"
-  if _im_assert_ready container uid-2 expected "${before}" "${after}" "${node}"; then fail 'accepted stale UID'; fi
-  if _im_assert_ready container uid-1 newer "${before}" "${after}" "${node}"; then fail 'accepted stale generation'; fi
+  _im_assert_ready container uid-1 expected "${before}" "${after}" "${node}" true
+  if _im_assert_ready container uid-2 expected "${before}" "${after}" "${node}" true; then fail 'accepted stale UID'; fi
+  if _im_assert_ready container uid-1 newer "${before}" "${after}" "${node}" true; then fail 'accepted stale generation'; fi
   before_same_slot="$(jq '.slot="kube2" | .identity="kube2"' <<<"${before}")"
-  if _im_assert_ready container uid-1 expected "${before_same_slot}" "${after}" "${node}"; then fail 'accepted unchanged slot'; fi
-  if _im_assert_ready container uid-1 expected "${before}" "${after}" "$(jq '.metadata.labels={}' <<<"${node}")"; then fail 'accepted wrong registration'; fi
+  if _im_assert_ready container uid-1 expected "${before_same_slot}" "${after}" "${node}" true; then fail 'accepted unchanged repave slot'; fi
+  _im_assert_ready container uid-1 expected "${before_same_slot}" "${after}" "${node}"
+  if _im_assert_ready container uid-1 expected "${before}" "${after}" "$(jq '.metadata.labels={}' <<<"${node}")" true; then fail 'accepted wrong registration'; fi
   stale="$(jq --arg reg "$(jq -r '.registration' <<<"${before}")" '.registration=$reg' <<<"${after}")"
   node_stale="$(jq --arg reg "$(jq -r '.registration' <<<"${before}")" '.metadata.labels["kubernetes.azure.com/flex-runtime-generation"]=$reg' <<<"${node}")"
-  if _im_assert_ready container uid-1 expected "${before}" "${stale}" "${node_stale}"; then fail 'accepted reused container registration'; fi
+  if _im_assert_ready container uid-1 expected "${before}" "${stale}" "${node_stale}" true; then fail 'accepted reused container repave registration'; fi
+  if _im_assert_ready container uid-1 expected "${before}" "${stale}" "${node_stale}"; then fail 'accepted reused container reset registration'; fi
   _im_assert_stable "${after}" "${after}" uid-2 "${node}"
   if _im_assert_stable "${before}" "${after}" uid-2 "${node}"; then fail 'accepted changed live runtime'; fi
   # Reboot identity is checked separately: OCI inner PIDs may repeat exactly.
   _im_assert_stable "${after}" "${after}" uid-2 "${node}" true
+  if _im_assert_stable "${after}" "${after}" uid-2 "$(jq '.status.nodeInfo.kubeletVersion="v1.99.0"' <<<"${node}")" true; then fail 'accepted wrong reboot kubelet version'; fi
+  _im_assert_stable "${after}" "${after}" uid-2 "$(jq '.status.nodeInfo.kubeletVersion="1.35.0"' <<<"${node}")" true
   make_node none expected
   before="$(<"${case_dir}/runtime")"
   make_node none expected
@@ -404,8 +460,64 @@ container_reboot_budget() {
   [[ "$(grep -c '^join container' "${case_dir}/trace")" == 1 ]]
 }
 
+reset_rejoin_registration() {
+  local mode
+  for mode in none container; do
+    reset_fixture "reused-reset-registration-${mode}"
+    REUSE_RESET_NONCE=1
+    E2E_NODE_JOIN_TIMEOUT=10
+    if isolation_modes_mode "${mode}"; then fail "accepted reused ${mode} reset registration"; fi
+    [[ "$(grep -c "^join ${mode}$" "${case_dir}/trace")" == 2 ]]
+    [[ "$(grep -c '^ready token-vm$' "${case_dir}/trace")" == 3 ]] || fail 'rejoin passed the Ready fence'
+    [[ "$(grep -c '^runtime validate-reset ' "${case_dir}/trace")" == 3 ]]
+    [[ "$(jq -r '.registration' "${case_dir}/runtime")" == "$(jq -r '.registration' "${case_dir}/before-reset")" ]]
+    [[ "$(jq -r '.metadata.uid' "${case_dir}/node")" == uid-3 ]]
+  done
+  reset_fixture same-kube1-after-reset
+  INITIAL_CONTAINER_SLOT=kube2
+  isolation_modes_mode container
+  [[ "$(jq -r '.slot' "${case_dir}/before-reset")" == kube1 ]]
+  [[ "$(jq -r '.slot' "${case_dir}/runtime")" == kube1 ]]
+  [[ "$(jq -r '.registration' "${case_dir}/runtime")" != "$(jq -r '.registration' "${case_dir}/before-reset")" ]]
+  [[ "$(grep -c '^ready token-vm$' "${case_dir}/trace")" == 4 ]] || fail 'same-slot rejoin did not become Ready'
+}
+
+reboot_version_fence() {
+  local mode
+  for mode in none container; do
+    reset_fixture "wrong-reboot-version-${mode}"
+    WRONG_REBOOT_VERSION=1
+    E2E_NODE_JOIN_TIMEOUT=10
+    if isolation_modes_mode "${mode}"; then fail "accepted wrong ${mode} reboot version"; fi
+    [[ -f "${case_dir}/reboot-done" && "$(<"${case_dir}/epoch")" == 10100 ]]
+    [[ "$(jq -r '.kubeletVersion' "${case_dir}/runtime")" == v1.35.0 ]]
+    [[ "$(jq -r '.status.nodeInfo.kubeletVersion' "${case_dir}/node")" == v1.99.0 ]]
+    [[ "$(grep -c '^join ' "${case_dir}/trace")" == 1 ]]
+    assert_absent '^goal .*settings$'
+    [[ "$(grep -c '^kubectl delete node ' "${case_dir}/trace")" == 1 ]]
+  done
+}
+
+early_log_routing() {
+  reset_fixture early-logs
+  local im_mode=none im_ip=192.0.2.10 im_name=token-vm im_owner=iso-none-early
+  local im_ns=iso-none-early im_selector=e2e.aks-flex-node.io/isolation-owner=iso-none-early
+  local im_logs="${E2E_LOG_DIR}/early" prefix="${E2E_LOG_DIR}/iso-none-early-failure"
+  _im_diagnostics failure
+  [[ "$(<"${case_dir}/runtime")" == null ]]
+  [[ "$(grep -c '^runtime diagnostics none$' "${case_dir}/trace")" == 2 ]]
+  assert_absent '^runtime diagnostics $'
+  [[ "$(<"${prefix}-host-kubelet.log")" == host-kubelet-journal ]]
+  [[ "$(<"${prefix}-host-containerd.log")" == host-containerd-journal ]]
+  [[ "$(<"${prefix}-host-npd.log")" == host-npd-journal ]]
+  # Guest routing is still attempted, but cannot read absent applied state.
+  assert_contains '^runtime exec -- journalctl .* -u kubelet.service -u unbounded-kubelet.service$'
+  assert_contains '^runtime exec -- journalctl .* -u containerd.service -u unbounded-containerd.service$'
+  [[ -f "${im_logs}/failure.log" ]]
+}
+
 failed=0
-for test in mode_validation both_modes existing_mode failure_propagation cleanup_exit_codes namespace_cleanup_budget reset_fences assertion_contracts live_generation_fence container_host_ownership container_reboot_budget; do
+for test in mode_validation both_modes existing_mode failure_propagation cleanup_exit_codes namespace_cleanup_budget reset_fences assertion_contracts live_generation_fence container_host_ownership container_reboot_budget reset_rejoin_registration reboot_version_fence early_log_routing; do
   set +e
   (set -e; "${test}") >"${work}/${test}.log" 2>&1
   rc=$?

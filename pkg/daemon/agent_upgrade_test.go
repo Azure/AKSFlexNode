@@ -108,6 +108,7 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent-upgrade.json")
 	executor := &hostAgentUpgradeExecutor{
 		state:   &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
+		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		signals: agentUpgradeSignalStore{path: path},
 	}
 	if err := executor.RecordPending(t.Context(), "operation-1"); err != nil {
@@ -133,6 +134,7 @@ func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
 		log:             slog.New(slog.DiscardHandler),
 		paths:           paths,
 		signals:         agentUpgradeSignalStore{path: paths.SignalPath},
+		startup:         containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		guardLegacySeed: func() error { return guardErr },
 	}
 
@@ -373,7 +375,10 @@ func TestPublishAgentUpgradeSignalPreservesSignalWhenRollbackFails(t *testing.T)
 	}); err != nil {
 		t.Fatalf("write signal: %v", err)
 	}
-	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "current-instance"}
+	executor := &hostAgentUpgradeExecutor{
+		paths: paths, signals: signals, instanceID: "current-instance",
+		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
+	}
 	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err == nil {
 		t.Fatal("publishAndClearAgentUpgradeSignal error = nil")
 	}
@@ -486,6 +491,7 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 		paths:      paths,
 		signals:    signals,
 		instanceID: "restarted-instance",
+		startup:    containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		nspawnBinaryPath: func(string) string {
 			return nspawnBinary
 		},
