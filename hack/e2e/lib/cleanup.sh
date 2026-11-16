@@ -68,6 +68,31 @@ _collect_vm_logs() {
   log_info "Logs saved to ${E2E_LOG_DIR}/${prefix}-*.log"
 }
 
+# Activity records survive resource deletion and identify the caller behind
+# pool writes that can overlap Machine registration. Do not collect properties
+# or full claims: bootstrap actions can include sensitive response material.
+_collect_aks_activity() {
+  local subscription resource_group cluster_id
+  subscription="$(state_get subscription_id)"
+  resource_group="$(state_get resource_group)"
+  cluster_id="$(state_get cluster_id)"
+  [[ -n "${subscription}" && -n "${resource_group}" && -n "${cluster_id}" ]] || return 0
+
+  if ! { timeout 60 az monitor activity-log list \
+    --subscription "${subscription}" \
+    --resource-group "${resource_group}" \
+    --offset 4h --max-events 1000 \
+    --query '[].{time:eventTimestamp,operation:operationName.value,status:status.value,caller:caller,correlationId:correlationId,operationId:operationId,resourceId:resourceId,applicationId:claims.appid}' \
+    --output json |
+      jq --arg cluster "${cluster_id}" '
+        ($cluster | ascii_downcase) as $root |
+        map(select((.resourceId // "" | ascii_downcase) as $id |
+          $id == $root or ($id | startswith($root + "/"))))
+      '; } > "${E2E_LOG_DIR}/azure-activity.json" 2> "${E2E_LOG_DIR}/azure-activity.err"; then
+    log_warn "Azure Activity Log unavailable; see azure-activity.err for access/query details"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # collect_logs - Collect logs from all VMs
 # ---------------------------------------------------------------------------
@@ -75,6 +100,7 @@ collect_logs() {
   log_section "Collecting Logs"
 
   mkdir -p "${E2E_LOG_DIR}"
+  _collect_aks_activity
 
   local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip arc_vm_ip
   msi_vm_ip="$(state_get msi_vm_ip)"

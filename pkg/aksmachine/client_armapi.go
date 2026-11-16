@@ -2,6 +2,7 @@ package aksmachine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,10 +25,11 @@ const (
 	// ARM can throttle concurrent node bootstrap requests for several minutes.
 	// Keep the backoff bounded while allowing a realistic subscription burst to
 	// clear without requiring the whole bootstrap workflow to restart.
-	armMachineMaxRetries    = 30
-	armMachineTryTimeout    = 2 * time.Minute
-	armMachineRetryDelay    = 5 * time.Second
-	armMachineMaxRetryDelay = time.Minute
+	armMachineMaxRetries               = 30
+	armMachineTryTimeout               = 2 * time.Minute
+	armMachineRetryDelay               = 5 * time.Second
+	armMachineMaxRetryDelay            = time.Minute
+	armMachineOperationConflictTimeout = 2 * time.Minute
 )
 
 type armMachineClient struct {
@@ -69,17 +71,8 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 		},
 	}
 	agentPoolID := c.machineID.Parent
-	clusterID := agentPoolID.Parent
 	c.logger.Info("creating or updating AKS machine", "machine", c.machineID.Name, "pool", agentPoolID.Name)
-	poller, err := c.client.BeginCreateOrUpdate(
-		ctx,
-		c.machineID.ResourceGroupName,
-		clusterID.Name,
-		agentPoolID.Name,
-		c.machineID.Name,
-		params,
-		nil,
-	)
+	poller, err := c.beginCreateWithPoolRetry(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("begin create machine %q: %w", c.machineID.Name, err)
 	}
@@ -95,6 +88,63 @@ func (c *armMachineClient) Create(ctx context.Context, desired GoalState) (*Mach
 		return nil, fmt.Errorf("validate create machine response: %w", err)
 	}
 	return result, nil
+}
+
+func (c *armMachineClient) beginCreateWithPoolRetry(ctx context.Context, params armcontainerservice.Machine) (*runtime.Poller[armcontainerservice.MachinesClientCreateOrUpdateResponse], error) {
+	poolID := c.machineID.Parent
+	request := func(ctx context.Context) (*runtime.Poller[armcontainerservice.MachinesClientCreateOrUpdateResponse], error) {
+		return c.client.BeginCreateOrUpdate(ctx, c.machineID.ResourceGroupName, poolID.Parent.Name, poolID.Name, c.machineID.Name, params, nil)
+	}
+	poller, err := request(ctx)
+	if !isARMOperationInProgress(err) {
+		return poller, err
+	}
+
+	// A pool update rejects this PUT before it is accepted. Retry only that
+	// explicit conflict; accepted long-running operations keep their poller.
+	ctx, cancel := context.WithTimeout(ctx, armMachineOperationConflictTimeout)
+	defer cancel()
+	for delay := armMachineRetryDelay; ; delay = min(delay*2, armMachineMaxRetryDelay) {
+		c.logger.Info("waiting for concurrent AKS pool operation", "pool", poolID.Name, "retryDelay", delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("wait for concurrent AKS pool operation: %w", errors.Join(ctx.Err(), err))
+		case <-timer.C:
+		}
+		poller, err = request(ctx)
+		if !isARMOperationInProgress(err) {
+			return poller, err
+		}
+	}
+}
+
+func isARMOperationInProgress(err error) bool {
+	var responseErr *azcore.ResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	if strings.EqualFold(responseErr.ErrorCode, "AnotherOperationInProgress") {
+		return true
+	}
+	if !strings.EqualFold(responseErr.ErrorCode, "OperationNotAllowed") || responseErr.RawResponse == nil {
+		return false
+	}
+	payload, err := runtime.Payload(responseErr.RawResponse)
+	if err != nil {
+		return false
+	}
+	var body struct {
+		Subcode string `json:"subcode"`
+		Error   struct {
+			Subcode string `json:"subcode"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return false
+	}
+	return strings.EqualFold(body.Subcode, "AnotherOperationInProgress") || strings.EqualFold(body.Error.Subcode, "AnotherOperationInProgress")
 }
 
 func (c *armMachineClient) Get(ctx context.Context) (*Machine, error) {

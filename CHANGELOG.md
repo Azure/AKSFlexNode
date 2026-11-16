@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Retry ARM Machine creation rejected by an explicit concurrent pool operation with bounded backoff, while leaving unrelated conflicts and authorization failures fatal.
 - Let systemd retry transient NPD startup failures and require a stable active/running process before completion, with bounded readiness waits and cancellation.
 - Create missing bootstrap host-root directories with traversable permissions under a private umask, without changing existing directories or credential-file permissions.
 - Give online nspawn NPD access to the real host kernel log through a read-only `/dev/kmsg` bind and device-controller grant, fixing startup failure with pipe-console workers.

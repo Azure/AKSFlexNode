@@ -641,6 +641,12 @@ Confirm:
 - role assignment propagation has completed;
 - `--cluster-resource-id` and `--agent-pool-name` are correct.
 
+An HTTP 409 with `AnotherOperationInProgress` means AKS is serializing a
+concurrent operation on the pool. The agent retries that explicitly rejected
+Machine request with bounded backoff for up to two minutes. If the wait expires,
+inspect the pool's current operation and let it finish before retrying bootstrap.
+Other conflicts and authorization failures are not retried by this handler.
+
 ### Bootstrap token expired
 
 Generate fresh data by rerunning bootstrap with `--fetch-bootstrap-data`. Do not
