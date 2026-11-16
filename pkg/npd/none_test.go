@@ -124,8 +124,14 @@ func TestHostNativeNPDForcedRestart(t *testing.T) {
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				if !slices.Equal(calls, tc.want) {
-					t.Fatalf("NPD commands = %v, want %v", calls, tc.want)
+				wantActions := tc.want[:len(tc.want)-1]
+				if len(calls) < len(wantActions)+2 || !slices.Equal(calls[:len(wantActions)], wantActions) {
+					t.Fatalf("NPD commands = %v, want actions %v followed by stable readiness checks", calls, wantActions)
+				}
+				for _, call := range calls[len(wantActions):] {
+					if call != npdStatusCommand(HostUnitNPD) {
+						t.Fatalf("unexpected command after startup actions: %s", call)
+					}
 				}
 			}
 			after, err := os.Stat(path)

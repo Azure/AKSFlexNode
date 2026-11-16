@@ -14,7 +14,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
-func TestNPDRestartChecksRunningProcessAfterSuccessfulJob(t *testing.T) {
+func TestNPDRunningPIDValidation(t *testing.T) {
 	t.Parallel()
 	showErr := errors.New("systemd status unavailable")
 	for _, tc := range []struct {
@@ -65,7 +65,17 @@ func TestNPDRestartChecksRunningProcessAfterSuccessfulJob(t *testing.T) {
 						unit = HostUnitNPD
 						ns.RootOverride = none.Root{HostRoot: root, Layout: none.Layout{Base: filepath.Join(root, "node")}, Version: "v1"}
 					}
-					err := Restart(slog.New(slog.DiscardHandler), &config.Config{}, ns).Do(t.Context())
+					task, ok := Restart(slog.New(slog.DiscardHandler), &config.Config{}, ns).(*startTask)
+					if !ok {
+						t.Fatal("Restart did not return an NPD task")
+					}
+					if err := task.ensureSystemdUnit(t.Context(), true); err != nil {
+						t.Fatal(err)
+					}
+					pid, err := task.runningPID(t.Context())
+					if err == nil && pid == 0 {
+						t.Fatal("running NPD has no main process")
+					}
 					if (err != nil) != tc.wantErr {
 						t.Fatalf("Restart error = %v, wantErr = %t", err, tc.wantErr)
 					}

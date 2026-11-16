@@ -17,7 +17,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -27,12 +26,14 @@ import (
 var serviceTemplate string
 
 const (
-	systemdUnitNPD               = "node-problem-detector.service"
-	HostUnitNPD                  = "aks-flex-node-npd.service"
-	kubeletClientCertificatePath = hostnode.KubeletClientPKIDir + "/kubelet-client-current.pem"
+	systemdUnitNPD = "node-problem-detector.service"
+	HostUnitNPD    = "aks-flex-node-npd.service"
 )
 
-var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
+var (
+	tmpl             = template.Must(template.New("npd-service").Parse(serviceTemplate))
+	errNPDNotRunning = errors.New("NPD unit is not running")
+)
 
 type startTask struct {
 	log            *slog.Logger
@@ -42,7 +43,8 @@ type startTask struct {
 	nodeName       string
 	unit           string
 	forceRestart   bool
-	tlsBootstrap   bool
+	pollInterval   time.Duration
+	stableFor      time.Duration
 	binaryPath     string
 	run            func(context.Context, *slog.Logger, ...string) (string, error)
 }
@@ -62,7 +64,8 @@ func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart
 		root:           nodeStart.Root(),
 		nodeName:       nodeStart.NodeName,
 		run:            nodeStart.Exec,
-		tlsBootstrap:   len(nodeStart.Kubelet.KubeconfigData) == 0 && nodeStart.Kubelet.ExecCredential == nil && nodeStart.Kubelet.BootstrapToken != "",
+		pollInterval:   time.Second,
+		stableFor:      2 * time.Second,
 	}
 	if nodeStart.HostNative() {
 		task.unit = HostUnitNPD
@@ -86,10 +89,8 @@ func Restart(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeSta
 func (t *startTask) Name() string { return "start-npd" }
 
 func (t *startTask) Do(ctx context.Context) error {
-	if t.tlsBootstrap {
-		if err := t.waitForKubeletCredentials(ctx); err != nil {
-			return err
-		}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("start NPD unit %s: %w", t.unit, err)
 	}
 	serviceUpdated, err := t.ensureServiceFile()
 	if err != nil {
@@ -99,40 +100,45 @@ func (t *startTask) Do(ctx context.Context) error {
 	if err := t.ensureSystemdUnit(ctx, serviceUpdated || t.forceRestart); err != nil {
 		return err
 	}
-	return t.verifyRunning(ctx)
+	return t.waitForRunning(ctx)
 }
 
-func (t *startTask) waitForKubeletCredentials(ctx context.Context) error {
+func (t *startTask) waitForRunning(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(t.pollInterval)
 	defer ticker.Stop()
 
-	// Kubelet can be active and write its kubeconfig before TLS bootstrap
-	// publishes the PEM it references. NPD loads both at process startup.
-	t.log.Info("waiting for kubelet TLS bootstrap credentials before NPD")
+	var lastPID uint64
+	var stableSince time.Time
+	var lastStatus error
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("wait for kubelet TLS bootstrap credentials before NPD: %w", err)
+			return fmt.Errorf("NPD unit %s did not stay running (last MainPID=%d): %w", t.unit, lastPID, errors.Join(err, lastStatus))
 		}
-		ready := true
-		for _, path := range []string{t.kubeconfigPath, kubeletClientCertificatePath} {
-			// Probe in the node: an absolute kubelet certificate symlink must
-			// resolve inside its filesystem, not relative to the host root.
-			if _, err := t.run(ctx, t.log, "test", "-s", path); err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return fmt.Errorf("wait for kubelet TLS bootstrap credentials before NPD: %w", err)
-				}
-				ready = false
-				break
+		pid, err := t.runningPID(ctx)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("wait for NPD unit %s: %w", t.unit, ctxErr)
+		}
+		if err != nil {
+			if !errors.Is(err, errNPDNotRunning) {
+				return err
 			}
-		}
-		if ready {
-			return nil
+			lastPID, stableSince, lastStatus = 0, time.Time{}, err
+		} else {
+			lastStatus = nil
+			if pid != lastPID {
+				lastPID, stableSince = pid, time.Now()
+			}
+			// Type=simple may look running briefly before NPD exits. Let
+			// systemd retry failures and require a stable process, not a start job.
+			if time.Since(stableSince) >= t.stableFor {
+				return nil
+			}
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("wait for kubelet TLS bootstrap credentials before NPD: %w", ctx.Err())
+			return fmt.Errorf("NPD unit %s did not stay running (last MainPID=%d): %w", t.unit, lastPID, errors.Join(ctx.Err(), lastStatus))
 		case <-ticker.C:
 		}
 	}
@@ -170,12 +176,10 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 	return true, nil
 }
 
-// verifyRunning distinguishes a live detector from a successful systemd job
-// that has already transitioned into an automatic restart attempt.
-func (t *startTask) verifyRunning(ctx context.Context) error {
+func (t *startTask) runningPID(ctx context.Context) (uint64, error) {
 	out, err := t.run(ctx, t.log, "systemctl", "show", "--property=ActiveState", "--property=SubState", "--property=MainPID", t.unit)
 	if err != nil {
-		return fmt.Errorf("read NPD unit %s status: %w", t.unit, err)
+		return 0, fmt.Errorf("read NPD unit %s status: %w", t.unit, err)
 	}
 	properties := make(map[string]string)
 	for _, line := range strings.Split(out, "\n") {
@@ -185,10 +189,10 @@ func (t *startTask) verifyRunning(ctx context.Context) error {
 	}
 	pid, err := strconv.ParseUint(properties["MainPID"], 10, 32)
 	if err != nil || pid == 0 || properties["ActiveState"] != "active" || properties["SubState"] != "running" {
-		return fmt.Errorf("NPD unit %s is not running (ActiveState=%q SubState=%q MainPID=%q)",
-			t.unit, properties["ActiveState"], properties["SubState"], properties["MainPID"])
+		return 0, fmt.Errorf("%w: %s (ActiveState=%q SubState=%q MainPID=%q)",
+			errNPDNotRunning, t.unit, properties["ActiveState"], properties["SubState"], properties["MainPID"])
 	}
-	return nil
+	return pid, nil
 }
 
 func (t *startTask) ensureSystemdUnit(ctx context.Context, updated bool) error {
