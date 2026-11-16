@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestEnsureAgentUpgradeLayoutMigratesLegacyBinaryIdempotently(t *testing.T) {
@@ -153,6 +154,7 @@ func TestInstallAndSwitchAgentBinaryRejectsInvalidInputsWithoutSwitching(t *test
 		"ftp://example.com/agent.tar.gz",
 		strings.Repeat("0", 64),
 		paths,
+		isolation.ModeNSpawn,
 	)
 	if err == nil {
 		t.Fatal("installAndSwitchAgentBinary error = nil")

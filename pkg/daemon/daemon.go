@@ -75,7 +75,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	operator, err := newNSpawnNodeOperator(cfg, store)
+	operator, err := newNodeOperator(ctx, cfg, store)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
 	if containerized {
-		convergence := newContainerAgentConvergence(log, operator)
+		nspawnOperator, ok := operator.(*nspawnNodeOperator)
+		if !ok {
+			return fmt.Errorf("containerized agent requires nspawn isolation")
+		}
+		convergence := newContainerAgentConvergence(log, nspawnOperator)
 		held, err := convergence.converge(ctx)
 		if err != nil {
 			return err

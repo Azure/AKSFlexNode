@@ -128,6 +128,7 @@ The following table is generated from the Cobra command tree. Run `make docs-cli
 | `aks-flex-node recover-agent-upgrade [flags]` | Restore the last-known-good agent after a failed upgrade | — | hidden | `--message` |
 | `aks-flex-node reset` | Remove AKS node configuration | `unbootstrap` | listed | — |
 | `aks-flex-node start [flags]` | Bootstrap the node and start the agent service | `bootstrap` | listed | `--config` (required) |
+| `aks-flex-node supports-isolation MODE` | Check whether the agent supports a node isolation mode | — | hidden | — |
 | `aks-flex-node token` | Kubernetes exec based authentication provider. | — | listed | — |
 | `aks-flex-node token kubelogin [flags]` | Retrieves token via Azure/kubelogin. | — | listed | `--client-certificate-file`; `--pop-claims`; `--pop-enabled`; `--server-id` (default: `6dae42f8-4368-4678-94ff-3960e28e3630`) |
 | `aks-flex-node version` | Show version information | — | listed | — |

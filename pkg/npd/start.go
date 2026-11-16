@@ -44,6 +44,9 @@ type startTask struct {
 // Start renders and starts NPD through the node's filesystem and executor.
 func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart) phases.Task {
 	if disabledForOfflineArtifacts(cfg) {
+		if nodeStart.HostNative() {
+			return &disableHostTask{log: log, root: nodeStart.Root(), run: nodeStart.Exec}
+		}
 		return disabledTask{name: "start-npd", log: log}
 	}
 
@@ -72,6 +75,42 @@ func Restart(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeSta
 		start.forceRestart = true
 	}
 	return task
+}
+
+type disableHostTask struct {
+	log  *slog.Logger
+	root isolation.NodeRoot
+	run  func(context.Context, *slog.Logger, ...string) (string, error)
+}
+
+func (t *disableHostTask) Name() string { return "start-npd" }
+
+func (t *disableHostTask) Do(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("disable NPD unit %s: %w", HostUnitNPD, err)
+	}
+	unitPath := t.root.Path(filepath.Join("/etc/systemd/system", HostUnitNPD))
+	if _, err := os.Stat(unitPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("stat NPD unit %s: %w", HostUnitNPD, err)
+	}
+
+	// Keep the unit file as the ownership record; stop and disable can be
+	// retried even after the active version no longer contains NPD.
+	for _, action := range []string{"stop", "disable"} {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("disable NPD unit %s: %w", HostUnitNPD, err)
+		}
+		if _, err := t.run(ctx, t.log, "systemctl", action, HostUnitNPD); err != nil {
+			return fmt.Errorf("%s NPD unit %s: %w", action, HostUnitNPD, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("disable NPD unit %s: %w", HostUnitNPD, err)
+	}
+	t.log.Info("Host NPD unit stopped and disabled for offline artifacts", "unit", HostUnitNPD)
+	return nil
 }
 
 func (t *startTask) Name() string { return "start-npd" }

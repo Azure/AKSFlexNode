@@ -16,6 +16,8 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
@@ -204,6 +206,28 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		return err
 	}
 
+	applied, err := state.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if applied != nil && applied.isolationMode() == isolation.ModeNone {
+		if applied.NodeConfig == nil {
+			return fmt.Errorf("none node has no applied configuration")
+		}
+		gs, err := newNoneRuntime(noneops.Params{Log: log, Config: applied.NodeConfig}).GoalState()
+		if err != nil {
+			return err
+		}
+		if gs.NodeStart.LocalDNS.Enabled {
+			if err := nodestart.WriteLocalDNSNetworkFiles(gs.NodeStart); err != nil {
+				return err
+			}
+		}
+		if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+			return err
+		}
+		return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())))
+	}
 	active, err := activeMachineFromStore(ctx, state)
 	if err != nil {
 		return err

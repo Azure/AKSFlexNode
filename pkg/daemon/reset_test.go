@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -9,7 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // TestResetNodeCleansUpLocalDNS pins that reset runs the library's full
@@ -99,5 +104,95 @@ func TestRemoveFilesTaskIsIdempotent(t *testing.T) {
 	}
 	if _, err := os.Lstat(present); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("file was not removed: %v", err)
+	}
+}
+
+func TestResetNodeAppliedStateRouting(t *testing.T) {
+	t.Parallel()
+	noneState := func() *State {
+		return &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
+	}
+	for _, tc := range []struct {
+		name    string
+		state   func() *State
+		damage  string
+		want    string
+		wantErr bool
+	}{
+		{name: "missing state keeps legacy reset", want: "nspawn"},
+		{name: "legacy nspawn state", state: func() *State { return &State{ActiveMachine: "kube1"} }, want: "nspawn"},
+		{name: "explicit nspawn state", state: func() *State { return &State{Isolation: isolation.ModeNSpawn} }, want: "nspawn"},
+		{name: "none state", state: noneState, want: "none"},
+		{name: "none without config", state: func() *State { return &State{Isolation: isolation.ModeNone} }, wantErr: true},
+		{name: "none with container config", state: func() *State {
+			return &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "container"}}
+		}, wantErr: true},
+		{name: "container unsupported", state: func() *State { return &State{Isolation: isolation.ModeContainer} }, wantErr: true},
+		{name: "unsupported mode", state: func() *State { return &State{Isolation: "unknown"} }, wantErr: true},
+		{name: "unreadable state", damage: "unreadable", wantErr: true},
+		{name: "malformed state", damage: "malformed", wantErr: true},
+		{name: "tampered none state", state: noneState, damage: "checksum", wantErr: true},
+		{name: "missing legacy checksum", state: func() *State { return &State{ActiveMachine: "kube1"} }, damage: "sidecar", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			store, err := newFileStateStore(filepath.Join(root, "daemon-state.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.state != nil {
+				if err := store.Save(t.Context(), tc.state()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch tc.damage {
+			case "unreadable":
+				if err := os.Mkdir(store.path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "malformed":
+				putNoneResetFile(t, root, stateFileName, "{")
+			case "checksum":
+				data, err := os.ReadFile(store.path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				putNoneResetFile(t, root, stateFileName, string(bytes.Replace(data, []byte(`"none"`), []byte(`"container"`), 1)))
+			case "sidecar":
+				if err := os.Remove(store.checksumPath()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ipam := putNoneResetFile(t, root, "var/lib/cni/networks/site/10.0.0.2", "site-owned")
+			config := putNoneResetFile(t, root, "etc/cni/net.d/site.conflist", "site-owned")
+			var modes []string
+			marker := func(mode string) func(context.Context) error {
+				return func(context.Context) error {
+					modes = append(modes, mode)
+					return nil
+				}
+			}
+			noneTask := hostnode.Func("none", func(context.Context) error {
+				modes = append(modes, "none")
+				return hostnode.ResetCNIState(root)
+			})
+			task := resetNodeFromState(slog.New(slog.DiscardHandler), store.Load, noneTask,
+				hostnode.Func("nspawn", marker("nspawn")))
+			err = task.Do(t.Context())
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("reset=%v, wantErr=%v", err, tc.wantErr)
+			}
+			if tc.wantErr && len(modes) != 0 || !tc.wantErr && (len(modes) != 1 || modes[0] != tc.want) {
+				t.Fatalf("reset modes=%v, want %q", modes, tc.want)
+			}
+			for _, path := range []string{ipam, config} {
+				if tc.want == "none" {
+					assertNoneResetAbsent(t, "", path)
+				} else if data, err := os.ReadFile(path); err != nil || string(data) != "site-owned" {
+					t.Fatalf("unowned %s changed: %q, %v", path, data, err)
+				}
+			}
+		})
 	}
 }

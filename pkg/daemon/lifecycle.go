@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -16,6 +17,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -44,7 +46,9 @@ const (
 //go:embed assets/aks-flex-node-agent.service
 var serviceUnitContent []byte
 
-var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Parse(string(serviceUnitContent)))
+var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Funcs(template.FuncMap{
+	"join": strings.Join,
+}).Parse(string(serviceUnitContent)))
 
 //go:embed assets/aks-flex-node-agent-recovery.service
 var recoveryServiceUnitContent []byte
@@ -174,11 +178,15 @@ func ensureAgentUpgradeServiceAssetsAt(
 }
 
 type agentServiceOptions struct {
-	ARCEnabled bool
+	ARCEnabled    bool
+	NoneIsolation bool
 }
 
 func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
-	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled()}
+	return agentServiceOptions{
+		ARCEnabled:    cfg.IsARCEnabled(),
+		NoneIsolation: cfg.Bootstrap.Isolation == isolation.ModeNone,
+	}
 }
 
 type agentServiceAsset struct {
@@ -301,12 +309,17 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 	if err != nil {
 		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
 	}
-	return agentServiceOptions{ARCEnabled: bytes.Contains(content, []byte(arcSystemdDependency))}, nil
+	return agentServiceOptions{
+		ARCEnabled:    bytes.Contains(content, []byte(arcSystemdDependency)),
+		NoneIsolation: bytes.Contains(content, []byte("# Node isolation: none")),
+	}, nil
 }
 
 type agentServiceTemplateData struct {
 	CurrentBinaryPath string
 	Dependencies      []string
+	WantedTargets     []string
+	NoneIsolation     bool
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -314,11 +327,18 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	if serviceOptions.ARCEnabled {
 		dependencies = append(dependencies, arcSystemdDependency)
 	}
+	wantedTargets := []string{"network-online.target", "systemd-udev-settle.service"}
+	if !serviceOptions.NoneIsolation {
+		wantedTargets = append(wantedTargets, "machines.target")
+	}
+	wantedTargets = append(wantedTargets, dependencies...)
 
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
 		CurrentBinaryPath: currentBinaryPath,
 		Dependencies:      dependencies,
+		WantedTargets:     wantedTargets,
+		NoneIsolation:     serviceOptions.NoneIsolation,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}

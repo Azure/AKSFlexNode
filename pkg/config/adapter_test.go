@@ -4,11 +4,13 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestToAgentConfigKubeletLabels(t *testing.T) {
@@ -33,8 +35,9 @@ func TestToAgentConfigKubeletLabels(t *testing.T) {
 
 			customLabels := maps.Clone(tt.labels)
 			cfg := &Config{
-				Azure: AzureConfig{TargetAgentPoolName: "flexnode-edge"},
-				Node:  NodeConfig{Labels: customLabels},
+				Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
+				Azure:     AzureConfig{TargetAgentPoolName: "flexnode-edge"},
+				Node:      NodeConfig{Labels: customLabels},
 			}
 			wantLabels := maps.Clone(tt.labels)
 			if wantLabels == nil {
@@ -61,6 +64,7 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 		Azure: AzureConfig{
 			BootstrapToken:      &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"},
 			TargetAgentPoolName: "flexnode-edge",
@@ -159,7 +163,10 @@ func TestToAgentConfig_BootstrapToken(t *testing.T) {
 func TestToAgentConfig_NodeName(t *testing.T) {
 	t.Parallel()
 
-	cfg := &Config{Agent: AgentConfig{NodeName: "worker-1"}}
+	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
+		Agent:     AgentConfig{NodeName: "worker-1"},
+	}
 
 	ac := ToAgentConfig(cfg, "kube1")
 
@@ -172,6 +179,7 @@ func TestToAgentConfig_ResourceReservations(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 		Node: NodeConfig{
 			MaxPods: 30,
 			Kubelet: KubeletConfig{
@@ -237,6 +245,7 @@ func TestToAgentConfig_ServicePrincipal(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 		Azure: AzureConfig{
 			ServicePrincipal: &ServicePrincipalConfig{
 				TenantID:     "tenant-123",
@@ -305,6 +314,7 @@ func TestToAgentConfig_ServicePrincipalClientSecretFile(t *testing.T) {
 				ClientSecretFile: clientSecretFile,
 			},
 		},
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 	}
 	if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
 		t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
@@ -336,6 +346,7 @@ func TestToAgentConfig_ServicePrincipalCertificateFile(t *testing.T) {
 				ClientSecretFile: certificateFile,
 			},
 		},
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 	}
 	if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
 		t.Fatalf("ServicePrincipalConfig.validate() error = %v", err)
@@ -361,6 +372,7 @@ func TestToAgentConfig_ManagedIdentity(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 		Azure: AzureConfig{
 			ManagedIdentity: &ManagedIdentityConfig{
 				ClientID: "mi-client-id",
@@ -409,6 +421,7 @@ func TestToAgentConfig_ManagedIdentitySystemAssigned(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 		Azure: AzureConfig{
 			ManagedIdentity: &ManagedIdentityConfig{},
 		},
@@ -454,7 +467,8 @@ func TestToAgentConfig_CRICNIVersions(t *testing.T) {
 			SandboxImage: "registry.example.test/pause:3.9",
 		},
 		Bootstrap: BootstrapConfig{
-			OCIImage: "registry.example.test/flex/rootfs:ubuntu-24.04",
+			Isolation: isolation.ModeNSpawn,
+			OCIImage:  "registry.example.test/flex/rootfs:ubuntu-24.04",
 		},
 		Networking: NetworkingConfig{
 			DNSServiceIP: "10.0.0.10",
@@ -516,7 +530,10 @@ func TestToAgentConfig_Gantry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := &Config{Components: ComponentsConfig{Gantry: tt.gantry}}
+			cfg := &Config{
+				Bootstrap:  BootstrapConfig{Isolation: isolation.ModeNSpawn},
+				Components: ComponentsConfig{Gantry: tt.gantry},
+			}
 			ac := ToAgentConfig(cfg, "kube1")
 
 			if got := ac.Gantry != nil; got != tt.wantConfig {
@@ -534,6 +551,7 @@ func TestToAgentConfig_OfflineArtifacts(t *testing.T) {
 
 	cfg := &Config{
 		Bootstrap: BootstrapConfig{
+			Isolation:        isolation.ModeNSpawn,
 			OfflineArtifacts: OfflineArtifactsConfig{Source: "/opt/artifacts/{{ .KubernetesVersion }}"},
 		},
 	}
@@ -552,6 +570,7 @@ func TestToAgentConfig_AdditionalHostDevices(t *testing.T) {
 
 	cfg := &Config{
 		Bootstrap: BootstrapConfig{
+			Isolation:             isolation.ModeNSpawn,
 			AdditionalHostDevices: []string{"/dev/uinput", "/dev/input/event0"},
 		},
 	}
@@ -570,6 +589,7 @@ func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
 
 	cfg := &Config{
 		Bootstrap: BootstrapConfig{
+			Isolation: isolation.ModeNSpawn,
 			AdditionalHostMounts: []AdditionalHostMount{
 				{Source: "/opt/config", Target: "/etc/config", ReadOnly: true},
 				{Source: "/var/lib/example"},
@@ -579,7 +599,7 @@ func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
 
 	ac := ToAgentConfig(cfg, "kube1")
 	if len(ac.AdditionalHostMounts) != 2 {
-		t.Fatalf("AdditionalHostMounts=%#v, want 2 entries", ac.AdditionalHostMounts)
+		t.Fatalf("AdditionalHostMounts=%#v, want only the 2 configured mounts", ac.AdditionalHostMounts)
 	}
 	if got := ac.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
 		t.Fatalf("AdditionalHostMounts[0]=%#v", got)
@@ -587,12 +607,17 @@ func TestToAgentConfig_AdditionalHostMounts(t *testing.T) {
 	if got := ac.AdditionalHostMounts[1]; got.Source != "/var/lib/example" || got.Target != "" || got.ReadOnly {
 		t.Fatalf("AdditionalHostMounts[1]=%#v", got)
 	}
+	ac.AdditionalHostMounts[0].Source = "/changed/by/consumer"
+	if cfg.Bootstrap.AdditionalHostMounts[0].Source != "/opt/config" {
+		t.Fatal("adapted mounts share the caller's backing slice")
+	}
 }
 
 func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
+		Bootstrap: BootstrapConfig{Isolation: isolation.ModeNSpawn},
 		Azure: AzureConfig{
 			BootstrapToken: &BootstrapTokenConfig{Token: "tok"},
 		},
@@ -627,39 +652,63 @@ func TestToAgentConfig_CRICNIVersionsEmpty(t *testing.T) {
 	}
 }
 
-// TestToAgentConfig_NSpawnLifecycle: the machines' hooks start the agent's nspawn lifecycle units
-// for the machine, %i, rather than run a helper unbounded copies onto the host.
 func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]*Config{
-		"default credentials": {},
-		"paired kubeconfigs": {
-			Agent: AgentConfig{KubeconfigData: validEmbeddedKubeconfig},
-			Node:  NodeConfig{Kubelet: KubeletConfig{KubeconfigData: validEmbeddedKubeconfig}},
-		},
-	}
-	for name, cfg := range tests {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode isolation.Mode
+	}{
+		{name: "default"},
+		{name: "nspawn", mode: isolation.ModeNSpawn},
+		{name: "none", mode: isolation.ModeNone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			ac := ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
-			want := &agentconfig.NSpawnLifecycleConfig{
-				PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
-				PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
-			}
-			if ac.NSpawnLifecycle == nil || *ac.NSpawnLifecycle != *want {
-				t.Fatalf("NSpawnLifecycle = %+v, want %+v", ac.NSpawnLifecycle, want)
-			}
-			if err := agentconfig.ValidateNSpawnLifecycle(ac.NSpawnLifecycle); err != nil {
-				t.Fatalf("unbounded rejects the hooks' commands: %v", err)
-			}
-			rootFS, err := goalstates.ResolveNSpawnConfig(ac, goalstates.NSpawnMachineKube1)
-			if err != nil {
-				t.Fatalf("ResolveNSpawnConfig: %v", err)
-			}
-			if rootFS.UsesLifecycleHelper() {
-				t.Fatal("the machine's hooks would still run the lifecycle helper")
+			for _, pairedKubeconfigs := range []bool{false, true} {
+				name := "default credentials"
+				if pairedKubeconfigs {
+					name = "paired kubeconfigs"
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					cfg := &Config{Bootstrap: BootstrapConfig{
+						Isolation: tc.mode,
+					}}
+					if pairedKubeconfigs {
+						cfg.Agent.KubeconfigData = validEmbeddedKubeconfig
+						cfg.Node.Kubelet.KubeconfigData = validEmbeddedKubeconfig
+					}
+					if err := cfg.Bootstrap.validate(); err != nil {
+						t.Fatal(err)
+					}
+
+					want := &agentconfig.NSpawnLifecycleConfig{
+						PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
+						PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
+					}
+					for range 2 {
+						ac := ToAgentConfig(cfg, goalstates.NSpawnMachineKube1)
+						if !reflect.DeepEqual(ac.NSpawnLifecycle, want) {
+							t.Fatalf("NSpawnLifecycle = %+v, want %+v", ac.NSpawnLifecycle, want)
+						}
+						if err := agentconfig.ValidateNSpawnLifecycle(ac.NSpawnLifecycle); err != nil {
+							t.Fatalf("unbounded rejects the hooks' commands: %v", err)
+						}
+						rootFS, err := goalstates.ResolveNSpawnConfig(ac, goalstates.NSpawnMachineKube1)
+						if err != nil {
+							t.Fatalf("ResolveNSpawnConfig: %v", err)
+						}
+						if !reflect.DeepEqual(rootFS.NSpawnLifecycle, want) {
+							t.Fatalf("resolved NSpawnLifecycle = %+v, want %+v", rootFS.NSpawnLifecycle, want)
+						}
+						if rootFS.UsesLifecycleHelper() {
+							t.Fatal("the machine's hooks would still run the lifecycle helper")
+						}
+					}
+				})
 			}
 		})
 	}
