@@ -146,6 +146,11 @@ class Runtime:
         require(atomic or mode == "nspawn", "non-nspawn state requires atomic record")
         slot = state.get("activeMachine", "")
         require(slot == "" if mode == "none" else slot in SLOTS, "invalid state slot")
+        scalar(state.get("appliedSettingsVersion"), "generation")
+        scalar(state.get("appliedKubernetesVersion"), "kubelet version")
+        # Canonical nspawn State predates the frozen applied node config.
+        if mode == "nspawn" and "nodeConfig" not in state:
+            return state
         node = state.get("nodeConfig")
         require(isinstance(node, dict) and isinstance(node.get("Kubelet"), dict),
                 "missing node state")
@@ -155,8 +160,6 @@ class Runtime:
         localdns = node.get("LocalDNS")
         require(localdns is None or (isinstance(localdns, dict) and
                 type(localdns.get("Enabled", False)) is bool), "invalid node LocalDNS state")
-        scalar(state.get("appliedSettingsVersion"), "generation")
-        scalar(state.get("appliedKubernetesVersion"), "kubelet version")
         labels = node["Kubelet"].get("Labels", {})
         require(isinstance(labels, dict), "invalid node labels")
         scalar(labels.get(LABEL, ""), "registration", empty=mode == "nspawn")
@@ -193,10 +196,29 @@ class Runtime:
     def localdns_unit(self, state):
         return "unbounded-localdns.service" if self.mode(state) == "none" else "localdns.service"
 
+    def localdns_enabled(self, state):
+        if "nodeConfig" in state:
+            return (state["nodeConfig"].get("LocalDNS") or {}).get("Enabled", False)
+        # Legacy nspawn has no applied LocalDNS intent. Do not infer it from
+        # service liveness or turn a missing config into an explicit disable.
+        if not self.exists(CONFIG):
+            return None
+        cfg = decode(self.read(CONFIG), "config")
+        require(isinstance(cfg, dict), "invalid config")
+        networking = cfg.get("networking", {})
+        require(isinstance(networking, dict), "invalid networking config")
+        profile = networking.get("localDNS")
+        if profile is None:
+            return False
+        require(isinstance(profile, dict) and profile.get("mode") in (
+            "Required", "Preferred", "Disabled"), "invalid config LocalDNS mode")
+        # Match LocalDNSProfile.Enabled in pkg/config/internal/localdns.
+        return profile["mode"] == "Required"
+
     def units(self, state):
         units = NONE_UNITS if self.mode(state) == "none" else (
             "kubelet.service", "containerd.service", "localdns.service", "node-problem-detector.service")
-        if not (state["nodeConfig"].get("LocalDNS") or {}).get("Enabled", False):
+        if not self.localdns_enabled(state):
             units = tuple(unit for unit in units if unit != self.localdns_unit(state))
         return units
 
@@ -230,7 +252,7 @@ class Runtime:
         return {"mode": self.mode(state), "slot": state.get("activeMachine", ""),
                 "generation": state["appliedSettingsVersion"], "identity": self.identity(state),
                 "kubeletVersion": state["appliedKubernetesVersion"],
-                "registration": state["nodeConfig"]["Kubelet"].get("Labels", {}).get(LABEL, ""),
+                "registration": state.get("nodeConfig", {}).get("Kubelet", {}).get("Labels", {}).get(LABEL, ""),
                 "corePids": pids}
 
     def nspawn_workers(self):
@@ -310,7 +332,7 @@ class Runtime:
         self.markers_clear()
         self.topology(expected, state.get("activeMachine", ""))
         localdns = self.localdns_unit(state)
-        if localdns not in self.units(state):
+        if self.localdns_enabled(state) is False:
             values = self.properties(localdns, state)
             require(values.get("ActiveState") == "inactive" and values.get("MainPID", "0") == "0" and
                     values.get("UnitFileState", "") not in ("enabled", "enabled-runtime"),
@@ -394,7 +416,12 @@ class Runtime:
             except ProbeError as exc:
                 summary["errors"].append(str(exc))
         if state is not None:
-            for unit in self.units(state):
+            try:
+                units = self.units(state)
+            except ProbeError as exc:
+                summary["errors"].append(str(exc))
+                units = ()
+            for unit in units:
                 try:
                     summary["units"]["node:" + unit] = self.properties(unit, state)
                 except ProbeError as exc:

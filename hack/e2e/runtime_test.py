@@ -30,7 +30,8 @@ def applied(mode):
               "appliedSettingsVersion": "generation-1", "appliedKubernetesVersion": "1.35.0",
               "nodeConfig": node}
     if mode == "nspawn":
-        del node["Kubelet"]["Labels"][runtime.LABEL]
+        del result["isolation"]
+        del result["nodeConfig"]
     return result
 
 
@@ -52,11 +53,12 @@ class Fixture:
             self.put("/opt/unbounded/agent/bin/aks-flex-node", "agent", executable=True)
         else:
             state = applied(mode)
-            if localdns_enabled:
+            if localdns_enabled and mode != "nspawn":
                 state["nodeConfig"]["LocalDNS"] = {"Enabled": True}
             self.save(state)
             self.put(runtime.CONFIG, json.dumps({"bootstrap": {"isolation": mode},
-                                                  "token": "DO-NOT-PRINT-CONFIG"}))
+                       "networking": {"localDNS": {"mode": "Required" if localdns_enabled else "Disabled"}},
+                       "token": "DO-NOT-PRINT-CONFIG"}))
             if mode == "none":
                 self.path("/opt/unbounded/node/version-1").mkdir(parents=True)
                 self.path("/opt/unbounded/node/current").symlink_to("version-1")
@@ -123,23 +125,23 @@ class StateTests(unittest.TestCase):
                 self.assertEqual(fixture.probe.state(), applied(mode))
                 if mode == "nspawn":
                     state = applied(mode)
-                    del state["isolation"]
-                    del state["nodeConfig"]["Isolation"]
+                    state["isolation"] = "nspawn"
                     fixture.save(state)
                     self.assertEqual(fixture.probe.mode(fixture.probe.state()), "nspawn")
 
     def test_atomic_checksum_preserves_raw_payload(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fixture = Fixture(directory)
-            state = applied("none")
-            state["nodeConfig"]["Kubelet"]["Auth"]["BootstrapToken"] = "escaped \\ \" ü"
-            payload = json.dumps(state, indent=3, ensure_ascii=True)
-            fixture.save(state, payload)
-            self.assertEqual(fixture.probe.state(), state)
-            fixture.put(runtime.STATE, fixture.path(runtime.STATE).read_text().replace(
-                '"appliedSettingsVersion": "generation-1"', '"appliedSettingsVersion":"generation-1"'))
-            with self.assertRaisesRegex(runtime.ProbeError, "checksum mismatch"):
-                fixture.probe.state()
+        for mode in ("none", "container"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, mode)
+                state = applied(mode)
+                state["nodeConfig"]["Kubelet"]["Auth"]["BootstrapToken"] = "escaped \\ \" ü"
+                payload = json.dumps(state, indent=3, ensure_ascii=True)
+                fixture.save(state, payload)
+                self.assertEqual(fixture.probe.state(), state)
+                fixture.put(runtime.STATE, fixture.path(runtime.STATE).read_text().replace(
+                    '"appliedSettingsVersion": "generation-1"', '"appliedSettingsVersion":"generation-1"'))
+                with self.assertRaisesRegex(runtime.ProbeError, "checksum mismatch"):
+                    fixture.probe.state()
 
     def test_corrupt_records_never_use_legacy_sidecar(self):
         cases = {
@@ -151,40 +153,48 @@ class StateTests(unittest.TestCase):
             "missing checksum": lambda record: record.pop("checksum"),
             "null payload": lambda record: record.update(payload=None),
         }
-        for name, mutate in cases.items():
-            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
-                fixture = Fixture(directory)
-                record = json.loads(fixture.path(runtime.STATE).read_text())
-                mutate(record)
-                text = json.dumps(record)
-                fixture.put(runtime.STATE, text)
-                fixture.put(runtime.STATE + ".sha256", hashlib.sha256(text.encode()).hexdigest())
-                with self.assertRaises(runtime.ProbeError):
-                    fixture.probe.state()
+        for mode in ("none", "container"):
+            for name, mutate in cases.items():
+                with self.subTest(mode=mode, name=name), tempfile.TemporaryDirectory() as directory:
+                    fixture = Fixture(directory, mode)
+                    record = json.loads(fixture.path(runtime.STATE).read_text())
+                    mutate(record)
+                    text = json.dumps(record)
+                    fixture.put(runtime.STATE, text)
+                    fixture.put(runtime.STATE + ".sha256", hashlib.sha256(text.encode()).hexdigest())
+                    with self.assertRaises(runtime.ProbeError):
+                        fixture.probe.state()
 
     def test_invalid_state_and_node_contract(self):
         changes = {
             "missing node": lambda state: state.pop("nodeConfig"),
             "node null": lambda state: state.update(nodeConfig=None),
+            "kubelet missing": lambda state: state["nodeConfig"].pop("Kubelet"),
+            "kubelet null": lambda state: state["nodeConfig"].update(Kubelet=None),
+            "invalid LocalDNS": lambda state: state["nodeConfig"].update(LocalDNS="DO-NOT-PRINT"),
+            "non-bool LocalDNS": lambda state: state["nodeConfig"].update(LocalDNS={"Enabled": 1}),
             "wrong mode": lambda state: state.update(isolation="broken"),
             "wrong slot": lambda state: state.update(activeMachine="kube2"),
             "node mode mismatch": lambda state: state["nodeConfig"].update(Isolation="nspawn"),
             "node slot mismatch": lambda state: state["nodeConfig"].update(MachineName="kube2"),
             "generation missing": lambda state: state.pop("appliedSettingsVersion"),
+            "version missing": lambda state: state.pop("appliedKubernetesVersion"),
+            "labels null": lambda state: state["nodeConfig"]["Kubelet"].update(Labels=None),
             "labels missing": lambda state: state["nodeConfig"]["Kubelet"].update(Labels={}),
             "scalar injection": lambda state: state.update(appliedSettingsVersion="secret\npassword"),
         }
-        for name, mutate in changes.items():
-            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
-                fixture = Fixture(directory)
-                state = applied("none")
-                mutate(state)
-                # Force an atomic record even when testing an invalid mode.
-                payload = json.dumps(state)
-                fixture.put(runtime.STATE, '{"version":1,"payload":%s,"checksum":"%s"}' % (
-                    payload, hashlib.sha256(payload.encode()).hexdigest()))
-                with self.assertRaises(runtime.ProbeError):
-                    fixture.probe.state()
+        for mode in ("none", "container"):
+            for name, mutate in changes.items():
+                with self.subTest(mode=mode, name=name), tempfile.TemporaryDirectory() as directory:
+                    fixture = Fixture(directory, mode)
+                    state = applied(mode)
+                    mutate(state)
+                    # Force an atomic record even when testing an invalid mode.
+                    payload = json.dumps(state)
+                    fixture.put(runtime.STATE, '{"version":1,"payload":%s,"checksum":"%s"}' % (
+                        payload, hashlib.sha256(payload.encode()).hexdigest()))
+                    with self.assertRaises(runtime.ProbeError):
+                        fixture.probe.state()
 
     def test_missing_and_malformed_state_fail_closed(self):
         for text in (None, "not-json DO-NOT-PRINT", "null", "[]", '{"payload": {}, "payload": {}}'):
@@ -200,14 +210,68 @@ class StateTests(unittest.TestCase):
                 self.assertEqual(fixture.calls, [])
 
     def test_legacy_requires_valid_checksum(self):
-        for corrupt in (False, True):
-            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
+        for failure in ("missing", "bad", "changed payload"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 fixture = Fixture(directory, "nspawn")
-                if corrupt:
-                    fixture.put(runtime.STATE + ".sha256", "bad")
-                else:
+                if failure == "missing":
                     fixture.path(runtime.STATE + ".sha256").unlink()
+                elif failure == "bad":
+                    fixture.put(runtime.STATE + ".sha256", "0" * 64)
+                else:
+                    fixture.put(runtime.STATE, fixture.path(runtime.STATE).read_text() + "\n")
                 with self.assertRaises(runtime.ProbeError):
+                    fixture.probe.state()
+
+    def test_legacy_minimal_state_needs_no_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(directory, "nspawn")
+            fixture.path(runtime.CONFIG).unlink()
+            state = fixture.probe.state()
+            self.assertEqual(state, {"activeMachine": "kube1", "appliedSettingsVersion": "generation-1",
+                                     "appliedKubernetesVersion": "1.35.0"})
+            self.assertEqual(fixture.probe.mode(state), "nspawn")
+            self.assertNotIn("nodeConfig", state)
+            self.assertEqual(fixture.calls, [])
+
+    def test_invalid_legacy_state_still_fails_closed(self):
+        changes = {
+            "missing slot": lambda state: state.pop("activeMachine"),
+            "invalid slot": lambda state: state.update(activeMachine="kube3"),
+            "empty slot": lambda state: state.update(activeMachine=""),
+            "invalid isolation": lambda state: state.update(isolation="DO-NOT-PRINT"),
+            "missing generation": lambda state: state.pop("appliedSettingsVersion"),
+            "empty generation": lambda state: state.update(appliedSettingsVersion=""),
+            "missing version": lambda state: state.pop("appliedKubernetesVersion"),
+            "scalar injection": lambda state: state.update(appliedKubernetesVersion="DO-NOT-PRINT\nsecret"),
+            "null node": lambda state: state.update(nodeConfig=None),
+            "incomplete node": lambda state: state.update(nodeConfig={}),
+        }
+        for name, mutate in changes.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, "nspawn")
+                state = applied("nspawn")
+                mutate(state)
+                # Keep the legacy envelope even for an invalid isolation.
+                text = json.dumps(state)
+                fixture.put(runtime.STATE, text)
+                fixture.put(runtime.STATE + ".sha256", hashlib.sha256(text.encode()).hexdigest())
+                with self.assertRaises(runtime.ProbeError) as error:
+                    fixture.probe.state()
+                self.assertNotIn("DO-NOT-PRINT", str(error.exception))
+
+    def test_state_envelopes_cannot_be_interchanged(self):
+        for mode in runtime.MODES:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, mode)
+                payload = json.dumps(applied(mode))
+                if mode == "nspawn":
+                    text = json.dumps({"version": 1, "payload": applied(mode),
+                                       "checksum": hashlib.sha256(payload.encode()).hexdigest()})
+                else:
+                    text = payload
+                fixture.put(runtime.STATE, text)
+                fixture.put(runtime.STATE + ".sha256", hashlib.sha256(text.encode()).hexdigest())
+                with self.assertRaisesRegex(runtime.ProbeError, "atomic"):
                     fixture.probe.state()
 
 
@@ -222,6 +286,24 @@ class RoutingTests(unittest.TestCase):
                 self.assertEqual(fixture.probe.route(fixture.probe.state(), argv), prefixes[mode] + argv)
                 with self.assertRaisesRegex(runtime.ProbeError, "requires a command"):
                     fixture.probe.route(fixture.probe.state(), [])
+
+    def test_legacy_exec_uses_recorded_kube2_without_config(self):
+        for explicit_mode in (False, True):
+            with self.subTest(explicit_mode=explicit_mode), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, "nspawn")
+                state = applied("nspawn")
+                state["activeMachine"] = "kube2"
+                if explicit_mode:
+                    state["isolation"] = "nspawn"
+                fixture.save(state)
+                fixture.put(runtime.CONFIG, "invalid DO-NOT-PRINT-CONFIG")
+                argv = ["journalctl", "--no-pager", "-u", "kubelet.service"]
+                prefix = ["systemd-run", "--quiet", "--pipe", "--wait", "--machine=kube2"]
+                self.assertEqual(fixture.probe.route(fixture.probe.state(), argv), prefix + argv)
+                with mock.patch.object(runtime, "Runtime", return_value=fixture.probe):
+                    self.assertEqual(runtime.main(["exec", "--"] + argv), 0)
+                self.assertEqual(fixture.calls[-1][0], prefix + argv)
+                self.assertFalse(fixture.calls[-1][1]["capture_output"])
 
     def test_none_requires_real_current_version(self):
         for target in (None, "/etc", "../escape", "missing"):
@@ -275,6 +357,86 @@ class ValidationTests(unittest.TestCase):
                 self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
                 self.assertTrue(all(call[1]["timeout"] > 0 for call in fixture.calls))
 
+    def test_minimal_legacy_snapshot_without_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(directory, "nspawn", localdns_enabled=True)
+            state = applied("nspawn")
+            state["activeMachine"] = "kube2"
+            fixture.save(state)
+            fixture.path(runtime.CONFIG).unlink()
+            before = {path: fixture.path(path).read_bytes() for path in (
+                runtime.STATE, runtime.STATE + ".sha256")}
+            result = fixture.probe.snapshot()
+            self.assertEqual(result, {"mode": "nspawn", "slot": "kube2", "identity": "kube2",
+                "generation": "generation-1", "kubeletVersion": "1.35.0", "registration": "",
+                "corePids": {"kubelet.service": 321, "containerd.service": 321,
+                             "node-problem-detector.service": 321}})
+            self.assertTrue(all("--machine=kube2" in argv for argv, _ in fixture.calls))
+            for path, data in before.items():
+                self.assertEqual(fixture.path(path).read_bytes(), data)
+            self.assertNotIn("nodeConfig", fixture.probe.state())
+
+    def test_stored_node_config_remains_authoritative(self):
+        for mode in runtime.MODES:
+            for enabled in (False, True):
+                with self.subTest(mode=mode, enabled=enabled), tempfile.TemporaryDirectory() as directory:
+                    fixture = Fixture(directory, mode, localdns_enabled=enabled)
+                    state = applied("container" if mode == "nspawn" else mode)
+                    if mode == "nspawn":
+                        del state["isolation"]
+                        del state["nodeConfig"]["Isolation"]
+                    state["nodeConfig"]["LocalDNS"] = {"Enabled": enabled}
+                    fixture.save(state)
+                    fixture.put(runtime.CONFIG, json.dumps({"bootstrap": {"isolation": mode},
+                        "networking": {"localDNS": {"mode": "Disabled" if enabled else "Required"}},
+                        "token": "DO-NOT-PRINT-CONFIG"}))
+                    result = fixture.probe.validate(mode)
+                    self.assertEqual(result["registration"], "registration-123")
+                    self.assertEqual(len(result["corePids"]), 4 if enabled else 3)
+                    self.assertEqual(fixture.probe.state(), state)
+                    self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+
+    def test_legacy_localdns_uses_flex_config_modes(self):
+        cases = (({}, False), ({"localDNS": None}, False),
+                 ({"localDNS": {"mode": "Required"}}, True),
+                 ({"localDNS": {"mode": "Preferred"}}, False),
+                 ({"localDNS": {"mode": "Disabled"}}, False))
+        for networking, enabled in cases:
+            with self.subTest(networking=networking), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, "nspawn", localdns_enabled=enabled)
+                fixture.put(runtime.CONFIG, json.dumps({"bootstrap": {}, "networking": networking,
+                                                        "token": "DO-NOT-PRINT-CONFIG"}))
+                state = fixture.probe.state()
+                self.assertIs(fixture.probe.localdns_enabled(state), enabled)
+                result = fixture.probe.validate("nspawn")
+                self.assertEqual("localdns.service" in result["corePids"], enabled)
+                self.assertEqual(result["registration"], "")
+                self.assertNotIn("nodeConfig", fixture.probe.state())
+                self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+                # Explicit intent, not observed liveness, controls the assertion.
+                fixture.localdns_enabled = not enabled
+                with self.assertRaises(runtime.ProbeError):
+                    fixture.probe.validate("nspawn")
+
+    def test_invalid_legacy_localdns_config_is_sanitized(self):
+        configs = ("invalid DO-NOT-PRINT", "[]", '{"networking":[]}',
+                   '{"networking":{"localDNS":"DO-NOT-PRINT"}}',
+                   '{"networking":{"localDNS":{}}}',
+                   '{"networking":{"localDNS":{"mode":"required"}}}',
+                   '{"networking":{"localDNS":{"mode":"DO-NOT-PRINT"}}}')
+        for config in configs:
+            with self.subTest(config=config), tempfile.TemporaryDirectory() as directory:
+                fixture = Fixture(directory, "nspawn")
+                fixture.put(runtime.CONFIG, config)
+                with self.assertRaises(runtime.ProbeError) as error:
+                    fixture.probe.snapshot()
+                self.assertNotIn("DO-NOT-PRINT", str(error.exception))
+                result = fixture.probe.diagnostics()
+                self.assertEqual(result["mode"], "nspawn")
+                self.assertTrue(result["errors"])
+                self.assertIn(runtime.DAEMON, result["units"])
+                self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+
     def test_localdns_enabled_and_disabled_modes(self):
         for mode in runtime.MODES:
             for enabled in (False, True):
@@ -294,9 +456,10 @@ class ValidationTests(unittest.TestCase):
                                                    "SubState": "running", "MainPID": "99"}
                         with self.assertRaises(runtime.ProbeError):
                             fixture.probe.validate(mode)
-                        state = applied(mode)
-                        state["nodeConfig"]["LocalDNS"] = {"Enabled": False}
-                        fixture.save(state)
+                        if mode != "nspawn":
+                            state = applied(mode)
+                            state["nodeConfig"]["LocalDNS"] = {"Enabled": False}
+                            fixture.save(state)
                         fixture.overrides.clear()
                         self.assertEqual(len(fixture.probe.snapshot()["corePids"]), 3)
 
@@ -478,6 +641,23 @@ class DiagnosticsTests(unittest.TestCase):
                 self.assertEqual(result["journal"], {"entries": 1, "priorities": {"3": 1}})
                 journal = [argv for argv, _ in fixture.calls if argv[0] == "journalctl"][0]
                 self.assertIn("--output-fields=PRIORITY", journal)
+
+    def test_minimal_legacy_diagnostics_probe_active_guest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(directory, "nspawn")
+            state = applied("nspawn")
+            state["activeMachine"] = "kube2"
+            fixture.save(state)
+            fixture.path(runtime.CONFIG).unlink()
+            result = fixture.probe.diagnostics()
+            self.assertEqual(result["mode"], "nspawn")
+            self.assertEqual(result["errors"], [])
+            self.assertEqual({name for name in result["units"] if name.startswith("node:")},
+                {"node:kubelet.service", "node:containerd.service", "node:node-problem-detector.service"})
+            guest_calls = [argv for argv, _ in fixture.calls if argv[0] == "systemd-run"]
+            self.assertEqual(len(guest_calls), 3)
+            self.assertTrue(all("--machine=kube2" in argv for argv in guest_calls))
+            self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
 
     def test_missing_or_corrupt_state_keeps_explicit_mode_and_errors(self):
         for corrupt in (False, True):

@@ -37,6 +37,10 @@ _collect_vm_logs() {
     "sudo cat /tmp/aks-flex-node-preflight.log 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-preflight.log" 2>/dev/null || true
 
+  remote_exec "${vm_ip}" \
+    "sudo timeout 30 journalctl -u systemd-nspawn@kube1.service -u systemd-nspawn@kube2.service -n 300 --no-pager" \
+    > "${E2E_LOG_DIR}/${prefix}-nspawn-journal.log" 2>&1 || true
+
   runtime_install "${vm_ip}" || true
   runtime_on "${vm_ip}" diagnostics \
     > "${E2E_LOG_DIR}/${prefix}-runtime.json" 2>&1 || true

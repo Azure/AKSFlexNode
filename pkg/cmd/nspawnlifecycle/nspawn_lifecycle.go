@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -111,12 +112,20 @@ func newPhaseCommand(
 
 func newLifecycle(log *slog.Logger, configPath string) (*sharedlifecycle.Lifecycle, error) {
 	return sharedlifecycle.New(log, sharedlifecycle.Hooks{
-		LoadConfig: configLoader(configPath),
+		LoadConfig: configLoader(configPath, func(ctx context.Context, cfg *agentconfig.AgentConfig, services []string) error {
+			// Regenerated binds and their device-controller grants must agree,
+			// including when an older installation never wrote the grant.
+			rootFS := &goalstates.RootFS{
+				ServiceOverrideFile:  filepath.Join(goalstates.SystemdSystemDir, "systemd-nspawn@"+cfg.MachineName+".service.d", "override.conf"),
+				AdditionalHostMounts: cfg.AdditionalHostMounts,
+			}
+			return daemon.ConfigureNSpawnDependencies(log, rootFS, services).Do(ctx)
+		}),
 	})
 }
 
-func configLoader(configPath string) sharedlifecycle.ConfigLoader {
-	return func(_ context.Context, machineName string) (*agentconfig.AgentConfig, bool, error) {
+func configLoader(configPath string, configure func(context.Context, *agentconfig.AgentConfig, []string) error) sharedlifecycle.ConfigLoader {
+	return func(ctx context.Context, machineName string) (*agentconfig.AgentConfig, bool, error) {
 		cfg, err := flexconfig.LoadConfig(configPath)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, false, nil
@@ -125,7 +134,11 @@ func configLoader(configPath string) sharedlifecycle.ConfigLoader {
 			return nil, false, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
 		}
 
-		return flexconfig.ToAgentConfig(cfg, machineName), true, nil
+		agentCfg := flexconfig.ToAgentConfig(cfg, machineName)
+		if err := configure(ctx, agentCfg, cfg.Bootstrap.AdditionalRequiredServices); err != nil {
+			return nil, false, fmt.Errorf("configure nspawn host dependencies: %w", err)
+		}
+		return agentCfg, true, nil
 	}
 }
 

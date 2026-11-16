@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 )
 
 type fakeLifecycle struct {
@@ -92,6 +94,7 @@ func TestConfigLoaderLoadsAndConvertsPersistedConfig(t *testing.T) {
 			}
 		},
 		"agent": {"nodeName": "flex-node-1", "logLevel": "info"},
+		"bootstrap": {"additionalRequiredServices": ["storage-ready.service"]},
 		"node": {"kubelet": {
 			"clusterFQDN": "test-cluster.hcp.eastus.azmk8s.io",
 			"caCertData": "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t"
@@ -101,12 +104,29 @@ func TestConfigLoaderLoadsAndConvertsPersistedConfig(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cfg, found, err := configLoader(path)(context.Background(), "kube2")
+	configured := false
+	configure := func(_ context.Context, cfg *agentconfig.AgentConfig, services []string) error {
+		configured = true
+		if cfg.MachineName != "kube2" || !slices.Equal(services, []string{"storage-ready.service"}) {
+			t.Fatalf("host dependency configuration lost machine/services: %s %v", cfg.MachineName, services)
+		}
+		foundKernelLog := false
+		for _, mount := range cfg.AdditionalHostMounts {
+			if mount.Source == "/dev/kmsg" && mount.ReadOnly {
+				foundKernelLog = true
+			}
+		}
+		if !foundKernelLog {
+			t.Fatal("pre-start did not reconcile the NPD kernel-log mount dependency")
+		}
+		return nil
+	}
+	cfg, found, err := configLoader(path, configure)(context.Background(), "kube2")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if !found {
-		t.Fatal("load config found = false, want true")
+	if !found || !configured {
+		t.Fatal("config was returned without reconciling its host dependencies")
 	}
 	if cfg.MachineName != "kube2" {
 		t.Errorf("MachineName = %q, want kube2", cfg.MachineName)
@@ -117,12 +137,22 @@ func TestConfigLoaderLoadsAndConvertsPersistedConfig(t *testing.T) {
 	if cfg.Kubelet.Auth.BootstrapToken == "" {
 		t.Error("bootstrap token was not converted")
 	}
+	dependencyErr := errors.New("device grant could not be installed")
+	cfg, found, err = configLoader(path, func(context.Context, *agentconfig.AgentConfig, []string) error {
+		return dependencyErr
+	})(t.Context(), "kube2")
+	if !errors.Is(err, dependencyErr) || cfg != nil || found {
+		t.Fatalf("pre-start accepted config without its required grant: found=%t error=%v", found, err)
+	}
 }
 
 func TestConfigLoaderTreatsMissingConfigAsBootstrapWindow(t *testing.T) {
 	t.Parallel()
 
-	cfg, found, err := configLoader(filepath.Join(t.TempDir(), "missing.json"))(context.Background(), "kube1")
+	cfg, found, err := configLoader(filepath.Join(t.TempDir(), "missing.json"), func(context.Context, *agentconfig.AgentConfig, []string) error {
+		t.Fatal("missing bootstrap config attempted to change host dependencies")
+		return nil
+	})(context.Background(), "kube1")
 	if err != nil {
 		t.Fatalf("load missing config: %v", err)
 	}
