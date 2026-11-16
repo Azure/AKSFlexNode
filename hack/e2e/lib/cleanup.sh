@@ -13,6 +13,8 @@ readonly _E2E_CLEANUP_LOADED=1
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/runtime.sh"
 
 # ---------------------------------------------------------------------------
 # _collect_vm_logs - Collect logs from a single VM
@@ -20,6 +22,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 _collect_vm_logs() {
   local vm_ip="$1"
   local prefix="$2"
+  local -a mode_args=()
+  if [[ -n "${3:-}" ]]; then mode_args=("$3"); fi
 
   log_info "Collecting logs from ${vm_ip} (${prefix})..."
 
@@ -35,59 +39,35 @@ _collect_vm_logs() {
     "sudo cat /tmp/aks-flex-node-preflight.log 2>/dev/null" \
     > "${E2E_LOG_DIR}/${prefix}-preflight.log" 2>/dev/null || true
 
-  # Kubelet and containerd run inside the nspawn machine (kube1 or kube2).
-  # Use nsenter via the machine leader PID to run journalctl inside the container.
-  # Fall back to host journal for non-nspawn setups.
   remote_exec "${vm_ip}" \
-    "leader=\$(sudo machinectl show kube1 -p Leader --value 2>/dev/null); \
-     if [ -n \"\$leader\" ]; then \
-       sudo nsenter -t \$leader -m -p -- journalctl -u kubelet -n 500 --no-pager 2>/dev/null; \
-     else \
-       sudo journalctl -u kubelet -n 500 --no-pager 2>/dev/null; \
-     fi" \
-    > "${E2E_LOG_DIR}/${prefix}-kubelet.log" 2>/dev/null || true
+    "sudo timeout 30 journalctl -u systemd-nspawn@kube1.service -u systemd-nspawn@kube2.service -n 300 --no-pager" \
+    > "${E2E_LOG_DIR}/${prefix}-nspawn-journal.log" 2>&1 || true
 
+  runtime_install "${vm_ip}" || true
+  runtime_on "${vm_ip}" diagnostics "${mode_args[@]}" \
+    > "${E2E_LOG_DIR}/${prefix}-runtime.json" 2>&1 || true
+
+  # Bootstrap can fail before applied state exists; these units are host-owned.
   remote_exec "${vm_ip}" \
-    "leader=\$(sudo machinectl show kube1 -p Leader --value 2>/dev/null); \
-     if [ -n \"\$leader\" ]; then \
-       sudo nsenter -t \$leader -m -p -- journalctl -u containerd -n 200 --no-pager 2>/dev/null; \
-     else \
-       sudo journalctl -u containerd -n 200 --no-pager 2>/dev/null; \
-     fi" \
-    > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>/dev/null || true
+    "sudo -n timeout 30 journalctl --no-pager -n 500 -u unbounded-kubelet.service" \
+    > "${E2E_LOG_DIR}/${prefix}-host-kubelet.log" 2>&1 || true
+  remote_exec "${vm_ip}" \
+    "sudo -n timeout 30 journalctl --no-pager -n 200 -u unbounded-containerd.service" \
+    > "${E2E_LOG_DIR}/${prefix}-host-containerd.log" 2>&1 || true
+  remote_exec "${vm_ip}" \
+    "sudo -n timeout 30 journalctl --no-pager -n 500 -u aks-flex-node-npd.service" \
+    > "${E2E_LOG_DIR}/${prefix}-host-npd.log" 2>&1 || true
 
-  remote_exec "${vm_ip}" "bash -s" <<'REMOTE' > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
-npd_service="node-problem-detector.service"
-active_machine="$(sudo python3 - <<'PY'
-import json
-import sys
-
-try:
-    with open("/etc/aks-flex-node/daemon-state.json", encoding="utf-8") as state:
-        active_machine = json.load(state).get("activeMachine", "")
-    if active_machine:
-        print(active_machine)
-    else:
-        print("daemon state does not include activeMachine", file=sys.stderr)
-except FileNotFoundError as exc:
-    print(f"daemon state not found: {exc}", file=sys.stderr)
-except json.JSONDecodeError as exc:
-    print(f"daemon state is not valid JSON: {exc}", file=sys.stderr)
-except PermissionError as exc:
-    print(f"daemon state permission denied: {exc}", file=sys.stderr)
-PY
-)"
-if [ -n "${active_machine}" ]; then
-  echo "=== ${npd_service} logs (${active_machine}) ==="
-  # Match the agent and kubelet log depth; NPD entries are sparse but useful across node lifecycle phases.
-  sudo systemd-run --machine="${active_machine}" --quiet --pipe journalctl -u "${npd_service}" -n 500 --no-pager || \
-    echo "warning: failed to collect ${npd_service} logs from ${active_machine}"
-else
-  echo "warning: active machine unknown; falling back to host journal"
-  sudo journalctl -u "${npd_service}" -n 500 --no-pager || \
-    echo "warning: failed to collect ${npd_service} logs from host"
-fi
-REMOTE
+  # Route journals through the recorded active runtime, including kube2.
+  runtime_on "${vm_ip}" exec -- journalctl --no-pager -n 500 \
+    -u kubelet.service -u unbounded-kubelet.service \
+    > "${E2E_LOG_DIR}/${prefix}-kubelet.log" 2>&1 || true
+  runtime_on "${vm_ip}" exec -- journalctl --no-pager -n 200 \
+    -u containerd.service -u unbounded-containerd.service \
+    > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>&1 || true
+  runtime_on "${vm_ip}" exec -- journalctl --no-pager -n 500 \
+    -u node-problem-detector.service -u aks-flex-node-npd.service \
+    > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
 
   # Collect CNI config and nspawn machine state for networking diagnostics.
   # Read directly from the nspawn rootfs at /var/lib/machines/kube1/.
