@@ -73,8 +73,6 @@ func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart
 	if nodeStart.HostNative() {
 		task.unit = HostUnitNPD
 		task.binaryPath = filepath.Join(none.Layout{}.BinDir(), "node-problem-detector")
-	} else if nodeStart.InContainer {
-		task.binaryPath = "/usr/local/bin/node-problem-detector"
 	}
 	return task
 }

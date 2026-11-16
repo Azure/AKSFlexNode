@@ -57,7 +57,7 @@ func TestHostNativeNPD(t *testing.T) {
 			t.Fatalf("unexpected host NPD command %s", call)
 		}
 	}
-	assertRoot := DownloadToRoot(slog.New(slog.DiscardHandler), cfg, root)
+	assertRoot := Download(slog.New(slog.DiscardHandler), cfg, root)
 	download, ok := assertRoot.(*downloadTask)
 	if !ok || download.root != root {
 		t.Fatal("NPD download does not target the versioned root")

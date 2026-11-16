@@ -15,14 +15,8 @@ type installBinaryTask struct {
 	root isolation.NodeRoot
 }
 
-// InstallBinary returns a task that copies the current process binary into
-// the nspawn rootfs at /usr/local/bin/aks-flex-node.
-func InstallBinary(machineDir string) phases.Task {
-	return InstallBinaryToRoot(isolation.DirRoot{Dir: machineDir})
-}
-
-// InstallBinaryToRoot installs the credential helper in the node's filesystem.
-func InstallBinaryToRoot(root isolation.NodeRoot) phases.Task {
+// InstallBinary installs the credential helper in the node's filesystem.
+func InstallBinary(root isolation.NodeRoot) phases.Task {
 	return &installBinaryTask{root: root}
 }
 

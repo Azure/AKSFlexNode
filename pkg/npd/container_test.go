@@ -62,7 +62,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := DownloadToRoot(log, cfg, root).Do(t.Context()); err != nil {
+		if err := Download(log, cfg, root).Do(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}

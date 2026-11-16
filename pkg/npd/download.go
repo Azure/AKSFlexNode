@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 
 	utilexec "k8s.io/utils/exec"
@@ -23,8 +22,8 @@ const (
 
 	defaultNPDURLTemplate = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_%s.tar.gz"
 
-	// Paths as they appear inside the container.
-	npdBinaryPath = "/usr/bin/node-problem-detector"
+	// Paths in the node's filesystem view.
+	npdBinaryPath = "/usr/local/bin/node-problem-detector"
 	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
 
 	npdArtifactCheckName = "npd-artifact"
@@ -54,16 +53,14 @@ func (disabledPreflightCheck) Check(context.Context) []preflight.Result {
 }
 
 type downloadTask struct {
-	cfg        *config.Config
-	version    string
-	machineDir string
-	root       isolation.NodeRoot
+	cfg     *config.Config
+	version string
+	root    isolation.NodeRoot
 }
 
-// Download returns a task that downloads the node-problem-detector binary
-// and config from the upstream GitHub release tarball into the nspawn
-// machine rootfs at machineDir.
-func Download(log *slog.Logger, cfg *config.Config, machineDir string) phases.Task {
+// Download installs the node-problem-detector binary and config from the
+// upstream GitHub release tarball into the node's filesystem.
+func Download(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot) phases.Task {
 	if disabledForOfflineArtifacts(cfg) {
 		return disabledTask{name: "download-npd", log: log}
 	}
@@ -72,27 +69,14 @@ func Download(log *slog.Logger, cfg *config.Config, machineDir string) phases.Ta
 	if version == "" {
 		version = DefaultVersion
 	}
-	return &downloadTask{cfg: cfg, version: version, machineDir: machineDir}
-}
-
-// DownloadToRoot installs NPD through the node's filesystem view.
-func DownloadToRoot(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot) phases.Task {
-	task := Download(log, cfg, "")
-	if download, ok := task.(*downloadTask); ok {
-		download.root = root
-	}
-	return task
+	return &downloadTask{cfg: cfg, version: version, root: root}
 }
 
 func (t *downloadTask) Name() string { return "download-npd" }
 
 func (t *downloadTask) Do(ctx context.Context) error {
-	hostBinaryPath := filepath.Join(t.machineDir, npdBinaryPath)
-	hostConfigPath := filepath.Join(t.machineDir, npdConfigPath)
-	if t.root != nil {
-		hostBinaryPath = t.root.Path("/usr/local/bin/node-problem-detector")
-		hostConfigPath = t.root.Path(npdConfigPath)
-	}
+	hostBinaryPath := t.root.Path(npdBinaryPath)
+	hostConfigPath := t.root.Path(npdConfigPath)
 
 	if versionMatch(hostBinaryPath, t.version) {
 		return nil // already installed at correct version

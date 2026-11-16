@@ -145,7 +145,7 @@ func TestHostNPDOnlineToOfflineTransition(t *testing.T) {
 			var logs bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&logs, nil))
 			cfg := offlineTransitionConfig()
-			if err := DownloadToRoot(log, cfg, root).Do(t.Context()); err != nil {
+			if err := Download(log, cfg, root).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if len(systemd.calls) != 0 {

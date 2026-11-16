@@ -67,8 +67,8 @@ func newContainerNode(p containerops.Params) *containerops.Node {
 func containerArtifacts(cfg *config.Config, log *slog.Logger) func(context.Context, *goalstates.MachineGoalState) error {
 	return func(ctx context.Context, gs *goalstates.MachineGoalState) error {
 		return phases.Serial(log,
-			InstallBinaryToRoot(gs.RootFS.Root()),
-			npd.DownloadToRoot(log, cfg, gs.RootFS.Root()),
+			InstallBinary(gs.RootFS.Root()),
+			npd.Download(log, cfg, gs.RootFS.Root()),
 		).Do(ctx)
 	}
 }

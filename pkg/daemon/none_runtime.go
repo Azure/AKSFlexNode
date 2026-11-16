@@ -24,5 +24,5 @@ func prepareNoneDependencies(ctx context.Context, log *slog.Logger, cfg *config.
 // NPD is installed after the SDK selects a healthy runtime. Recovery can select
 // the source again, including for a settings-only repave sharing its binaries.
 func installNoneNPD(ctx context.Context, log *slog.Logger, cfg *config.Config, gs *goalstates.MachineGoalState) error {
-	return npd.DownloadToRoot(log, cfg, gs.RootFS.Root()).Do(ctx)
+	return npd.Download(log, cfg, gs.RootFS.Root()).Do(ctx)
 }
