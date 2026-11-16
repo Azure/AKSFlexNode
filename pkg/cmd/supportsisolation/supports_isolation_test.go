@@ -15,7 +15,7 @@ func TestSupportedModes(t *testing.T) {
 	}{
 		{name: "none", args: []string{string(isolation.ModeNone)}},
 		{name: "nspawn", args: []string{string(isolation.ModeNSpawn)}},
-		{name: "container", args: []string{string(isolation.ModeContainer)}, wantErr: true},
+		{name: "container", args: []string{string(isolation.ModeContainer)}},
 		{name: "unknown", args: []string{"invalid"}, wantErr: true},
 		{name: "empty argument", args: []string{""}, wantErr: true},
 		{name: "whitespace", args: []string{" "}, wantErr: true},

@@ -21,7 +21,9 @@ func TestBootstrapIsolation(t *testing.T) {
 		{name: "default", want: isolation.ModeNSpawn},
 		{name: "nspawn", bootstrap: BootstrapConfig{Isolation: "nspawn"}, want: isolation.ModeNSpawn},
 		{name: "none", bootstrap: BootstrapConfig{Isolation: "none"}, want: isolation.ModeNone},
-		{name: "container unsupported", bootstrap: BootstrapConfig{Isolation: "container"}, wantErr: true},
+		{name: "container requires opt in", bootstrap: BootstrapConfig{Isolation: "container"}, wantErr: true},
+		{name: "container enabled", bootstrap: BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}, want: isolation.ModeContainer},
+		{name: "container custom image", bootstrap: BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true, OCIImage: "oci://rootfs"}, want: isolation.ModeContainer},
 		{name: "unknown", bootstrap: BootstrapConfig{Isolation: "invalid"}, wantErr: true},
 		{name: "case sensitive", bootstrap: BootstrapConfig{Isolation: "NSpawn"}, wantErr: true},
 		{name: "whitespace rejected", bootstrap: BootstrapConfig{Isolation: " nspawn "}, wantErr: true},
@@ -63,8 +65,8 @@ func TestLoadConfigIsolation(t *testing.T) {
 		{name: "empty", bootstrap: `{"isolation":""}`, want: isolation.ModeNSpawn},
 		{name: "nspawn", bootstrap: `{"isolation":"nspawn"}`, want: isolation.ModeNSpawn},
 		{name: "none", bootstrap: `{"isolation":"none"}`, want: isolation.ModeNone},
-		{name: "container with future opt in unsupported", bootstrap: `{"isolation":"container","experimentalContainerIsolation":true}`, wantErr: true},
-		{name: "container unsupported", bootstrap: `{"isolation":"container"}`, wantErr: true},
+		{name: "container enabled", bootstrap: `{"isolation":"container","experimentalContainerIsolation":true}`, want: isolation.ModeContainer},
+		{name: "container requires opt in", bootstrap: `{"isolation":"container"}`, wantErr: true},
 		{name: "unknown", bootstrap: `{"isolation":"invalid"}`, wantErr: true},
 		{name: "non-string", bootstrap: `{"isolation":42}`, wantErr: true},
 	} {
@@ -111,8 +113,9 @@ func TestLoadConfigIsolation(t *testing.T) {
 				t.Fatalf("JSON isolation = %q, want %q", public.Bootstrap.Isolation, tc.want)
 			}
 			copiedCfg := cfg.DeepCopy()
-			if copiedCfg == nil || copiedCfg.Bootstrap.Isolation != tc.want {
-				t.Fatal("deep copy lost isolation")
+			if copiedCfg == nil || copiedCfg.Bootstrap.Isolation != tc.want ||
+				copiedCfg.Bootstrap.ExperimentalContainerIsolation != cfg.Bootstrap.ExperimentalContainerIsolation {
+				t.Fatal("deep copy lost isolation or experimental opt-in")
 			}
 
 			ac := ToAgentConfig(copiedCfg, "kube1")
@@ -128,6 +131,9 @@ func TestLoadConfigIsolation(t *testing.T) {
 			}
 			if ac.Kubelet.Auth.ExecCredential == nil || ac.Kubelet.Auth.ExecCredential.Command != want {
 				t.Fatalf("exec plugin must use %s", want)
+			}
+			if (ac.Experimental != nil && ac.Experimental.ContainerIsolation) != (tc.want == isolation.ModeContainer) {
+				t.Fatal("adapter lost experimental opt-in")
 			}
 		})
 	}

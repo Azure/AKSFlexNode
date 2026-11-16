@@ -10,11 +10,14 @@ import (
 	"testing"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 func putNoneResetFile(t *testing.T, root, path, content string) string {
@@ -195,7 +198,7 @@ func TestNoneResetRetriesUsingAppliedStateAfterSDKFootprintsDisappear(t *testing
 		return nil
 	})
 	for pass := 1; pass <= 2; pass++ {
-		if err := resetNodeFromState(td.Log, store.Load, runtime, wrongMode).Do(t.Context()); err != nil {
+		if err := resetNodeFromState(td.Log, store.Load, runtime, wrongMode, wrongMode).Do(t.Context()); err != nil {
 			t.Fatalf("retry %d: %v", pass, err)
 		}
 		assertNoneResetAbsent(t, td.Root, hostnode.CNIStateDir, none.ContainerdConfigPath)
@@ -225,5 +228,54 @@ func TestNoneResetCanceledAfterDestroyKeepsIPAM(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(td.Root, hostnode.CNIStateDir)); err != nil {
 		t.Fatalf("canceled reset removed IPAM: %v", err)
+	}
+}
+
+func TestNoneResetRoutingPreservesContainerHostPrivatePaths(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	log := slog.New(slog.DiscardHandler)
+	store, err := newFileStateStore(filepath.Join(root, "flex/daemon-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(t.Context(), containerTestState("kube1", "42")); err != nil {
+		t.Fatal(err)
+	}
+	td := &containerops.Teardown{
+		Log: log, Root: root, Layout: container.Layout{Base: filepath.Join(root, "opt/unbounded/containers")},
+		SystemdDir:  filepath.Join(root, "etc/systemd/system"),
+		RuntimePath: filepath.Join(root, "opt/unbounded/runtime/runc"),
+		MountInfo:   putNoneResetFile(t, root, "mountinfo", ""),
+		Run: func(context.Context, *slog.Logger, string, ...string) (string, error) {
+			t.Fatal("container reset without slots must not run host commands")
+			return "", nil
+		},
+	}
+	paths := []string{
+		"etc/cni/net.d/site.conflist", "var/lib/cni/networks/site/10.0.0.2",
+		"var/lib/containerd/site", goalstates.ContainerdConfigPath,
+	}
+	for _, path := range paths {
+		putNoneResetFile(t, root, path, "site-owned")
+	}
+	if td.Present() {
+		t.Fatal("container footprints remain; test must exercise applied-state routing")
+	}
+	wrongMode := hostnode.Func("wrong-mode", func(context.Context) error {
+		t.Fatal("container applied state routed to none or nspawn")
+		return nil
+	})
+	containerTask := phases.Serial(log, td.Stop(), td.Destroy(), td.RemoveConfig())
+	for pass := 1; pass <= 2; pass++ {
+		if err := resetNodeFromState(log, store.Load, wrongMode, containerTask, wrongMode).Do(t.Context()); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		for _, path := range paths {
+			data, err := os.ReadFile(filepath.Join(root, path))
+			if err != nil || string(data) != "site-owned" {
+				t.Fatalf("unowned container host path %s changed: %q, %v", path, data, err)
+			}
+		}
 	}
 }

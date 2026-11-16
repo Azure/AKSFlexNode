@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Select worker isolation with `bootstrap.isolation`: `nspawn` (default) or host-native `none`. None requires the host-installed agent and supports mode-aware preflight, reset, soft reboot, repave, and agent upgrades through existing Unbounded lifecycle APIs. Changing isolation requires reset and bootstrap; disconnect tolerance remains nspawn-only.
+- Experimental OCI worker isolation with `bootstrap.isolation: container` and `bootstrap.experimentalContainerIsolation: true`. Requires the host-installed agent, cgroup v2, and systemd 254+. Supports slot-based bootstrap, soft reboot, same-mode repave through the existing SDK `Upgrade`, reset, and mode-aware agent upgrades. This is separate from the containerized agent and is not a workload security boundary.
 - Disconnect tolerance: when AKS enables it for a node, the agent downloads and runs OpenYurt YurtHub in the worker and routes kubelet through it, so workloads keep running while the node is disconnected from the API server. Enabling it requires outbound HTTPS to `packages.microsoft.com`; joining does not. State is reported as a `DisconnectTolerance` Node condition on every node; with paired agent and kubelet kubeconfigs, grant the agent principal `patch` on its own `nodes/status` ([#390](https://github.com/Azure/AKSFlexNode/pull/390), [#391](https://github.com/Azure/AKSFlexNode/pull/391), [#392](https://github.com/Azure/AKSFlexNode/pull/392)).
 - `agent.machineClient.apiVersion` overrides the ARM Machine API version ([#390](https://github.com/Azure/AKSFlexNode/pull/390)).
 
@@ -18,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Persist container boot enablement before applied state; serialize agent activation with container repave and fence activation until the exact target registration is observed. Resume Flex completion only after a recorded successful SDK upgrade; ambiguous preparation fails closed for operator recovery or reset.
 - Clean up host-native CNI/IPAM state after successful runtime destruction and retain applied-mode routing for retries after partial reset.
 - Stop and disable agent-owned host NPD when a repave selects offline artifacts, including retries after partial disablement.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.

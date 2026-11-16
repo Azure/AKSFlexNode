@@ -6,6 +6,8 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -22,6 +24,10 @@ import (
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
 func ResetNode(log *slog.Logger) phases.Task {
+	containerTeardown := &containerops.Teardown{Log: log}
+	if containerTeardown.Present() || utilio.FileExists(defaultContainerStartupStore().path) {
+		return resetContainerNode(log, containerTeardown)
+	}
 	teardown := &noneops.Teardown{Log: log}
 	if teardown.Present() {
 		return resetNoneNode(log, teardown)
@@ -52,10 +58,10 @@ func ResetNode(log *slog.Logger) phases.Task {
 			return nil, err
 		}
 		return store.Load(ctx)
-	}, resetNoneNode(log, teardown), legacy)
+	}, resetNoneNode(log, teardown), resetContainerNode(log, containerTeardown), legacy)
 }
 
-func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, error), noneTask, legacy phases.Task) phases.Task {
+func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, error), noneTask, containerTask, legacy phases.Task) phases.Task {
 	// Destroy can remove all SDK footprints before a later cleanup fails. Flex's
 	// applied state survives until RemoveRuntimeDirs, retaining reset ownership.
 	return hostnode.Func("resume-applied-reset-or-"+legacy.Name(), func(ctx context.Context) error {
@@ -74,6 +80,11 @@ func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, er
 					return fmt.Errorf("none node has no valid applied configuration for reset")
 				}
 				task = noneTask
+			case isolation.ModeContainer:
+				if !validContainerState(applied) {
+					return fmt.Errorf("container node has no valid applied configuration for reset")
+				}
+				task = containerTask
 			case isolation.ModeNSpawn:
 			default:
 				return fmt.Errorf("unsupported applied isolation %q for reset", applied.Isolation)

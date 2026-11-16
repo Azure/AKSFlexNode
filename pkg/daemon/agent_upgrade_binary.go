@@ -253,12 +253,8 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 }
 
 func checkAgentIsolation(ctx context.Context, candidate string, mode isolation.Mode) error {
-	switch mode {
-	case "", isolation.ModeNSpawn:
+	if mode != isolation.ModeNone && mode != isolation.ModeContainer {
 		return nil
-	case isolation.ModeNone:
-	default:
-		return fmt.Errorf("unsupported node isolation %q", mode)
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

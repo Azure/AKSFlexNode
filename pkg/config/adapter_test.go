@@ -662,6 +662,7 @@ func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 		{name: "default"},
 		{name: "nspawn", mode: isolation.ModeNSpawn},
 		{name: "none", mode: isolation.ModeNone},
+		{name: "container", mode: isolation.ModeContainer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -675,7 +676,7 @@ func TestToAgentConfig_NSpawnLifecycle(t *testing.T) {
 					t.Parallel()
 
 					cfg := &Config{Bootstrap: BootstrapConfig{
-						Isolation: tc.mode,
+						Isolation: tc.mode, ExperimentalContainerIsolation: tc.mode == isolation.ModeContainer,
 					}}
 					if pairedKubeconfigs {
 						cfg.Agent.KubeconfigData = validEmbeddedKubeconfig

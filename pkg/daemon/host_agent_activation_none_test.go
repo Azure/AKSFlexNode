@@ -23,6 +23,7 @@ func TestNoneHostAgentActivationUsesOnlyHostBinary(t *testing.T) {
 				log:            discardLogger(),
 				paths:          paths,
 				state:          &testStateStore{state: &State{Isolation: isolation.ModeNone, ActiveMachine: slot}},
+				startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 				serviceOptions: agentServiceOptions{NoneIsolation: true},

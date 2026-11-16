@@ -419,6 +419,7 @@ func TestAgentServiceWantedTargets(t *testing.T) {
 	}{
 		{name: "nspawn", wanted: []string{"network-online.target", "systemd-udev-settle.service", "machines.target"}},
 		{name: "none", options: agentServiceOptions{NoneIsolation: true}, wanted: []string{"network-online.target", "systemd-udev-settle.service"}},
+		{name: "container", options: agentServiceOptions{ContainerIsolation: true}, wanted: []string{"network-online.target", "systemd-udev-settle.service"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

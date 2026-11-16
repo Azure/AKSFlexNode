@@ -178,14 +178,16 @@ func ensureAgentUpgradeServiceAssetsAt(
 }
 
 type agentServiceOptions struct {
-	ARCEnabled    bool
-	NoneIsolation bool
+	ARCEnabled         bool
+	NoneIsolation      bool
+	ContainerIsolation bool
 }
 
 func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
 	return agentServiceOptions{
-		ARCEnabled:    cfg.IsARCEnabled(),
-		NoneIsolation: cfg.Bootstrap.Isolation == isolation.ModeNone,
+		ARCEnabled:         cfg.IsARCEnabled(),
+		NoneIsolation:      cfg.Bootstrap.Isolation == isolation.ModeNone,
+		ContainerIsolation: cfg.Bootstrap.Isolation == isolation.ModeContainer,
 	}
 }
 
@@ -310,16 +312,18 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
 	}
 	return agentServiceOptions{
-		ARCEnabled:    bytes.Contains(content, []byte(arcSystemdDependency)),
-		NoneIsolation: bytes.Contains(content, []byte("# Node isolation: none")),
+		ARCEnabled:         bytes.Contains(content, []byte(arcSystemdDependency)),
+		NoneIsolation:      bytes.Contains(content, []byte("# Node isolation: none")),
+		ContainerIsolation: bytes.Contains(content, []byte("# Node isolation: container")),
 	}, nil
 }
 
 type agentServiceTemplateData struct {
-	CurrentBinaryPath string
-	Dependencies      []string
-	WantedTargets     []string
-	NoneIsolation     bool
+	CurrentBinaryPath  string
+	Dependencies       []string
+	WantedTargets      []string
+	NoneIsolation      bool
+	ContainerIsolation bool
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -328,17 +332,18 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 		dependencies = append(dependencies, arcSystemdDependency)
 	}
 	wantedTargets := []string{"network-online.target", "systemd-udev-settle.service"}
-	if !serviceOptions.NoneIsolation {
+	if !serviceOptions.NoneIsolation && !serviceOptions.ContainerIsolation {
 		wantedTargets = append(wantedTargets, "machines.target")
 	}
 	wantedTargets = append(wantedTargets, dependencies...)
 
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
-		CurrentBinaryPath: currentBinaryPath,
-		Dependencies:      dependencies,
-		WantedTargets:     wantedTargets,
-		NoneIsolation:     serviceOptions.NoneIsolation,
+		CurrentBinaryPath:  currentBinaryPath,
+		Dependencies:       dependencies,
+		WantedTargets:      wantedTargets,
+		NoneIsolation:      serviceOptions.NoneIsolation,
+		ContainerIsolation: serviceOptions.ContainerIsolation,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}

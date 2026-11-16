@@ -22,6 +22,8 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNone:
 		return setupNoneHost(cfg, log)
+	case isolation.ModeContainer:
+		return setupContainerHost(cfg, log)
 	}
 	var tasks []phases.Task
 	// In a container, the package manager on PATH is the image's, so it would install into the
@@ -60,6 +62,8 @@ func StartNode(
 	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNone:
 		return startNoneNode(cfg, log, gs, containerImageArchives, store, state)
+	case isolation.ModeContainer:
+		return startContainerNode(cfg, log, machineName, gs, containerImageArchives, store, state)
 	}
 	return phases.Serial(log,
 		// Before anything starts the machine: its hooks start these units.

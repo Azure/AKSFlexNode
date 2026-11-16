@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
@@ -258,13 +259,16 @@ func TestOfflineHostNPDCancellationRetainsOwnership(t *testing.T) {
 
 func TestOfflineNPDWithoutOwnedHostUnitDoesNotMutate(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"fresh host", "nspawn"} {
+	for _, mode := range []string{"fresh host", "nspawn", "container"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			ns, systemd, _ := newOfflineTransitionHost(t)
 			switch mode {
 			case "nspawn":
 				ns.RootOverride, ns.MachineDir = nil, t.TempDir()
+			case "container":
+				ns.RootOverride = container.Root{SlotName: "kube1", Dir: t.TempDir(), HostRoot: t.TempDir()}
+				ns.InContainer = true
 			}
 			unitDir := ns.Root().Path("/etc/systemd/system")
 			if err := os.MkdirAll(unitDir, 0o755); err != nil {

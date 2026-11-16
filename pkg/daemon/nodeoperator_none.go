@@ -55,6 +55,8 @@ func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) 
 	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNSpawn:
 		return base, nil
+	case isolation.ModeContainer:
+		return newContainerNodeOperator(base, state)
 	}
 	if state == nil || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return nil, fmt.Errorf("none node has no valid applied configuration")

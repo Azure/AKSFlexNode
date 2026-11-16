@@ -25,6 +25,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
 const (
@@ -244,6 +245,7 @@ type hostAgentUpgradeExecutor struct {
 	log                    *slog.Logger
 	paths                  agentUpgradePaths
 	state                  agentUpgradeStateLoader
+	startup                containerStartupReader
 	signals                agentUpgradeSignalStore
 	systemctl              func(context.Context, ...string) error
 	runSystemdRun          func(context.Context, ...string) error
@@ -266,6 +268,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		log:     log,
 		paths:   paths,
 		state:   state,
+		startup: defaultContainerStartupStore(),
 		signals: agentUpgradeSignalStore{path: paths.SignalPath},
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
@@ -275,7 +278,6 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		},
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
 		runningExecutable:      runningAgentExecutable,
-		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
 		guardLegacySeed: func() error {
 			return guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, runningFrom)
 		},
@@ -302,7 +304,10 @@ func (e *hostAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
 }
 
 func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {
-	return recordPendingAgentUpgrade(ctx, e.signals, e.state, operationName, e.instanceID)
+	// Existing signals are handled before this loader runs so a pending node
+	// startup cannot block an AgentUpgrade's recovery handoff.
+	state := agentActivationStateLoader{startup: e.startup, load: e.state.LoadState}
+	return recordPendingAgentUpgrade(ctx, e.signals, state, operationName, e.instanceID)
 }
 
 func recordPendingAgentUpgrade(
@@ -365,6 +370,9 @@ func (e *hostAgentUpgradeExecutor) RecordFailure(message string) error {
 }
 
 func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgradeRequest) error {
+	if err := requireNoContainerStartupForAgentActivation(e.startup); err != nil {
+		return err
+	}
 	if e.guardLegacySeed != nil {
 		if err := e.guardLegacySeed(); err != nil {
 			return err
@@ -658,9 +666,14 @@ var _ agentUpgrader = (*hostAgentUpgradeExecutor)(nil)
 func (e *hostAgentUpgradeExecutor) daemonInstance() string { return e.instanceID }
 
 func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
+	// Older daemons may have recorded the stopped source during a repave.
+	// Reject success, but leave rollback and failure publication unfenced.
+	if err := requireNoContainerStartupForAgentActivation(e.startup); err != nil {
+		return err
+	}
 	nspawnBinaryPath := e.nspawnBinaryPath
 	if nspawnBinaryPath == nil {
-		nspawnBinaryPath = activeNspawnAgentBinaryPath
+		nspawnBinaryPath = func(slot string) string { return activeNodeAgentBinaryPath(signal.Isolation, slot) }
 	}
 	return validateStartedAgentUpgrade(e.paths, signal, nspawnBinaryPath)
 }
@@ -764,15 +777,22 @@ func activeNspawnAgentBinaryPath(machine string) string {
 	return filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 }
 
+func activeNodeAgentBinaryPath(mode isolation.Mode, slot string) string {
+	if mode == isolation.ModeContainer {
+		return filepath.Join(container.Layout{}.RootfsDir(slot), "usr/local/bin/aks-flex-node")
+	}
+	return activeNspawnAgentBinaryPath(slot)
+}
+
 func synchronizeNodeAgentBinary(source string, mode isolation.Mode, slot string) error {
 	switch mode {
 	case isolation.ModeNone:
 		return nil
-	case "", isolation.ModeNSpawn:
+	case "", isolation.ModeNSpawn, isolation.ModeContainer:
 		if !validActiveMachine(slot) {
 			return fmt.Errorf("invalid active node slot %q", slot)
 		}
-		return copyExecutable(source, activeNspawnAgentBinaryPath(slot))
+		return copyExecutable(source, activeNodeAgentBinaryPath(mode, slot))
 	default:
 		return fmt.Errorf("unsupported node isolation %q", mode)
 	}

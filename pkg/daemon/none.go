@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -35,9 +36,12 @@ func validateIsolationEnvironment(cfg *config.Config, containerized bool) error 
 	switch cfg.Bootstrap.Isolation {
 	case isolation.ModeNSpawn:
 		return nil
-	case isolation.ModeNone:
+	case isolation.ModeNone, isolation.ModeContainer:
 		if containerized {
 			return fmt.Errorf("%s isolation requires the host-installed agent; the containerized agent requires host containerd", cfg.Bootstrap.Isolation)
+		}
+		if cfg.Bootstrap.Isolation == isolation.ModeContainer && !cfg.Bootstrap.ExperimentalContainerIsolation {
+			return fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
 		}
 		return nil
 	default:
@@ -65,8 +69,14 @@ func CheckBootstrapIsolation(ctx context.Context, cfg *config.Config, log *slog.
 	if (&noneops.Teardown{Log: log}).Present() || applied != nil && applied.isolationMode() == isolation.ModeNone {
 		return fmt.Errorf("host contains an installed or partially reset none node; reset it before bootstrapping")
 	}
+	if containerops.Present() || utilio.FileExists(defaultContainerStartupStore().path) || applied != nil && applied.isolationMode() == isolation.ModeContainer {
+		return fmt.Errorf("host contains an installed or partially reset container node; reset it before bootstrapping")
+	}
 	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 		return nil
+	}
+	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
+		return checkContainerBootstrap(ctx, log)
 	}
 	if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNone); err != nil {
 		return err
@@ -85,6 +95,9 @@ func ResolveNodeGoalState(ctx context.Context, log *slog.Logger, cfg *config.Con
 	}
 	if cfg.Bootstrap.Isolation == isolation.ModeNone {
 		gs, err = newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs}).GoalState()
+	}
+	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
+		gs, err = newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot}).GoalState()
 	}
 	return ac, gs, archives, err
 }

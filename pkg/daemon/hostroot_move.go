@@ -228,6 +228,9 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 		}
 		return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())))
 	}
+	if applied != nil && applied.isolationMode() == isolation.ModeContainer {
+		return rewriteContainerHostRootUnits(ctx, log, cfg, applied)
+	}
 	active, err := activeMachineFromStore(ctx, state)
 	if err != nil {
 		return err

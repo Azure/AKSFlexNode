@@ -440,6 +440,8 @@ bash /run/aks-flex-node-bootstrap/bootstrap.sh \
   --agent-version "$AKS_FLEX_NODE_VERSION"
 ```
 
+These commands use `nspawn` worker isolation by default. To evaluate an OCI **worker** on a fresh or reset host, add `--config-overrides '{"bootstrap":{"isolation":"container","experimentalContainerIsolation":true}}'` to the bootstrap command. Experimental container isolation requires the host-installed agent, cgroup v2, and systemd 254 or newer; it is not the containerized agent or a workload security boundary. Changing an installed worker's isolation requires reset and bootstrap. See [Bootstrap configuration](configuration.md#bootstrap) for host changes, repave completion, and fail-closed recovery behavior.
+
 The selected managed identity must be assigned to the VM and have Flex Node Agent Role at the target ARM agent-pool scope.
 
 For a host outside Azure, prefer an already-connected Azure Arc managed identity and `--auth arc`. Use `--auth service-principal` only when managed identity and Azure Arc aren't available. See [Joining nodes](joining-nodes.md) for those alternatives.
@@ -458,7 +460,7 @@ The script performs these operations:
 6. Applies runtime configuration overrides.
 7. Writes `/etc/aks-flex-node/config.json` as `0600 root:root`.
 8. Runs non-mutating preflight.
-9. Registers the ARM Machine and starts the nspawn worker.
+9. Registers the ARM Machine and starts the selected worker (nspawn by default).
 10. Installs and starts `aks-flex-node-agent.service`.
 
 On success, remove the transient files and record completion:

@@ -970,7 +970,7 @@ func TestLoadConfigPoolBootstrapData(t *testing.T) {
 		t.Fatalf("Agent CRI.Runc.Version = %q, want 1.2.3", agentCfg.CRI.Runc.Version)
 	}
 	if len(agentCfg.AdditionalHostMounts) != 2 {
-		t.Fatalf("Agent AdditionalHostMounts = %#v, want 2 entries", agentCfg.AdditionalHostMounts)
+		t.Fatalf("Agent AdditionalHostMounts = %#v, want 2 caller mounts", agentCfg.AdditionalHostMounts)
 	}
 	if got := agentCfg.AdditionalHostMounts[0]; got.Source != "/opt/config" || got.Target != "/etc/config" || !got.ReadOnly {
 		t.Fatalf("Agent AdditionalHostMounts[0] = %#v", got)

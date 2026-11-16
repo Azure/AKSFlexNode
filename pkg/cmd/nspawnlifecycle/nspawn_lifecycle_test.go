@@ -290,7 +290,7 @@ func TestNewLifecycleChecksPersistedMode(t *testing.T) {
 		{name: "empty mode", bootstrap: `{"isolation":""}`},
 		{name: "nspawn", bootstrap: `{"isolation":"nspawn"}`},
 		{name: "none", bootstrap: `{"isolation":"none"}`, wantNil: true},
-		{name: "container unsupported even with future opt in", bootstrap: `{"isolation":"container","experimentalContainerIsolation":true}`, wantNil: true, wantErr: true},
+		{name: "container", bootstrap: `{"isolation":"container","experimentalContainerIsolation":true}`, wantNil: true},
 		{name: "container without opt in", bootstrap: `{"isolation":"container"}`, wantNil: true, wantErr: true},
 		{name: "unknown mode", bootstrap: `{"isolation":"invalid"}`, wantNil: true, wantErr: true},
 		{name: "malformed config", bootstrap: `{`, wantNil: true, wantErr: true},

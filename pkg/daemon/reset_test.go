@@ -123,11 +123,22 @@ func TestResetNodeAppliedStateRouting(t *testing.T) {
 		{name: "legacy nspawn state", state: func() *State { return &State{ActiveMachine: "kube1"} }, want: "nspawn"},
 		{name: "explicit nspawn state", state: func() *State { return &State{Isolation: isolation.ModeNSpawn} }, want: "nspawn"},
 		{name: "none state", state: noneState, want: "none"},
+		{name: "container state", state: func() *State { return containerTestState("kube1", "42") }, want: "container"},
 		{name: "none without config", state: func() *State { return &State{Isolation: isolation.ModeNone} }, wantErr: true},
 		{name: "none with container config", state: func() *State {
 			return &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "container"}}
 		}, wantErr: true},
-		{name: "container unsupported", state: func() *State { return &State{Isolation: isolation.ModeContainer} }, wantErr: true},
+		{name: "container without config", state: func() *State { return &State{Isolation: isolation.ModeContainer} }, wantErr: true},
+		{name: "container without opt in", state: func() *State {
+			s := containerTestState("kube1", "42")
+			s.NodeConfig.Experimental = nil
+			return s
+		}, wantErr: true},
+		{name: "container with mismatched slot", state: func() *State {
+			s := containerTestState("kube1", "42")
+			s.ActiveMachine = "kube2"
+			return s
+		}, wantErr: true},
 		{name: "unsupported mode", state: func() *State { return &State{Isolation: "unknown"} }, wantErr: true},
 		{name: "unreadable state", damage: "unreadable", wantErr: true},
 		{name: "malformed state", damage: "malformed", wantErr: true},
@@ -178,7 +189,7 @@ func TestResetNodeAppliedStateRouting(t *testing.T) {
 				return hostnode.ResetCNIState(root)
 			})
 			task := resetNodeFromState(slog.New(slog.DiscardHandler), store.Load, noneTask,
-				hostnode.Func("nspawn", marker("nspawn")))
+				hostnode.Func("container", marker("container")), hostnode.Func("nspawn", marker("nspawn")))
 			err = task.Do(t.Context())
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("reset=%v, wantErr=%v", err, tc.wantErr)
