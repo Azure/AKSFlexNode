@@ -112,34 +112,38 @@ func newPhaseCommand(
 
 func newLifecycle(log *slog.Logger, configPath string) (*sharedlifecycle.Lifecycle, error) {
 	return sharedlifecycle.New(log, sharedlifecycle.Hooks{
-		LoadConfig: configLoader(configPath, func(ctx context.Context, cfg *agentconfig.AgentConfig, services []string) error {
+		LoadConfig: func(ctx context.Context, machineName string) (*agentconfig.AgentConfig, bool, error) {
+			cfg, services, err := loadConfig(configPath, machineName)
+			if err != nil || cfg == nil {
+				return nil, false, err
+			}
+
 			// Regenerated binds and their device-controller grants must agree,
 			// including when an older installation never wrote the grant.
 			rootFS := &goalstates.RootFS{
 				ServiceOverrideFile:  filepath.Join(goalstates.SystemdSystemDir, "systemd-nspawn@"+cfg.MachineName+".service.d", "override.conf"),
 				AdditionalHostMounts: cfg.AdditionalHostMounts,
 			}
-			return daemon.ConfigureNSpawnDependencies(log, rootFS, services).Do(ctx)
-		}),
+			if err := daemon.ConfigureNSpawnDependencies(log, rootFS, services).Do(ctx); err != nil {
+				return nil, false, fmt.Errorf("configure nspawn host dependencies: %w", err)
+			}
+			return cfg, true, nil
+		},
 	})
 }
 
-func configLoader(configPath string, configure func(context.Context, *agentconfig.AgentConfig, []string) error) sharedlifecycle.ConfigLoader {
-	return func(ctx context.Context, machineName string) (*agentconfig.AgentConfig, bool, error) {
-		cfg, err := flexconfig.LoadConfig(configPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, false, nil
-		}
-		if err != nil {
-			return nil, false, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
-		}
-
-		agentCfg := flexconfig.ToAgentConfig(cfg, machineName)
-		if err := configure(ctx, agentCfg, cfg.Bootstrap.AdditionalRequiredServices); err != nil {
-			return nil, false, fmt.Errorf("configure nspawn host dependencies: %w", err)
-		}
-		return agentCfg, true, nil
+// loadConfig returns nil config during the initial bootstrap window, before
+// the applied config has been persisted. It does not change host state.
+func loadConfig(configPath, machineName string) (*agentconfig.AgentConfig, []string, error) {
+	cfg, err := flexconfig.LoadConfig(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
 	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
+	}
+
+	return flexconfig.ToAgentConfig(cfg, machineName), cfg.Bootstrap.AdditionalRequiredServices, nil
 }
 
 func validateMachine(machineName string) error {

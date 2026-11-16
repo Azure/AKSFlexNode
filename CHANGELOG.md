@@ -21,7 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Clean up host-native CNI/IPAM state after successful runtime destruction and retain applied-mode routing for retries after partial reset.
 - Persist container boot enablement before recording applied state; serialize agent activation with container repave and fence activation while AKS completion is pending.
 - Stop and disable host-native NPD when a repave selects offline artifacts, including retries after partial disablement.
-- Retry ARM Machine creation rejected by an explicit concurrent pool operation with bounded backoff, while leaving unrelated conflicts and authorization failures fatal.
 - Let systemd retry transient NPD startup failures and require a stable active/running process before completion, with bounded readiness waits and cancellation.
 - Create missing bootstrap host-root directories with traversable permissions under a private umask, without changing existing directories or credential-file permissions.
 - Give online nspawn NPD access to the real host kernel log through a read-only `/dev/kmsg` bind and device-controller grant, including lifecycle configuration regeneration after legacy upgrades, fixing startup failure with pipe-console workers.

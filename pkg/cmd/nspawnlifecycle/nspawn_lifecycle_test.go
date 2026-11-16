@@ -7,9 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
-
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 )
 
 type fakeLifecycle struct {
@@ -77,7 +76,7 @@ func TestCommandValidatesMachine(t *testing.T) {
 	}
 }
 
-func TestConfigLoaderLoadsAndConvertsPersistedConfig(t *testing.T) {
+func TestLoadConfigLoadsAndConvertsPersistedConfig(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.json")
@@ -104,63 +103,117 @@ func TestConfigLoaderLoadsAndConvertsPersistedConfig(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	configured := false
-	configure := func(_ context.Context, cfg *agentconfig.AgentConfig, services []string) error {
-		configured = true
-		if cfg.MachineName != "kube2" || !slices.Equal(services, []string{"storage-ready.service"}) {
-			t.Fatalf("host dependency configuration lost machine/services: %s %v", cfg.MachineName, services)
-		}
-		foundKernelLog := false
-		for _, mount := range cfg.AdditionalHostMounts {
-			if mount.Source == "/dev/kmsg" && mount.ReadOnly {
-				foundKernelLog = true
+	for _, machine := range []string{"kube1", "kube2"} {
+		t.Run(machine, func(t *testing.T) {
+			t.Parallel()
+
+			for range 2 {
+				cfg, services, err := loadConfig(path, machine)
+				if err != nil {
+					t.Fatalf("load config: %v", err)
+				}
+				if cfg == nil {
+					t.Fatal("persisted config was not found")
+				}
+				if cfg.MachineName != machine {
+					t.Errorf("MachineName = %q, want %s", cfg.MachineName, machine)
+				}
+				if !slices.Equal(services, []string{"storage-ready.service"}) {
+					t.Errorf("required services = %v, want storage-ready.service", services)
+				}
+				if cfg.NodeName != "flex-node-1" {
+					t.Errorf("NodeName = %q, want flex-node-1", cfg.NodeName)
+				}
+				if cfg.Kubelet.Auth.BootstrapToken == "" {
+					t.Error("bootstrap token was not converted")
+				}
+				kernelLogMounts := 0
+				for _, mount := range cfg.AdditionalHostMounts {
+					if mount.Source == "/dev/kmsg" {
+						kernelLogMounts++
+						if !mount.ReadOnly || (mount.Target != "" && mount.Target != "/dev/kmsg") {
+							t.Error("NPD kernel-log mount must expose the real device read-only")
+						}
+					}
+				}
+				if kernelLogMounts != 1 {
+					t.Errorf("NPD kernel-log mounts = %d, want 1", kernelLogMounts)
+				}
 			}
-		}
-		if !foundKernelLog {
-			t.Fatal("pre-start did not reconcile the NPD kernel-log mount dependency")
-		}
-		return nil
-	}
-	cfg, found, err := configLoader(path, configure)(context.Background(), "kube2")
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if !found || !configured {
-		t.Fatal("config was returned without reconciling its host dependencies")
-	}
-	if cfg.MachineName != "kube2" {
-		t.Errorf("MachineName = %q, want kube2", cfg.MachineName)
-	}
-	if cfg.NodeName != "flex-node-1" {
-		t.Errorf("NodeName = %q, want flex-node-1", cfg.NodeName)
-	}
-	if cfg.Kubelet.Auth.BootstrapToken == "" {
-		t.Error("bootstrap token was not converted")
-	}
-	dependencyErr := errors.New("device grant could not be installed")
-	cfg, found, err = configLoader(path, func(context.Context, *agentconfig.AgentConfig, []string) error {
-		return dependencyErr
-	})(t.Context(), "kube2")
-	if !errors.Is(err, dependencyErr) || cfg != nil || found {
-		t.Fatalf("pre-start accepted config without its required grant: found=%t error=%v", found, err)
+		})
 	}
 }
 
-func TestConfigLoaderTreatsMissingConfigAsBootstrapWindow(t *testing.T) {
+func TestLoadConfigTreatsMissingConfigAsBootstrapWindow(t *testing.T) {
 	t.Parallel()
 
-	cfg, found, err := configLoader(filepath.Join(t.TempDir(), "missing.json"), func(context.Context, *agentconfig.AgentConfig, []string) error {
-		t.Fatal("missing bootstrap config attempted to change host dependencies")
-		return nil
-	})(context.Background(), "kube1")
-	if err != nil {
-		t.Fatalf("load missing config: %v", err)
+	path := filepath.Join(t.TempDir(), "missing.json")
+	for _, machine := range []string{"kube1", "kube2"} {
+		t.Run(machine, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, services, err := loadConfig(path, machine)
+			if err != nil {
+				t.Fatalf("load missing config: %v", err)
+			}
+			if cfg != nil || services != nil {
+				t.Fatal("missing config returned configuration or required services")
+			}
+
+			lifecycle, err := newLifecycle(slog.New(slog.DiscardHandler), path)
+			if err != nil {
+				t.Fatalf("create lifecycle: %v", err)
+			}
+			for range 2 {
+				if err := lifecycle.PreStart(t.Context(), machine); err != nil {
+					t.Fatalf("pre-start during bootstrap window: %v", err)
+				}
+			}
+		})
 	}
-	if found {
-		t.Fatal("load missing config found = true, want false")
-	}
-	if cfg != nil {
-		t.Fatalf("load missing config = %#v, want nil", cfg)
+}
+
+func TestLoadConfigRejectsInvalidConfig(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name       string
+		configJSON string
+		directory  bool
+		wantError  string
+	}{
+		{name: "malformed JSON", configJSON: "{", wantError: "error unmarshaling config"},
+		{name: "validation failure", configJSON: "{}", wantError: "config validation failed"},
+		{name: "read failure", directory: true, wantError: "failed to read config file"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if tt.directory {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, []byte(tt.configJSON), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, services, err := loadConfig(path, "kube1")
+			if err == nil || !strings.Contains(err.Error(), "load persisted AKS Flex config "+path) || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("load invalid config error = %v, want path context and %q", err, tt.wantError)
+			}
+			if cfg != nil || services != nil {
+				t.Fatal("invalid config returned configuration or required services")
+			}
+
+			lifecycle, err := newLifecycle(slog.New(slog.DiscardHandler), path)
+			if err != nil {
+				t.Fatalf("create lifecycle: %v", err)
+			}
+			if err := lifecycle.PreStart(t.Context(), "kube1"); err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("pre-start accepted invalid config: %v", err)
+			}
+		})
 	}
 }
 

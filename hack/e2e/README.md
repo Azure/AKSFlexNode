@@ -252,9 +252,7 @@ Run against infrastructure created by `infra` (these commands reset the token VM
 ./hack/e2e/run.sh isolation-container
 ```
 
-`go test ./hack/e2e` runs offline probe/config/sequence regression tests and shell
-syntax checks; it does not provision infrastructure. The GitHub E2E workflow runs
-these before Azure login, then runs the full live suite. The isolation suites use
+The isolation suites use
 bootstrap-token authentication; the existing nspawn cases retain MSI, Arc,
 offline-artifact, and kubeadm coverage. GPU, LocalDNS, ARM64 runtime, physical
 hosts, and preparation-time power cuts are not covered by these suites.
