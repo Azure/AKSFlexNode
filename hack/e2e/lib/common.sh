@@ -349,23 +349,23 @@ state_dump() {
 # `az aks get-credentials`, which rewrites the shared E2E kubeconfig. Serialize
 # local cluster/kubeconfig operations so concurrent kubectl calls never observe a
 # partially-written or context-less kubeconfig and fall back to localhost:8080.
-with_cluster_lock() {
+with_cluster_lock() (
   local lock_dir="${E2E_WORK_DIR}/cluster.lock"
-  local rc
+  local deadline=$((SECONDS + ${E2E_NODE_JOIN_TIMEOUT:-300}))
 
   mkdir -p "${E2E_WORK_DIR}"
   while ! mkdir "${lock_dir}" 2>/dev/null; do
+    if (( SECONDS >= deadline )); then
+      log_error "Timed out acquiring the E2E cluster lock: ${lock_dir}"
+      return 1
+    fi
     sleep 1
   done
 
-  set +e
+  # Install only after acquisition so a waiter cannot release another owner.
+  trap 'rmdir "${lock_dir}" 2>/dev/null || true' EXIT
   "$@"
-  rc=$?
-  set -e
-
-  rmdir "${lock_dir}" 2>/dev/null || true
-  return "${rc}"
-}
+)
 
 # The managed AKS FlexNode CSR approver accepts only RP-owned bootstrap tokens.
 # E2E creates equivalent token Secrets directly, so mark only the generated

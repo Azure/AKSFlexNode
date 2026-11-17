@@ -72,8 +72,58 @@ resolvectl dns "${interface}"
 REMOTE
 }
 
+# listBootstrapData can return before its pool operation finishes. Both reads
+# use the runner identity; the host's pool-scoped role need not read the cluster.
+_wait_for_msi_arm_pool_ready() {
+  local cluster_id="${1%/}"
+  local pool_id="${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}"
+  local deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
+  local resource_id provisioning_state ready remaining cli_timeout
+
+  while (( SECONDS < deadline )); do
+    ready=1
+    for resource_id in "${cluster_id}" "${pool_id}"; do
+      remaining=$((deadline - SECONDS))
+      (( remaining > 0 )) || break 2
+      cli_timeout=$((remaining < 60 ? remaining : 60))
+      if ! provisioning_state="$(timeout --kill-after=5s "${cli_timeout}s" az rest \
+        --only-show-errors \
+        --method get \
+        --url "https://management.azure.com${resource_id}?api-version=${E2E_ARM_MACHINE_API_VERSION}" \
+        --query properties.provisioningState \
+        --output tsv)"; then
+        log_error "Cannot read ARM readiness for ${resource_id}; check runner access and Azure CLI errors above"
+        return 1
+      fi
+      log_info "ARM readiness: ${resource_id} is ${provisioning_state}"
+      case "${provisioning_state,,}" in
+        succeeded) ;;
+        failed|canceled|cancelled|deleting)
+          log_error "ARM resource ${resource_id} reached ${provisioning_state}; cannot register a Machine"
+          return 1
+          ;;
+        ""|none|null)
+          log_error "ARM resource ${resource_id} did not return a provisioning state"
+          return 1
+          ;;
+        *) ready=0 ;;
+      esac
+    done
+    if (( ready == 1 )); then
+      return 0
+    fi
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || break
+    sleep "$((remaining < 10 ? remaining : 10))"
+  done
+
+  log_error "Timed out waiting for the ARM cluster and bootstrap pool to reach Succeeded"
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # _node_join_msi - Join the MSI VM with the requested Machine backend.
+# ARM callers hold with_cluster_lock through bootstrap.
 # ---------------------------------------------------------------------------
 _node_join_msi() {
   local machine_client_mode="$1"
@@ -192,13 +242,24 @@ EOF
     "${config_file}" > "${config_file}.tmp"
   mv "${config_file}.tmp" "${config_file}"
 
+  if [[ "${machine_client_mode}" == "arm" ]]; then
+    _wait_for_msi_arm_pool_ready "${cluster_id}"
+  fi
   log_info "Fetching initial AKS RP bootstrap data for the MSI node..."
   install -m 0600 /dev/null "${bootstrap_data_file}"
-  with_cluster_lock az rest \
-    --only-show-errors \
-    --method post \
-    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}/listBootstrapData?api-version=2026-05-02-preview" \
-    --output json > "${bootstrap_data_file}"
+  local -a fetch_bootstrap_data=(
+    timeout --kill-after=5s "${E2E_NODE_JOIN_TIMEOUT}s" az rest
+    --only-show-errors
+    --method post
+    --url "https://management.azure.com${cluster_id}/agentPools/${E2E_BOOTSTRAP_DATA_AGENT_POOL_NAME}/listBootstrapData?api-version=2026-05-02-preview"
+    --output json
+  )
+  if [[ "${machine_client_mode}" == "arm" ]]; then
+    # The ARM join already holds the lock; acquiring it here would deadlock.
+    "${fetch_bootstrap_data[@]}" > "${bootstrap_data_file}"
+  else
+    with_cluster_lock "${fetch_bootstrap_data[@]}" > "${bootstrap_data_file}"
+  fi
   jq -e '.azure.bootstrapToken.token | type == "string" and length > 0' "${bootstrap_data_file}" >/dev/null
   install -m 0600 /dev/null "${config_file}.tmp"
   jq --slurpfile bootstrapData "${bootstrap_data_file}" '
@@ -218,6 +279,10 @@ EOF
   if [[ "${machine_client_mode}" == "in-cluster" ]]; then
     ensure_flex_controller
     machine_configmap_upsert "$(state_get msi_vm_name)" "${E2E_KUBERNETES_VERSION}" "${E2E_KUBERNETES_VERSION}"
+  else
+    # Fetching bootstrap data may start another pool operation. Wait after the
+    # fetch, under the same lock as deployment, before EnsureMachine sends PUT.
+    _wait_for_msi_arm_pool_ready "${cluster_id}"
   fi
   _deploy_and_start_agent "${vm_ip}" "${config_file}" "${bootstrap_unit}"
 
@@ -230,7 +295,7 @@ node_join_msi() {
 
 node_join_msi_arm_registration() {
   local machine_name="$1"
-  _node_join_msi "arm" "${machine_name}" "aks-flex-node-msi-arm-registration"
+  with_cluster_lock _node_join_msi "arm" "${machine_name}" "aks-flex-node-msi-arm-registration"
 }
 
 # ---------------------------------------------------------------------------
