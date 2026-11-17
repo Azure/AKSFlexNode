@@ -48,15 +48,14 @@ func TestDownloadUsesNodeRoot(t *testing.T) {
 					t.Parallel()
 					dir := t.TempDir()
 					var root isolation.NodeRoot = isolation.DirRoot{Dir: dir}
-					binary := filepath.Join(dir, "usr/local/bin/node-problem-detector")
 					switch mode {
 					case "container":
 						root = container.Root{SlotName: "kube1", Dir: dir, HostRoot: t.TempDir()}
 					case "none":
 						layout := none.Layout{Base: t.TempDir()}
 						root = none.Root{HostRoot: dir, Layout: layout, Version: "v1"}
-						binary = filepath.Join(layout.VersionDir("v1"), "bin/node-problem-detector")
 					}
+					binary := root.Path(npdBinaryPath)
 					cfg := &config.Config{Npd: config.NPDConfig{Version: tc.configured}}
 					task, ok := Download(slog.New(slog.DiscardHandler), cfg, root).(*downloadTask)
 					if !ok {
