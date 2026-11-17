@@ -71,12 +71,12 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 	log := createPreflightLogger(cfg.Agent.LogLevel)
 
-	agentCfg, gs, _, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
+	resolved, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
 
-	nodeChecks := nodestart.Preflight(log, *agentCfg, gs)
+	nodeChecks := nodestart.Preflight(log, *resolved.AgentConfig, resolved.GoalState)
 	if cfg.UsesKubeconfigCredentials() {
 		nodeChecks, err = pairedKubeconfigChecks(cfg, nodeChecks)
 		if err != nil {
@@ -91,9 +91,9 @@ func (h *handler) execute(ctx context.Context) error {
 			failMachinesTargetForMissing,
 		)},
 		arc.Preflight(cfg, log),
-		host.Preflight(log, *agentCfg, gs),
+		host.Preflight(log, *resolved.AgentConfig, resolved.GoalState),
 		nodeChecks,
-		rootfs.Preflight(log, *agentCfg, gs),
+		rootfs.Preflight(log, *resolved.AgentConfig, resolved.GoalState),
 		npd.Preflight(cfg),
 	))
 

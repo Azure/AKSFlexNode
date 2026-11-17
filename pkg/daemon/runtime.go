@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -50,4 +49,4 @@ type workerRuntime interface {
 	Reset(*slog.Logger) phases.Task
 }
 
-type machineGoalResolver func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
+type machineGoalResolver func(context.Context, *slog.Logger, *config.Config, string) (config.ResolvedMachineGoal, error)
