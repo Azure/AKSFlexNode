@@ -11,11 +11,16 @@ import (
 
 func hostProviderServices() runtimeprovider.HostServices {
 	return runtimeprovider.HostServices{
-		CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
-		RemoveHostHelpers: removeHostHelpers, RemoveIfPresent: removeIfPresent,
-		SaveState: saveState, SyncDirs: syncDirs, RecoveryScriptPathUnder: recoveryScriptPathUnder,
-		UninstallService: UninstallService, EnsureNSpawnLifecycleUnits: EnsureNSpawnLifecycleUnits,
-		CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
+		CopyExecutable:             copyExecutable,
+		FilesHaveEqualSHA256:       filesHaveEqualSHA256,
+		RemoveHostHelpers:          removeHostHelpers,
+		RemoveIfPresent:            removeIfPresent,
+		SaveState:                  saveState,
+		SyncDirs:                   syncDirs,
+		RecoveryScriptPathUnder:    recoveryScriptPathUnder,
+		UninstallService:           UninstallService,
+		EnsureNSpawnLifecycleUnits: EnsureNSpawnLifecycleUnits,
+		CleanupLegacyBridgeCNI:     cleanupLegacyBridgeCNI,
 	}
 }
 
