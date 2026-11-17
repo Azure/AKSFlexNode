@@ -22,8 +22,8 @@ const (
 
 	defaultNPDURLTemplate = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_%s.tar.gz"
 
-	// BinaryPath is the canonical NPD binary path inside a node.
-	BinaryPath = "/usr/local/bin/node-problem-detector"
+	// BinaryPath is the NPD binary path relative to the node root.
+	BinaryPath = "usr/local/bin/node-problem-detector"
 
 	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
 
