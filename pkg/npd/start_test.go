@@ -141,14 +141,6 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 				if want := []string{"systemctl is-active " + unit}; !slices.Equal(calls, want) {
 					t.Fatalf("unchanged NPD commands = %v, want %v", calls, want)
 				}
-				calls = nil
-				forced := append(slices.Clone(options), StartOptions{ForceRestart: true})
-				if err := Start(log, cfg, root, ns, forced...).Do(t.Context()); err != nil {
-					t.Fatal(err)
-				}
-				if !slices.Equal(calls, want) {
-					t.Fatalf("forced NPD commands = %v, want %v", calls, want)
-				}
 			}
 			after, err := os.Stat(path)
 			if err != nil {

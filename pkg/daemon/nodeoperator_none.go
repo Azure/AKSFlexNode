@@ -73,7 +73,7 @@ func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) 
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
 			return npd.Start(log, cfg, ns.Root(), ns, npd.StartOptions{
-				ForceRestart: true, UnitName: npd.HostUnitNPD, BinaryPath: ns.Root().Path(npd.BinaryPath),
+				UnitName: npd.HostUnitNPD, BinaryPath: ns.Root().Path(npd.BinaryPath),
 			}).Do(ctx)
 		},
 	}, nil
