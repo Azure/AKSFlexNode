@@ -47,7 +47,7 @@ func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeSt
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
 		root:           root,
 		nodeName:       nodeStart.NodeName,
-		binaryPath:     root.Path(BinaryPath),
+		binaryPath:     root.Path(npdBinaryPath),
 		run:            nodeStart.Exec,
 	}
 }
