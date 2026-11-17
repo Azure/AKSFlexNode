@@ -20,7 +20,7 @@ var nodeProviders = map[isolation.Mode]func() NodeProvider{
 
 func hostProviderServices() runtimeprovider.HostServices {
 	return runtimeprovider.HostServices{
-		CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
+		InstallBinary: InstallBinary, CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
 		RemoveHostHelpers: removeHostHelpers, RemoveIfPresent: removeIfPresent,
 		SaveState: saveState, SyncDirs: syncDirs, RecoveryScriptPathUnder: recoveryScriptPathUnder,
 	}
@@ -31,7 +31,7 @@ func newNSpawnProvider() NodeProvider {
 		HostServices: hostProviderServices(), NewOperator: newNSpawnOperator,
 		CheckMachinesTarget: CheckMachinesTarget, ConvergeContainerAgent: convergeNSpawnContainerAgent,
 		EnsureLifecycleUnits: EnsureNSpawnLifecycleUnits, ConfigureDependencies: ConfigureNSpawnDependencies,
-		InstallBinary: InstallBinary, CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
+		CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
 		ActiveMachineFromStore: activeMachineFromStore,
 	}}
 }

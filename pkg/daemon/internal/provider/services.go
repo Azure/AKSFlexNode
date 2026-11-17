@@ -22,6 +22,7 @@ type OperatorFactory func(ctx context.Context, cfg *config.Config, store StateSt
 
 // HostServices supplies shared host-agent installation and filesystem operations.
 type HostServices struct {
+	InstallBinary           func(root isolation.NodeRoot) phases.Task
 	CopyExecutable          func(source string, destination string) error
 	FilesHaveEqualSHA256    func(first string, second string) (bool, error)
 	RemoveHostHelpers       func(log *slog.Logger) phases.Task
@@ -39,7 +40,6 @@ type NSpawnServices struct {
 	ConvergeContainerAgent func(ctx context.Context, log *slog.Logger, state StateLoader) (func(ctx context.Context) error, error)
 	EnsureLifecycleUnits   func(log *slog.Logger) phases.Task
 	ConfigureDependencies  func(log *slog.Logger, rootFS *goalstates.RootFS, services []string) phases.Task
-	InstallBinary          func(root isolation.NodeRoot) phases.Task
 	CleanupLegacyBridgeCNI func(log *slog.Logger) phases.Task
 	ActiveMachineFromStore func(ctx context.Context, store StateStore) (*ActiveMachine, error)
 }
