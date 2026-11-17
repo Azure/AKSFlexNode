@@ -39,7 +39,7 @@ func TestNoneNPDVersion(t *testing.T) {
 	}
 }
 
-func TestNoneOperatorForcesNPDRefresh(t *testing.T) {
+func TestNoneOperatorReconcilesNPD(t *testing.T) {
 	t.Parallel()
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}}
@@ -85,16 +85,16 @@ func TestNoneOperatorForcesNPDRefresh(t *testing.T) {
 	if err := op.startNPD(t.Context(), discardLogger(), cfg, ns); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"systemctl is-active " + npd.HostUnitNPD, "systemctl restart " + npd.HostUnitNPD}
+	want := []string{"systemctl is-active " + npd.HostUnitNPD}
 	if !slices.Equal(calls, want) {
-		t.Fatalf("operator did not force NPD to reload its binary: %v", calls)
+		t.Fatalf("operator NPD commands = %v, want %v", calls, want)
 	}
 	after, err := os.Stat(unit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(unit); err != nil || string(got) != string(content) || !os.SameFile(before, after) {
-		t.Fatalf("forced NPD refresh replaced an unchanged unit: %v", err)
+		t.Fatalf("NPD reconciliation replaced an unchanged unit: %v", err)
 	}
 }
 

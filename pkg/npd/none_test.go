@@ -57,23 +57,19 @@ func TestHostNativeNPD(t *testing.T) {
 	}
 }
 
-func TestHostNativeNPDForcedRestart(t *testing.T) {
+func TestHostNativeNPDReconciliation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name          string
-		force, active bool
-		want          []string
+		name   string
+		active bool
+		want   []string
 	}{
 		{
 			name: "unchanged active start", active: true,
 			want: []string{"systemctl is-active " + HostUnitNPD},
 		},
 		{
-			name: "unchanged active restart", force: true, active: true,
-			want: []string{"systemctl is-active " + HostUnitNPD, "systemctl restart " + HostUnitNPD},
-		},
-		{
-			name: "inactive restart starts service", force: true,
+			name: "inactive start",
 			want: []string{"systemctl is-active " + HostUnitNPD, "systemctl daemon-reload", "systemctl enable --now " + HostUnitNPD},
 		},
 	} {
@@ -108,7 +104,6 @@ func TestHostNativeNPDForcedRestart(t *testing.T) {
 			}
 			for range 2 {
 				calls, active = nil, tc.active
-				options.ForceRestart = tc.force
 				task := Start(log, cfg, root, ns, options)
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)
