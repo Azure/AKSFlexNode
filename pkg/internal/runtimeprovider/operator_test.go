@@ -1,4 +1,4 @@
-package daemon
+package runtimeprovider
 
 import (
 	"bytes"
@@ -12,7 +12,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -21,27 +20,27 @@ func TestFindActiveMachine(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		state   *runtimeprovider.State
+		state   *State
 		want    string
 		wantErr bool
 	}{
 		"kube1": {
-			state: &runtimeprovider.State{ActiveMachine: goalstates.NSpawnMachineKube1},
+			state: &State{ActiveMachine: goalstates.NSpawnMachineKube1},
 			want:  goalstates.NSpawnMachineKube1,
 		},
 		"kube2": {
-			state: &runtimeprovider.State{ActiveMachine: goalstates.NSpawnMachineKube2},
+			state: &State{ActiveMachine: goalstates.NSpawnMachineKube2},
 			want:  goalstates.NSpawnMachineKube2,
 		},
 		"missing state": {
 			wantErr: true,
 		},
 		"missing active machine": {
-			state:   &runtimeprovider.State{},
+			state:   &State{},
 			wantErr: true,
 		},
 		"invalid active machine": {
-			state:   &runtimeprovider.State{ActiveMachine: "kube3"},
+			state:   &State{ActiveMachine: "kube3"},
 			wantErr: true,
 		},
 	}
@@ -294,11 +293,11 @@ func discardLogger() *slog.Logger {
 }
 
 type testStateStore struct {
-	state *runtimeprovider.State
+	state *State
 	err   error
 }
 
-func (s *testStateStore) Load(context.Context) (*runtimeprovider.State, error) {
+func (s *testStateStore) Load(context.Context) (*State, error) {
 	if s.state == nil || s.err != nil {
 		return nil, s.err
 	}
@@ -309,7 +308,7 @@ func (s *testStateStore) Load(context.Context) (*runtimeprovider.State, error) {
 	return &loaded, nil
 }
 
-func (s *testStateStore) Save(context.Context, *runtimeprovider.State) error {
+func (s *testStateStore) Save(context.Context, *State) error {
 	return nil
 }
 

@@ -44,8 +44,8 @@ func TestNoneEnvironment(t *testing.T) {
 func TestNoneRuntimePolicy(t *testing.T) {
 	t.Parallel()
 	p := None{}
-	if p.Mode() != isolation.ModeNone || p.NSpawnRuntime() != nil {
-		t.Fatal("none selected nspawn runtime behavior")
+	if p.Mode() != isolation.ModeNone {
+		t.Fatal("none selected another runtime")
 	}
 	want := []string{"network-online.target", "systemd-udev-settle.service"}
 	if !slices.Equal(p.WantedTargets(), want) {
@@ -282,37 +282,39 @@ func (s *noneTestStateStore) Delete(ctx context.Context) error {
 	return nil
 }
 
-type noneTestOperator struct{ Operator }
-
 func TestNoneNewOperator(t *testing.T) {
 	t.Parallel()
-	failure := errors.New("operator construction failed")
+	failure := errors.New("state unavailable")
 	for _, tc := range []struct {
-		name string
-		err  error
+		name    string
+		state   *State
+		loadErr error
+		wantErr bool
 	}{
-		{name: "success"}, {name: "failure", err: failure},
+		{name: "success", state: &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}},
+		{name: "load failure", loadErr: failure, wantErr: true},
+		{name: "missing state", wantErr: true},
+		{name: "missing config", state: &State{Isolation: isolation.ModeNone}, wantErr: true},
+		{name: "mode mismatch", state: &State{Isolation: isolation.ModeNSpawn}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNone}}
-			store, want := &noneTestStateStore{}, &noneTestOperator{}
-			calls := 0
-			p := None{OperatorFactory: func(ctx context.Context, gotCfg *config.Config, gotStore StateStore, worker NodeProvider) (Operator, error) {
-				calls++
-				if ctx != t.Context() || gotCfg != cfg || gotStore != store || worker.Mode() != isolation.ModeNone {
-					t.Fatal("operator construction lost its inputs")
-				}
-				return want, tc.err
-			}}
+			store := &noneTestStateStore{applied: tc.state, err: tc.loadErr}
 			for range 2 {
-				got, err := p.NewOperator(t.Context(), cfg, store)
-				if got != want || !errors.Is(err, tc.err) {
-					t.Fatalf("NewOperator = %v, %v; want %v, %v", got, err, want, tc.err)
+				got, err := (None{}).NewOperator(t.Context(), cfg, store)
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("NewOperator = %v", err)
 				}
-			}
-			if calls != 2 {
-				t.Fatalf("operator factory called %d times, want 2", calls)
+				if tc.loadErr != nil && !errors.Is(err, tc.loadErr) {
+					t.Fatalf("lost state error: %v", err)
+				}
+				if err != nil {
+					continue
+				}
+				if applied, err := got.LoadState(t.Context()); err != nil || applied != tc.state {
+					t.Fatalf("LoadState = %+v, %v", applied, err)
+				}
 			}
 		})
 	}

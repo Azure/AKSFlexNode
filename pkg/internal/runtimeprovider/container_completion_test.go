@@ -1,4 +1,4 @@
-package daemon
+package runtimeprovider
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 )
 
 func TestContainerCompletionSyncFailureKeepsStartupAndSource(t *testing.T) {
@@ -15,7 +14,7 @@ func TestContainerCompletionSyncFailureKeepsStartupAndSource(t *testing.T) {
 	op, events, store := containerOperatorFixture(t, "", false)
 	syncErr := errors.New("post-start boot state did not persist")
 	calls := 0
-	op.syncPrepared = func(ctx context.Context, node runtimeprovider.ContainerRuntime) error {
+	op.syncPrepared = func(ctx context.Context, node ContainerRuntime) error {
 		calls++
 		if calls == 2 {
 			return syncErr

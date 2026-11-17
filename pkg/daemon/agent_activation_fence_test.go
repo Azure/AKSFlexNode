@@ -8,36 +8,32 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func activationFenceJournal(t *testing.T, scenario string) containerStartupStore {
 	t.Helper()
-	store := containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
+	store := containerStartupStore{Path: filepath.Join(t.TempDir(), "startup.json")}
 	if scenario == "absent" {
 		return store
 	}
 	if scenario == "unreadable" {
 		// A directory fails ReadFile even when the tests run as root.
-		if err := os.Mkdir(store.path, 0o700); err != nil {
+		if err := os.Mkdir(store.Path, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		return store
 	}
 	if scenario == "corrupt" {
-		writeTestFile(t, store.path, "{broken")
+		writeTestFile(t, store.Path, "{broken")
 		return store
 	}
 	startup := &containerStartup{Phase: scenario, Previous: containerTestState("kube1", "old"), Next: containerTestState("kube2", "next")}
@@ -54,7 +50,7 @@ func activationFenceJournal(t *testing.T, scenario string) containerStartupStore
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeTestFile(t, store.path, string(data))
+		writeTestFile(t, store.Path, string(data))
 	default:
 		if err := store.Save(t.Context(), startup); err != nil {
 			t.Fatal(err)
@@ -175,11 +171,11 @@ func TestAgentActivationRechecksStartupAfterLoadingState(t *testing.T) {
 			startup := activationFenceJournal(t, "absent")
 			loader := activationFencePublishingState{testStateStore: &testStateStore{state: containerTestState("kube1", "old")}, publish: func() {
 				published := activationFenceJournal(t, scenario)
-				if err := os.Rename(published.path, startup.path); err != nil {
+				if err := os.Rename(published.Path, startup.Path); err != nil {
 					t.Fatal(err)
 				}
 			}}
-			if state, err := loadAgentActivationState(t.Context(), &operatorBase{state: loader}, containerTestProvider(t, startup)); err == nil || state != nil {
+			if state, err := loadAgentActivationState(t.Context(), loader, containerTestProvider(t, startup)); err == nil || state != nil {
 				t.Fatalf("LoadState accepted a newly published startup: %+v, %v", state, err)
 			}
 		})
@@ -205,20 +201,15 @@ func activationFenceOperation() agentdaemon.MachineOperation {
 
 func TestAgentActivationRejectsStoppedSourceDuringContainerRepave(t *testing.T) {
 	t.Parallel()
-	op, events, store := containerOperatorFixture(t, "npd", false)
-	if _, err := op.ApplyGoalState(t.Context(), discardLogger(), aksmachine.GoalState{SettingsVersion: "next", KubernetesVersion: "1.36.2"}); err == nil {
-		t.Fatal("expected NPD failure after target startup")
+	source, target := containerTestState("kube1", "old"), containerTestState("kube2", "next")
+	startup := activationFenceJournal(t, "absent")
+	if err := startup.Save(t.Context(), &containerStartup{Phase: "starting", Next: target, Previous: source}); err != nil {
+		t.Fatal(err)
 	}
-	startup, err := op.startup.Load()
-	if err != nil || startup == nil || startup.Phase != "starting" || startup.Next.ActiveMachine != "kube2" || store.state.ActiveMachine != "kube1" {
-		t.Fatalf("startup = %+v, applied = %+v, error = %v", startup, store.state, err)
-	}
-	if !slices.Contains(*events, "source-stop") || !slices.Contains(*events, "start") {
-		t.Fatalf("did not reproduce stopped source and running target: %v", *events)
-	}
-	service := activationFenceService(t, op.startup, store.state)
+	applied := &fakeNodeOperator{state: source}
+	service := activationFenceService(t, startup, source)
 	executor := &hostAgentUpgradeExecutor{
-		log: discardLogger(), state: op, provider: service.provider, paths: service.paths,
+		log: discardLogger(), state: applied, provider: service.provider, paths: service.paths,
 		signals: agentUpgradeSignalStore{path: service.paths.SignalPath},
 	}
 	handler := machineOperationHandlers{log: discardLogger(), agentUpgrade: activationFenceUpgrade{executor, filepath.Join(t.TempDir(), "lock")}}
@@ -237,9 +228,9 @@ func TestAgentActivationRejectsStoppedSourceDuringContainerRepave(t *testing.T) 
 			t.Fatalf("denied upgrade recorded a signal: %+v, %v", signal, err)
 		}
 	}
-	op.startNPD = func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error { return nil }
-	if handled, err := op.ResumeRepave(t.Context(), discardLogger(), nil); !handled || err != nil {
-		t.Fatalf("resume = %t, %v", handled, err)
+	applied.state = target
+	if err := startup.Delete(); err != nil {
+		t.Fatal(err)
 	}
 	if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
 		t.Fatal(err)

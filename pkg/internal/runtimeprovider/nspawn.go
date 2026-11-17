@@ -31,7 +31,7 @@ var _ NodeProvider = NSpawn{}
 
 // NSpawn implements the systemd-nspawn worker lifecycle.
 type NSpawn struct {
-	Services   NSpawnServices
+	Host       HostServices
 	BinaryPath func(slot string) string
 }
 
@@ -49,16 +49,12 @@ func (NSpawn) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *confi
 	return config.ResolveMachineGoalState(ctx, log, cfg, slot)
 }
 func (p NSpawn) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
-	return []preflight.Checker{p.Services.CheckMachinesTarget(log, containerized || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "")}
+	return []preflight.Checker{CheckMachinesTarget(log, containerized || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "")}
 }
 func (NSpawn) WantedTargets() []string {
 	return []string{"network-online.target", "systemd-udev-settle.service", "machines.target"}
 }
-func (NSpawn) SupportsDisconnectTolerance() bool { return true }
-func (p NSpawn) NSpawnRuntime() NSpawnRuntime    { return p }
-func (p NSpawn) ConvergeContainerAgent(ctx context.Context, log *slog.Logger, state StateLoader) (func(ctx context.Context) error, error) {
-	return p.Services.ConvergeContainerAgent(ctx, log, state)
-}
+func (NSpawn) SupportsDisconnectTolerance() bool                 { return true }
 func (NSpawn) ValidateAgentActivation(ctx context.Context) error { return nil }
 func (NSpawn) ValidateActiveSlot(slot string) error {
 	if slot != goalstates.NSpawnMachineKube1 && slot != goalstates.NSpawnMachineKube2 {
@@ -71,13 +67,13 @@ func (p NSpawn) SynchronizeAgent(source string, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
 	}
-	return p.Services.CopyExecutable(source, p.BinaryPath(slot))
+	return p.Host.CopyExecutable(source, p.BinaryPath(slot))
 }
 func (p NSpawn) ValidateAgent(source string, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
 	}
-	equal, err := p.Services.FilesHaveEqualSHA256(source, p.BinaryPath(slot))
+	equal, err := p.Host.FilesHaveEqualSHA256(source, p.BinaryPath(slot))
 	if err != nil {
 		return fmt.Errorf("verify synchronized nspawn agent binary: %w", err)
 	}
@@ -104,25 +100,25 @@ func (NSpawn) SetupHost(cfg *config.Config, log *slog.Logger, containerized bool
 func (p NSpawn) StartNode(params StartParams) phases.Task {
 	cfg, log, gs := params.Config, params.Log, params.GoalState
 	return phases.Serial(log,
-		p.Services.EnsureLifecycleUnits(log),
+		p.Host.EnsureNSpawnLifecycleUnits(log),
 		StageContainerImageArchiveBindSource(log, params.ContainerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
-		p.Services.ConfigureDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
+		ConfigureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log, npd.Download(log, cfg, gs.RootFS.Root()), InstallBinary(gs.RootFS.Root())),
 		nodestart.StartNode(log, gs.NodeStart), nodestart.WaitForKubelet(log, params.MachineName),
-		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn), p.Services.SaveState(params.Store, params.State),
+		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn), p.Host.SaveState(params.Store, params.State),
 	)
 }
 func (p NSpawn) ResetNode(log *slog.Logger) phases.Task {
 	return phases.Serial(log,
 		phases.Parallel(log, nodestop.StopNode(log, goalstates.NSpawnMachineKube1), nodestop.StopNode(log, goalstates.NSpawnMachineKube2)),
 		phases.Parallel(log, reset.CleanupMachine(log, goalstates.NSpawnMachineKube1), reset.CleanupMachine(log, goalstates.NSpawnMachineKube2)),
-		phases.Parallel(log, reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), p.Services.CleanupLegacyBridgeCNI(log)),
-		p.Services.RemoveHostHelpers(log), reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
+		phases.Parallel(log, reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), p.Host.CleanupLegacyBridgeCNI(log)),
+		p.Host.RemoveHostHelpers(log), reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
 	)
 }
 func (p NSpawn) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state StateStore) error {
-	active, err := p.Services.ActiveMachineFromStore(ctx, state)
+	active, err := activeMachineFromStore(ctx, state)
 	if err != nil {
 		return err
 	}
@@ -152,10 +148,10 @@ func (p NSpawn) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *con
 	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 		return fmt.Errorf("reload systemd after moving to the host root: %w", err)
 	}
-	return p.Services.SyncDirs(goalstates.SystemdSystemDir, filepath.Dir(rootFS.ServiceOverrideFile), filepath.Dir(p.Services.RecoveryScriptPathUnder(hostroot.Resolve())), filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary))
+	return p.Host.SyncDirs(goalstates.SystemdSystemDir, filepath.Dir(rootFS.ServiceOverrideFile), filepath.Dir(p.Host.RecoveryScriptPathUnder(hostroot.Resolve())), filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary))
 }
 func (p NSpawn) NewOperator(ctx context.Context, cfg *config.Config, store StateStore) (Operator, error) {
-	return p.Services.NewOperator(ctx, cfg, store, p)
+	return newNSpawnOperator(ctx, cfg, store, p, p.Host)
 }
 
 // NSpawnLifecycleTasks installs the current helper before regenerating legacy hooks.

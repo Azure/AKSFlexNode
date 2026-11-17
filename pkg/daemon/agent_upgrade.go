@@ -341,7 +341,7 @@ func recordPendingAgentUpgrade(
 	if loaded == nil {
 		return fmt.Errorf("no valid active node for AgentUpgrade")
 	}
-	if err := validateAppliedProvider(provider, loaded); err != nil {
+	if err := runtimeprovider.ValidateAppliedState(provider, loaded); err != nil {
 		return err
 	}
 	mode := loaded.Isolation

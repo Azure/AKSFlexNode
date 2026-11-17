@@ -9,60 +9,26 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
-var nodeProviders = map[isolation.Mode]func() runtimeprovider.NodeProvider{
-	isolation.ModeNSpawn:    newNSpawnProvider,
-	isolation.ModeNone:      newNoneProvider,
-	isolation.ModeContainer: newContainerProvider,
-}
-
 func hostProviderServices() runtimeprovider.HostServices {
 	return runtimeprovider.HostServices{
-		CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
-		RemoveHostHelpers: removeHostHelpers, RemoveIfPresent: removeIfPresent,
-		SaveState: saveState, SyncDirs: syncDirs, RecoveryScriptPathUnder: recoveryScriptPathUnder,
+		CopyExecutable:             copyExecutable,
+		FilesHaveEqualSHA256:       filesHaveEqualSHA256,
+		RemoveHostHelpers:          removeHostHelpers,
+		RemoveIfPresent:            removeIfPresent,
+		SaveState:                  saveState,
+		SyncDirs:                   syncDirs,
+		RecoveryScriptPathUnder:    recoveryScriptPathUnder,
+		UninstallService:           UninstallService,
+		EnsureNSpawnLifecycleUnits: EnsureNSpawnLifecycleUnits,
+		CleanupLegacyBridgeCNI:     cleanupLegacyBridgeCNI,
+		PlannedHostRoot:            PlannedHostRoot,
+		ActivationLockPath:         agentUpgradeLockPath,
 	}
-}
-
-func newNSpawnProvider() runtimeprovider.NodeProvider {
-	return runtimeprovider.NSpawn{BinaryPath: runtimeprovider.NSpawnAgentBinaryPath, Services: runtimeprovider.NSpawnServices{
-		HostServices: hostProviderServices(), NewOperator: newNSpawnOperator,
-		CheckMachinesTarget: CheckMachinesTarget, ConvergeContainerAgent: convergeNSpawnContainerAgent,
-		EnsureLifecycleUnits: EnsureNSpawnLifecycleUnits, ConfigureDependencies: ConfigureNSpawnDependencies,
-		CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
-		ActiveMachineFromStore: activeMachineFromStore,
-	}}
-}
-
-func newNoneProvider() runtimeprovider.NodeProvider {
-	return runtimeprovider.None{Host: hostProviderServices(), OperatorFactory: newNoneOperator}
-}
-
-func convergeNSpawnContainerAgent(ctx context.Context, log *slog.Logger, state agentUpgradeStateLoader) (func(context.Context) error, error) {
-	convergence := newContainerAgentConvergence(log, state)
-	held, err := convergence.converge(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if held {
-		return convergence.writeUnits, nil
-	}
-	return noHeldAssets, nil
 }
 
 // NewNodeProvider constructs the runtime for an explicitly selected mode.
 func NewNodeProvider(mode isolation.Mode) (runtimeprovider.NodeProvider, error) {
-	create, ok := nodeProviders[mode]
-	if !ok {
-		return nil, fmt.Errorf("unsupported node isolation %q", mode)
-	}
-	return create(), nil
-}
-
-func validateAppliedProvider(provider runtimeprovider.NodeProvider, applied *runtimeprovider.State) error {
-	if applied != nil && applied.Isolation != provider.Mode() {
-		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.Isolation)
-	}
-	return nil
+	return runtimeprovider.New(mode, hostProviderServices())
 }
 
 // CheckBootstrapIsolation runs before registration or host mutation, even when
@@ -83,7 +49,7 @@ func CheckBootstrapIsolation(ctx context.Context, log *slog.Logger, provider run
 }
 
 func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider runtimeprovider.NodeProvider, applied *runtimeprovider.State, candidates []runtimeprovider.NodeProvider) error {
-	if err := validateAppliedProvider(provider, applied); err != nil {
+	if err := runtimeprovider.ValidateAppliedState(provider, applied); err != nil {
 		return err
 	}
 	// Registry discovery also catches partial installs without applied Flex state.
@@ -154,9 +120,5 @@ func installedNodeProvider(ctx context.Context, log *slog.Logger) (runtimeprovid
 }
 
 func registeredNodeProviders() []runtimeprovider.NodeProvider {
-	providers := make([]runtimeprovider.NodeProvider, 0, len(nodeProviders))
-	for _, create := range nodeProviders {
-		providers = append(providers, create())
-	}
-	return providers
+	return runtimeprovider.All(hostProviderServices())
 }

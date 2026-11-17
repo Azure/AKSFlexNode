@@ -1,4 +1,4 @@
-package daemon
+package runtimeprovider
 
 import (
 	"context"
@@ -51,7 +51,7 @@ func TestContainerRepaveSharesAgentActivationLock(t *testing.T) {
 func TestContainerResumeWaitsForAgentActivationLock(t *testing.T) {
 	t.Parallel()
 	op, events, store := containerOperatorFixture(t, "", false)
-	if err := op.startup.Save(t.Context(), &containerStartup{Phase: "starting", Next: containerTestState("kube2", "new"), Previous: store.state}); err != nil {
+	if err := op.startup.Save(t.Context(), &ContainerStartup{Phase: "starting", Next: containerTestState("kube2", "new"), Previous: store.state}); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := agentbinary.AcquireHostActivationLock(op.activationLockPath)

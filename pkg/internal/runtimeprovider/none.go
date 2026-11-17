@@ -33,8 +33,7 @@ var _ NodeProvider = None{}
 
 // None implements the host-native worker lifecycle.
 type None struct {
-	Host            HostServices
-	OperatorFactory OperatorFactory
+	Host HostServices
 }
 
 func (None) Mode() isolation.Mode {
@@ -51,10 +50,6 @@ func (None) WantedTargets() []string {
 
 func (None) SupportsDisconnectTolerance() bool {
 	return false
-}
-
-func (None) NSpawnRuntime() NSpawnRuntime {
-	return nil
 }
 
 func (None) ValidateAgentActivation(ctx context.Context) error {
@@ -221,7 +216,7 @@ func (p None) StartNode(params StartParams) phases.Task {
 }
 
 func (p None) NewOperator(ctx context.Context, cfg *config.Config, store StateStore) (Operator, error) {
-	return p.OperatorFactory(ctx, cfg, store, p)
+	return newNoneOperator(ctx, cfg, store, p, p.Host)
 }
 
 // NewNoneRuntime keeps SDK recovery files within Flex's reset ownership.

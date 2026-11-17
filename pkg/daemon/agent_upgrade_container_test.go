@@ -390,7 +390,7 @@ func startedContainerUpgrade(t *testing.T, runningImage, machineBinary string) (
 	running := writeTestFile(t, filepath.Join(dir, "running"), "candidate agent")
 	machine := writeTestFile(t, filepath.Join(dir, "machine"), machineBinary)
 	executor.runningExecutable = func() (string, error) { return running, nil }
-	executor.provider = nspawnProvider{Services: runtimeprovider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return machine }}
+	executor.provider = nspawnProvider{Host: hostProviderServices(), BinaryPath: func(slot string) string { return machine }}
 	phases := &[]machinav1alpha3.OperationPhase{}
 	executor.finishMachineOperation = func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
 		*phases = append(*phases, result.Phase)

@@ -329,7 +329,7 @@ func (s *flexDaemonActivationService) loadActivationState(ctx context.Context) (
 	if err := s.provider.ValidateAgentActivation(ctx); err != nil {
 		return nil, err
 	}
-	if err := validateAppliedProvider(s.provider, state); err != nil {
+	if err := runtimeprovider.ValidateAppliedState(s.provider, state); err != nil {
 		return nil, err
 	}
 	return state, nil

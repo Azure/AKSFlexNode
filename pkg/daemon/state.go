@@ -62,20 +62,6 @@ func validActiveMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
 }
 
-func activeMachineFromStore(ctx context.Context, store stateStore) (*runtimeprovider.ActiveMachine, error) {
-	state, err := store.Load(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if state == nil {
-		return nil, fmt.Errorf("daemon state is missing active machine")
-	}
-	if !validActiveMachine(state.ActiveMachine) {
-		return nil, fmt.Errorf("daemon state active machine %q is invalid", state.ActiveMachine)
-	}
-	return &runtimeprovider.ActiveMachine{Name: state.ActiveMachine, State: state}, nil
-}
-
 type stateStore = runtimeprovider.StateStore
 
 func NewFileStateStore() (stateStore, error) {

@@ -37,7 +37,6 @@ var _ NodeProvider = Container{}
 // Container implements the OCI worker lifecycle.
 type Container struct {
 	Host               HostServices
-	OperatorFactory    OperatorFactory
 	PlannedHostRoot    func() string
 	Startup            ContainerStartupReader
 	StartupPath        string
@@ -99,7 +98,6 @@ func (Container) WantedTargets() []string {
 	return []string{"network-online.target", "systemd-udev-settle.service"}
 }
 func (Container) SupportsDisconnectTolerance() bool { return false }
-func (Container) NSpawnRuntime() NSpawnRuntime      { return nil }
 func (Container) ValidateResetState(state *State) error {
 	if !ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration for reset")
@@ -152,7 +150,11 @@ func (p Container) NewOperator(ctx context.Context, cfg *config.Config, store St
 	if !cfg.Bootstrap.ExperimentalContainerIsolation {
 		return nil, fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
 	}
-	return p.OperatorFactory(ctx, cfg, store, p)
+	base, state, err := newOperatorBase(ctx, cfg, store, p, p.Host)
+	if err != nil {
+		return nil, err
+	}
+	return newContainerNodeOperator(base, state, ContainerStartupStore{Path: p.StartupPath}, p.ActivationLockPath)
 }
 
 // ValidContainerState checks persisted container slot and configuration ownership.

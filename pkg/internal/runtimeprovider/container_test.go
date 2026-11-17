@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
@@ -15,7 +14,7 @@ import (
 
 func mustNodeProvider(t *testing.T, mode isolation.Mode) runtimeprovider.NodeProvider {
 	t.Helper()
-	p, err := daemon.NewNodeProvider(mode)
+	p, err := runtimeprovider.New(mode, runtimeprovider.HostServices{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package daemon
+package runtimeprovider
 
 import (
 	"context"
@@ -9,37 +9,36 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 const containerStartupFileName = "container-startup.json"
 
+const containerStartupFileMode = 0o600
+
 // Preparing fences agent activation during the SDK upgrade. An interruption or
 // SDK error requires operator recovery; the record cannot identify a safe slot.
 // Starting records a successful SDK return with Flex completion still pending,
 // not a pre-kubelet publication. Finished records completed local work.
-type containerStartup = runtimeprovider.ContainerStartup
+type ContainerStartupStore struct{ Path string }
 
-type containerStartupStore struct{ path string }
-
-func defaultContainerStartupStore() containerStartupStore {
-	return containerStartupStore{path: filepath.Join(config.ConfigDir, containerStartupFileName)}
+func defaultContainerStartupStore() ContainerStartupStore {
+	return ContainerStartupStore{Path: filepath.Join(config.ConfigDir, containerStartupFileName)}
 }
 
-func (s containerStartupStore) Load() (*containerStartup, error) {
-	data, err := os.ReadFile(s.path)
+func (s ContainerStartupStore) Load() (*ContainerStartup, error) {
+	data, err := os.ReadFile(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read container startup: %w", err)
 	}
-	var startup containerStartup
+	var startup ContainerStartup
 	if err := json.Unmarshal(data, &startup); err != nil {
 		return nil, fmt.Errorf("decode container startup: %w", err)
 	}
-	if !runtimeprovider.ValidContainerState(startup.Next) || !runtimeprovider.ValidContainerState(startup.Previous) ||
+	if !ValidContainerState(startup.Next) || !ValidContainerState(startup.Previous) ||
 		startup.Next.ActiveMachine == startup.Previous.ActiveMachine || startup.Next.AppliedSettingsVersion == "" {
 		return nil, fmt.Errorf("container startup has invalid frozen configuration or slots")
 	}
@@ -51,19 +50,19 @@ func (s containerStartupStore) Load() (*containerStartup, error) {
 	}
 }
 
-func (s containerStartupStore) Save(_ context.Context, startup *containerStartup) error {
+func (s ContainerStartupStore) Save(_ context.Context, startup *ContainerStartup) error {
 	data, err := json.Marshal(startup)
 	if err != nil {
 		return fmt.Errorf("encode container startup: %w", err)
 	}
-	if err := utilio.WriteFile(s.path, append(data, '\n'), stateFileMode); err != nil {
+	if err := utilio.WriteFile(s.Path, append(data, '\n'), containerStartupFileMode); err != nil {
 		return fmt.Errorf("publish container startup: %w", err)
 	}
 	return nil
 }
 
-func (s containerStartupStore) Delete() error {
-	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+func (s ContainerStartupStore) Delete() error {
+	if err := os.Remove(s.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove container startup: %w", err)
 	}
 	return nil

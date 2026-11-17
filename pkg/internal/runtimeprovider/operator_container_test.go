@@ -1,32 +1,27 @@
-package daemon
+package runtimeprovider
 
 import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/hostnode/hostnodetest"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
-	corev1 "k8s.io/api/core/v1"
 )
 
-func containerTestState(slot, version string) *runtimeprovider.State {
+func containerTestState(slot, version string) *State {
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	return (&runtimeprovider.State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
+	return (&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
 		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot)}).DeepCopy()
 }
 
@@ -73,7 +68,7 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	state := containerTestState("kube1", "old")
 	store := &noneTestStore{events: events, state: state, failSave: failSave}
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	startup := containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
+	startup := ContainerStartupStore{Path: filepath.Join(t.TempDir(), "startup.json")}
 	provider := containerTestProvider(t, startup)
 	operator, err := provider.NewOperator(t.Context(), cfg, store)
 	if err != nil {
@@ -87,7 +82,7 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	op.newNode = func(p containerops.Params) (containerNode, error) {
 		return &fakeContainerNode{params: p, events: events, fail: fail}, nil
 	}
-	op.syncPrepared = func(context.Context, runtimeprovider.ContainerRuntime) error {
+	op.syncPrepared = func(context.Context, ContainerRuntime) error {
 		*events = append(*events, "sync-prepared")
 		if fail == "sync-prepared" {
 			return errors.New("prepared filesystem could not be persisted")
@@ -151,7 +146,7 @@ func TestContainerStartupResumeFrozen(t *testing.T) {
 	op, events, store := containerOperatorFixture(t, "", false)
 	frozen := containerTestState("kube2", "frozen")
 	frozen.NodeConfig.Cluster.Version = "1.36.2"
-	if err := op.startup.Save(t.Context(), &containerStartup{Phase: "starting", Next: frozen, Previous: store.state}); err != nil {
+	if err := op.startup.Save(t.Context(), &ContainerStartup{Phase: "starting", Next: frozen, Previous: store.state}); err != nil {
 		t.Fatal(err)
 	}
 	op.cfg.Components.Kubernetes = "1.99.0"
@@ -179,7 +174,7 @@ func TestContainerStartupResumeFrozen(t *testing.T) {
 func TestContainerInterruptedSDKUpgradeFailsClosed(t *testing.T) {
 	t.Parallel()
 	op, events, store := containerOperatorFixture(t, "", false)
-	if err := op.startup.Save(t.Context(), &containerStartup{Phase: "preparing", Next: containerTestState("kube2", "next"), Previous: store.state}); err != nil {
+	if err := op.startup.Save(t.Context(), &ContainerStartup{Phase: "preparing", Next: containerTestState("kube2", "next"), Previous: store.state}); err != nil {
 		t.Fatal(err)
 	}
 	if handled, err := op.ResumeRepave(t.Context(), discardLogger(), nil); !handled || err == nil {
@@ -190,57 +185,6 @@ func TestContainerInterruptedSDKUpgradeFailsClosed(t *testing.T) {
 	}
 	if len(*events) != 0 {
 		t.Fatalf("unsafe preparation recovery: %v", *events)
-	}
-}
-
-func TestContainerHostRecipeAndHelper(t *testing.T) {
-	t.Parallel()
-	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	provider := containerTestProvider(t, activationFenceJournal(t, "absent"))
-	recipe := provider.SetupHost(cfg, discardLogger(), false).Name()
-	for _, required := range []string{"disable-containerd", "disable-kubelet", "remove-apt-hardening", "load-kernel-modules"} {
-		if !strings.Contains(recipe, required) {
-			t.Errorf("missing %s: %s", required, recipe)
-		}
-	}
-	if strings.Contains(recipe, "harden-apt") || strings.Contains(recipe, "install-systemd-container") {
-		t.Fatalf("container recipe includes nspawn host preparation: %s", recipe)
-	}
-	node, err := runtimeprovider.NewContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1",
-		GoalState: hostnodetest.GoalState("kube1", false),
-		Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()}}, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if node.Backend().HelperPath != defaultAgentUpgradePaths().BinaryPath {
-		t.Fatal("container helper is not the stable Flex executable")
-	}
-	unit, err := renderAgentServiceUnit("/agent", agentServiceOptionsFor(cfg, provider))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(unit), "machines.target") || strings.Contains(string(unit), "# Node isolation:") {
-		t.Fatalf("incorrect container agent service: %s", unit)
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ServiceUnitName), unit, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	paths := testAgentUpgradePaths(t)
-	service := &flexDaemonActivationService{
-		log:            discardLogger(),
-		paths:          paths,
-		state:          &testStateStore{state: containerTestState("kube1", "42")},
-		provider:       provider,
-		systemdDir:     dir,
-		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
-		inspectService: func(context.Context, *slog.Logger, string) (bool, error) { return false, nil },
-	}
-	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(service.serviceOptions.WantedTargets, provider.WantedTargets()) {
-		t.Fatalf("activation did not retain container provider targets: %+v", service.serviceOptions)
 	}
 }
 
@@ -285,37 +229,5 @@ func TestContainerRepaveRefreshesARMInputs(t *testing.T) {
 	}
 	if op.cfg.Azure.BootstrapToken.Token != "expired-bootstrap-token" {
 		t.Fatal("repave mutated startup configuration")
-	}
-}
-
-func TestContainerHubIntentDoesNotOperateNSpawn(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		enabled bool
-		reason  string
-	}{
-		{name: "disabled", reason: hubReasonDisabled}, {name: "unsupported", enabled: true, reason: "Unsupported"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			adapter, err := newHubMachineAdapter(func(string) (hubTransitionOperations, error) {
-				t.Fatal("container DT invoked nspawn operations")
-				return nil, nil
-			}, mustNodeProvider(t, isolation.ModeContainer))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var condition corev1.NodeCondition
-			adapter.setCondition = func(_ context.Context, c corev1.NodeCondition) error { condition = c; return nil }
-			for range 2 {
-				if err := adapter.ReconcileHub(t.Context(), aksmachine.GoalState{DisconnectToleranceEnabled: &tc.enabled}, containerTestState("kube1", "old"), nil); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if condition.Reason != tc.reason {
-				t.Fatalf("condition = %s, want %s", condition.Reason, tc.reason)
-			}
-		})
 	}
 }

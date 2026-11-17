@@ -1,4 +1,4 @@
-package daemon
+package runtimeprovider
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
@@ -356,7 +355,7 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 			gs := hostnodetest.GoalState("kube1", false)
 			gs.NodeStart.Kubelet.KubeletAuthInfo = ac.Kubelet.Auth
 			params := f.params(containerops.Params{Log: discardLogger(), Config: ac, Slot: "kube1", GoalState: gs})
-			node, err := runtimeprovider.NewContainerNode(params, cfg)
+			node, err := NewContainerNode(params, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -420,7 +419,7 @@ func TestContainerCompletionJournalWithOriginalSDK(t *testing.T) {
 			op, _, store := containerOperatorFixture(t, "", false)
 			op.cfg.Bootstrap.OfflineArtifacts.Source = "file:///unused-offline-artifacts"
 			op.newNode = func(p containerops.Params) (containerNode, error) {
-				node, err := runtimeprovider.NewContainerNode(f.params(p), op.cfg)
+				node, err := NewContainerNode(f.params(p), op.cfg)
 				if err != nil {
 					return nil, err
 				}
@@ -453,10 +452,10 @@ func TestContainerCompletionJournalWithOriginalSDK(t *testing.T) {
 				}
 				if failure == "completion publication" {
 					// Let the SDK succeed but prevent Flex from recording its return.
-					if err := os.Rename(filepath.Dir(op.startup.path), filepath.Dir(op.startup.path)+"-saved"); err != nil {
+					if err := os.Rename(filepath.Dir(op.startup.Path), filepath.Dir(op.startup.Path)+"-saved"); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.WriteFile(filepath.Dir(op.startup.path), nil, 0o600); err != nil {
+					if err := os.WriteFile(filepath.Dir(op.startup.Path), nil, 0o600); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -475,10 +474,10 @@ func TestContainerCompletionJournalWithOriginalSDK(t *testing.T) {
 				t.Fatalf("ApplyGoalState = %v, target exposure = %t", err, seenExposure)
 			}
 			if failure == "completion publication" {
-				if err := os.Remove(filepath.Dir(op.startup.path)); err != nil {
+				if err := os.Remove(filepath.Dir(op.startup.Path)); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Rename(filepath.Dir(op.startup.path)+"-saved", filepath.Dir(op.startup.path)); err != nil {
+				if err := os.Rename(filepath.Dir(op.startup.Path)+"-saved", filepath.Dir(op.startup.Path)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -510,7 +509,7 @@ func TestContainerCompletionJournalWithOriginalSDK(t *testing.T) {
 				if startup.Phase != "starting" || store.state.ActiveMachine != "kube1" || f.active[container.UnitName("kube1")] || !f.active[container.UnitName("kube2")] {
 					t.Fatalf("NPD failure did not leave stopped source and pending target: %+v, %v", startup, f.active)
 				}
-				if err := requireNoContainerStartupForAgentActivation(op.startup); err == nil {
+				if err := RequireNoContainerStartupForAgentActivation(op.startup); err == nil {
 					t.Fatal("pending NPD completion allowed source agent synchronization")
 				}
 				failure = "healthy"

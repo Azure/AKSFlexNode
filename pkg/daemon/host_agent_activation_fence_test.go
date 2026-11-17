@@ -54,6 +54,10 @@ func (s activationFencePublishingState) Load(ctx context.Context) (*runtimeprovi
 	return s.testStateStore.Load(ctx)
 }
 
+func (s activationFencePublishingState) LoadState(ctx context.Context) (*runtimeprovider.State, error) {
+	return s.Load(ctx)
+}
+
 func TestDirectAgentActivationRechecksBeforeSynchronization(t *testing.T) {
 	t.Parallel()
 	startup := activationFenceJournal(t, "absent")

@@ -19,7 +19,6 @@ import (
 type nspawnProvider = runtimeprovider.NSpawn
 type noneProvider = runtimeprovider.None
 
-var newNoneRuntime = runtimeprovider.NewNoneRuntime
 var resetNoneRuntime = runtimeprovider.ResetNoneRuntime
 
 func mustNodeProvider(t *testing.T, mode isolation.Mode) runtimeprovider.NodeProvider {

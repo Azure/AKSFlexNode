@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -26,14 +26,14 @@ func TestNodeProviderFactory(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := daemon.NewNodeProvider(tc.mode)
+			p, err := runtimeprovider.New(tc.mode, runtimeprovider.HostServices{})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("factory=%v, %v", p, err)
 			}
 			if tc.wantErr {
 				return
 			}
-			if p.Mode() != tc.want || p.SupportsDisconnectTolerance() != tc.nspawn || (p.NSpawnRuntime() != nil) != tc.nspawn {
+			if p.Mode() != tc.want || p.SupportsDisconnectTolerance() != tc.nspawn {
 				t.Fatalf("wrong provider capabilities: %T", p)
 			}
 			if err := p.ValidateEnvironment(false); err != nil {
