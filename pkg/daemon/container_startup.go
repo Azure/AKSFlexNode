@@ -56,7 +56,7 @@ func (s containerStartupStore) Save(_ context.Context, startup *containerStartup
 	if err != nil {
 		return fmt.Errorf("encode container startup: %w", err)
 	}
-	if err := utilio.WriteFileDurable(s.path, append(data, '\n'), stateFileMode); err != nil {
+	if err := utilio.WriteFile(s.path, append(data, '\n'), stateFileMode); err != nil {
 		return fmt.Errorf("publish container startup: %w", err)
 	}
 	return nil
@@ -66,5 +66,5 @@ func (s containerStartupStore) Delete() error {
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove container startup: %w", err)
 	}
-	return utilio.SyncDir(filepath.Dir(s.path))
+	return nil
 }

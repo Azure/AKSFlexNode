@@ -102,8 +102,8 @@ func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider Node
 // discoverResetProvider loads Flex state first: SDK Destroy can remove all SDK
 // footprints before later cleanup fails. A corrupt journal must never route to
 // the legacy runtime's destructive cleanup.
-func discoverResetProvider(ctx context.Context, load func(context.Context) (*runtimeprovider.State, error), log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
-	applied, err := load(ctx)
+func discoverResetProvider(ctx context.Context, store stateStore, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
+	applied, err := store.Load(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load applied state for reset: %w", err)
 	}

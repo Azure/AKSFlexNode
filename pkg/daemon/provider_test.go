@@ -74,7 +74,7 @@ func TestResetInvokesDiscoveredActions(t *testing.T) {
 	t.Parallel()
 	resets := 0
 	provider := resetActionProvider{NodeProvider: mustNodeProvider(t, "none"), resets: &resets}
-	task, err := resetNodeFromState(t.Context(), discardLogger(), (&testStateStore{}).Load, []NodeProvider{provider})
+	task, err := resetNodeFromState(t.Context(), discardLogger(), &testStateStore{}, []NodeProvider{provider})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestResetProviderDiscovery(t *testing.T) {
 			for _, mode := range tc.present {
 				candidates = append(candidates, presenceProvider{NodeProvider: mustNodeProvider(t, mode), present: true, probes: &probes})
 			}
-			p, err := discoverResetProvider(t.Context(), func(context.Context) (*runtimeprovider.State, error) { return tc.state, tc.loadErr }, discardLogger(), candidates)
+			p, err := discoverResetProvider(t.Context(), &testStateStore{state: tc.state, err: tc.loadErr}, discardLogger(), candidates)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("discover=%v, %v", p, err)
 			}

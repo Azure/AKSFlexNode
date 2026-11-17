@@ -295,11 +295,12 @@ func discardLogger() *slog.Logger {
 
 type testStateStore struct {
 	state *runtimeprovider.State
+	err   error
 }
 
 func (s *testStateStore) Load(context.Context) (*runtimeprovider.State, error) {
-	if s.state == nil {
-		return nil, nil
+	if s.state == nil || s.err != nil {
+		return nil, s.err
 	}
 	loaded := *s.state
 	if loaded.Isolation == "" {
