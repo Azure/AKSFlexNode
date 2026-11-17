@@ -186,7 +186,7 @@ func (r containerRuntime) Retire(log *slog.Logger, input Inputs) phases.Task {
 func (containerRuntime) Reset(log *slog.Logger) phases.Task {
 	teardown := &containerops.Teardown{Log: log}
 	return phases.Serial(log,
-		containerTeardown(log, teardown),
+		containerTeardown(teardown),
 		phases.Parallel(log,
 			reset.CleanupNetwork(log),
 			reset.RemoveWireGuardKeys(log),
@@ -197,10 +197,15 @@ func (containerRuntime) Reset(log *slog.Logger) phases.Task {
 	)
 }
 
-func containerTeardown(log *slog.Logger, teardown *containerops.Teardown) phases.Task {
+func containerTeardown(teardown *containerops.Teardown) phases.Task {
 	return hostnode.Func("reset-oci-node", func(ctx context.Context) error {
-		if err := phases.Serial(log, teardown.Stop(), teardown.RemoveConfig(), teardown.Destroy()).Do(ctx); err != nil {
+		// Destroy stops existing supervisors and checks that every container is
+		// gone, including slots whose unit was never written or was removed.
+		if err := teardown.Destroy().Do(ctx); err != nil {
 			return fmt.Errorf("tear down OCI worker: %w", err)
+		}
+		if err := teardown.RemoveConfig().Do(ctx); err != nil {
+			return fmt.Errorf("remove OCI worker configuration: %w", err)
 		}
 		return removeContainerUpgradeArtifact(teardown.Root)
 	})

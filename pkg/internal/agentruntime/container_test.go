@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
@@ -16,6 +17,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostnode/hostnodetest"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -87,7 +89,10 @@ func TestContainerStartPreflightAndRuntimeInstallation(t *testing.T) {
 			}
 			input := Inputs{
 				Config: &config.Config{},
-				Node:   Node{Slot: "kube1", GoalState: hostnodetest.GoalState("kube1", false)},
+				Node: Node{
+					Slot:      "kube1",
+					GoalState: hostnodetest.GoalState("kube1", false),
+				},
 			}
 			err := worker.Start(slog.New(slog.DiscardHandler), input).Do(t.Context())
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -117,7 +122,10 @@ func TestContainerFreshStartInstallsHelperBeforeActivation(t *testing.T) {
 			params.SystemdDir = filepath.Join(dir, "systemd")
 			params.RuntimePath = runtimePath
 			params.ImageArchiveDir = filepath.Join(dir, "images")
-			params.Host = &container.HostFS{CgroupControllers: cgroupPath, SELinuxEnforce: filepath.Join(dir, "absent")}
+			params.Host = &container.HostFS{
+				CgroupControllers: cgroupPath,
+				SELinuxEnforce:    filepath.Join(dir, "absent"),
+			}
 			params.HostRoot = filepath.Join(dir, "host")
 			params.SetupNetwork = func(context.Context) error { return nil }
 			params.WaitLocalDNS = func(context.Context, *goalstates.NodeStart) error { return nil }
@@ -148,10 +156,15 @@ func TestContainerFreshStartInstallsHelperBeforeActivation(t *testing.T) {
 		},
 	}
 	input := Inputs{
-		Config: &config.Config{Bootstrap: config.BootstrapConfig{
-			OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
-		}},
-		Node: Node{Slot: "kube1", GoalState: hostnodetest.GoalState("kube1", false)},
+		Config: &config.Config{
+			Bootstrap: config.BootstrapConfig{
+				OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
+			},
+		},
+		Node: Node{
+			Slot:      "kube1",
+			GoalState: hostnodetest.GoalState("kube1", false),
+		},
 	}
 	if err := worker.Start(slog.New(slog.DiscardHandler), input).Do(t.Context()); err != nil {
 		t.Fatal(err)
@@ -186,9 +199,11 @@ func TestContainerUpgradeUnpackInstallsHelper(t *testing.T) {
 					},
 				},
 			})
-			cfg := &config.Config{Bootstrap: config.BootstrapConfig{
-				OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
-			}}
+			cfg := &config.Config{
+				Bootstrap: config.BootstrapConfig{
+					OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
+				},
+			}
 			gs, err := bindContainerArtifacts(node, slog.New(slog.DiscardHandler), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -253,10 +268,15 @@ func TestContainerUpgradeInstallsHelperBeforeProvisionAndActivation(t *testing.T
 	}
 	previous := Node{Slot: "kube1", GoalState: hostnodetest.GoalState("kube1", false)}
 	input := Inputs{
-		Config: &config.Config{Bootstrap: config.BootstrapConfig{
-			OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
-		}},
-		Node:     Node{Slot: "kube2", GoalState: hostnodetest.GoalState("kube2", false)},
+		Config: &config.Config{
+			Bootstrap: config.BootstrapConfig{
+				OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
+			},
+		},
+		Node: Node{
+			Slot:      "kube2",
+			GoalState: hostnodetest.GoalState("kube2", false),
+		},
 		Previous: &previous,
 	}
 	err := worker.Start(slog.New(slog.DiscardHandler), input).Do(t.Context())
@@ -292,73 +312,231 @@ func TestContainerResetRemovesOnlyUpgradeSnapshot(t *testing.T) {
 	}
 }
 
-func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
-	t.Parallel()
+type containerTeardownFixture struct {
+	teardown       *containerops.Teardown
+	snapshot       string
+	modules        string
+	sharedConfig   string
+	unrelated      string
+	unit           string
+	stops          int
+	missingStops   int
+	stopErr        error
+	containerAlive bool
+}
+
+func newContainerTeardownFixture(t *testing.T) *containerTeardownFixture {
+	t.Helper()
 	dir := t.TempDir()
 	root := filepath.Join(dir, "host")
 	layout := container.Layout{Base: filepath.Join(dir, "containers")}
-	mountInfo := filepath.Join(dir, "mountinfo")
-	snapshot := filepath.Join(root, goalstates.AgentConfigDir, "container-upgrade-config")
-	for _, path := range []string{layout.RootfsDir("kube1"), snapshot, filepath.Join(dir, "systemd")} {
+	systemdDir := filepath.Join(dir, "systemd")
+	f := &containerTeardownFixture{
+		snapshot:     filepath.Join(root, goalstates.AgentConfigDir, containerUpgradeSnapshot),
+		modules:      filepath.Join(root, noneops.ModulesLoadPath),
+		sharedConfig: filepath.Join(root, "var/lib/kubelet/config.yaml"),
+		unrelated:    filepath.Join(root, goalstates.AgentConfigDir, "none-upgrade-journal.json"),
+		unit:         filepath.Join(systemdDir, container.UnitName("kube1")),
+	}
+	for _, path := range []string{layout.RootfsDir("kube1"), f.snapshot, systemdDir, filepath.Dir(f.modules), filepath.Dir(f.sharedConfig)} {
 		if err := os.MkdirAll(path, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(snapshot, "credentials"), []byte("secret"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, path := range []string{filepath.Join(f.snapshot, "credentials"), f.modules, f.sharedConfig, f.unrelated} {
+		if err := os.WriteFile(path, []byte("retained"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	mount := "100 1 0:50 / " + layout.RootfsDir("kube1") + "/volume rw - xfs /dev/sda rw\n"
-	if err := os.WriteFile(mountInfo, []byte(mount), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	teardown := &containerops.Teardown{
-		Log:         slog.New(slog.DiscardHandler),
-		Root:        root,
-		Layout:      layout,
-		SystemdDir:  filepath.Join(dir, "systemd"),
-		RuntimePath: filepath.Join(dir, "runtime", "runc"),
-		MountInfo:   mountInfo,
-		Run: func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
-			if strings.HasSuffix(name, "runc") && len(args) > 0 && args[0] == "state" {
-				return "", errors.New("not running")
-			}
-			return "", nil
-		},
-	}
-	task := containerTeardown(teardown.Log, teardown)
-	if err := task.Do(t.Context()); err == nil {
-		t.Fatal("expected teardown to fail while a slot mount remains")
-	}
-	if _, err := os.Stat(filepath.Join(snapshot, "credentials")); err != nil {
-		t.Fatalf("snapshot removed despite failed teardown: %v", err)
-	}
+	mountInfo := filepath.Join(dir, "mountinfo")
 	if err := os.WriteFile(mountInfo, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if err := task.Do(t.Context()); err != nil {
-			t.Fatalf("safe teardown: %v", err)
+	f.teardown = &containerops.Teardown{
+		Log:          slog.New(slog.DiscardHandler),
+		Root:         root,
+		Layout:       layout,
+		SystemdDir:   systemdDir,
+		RuntimePath:  filepath.Join(dir, "runtime", "runc"),
+		MountInfo:    mountInfo,
+		GoneTimeout:  5 * time.Millisecond,
+		PollInterval: time.Millisecond,
+		Run:          f.run,
+	}
+	return f
+}
+
+func (f *containerTeardownFixture) run(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
+	if name == "systemctl" && len(args) >= 2 && args[0] == "stop" {
+		f.stops++
+		if _, err := os.Lstat(filepath.Join(f.teardown.SystemdDir, args[1])); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				f.missingStops++
+				return "", errors.New("unit not loaded")
+			}
+			return "", err
+		}
+		if f.stopErr == nil {
+			f.containerAlive = false
+		}
+		return "", f.stopErr
+	}
+	if strings.HasSuffix(name, "runc") && len(args) > 0 && args[0] == "state" {
+		if f.containerAlive {
+			return `{"status":"running"}`, nil
+		}
+		return "", errors.New("not running")
+	}
+	return "", nil
+}
+
+func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		createUnit bool
+		wantStops  int
+	}{
+		{name: "interrupted prepare without unit"},
+		{name: "unit removed before mounted rootfs", createUnit: true, wantStops: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newContainerTeardownFixture(t)
+			if tc.createUnit {
+				if err := os.WriteFile(f.unit, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mount := "100 1 0:50 / " + f.teardown.Layout.RootfsDir("kube1") + "/volume rw - xfs /dev/sda rw\n"
+			if err := os.WriteFile(f.teardown.MountInfo, []byte(mount), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			task := containerTeardown(f.teardown)
+			if err := task.Do(t.Context()); err == nil || !strings.Contains(err.Error(), "still mounted") {
+				t.Fatalf("expected mount safety failure, got %v", err)
+			}
+			for _, path := range []string{filepath.Join(f.snapshot, "credentials"), f.modules, f.sharedConfig, f.teardown.Layout.RootfsDir("kube1")} {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("unsafe teardown removed %s: %v", path, err)
+				}
+			}
+			if _, err := os.Stat(f.unit); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected supervisor absent before retry: %v", err)
+			}
+			if err := os.WriteFile(f.teardown.MountInfo, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := task.Do(t.Context()); err != nil {
+					t.Fatalf("safe teardown retry: %v", err)
+				}
+			}
+			if f.stops != tc.wantStops || f.missingStops != 0 {
+				t.Fatalf("stop calls=%d, missing-unit stops=%d", f.stops, f.missingStops)
+			}
+			for _, path := range []string{f.snapshot, f.modules, f.sharedConfig} {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("teardown retained %s: %v", path, err)
+				}
+			}
+			if _, err := os.Stat(f.unrelated); err != nil {
+				t.Fatalf("removed unrelated SDK artifact: %v", err)
+			}
+		})
+	}
+}
+
+func TestContainerTeardownStopsRunningSupervisor(t *testing.T) {
+	t.Parallel()
+	f := newContainerTeardownFixture(t)
+	if err := os.WriteFile(f.unit, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.containerAlive = true
+	if err := containerTeardown(f.teardown).Do(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if f.stops != 1 || f.missingStops != 0 || f.containerAlive {
+		t.Fatalf("stops=%d missing-unit stops=%d live=%t", f.stops, f.missingStops, f.containerAlive)
+	}
+	for _, path := range []string{f.snapshot, f.modules, f.sharedConfig} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("teardown retained %s: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(snapshot); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("snapshot still present: %v", err)
+	if _, err := os.Stat(f.unrelated); err != nil {
+		t.Fatalf("removed unrelated SDK artifact: %v", err)
+	}
+}
+
+func TestContainerTeardownPropagatesStopFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		alive bool
+	}{
+		{name: "container gone"},
+		{name: "container still alive", alive: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newContainerTeardownFixture(t)
+			if err := os.WriteFile(f.unit, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f.stopErr = errors.New("stop failed")
+			f.containerAlive = tc.alive
+			task := containerTeardown(f.teardown)
+			if err := task.Do(t.Context()); !errors.Is(err, f.stopErr) {
+				t.Fatalf("stop error lost: %v", err)
+			}
+			for _, path := range []string{filepath.Join(f.snapshot, "credentials"), f.modules, f.sharedConfig, f.unrelated} {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("failed stop removed %s: %v", path, err)
+				}
+			}
+			if tc.alive {
+				for _, path := range []string{f.unit, f.teardown.Layout.RootfsDir("kube1")} {
+					if _, err := os.Stat(path); err != nil {
+						t.Fatalf("live container lost %s: %v", path, err)
+					}
+				}
+			}
+			f.stopErr = nil
+			f.containerAlive = false
+			for range 2 {
+				if err := task.Do(t.Context()); err != nil {
+					t.Fatalf("retry after stop failure: %v", err)
+				}
+			}
+			if _, err := os.Stat(f.snapshot); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("snapshot still present after retry: %v", err)
+			}
+			if _, err := os.Stat(f.unrelated); err != nil {
+				t.Fatalf("removed unrelated SDK artifact: %v", err)
+			}
+		})
 	}
 }
 
 func TestContainerWorkerUsesSDKRootAndExecutor(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	worker := containerRuntime{newNode: func(params containerops.Params) *containerops.Node {
-		params.Layout = container.Layout{Base: filepath.Join(dir, "containers")}
-		params.RuntimePath = filepath.Join(dir, "runc")
-		params.HostRoot = filepath.Join(dir, "host")
-		params.Run = func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
-			return name + " " + strings.Join(args, " "), nil
-		}
-		return containerops.New(params)
-	}}
+	worker := containerRuntime{
+		newNode: func(params containerops.Params) *containerops.Node {
+			params.Layout = container.Layout{Base: filepath.Join(dir, "containers")}
+			params.RuntimePath = filepath.Join(dir, "runc")
+			params.HostRoot = filepath.Join(dir, "host")
+			params.Run = func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
+				return name + " " + strings.Join(args, " "), nil
+			}
+			return containerops.New(params)
+		},
+	}
 	view, err := worker.Worker(slog.New(slog.DiscardHandler), Node{
-		Slot: "kube2", GoalState: hostnodetest.GoalState("kube2", false),
+		Slot:      "kube2",
+		GoalState: hostnodetest.GoalState("kube2", false),
 	})
 	if err != nil {
 		t.Fatal(err)
