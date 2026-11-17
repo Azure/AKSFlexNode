@@ -325,6 +325,9 @@ source "$SCRIPT"
 `+runtimeRemoteStub+`
 log_error() { echo "$*" >&2; }
 log_info() { echo "$*"; }
+# Poll attempts must not depend on crossing a wall-clock second during setup.
+unset SECONDS
+SECONDS=0
 sleep() { SECONDS=100; }
 E2E_NODE_JOIN_TIMEOUT=1
 E2E_KUBERNETES_VERSION=v1.35.0
@@ -385,6 +388,8 @@ _isolation_snapshot() {
   if [[ "$LAST" == empty ]]; then return 0; fi
   printf 'container|kube2|1.35.0\r|settings|location\n'
 }
+unset SECONDS
+SECONDS=0
 sleep() {
   if [[ -e "$ROOT/slept" ]]; then SECONDS=100; else touch "$ROOT/slept"; fi
 }
