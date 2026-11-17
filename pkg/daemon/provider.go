@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
-type NodeProvider = provider.NodeProvider
-type StartParams = provider.StartParams
-type agentActions = provider.AgentActions
+type NodeProvider = runtimeprovider.NodeProvider
+type StartParams = runtimeprovider.StartParams
+type agentActions = runtimeprovider.AgentActions
 
 var nodeProviders = map[isolation.Mode]func() NodeProvider{
 	isolation.ModeNSpawn:    newNSpawnProvider,
@@ -19,26 +19,26 @@ var nodeProviders = map[isolation.Mode]func() NodeProvider{
 	isolation.ModeContainer: newContainerProvider,
 }
 
-func hostProviderServices() provider.HostServices {
-	return provider.HostServices{
-		CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
+func hostProviderServices() runtimeprovider.HostServices {
+	return runtimeprovider.HostServices{
+		InstallBinary: InstallBinary, CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
 		RemoveHostHelpers: removeHostHelpers, RemoveIfPresent: removeIfPresent,
 		SaveState: saveState, SyncDirs: syncDirs, RecoveryScriptPathUnder: recoveryScriptPathUnder,
 	}
 }
 
 func newNSpawnProvider() NodeProvider {
-	return provider.NSpawn{BinaryPath: provider.NSpawnAgentBinaryPath, Services: provider.NSpawnServices{
+	return runtimeprovider.NSpawn{BinaryPath: runtimeprovider.NSpawnAgentBinaryPath, Services: runtimeprovider.NSpawnServices{
 		HostServices: hostProviderServices(), NewOperator: newNSpawnOperator,
 		CheckMachinesTarget: CheckMachinesTarget, ConvergeContainerAgent: convergeNSpawnContainerAgent,
 		EnsureLifecycleUnits: EnsureNSpawnLifecycleUnits, ConfigureDependencies: ConfigureNSpawnDependencies,
-		InstallBinary: InstallBinary, CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
+		CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
 		ActiveMachineFromStore: activeMachineFromStore,
 	}}
 }
 
 func newNoneProvider() NodeProvider {
-	return provider.None{Services: provider.NoneServices{HostServices: hostProviderServices(), NewOperator: newNoneOperator}}
+	return runtimeprovider.None{Services: runtimeprovider.NoneServices{HostServices: hostProviderServices(), NewOperator: newNoneOperator}}
 }
 
 func convergeNSpawnContainerAgent(ctx context.Context, log *slog.Logger, state agentUpgradeStateLoader) (func(context.Context) error, error) {
@@ -62,7 +62,7 @@ func NewNodeProvider(mode isolation.Mode) (NodeProvider, error) {
 	return create(), nil
 }
 
-func validateAppliedProvider(provider NodeProvider, applied *State) error {
+func validateAppliedProvider(provider NodeProvider, applied *runtimeprovider.State) error {
 	if applied != nil && applied.Isolation != provider.Mode() {
 		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.Isolation)
 	}
@@ -86,7 +86,7 @@ func CheckBootstrapIsolation(ctx context.Context, log *slog.Logger, provider Nod
 	return checkBootstrapProvider(ctx, log, provider, applied, registeredNodeProviders())
 }
 
-func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider NodeProvider, applied *State, candidates []NodeProvider) error {
+func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider NodeProvider, applied *runtimeprovider.State, candidates []NodeProvider) error {
 	if err := validateAppliedProvider(provider, applied); err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider Node
 // discoverResetProvider loads Flex state first: SDK Destroy can remove all SDK
 // footprints before later cleanup fails. A corrupt journal must never route to
 // the legacy runtime's destructive cleanup.
-func discoverResetProvider(ctx context.Context, load func(context.Context) (*State, error), log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
+func discoverResetProvider(ctx context.Context, load func(context.Context) (*runtimeprovider.State, error), log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
 	applied, err := load(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load applied state for reset: %w", err)
@@ -121,7 +121,7 @@ func discoverResetProvider(ctx context.Context, load func(context.Context) (*Sta
 
 // discoverNodeProvider preserves applied ownership, including after SDK cleanup.
 // Without applied state, runtime footprints can identify a partial bootstrap.
-func discoverNodeProvider(applied *State, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
+func discoverNodeProvider(applied *runtimeprovider.State, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
 	if applied != nil {
 		return NewNodeProvider(applied.Isolation)
 	}

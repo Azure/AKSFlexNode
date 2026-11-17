@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -48,7 +49,7 @@ type activationFencePublishingState struct {
 	publish func()
 }
 
-func (s activationFencePublishingState) Load(ctx context.Context) (*State, error) {
+func (s activationFencePublishingState) Load(ctx context.Context) (*runtimeprovider.State, error) {
 	s.publish()
 	return s.testStateStore.Load(ctx)
 }
@@ -58,7 +59,7 @@ func TestDirectAgentActivationRechecksBeforeSynchronization(t *testing.T) {
 	startup := activationFenceJournal(t, "absent")
 	service := activationFenceService(t, startup, nil)
 	service.state = activationFencePublishingState{
-		testStateStore: &testStateStore{state: &State{Isolation: isolation.ModeNone}},
+		testStateStore: &testStateStore{state: &runtimeprovider.State{Isolation: isolation.ModeNone}},
 		publish: func() {
 			if err := startup.Save(t.Context(), &containerStartup{Phase: "starting", Previous: containerTestState("kube1", "old"), Next: containerTestState("kube2", "next")}); err != nil {
 				t.Fatal(err)

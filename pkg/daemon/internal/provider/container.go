@@ -15,7 +15,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
-	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
@@ -35,7 +35,9 @@ var _ NodeProvider = Container{}
 
 // Container implements the OCI worker lifecycle.
 type Container struct {
-	Services           ContainerServices
+	Host               HostServices
+	OperatorFactory    OperatorFactory
+	PlannedHostRoot    func() string
 	Startup            ContainerStartupReader
 	StartupPath        string
 	ActivationLockPath string
@@ -69,20 +71,20 @@ func (p Container) CheckBootstrap(ctx context.Context, log *slog.Logger, applied
 	if applied != nil || p.BootstrapPresent(log) {
 		return fmt.Errorf("host contains an installed or partially reset container node; reset it before bootstrapping")
 	}
-	return p.Services.CheckBootstrap(ctx, log)
+	if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeContainer); err != nil {
+		return err
+	}
+	// Prepare installs the runtime; other backend requirements must already hold.
+	return (&container.Backend{Log: log, RuntimeProvisioned: true}).Preflight()
 }
 func (p Container) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	ac, gs, archives, err := config.ResolveMachineGoalState(ctx, log, cfg, slot)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	gs, err = p.Services.NewNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot}).GoalState()
+	gs, err = NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot}).GoalState()
 	return ac, gs, archives, err
 }
-func (p Container) SetupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
-	return p.Services.SetupHost(cfg, log)
-}
-func (p Container) StartNode(params StartParams) phases.Task { return p.Services.StartNode(params) }
 func (Container) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
 	return nil
 }
@@ -91,23 +93,11 @@ func (Container) WantedTargets() []string {
 }
 func (Container) SupportsDisconnectTolerance() bool { return false }
 func (Container) NSpawnRuntime() NSpawnRuntime      { return nil }
-func (p Container) ResetNode(log *slog.Logger) phases.Task {
-	teardown := *p.Teardown
-	teardown.Log = log
-	return p.Services.ResetNode(log, &teardown)
-}
 func (Container) ValidateResetState(state *State) error {
 	if !ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration for reset")
 	}
 	return nil
-}
-func (p Container) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, store StateStore) error {
-	state, err := store.Load(ctx)
-	if err != nil {
-		return err
-	}
-	return p.Services.RewriteNodeUnits(ctx, log, cfg, state, p.Startup)
 }
 func (p Container) ValidateAgentActivation(ctx context.Context) error {
 	return RequireNoContainerStartupForAgentActivation(p.Startup)
@@ -130,13 +120,13 @@ func (p Container) SynchronizeAgent(source string, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
 	}
-	return p.Services.CopyExecutable(source, p.BinaryPath(slot))
+	return p.Host.CopyExecutable(source, p.BinaryPath(slot))
 }
 func (p Container) ValidateAgent(source string, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
 	}
-	equal, err := p.Services.FilesHaveEqualSHA256(source, p.BinaryPath(slot))
+	equal, err := p.Host.FilesHaveEqualSHA256(source, p.BinaryPath(slot))
 	if err != nil {
 		return fmt.Errorf("verify synchronized container agent binary: %w", err)
 	}
@@ -155,7 +145,7 @@ func (p Container) NewOperator(ctx context.Context, cfg *config.Config, store St
 	if !cfg.Bootstrap.ExperimentalContainerIsolation {
 		return nil, fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
 	}
-	return p.Services.NewOperator(ctx, cfg, store, p)
+	return p.OperatorFactory(ctx, cfg, store, p)
 }
 
 // ValidContainerState checks persisted container slot and configuration ownership.

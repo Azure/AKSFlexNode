@@ -15,6 +15,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
@@ -100,7 +101,7 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Components: config.ComponentsConfig{Kubernetes: "1.34.1"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 	ac := config.ToAgentConfig(cfg, noneops.Slot)
-	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
+	f.store = &noneTestStore{events: &events, state: &runtimeprovider.State{Isolation: isolation.ModeNone, NodeConfig: ac, AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
 	factory := func(p noneops.Params) noneNode {
 		p.Overrides, p.Hooks = f.params.Overrides, f.params.Hooks
 		p.Resolve = func(string) (*goalstates.MachineGoalState, error) { return completionGoal(p.Config), nil }
@@ -171,7 +172,7 @@ func (f *completionFixture) assertCommitted(t *testing.T) {
 	}
 }
 
-func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
+func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *runtimeprovider.State) {
 	t.Helper()
 	p := f.params
 	p.Log, p.Config, p.GoalState = discardLogger(), state.NodeConfig, completionGoal(state.NodeConfig)
@@ -308,7 +309,7 @@ func TestNoneCompletionRespectsDeletePrecedence(t *testing.T) {
 	for _, removed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("machine removed=%t", removed), func(t *testing.T) {
 			t.Parallel()
-			op := &resetCompletionOperator{fakeNodeOperator: &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41"}}}
+			op := &resetCompletionOperator{fakeNodeOperator: &fakeNodeOperator{state: &runtimeprovider.State{AppliedSettingsVersion: "41"}}}
 			machines := &fakeMachineClient{notFound: removed, machine: &aksmachine.Machine{Goal: aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.2"}}}
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}, Spec: corev1.NodeSpec{Taints: []corev1.Taint{deletionTaint()}}}
 			r := newTestRepaveReconciler(t, machines, fakeClient(node), op)

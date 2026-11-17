@@ -15,9 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -26,6 +24,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -237,9 +236,9 @@ type agentUpgrader interface {
 	agentUpgradeHandoff
 }
 
-type agentUpgradeStateLoader = provider.StateLoader
+type agentUpgradeStateLoader = runtimeprovider.StateLoader
 
-func loadAgentActivationState(ctx context.Context, loader agentUpgradeStateLoader, actions agentActions) (*State, error) {
+func loadAgentActivationState(ctx context.Context, loader agentUpgradeStateLoader, actions agentActions) (*runtimeprovider.State, error) {
 	if err := actions.ValidateAgentActivation(ctx); err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-package daemon
+package provider
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
@@ -24,16 +23,13 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
-func checkContainerBootstrap(ctx context.Context, log *slog.Logger) error {
-	if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeContainer); err != nil {
-		return err
-	}
-	// Prepare installs the runtime; all other backend requirements, including
-	// systemd 254+, must already hold before bootstrap mutates the host.
-	return (&container.Backend{Log: log, RuntimeProvisioned: true}).Preflight()
+// ContainerRuntime exposes the SDK state needed for artifact installation and persistence.
+type ContainerRuntime interface {
+	GoalState() (*goalstates.MachineGoalState, error)
+	Backend() *container.Backend
 }
 
-func setupContainerHost(cfg *config.Config, log *slog.Logger) phases.Task {
+func (Container) SetupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
 	return phases.Serial(log,
 		host.InstallPackagesFor(log, isolation.ModeContainer),
 		noneops.LoadKernelModules(log, nil),
@@ -47,12 +43,12 @@ func setupContainerHost(cfg *config.Config, log *slog.Logger) phases.Task {
 	)
 }
 
-// Flex owns node-lifecycle, so Unbounded must not install its own helper over
-// the stable executable used by the container's supervising unit.
-func newContainerNode(p containerops.Params) *containerops.Node {
-	p.HelperPath = defaultAgentUpgradePaths().BinaryPath
+// NewContainerNode retains Flex's stable lifecycle helper instead of installing
+// the SDK agent over it.
+func NewContainerNode(p containerops.Params) *containerops.Node {
+	p.HelperPath = config.HostBinaryPath()
 	p.ConfigSnapshotDir = filepath.Join(config.ConfigDir, "container-upgrade-config")
-	p.InstallHelper = func(context.Context) error {
+	p.InstallHelper = func(ctx context.Context) error {
 		info, err := os.Stat(p.HelperPath)
 		if err != nil {
 			return fmt.Errorf("inspect Flex node lifecycle executable: %w", err)
@@ -65,18 +61,19 @@ func newContainerNode(p containerops.Params) *containerops.Node {
 	return containerops.New(p)
 }
 
-func containerArtifacts(cfg *config.Config, log *slog.Logger) func(context.Context, *goalstates.MachineGoalState) error {
+// ContainerArtifacts installs the Flex helper and NPD before kubelet can start.
+func ContainerArtifacts(cfg *config.Config, log *slog.Logger, installBinary func(root isolation.NodeRoot) phases.Task) func(ctx context.Context, goal *goalstates.MachineGoalState) error {
 	return func(ctx context.Context, gs *goalstates.MachineGoalState) error {
 		return phases.Serial(log,
-			InstallBinary(gs.RootFS.Root()),
+			installBinary(gs.RootFS.Root()),
 			npd.Download(log, cfg, gs.RootFS.Root()),
 		).Do(ctx)
 	}
 }
 
-// Upgrade calls Prepare internally. Wrap the SDK's bound unpacker so Flex's
-// credential helper and NPD are present before provisioning can enable kubelet.
-func wrapContainerArtifactUnpack(node containerNode, install func(context.Context, *goalstates.MachineGoalState) error) error {
+// WrapContainerArtifactUnpack stages Flex artifacts through the SDK's unpack hook
+// because Upgrade calls Prepare internally.
+func WrapContainerArtifactUnpack(node ContainerRuntime, install func(ctx context.Context, goal *goalstates.MachineGoalState) error) error {
 	gs, err := node.GoalState()
 	if err != nil {
 		return err
@@ -95,21 +92,21 @@ func wrapContainerArtifactUnpack(node containerNode, install func(context.Contex
 	return nil
 }
 
-func startContainerNode(params StartParams) phases.Task {
+func (p Container) StartNode(params StartParams) phases.Task {
 	cfg, log, slot, gs := params.Config, params.Log, params.MachineName, params.GoalState
 	store, state := params.Store, params.State
 	return hostnode.Func("start-container-node", func(ctx context.Context) error {
 		ac := config.ToAgentConfig(cfg, slot).DeepCopy()
-		node := newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
-		if err := wrapContainerArtifactUnpack(managedContainerNode{node}, containerArtifacts(cfg, log)); err != nil {
+		node := NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
+		if err := WrapContainerArtifactUnpack(node, ContainerArtifacts(cfg, log, p.Host.InstallBinary)); err != nil {
 			return err
 		}
 		resolved, err := node.GoalState()
 		if err != nil {
 			return err
 		}
-		node.Backend().UnitRequires = append(node.Backend().UnitRequires, provider.NoneRequiredServices(cfg)...)
-		if err := provider.StageContainerImageArchiveBindSource(log, params.ContainerImageArchives).Do(ctx); err != nil {
+		node.Backend().UnitRequires = append(node.Backend().UnitRequires, NoneRequiredServices(cfg)...)
+		if err := StageContainerImageArchiveBindSource(log, params.ContainerImageArchives).Do(ctx); err != nil {
 			return err
 		}
 		running, err := node.Running(ctx)
@@ -131,16 +128,20 @@ func startContainerNode(params StartParams) phases.Task {
 		if err := npd.Start(log, cfg, resolved.NodeStart.Root(), resolved.NodeStart).Do(ctx); err != nil {
 			return err
 		}
-		if err := syncContainerFilesystems(ctx, managedContainerNode{node}); err != nil {
+		if err := SyncContainerFilesystems(ctx, node); err != nil {
 			return fmt.Errorf("persist bootstrapped container: %w", err)
 		}
 		state.Isolation, state.ActiveMachine, state.NodeConfig = isolation.ModeContainer, slot, ac
-		return saveState(store, state).Do(ctx)
+		return p.Host.SaveState(store, state).Do(ctx)
 	})
 }
 
-func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state *State, journal containerStartupReader) error {
-	startup, err := journal.Load()
+func (p Container) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, store StateStore) error {
+	state, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	startup, err := p.Startup.Load()
 	if err != nil {
 		return err
 	}
@@ -150,15 +151,15 @@ func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *c
 		}
 		state = startup.Next
 	}
-	if !provider.ValidContainerState(state) {
+	if !ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration")
 	}
-	node := newContainerNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
+	node := NewContainerNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
 	gs, err := node.GoalState()
 	if err != nil {
 		return err
 	}
-	node.Backend().UnitRequires = append(node.Backend().UnitRequires, provider.NoneRequiredServices(cfg)...)
+	node.Backend().UnitRequires = append(node.Backend().UnitRequires, NoneRequiredServices(cfg)...)
 	if err := node.RewriteUnit(ctx); err != nil {
 		return err
 	}
@@ -170,18 +171,21 @@ func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *c
 	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 		return err
 	}
-	return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(PlannedHostRoot())))
+	return p.Host.SyncDirs(goalstates.SystemdSystemDir, filepath.Dir(p.Host.RecoveryScriptPathUnder(p.PlannedHostRoot())))
 }
 
-func resetContainerNode(log *slog.Logger, teardown *containerops.Teardown) phases.Task {
+func (p Container) ResetNode(log *slog.Logger) phases.Task {
+	owned := *p.Teardown
+	owned.Log = log
+	teardown := &owned
 	// Serial is intentional: shared host data and persisted state survive a
 	// failed stop/destroy so reset can be retried without losing ownership.
 	return phases.Serial(log,
 		teardown.Stop(), teardown.Destroy(), teardown.RemoveConfig(),
 		reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), reset.RemoveNFTablesFlush(log),
-		removeHostHelpers(log),
-		provider.RemoveHostUnit(log, "static-routes.service"),
-		provider.RemoveHostUnit(log, "check-route-overlap.service"),
+		p.Host.RemoveHostHelpers(log),
+		RemoveHostUnit(log, "static-routes.service"),
+		RemoveHostUnit(log, "check-route-overlap.service"),
 		reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
 	)
 }

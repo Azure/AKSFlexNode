@@ -1,4 +1,4 @@
-package daemon
+package provider
 
 import (
 	"context"
@@ -13,7 +13,8 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
-func syncContainerFilesystems(ctx context.Context, node containerNode) error {
+// SyncContainerFilesystems persists runtime and boot state before applied-state publication.
+func SyncContainerFilesystems(ctx context.Context, node ContainerRuntime) error {
 	paths, err := preparedContainerPaths(node)
 	if err != nil {
 		return err
@@ -21,7 +22,7 @@ func syncContainerFilesystems(ctx context.Context, node containerNode) error {
 	return syncPreparedFilesystems(ctx, paths, syncContainerFilesystem)
 }
 
-func preparedContainerPaths(node containerNode) ([]string, error) {
+func preparedContainerPaths(node ContainerRuntime) ([]string, error) {
 	gs, err := node.GoalState()
 	if err != nil {
 		return nil, err

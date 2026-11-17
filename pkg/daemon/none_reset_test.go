@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -164,7 +165,7 @@ func TestNoneResetRetriesUsingAppliedStateAfterSDKFootprintsDisappear(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save(t.Context(), &State{
+	if err := store.Save(t.Context(), &runtimeprovider.State{
 		Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: string(isolation.ModeNone)},
 	}); err != nil {
 		t.Fatal(err)

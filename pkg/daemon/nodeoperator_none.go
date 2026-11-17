@@ -7,7 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -49,12 +49,12 @@ func newNoneOperator(ctx context.Context, cfg *config.Config, store stateStore, 
 	}
 	return &noneNodeOperator{
 		operatorBase: base,
-		newNode:      func(p noneops.Params) noneNode { return provider.NewNoneRuntime(p) },
+		newNode:      func(p noneops.Params) noneNode { return runtimeprovider.NewNoneRuntime(p) },
 		resolve:      config.ResolveMachineGoalState,
-		dependencies: provider.PrepareNoneDependencies,
-		installNPD:   provider.InstallNoneNPD,
+		dependencies: runtimeprovider.PrepareNoneDependencies,
+		installNPD:   runtimeprovider.InstallNoneNPD,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
-			return provider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
+			return runtimeprovider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
 			return npd.Start(log, cfg, ns.Root(), ns).Do(ctx)
@@ -62,7 +62,7 @@ func newNoneOperator(ctx context.Context, cfg *config.Config, store stateStore, 
 	}, nil
 }
 
-func (o *noneNodeOperator) applied(ctx context.Context) (*State, error) {
+func (o *noneNodeOperator) applied(ctx context.Context) (*runtimeprovider.State, error) {
 	state, err := o.state.Load(ctx)
 	if err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ func (o *noneNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) er
 	return o.startNPD(ctx, log, o.cfg, gs.NodeStart)
 }
 
-func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
+func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*runtimeprovider.State, error) {
 	if err := o.recover(ctx, log); err != nil {
 		return nil, fmt.Errorf("recover none node before repave: %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -20,7 +21,7 @@ func TestNoneOperatorReconcilesNPD(t *testing.T) {
 	t.Parallel()
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}}
-	state := &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
+	state := &runtimeprovider.State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
 	operator, err := mustNodeProvider(t, cfg.Bootstrap.Isolation).NewOperator(t.Context(), cfg, &noneTestStore{events: &events, state: state})
 	if err != nil {
 		t.Fatal(err)

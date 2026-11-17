@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
@@ -226,7 +227,7 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 // a newer Machine goal waits for its repave signal. Failures are logged, not
 // returned, so they don't switch the Machine poll to fast error backoff; the
 // adapter paces its own retries and the journal keeps progress.
-func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machineSnapshot, nodeSnap nodeSnapshot, state *State) {
+func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machineSnapshot, nodeSnap nodeSnapshot, state *runtimeprovider.State) {
 	if r.hub == nil || nodeSnap.node == nil || machineSnap.machine == nil {
 		return
 	}
@@ -237,7 +238,7 @@ func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machine
 
 // hubMachineReconciler maps Machine reads to local Hub state. It runs on the same serialized queue as repave and MachineOperations.
 type hubMachineReconciler interface {
-	ReconcileHub(context.Context, aksmachine.GoalState, *State, *corev1.Node) error
+	ReconcileHub(context.Context, aksmachine.GoalState, *runtimeprovider.State, *corev1.Node) error
 }
 
 func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot, error) {
@@ -265,7 +266,7 @@ func (r *repaveReconciler) nodeSnapshot(ctx context.Context) (nodeSnapshot, erro
 	return nodeSnapshot{node: &node}, nil
 }
 
-func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goal aksmachine.GoalState) error {
+func (r *repaveReconciler) applyGoalState(ctx context.Context, state *runtimeprovider.State, goal aksmachine.GoalState) error {
 	if err := r.patchStatus(ctx, aksmachine.ProvisioningStateReconciling, stateObservedVersion(state), "applying machine goal state"); err != nil {
 		return err
 	}
@@ -296,7 +297,7 @@ func (r *repaveReconciler) patchStatus(ctx context.Context, provisioningState ak
 	})
 }
 
-func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
+func decide(machine machineSnapshot, node nodeSnapshot, state *runtimeprovider.State) decision {
 	nodeExists := node.node != nil
 	deleteRequested := nodeExists && hasDeletionSignal(node.node.Spec.Taints)
 	if deleteRequested {
@@ -328,7 +329,7 @@ func decide(machine machineSnapshot, node nodeSnapshot, state *State) decision {
 	return decision{Kind: decisionWaitForNodeSignal, Goal: goal, Reason: "goal state differs but node deletion trigger is absent"}
 }
 
-func goalApplied(goal aksmachine.GoalState, state *State) bool {
+func goalApplied(goal aksmachine.GoalState, state *runtimeprovider.State) bool {
 	if state == nil {
 		return false
 	}
@@ -344,7 +345,7 @@ func hasDeletionSignal(taints []corev1.Taint) bool {
 	return false
 }
 
-func stateObservedVersion(state *State) string {
+func stateObservedVersion(state *runtimeprovider.State) string {
 	if state == nil {
 		return ""
 	}

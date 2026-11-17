@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -22,9 +23,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func containerTestState(slot, version string) *State {
+func containerTestState(slot, version string) *runtimeprovider.State {
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	return (&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
+	return (&runtimeprovider.State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
 		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot)}).DeepCopy()
 }
 
@@ -85,7 +86,7 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	op.newNode = func(p containerops.Params) containerNode {
 		return &fakeContainerNode{params: p, events: events, fail: fail}
 	}
-	op.syncPrepared = func(context.Context, containerNode) error {
+	op.syncPrepared = func(context.Context, runtimeprovider.ContainerRuntime) error {
 		*events = append(*events, "sync-prepared")
 		if fail == "sync-prepared" {
 			return errors.New("prepared filesystem could not be persisted")
@@ -204,7 +205,7 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	if strings.Contains(recipe, "harden-apt") || strings.Contains(recipe, "install-systemd-container") {
 		t.Fatalf("container recipe includes nspawn host preparation: %s", recipe)
 	}
-	node := newContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1"})
+	node := runtimeprovider.NewContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1"})
 	if node.Backend().HelperPath != defaultAgentUpgradePaths().BinaryPath {
 		t.Fatal("container helper is not the stable Flex executable")
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -18,7 +19,7 @@ func TestFileStateStoreSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFileStateStore: %v", err)
 	}
-	want := &State{
+	want := &runtimeprovider.State{
 		AppliedSettingsVersion:    "42",
 		AppliedKubernetesVersion:  "1.34.0",
 		PreviousSettingsVersion:   "41",
@@ -62,7 +63,7 @@ func TestFileStateStoreChecksumMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFileStateStore: %v", err)
 	}
-	if err := store.Save(context.Background(), &State{AppliedSettingsVersion: "42"}); err != nil {
+	if err := store.Save(context.Background(), &runtimeprovider.State{AppliedSettingsVersion: "42"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if err := os.WriteFile(path, []byte(`{"appliedSettingsVersion":"43"}`), 0o600); err != nil {
@@ -103,7 +104,7 @@ func TestFileStateStoreDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFileStateStore: %v", err)
 	}
-	if err := store.Save(context.Background(), &State{AppliedSettingsVersion: "42"}); err != nil {
+	if err := store.Save(context.Background(), &runtimeprovider.State{AppliedSettingsVersion: "42"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if err := store.Delete(context.Background()); err != nil {
@@ -138,7 +139,7 @@ func TestSeededState(t *testing.T) {
 func TestSaveStateValidation(t *testing.T) {
 	t.Parallel()
 
-	if err := saveState(nil, &State{}).Do(t.Context()); err == nil {
+	if err := saveState(nil, &runtimeprovider.State{}).Do(t.Context()); err == nil {
 		t.Fatalf("SaveState nil store error = nil")
 	}
 	store, err := newFileStateStore(filepath.Join(t.TempDir(), "state.json"))
@@ -148,7 +149,7 @@ func TestSaveStateValidation(t *testing.T) {
 	if err := saveState(store, nil).Do(t.Context()); err == nil {
 		t.Fatalf("SaveState nil state error = nil")
 	}
-	if task := saveState(store, &State{}); task.Name() != "save-daemon-state" {
+	if task := saveState(store, &runtimeprovider.State{}); task.Name() != "save-daemon-state" {
 		t.Fatalf("Name = %q, want save-daemon-state", task.Name())
 	}
 }
@@ -157,23 +158,23 @@ func TestActiveMachineFromStore(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		state   *State
+		state   *runtimeprovider.State
 		want    string
 		wantErr bool
 	}{
 		"kube1": {
-			state: &State{ActiveMachine: "kube1"},
+			state: &runtimeprovider.State{ActiveMachine: "kube1"},
 			want:  "kube1",
 		},
 		"kube2": {
-			state: &State{ActiveMachine: "kube2"},
+			state: &runtimeprovider.State{ActiveMachine: "kube2"},
 			want:  "kube2",
 		},
 		"missing state": {
 			wantErr: true,
 		},
 		"invalid active machine": {
-			state:   &State{ActiveMachine: "kube3"},
+			state:   &runtimeprovider.State{ActiveMachine: "kube3"},
 			wantErr: true,
 		},
 	}

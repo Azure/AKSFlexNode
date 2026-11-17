@@ -1,4 +1,4 @@
-package daemon
+package provider
 
 import (
 	"context"
@@ -8,11 +8,21 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
+
+type preparedTestNode struct {
+	params  containerops.Params
+	backend container.Backend
+}
+
+func (n *preparedTestNode) GoalState() (*goalstates.MachineGoalState, error) {
+	return n.params.GoalState, nil
+}
+
+func (n *preparedTestNode) Backend() *container.Backend { return &n.backend }
 
 func TestPreparedContainerPathsCoverPrivateAndSharedState(t *testing.T) {
 	t.Parallel()
@@ -21,7 +31,7 @@ func TestPreparedContainerPathsCoverPrivateAndSharedState(t *testing.T) {
 	if err := os.MkdirAll(root.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	node := &fakeContainerNode{
+	node := &preparedTestNode{
 		params: containerops.Params{GoalState: &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{RootOverride: root}}},
 		backend: container.Backend{Layout: container.Layout{Base: filepath.Join(base, "containers")},
 			SystemdDir: filepath.Join(base, "systemd"), RuntimePath: filepath.Join(base, "runtime/runc"), HelperPath: filepath.Join(base, "agent/bin/aks-flex-node")},
@@ -91,31 +101,6 @@ func TestPreparedFilesystemBarrier(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestContainerCompletionSyncFailureKeepsStartupAndSource(t *testing.T) {
-	t.Parallel()
-	op, events, store := containerOperatorFixture(t, "", false)
-	syncErr := errors.New("post-start boot state did not persist")
-	calls := 0
-	op.syncPrepared = func(context.Context, containerNode) error {
-		calls++
-		if calls == 2 {
-			return syncErr
-		}
-		return nil
-	}
-	_, err := op.ApplyGoalState(t.Context(), discardLogger(), aksmachine.GoalState{SettingsVersion: "new", KubernetesVersion: "1.36.2"})
-	if !errors.Is(err, syncErr) {
-		t.Fatalf("completion ignored persistence failure: %v", err)
-	}
-	startup, err := op.startup.Load()
-	if err != nil || startup == nil || startup.Phase != "starting" {
-		t.Fatalf("published startup was cleared on failed persistence: %+v %v", startup, err)
-	}
-	if store.state.ActiveMachine != "kube1" || slices.Contains(*events, "destroy-kube1") {
-		t.Fatalf("failed completion retired source or published target: %v", *events)
 	}
 }
 

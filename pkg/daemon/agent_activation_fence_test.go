@@ -14,6 +14,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
@@ -62,7 +63,7 @@ func activationFenceJournal(t *testing.T, scenario string) containerStartupStore
 	return store
 }
 
-func activationFenceService(t *testing.T, startup containerStartupStore, state *State) *flexDaemonActivationService {
+func activationFenceService(t *testing.T, startup containerStartupStore, state *runtimeprovider.State) *flexDaemonActivationService {
 	t.Helper()
 	return &flexDaemonActivationService{
 		log: discardLogger(), paths: testAgentUpgradePaths(t),
@@ -81,7 +82,7 @@ func TestAgentActivationFencesPendingContainerStartup(t *testing.T) {
 				t.Run(string(mode), func(t *testing.T) {
 					t.Parallel()
 					startup := activationFenceJournal(t, scenario)
-					state := &State{Isolation: mode, ActiveMachine: "kube1"}
+					state := &runtimeprovider.State{Isolation: mode, ActiveMachine: "kube1"}
 					service := activationFenceService(t, startup, state)
 					executor := &hostAgentUpgradeExecutor{
 						log: discardLogger(), paths: service.paths, provider: service.provider,
@@ -122,7 +123,7 @@ func TestAgentActivationWithoutContainerStartup(t *testing.T) {
 		t.Run("isolation="+string(mode), func(t *testing.T) {
 			t.Parallel()
 			startup := activationFenceJournal(t, "absent")
-			state := &State{Isolation: mode, ActiveMachine: "kube1"}
+			state := &runtimeprovider.State{Isolation: mode, ActiveMachine: "kube1"}
 			if state.Isolation == "" {
 				state.Isolation = isolation.ModeNSpawn
 			}
@@ -343,15 +344,15 @@ func TestRecordPendingAgentUpgradeRejectsMissingActiveNode(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name  string
-		state *State
+		state *runtimeprovider.State
 	}{
 		{name: "missing state"},
-		{name: "default without slot", state: &State{}},
-		{name: "default invalid slot", state: &State{ActiveMachine: "../escape"}},
-		{name: "nspawn without slot", state: &State{Isolation: isolation.ModeNSpawn}},
-		{name: "nspawn invalid slot", state: &State{Isolation: isolation.ModeNSpawn, ActiveMachine: "../escape"}},
-		{name: "container without slot", state: &State{Isolation: isolation.ModeContainer}},
-		{name: "container invalid slot", state: &State{Isolation: isolation.ModeContainer, ActiveMachine: "../escape"}},
+		{name: "default without slot", state: &runtimeprovider.State{}},
+		{name: "default invalid slot", state: &runtimeprovider.State{ActiveMachine: "../escape"}},
+		{name: "nspawn without slot", state: &runtimeprovider.State{Isolation: isolation.ModeNSpawn}},
+		{name: "nspawn invalid slot", state: &runtimeprovider.State{Isolation: isolation.ModeNSpawn, ActiveMachine: "../escape"}},
+		{name: "container without slot", state: &runtimeprovider.State{Isolation: isolation.ModeContainer}},
+		{name: "container invalid slot", state: &runtimeprovider.State{Isolation: isolation.ModeContainer, ActiveMachine: "../escape"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

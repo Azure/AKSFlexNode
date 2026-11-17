@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -22,8 +22,8 @@ func TestNoneStateRoundTrip(t *testing.T) {
 	}
 	ac := &agentconfig.AgentConfig{Isolation: "none"}
 	ac.Cluster.Version = "1.36.2"
-	state := &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.36.2"}
-	provider.SeedNoneState(state, ac)
+	state := &runtimeprovider.State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.36.2"}
+	runtimeprovider.SeedNoneState(state, ac)
 	for _, settings := range []string{"43", "44", "44"} {
 		state.AppliedSettingsVersion = settings
 		if err := store.Save(t.Context(), state); err != nil {
@@ -45,7 +45,7 @@ func TestNspawnStateFormatUnchanged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			state := &State{AppliedSettingsVersion: "42", ActiveMachine: "kube1", Isolation: mode}
+			state := &runtimeprovider.State{AppliedSettingsVersion: "42", ActiveMachine: "kube1", Isolation: mode}
 			if err := store.Save(t.Context(), state); err != nil {
 				t.Fatal(err)
 			}
