@@ -119,13 +119,15 @@ func runStart(ctx context.Context, cfg *config.Config) error {
 		},
 	}
 	if !reapply {
-		ac, gs, archives, err := config.ResolveMachineGoalState(ctx, logger, cfg, state.ActiveMachine)
+		resolved, err := config.ResolveMachineGoalState(ctx, logger, cfg, state.ActiveMachine)
 		if err != nil {
 			return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 		}
-		input.Node.Config, input.Node.GoalState, input.Archives = ac, gs, archives
+		input.Node.Config = resolved.AgentConfig
+		input.Node.GoalState = resolved.GoalState
+		input.Archives = resolved.ContainerImageArchives
 		if cfg.Bootstrap.Isolation == isolation.ModeNone {
-			state.NodeConfig = ac.DeepCopy()
+			state.NodeConfig = resolved.AgentConfig.DeepCopy()
 		}
 	}
 

@@ -15,7 +15,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -243,6 +242,6 @@ func (t testTask) Do(context.Context) error {
 	return nil
 }
 
-func fakeResolveMachine(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
-	return nil, &goalstates.MachineGoalState{}, nil, nil
+func fakeResolveMachine(context.Context, *slog.Logger, *config.Config, string) (config.ResolvedMachineGoal, error) {
+	return config.ResolvedMachineGoal{GoalState: &goalstates.MachineGoalState{}}, nil
 }

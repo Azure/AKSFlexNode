@@ -331,24 +331,28 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		"settingsVersion", goal.SettingsVersion,
 		"kubernetesVersion", cfg.Components.Kubernetes,
 	)
-	ac, gs, archives, err := r.resolve(ctx, r.log, cfg, newMachine)
+	resolved, err := r.resolve(ctx, r.log, cfg, newMachine)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
 	previous := agentruntime.Node{Slot: active.Name, Config: active.State.NodeConfig}
 	input := agentruntime.Inputs{
-		Config:   cfg,
-		Node:     agentruntime.Node{Slot: newMachine, Config: ac, GoalState: gs},
+		Config: cfg,
+		Node: agentruntime.Node{
+			Slot:      newMachine,
+			Config:    resolved.AgentConfig,
+			GoalState: resolved.GoalState,
+		},
 		Previous: &previous,
-		Archives: archives,
+		Archives: resolved.ContainerImageArchives,
 	}
 	next := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
 	next.Isolation = cfg.Bootstrap.Isolation
 	if next.Isolation == isolation.ModeNone {
-		if ac == nil || previous.Config == nil {
+		if resolved.AgentConfig == nil || previous.Config == nil {
 			return nil, fmt.Errorf("none repave requires applied and target runtime configurations")
 		}
-		next.NodeConfig = ac.DeepCopy()
+		next.NodeConfig = resolved.AgentConfig.DeepCopy()
 	}
 
 	if err := r.runtime.Prepare(r.log, input).Do(ctx); err != nil {
