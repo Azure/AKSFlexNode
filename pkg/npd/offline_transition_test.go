@@ -80,7 +80,7 @@ func newOfflineTransitionHost(t *testing.T) (*goalstates.NodeStart, *offlineNPDS
 
 func startOfflineTransitionHost(t *testing.T, ns *goalstates.NodeStart, systemd *offlineNPDSystemd) []byte {
 	t.Helper()
-	task, ok := Start(slog.New(slog.DiscardHandler), &config.Config{}, ns).(*startTask)
+	task, ok := Start(slog.New(slog.DiscardHandler), &config.Config{}, ns.Root(), ns, StartOptions{}).(*startTask)
 	if !ok {
 		t.Fatal("online Start did not return *startTask")
 	}
@@ -145,9 +145,9 @@ func TestHostNPDOnlineToOfflineTransition(t *testing.T) {
 			}
 			for range 2 {
 				systemd.calls = nil
-				task := Start(log, cfg, ns)
+				task := Start(log, cfg, ns.Root(), ns, StartOptions{})
 				if operation == "restart" {
-					task = Restart(log, cfg, ns)
+					task = Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true})
 				}
 				if task.Name() != "start-npd" {
 					t.Fatalf("offline task name = %q", task.Name())
@@ -185,7 +185,7 @@ func TestOfflineHostNPDFailureRetainsOwnershipAndRetries(t *testing.T) {
 			unit := startOfflineTransitionHost(t, ns, systemd)
 			systemd.failAction, systemd.failure = tc.action, tc.failure
 			log, cfg := slog.New(slog.DiscardHandler), offlineTransitionConfig()
-			task := Restart(log, cfg, ns)
+			task := Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true})
 			if err := task.Do(t.Context()); !errors.Is(err, tc.failure) {
 				t.Fatalf("offline %s error = %v, want wrapped %v", tc.action, err, tc.failure)
 			}
@@ -231,7 +231,7 @@ func TestOfflineHostNPDCancellationRetainsOwnership(t *testing.T) {
 				}
 			}
 			log, cfg := slog.New(slog.DiscardHandler), offlineTransitionConfig()
-			if err := Restart(log, cfg, ns).Do(ctx); !errors.Is(err, context.Canceled) {
+			if err := Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true}).Do(ctx); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled cleanup = %v", err)
 			}
 			var want []string
@@ -246,7 +246,7 @@ func TestOfflineHostNPDCancellationRetainsOwnership(t *testing.T) {
 			}
 			assertOfflineNPDUnit(t, ns, unit)
 			systemd.afterAction = nil
-			if err := Restart(log, cfg, ns).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true}).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if systemd.active || systemd.enabled {
@@ -283,10 +283,10 @@ func TestOfflineNPDWithoutOwnedHostUnitDoesNotMutate(t *testing.T) {
 			}
 			log, cfg := slog.New(slog.DiscardHandler), offlineTransitionConfig()
 			for range 2 {
-				if err := Start(log, cfg, ns).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, ns.Root(), ns, StartOptions{}).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				if err := Restart(log, cfg, ns).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true}).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -325,7 +325,7 @@ func TestOfflineHostNPDPropagatesOwnershipStatError(t *testing.T) {
 	if !errors.As(statErr, &pathErr) {
 		t.Fatalf("expected unit stat failure, got %v", statErr)
 	}
-	if err := Restart(slog.New(slog.DiscardHandler), offlineTransitionConfig(), ns).Do(t.Context()); !errors.Is(err, pathErr.Err) {
+	if err := Start(slog.New(slog.DiscardHandler), offlineTransitionConfig(), ns.Root(), ns, StartOptions{ForceRestart: true}).Do(t.Context()); !errors.Is(err, pathErr.Err) {
 		t.Fatalf("ownership stat error was hidden: %v", err)
 	}
 	if len(systemd.calls) != 0 {

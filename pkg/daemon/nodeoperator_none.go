@@ -69,7 +69,7 @@ func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) 
 			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
-			return npd.Restart(log, cfg, ns).Do(ctx)
+			return npd.Start(log, cfg, ns.Root(), ns, npd.StartOptions{ForceRestart: true}).Do(ctx)
 		},
 	}, nil
 }
