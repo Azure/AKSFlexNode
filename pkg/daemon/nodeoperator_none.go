@@ -83,8 +83,7 @@ func (o *noneNodeOperator) recover(ctx context.Context, log *slog.Logger) error 
 	if err := o.dependencies(ctx, log, o.cfg); err != nil {
 		return err
 	}
-	// Do not stamp a new nonce here: the SDK compares the applied config's
-	// digest with its journal, including for settings-only repaves.
+	// The SDK compares the applied config's digest with its journal.
 	node := o.newNode(noneops.Params{Log: log, Config: state.NodeConfig})
 	if err := node.RecoverUpgrade(ctx); err != nil {
 		return err
@@ -145,11 +144,9 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	if err != nil {
 		return nil, err
 	}
+	ac = ac.DeepCopy()
 	next := nextAppliedState(state, goal, nil)
 	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeNone, ac, noneNPDVersion(cfg)
-	next = registrationState(next)
-	ac = next.NodeConfig
-	gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
 	node := o.newNode(noneops.Params{
 		Log: log, Config: ac, GoalState: gs, Previous: state.NodeConfig,
 	})

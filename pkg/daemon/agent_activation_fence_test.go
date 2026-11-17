@@ -19,8 +19,6 @@ import (
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -249,13 +247,6 @@ func TestAgentActivationRejectsStoppedSourceDuringContainerRepave(t *testing.T) 
 	op.startNPD = func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error { return nil }
 	if handled, err := op.ResumeRepave(t.Context(), discardLogger(), nil); !handled || err != nil {
 		t.Fatalf("resume = %t, %v", handled, err)
-	}
-	if err := executor.RecordPending(t.Context(), "upgrade"); err == nil {
-		t.Fatal("finished but unobserved startup did not fence upgrade")
-	}
-	observed := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: startup.Next.NodeConfig.Kubelet.Labels}}
-	if _, err := op.ResumeRepave(t.Context(), discardLogger(), observed); err != nil {
-		t.Fatal(err)
 	}
 	if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
 		t.Fatal(err)

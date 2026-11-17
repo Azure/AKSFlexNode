@@ -89,7 +89,7 @@ func (o *containerNodeOperator) requireNoStartup() error {
 		return err
 	}
 	if startup != nil {
-		return fmt.Errorf("container startup must complete and its registration be observed before another operation")
+		return fmt.Errorf("container startup must complete before another operation")
 	}
 	return nil
 }
@@ -135,10 +135,9 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err != nil {
 		return nil, fmt.Errorf("resolve container repave: %w", err)
 	}
+	ac = ac.DeepCopy()
 	next := nextAppliedState(state, goal, &activeMachine{Name: slot})
 	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeContainer, ac, noneNPDVersion(cfg)
-	next = registrationState(next)
-	gs.NodeStart.Kubelet.NodeLabels = next.NodeConfig.Kubelet.Labels
 	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
 	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
 		return nil, err
@@ -174,7 +173,7 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 
 // ResumeRepave retries Flex completion only after a recorded successful SDK
 // upgrade. It never infers recovery from the slots left by a failed upgrade.
-func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logger, observed *corev1.Node) (bool, error) {
+func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logger, _ *corev1.Node) (bool, error) {
 	startup, err := o.startup.Load()
 	if err != nil || startup == nil {
 		return err != nil, err
@@ -203,13 +202,7 @@ func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logg
 			return true, err
 		}
 	}
-	expected := startup.Next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]
-	if observed != nil && observed.Labels[runtimeGenerationLabel] == expected {
-		if err := o.startup.Delete(); err != nil {
-			return true, err
-		}
-	}
-	return true, nil
+	return true, o.startup.Delete()
 }
 
 // Direct agent activation is a separate process. Share its nonblocking lock so

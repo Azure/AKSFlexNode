@@ -20,14 +20,12 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func containerTestState(slot, version string) *State {
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	return registrationState(&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
-		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot), NPDVersion: "v1.35.1"})
-
+	return &State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
+		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot).DeepCopy(), NPDVersion: "v1.35.1"}
 }
 
 type fakeContainerNode struct {
@@ -146,63 +144,33 @@ func TestContainerRepaveCompletionAndCleanup(t *testing.T) {
 	}
 }
 
-func TestContainerStartupResumeFrozenAndFenced(t *testing.T) {
+func TestContainerStartupResumeFrozen(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, observed string
-		clear          bool
-	}{
-		{name: "Node absent"}, {name: "unlabeled Node", observed: "missing"},
-		{name: "old registration", observed: "stale"}, {name: "exact registration", observed: "match", clear: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			op, events, store := containerOperatorFixture(t, "", false)
-			frozen := containerTestState("kube2", "frozen")
-			frozen.NodeConfig.Cluster.Version = "1.36.2"
-			if err := op.startup.Save(t.Context(), &containerStartup{Phase: "starting", Next: frozen, Previous: store.state}); err != nil {
-				t.Fatal(err)
-			}
-			op.cfg.Components.Kubernetes = "1.99.0"
-			op.resolve = func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
-				t.Fatal("resume resolved a newer goal")
-				return nil, nil, nil, nil
-			}
-			var observed *corev1.Node
-			if tc.observed != "" {
-				observed = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{}}}
-				switch tc.observed {
-				case "match":
-					observed.Labels = frozen.NodeConfig.Kubelet.Labels
-				case "stale":
-					observed.Labels[runtimeGenerationLabel] = "old-registration"
-				}
-			}
-			for range 2 {
-				handled, err := op.ResumeRepave(t.Context(), discardLogger(), observed)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !handled && !tc.clear {
-					t.Fatal("startup fence cleared early")
-				}
-			}
-			if !slices.Equal(*events, []string{"resume-start", "npd", "sync-prepared", "persist", "destroy-kube1"}) {
-				t.Fatalf("resume changed shared configuration: %v", *events)
-			}
-			if !reflect.DeepEqual(store.state, frozen) {
-				t.Fatal("did not persist frozen state")
-			}
-			startup, err := op.startup.Load()
-			if err != nil || (startup == nil) != tc.clear {
-				t.Fatalf("startup fence: %+v, %v", startup, err)
-			}
-			if !tc.clear {
-				if _, err := op.ApplyGoalState(t.Context(), discardLogger(), aksmachine.GoalState{SettingsVersion: "newer"}); err == nil {
-					t.Fatal("pending startup authorized another repave")
-				}
-			}
-		})
+	op, events, store := containerOperatorFixture(t, "", false)
+	frozen := containerTestState("kube2", "frozen")
+	frozen.NodeConfig.Cluster.Version = "1.36.2"
+	if err := op.startup.Save(t.Context(), &containerStartup{Phase: "starting", Next: frozen, Previous: store.state}); err != nil {
+		t.Fatal(err)
+	}
+	op.cfg.Components.Kubernetes = "1.99.0"
+	op.resolve = func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+		t.Fatal("resume resolved a newer goal")
+		return nil, nil, nil, nil
+	}
+	for attempt := range 2 {
+		handled, err := op.ResumeRepave(t.Context(), discardLogger(), nil)
+		if err != nil || handled != (attempt == 0) {
+			t.Fatalf("ResumeRepave = %t, %v", handled, err)
+		}
+	}
+	if !slices.Equal(*events, []string{"resume-start", "npd", "sync-prepared", "persist", "destroy-kube1"}) {
+		t.Fatalf("resume changed shared configuration: %v", *events)
+	}
+	if !reflect.DeepEqual(store.state, frozen) {
+		t.Fatal("did not persist frozen state")
+	}
+	if startup, err := op.startup.Load(); err != nil || startup != nil {
+		t.Fatalf("completed startup remains: %+v, %v", startup, err)
 	}
 }
 
@@ -301,30 +269,26 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	}
 }
 
-func TestContainerRepaveRotatesSlotAndRegistration(t *testing.T) {
+func TestContainerRepaveRotatesSlots(t *testing.T) {
 	t.Parallel()
 	for _, settings := range []string{"old", "new"} {
 		t.Run("settings="+settings, func(t *testing.T) {
 			t.Parallel()
-			op, _, store := containerOperatorFixture(t, "", false)
-			seen := map[string]bool{store.state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]: true}
+			op, _, _ := containerOperatorFixture(t, "", false)
 			goal := aksmachine.GoalState{SettingsVersion: settings, KubernetesVersion: "1.36.2"}
 			for _, slot := range []string{"kube2", "kube1"} {
 				state, err := op.ApplyGoalState(t.Context(), discardLogger(), goal)
 				if err != nil {
 					t.Fatal(err)
 				}
-				generation := state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]
-				if state.ActiveMachine != slot || state.AppliedSettingsVersion != settings || generation == "" || seen[generation] {
-					t.Fatalf("repave did not rotate slot and registration: slot=%s settings=%s generation=%s", state.ActiveMachine, state.AppliedSettingsVersion, generation)
+				if state.ActiveMachine != slot || state.AppliedSettingsVersion != settings {
+					t.Fatalf("repave did not rotate slot: slot=%s settings=%s", state.ActiveMachine, state.AppliedSettingsVersion)
 				}
-				seen[generation] = true
-				observed := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: state.NodeConfig.Kubelet.Labels}}
-				if handled, err := op.ResumeRepave(t.Context(), discardLogger(), observed); err != nil || !handled {
-					t.Fatalf("observe target registration: handled=%t, err=%v", handled, err)
+				if handled, err := op.ResumeRepave(t.Context(), discardLogger(), nil); err != nil || !handled {
+					t.Fatalf("complete startup: handled=%t, err=%v", handled, err)
 				}
 				if pending, err := op.startup.Load(); err != nil || pending != nil {
-					t.Fatalf("exact registration retained startup fence: %+v, %v", pending, err)
+					t.Fatalf("completed startup remains: %+v, %v", pending, err)
 				}
 			}
 		})
