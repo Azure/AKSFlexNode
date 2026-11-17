@@ -97,13 +97,16 @@ func TestOCIRepaveSavesAlternateSlotBeforeRetire(t *testing.T) {
 			r.runtime = &ociRepaveRuntime{events: &events}
 			r.state = store
 			r.cfg.Bootstrap.Isolation = isolation.ModeContainer
-			r.resolve = func(_ context.Context, _ *slog.Logger, _ *config.Config, _ string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
-				return &agentconfig.AgentConfig{
-					Isolation: "container",
-					Cluster: agentconfig.AgentClusterConfig{
-						Version: "1.35.0",
+			r.resolve = func(_ context.Context, _ *slog.Logger, _ *config.Config, _ string) (config.ResolvedMachineGoal, error) {
+				return config.ResolvedMachineGoal{
+					AgentConfig: &agentconfig.AgentConfig{
+						Isolation: "container",
+						Cluster: agentconfig.AgentClusterConfig{
+							Version: "1.35.0",
+						},
 					},
-				}, &goalstates.MachineGoalState{}, nil, nil
+					GoalState: &goalstates.MachineGoalState{},
+				}, nil
 			}
 			_, err := r.executeGoalState(t.Context(), aksmachine.GoalState{
 				SettingsVersion:   "new",

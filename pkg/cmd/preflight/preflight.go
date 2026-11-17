@@ -72,12 +72,13 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 	log := createPreflightLogger(cfg.Agent.LogLevel)
 
-	agentCfg, gs, _, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
+	resolved, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
 
-	gs, err = agentruntime.PreflightGoalState(log, cfg.Bootstrap.Isolation, agentCfg, gs)
+	agentCfg := resolved.AgentConfig
+	gs, err := agentruntime.PreflightGoalState(log, cfg.Bootstrap.Isolation, agentCfg, resolved.GoalState)
 	if err != nil {
 		return fmt.Errorf("resolve worker preflight view: %w", err)
 	}

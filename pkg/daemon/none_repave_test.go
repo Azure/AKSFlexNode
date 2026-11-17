@@ -121,11 +121,14 @@ func TestNoneRepaveSavesBeforeCommitAndCleansHub(t *testing.T) {
 			r := newTestRepaveReconciler(t, &fakeMachineClient{}, fakeClient(), &fakeWorkerRuntime{})
 			r.runtime, r.state = worker, store
 			r.cfg.Bootstrap.Isolation = isolation.ModeNone
-			r.resolve = func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
-				return &agentconfig.AgentConfig{
-					Isolation: "none",
-					Cluster:   agentconfig.AgentClusterConfig{Version: "1.35.0"},
-				}, &goalstates.MachineGoalState{}, nil, nil
+			r.resolve = func(context.Context, *slog.Logger, *config.Config, string) (config.ResolvedMachineGoal, error) {
+				return config.ResolvedMachineGoal{
+					AgentConfig: &agentconfig.AgentConfig{
+						Isolation: "none",
+						Cluster:   agentconfig.AgentClusterConfig{Version: "1.35.0"},
+					},
+					GoalState: &goalstates.MachineGoalState{},
+				}, nil
 			}
 			_, err := r.executeGoalState(t.Context(), aksmachine.GoalState{SettingsVersion: "new", KubernetesVersion: "1.35.0"})
 			if (err != nil) != tc.failSave {
