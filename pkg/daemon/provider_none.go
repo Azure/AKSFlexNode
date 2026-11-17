@@ -163,9 +163,7 @@ func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs
 		if err := installNoneNPD(ctx, log, cfg, gs); err != nil {
 			return err
 		}
-		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart, npd.StartOptions{
-			UnitName: npd.HostUnitNPD, BinaryPath: gs.NodeStart.Root().Path(npd.BinaryPath),
-		}).Do(ctx); err != nil {
+		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart, isolation.ModeNone).Do(ctx); err != nil {
 			return err
 		}
 		seedNoneState(state, ac, noneNPDVersion(cfg))
@@ -175,7 +173,7 @@ func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs
 
 func resetNoneNode(log *slog.Logger, teardown *noneops.Teardown) phases.Task {
 	return phases.Serial(log,
-		removeNoneHostUnit(log, npd.HostUnitNPD),
+		removeNoneHostUnit(log, npd.UnitName),
 		resetNoneRuntime(log, teardown, hostnode.ResetCNIState),
 		reset.CleanupNetwork(log),
 		reset.RemoveWireGuardKeys(log),

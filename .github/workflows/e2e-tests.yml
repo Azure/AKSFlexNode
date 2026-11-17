@@ -65,12 +65,13 @@ env:
 jobs:
   e2e:
     name: E2E Tests
-    # Only canonical same-repository PRs may request access to the protected E2E
-    # environment. Fork PRs remain blocked.
+    # Check the PR's actual base explicitly; native stack branch filters can
+    # match the stack base. Keep manual dispatch and fork restrictions intact.
     if: >
       github.repository == 'Azure/AKSFlexNode' &&
       (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+       (github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Environment approvals cannot be conditional within one environment. Route
