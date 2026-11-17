@@ -234,8 +234,7 @@ Each mode exercises:
   followed by runtime and workload validation.
 - A settings-only goal update that must leave the live Node and core processes
   unchanged until Node deletion authorizes repave. Completion requires the
-  expected applied generation, a new Node UID, and a fresh registration label
-  matching persisted state;
+  expected applied generation and a new Node UID;
   container mode must switch slots.
 - Two resets, mode-owned runtime cleanup, retained agent binaries, and rejoin.
   Container reset must preserve sentinels in host-private CNI, IPAM, and

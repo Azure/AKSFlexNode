@@ -18,7 +18,6 @@ STATE = "/etc/aks-flex-node/daemon-state.json"
 CONFIG = "/etc/aks-flex-node/config.json"
 RUNC = "/opt/unbounded/runtime/runc"
 DAEMON = "aks-flex-node-agent.service"
-LABEL = "kubernetes.azure.com/flex-runtime-generation"
 # The SDK's none journal sits beside Flex's ConfigSnapshotDir override.
 MARKERS = (
     "/etc/aks-flex-node/none-upgrade-journal.json",
@@ -165,7 +164,6 @@ class Runtime:
                 type(localdns.get("Enabled", False)) is bool), "invalid node LocalDNS state")
         labels = node["Kubelet"].get("Labels", {})
         require(isinstance(labels, dict), "invalid node labels")
-        scalar(labels.get(LABEL, ""), "registration", empty=mode == "nspawn")
         return state
 
     @staticmethod
@@ -255,7 +253,6 @@ class Runtime:
         return {"mode": self.mode(state), "slot": state.get("activeMachine", ""),
                 "generation": state["appliedSettingsVersion"], "identity": self.identity(state),
                 "kubeletVersion": state["appliedKubernetesVersion"],
-                "registration": state.get("nodeConfig", {}).get("Kubelet", {}).get("Labels", {}).get(LABEL, ""),
                 "corePids": pids}
 
     def nspawn_workers(self):

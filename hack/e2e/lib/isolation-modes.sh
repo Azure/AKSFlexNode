@@ -118,7 +118,7 @@ PY
 }
 
 # Pure assertions are shared by the live poller and offline contract tests.
-# Reset may reuse a slot; only repave requires rotation as well as a fresh nonce.
+# Reset may reuse a slot; only repave requires rotation.
 _im_assert_ready() {
   local mode="$1" old_uid="$2" generation="$3" before="$4" snapshot="$5" node="$6" repave="${7:-false}"
   jq -en --arg mode "${mode}" --arg old "${old_uid}" --arg generation "${generation}" \
@@ -127,13 +127,10 @@ _im_assert_ready() {
     $s.mode == $mode and $s.generation == $generation and
     ($s.kubeletVersion | ltrimstr("v")) == $version and
     ($s.identity | type == "string" and length > 0) and
-    ($s.registration | type == "string" and length > 0) and
     ($s.corePids | type == "object" and length > 0 and all(.[]; type == "number" and . > 0)) and
     ($n.metadata.uid | type == "string" and length > 0 and . != $old) and
     any($n.status.conditions[]; .type == "Ready" and .status == "True") and
     ($n.status.nodeInfo.kubeletVersion | ltrimstr("v")) == $version and
-    $n.metadata.labels["kubernetes.azure.com/flex-runtime-generation"] == $s.registration and
-    ($before == null or $s.registration != $before.registration) and
     (if $mode == "container" then
        ($s.slot == "kube1" or $s.slot == "kube2") and
        ($repave == false or ($before != null and $s.slot != $before.slot and $s.identity != $before.identity))
@@ -148,7 +145,6 @@ _im_assert_stable() {
     ($reboot or $a.corePids == $b.corePids) and
     $n.metadata.uid == $uid and
     ($n.status.nodeInfo.kubeletVersion | ltrimstr("v")) == ($a.kubeletVersion | ltrimstr("v")) and
-    $n.metadata.labels["kubernetes.azure.com/flex-runtime-generation"] == $a.registration and
     any($n.status.conditions[]; .type == "Ready" and .status == "True")' >/dev/null
 }
 
@@ -176,7 +172,6 @@ _im_network() {
       (.metadata.labels["kubernetes.azure.com/agentpool"] // "" | length > 0) and
       .metadata.labels["kubernetes.azure.com/nodepool-type"] != "FlexNodes" and
       .metadata.labels["kubernetes.io/os"] == "linux" and
-      (.metadata.labels["kubernetes.azure.com/flex-runtime-generation"] == null) and
       (.spec.providerID // "" | startswith("azure://")) and (.spec.unschedulable != true) and
       any(.status.conditions[]; .type == "Ready" and .status == "True"))] |
     sort_by(.metadata.name) | .[0].metadata.name // error("no managed AKS native Node")')" || return

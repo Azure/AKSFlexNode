@@ -41,8 +41,8 @@ func TestNoneBaseSoftRestartDoesNotRepave(t *testing.T) {
 	if data, err := os.ReadFile(credentials); err != nil || string(data) != "client credentials" {
 		t.Fatalf("soft restart replaced credentials: %v", err)
 	}
-	if f.store.state.AppliedSettingsVersion != "41" || f.store.state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] != "source-nonce" {
-		t.Fatal("soft restart changed applied settings or registration nonce")
+	if f.store.state.AppliedSettingsVersion != "41" {
+		t.Fatal("soft restart changed applied settings")
 	}
 	f.assertCommitted(t)
 	f.assertAppliedRuntime(t, f.store.state)

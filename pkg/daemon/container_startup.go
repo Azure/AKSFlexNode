@@ -17,7 +17,7 @@ const containerStartupFileName = "container-startup.json"
 // Preparing fences agent activation during the SDK upgrade. An interruption or
 // SDK error requires operator recovery; the record cannot identify a safe slot.
 // Starting records a successful SDK return with Flex completion still pending,
-// not a pre-kubelet publication. Finished waits for this exact registration.
+// not a pre-kubelet publication. Finished records completed local work.
 type containerStartup struct {
 	Phase    string `json:"phase"`
 	Next     *State `json:"next"`
@@ -50,8 +50,7 @@ func (s containerStartupStore) Load() (*containerStartup, error) {
 		return nil, fmt.Errorf("decode container startup: %w", err)
 	}
 	if !validContainerState(startup.Next) || !validContainerState(startup.Previous) ||
-		startup.Next.ActiveMachine == startup.Previous.ActiveMachine || startup.Next.AppliedSettingsVersion == "" ||
-		startup.Next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] == "" {
+		startup.Next.ActiveMachine == startup.Previous.ActiveMachine || startup.Next.AppliedSettingsVersion == "" {
 		return nil, fmt.Errorf("container startup has invalid frozen configuration or slots")
 	}
 	switch startup.Phase {

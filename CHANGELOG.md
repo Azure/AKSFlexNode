@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Persist container boot enablement before applied state; serialize agent activation with container repave and fence activation until the exact target registration is observed. Resume Flex completion only after a recorded successful SDK upgrade; ambiguous preparation fails closed for operator recovery or reset.
+- Persist container boot enablement before applied state; serialize agent activation with container repave. Resume Flex completion only after a recorded successful SDK upgrade; ambiguous preparation fails closed for operator recovery or reset.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
 - Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
 

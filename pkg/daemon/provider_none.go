@@ -134,11 +134,7 @@ func (noneProvider) SetupHost(cfg *config.Config, log *slog.Logger, _ bool) phas
 
 func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
 	return hostnode.Func("start-none-node", func(ctx context.Context) error {
-		ac := config.ToAgentConfig(cfg, noneops.Slot)
-		registration := *state
-		registration.NodeConfig = ac
-		ac = registrationState(&registration).NodeConfig
-		gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
+		ac := config.ToAgentConfig(cfg, noneops.Slot).DeepCopy()
 		node := newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs})
 		if err := stageContainerImageArchiveBindSource(log, archives).Do(ctx); err != nil {
 			return err

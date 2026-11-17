@@ -96,11 +96,7 @@ func wrapContainerArtifactUnpack(node containerNode, install func(context.Contex
 
 func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
 	return hostnode.Func("start-container-node", func(ctx context.Context) error {
-		registration := *state
-		registration.Isolation, registration.ActiveMachine = isolation.ModeContainer, slot
-		registration.NodeConfig = config.ToAgentConfig(cfg, slot)
-		ac := registrationState(&registration).NodeConfig
-		gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
+		ac := config.ToAgentConfig(cfg, slot).DeepCopy()
 		node := newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
 		if err := wrapContainerArtifactUnpack(managedContainerNode{node}, containerArtifacts(cfg, log)); err != nil {
 			return err
