@@ -65,6 +65,10 @@ func (NSpawn) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(
 func (noneRuntime) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
 
 func planReset(log *slog.Logger) (ResetPlan, error) {
+	if log == nil {
+		return nil, fmt.Errorf("logger is nil")
+	}
+
 	hostArtifacts, err := NoneUpgradeArtifactsPresent()
 	if err != nil {
 		return nil, err

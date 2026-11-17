@@ -21,10 +21,14 @@ type resetRuntime struct {
 	agentruntime.Runtime
 	task   phases.Task
 	events *[]string
+	fail   string
 }
 
 func (r resetRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
 	*r.events = append(*r.events, "discover")
+	if r.fail == "discover" {
+		return nil, errors.New("discovery failed")
+	}
 	return r, nil
 }
 
@@ -33,11 +37,22 @@ func (resetRuntime) HasHostNativeState() bool { return true }
 func (r resetRuntime) Stop() phases.Task {
 	return hostnode.Func("stop", func(context.Context) error {
 		*r.events = append(*r.events, "stop")
+		if r.fail == "stop" {
+			return errors.New("stop failed")
+		}
 		return nil
 	})
 }
 
 func (r resetRuntime) Finish() phases.Task { return r.task }
+
+func TestResetCommandDoesNotSelectIsolation(t *testing.T) {
+	t.Parallel()
+
+	if flag := NewCommand().Flags().Lookup("isolation"); flag != nil {
+		t.Fatal("reset must discover runtime traces rather than accept an isolation flag")
+	}
+}
 
 func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 	t.Parallel()
@@ -46,12 +61,16 @@ func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 		name    string
 		state   string
 		missing bool
-		fail    bool
+		fail    string
 	}{
 		{name: "absent", missing: true},
 		{name: "corrupt", state: "not json"},
 		{name: "stale", state: `{"isolation":"nspawn","activeMachine":"kube1"}`},
-		{name: "cleanup failure", state: "corrupt", fail: true},
+		{name: "uninstall failure", state: "corrupt", fail: "uninstall"},
+		{name: "discovery failure", state: "corrupt", fail: "discover"},
+		{name: "stop failure", state: "corrupt", fail: "stop"},
+		{name: "Hub failure", state: "corrupt", fail: "hub"},
+		{name: "cleanup failure", state: "corrupt", fail: "worker"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -73,11 +92,14 @@ func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 			var events []string
 			uninstall := hostnode.Func("uninstall", func(context.Context) error {
 				events = append(events, "uninstall")
+				if tc.fail == "uninstall" {
+					return errors.New("uninstall failed")
+				}
 				return nil
 			})
-			worker := resetRuntime{events: &events, task: hostnode.Func("worker", func(context.Context) error {
+			worker := resetRuntime{events: &events, fail: tc.fail, task: hostnode.Func("worker", func(context.Context) error {
 				events = append(events, "worker")
-				if tc.fail {
+				if tc.fail == "worker" {
 					return errors.New("cleanup failed")
 				}
 				return nil
@@ -89,15 +111,19 @@ func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 			log := slog.New(slog.DiscardHandler)
 			hub := hostnode.Func("hub", func(context.Context) error {
 				events = append(events, "hub")
+				if tc.fail == "hub" {
+					return errors.New("Hub failed")
+				}
 				return nil
 			})
 			err := runReset(t.Context(), log, uninstall, daemon.ResetWorker(log, worker, hub), clear)
-			if (err != nil) != tc.fail {
+			if (err != nil) != (tc.fail != "") {
 				t.Fatalf("reset error = %v", err)
 			}
 			want := []string{"uninstall", "discover", "stop", "hub", "worker", "clear"}
-			if tc.fail {
-				want = want[:5]
+			if tc.fail != "" {
+				failedAt := map[string]int{"uninstall": 1, "discover": 2, "stop": 3, "hub": 4, "worker": 5}
+				want = want[:failedAt[tc.fail]]
 				if contents, err := os.ReadFile(state); err != nil || string(contents) != tc.state {
 					t.Fatalf("state not retained: %q, %v", contents, err)
 				}
