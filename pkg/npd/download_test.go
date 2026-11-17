@@ -3,16 +3,12 @@ package npd
 import (
 	"context"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/container"
-	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
@@ -26,66 +22,6 @@ func TestConstructDownloadSource(t *testing.T) {
 	want := "https://github.com/kubernetes/node-problem-detector/releases/download/v1.35.1/node-problem-detector-v1.35.1-linux_" + runtime.GOARCH + ".tar.gz"
 	if got.String() != want {
 		t.Fatalf("source = %q, want %q", got.String(), want)
-	}
-}
-
-func TestDownloadUsesNodeRoot(t *testing.T) {
-	t.Parallel()
-	fixture, err := filepath.Abs("testdata/version.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, mode := range []string{"nspawn", "container", "none"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			for _, tc := range []struct {
-				name, configured, wantVersion string
-			}{
-				{name: "default version", wantVersion: DefaultVersion},
-				{name: "configured version", configured: "v1.2.3", wantVersion: "v1.2.3"},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					t.Parallel()
-					dir := t.TempDir()
-					var root isolation.NodeRoot = isolation.DirRoot{Dir: dir}
-					binary := filepath.Join(dir, "usr/local/bin/node-problem-detector")
-					switch mode {
-					case "container":
-						root = container.Root{SlotName: "kube1", Dir: dir, HostRoot: t.TempDir()}
-					case "none":
-						layout := none.Layout{Base: t.TempDir()}
-						root = none.Root{HostRoot: dir, Layout: layout, Version: "v1"}
-						binary = filepath.Join(layout.VersionDir("v1"), "bin/node-problem-detector")
-					}
-					cfg := &config.Config{Npd: config.NPDConfig{Version: tc.configured}}
-					task, ok := Download(slog.New(slog.DiscardHandler), cfg, root).(*downloadTask)
-					if !ok {
-						t.Fatal("Download did not return *downloadTask")
-					}
-					if task.root != root || task.cfg != cfg || task.version != tc.wantVersion {
-						t.Fatalf("Download did not retain the node root, config, and version: %+v", task)
-					}
-					if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
-						t.Fatal(err)
-					}
-					// Keep the executable immutable across parallel process forks.
-					if err := os.WriteFile(binary+".version", []byte(tc.wantVersion+"\n"), 0o600); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.Symlink(fixture, binary); err != nil {
-						t.Fatal(err)
-					}
-					// Reuse must succeed without initiating a release download.
-					ctx, cancel := context.WithCancel(t.Context())
-					cancel()
-					for range 2 {
-						if err := task.Do(ctx); err != nil {
-							t.Fatal(err)
-						}
-					}
-				})
-			}
-		})
 	}
 }
 

@@ -357,7 +357,7 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				path := filepath.Join(f.rootPath("kube1"), "usr/local/bin/node-problem-detector")
+				path := filepath.Join(f.rootPath("kube1"), "opt/aks-flex-node/bin/node-problem-detector")
 				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 					t.Fatal(err)
 				}
@@ -378,7 +378,7 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 				if info, err := os.Stat(helper); err != nil || info.Mode().Perm()&0o111 == 0 {
 					t.Fatalf("credential helper not installed before %s: %v", event, err)
 				}
-				npd := gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector")
+				npd := gs.RootFS.Root().Path("opt/aks-flex-node/bin/node-problem-detector")
 				_, err := os.Stat(npd)
 				if (!offline && err != nil) || (offline && !errors.Is(err, os.ErrNotExist)) {
 					t.Fatalf("NPD availability before %s (offline=%t): %v", event, offline, err)
