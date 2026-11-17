@@ -96,21 +96,20 @@ func TestNoneCheckAgentCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, supported string
-		missing, cancel bool
-		wantErr         bool
+		name, executable string
+		missing, cancel  bool
+		wantErr          bool
 	}{
-		{name: "supports none", supported: "none"},
-		{name: "only supports nspawn", supported: "nspawn", wantErr: true},
-		{name: "only supports container", supported: "container", wantErr: true},
-		{name: "missing executable", missing: true, wantErr: true},
-		{name: "canceled", supported: "none", cancel: true, wantErr: true},
+		{name: "supports none", executable: "none"},
+		{name: "only supports nspawn", executable: "nspawn", wantErr: true},
+		{name: "only supports container", executable: "container", wantErr: true},
+		{name: "missing executable", executable: "missing", missing: true, wantErr: true},
+		{name: "canceled", executable: "none", cancel: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			candidate := filepath.Join(t.TempDir(), tc.supported+"candidate")
+			candidate := filepath.Join(t.TempDir(), tc.executable)
 			if !tc.missing {
-				candidate = filepath.Join(t.TempDir(), tc.supported)
 				if err := os.Symlink(fixture, candidate); err != nil {
 					t.Fatal(err)
 				}
@@ -188,7 +187,7 @@ func TestNoneRequiredServices(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{
 				Bootstrap:   config.BootstrapConfig{AdditionalRequiredServices: slices.Clone(tc.extra)},
-				HostRouting: config.HostRoutingConfig{StaticRoutes: config.StaticRoutesConfig{Routes: tc.routes}},
+				HostRouting: config.HostRoutingConfig{StaticRoutes: config.StaticRoutesConfig{Enabled: len(tc.routes) > 0, Routes: tc.routes}},
 			}
 			for range 2 {
 				if got := NoneRequiredServices(cfg); !slices.Equal(got, tc.want) {
@@ -265,12 +264,23 @@ func TestSeedNoneState(t *testing.T) {
 }
 
 type noneTestStateStore struct {
-	StateStore
 	applied *State
 	err     error
 }
 
-func (s *noneTestStateStore) Load(ctx context.Context) (*State, error) { return s.applied, s.err }
+func (s *noneTestStateStore) Load(ctx context.Context) (*State, error) {
+	return s.applied, s.err
+}
+
+func (s *noneTestStateStore) Save(ctx context.Context, state *State) error {
+	s.applied = state
+	return nil
+}
+
+func (s *noneTestStateStore) Delete(ctx context.Context) error {
+	s.applied = nil
+	return nil
+}
 
 type noneTestOperator struct{ Operator }
 
