@@ -76,7 +76,7 @@ func TestNoneOperatorReconcilesNPD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "ExecStart="+ns.Root().Path(npd.BinaryPath)+" ") {
+	if !strings.Contains(string(content), "ExecStart="+ns.Root().Path("usr/local/bin/node-problem-detector")+" ") {
 		t.Fatalf("NPD does not execute the versioned root's binary: %s", content)
 	}
 	calls = nil

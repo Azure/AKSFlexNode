@@ -66,8 +66,8 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 	}
 	rendered := string(data)
 
-	if !strings.Contains(rendered, "ExecStart="+nodeStart.Root().Path(BinaryPath)+" ") {
-		t.Fatalf("rendered unit missing root-relative NPD binary path:\n%s", rendered)
+	if !strings.Contains(rendered, "ExecStart="+filepath.Join(machineDir, npdBinaryPath)+" ") {
+		t.Fatalf("rendered unit missing NPD binary path under the supplied root:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "auth="+wantKubeconfigPath) {
 		t.Fatalf("rendered unit missing auth=%s:\n%s", wantKubeconfigPath, rendered)
@@ -104,7 +104,7 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			case isolation.ModeNone:
 				root = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
 			}
-			binary := root.Path(BinaryPath)
+			binary := root.Path(npdBinaryPath)
 			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 			path := root.Path("/etc/systemd/system/" + systemdUnitNPD)
 			if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
