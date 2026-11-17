@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -54,6 +55,34 @@ func (*activationTargetService) WaitHealthyForBinary(_ context.Context, path str
 	return filepath.EvalSymlinks(path)
 }
 
+func writeActivationConfig(t *testing.T, path, overrides string) string {
+	t.Helper()
+
+	const baseline = `{
+		"azure": {
+			"targetCluster": {"resourceId": "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster"},
+			"bootstrapToken": {"token": "abcdef.0123456789abcdef"}
+		},
+		"agent": {"nodeName": "test-node"},
+		"node": {"kubelet": {"clusterFQDN": "cluster.example", "caCertData": "Y2E="}}
+	}`
+	var cfg config.Config
+	if err := json.Unmarshal([]byte(baseline), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(overrides), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 	t.Parallel()
 
@@ -94,23 +123,13 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 		},
-		{
-			name:      "binary repair ignores broken runtime and credential settings",
-			data:      `{"bootstrap":{"isolation":"invalid"},"agent":{"logLevel":"invalid"},"azure":{"arc":{"enabled":true},"servicePrincipal":{"clientSecretFile":"missing-credential"}}}`,
-			applied:   isolation.ModeNone,
-			unit:      "Wants=machines.target\n",
-			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
-			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
 			configPath := filepath.Join(dir, "config.json")
-			if err := os.WriteFile(configPath, []byte(tc.data), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			data := writeActivationConfig(t, configPath, tc.data)
 			unitPath := filepath.Join(dir, agentdeployment.ServiceUnitName)
 			if tc.unit != "" {
 				if err := os.WriteFile(unitPath, []byte(tc.unit), 0o644); err != nil {
@@ -143,7 +162,7 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 			if leaf.prepares != 0 || leaf.restarts != 0 {
 				t.Fatal("preflight prepared or restarted the service")
 			}
-			if got, err := os.ReadFile(configPath); err != nil || string(got) != tc.data {
+			if got, err := os.ReadFile(configPath); err != nil || string(got) != data {
 				t.Fatalf("preflight changed desired config: %v", err)
 			}
 			got, err := os.ReadFile(unitPath)
@@ -168,6 +187,7 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 		danglingUnit bool
 		active       bool
 		data         string
+		overrides    bool
 		preflightErr error
 		wantErr      string
 		wantPlans    int
@@ -189,7 +209,7 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 		{
 			name:    "applied state still requires config",
 			state:   &State{Isolation: isolation.ModeNSpawn},
-			wantErr: "read host agent configuration",
+			wantErr: "load host agent configuration",
 		},
 		{
 			name:      "active service without unit still requires config",
@@ -209,9 +229,10 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 			wantErr: "error unmarshaling config",
 		},
 		{
-			name:    "unsupported desired mode without applied state",
-			data:    `{"bootstrap":{"isolation":"invalid"}}`,
-			wantErr: "unsupported worker isolation",
+			name:      "unsupported desired mode without applied state",
+			data:      `{"bootstrap":{"isolation":"invalid"}}`,
+			overrides: true,
+			wantErr:   "unsupported worker isolation",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,7 +240,9 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 
 			dir := t.TempDir()
 			configPath := filepath.Join(dir, "config.json")
-			if tc.data != "" {
+			if tc.overrides {
+				writeActivationConfig(t, configPath, tc.data)
+			} else if tc.data != "" {
 				if err := os.WriteFile(configPath, []byte(tc.data), 0o600); err != nil {
 					t.Fatal(err)
 				}

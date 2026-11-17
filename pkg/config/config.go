@@ -400,33 +400,6 @@ func validateNodeName(name string) error {
 // LoadConfig loads configuration from a JSON file.
 // The configPath parameter is required and cannot be empty.
 func LoadConfig(configPath string) (*Config, error) {
-	cfg, err := readConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
-	}
-
-	return cfg, nil
-}
-
-// ReadConfig decodes configuration and applies defaults without validating runtime
-// settings or loading credentials. Binary repair can read deployment intent even
-// when the runtime configuration needs repair too.
-func ReadConfig(configPath string) (*Config, error) {
-	cfg, err := readConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg.setDefaults()
-
-	return cfg, nil
-}
-
-func readConfig(configPath string) (*Config, error) {
 	// Require config path to be specified
 	if configPath == "" {
 		return nil, fmt.Errorf("config file path is required")
@@ -443,6 +416,9 @@ func readConfig(configPath string) (*Config, error) {
 	}
 	if err := adaptLegacyConfigData(data, config); err != nil {
 		return nil, fmt.Errorf("adapt legacy config data: %w", err)
+	}
+	if err := config.validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	return config, nil
