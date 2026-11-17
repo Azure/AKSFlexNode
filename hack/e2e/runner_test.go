@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,15 +11,7 @@ import (
 
 func runShell(t *testing.T, env []string, script string) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-ceu", script)
-	cmd.Env = append(os.Environ(), env...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("shell failed: %v\n%s", err, output)
-	}
-	return string(output)
+	return runShellResult(t, env, script, true)
 }
 
 func TestRunnerScriptsParse(t *testing.T) {
@@ -110,7 +101,7 @@ _isolation_wait_runtime() { echo "runtime:$2"; }
 validate_node_joined() { echo ready; }
 validate_node_ip() { echo address; }
 smoke_test() { echo "workload:$2"; }
-_isolation_reapply_and_restart() { echo "restart:$3"; }
+_isolation_reapply_and_restart() { echo "restart:$3:$4"; }
 _isolation_host_reboot() { echo "reboot:$3"; }
 _isolation_repave() { echo "repave:$3"; }
 _isolation_assert_clean() { echo "clean:$2"; }
@@ -118,7 +109,12 @@ isolation_all
 `)
 	want := []string{"api", "reset", "absent"}
 	for _, mode := range []string{"none", "container"} {
-		want = append(want, "join:"+mode, "runtime:"+mode, "ready", "address", "workload:"+mode+"-join", "restart:"+mode, "reboot:"+mode, "repave:"+mode, "reset", "clean:"+mode, "absent", "join:"+mode, "runtime:"+mode, "ready", "workload:"+mode+"-rejoin", "reset", "clean:"+mode, "absent")
+		want = append(want,
+			"join:"+mode, "runtime:"+mode, "ready", "address", "workload:"+mode+"-join",
+			"restart:"+mode+":pre-repave", "reboot:"+mode, "repave:"+mode, "restart:"+mode+":post-repave",
+			"reset", "clean:"+mode, "absent", "join:"+mode, "runtime:"+mode, "ready",
+			"workload:"+mode+"-rejoin", "reset", "clean:"+mode, "absent",
+		)
 	}
 	want = append(want, "join:nspawn", "ready")
 	if strings.TrimSpace(output) != strings.Join(want, "\n") {
