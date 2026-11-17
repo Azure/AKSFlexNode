@@ -37,7 +37,7 @@ func (r *noneRepaveRuntime) Worker(_ *slog.Logger, _ agentruntime.Node) (agentru
 	}, nil
 }
 
-func (r *noneRepaveRuntime) Prepare(_ *slog.Logger, input agentruntime.Inputs) phases.Task {
+func (r *noneRepaveRuntime) PrepareUpgrade(_ *slog.Logger, input agentruntime.Inputs) phases.Task {
 	return testTask{
 		name: "recover",
 		run: func() error {

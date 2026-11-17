@@ -175,14 +175,14 @@ func ensureAgentUpgradeServiceAssetsAt(
 }
 
 type agentServiceOptions struct {
-	ARCEnabled bool
-	NoneWorker bool
+	ARCEnabled         bool
+	OmitMachinesTarget bool
 }
 
 func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
 	return agentServiceOptions{
-		ARCEnabled: cfg.IsARCEnabled(),
-		NoneWorker: cfg.Bootstrap.Isolation == isolation.ModeNone,
+		ARCEnabled:         cfg.IsARCEnabled(),
+		OmitMachinesTarget: cfg.Bootstrap.Isolation == isolation.ModeNone || cfg.Bootstrap.Isolation == isolation.ModeContainer,
 	}
 }
 
@@ -327,15 +327,15 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
 	}
 	return agentServiceOptions{
-		ARCEnabled: bytes.Contains(content, []byte(arcSystemdDependency)),
-		NoneWorker: !bytes.Contains(content, []byte("machines.target")),
+		ARCEnabled:         bytes.Contains(content, []byte(arcSystemdDependency)),
+		OmitMachinesTarget: !bytes.Contains(content, []byte("machines.target")),
 	}, nil
 }
 
 type agentServiceTemplateData struct {
-	CurrentBinaryPath string
-	Dependencies      []string
-	NoneWorker        bool
+	CurrentBinaryPath  string
+	Dependencies       []string
+	OmitMachinesTarget bool
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -346,9 +346,9 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
-		CurrentBinaryPath: currentBinaryPath,
-		Dependencies:      dependencies,
-		NoneWorker:        serviceOptions.NoneWorker,
+		CurrentBinaryPath:  currentBinaryPath,
+		Dependencies:       dependencies,
+		OmitMachinesTarget: serviceOptions.OmitMachinesTarget,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}

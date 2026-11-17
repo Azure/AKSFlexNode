@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,6 +19,7 @@ import (
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
@@ -102,7 +104,7 @@ func recordPendingAgentUpgrade(
 	return nil
 }
 
-// agentUpgradeHelperPaths resolves both nspawn slots because a later repave can
+// agentUpgradeHelperPaths resolves both worker slots because a later repave can
 // change the active slot without replacing the daemon's upgrade executor.
 func agentUpgradeHelperPaths(log *slog.Logger, mode isolation.Mode) (map[string]string, error) {
 	if mode == isolation.ModeNone {
@@ -115,6 +117,11 @@ func agentUpgradeHelperPaths(log *slog.Logger, mode isolation.Mode) (map[string]
 	}
 	helpers := make(map[string]string, 2)
 	for _, slot := range []string{goalstates.NSpawnMachineKube1, goalstates.NSpawnMachineKube2} {
+		if mode == isolation.ModeContainer {
+			helpers[slot] = filepath.Join((container.Layout{}).RootfsDir(slot), "usr/local/bin/aks-flex-node")
+			continue
+		}
+
 		worker, err := runtime.Worker(log, agentruntime.Node{Slot: slot})
 		if err != nil {
 			return nil, fmt.Errorf("resolve worker for agent upgrade: %w", err)

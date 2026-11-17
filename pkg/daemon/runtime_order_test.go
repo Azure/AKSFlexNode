@@ -35,7 +35,7 @@ func (r *recordingRuntime) task(name string) phases.Task {
 	}
 }
 
-func (r *recordingRuntime) Prepare(log *slog.Logger, input agentruntime.Inputs) phases.Task {
+func (r *recordingRuntime) PrepareUpgrade(log *slog.Logger, input agentruntime.Inputs) phases.Task {
 	r.machine = input.Previous.Slot
 	return phases.Serial(log, r.task("stop"), r.task("network"))
 }

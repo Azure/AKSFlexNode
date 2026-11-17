@@ -122,7 +122,7 @@ func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
 	if s.WorkerMode != "" {
-		s.serviceOptions.NoneWorker = s.WorkerMode == isolation.ModeNone
+		s.serviceOptions.OmitMachinesTarget = s.WorkerMode == isolation.ModeNone || s.WorkerMode == isolation.ModeContainer
 	}
 
 	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)

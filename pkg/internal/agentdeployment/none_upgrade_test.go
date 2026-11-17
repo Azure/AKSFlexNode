@@ -17,7 +17,7 @@ import (
 func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone} {
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
@@ -26,8 +26,8 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			writeTestFile(t, paths.BinaryPath, previous)
 			// An older nspawn candidate need not implement supports-isolation.
 			candidate := "#!/bin/sh\ntest \"$1\" = version\n"
-			if mode == isolation.ModeNone {
-				candidate = "#!/bin/sh\ncase \"$1\" in version) echo v1;; supports-isolation) test \"$2\" = none;; *) exit 1;; esac\n"
+			if mode != isolation.ModeNSpawn {
+				candidate = fmt.Sprintf("#!/bin/sh\ncase \"$1\" in version) echo v1;; supports-isolation) test \"$2\" = %s;; *) exit 1;; esac\n", mode)
 			}
 			archive := agentUpgradeTestArchive(t, candidate)
 			digest := sha256.Sum256(archive)
@@ -69,7 +69,7 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			}
 			assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 			assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
-			if mode == isolation.ModeNSpawn {
+			if mode != isolation.ModeNone {
 				assertAgentUpgradeFileContent(t, helper, candidate)
 				writeTestFile(t, helper, "stale helper")
 				if err := executor.ValidateStarted(signal); err == nil || !strings.Contains(err.Error(), "do not match") {
@@ -82,7 +82,7 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 					t.Fatalf("rollback: %v", err)
 				}
 				assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
-				if mode == isolation.ModeNSpawn {
+				if mode != isolation.ModeNone {
 					assertAgentUpgradeFileContent(t, helper, previous)
 				} else if _, err := os.Stat(filepath.Dir(helper)); !os.IsNotExist(err) {
 					t.Fatalf("none upgrade touched guest helper destination: %v", err)

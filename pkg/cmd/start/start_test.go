@@ -71,7 +71,11 @@ func (r *bootstrapTestRuntime) Restart(_ *slog.Logger, input agentruntime.Inputs
 	})
 }
 
-func (r *bootstrapTestRuntime) Prepare(*slog.Logger, agentruntime.Inputs) phases.Task {
+func (r *bootstrapTestRuntime) PrepareUpgrade(*slog.Logger, agentruntime.Inputs) phases.Task {
+	return hostnode.Func("prepare-upgrade", func(context.Context) error { return nil })
+}
+
+func (r *bootstrapTestRuntime) Recover(*slog.Logger, agentruntime.Inputs) phases.Task {
 	return hostnode.Func("recover", func(context.Context) error {
 		r.events = append(r.events, "recover")
 		return nil

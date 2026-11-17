@@ -55,8 +55,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if applied != nil && applied.Isolation != cfg.Bootstrap.Isolation {
 		return fmt.Errorf("worker isolation change requires reset")
 	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNone && applied == nil {
-		return fmt.Errorf("applied none worker state is missing")
+	if (cfg.Bootstrap.Isolation == isolation.ModeNone || cfg.Bootstrap.Isolation == isolation.ModeContainer) && applied == nil {
+		return fmt.Errorf("applied %s worker state is missing", cfg.Bootstrap.Isolation)
 	}
 	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
 	if err != nil {
@@ -91,7 +91,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+	if cfg.Bootstrap.Isolation == isolation.ModeNone || cfg.Bootstrap.Isolation == isolation.ModeContainer {
 		input := agentruntime.Inputs{
 			Config: cfg,
 			Node: agentruntime.Node{
@@ -99,7 +99,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				Config: applied.NodeConfig,
 			},
 		}
-		if err := worker.Prepare(log, input).Do(ctx); err != nil {
+		if err := worker.Recover(log, input).Do(ctx); err != nil {
 			return fmt.Errorf("recover worker at startup: %w", err)
 		}
 	}

@@ -32,6 +32,16 @@ func TestContainerizedAgentModeValidation(t *testing.T) {
 			wantErr:       true,
 		},
 		{
+			name:          "containerized OCI",
+			mode:          isolation.ModeContainer,
+			containerized: true,
+			wantErr:       true,
+		},
+		{
+			name: "host OCI",
+			mode: isolation.ModeContainer,
+		},
+		{
 			name: "host none",
 			mode: isolation.ModeNone,
 		},
@@ -79,7 +89,7 @@ func TestBootstrapStateSelectsInstalledWorker(t *testing.T) {
 			reapply: true,
 		},
 		{
-			name:    "future alternate slot",
+			name:    "OCI alternate slot",
 			mode:    isolation.ModeContainer,
 			applied: alternate,
 			want:    alternate,

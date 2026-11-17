@@ -285,7 +285,7 @@ func secureInstallOptions(rawURL, expectedDigest string, mode isolation.Mode) (a
 		Mode:           upgradeBinaryMode,
 		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
 	}
-	if mode == isolation.ModeNone {
+	if mode != isolation.ModeNSpawn {
 		opts.Check = func(ctx context.Context, path string) error {
 			return CheckIsolation(ctx, path, mode)
 		}

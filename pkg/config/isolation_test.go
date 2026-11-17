@@ -33,9 +33,10 @@ func TestIsolationDefaultsAndCopy(t *testing.T) {
 			valid: true,
 		},
 		{
-			name: "container not implemented",
-			mode: isolation.ModeContainer,
-			want: isolation.ModeContainer,
+			name:  "container",
+			mode:  isolation.ModeContainer,
+			want:  isolation.ModeContainer,
+			valid: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

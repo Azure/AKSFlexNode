@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
@@ -40,6 +41,23 @@ func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.
 		return err
 	}
 	present := artifacts || noneops.Present()
+	ociArtifacts, err := agentruntime.ContainerUpgradeArtifactPresent()
+	if err != nil {
+		return err
+	}
+	ociPresent := ociArtifacts || containerops.Present()
+	if cfg.Bootstrap.Isolation != isolation.ModeContainer && ociPresent {
+		return fmt.Errorf("OCI worker is present; reset before changing isolation")
+	}
+	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
+		if present {
+			return fmt.Errorf("host-native worker is present; reset before changing isolation")
+		}
+		if applied == nil && ociPresent {
+			return fmt.Errorf("OCI worker has no applied state; reset before bootstrap")
+		}
+		return host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNSpawn)
+	}
 	if cfg.Bootstrap.Isolation == isolation.ModeNone {
 		if applied == nil && present {
 			return fmt.Errorf("host-native worker has no applied state; reset before bootstrap")

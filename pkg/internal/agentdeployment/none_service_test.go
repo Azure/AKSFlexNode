@@ -23,8 +23,8 @@ func TestNoneDaemonUnitDoesNotRequireMachinesTarget(t *testing.T) {
 			t.Parallel()
 
 			unit, err := renderAgentServiceUnit("/opt/unbounded/agent/bin/aks-flex-node", agentServiceOptions{
-				NoneWorker: true,
-				ARCEnabled: arc,
+				OmitMachinesTarget: true,
+				ARCEnabled:         arc,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -41,7 +41,7 @@ func TestNoneDaemonUnitDoesNotRequireMachinesTarget(t *testing.T) {
 				t.Fatal(err)
 			}
 			options, err := installedAgentServiceOptions(dir)
-			if err != nil || !options.NoneWorker || options.ARCEnabled != arc {
+			if err != nil || !options.OmitMachinesTarget || options.ARCEnabled != arc {
 				t.Fatalf("installed options = %+v, %v", options, err)
 			}
 		})
@@ -54,7 +54,10 @@ func TestActivationPlansAppliedWorkerMode(t *testing.T) {
 	paths := testAgentUpgradePaths(t)
 	dir := t.TempDir()
 	recovery := filepath.Join(t.TempDir(), "recovery.sh")
-	options := agentServiceOptions{NoneWorker: true, ARCEnabled: true}
+	options := agentServiceOptions{
+		OmitMachinesTarget: true,
+		ARCEnabled:         true,
+	}
 	if err := writeAgentServiceAssets(paths, options, dir, recovery, paths.CurrentPath, false); err != nil {
 		t.Fatal(err)
 	}

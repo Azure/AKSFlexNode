@@ -344,18 +344,19 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	}
 	next := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
 	next.Isolation = cfg.Bootstrap.Isolation
-	if next.Isolation == isolation.ModeNone {
+	if next.Isolation == isolation.ModeNone || next.Isolation == isolation.ModeContainer {
 		if ac == nil || previous.Config == nil {
-			return nil, fmt.Errorf("none repave requires applied and target runtime configurations")
+			return nil, fmt.Errorf("%s repave requires applied and target runtime configurations", next.Isolation)
 		}
 		next.NodeConfig = ac.DeepCopy()
 	}
 
-	if err := r.runtime.Prepare(r.log, input).Do(ctx); err != nil {
+	if err := r.runtime.PrepareUpgrade(r.log, input).Do(ctx); err != nil {
 		return nil, fmt.Errorf("prepare worker upgrade: %w", err)
 	}
 	var tasks []phases.Task
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+	switch cfg.Bootstrap.Isolation {
+	case isolation.ModeNone:
 		view, err := r.runtime.Worker(r.log, previous)
 		if err != nil {
 			return nil, fmt.Errorf("resolve worker for hub cleanup: %w", err)
@@ -363,7 +364,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		if err := yurthub.ResetHost(ctx, hubWorker(active.Name, view)); err != nil {
 			return nil, fmt.Errorf("clean host hub before repave: %w", err)
 		}
-	} else {
+	case "", isolation.ModeNSpawn:
 		tasks = append(tasks, r.hookUnits(r.log))
 	}
 	tasks = append(tasks,

@@ -201,8 +201,12 @@ func (f *fakeWorkerRuntime) Restart(_ *slog.Logger, input agentruntime.Inputs) p
 	}
 }
 
-func (f *fakeWorkerRuntime) Prepare(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
+func (f *fakeWorkerRuntime) PrepareUpgrade(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
 	return testTask{name: "prepare-upgrade"}
+}
+
+func (f *fakeWorkerRuntime) Recover(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
+	return testTask{name: "recover"}
 }
 
 func (f *fakeWorkerRuntime) Retire(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {

@@ -35,6 +35,17 @@ func TestCandidateIsolationProbe(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "old OCI release",
+			mode:    isolation.ModeContainer,
+			script:  "exit 1",
+			wantErr: true,
+		},
+		{
+			name:   "OCI support",
+			mode:   isolation.ModeContainer,
+			script: `test "$1" = supports-isolation && test "$2" = container`,
+		},
+		{
 			name:   "none support",
 			mode:   isolation.ModeNone,
 			script: `test "$1" = supports-isolation && test "$2" = none`,

@@ -117,31 +117,38 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 	if err != nil {
 		return err
 	}
-	return s.synchronizeActiveNspawn(healthCtx, expected)
+	return s.synchronizeActiveWorker(healthCtx, expected)
 }
 
-func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Context, expected string) error {
+func (s *flexDaemonActivationService) synchronizeActiveWorker(ctx context.Context, expected string) error {
 	state, err := s.state.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("load active nspawn state: %w", err)
+		return fmt.Errorf("load active worker state: %w", err)
 	}
 	if state == nil {
-		s.log.Info("activated host agent without active nspawn synchronization")
+		s.log.Info("activated host agent without an active worker")
 		return nil
 	}
 	if !validActiveMachine(state.ActiveMachine) {
-		return fmt.Errorf("no valid active nspawn machine for agent activation")
+		return fmt.Errorf("no valid active worker for agent activation")
 	}
 	if state.Isolation == isolation.ModeNone {
 		return nil
 	}
 
-	worker, err := (agentruntime.NSpawn{}).Worker(s.log, agentruntime.Node{Slot: state.ActiveMachine, Config: state.NodeConfig})
+	runtime, err := agentruntime.New(state.Isolation)
+	if err != nil {
+		return err
+	}
+	worker, err := runtime.Worker(s.log, agentruntime.Node{
+		Slot:   state.ActiveMachine,
+		Config: state.NodeConfig,
+	})
 	if err != nil {
 		return fmt.Errorf("resolve active worker for agent activation: %w", err)
 	}
 	if err := s.synchronize(expected, worker.Root.Path("/usr/local/bin/aks-flex-node")); err != nil {
-		return fmt.Errorf("synchronize active nspawn agent binary: %w", err)
+		return fmt.Errorf("synchronize worker credential helper: %w", err)
 	}
 	return nil
 }

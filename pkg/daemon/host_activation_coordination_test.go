@@ -181,8 +181,14 @@ func TestActivationWorkerSyncFailureRollsBackAndReloadsState(t *testing.T) {
 	writeExecutable(t, candidate, "#!/bin/sh\n[ \"$1\" = version ]\n")
 
 	store := &activationStateFixture{states: []*State{
-		{ActiveMachine: "kube1"},
-		{ActiveMachine: "kube2"},
+		{
+			Isolation:     isolation.ModeNSpawn,
+			ActiveMachine: "kube1",
+		},
+		{
+			Isolation:     isolation.ModeNSpawn,
+			ActiveMachine: "kube2",
+		},
 	}}
 	var copies []string
 	syncErr := errors.New("worker copy failed")

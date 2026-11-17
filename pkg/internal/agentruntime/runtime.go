@@ -8,10 +8,12 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 // Node contains a resolved worker configuration and placement.
@@ -42,8 +44,8 @@ type Runtime interface {
 	Worker(*slog.Logger, Node) (WorkerContext, error)
 	Start(*slog.Logger, Inputs) phases.Task
 	Restart(*slog.Logger, Inputs) phases.Task
-	// Prepare stops and cleans nspawn before replacement, or recovers a none upgrade.
-	Prepare(*slog.Logger, Inputs) phases.Task
+	PrepareUpgrade(*slog.Logger, Inputs) phases.Task
+	Recover(*slog.Logger, Inputs) phases.Task
 	// Retire runs after the daemon saves applied state.
 	Retire(*slog.Logger, Inputs) phases.Task
 	Reset(*slog.Logger) phases.Task
@@ -56,6 +58,8 @@ func New(mode isolation.Mode) (Runtime, error) {
 		return NSpawn{}, nil
 	case isolation.ModeNone:
 		return noneRuntime{newNode: noneops.New}, nil
+	case isolation.ModeContainer:
+		return containerRuntime{newNode: containerops.New, stageArchives: rootfs.DownloadContainerImageArchives}, nil
 	default:
 		return nil, fmt.Errorf("unsupported worker isolation %q", mode)
 	}
