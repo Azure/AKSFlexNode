@@ -35,15 +35,8 @@ func (s containerStartupStore) Load() (*containerStartup, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read container startup: %w", err)
 	}
-	var record noneStateRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return nil, fmt.Errorf("decode container startup record: %w", err)
-	}
-	if record.Version != 1 || record.Checksum != checksum(record.Payload) {
-		return nil, fmt.Errorf("invalid container startup record integrity or version")
-	}
 	var startup containerStartup
-	if err := json.Unmarshal(record.Payload, &startup); err != nil {
+	if err := json.Unmarshal(data, &startup); err != nil {
 		return nil, fmt.Errorf("decode container startup: %w", err)
 	}
 	if !provider.ValidContainerState(startup.Next) || !provider.ValidContainerState(startup.Previous) ||
@@ -59,13 +52,9 @@ func (s containerStartupStore) Load() (*containerStartup, error) {
 }
 
 func (s containerStartupStore) Save(_ context.Context, startup *containerStartup) error {
-	payload, err := json.Marshal(startup)
+	data, err := json.Marshal(startup)
 	if err != nil {
 		return fmt.Errorf("encode container startup: %w", err)
-	}
-	data, err := json.Marshal(noneStateRecord{Version: 1, Payload: payload, Checksum: checksum(payload)})
-	if err != nil {
-		return err
 	}
 	if err := os.Chmod(s.path, stateFileMode); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

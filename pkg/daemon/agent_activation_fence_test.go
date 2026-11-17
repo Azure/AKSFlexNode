@@ -41,7 +41,7 @@ func activationFenceJournal(t *testing.T, scenario string) containerStartupStore
 	}
 	startup := &containerStartup{Phase: scenario, Previous: containerTestState("kube1", "old"), Next: containerTestState("kube2", "next")}
 	switch scenario {
-	case "bad checksum", "bad version", "invalid frozen state", "invalid phase":
+	case "invalid frozen state", "invalid phase":
 		startup.Phase = "starting"
 		if scenario == "invalid frozen state" {
 			startup.Next.NodeConfig = nil
@@ -49,18 +49,7 @@ func activationFenceJournal(t *testing.T, scenario string) containerStartupStore
 		if scenario == "invalid phase" {
 			startup.Phase = "unknown"
 		}
-		payload, err := json.Marshal(startup)
-		if err != nil {
-			t.Fatal(err)
-		}
-		record := noneStateRecord{Version: 1, Payload: payload, Checksum: checksum(payload)}
-		if scenario == "bad checksum" {
-			record.Checksum = "wrong"
-		}
-		if scenario == "bad version" {
-			record.Version = 2
-		}
-		data, err := json.Marshal(record)
+		data, err := json.Marshal(startup)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -85,7 +74,7 @@ func activationFenceService(t *testing.T, startup containerStartupStore, state *
 
 func TestAgentActivationFencesPendingContainerStartup(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"preparing", "starting", "finished", "corrupt", "bad checksum", "bad version", "invalid frozen state", "invalid phase", "unreadable"} {
+	for _, scenario := range []string{"preparing", "starting", "finished", "corrupt", "invalid frozen state", "invalid phase", "unreadable"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			for _, mode := range []isolation.Mode{isolation.ModeContainer, isolation.ModeNSpawn, isolation.ModeNone} {

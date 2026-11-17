@@ -240,8 +240,7 @@ Each mode exercises:
   Container reset must preserve sentinels in host-private CNI, IPAM, and
   containerd directories.
 
-The runtime probes read both legacy nspawn state and checksummed non-nspawn
-state. Diagnostics and snapshots exclude persisted configurations and credentials.
+Diagnostics and snapshots exclude persisted configurations and credentials.
 
 Run against infrastructure created by `infra` (these commands reset the token VM):
 

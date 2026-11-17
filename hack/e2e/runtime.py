@@ -63,26 +63,6 @@ def decode(text, label):
         raise ProbeError("invalid JSON in " + label) from None
 
 
-def payload_bytes(text):
-    """Keep the payload's original spacing/escapes: Go hashes json.RawMessage."""
-    decoder = json.JSONDecoder()
-    pos = text.index("{") + 1
-    while True:
-        pos += len(text[pos:]) - len(text[pos:].lstrip())
-        key, pos = decoder.raw_decode(text, pos)
-        pos += len(text[pos:]) - len(text[pos:].lstrip())
-        require(text[pos] == ":", "invalid state record")
-        pos += 1
-        pos += len(text[pos:]) - len(text[pos:].lstrip())
-        start = pos
-        _, pos = decoder.raw_decode(text, pos)
-        if key == "payload":
-            return text[start:pos].encode("utf-8")
-        pos += len(text[pos:]) - len(text[pos:].lstrip())
-        require(text[pos] == ",", "missing state payload")
-        pos += 1
-
-
 class Runtime:
     def __init__(self, root="/", runner=subprocess.run):
         # An explicit root keeps filesystem unit tests off the actual host.
@@ -129,23 +109,11 @@ class Runtime:
             raise ProbeError("invalid state encoding") from None
         state = decode(text, "state")
         require(isinstance(state, dict), "state is not an object")
-        atomic = bool({"version", "payload", "checksum"} & state.keys())
-        if atomic:
-            require(type(state.get("version")) is int and state["version"] == 1,
-                    "unsupported state record version")
-            require(isinstance(state.get("payload"), dict), "missing state payload")
-            require(state.get("checksum") == hashlib.sha256(payload_bytes(text)).hexdigest(),
-                    "state checksum mismatch")
-            state = state["payload"]
-            require(state.get("isolation") in ("none", "container"),
-                    "atomic state requires none or container isolation")
-        else:
-            digest = self.read(STATE + ".sha256").strip()
-            require(digest == hashlib.sha256(data).hexdigest().encode("ascii"),
-                    "state checksum mismatch")
+        digest = self.read(STATE + ".sha256").strip()
+        require(digest == hashlib.sha256(data).hexdigest().encode("ascii"),
+                "state checksum mismatch")
         mode = state.get("isolation", "nspawn")
         require(mode in MODES, "invalid state isolation")
-        require(atomic or mode == "nspawn", "non-nspawn state requires atomic record")
         slot = state.get("activeMachine", "")
         require(slot == "" if mode == "none" else slot in SLOTS, "invalid state slot")
         scalar(state.get("appliedSettingsVersion"), "generation")
