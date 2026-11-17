@@ -12,12 +12,45 @@ import (
 type NodeProvider = provider.NodeProvider
 type StartParams = provider.StartParams
 type agentActions = provider.AgentActions
-type nspawnRuntime = provider.NSpawnRuntime
 
 var nodeProviders = map[isolation.Mode]func() NodeProvider{
-	isolation.ModeNSpawn:    func() NodeProvider { return nspawnProvider{binaryPath: activeNspawnAgentBinaryPath} },
-	isolation.ModeNone:      func() NodeProvider { return noneProvider{} },
+	isolation.ModeNSpawn:    newNSpawnProvider,
+	isolation.ModeNone:      newNoneProvider,
 	isolation.ModeContainer: newContainerProvider,
+}
+
+func hostProviderServices() provider.HostServices {
+	return provider.HostServices{
+		CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
+		RemoveHostHelpers: removeHostHelpers, RemoveIfPresent: removeIfPresent,
+		SaveState: saveState, SyncDirs: syncDirs, RecoveryScriptPathUnder: recoveryScriptPathUnder,
+	}
+}
+
+func newNSpawnProvider() NodeProvider {
+	return provider.NSpawn{BinaryPath: provider.NSpawnAgentBinaryPath, Services: provider.NSpawnServices{
+		HostServices: hostProviderServices(), NewOperator: newNSpawnOperator,
+		CheckMachinesTarget: CheckMachinesTarget, ConvergeContainerAgent: convergeNSpawnContainerAgent,
+		EnsureLifecycleUnits: EnsureNSpawnLifecycleUnits, ConfigureDependencies: ConfigureNSpawnDependencies,
+		InstallBinary: InstallBinary, CleanupLegacyBridgeCNI: cleanupLegacyBridgeCNI,
+		ActiveMachineFromStore: activeMachineFromStore,
+	}}
+}
+
+func newNoneProvider() NodeProvider {
+	return provider.None{Services: provider.NoneServices{HostServices: hostProviderServices(), NewOperator: newNoneOperator}}
+}
+
+func convergeNSpawnContainerAgent(ctx context.Context, log *slog.Logger, state agentUpgradeStateLoader) (func(context.Context) error, error) {
+	convergence := newContainerAgentConvergence(log, state)
+	held, err := convergence.converge(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		return convergence.writeUnits, nil
+	}
+	return noHeldAssets, nil
 }
 
 // NewNodeProvider constructs the runtime for an explicitly selected mode.

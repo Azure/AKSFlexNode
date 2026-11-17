@@ -9,18 +9,24 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
+type containerProvider = provider.Container
+
+var requireNoContainerStartupForAgentActivation = provider.RequireNoContainerStartupForAgentActivation
+
 func containerTestProvider(t *testing.T, startup containerStartupStore) containerProvider {
 	t.Helper()
 	root := t.TempDir()
 	return containerProvider{
-		startup: startup, startupPath: startup.path, activationLockPath: filepath.Join(root, "activation.lock"),
-		binaryPath: func(slot string) string { return filepath.Join(root, "slots", slot, "aks-flex-node") },
-		teardown: &containerops.Teardown{Root: root, Layout: container.Layout{Base: filepath.Join(root, "containers")},
+		Services: containerProviderServices(startup, filepath.Join(root, "activation.lock")),
+		Startup:  startup, StartupPath: startup.path, ActivationLockPath: filepath.Join(root, "activation.lock"),
+		BinaryPath: func(slot string) string { return filepath.Join(root, "slots", slot, "aks-flex-node") },
+		Teardown: &containerops.Teardown{Root: root, Layout: container.Layout{Base: filepath.Join(root, "containers")},
 			SystemdDir: filepath.Join(root, "systemd"), RuntimePath: filepath.Join(root, "runc")},
 	}
 }
@@ -31,14 +37,14 @@ func TestContainerProviderDiscoversStartupWithoutAppliedState(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			p := containerTestProvider(t, activationFenceJournal(t, scenario))
-			if p.teardown.Present() {
+			if p.Teardown.Present() {
 				t.Fatal("fixture has SDK footprints")
 			}
 			selected, err := discoverNodeProvider(nil, discardLogger(), []NodeProvider{p})
 			if err != nil || selected.Mode() != isolation.ModeContainer {
 				t.Fatalf("discovery=%T, %v", selected, err)
 			}
-			service := activationFenceService(t, containerStartupStore{path: p.startupPath}, nil)
+			service := activationFenceService(t, containerStartupStore{path: p.StartupPath}, nil)
 			service.provider = selected
 			executor := &hostAgentUpgradeExecutor{provider: selected, state: &fakeNodeOperator{}, signals: agentUpgradeSignalStore{path: service.paths.SignalPath}}
 			for range 2 {

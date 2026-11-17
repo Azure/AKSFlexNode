@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -28,7 +29,7 @@ func TestNoneStateRoundTrip(t *testing.T) {
 			ac := &agentconfig.AgentConfig{Isolation: "none"}
 			ac.Cluster.Version = "1.36.2"
 			state := &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.36.2"}
-			seedNoneState(state, ac)
+			provider.SeedNoneState(state, ac)
 
 			var legacyChecksum []byte
 			if legacy {

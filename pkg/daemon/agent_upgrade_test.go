@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -489,7 +491,7 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 		paths:      paths,
 		signals:    signals,
 		instanceID: "restarted-instance",
-		provider:   nspawnProvider{binaryPath: func(string) string { return nspawnBinary }},
+		provider:   nspawnProvider{Services: provider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return nspawnBinary }},
 		finishMachineOperation: func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
 			finished++
 			if result.Phase != machinav1alpha3.OperationPhaseComplete {

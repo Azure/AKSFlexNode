@@ -336,11 +336,11 @@ func TestAgentActivationDoesNotValidateMatchingStoppedSource(t *testing.T) {
 	signal := &agentUpgradeSignal{OperationName: "upgrade", Isolation: isolation.ModeContainer, ActiveMachine: "kube1", CandidatePath: paths.BluePath}
 	helperPath := func(string) string { return helper }
 	provider := containerTestProvider(t, activationFenceJournal(t, "absent"))
-	provider.binaryPath = helperPath
+	provider.BinaryPath = helperPath
 	if err := validateStartedAgentUpgrade(paths, signal, provider); err != nil {
 		t.Fatalf("expected matching source to pass binary checks: %v", err)
 	}
-	provider.startup = activationFenceJournal(t, "starting")
+	provider.Startup = activationFenceJournal(t, "starting")
 	executor := &hostAgentUpgradeExecutor{paths: paths, provider: provider}
 	if err := executor.validateStarted(signal); err == nil || !strings.Contains(err.Error(), "container startup") {
 		t.Fatalf("stopped-source upgrade judged successful: %v", err)

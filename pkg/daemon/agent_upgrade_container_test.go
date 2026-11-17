@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 )
@@ -389,7 +390,7 @@ func startedContainerUpgrade(t *testing.T, runningImage, machineBinary string) (
 	running := writeTestFile(t, filepath.Join(dir, "running"), "candidate agent")
 	machine := writeTestFile(t, filepath.Join(dir, "machine"), machineBinary)
 	executor.runningExecutable = func() (string, error) { return running, nil }
-	executor.provider = nspawnProvider{binaryPath: func(string) string { return machine }}
+	executor.provider = nspawnProvider{Services: provider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return machine }}
 	phases := &[]machinav1alpha3.OperationPhase{}
 	executor.finishMachineOperation = func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
 		*phases = append(*phases, result.Phase)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -38,8 +39,8 @@ type noneNodeOperator struct {
 	recovered bool
 }
 
-func (p noneProvider) NewOperator(ctx context.Context, cfg *config.Config, store stateStore) (nodeOperator, error) {
-	base, state, err := newOperatorBase(ctx, cfg, store, p)
+func newNoneOperator(ctx context.Context, cfg *config.Config, store stateStore, worker NodeProvider) (nodeOperator, error) {
+	base, state, err := newOperatorBase(ctx, cfg, store, worker)
 	if err != nil {
 		return nil, err
 	}
@@ -48,12 +49,12 @@ func (p noneProvider) NewOperator(ctx context.Context, cfg *config.Config, store
 	}
 	return &noneNodeOperator{
 		operatorBase: base,
-		newNode:      func(p noneops.Params) noneNode { return newNoneRuntime(p) },
+		newNode:      func(p noneops.Params) noneNode { return provider.NewNoneRuntime(p) },
 		resolve:      config.ResolveMachineGoalState,
-		dependencies: prepareNoneDependencies,
-		installNPD:   installNoneNPD,
+		dependencies: provider.PrepareNoneDependencies,
+		installNPD:   provider.InstallNoneNPD,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
-			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
+			return provider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
 			return npd.Start(log, cfg, ns.Root(), ns).Do(ctx)
@@ -184,10 +185,4 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 		log.Warn("could not prune previous node binaries", "error", err)
 	}
 	return next, nil
-}
-
-func seedNoneState(state *State, cfg *agentconfig.AgentConfig) {
-	state.Isolation = isolation.ModeNone
-	state.ActiveMachine = ""
-	state.NodeConfig = cfg
 }
