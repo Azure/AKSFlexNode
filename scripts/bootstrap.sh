@@ -667,7 +667,7 @@ install_agent_binary() {
     local target="$INSTALL_DIR/aks-flex-node"
 
     # Created only when missing: an existing directory belongs to the image.
-    { [[ -d "$INSTALL_DIR" ]] || install -d -o root -g root -m 0755 "$INSTALL_DIR"; } ||
+    { [[ -d "$INSTALL_DIR" ]] || (umask 022; install -d -o root -g root -m 0755 "$INSTALL_DIR"); } ||
         fatal "cannot write to $INSTALL_DIR"
 
     # errexit does not apply inside a subshell on the left of ||, so every
