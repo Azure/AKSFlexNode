@@ -35,7 +35,7 @@ func TestHostNativeNPD(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path := root.Path(filepath.Join("/etc/systemd/system", UnitName))
+	path := root.Path(filepath.Join("/etc/systemd/system", systemdUnitNPD))
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestHostNativeNPD(t *testing.T) {
 		t.Fatalf("incorrect NPD service: %s", content)
 	}
 	for _, call := range calls {
-		if !strings.HasPrefix(call, "systemctl ") || !strings.Contains(call, UnitName) && call != "systemctl daemon-reload" {
+		if !strings.HasPrefix(call, "systemctl ") || !strings.Contains(call, systemdUnitNPD) && call != "systemctl daemon-reload" {
 			t.Fatalf("unexpected host NPD command %s", call)
 		}
 	}
@@ -64,11 +64,11 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 	}{
 		{
 			name: "unchanged active start", active: true,
-			want: []string{"systemctl is-active " + UnitName},
+			want: []string{"systemctl is-active " + systemdUnitNPD},
 		},
 		{
 			name: "inactive start",
-			want: []string{"systemctl is-active " + UnitName, "systemctl daemon-reload", "systemctl enable --now " + UnitName},
+			want: []string{"systemctl is-active " + systemdUnitNPD, "systemctl daemon-reload", "systemctl enable --now " + systemdUnitNPD},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 			if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			path := root.Path(filepath.Join("/etc/systemd/system", UnitName))
+			path := root.Path(filepath.Join("/etc/systemd/system", systemdUnitNPD))
 			before, err := os.Stat(path)
 			if err != nil {
 				t.Fatal(err)

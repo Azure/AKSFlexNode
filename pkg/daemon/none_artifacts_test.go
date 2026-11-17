@@ -67,7 +67,7 @@ func TestNoneOperatorReconcilesNPD(t *testing.T) {
 	if err := npd.Start(discardLogger(), cfg, ns.Root(), ns).Do(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	unit := ns.Root().Path("/etc/systemd/system/" + npd.UnitName)
+	unit := ns.Root().Path("/etc/systemd/system/node-problem-detector.service")
 	before, err := os.Stat(unit)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestNoneOperatorReconcilesNPD(t *testing.T) {
 	if err := op.startNPD(t.Context(), discardLogger(), cfg, ns); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"systemctl is-active " + npd.UnitName}
+	want := []string{"systemctl is-active node-problem-detector.service"}
 	if !slices.Equal(calls, want) {
 		t.Fatalf("operator NPD commands = %v, want %v", calls, want)
 	}

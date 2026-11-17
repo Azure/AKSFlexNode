@@ -32,7 +32,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	data, err := os.ReadFile(root.Path("/etc/systemd/system/" + UnitName))
+	data, err := os.ReadFile(root.Path("/etc/systemd/system/" + systemdUnitNPD))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	if entries, err := os.ReadDir(decoy); err != nil || len(entries) != 0 {
 		t.Fatalf("NPD wrote through MachineDir: %v", err)
 	}
-	if !slices.Contains(calls, "systemctl restart "+UnitName) {
+	if !slices.Contains(calls, "systemctl restart "+systemdUnitNPD) {
 		t.Fatalf("NPD was not restarted through the container executor: %v", calls)
 	}
 	// The download and rendered command must name the same binary. A local
