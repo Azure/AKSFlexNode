@@ -385,6 +385,14 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 			serviceOptions: agentServiceOptions{ARCEnabled: true},
 			golden:         "aks-flex-node-agent-arc.service.golden",
 		},
+		"none": {
+			serviceOptions: agentServiceOptions{NoneIsolation: true},
+			golden:         "aks-flex-node-agent-none.service.golden",
+		},
+		"none Arc": {
+			serviceOptions: agentServiceOptions{ARCEnabled: true, NoneIsolation: true},
+			golden:         "aks-flex-node-agent-none-arc.service.golden",
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -442,6 +450,9 @@ func TestAgentServiceWantedTargets(t *testing.T) {
 				if len(directives) != 1 || directives[0] != strings.Join(wanted, " ") {
 					t.Fatalf("Arc=%t: Wants directives = %v, want %v", arc, directives, wanted)
 				}
+				if strings.Contains(string(unit), "# Node isolation:") {
+					t.Fatalf("unit contains an isolation comment:\n%s", unit)
+				}
 				header, _, _ := strings.Cut(string(unit), "\n\n[Service]")
 				if strings.Contains(header, "\n\n") {
 					t.Fatalf("conditional template left an empty line in the unit header:\n%s", unit)
@@ -456,6 +467,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 
 	tests := map[string]struct {
 		writeUnit      bool
+		unit           string
 		serviceOptions agentServiceOptions
 		want           agentServiceOptions
 	}{
@@ -465,6 +477,25 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 			writeUnit:      true,
 			serviceOptions: agentServiceOptions{ARCEnabled: true},
 			want:           agentServiceOptions{ARCEnabled: true},
+		},
+		"none unit": {
+			writeUnit:      true,
+			serviceOptions: agentServiceOptions{NoneIsolation: true},
+		},
+		"none Arc unit": {
+			writeUnit:      true,
+			serviceOptions: agentServiceOptions{ARCEnabled: true, NoneIsolation: true},
+			want:           agentServiceOptions{ARCEnabled: true},
+		},
+		"legacy unit without machines target": {
+			unit: "[Unit]\nAfter=network-online.target\nWants=network-online.target\n",
+		},
+		"legacy Arc unit without machines target": {
+			unit: "[Unit]\nAfter=network-online.target himdsd.service\nWants=network-online.target himdsd.service\n",
+			want: agentServiceOptions{ARCEnabled: true},
+		},
+		"obsolete isolation comment": {
+			unit: "[Unit]\n# Node isolation: none\nWants=network-online.target machines.target\n",
 		},
 	}
 	for name, tt := range tests {
@@ -477,6 +508,11 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 					t.Fatalf("renderAgentServiceUnit() error = %v", err)
 				}
 				if err := os.WriteFile(filepath.Join(systemdDir, ServiceUnitName), unit, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.unit != "" {
+				if err := os.WriteFile(filepath.Join(systemdDir, ServiceUnitName), []byte(tt.unit), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

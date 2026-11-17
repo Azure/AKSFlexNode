@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // The SDK journals host changes and rolls back failures. Flex persists the
@@ -106,7 +107,7 @@ func (o *noneNodeOperator) recover(ctx context.Context, log *slog.Logger) error 
 	if err != nil {
 		return err
 	}
-	cfg := noneNPDConfig(state)
+	cfg := npdConfigFromState(state)
 	if err := o.installNPD(ctx, log, cfg, gs); err != nil {
 		return err
 	}
@@ -115,6 +116,12 @@ func (o *noneNodeOperator) recover(ctx context.Context, log *slog.Logger) error 
 	}
 	o.recovered = true
 	return nil
+}
+
+// ResumeRepave runs the SDK's applied-config recovery before normal RP
+// reconciliation. Recovery may roll an uncommitted target back to the source.
+func (o *noneNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logger, _ *corev1.Node) (bool, error) {
+	return false, o.recover(ctx, log)
 }
 
 func (o *noneNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) error {
@@ -133,7 +140,7 @@ func (o *noneNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) er
 	if err != nil {
 		return err
 	}
-	return o.startNPD(ctx, log, noneNPDConfig(state), gs.NodeStart)
+	return o.startNPD(ctx, log, npdConfigFromState(state), gs.NodeStart)
 }
 
 func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
@@ -154,7 +161,7 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	}
 	next := nextAppliedState(state, goal, nil)
 	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeNone, ac, noneNPDVersion(cfg)
-	next = noneRegistrationState(next)
+	next = registrationState(next)
 	ac = next.NodeConfig
 	gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
 	node := o.newNode(noneops.Params{
@@ -175,10 +182,10 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	if err != nil {
 		return nil, err
 	}
-	if err := o.installNPD(ctx, log, noneNPDConfig(next), gs); err != nil {
+	if err := o.installNPD(ctx, log, npdConfigFromState(next), gs); err != nil {
 		return nil, err
 	}
-	if err := o.startNPD(ctx, log, noneNPDConfig(next), gs.NodeStart); err != nil {
+	if err := o.startNPD(ctx, log, npdConfigFromState(next), gs.NodeStart); err != nil {
 		return nil, err
 	}
 	// Until this save succeeds, recovery restores the source configuration.

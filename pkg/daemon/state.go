@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +26,7 @@ const (
 	stateFileName = "daemon-state.json"
 
 	noneStateRecordVersion = 1
+	runtimeGenerationLabel = "kubernetes.azure.com/flex-runtime-generation"
 )
 
 // noneStateRecord keeps the applied config and its integrity check in one
@@ -48,6 +50,27 @@ type State struct {
 	// NPDVersion identifies none's application binaries. Empty denotes the
 	// legacy directory identity or a node with NPD disabled.
 	NPDVersion string `json:"npdVersion,omitempty"`
+}
+
+// registrationState freezes a fresh registration identity without mutating
+// the applied configuration used by SDK recovery.
+func registrationState(state *State) *State {
+	next := *state
+	next.NodeConfig = state.NodeConfig.DeepCopy()
+	if next.NodeConfig.Kubelet.Labels == nil {
+		next.NodeConfig.Kubelet.Labels = make(map[string]string)
+	}
+	sum := sha256.Sum256([]byte(state.AppliedSettingsVersion + ":" + rand.Text()))
+	next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] = hex.EncodeToString(sum[:16])
+	return &next
+}
+
+func npdConfigFromState(state *State) *config.Config {
+	cfg := &config.Config{Npd: config.NPDConfig{Version: state.NPDVersion}}
+	if offline := state.NodeConfig.OfflineArtifacts; offline != nil {
+		cfg.Bootstrap.OfflineArtifacts.Source = offline.Source
+	}
+	return cfg
 }
 
 func (s *State) isolationMode() isolation.Mode {

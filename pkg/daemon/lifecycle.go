@@ -310,8 +310,7 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
 	}
 	return agentServiceOptions{
-		ARCEnabled:    bytes.Contains(content, []byte(arcSystemdDependency)),
-		NoneIsolation: bytes.Contains(content, []byte("# Node isolation: none")),
+		ARCEnabled: bytes.Contains(content, []byte(arcSystemdDependency)),
 	}, nil
 }
 
@@ -319,7 +318,6 @@ type agentServiceTemplateData struct {
 	CurrentBinaryPath string
 	Dependencies      []string
 	WantedTargets     []string
-	NoneIsolation     bool
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -338,7 +336,6 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 		CurrentBinaryPath: currentBinaryPath,
 		Dependencies:      dependencies,
 		WantedTargets:     wantedTargets,
-		NoneIsolation:     serviceOptions.NoneIsolation,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}
