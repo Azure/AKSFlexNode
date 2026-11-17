@@ -50,14 +50,15 @@ func TestHostAgentActivationUsesAppliedIsolation(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					applied := &State{Isolation: tc.mode, ActiveMachine: tc.slot}
 					service := &flexDaemonActivationService{
 						log:            discardLogger(),
 						paths:          paths,
-						state:          &testStateStore{state: &State{Isolation: tc.mode, ActiveMachine: tc.slot}},
+						state:          &testStateStore{state: applied},
 						systemdDir:     systemdDir,
 						recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 						serviceOptions: options,
-						provider:       mustNodeProvider(t, tc.mode),
+						provider:       mustNodeProvider(t, applied.IsolationMode()),
 						inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 							return false, nil
 						},

@@ -13,8 +13,8 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -35,20 +35,7 @@ type noneStateRecord struct {
 	Checksum string          `json:"checksum"`
 }
 
-// State records the last safely applied AKS machine goal and the previous
-// known-good goal needed for rollback-oriented reconciliation.
-type State struct {
-	AppliedSettingsVersion    string                   `json:"appliedSettingsVersion,omitempty"`
-	AppliedKubernetesVersion  string                   `json:"appliedKubernetesVersion,omitempty"`
-	PreviousSettingsVersion   string                   `json:"previousSettingsVersion,omitempty"`
-	PreviousKubernetesVersion string                   `json:"previousKubernetesVersion,omitempty"`
-	ActiveMachine             string                   `json:"activeMachine,omitempty"`
-	Isolation                 isolation.Mode           `json:"isolation,omitempty"`
-	NodeConfig                *agentconfig.AgentConfig `json:"nodeConfig,omitempty"`
-	// NPDVersion identifies none's application binaries. Empty denotes the
-	// legacy directory identity or a node with NPD disabled.
-	NPDVersion string `json:"npdVersion,omitempty"`
-}
+type State = provider.State
 
 func npdConfigFromState(state *State) *config.Config {
 	cfg := &config.Config{Npd: config.NPDConfig{Version: state.NPDVersion}}
@@ -56,13 +43,6 @@ func npdConfigFromState(state *State) *config.Config {
 		cfg.Bootstrap.OfflineArtifacts.Source = offline.Source
 	}
 	return cfg
-}
-
-func (s *State) isolationMode() isolation.Mode {
-	if s.Isolation == "" {
-		return isolation.ModeNSpawn
-	}
-	return s.Isolation
 }
 
 type saveStateTask struct {
@@ -115,11 +95,7 @@ func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachi
 	return &activeMachine{Name: state.ActiveMachine, State: state}, nil
 }
 
-type stateStore interface {
-	Load(ctx context.Context) (*State, error)
-	Save(ctx context.Context, state *State) error
-	Delete(ctx context.Context) error
-}
+type stateStore = provider.StateStore
 
 func NewFileStateStore() (stateStore, error) {
 	return newFileStateStore("")
@@ -187,7 +163,7 @@ func (s *fileStateStore) loadNoneRecord(data []byte) (*State, error) {
 	if err := json.Unmarshal(record.Payload, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state payload %s: %w", s.path, err)
 	}
-	if state.isolationMode() != isolation.ModeNone {
+	if state.IsolationMode() != isolation.ModeNone {
 		return nil, fmt.Errorf("daemon state record %s requires none isolation", s.path)
 	}
 	return &state, nil
@@ -219,7 +195,7 @@ func (s *fileStateStore) Save(_ context.Context, state *State) error {
 	if state == nil {
 		return fmt.Errorf("daemon state is nil")
 	}
-	if state.isolationMode() == isolation.ModeNone {
+	if state.IsolationMode() == isolation.ModeNone {
 		return s.saveNoneRecord(state)
 	}
 	data, err := json.MarshalIndent(state, "", "  ")

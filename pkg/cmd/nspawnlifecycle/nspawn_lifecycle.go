@@ -116,7 +116,7 @@ func newPhaseCommand(
 
 func newLifecycle(log *slog.Logger, configPath string) (lifecycle, error) {
 	cfg, err := flexconfig.LoadConfig(configPath)
-	var mode isolation.Mode
+	mode := isolation.ModeNSpawn
 	switch {
 	case err == nil:
 		mode = cfg.Bootstrap.Isolation

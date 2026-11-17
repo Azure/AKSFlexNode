@@ -5,68 +5,22 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/phases"
-	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
-// NodeProvider owns node-runtime actions. Select once at an entry boundary and
-// retain it for the flow; applied metadata is validation, not a dispatch source.
-type NodeProvider interface {
-	BootstrapActions
-	agentActions
-	hostActions
-	Mode() isolation.Mode
-	NewOperator(context.Context, *config.Config, stateStore) (nodeOperator, error)
-}
-
-// BootstrapActions leaves AKS registration and state sequencing with the caller.
-type BootstrapActions interface {
-	ValidateEnvironment(containerized bool) error
-	BootstrapPresent(*slog.Logger) bool
-	CheckBootstrap(context.Context, *slog.Logger, *State) error
-	ResolveGoalState(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
-	SetupHost(*config.Config, *slog.Logger, bool) phases.Task
-	StartNode(*config.Config, *slog.Logger, string, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, stateStore, *State) phases.Task
-	RuntimeChecks(*config.Config, *slog.Logger, bool) []preflight.Checker
-}
-
-type agentActions interface {
-	ValidateAgentActivation(context.Context) error
-	ValidateActiveSlot(string) error
-	CheckAgentCandidate(context.Context, string) error
-	SynchronizeAgent(source, slot string) error
-	ValidateAgent(source, slot string) error
-	RollbackAgent(source, slot string) error
-}
-
-type hostActions interface {
-	WantedTargets() []string
-	SupportsDisconnectTolerance() bool
-	ResetNode(*slog.Logger) phases.Task
-	ValidateResetState(*State) error
-	RewriteNodeUnits(context.Context, *slog.Logger, *config.Config, stateStore) error
-	// NSpawnRuntime is absent when the runtime has no nspawn lifecycle hooks.
-	NSpawnRuntime() nspawnRuntime
-}
-
-type nspawnRuntime interface {
-	ConvergeContainerAgent(context.Context, *slog.Logger, agentUpgradeStateLoader) (func(context.Context) error, error)
-}
+type NodeProvider = provider.NodeProvider
+type StartParams = provider.StartParams
+type agentActions = provider.AgentActions
+type nspawnRuntime = provider.NSpawnRuntime
 
 var nodeProviders = map[isolation.Mode]func() NodeProvider{
 	isolation.ModeNSpawn: func() NodeProvider { return nspawnProvider{binaryPath: activeNspawnAgentBinaryPath} },
 	isolation.ModeNone:   func() NodeProvider { return noneProvider{} },
 }
 
-// NewNodeProvider is the sole runtime registry. Empty mode retains the nspawn default.
+// NewNodeProvider constructs the runtime for an explicitly selected mode.
 func NewNodeProvider(mode isolation.Mode) (NodeProvider, error) {
-	if mode == "" {
-		mode = isolation.ModeNSpawn
-	}
 	create, ok := nodeProviders[mode]
 	if !ok {
 		return nil, fmt.Errorf("unsupported node isolation %q", mode)
@@ -75,8 +29,8 @@ func NewNodeProvider(mode isolation.Mode) (NodeProvider, error) {
 }
 
 func validateAppliedProvider(provider NodeProvider, applied *State) error {
-	if applied != nil && applied.isolationMode() != provider.Mode() {
-		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.isolationMode())
+	if applied != nil && applied.IsolationMode() != provider.Mode() {
+		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.IsolationMode())
 	}
 	return nil
 }
@@ -135,7 +89,7 @@ func discoverResetProvider(ctx context.Context, load func(context.Context) (*Sta
 // Without applied state, runtime footprints can identify a partial bootstrap.
 func discoverNodeProvider(applied *State, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
 	if applied != nil {
-		return NewNodeProvider(applied.isolationMode())
+		return NewNodeProvider(applied.IsolationMode())
 	}
 	var found NodeProvider
 	for _, provider := range candidates {
@@ -150,7 +104,7 @@ func discoverNodeProvider(applied *State, log *slog.Logger, candidates []NodePro
 	if found != nil {
 		return found, nil
 	}
-	return NewNodeProvider("")
+	return NewNodeProvider(isolation.ModeNSpawn)
 }
 
 func installedNodeProvider(ctx context.Context, log *slog.Logger) (NodeProvider, stateStore, error) {

@@ -66,7 +66,7 @@ func (o *noneNodeOperator) applied(ctx context.Context) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if state == nil || state.isolationMode() != isolation.ModeNone || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
+	if state == nil || state.IsolationMode() != isolation.ModeNone || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return nil, fmt.Errorf("none node has no applied configuration")
 	}
 	return state, nil
