@@ -290,8 +290,11 @@ const agentRestartTimerAccuracy = "100ms"
 // a failed upgrade back. A host root that cannot be migrated is logged and left
 // as it is, and the layout is the one this binary runs from: the recovery
 // script runs the resolved last-good link, so that is the layout systemd uses.
-func RecoverAgentUpgrade(ctx context.Context, message string, mode isolation.Mode, helperPaths map[string]string) error {
-	log := slog.Default()
+func RecoverAgentUpgrade(ctx context.Context, log *slog.Logger, message string, mode isolation.Mode, helperPaths map[string]string) error {
+	if log == nil {
+		return fmt.Errorf("logger is nil")
+	}
+
 	if Containerized() {
 		if err := recoverContainerAgentUpgrade(ctx, log, message,
 			NewUpgradeSignalStore(DefaultUpgradePaths().SignalPath),

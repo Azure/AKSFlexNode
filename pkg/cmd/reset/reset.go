@@ -38,7 +38,7 @@ func runReset(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	mode := isolation.ModeNSpawn
+	mode := config.DefaultIsolationMode
 	orphanedArtifacts := false
 	if state != nil {
 		mode = state.Isolation

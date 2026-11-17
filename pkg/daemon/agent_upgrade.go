@@ -12,6 +12,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -127,9 +128,13 @@ func agentUpgradeHelperPaths(log *slog.Logger, mode isolation.Mode) (map[string]
 
 // RecoverAgentUpgrade selects the applied worker before deployment restores the
 // last-good agent. Image deployments have no host worker mode to select.
-func RecoverAgentUpgrade(ctx context.Context, message string) error {
+func RecoverAgentUpgrade(ctx context.Context, log *slog.Logger, message string) error {
+	if log == nil {
+		return fmt.Errorf("logger is nil")
+	}
+
 	if agentdeployment.Containerized() {
-		return agentdeployment.RecoverAgentUpgrade(ctx, message, isolation.ModeNSpawn, nil)
+		return agentdeployment.RecoverAgentUpgrade(ctx, log, message, config.DefaultIsolationMode, nil)
 	}
 
 	store, err := NewFileStateStore()
@@ -140,16 +145,16 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	if err != nil {
 		return fmt.Errorf("load applied worker for AgentUpgrade recovery: %w", err)
 	}
-	mode := isolation.ModeNSpawn
+	mode := config.DefaultIsolationMode
 	if state != nil {
 		mode = state.Isolation
 	}
-	helpers, err := agentUpgradeHelperPaths(slog.Default(), mode)
+	helpers, err := agentUpgradeHelperPaths(log, mode)
 	if err != nil {
 		return err
 	}
 
-	return agentdeployment.RecoverAgentUpgrade(ctx, message, mode, helpers)
+	return agentdeployment.RecoverAgentUpgrade(ctx, log, message, mode, helpers)
 }
 
 func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c client.Client, upgrade agentUpgradeHandoff) error {

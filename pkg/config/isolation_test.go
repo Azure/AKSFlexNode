@@ -48,9 +48,11 @@ func TestIsolationDefaultsAndCopy(t *testing.T) {
 			if copyBeforeDefaults.Bootstrap.Isolation != tc.mode {
 				t.Fatal("DeepCopy changed isolation")
 			}
-			cfg.setDefaults()
-			if cfg.Bootstrap.Isolation != tc.want {
-				t.Fatalf("mode = %q, want %q", cfg.Bootstrap.Isolation, tc.want)
+			for range 2 {
+				cfg.setDefaults()
+				if cfg.Bootstrap.Isolation != tc.want {
+					t.Fatalf("mode = %q, want %q", cfg.Bootstrap.Isolation, tc.want)
+				}
 			}
 			if err := cfg.Bootstrap.validate(); (err == nil) != tc.valid {
 				t.Fatalf("validation = %v", err)

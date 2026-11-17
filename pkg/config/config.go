@@ -46,6 +46,9 @@ const (
 	defaultMaxPods                  = 110
 	defaultTargetAgentPoolName      = "aksflexnodes"
 
+	// DefaultIsolationMode preserves nspawn when legacy configuration omits isolation.
+	DefaultIsolationMode = isolation.ModeNSpawn
+
 	// Machine client modes.
 	MachineClientModeARM       = "arm"
 	MachineClientModeInCluster = "in-cluster"
@@ -444,14 +447,18 @@ func (cfg *Config) DeepCopy() *Config {
 }
 
 func (c *Config) setDefaults() {
-	if c.Bootstrap.Isolation == "" {
-		c.Bootstrap.Isolation = isolation.ModeNSpawn
-	}
+	c.setBootstrapDefaults()
 	c.setAzureDefaults()
 	c.setAgentDefaults()
 	c.setNodeDefaults()
 	c.setRuncDefaults()
 	c.setNpdDefaults()
+}
+
+func (c *Config) setBootstrapDefaults() {
+	if c.Bootstrap.Isolation == "" {
+		c.Bootstrap.Isolation = DefaultIsolationMode
+	}
 }
 
 func (c *Config) setAzureDefaults() {
