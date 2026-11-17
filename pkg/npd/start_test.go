@@ -66,8 +66,8 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 	}
 	rendered := string(data)
 
-	if !strings.Contains(rendered, "ExecStart=/usr/local/bin/node-problem-detector ") {
-		t.Fatalf("rendered unit missing canonical NPD binary path:\n%s", rendered)
+	if !strings.Contains(rendered, "ExecStart="+filepath.Join(machineDir, BinaryPath)+" ") {
+		t.Fatalf("rendered unit missing NPD binary path under the supplied root:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "auth="+wantKubeconfigPath) {
 		t.Fatalf("rendered unit missing auth=%s:\n%s", wantKubeconfigPath, rendered)
