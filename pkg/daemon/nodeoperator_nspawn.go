@@ -10,6 +10,7 @@ import (
 	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
@@ -37,7 +38,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
-		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart),
+		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn),
 	).Do(ctx)
 }
 

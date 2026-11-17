@@ -42,7 +42,7 @@ func TestNoneOperatorReconcilesNPD(t *testing.T) {
 			return "active", nil
 		},
 	}
-	if err := npd.Start(discardLogger(), cfg, ns.Root(), ns).Do(t.Context()); err != nil {
+	if err := npd.Start(discardLogger(), cfg, ns.Root(), ns, isolation.ModeNone).Do(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	unit := ns.Root().Path("/etc/systemd/system/node-problem-detector.service")

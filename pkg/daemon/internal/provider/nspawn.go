@@ -110,7 +110,7 @@ func (p NSpawn) StartNode(params StartParams) phases.Task {
 		p.Services.ConfigureDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log, npd.Download(log, cfg, gs.RootFS.Root()), InstallBinary(gs.RootFS.Root())),
 		nodestart.StartNode(log, gs.NodeStart), nodestart.WaitForKubelet(log, params.MachineName),
-		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart), p.Services.SaveState(params.Store, params.State),
+		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn), p.Services.SaveState(params.Store, params.State),
 	)
 }
 func (p NSpawn) ResetNode(log *slog.Logger) phases.Task {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
@@ -28,7 +29,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	}
 	cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 	for range 2 {
-		if err := Start(log, cfg, ns.Root(), ns).Do(t.Context()); err != nil {
+		if err := Start(log, cfg, ns.Root(), ns, isolation.ModeContainer).Do(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -36,7 +37,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "ExecStart="+root.Path(npdBinaryPath)+" ") || !strings.Contains(string(data), "container-worker") {
+	if !strings.Contains(string(data), "ExecStart=/"+npdBinaryPath+" ") || !strings.Contains(string(data), "container-worker") {
 		t.Fatalf("incorrect container service: %s", data)
 	}
 	if entries, err := os.ReadDir(decoy); err != nil || len(entries) != 0 {

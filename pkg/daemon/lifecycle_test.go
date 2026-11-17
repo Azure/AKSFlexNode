@@ -320,7 +320,10 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
 	t.Parallel()
 
-	gs := &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{MachineDir: t.TempDir()}, NodeStart: &goalstates.NodeStart{}}
+	gs := &goalstates.MachineGoalState{
+		RootFS:    &goalstates.RootFS{MachineDir: t.TempDir()},
+		NodeStart: &goalstates.NodeStart{},
+	}
 	name := mustNodeProvider(t, "nspawn").StartNode(StartParams{
 		Config: &config.Config{}, Log: slog.New(slog.DiscardHandler), MachineName: "kube1", GoalState: gs, State: &runtimeprovider.State{},
 	}).Name()
