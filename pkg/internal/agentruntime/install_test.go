@@ -34,7 +34,7 @@ func TestInstallBinaryUsesNodeRoot(t *testing.T) {
 				root = none.Root{HostRoot: dir, Layout: layout, Version: "v1"}
 				dest = filepath.Join(layout.VersionDir("v1"), "bin/aks-flex-node")
 			}
-			task := installBinary(root)
+			task := &installBinaryTask{root: root}
 			if task.Name() != "install-binary-in-rootfs" {
 				t.Fatalf("task name = %q", task.Name())
 			}

@@ -44,7 +44,7 @@ func (NSpawn) Start(log *slog.Logger, input Inputs) phases.Task {
 		configureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log,
 			npd.Download(log, cfg, gs.RootFS.Root()),
-			installBinary(gs.RootFS.Root()),
+			&installBinaryTask{root: gs.RootFS.Root()},
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, input.Node.Slot),

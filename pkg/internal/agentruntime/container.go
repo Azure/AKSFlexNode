@@ -61,7 +61,7 @@ func (r containerRuntime) Worker(log *slog.Logger, input Node) (WorkerContext, e
 
 func containerArtifacts(ctx context.Context, log *slog.Logger, cfg *config.Config, gs *goalstates.MachineGoalState) error {
 	return phases.Parallel(log,
-		installBinary(gs.RootFS.Root()),
+		&installBinaryTask{root: gs.RootFS.Root()},
 		npd.Download(log, cfg, gs.RootFS.Root()),
 	).Do(ctx)
 }
