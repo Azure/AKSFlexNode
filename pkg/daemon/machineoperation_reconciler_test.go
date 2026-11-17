@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -223,7 +224,7 @@ func (m errorRESTMapper) ResourceSingularizer(string) (string, error) {
 func TestMachineOperationHandlersNodeReboot(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}}
+	operator := &fakeNodeOperator{state: &runtimeprovider.State{ActiveMachine: "kube1"}}
 	store := &fakeMachineOperationStore{}
 	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
 
@@ -538,7 +539,7 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 func TestMachineOperationHandlersAgentReset(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}}
+	operator := &fakeNodeOperator{state: &runtimeprovider.State{ActiveMachine: "kube1"}}
 	store := &fakeMachineOperationStore{}
 	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
 

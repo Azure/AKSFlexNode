@@ -7,13 +7,13 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-type activeMachine = provider.ActiveMachine
+type activeMachine = runtimeprovider.ActiveMachine
 
-type nodeOperator = provider.Operator
+type nodeOperator = runtimeprovider.Operator
 
 type operatorBase struct {
 	cfg                    *config.Config
@@ -22,7 +22,7 @@ type operatorBase struct {
 	provider               NodeProvider
 }
 
-func newOperatorBase(ctx context.Context, cfg *config.Config, store stateStore, provider NodeProvider) (*operatorBase, *State, error) {
+func newOperatorBase(ctx context.Context, cfg *config.Config, store stateStore, provider NodeProvider) (*operatorBase, *runtimeprovider.State, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("state store is nil")
 	}
@@ -36,7 +36,9 @@ func newOperatorBase(ctx context.Context, cfg *config.Config, store stateStore, 
 	return &operatorBase{cfg: cfg, state: store, bootstrapDataRefresher: bootstrapDataRefresherForConfig(cfg), provider: provider}, applied, nil
 }
 
-func (o *operatorBase) LoadState(ctx context.Context) (*State, error) { return o.state.Load(ctx) }
+func (o *operatorBase) LoadState(ctx context.Context) (*runtimeprovider.State, error) {
+	return o.state.Load(ctx)
+}
 func (o *operatorBase) ResetNode(ctx context.Context, log *slog.Logger) error {
 	applied, err := o.state.Load(ctx)
 	if err != nil {
@@ -89,8 +91,8 @@ func (o *operatorBase) configForGoalState(ctx context.Context, log *slog.Logger,
 	return cfg, nil
 }
 
-func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
-	next := &State{AppliedSettingsVersion: goal.SettingsVersion, AppliedKubernetesVersion: goal.KubernetesVersion}
+func nextAppliedState(current *runtimeprovider.State, goal aksmachine.GoalState, active *activeMachine) *runtimeprovider.State {
+	next := &runtimeprovider.State{AppliedSettingsVersion: goal.SettingsVersion, AppliedKubernetesVersion: goal.KubernetesVersion}
 	if current != nil {
 		next.Isolation = current.Isolation
 		next.PreviousSettingsVersion = current.AppliedSettingsVersion

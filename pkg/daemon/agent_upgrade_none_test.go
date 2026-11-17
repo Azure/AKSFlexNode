@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -99,7 +100,7 @@ func TestNoneAgentUpgradeSignal(t *testing.T) {
 	t.Parallel()
 	paths := testAgentUpgradePaths(t)
 	store := agentUpgradeSignalStore{path: paths.SignalPath}
-	loader := &fakeNodeOperator{state: &State{Isolation: isolation.ModeNone}}
+	loader := &fakeNodeOperator{state: &runtimeprovider.State{Isolation: isolation.ModeNone}}
 	if err := recordPendingAgentUpgrade(t.Context(), store, loader, "upgrade", "daemon", mustNodeProvider(t, "none")); err != nil {
 		t.Fatal(err)
 	}

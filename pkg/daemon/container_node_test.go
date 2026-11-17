@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -22,9 +23,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func containerTestState(slot, version string) *State {
+func containerTestState(slot, version string) *runtimeprovider.State {
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	return (&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
+	return (&runtimeprovider.State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
 		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot)}).DeepCopy()
 }
 

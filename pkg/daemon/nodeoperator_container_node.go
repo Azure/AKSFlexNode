@@ -8,7 +8,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
@@ -49,8 +49,8 @@ type containerNodeOperator struct {
 	syncPrepared       func(context.Context, containerNode) error
 }
 
-func newContainerNodeOperator(base *operatorBase, state *State, startup containerStartupStore, activationLockPath string) (*containerNodeOperator, error) {
-	if !provider.ValidContainerState(state) {
+func newContainerNodeOperator(base *operatorBase, state *runtimeprovider.State, startup containerStartupStore, activationLockPath string) (*containerNodeOperator, error) {
+	if !runtimeprovider.ValidContainerState(state) {
 		return nil, fmt.Errorf("container node has no valid applied configuration or slot")
 	}
 	return &containerNodeOperator{
@@ -59,7 +59,7 @@ func newContainerNodeOperator(base *operatorBase, state *State, startup containe
 		resolve:      config.ResolveMachineGoalState,
 		syncPrepared: syncContainerFilesystems,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
-			return provider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
+			return runtimeprovider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
 			return npd.Start(log, cfg, ns.Root(), ns).Do(ctx)
@@ -67,12 +67,12 @@ func newContainerNodeOperator(base *operatorBase, state *State, startup containe
 	}, nil
 }
 
-func (o *containerNodeOperator) applied(ctx context.Context) (*State, error) {
+func (o *containerNodeOperator) applied(ctx context.Context) (*runtimeprovider.State, error) {
 	state, err := o.state.Load(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !provider.ValidContainerState(state) {
+	if !runtimeprovider.ValidContainerState(state) {
 		return nil, fmt.Errorf("container node has no valid applied configuration or slot")
 	}
 	return state, nil
@@ -108,7 +108,7 @@ func (o *containerNodeOperator) RestartNode(ctx context.Context, log *slog.Logge
 	return o.startNPD(ctx, log, o.cfg, gs.NodeStart)
 }
 
-func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
+func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*runtimeprovider.State, error) {
 	unlock, err := o.lockAgentActivation(log)
 	if err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
 		return nil, err
 	}
-	node.Backend().UnitRequires = append(node.Backend().UnitRequires, provider.NoneRequiredServices(cfg)...)
+	node.Backend().UnitRequires = append(node.Backend().UnitRequires, runtimeprovider.NoneRequiredServices(cfg)...)
 	old := o.newNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
 	if err := o.stage(ctx, log, archives); err != nil {
 		return nil, err

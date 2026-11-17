@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -423,7 +424,7 @@ type testHubMachineReconciler struct {
 	err   error
 }
 
-func (r *testHubMachineReconciler) ReconcileHub(context.Context, aksmachine.GoalState, *State, *corev1.Node) error {
+func (r *testHubMachineReconciler) ReconcileHub(context.Context, aksmachine.GoalState, *runtimeprovider.State, *corev1.Node) error {
 	r.calls++
 	return r.err
 }
@@ -434,7 +435,7 @@ func TestHubUsesExistingMachineQueue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.0"}}}
-			operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "42", ActiveMachine: "kube1"}}
+			operator := &fakeNodeOperator{state: &runtimeprovider.State{AppliedSettingsVersion: "42", ActiveMachine: "kube1"}}
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
 			hub := &testHubMachineReconciler{}
 			wantCalls := 1

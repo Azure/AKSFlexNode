@@ -7,7 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -33,7 +33,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	}
 
 	return phases.Serial(log,
-		provider.StageContainerImageArchiveBindSource(log, containerImageArchives),
+		runtimeprovider.StageContainerImageArchiveBindSource(log, containerImageArchives),
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
@@ -61,7 +61,7 @@ func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*activeMach
 	return activeMachineFromStore(ctx, o.state)
 }
 
-func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
+func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*runtimeprovider.State, error) {
 	active, err := o.findActiveMachine(ctx)
 	if err != nil {
 		return nil, err

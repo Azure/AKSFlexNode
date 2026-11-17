@@ -17,6 +17,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 )
 
@@ -106,7 +107,7 @@ func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Con
 
 // ReconcileHub applies DT intent to the active worker. node is the current Node
 // (nil if unknown); its condition is compared before writing a new one.
-func (a *hubMachineAdapter) ReconcileHub(ctx context.Context, goal aksmachine.GoalState, state *State, node *corev1.Node) error {
+func (a *hubMachineAdapter) ReconcileHub(ctx context.Context, goal aksmachine.GoalState, state *runtimeprovider.State, node *corev1.Node) error {
 	// Nil means this snapshot carried no authoritative value (for example an
 	// undecodable field). Keep current state; an omitted field was already
 	// mapped to false by the Machine client, per the agreed contract.

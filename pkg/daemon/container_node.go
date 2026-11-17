@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
@@ -108,8 +108,8 @@ func startContainerNode(params StartParams) phases.Task {
 		if err != nil {
 			return err
 		}
-		node.Backend().UnitRequires = append(node.Backend().UnitRequires, provider.NoneRequiredServices(cfg)...)
-		if err := provider.StageContainerImageArchiveBindSource(log, params.ContainerImageArchives).Do(ctx); err != nil {
+		node.Backend().UnitRequires = append(node.Backend().UnitRequires, runtimeprovider.NoneRequiredServices(cfg)...)
+		if err := runtimeprovider.StageContainerImageArchiveBindSource(log, params.ContainerImageArchives).Do(ctx); err != nil {
 			return err
 		}
 		running, err := node.Running(ctx)
@@ -139,7 +139,7 @@ func startContainerNode(params StartParams) phases.Task {
 	})
 }
 
-func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state *State, journal containerStartupReader) error {
+func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state *runtimeprovider.State, journal containerStartupReader) error {
 	startup, err := journal.Load()
 	if err != nil {
 		return err
@@ -150,7 +150,7 @@ func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *c
 		}
 		state = startup.Next
 	}
-	if !provider.ValidContainerState(state) {
+	if !runtimeprovider.ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration")
 	}
 	node := newContainerNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
@@ -158,7 +158,7 @@ func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *c
 	if err != nil {
 		return err
 	}
-	node.Backend().UnitRequires = append(node.Backend().UnitRequires, provider.NoneRequiredServices(cfg)...)
+	node.Backend().UnitRequires = append(node.Backend().UnitRequires, runtimeprovider.NoneRequiredServices(cfg)...)
 	if err := node.RewriteUnit(ctx); err != nil {
 		return err
 	}
@@ -180,8 +180,8 @@ func resetContainerNode(log *slog.Logger, teardown *containerops.Teardown) phase
 		teardown.Stop(), teardown.Destroy(), teardown.RemoveConfig(),
 		reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), reset.RemoveNFTablesFlush(log),
 		removeHostHelpers(log),
-		provider.RemoveHostUnit(log, "static-routes.service"),
-		provider.RemoveHostUnit(log, "check-route-overlap.service"),
+		runtimeprovider.RemoveHostUnit(log, "static-routes.service"),
+		runtimeprovider.RemoveHostUnit(log, "check-route-overlap.service"),
 		reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
 	)
 }

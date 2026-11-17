@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -28,7 +29,7 @@ func TestNoneHubIntentIsReportedWithoutNSpawnOperations(t *testing.T) {
 			var condition corev1.NodeCondition
 			adapter.setCondition = func(_ context.Context, c corev1.NodeCondition) error { condition = c; return nil }
 			for range 2 {
-				if err := adapter.ReconcileHub(t.Context(), aksmachine.GoalState{DisconnectToleranceEnabled: &enabled}, &State{Isolation: isolation.ModeNone}, nil); err != nil {
+				if err := adapter.ReconcileHub(t.Context(), aksmachine.GoalState{DisconnectToleranceEnabled: &enabled}, &runtimeprovider.State{Isolation: isolation.ModeNone}, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
