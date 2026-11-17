@@ -67,7 +67,10 @@ func NewContainerNode(p containerops.Params, cfg *config.Config) (*containerops.
 			return err
 		}
 		root := isolation.DirRoot{Dir: dir}
-		if err := phases.Serial(p.Log, InstallBinary(root), npd.Download(p.Log, cfg, root)).Do(ctx); err != nil {
+		if err := phases.Serial(p.Log,
+			InstallBinary(root),
+			npd.Download(p.Log, cfg, root),
+		).Do(ctx); err != nil {
 			return fmt.Errorf("install Flex container artifacts: %w", err)
 		}
 		return nil
@@ -80,9 +83,14 @@ func (p Container) StartNode(params StartParams) phases.Task {
 	store, state := params.Store, params.State
 	return hostnode.Func("start-container-node", func(ctx context.Context) error {
 		ac := config.ToAgentConfig(cfg, slot).DeepCopy()
-		node, err := NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot,
+		node, err := NewContainerNode(containerops.Params{
+			Log:       log,
+			Config:    ac,
+			GoalState: gs,
+			Slot:      slot,
 			Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()},
-			Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")}}, cfg)
+			Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")},
+		}, cfg)
 		if err != nil {
 			return err
 		}
@@ -139,9 +147,13 @@ func (p Container) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *
 	if !ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration")
 	}
-	node, err := NewContainerNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine,
+	node, err := NewContainerNode(containerops.Params{
+		Log:       log,
+		Config:    state.NodeConfig,
+		Slot:      state.ActiveMachine,
 		Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()},
-		Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")}}, cfg)
+		Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")},
+	}, cfg)
 	if err != nil {
 		return err
 	}
@@ -171,11 +183,16 @@ func (p Container) ResetNode(log *slog.Logger) phases.Task {
 	// Serial is intentional: shared host data and persisted state survive a
 	// failed stop/destroy so reset can be retried without losing ownership.
 	return phases.Serial(log,
-		teardown.Stop(), teardown.Destroy(), teardown.RemoveConfig(),
-		reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), reset.RemoveNFTablesFlush(log),
+		teardown.Stop(),
+		teardown.Destroy(),
+		teardown.RemoveConfig(),
+		reset.CleanupNetwork(log),
+		reset.RemoveWireGuardKeys(log),
+		reset.RemoveNFTablesFlush(log),
 		p.Host.RemoveHostHelpers(log),
 		RemoveHostUnit(log, "static-routes.service"),
 		RemoveHostUnit(log, "check-route-overlap.service"),
-		reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
+		reset.ReloadSystemd(log),
+		config.RemoveRuntimeDirs(log),
 	)
 }
