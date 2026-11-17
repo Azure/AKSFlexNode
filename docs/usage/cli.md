@@ -126,7 +126,7 @@ The following table is generated from the Cobra command tree. Run `make docs-cli
 | `aks-flex-node nspawn-lifecycle reconcile MACHINE` | Restart a machine and run its lifecycle reconciliation | — | hidden | — |
 | `aks-flex-node preflight [flags]` | Run non-mutating preflight checks | — | listed | `--config` (required); `--fail-on-warnings`; `--ignore-preflight-errors`; `--output` (default: `text`) |
 | `aks-flex-node recover-agent-upgrade [flags]` | Restore the last-known-good agent after a failed upgrade | — | hidden | `--message` |
-| `aks-flex-node reset` | Remove AKS node configuration | `unbootstrap` | listed | — |
+| `aks-flex-node reset [flags]` | Remove AKS node configuration | `unbootstrap` | listed | `--isolation` |
 | `aks-flex-node start [flags]` | Bootstrap the node and start the agent service | `bootstrap` | listed | `--config` (required) |
 | `aks-flex-node supports-isolation MODE` |  | — | hidden | — |
 | `aks-flex-node token` | Kubernetes exec based authentication provider. | — | listed | — |
