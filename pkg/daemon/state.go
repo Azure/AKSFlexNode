@@ -132,7 +132,7 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
 	if state.Isolation == "" {
-		state.Isolation = isolation.ModeNSpawn
+		state.Isolation = config.DefaultIsolationMode
 	}
 	if err := config.ValidateIsolation(state.Isolation); err != nil {
 		return nil, fmt.Errorf("invalid applied worker isolation: %w", err)
