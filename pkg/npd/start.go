@@ -37,11 +37,16 @@ type startTask struct {
 }
 
 // Start renders NPD through root and manages it through the node's executor.
-// root maps the agent's filesystem; binaryPath must be in the executor's
-// filesystem view (guest paths must not include the agent-side root prefix).
-func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, binaryPath string) phases.Task {
+// root maps the agent's filesystem. Only native execution uses its mapped
+// binary path; guest executors use the canonical in-node path.
+func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, mode isolation.Mode) phases.Task {
 	if disabledForOfflineArtifacts(cfg) {
 		return &disableTask{log: log, root: root, run: nodeStart.Exec}
+	}
+
+	binaryPath := BinaryPath
+	if mode == isolation.ModeNone {
+		binaryPath = root.Path(BinaryPath)
 	}
 
 	return &startTask{

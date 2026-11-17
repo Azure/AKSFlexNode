@@ -20,8 +20,8 @@ import (
 
 func TestOfflineNPDUsesSuppliedRootAndFixedUnit(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"nspawn", "container", "none"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeContainer, isolation.ModeNone} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			for _, tc := range []struct {
 				name, failAction, cancelAfter string
@@ -43,9 +43,9 @@ func TestOfflineNPDUsesSuppliedRootAndFixedUnit(t *testing.T) {
 					t.Parallel()
 					var root isolation.NodeRoot = isolation.DirRoot{Dir: t.TempDir()}
 					switch mode {
-					case "container":
+					case isolation.ModeContainer:
 						root = container.Root{SlotName: "worker", Dir: t.TempDir(), HostRoot: t.TempDir()}
-					case "none":
+					case isolation.ModeNone:
 						root = none.Root{HostRoot: t.TempDir(), Layout: none.Layout{Base: t.TempDir()}, Version: "offline"}
 					}
 					unitPath := root.Path("/etc/systemd/system/" + UnitName)
@@ -106,7 +106,7 @@ func TestOfflineNPDUsesSuppliedRootAndFixedUnit(t *testing.T) {
 					cfg := &config.Config{Bootstrap: config.BootstrapConfig{
 						OfflineArtifacts: config.OfflineArtifactsConfig{Source: "https://example.invalid/artifacts"},
 					}}
-					task := Start(log, cfg, root, ns, BinaryPath)
+					task := Start(log, cfg, root, ns, mode)
 					if task.Name() != "start-npd" {
 						t.Fatalf("task name = %q", task.Name())
 					}
