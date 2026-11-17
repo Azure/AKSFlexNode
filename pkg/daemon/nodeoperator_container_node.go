@@ -8,6 +8,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
@@ -48,14 +49,8 @@ type containerNodeOperator struct {
 	syncPrepared       func(context.Context, containerNode) error
 }
 
-func validContainerState(state *State) bool {
-	return state != nil && state.IsolationMode() == isolation.ModeContainer && validActiveMachine(state.ActiveMachine) &&
-		state.NodeConfig != nil && state.NodeConfig.Isolation == string(isolation.ModeContainer) && state.NodeConfig.MachineName == state.ActiveMachine &&
-		state.NodeConfig.Experimental != nil && state.NodeConfig.Experimental.ContainerIsolation
-}
-
 func newContainerNodeOperator(base *operatorBase, state *State, startup containerStartupStore, activationLockPath string) (*containerNodeOperator, error) {
-	if !validContainerState(state) {
+	if !provider.ValidContainerState(state) {
 		return nil, fmt.Errorf("container node has no valid applied configuration or slot")
 	}
 	return &containerNodeOperator{
@@ -64,7 +59,7 @@ func newContainerNodeOperator(base *operatorBase, state *State, startup containe
 		resolve:      config.ResolveMachineGoalState,
 		syncPrepared: syncContainerFilesystems,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
-			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
+			return provider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
 			return npd.Start(log, cfg, ns.Root(), ns).Do(ctx)
@@ -77,7 +72,7 @@ func (o *containerNodeOperator) applied(ctx context.Context) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !validContainerState(state) {
+	if !provider.ValidContainerState(state) {
 		return nil, fmt.Errorf("container node has no valid applied configuration or slot")
 	}
 	return state, nil
@@ -142,7 +137,7 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
 		return nil, err
 	}
-	node.Backend().UnitRequires = append(node.Backend().UnitRequires, noneRequiredServices(cfg)...)
+	node.Backend().UnitRequires = append(node.Backend().UnitRequires, provider.NoneRequiredServices(cfg)...)
 	old := o.newNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
 	if err := o.stage(ctx, log, archives); err != nil {
 		return nil, err

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
@@ -126,9 +127,9 @@ func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
 			if mode == isolation.ModeContainer {
 				want = filepath.Join(container.Layout{}.RootfsDir("kube2"), "usr/local/bin/aks-flex-node")
 			}
-			path := activeNspawnAgentBinaryPath
+			path := provider.NSpawnAgentBinaryPath
 			if mode == isolation.ModeContainer {
-				path = activeContainerAgentBinaryPath
+				path = provider.ContainerAgentBinaryPath
 			}
 			if got := path("kube2"); got != want {
 				t.Fatalf("binary sync path = %s, want %s", got, want)
@@ -178,7 +179,7 @@ func TestContainerAgentUpgradeSignal(t *testing.T) {
 	if signal.Isolation != isolation.ModeContainer || signal.ActiveMachine != "kube2" {
 		t.Fatalf("wrong signal: %+v", signal)
 	}
-	if strings.Contains(activeContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
+	if strings.Contains(provider.ContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
 		t.Fatal("container signal selects nspawn synchronization")
 	}
 }
