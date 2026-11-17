@@ -147,7 +147,7 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 			return errors.New("NPD install interrupted")
 		}
 		// Simulate different NPD versions sharing an SDK binary directory.
-		path := gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector")
+		path := gs.RootFS.Root().Path("opt/aks-flex-node/bin/node-problem-detector")
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
@@ -193,7 +193,7 @@ func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary, err := os.ReadFile(gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector"))
+	binary, err := os.ReadFile(gs.RootFS.Root().Path("opt/aks-flex-node/bin/node-problem-detector"))
 	if err != nil || string(binary) != state.NPDVersion {
 		t.Fatalf("active NPD = %q, want %q: %v", binary, state.NPDVersion, err)
 	}
