@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Drive A/B updates of Azure Container Linux with Trident in a local KVM VM, and check them.
 
-    hack/acl-abupdate/abupdate.py fetch [TAG...]         pull the installer ISO and COSIs from ACR
+    hack/acl-abupdate/abupdate.py image fetch [TAG...]   pull the installer ISO and COSIs from ACR
+    hack/acl-abupdate/abupdate.py image build NAME ...   build a COSI with your files, to update to
     hack/acl-abupdate/abupdate.py up                     install the base image, save snapshot base
     hack/acl-abupdate/abupdate.py test                   run every scenario, each from snapshot base
     hack/acl-abupdate/abupdate.py run SCENARIO...        run scenarios; `scenarios` lists them
@@ -48,6 +49,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cosibuild  # noqa: E402
 from errors import StepError  # noqa: E402
 from scenarios import REGISTRY, Needs, Scenario, Skip  # noqa: E402
 
@@ -95,6 +97,7 @@ CACHE = Path(os.environ.get("ACL_AB_CACHE_DIR", str(REPO / ".vm" / "acl-abupdate
 IMAGES = CACHE / "images"
 INSTALLED = CACHE / "installed"
 TOOLS = CACHE / "tools"
+BUILDS = CACHE / "builds"
 ORAS_AUTH = CACHE / "oras-auth.json"
 
 # Where the images come from: an OCI registry and namespace, and the repositories of the KVM
@@ -120,6 +123,11 @@ ORAS_VERSION = "1.3.2"
 ORAS_SHA256 = "9229ccc6d17bb282039ad4a69abb16dcb887a5bce567c075d731d9b3c7ad8eaf"
 TAG_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 SNAPSHOT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# A build's name: lowercase, starting with a letter, so it's never a build tag, and usable in a URL
+# path and in the semver version the update server offers it as.
+BUILD_NAME_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,39}")
+# The Image Customizer container that `image build` runs; see cosibuild.py.
+IMAGE_CUSTOMIZER = os.environ.get("ACL_AB_IMAGE_CUSTOMIZER", cosibuild.DEFAULT_IMAGE_CUSTOMIZER)
 
 VM_MEMORY = _env_int("ACL_AB_VM_MEMORY", 6144)
 VM_CPUS = _env_int("ACL_AB_VM_CPUS", 2)
@@ -601,10 +609,17 @@ class Image:
     def build(self) -> str:
         return str((self.info.get("annotations") or {}).get("com.microsoft.acl.buildNumber", ""))
 
+    @property
+    def built(self) -> dict[str, Any]:
+        """What `image build` recorded of the build this image is, or nothing for any other image."""
+        return self.info.get("built") or {}
+
     def describe(self) -> str:
         parts = [f"{self.kind}", human_size(int(self.info.get("size", 0)))]
         if self.build:
             parts.append(f"build {self.build}")
+        if self.built:
+            parts.append(f"built from {self.built.get('from', {}).get('name', '?')}, version {self.built.get('version', '?')}")
         if self.kind == "cosi":
             parts += [f"OS {self.version or '?'}", f"/usr root hash {short(self.roothash)}"]
         return f"{self.name}: {', '.join(parts)}"
@@ -830,8 +845,46 @@ def cosi_if_present(tag: str, state: State | None = None) -> Image | None:
     return cached_image(IMAGES / COSI_REPO / tag, "cosi")
 
 
+def build_image(name: str) -> Image | None:
+    """The build of that name, if `image build` made one."""
+    return cached_image(BUILDS / name, "cosi") if BUILD_NAME_PATTERN.fullmatch(name) else None
+
+
+def known_builds() -> list[Image]:
+    builds = [build_image(directory.name) for directory in sorted(BUILDS.iterdir())] if BUILDS.is_dir() else []
+    return [image for image in builds if image]
+
+
+def offer_version(image: Image) -> str | None:
+    """The version the update server offers an image as: a build's own, or None for its tag's."""
+    return str(image.built.get("version") or "") or None
+
+
+def package_for(target: Image) -> Any:
+    """The update server's package for a target."""
+    import omaha
+
+    return omaha.Package.for_cosi(target.name, target.path, target.sha384, offer_version(target))
+
+
+def build_version(name: str, source: Image, previous: Image | None) -> tuple[str, int]:
+    """A build's semver version, and which build of its name it is: its source's version, as the
+    update server offers that, with -NAME.N for the Nth build of NAME, so each is offered as its own."""
+    import omaha
+
+    count = int(previous.built.get("count", 0) if previous else 0) + 1
+    core = offer_version(source)
+    if not core:
+        try:
+            core = omaha.tag_to_semver(source.name)
+        except StepError:
+            core = source.version if omaha.is_semver(source.version) else "0.0.0"
+    core = re.split(r"[-+]", core, maxsplit=1)[0]
+    return f"{core}-{name}.{count}", count
+
+
 def known_cosis() -> list[Image]:
-    """The COSIs the harness has seen: the cache's, and local ones, to name the booted image."""
+    """The COSIs the harness has seen: the cache's, builds, and local ones, to name the booted image."""
     images: list[Image] = []
     repo = IMAGES / COSI_REPO
     if COSI_REPO and repo.is_dir():
@@ -840,6 +893,7 @@ def known_cosis() -> list[Image]:
                 image = cached_image(directory, "cosi")
                 if image:
                     images.append(image)
+    images += known_builds()
     for value, tag in ((BASE_COSI, BASE_TAG), (UPDATE_COSI, UPDATE_TAG)):
         if value:
             with contextlib.suppress(StepError):
@@ -868,19 +922,22 @@ def pick_other(roothash: str, base: Image, update: Image) -> Image:
 
 
 def resolve_target(spec: str, state: State, current_roothash: Callable[[], str]) -> Image:
-    """A target: base, update, other (whichever of those the VM doesn't run), a tag, or a COSI."""
+    """A target: base, update, other (whichever of those the VM doesn't run), a build, a tag, or a COSI."""
     if spec == "base":
         return cosi(state.base_tag, state)
     if spec == "update":
         return cosi(state.update_tag, state)
     if spec == "other":
         return pick_other(current_roothash(), cosi(state.base_tag, state), cosi(state.update_tag, state))
+    built = build_image(spec)
+    if built:
+        return built
     path = Path(spec).expanduser()
     if spec.endswith(".cosi") or "/" in spec or path.is_file():
         return local_image(path, "cosi")
     if TAG_PATTERN.fullmatch(spec):
         return cosi(spec, state)
-    raise StepError(f"{spec!r} isn't a target: name base, update, other, a tag, or a .cosi file")
+    raise StepError(f"{spec!r} isn't a target: name base, update, other, a build, a tag, or a .cosi file")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2947,9 +3004,7 @@ class Context:
         and finalize: a repeated request and a removed status (N5), and a finalize for another
         version (N4). With heartbeat, the update server serves the COSI slowly, so the stage runs
         for a few of the agent's heartbeats, and checks them (N6)."""
-        import omaha
-
-        package = omaha.Package.for_cosi(target.name, target.path, target.sha384)
+        package = package_for(target)
         common = {"target_version": package.version, "app_id": ANNOTATION_APP_ID,
                   "track": annotation_track(package.version), "node_update_id": str(uuid.uuid4())}
         observed: list[dict[str, Any]] = []
@@ -3027,10 +3082,8 @@ class Context:
         starts, after the firmware has used its one-time BootNext, so it boots its BootOrder's first
         entry, the slot it ran. The agent's commit after that boot must report TargetBootFailed, with
         Trident's ab-update-reboot-check, and a new update must then succeed (N7)."""
-        import omaha
-
         c = self.checks
-        package = omaha.Package.for_cosi(target.name, target.path, target.sha384)
+        package = package_for(target)
         common = {"target_version": package.version, "app_id": ANNOTATION_APP_ID,
                   "track": annotation_track(package.version), "node_update_id": str(uuid.uuid4())}
         with self.update_server(package) as server:
@@ -3142,7 +3195,7 @@ class Context:
         import omaha
 
         c = self.checks
-        package = omaha.Package.for_cosi(target.name, target.path, target.sha384)
+        package = package_for(target)
         common = {"target_version": package.version, "app_id": ANNOTATION_APP_ID,
                   "track": annotation_track(package.version), "node_update_id": str(uuid.uuid4())}
         before = self.probe("before-annotation-rejects")
@@ -3455,7 +3508,7 @@ def baseline(ctx: Context) -> None:
         warn(f"can't read the base COSI: {error}")
     if base is None:
         log(f"the {ctx.state.base_tag} COSI isn't cached, so /usr's root hash isn't compared with it; "
-            "`fetch` pulls it")
+            "`image fetch` pulls it")
     elif current.roothash == base.roothash:
         name = base.name
         log(f"/usr's root hash is the base COSI's ({base.name})")
@@ -3474,7 +3527,7 @@ def baseline(ctx: Context) -> None:
 # Commands
 
 
-def cmd_fetch(args: argparse.Namespace) -> None:
+def image_fetch(args: argparse.Namespace) -> None:
     state = State.load() if STATE_FILE.is_file() else None
     if state:
         use_images(state)
@@ -3492,7 +3545,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         log(cosi(tag, state, refresh=args.refresh).describe())
 
 
-def cmd_images(_: argparse.Namespace) -> None:
+def image_list(_: argparse.Namespace) -> None:
     if STATE_FILE.is_file():
         use_images(State.load())
     rows = []
@@ -3503,18 +3556,141 @@ def cmd_images(_: argparse.Namespace) -> None:
                 rows.append({"kind": kind, "tag": image.name, "build": image.build, "os": image.version,
                              "roothash": image.roothash, "metadataSha384": image.sha384,
                              "size": int(image.info.get("size", 0)), "path": str(image.path)})
+    builds = [{"name": image.name, "from": image.built.get("from", {}).get("name", ""),
+               "version": image.built.get("version", ""), "created": image.built.get("created", ""),
+               "files": image.built.get("files", []), "config": image.built.get("config"),
+               "roothash": image.roothash, "metadataSha384": image.sha384,
+               "size": int(image.info.get("size", 0)), "path": str(image.path)} for image in known_builds()]
     installed = [{"tag": path.name, **json.loads((path / "info.json").read_text())}
                  for path in sorted(INSTALLED.glob("*")) if (path / "info.json").is_file()]
     if _json_output:
-        print(json.dumps({"images": rows, "installed": installed}, indent=2))
+        print(json.dumps({"images": rows, "builds": builds, "installed": installed}, indent=2))
         return
-    if not rows:
-        log(f"no images in {IMAGES}; `fetch` pulls them")
+    if not rows and not builds:
+        log(f"no images in {IMAGES}; `image fetch` pulls them")
     for row in rows:
         print(f"{row['kind']:5} {row['tag']:14} build {row['build'] or '-':10} OS {row['os'] or '-':22} "
               f"root hash {short(row['roothash']):12} sha384 {short(row['metadataSha384']):12} {human_size(row['size'])}")
+    for row in builds:
+        print(f"build {row['name']:14} from {row['from'] or '-':10} version {row['version'] or '-':30} "
+              f"root hash {short(row['roothash']):12} sha384 {short(row['metadataSha384']):12} {human_size(row['size'])}")
     for entry in installed:
         print(f"installed base {entry['tag']} from {entry.get('iso', '?')}, {entry.get('installed', '?')}")
+
+
+def check_build_prerequisites() -> None:
+    missing = [tool for tool in ("podman", "zstd", "mdir", "mtype", "mcopy") if not shutil.which(tool)]
+    if missing:
+        die(f"image build needs {', '.join(missing)}; mdir, mtype, and mcopy are in mtools")
+    if run(["sudo", "-n", "true"], check=False, capture=True).returncode != 0:
+        die("image build needs sudo without a password prompt, for Image Customizer's privileged container; "
+            "run `sudo -v` first if your sudo caches credentials")
+
+
+def build_source(spec: str, state: State | None) -> Image:
+    """The image a build starts from: a target as `update --to` takes one, but not `other`. Without
+    a VM, base and update are the tags the settings give."""
+    if spec == "other":
+        raise StepError("--from takes base, update, a build, a tag, or a .cosi file")
+    if state is None and spec in ("base", "update"):
+        tag, variable = (BASE_TAG, "ACL_AB_BASE_TAG") if spec == "base" else (UPDATE_TAG, "ACL_AB_UPDATE_TAG")
+        if not tag:
+            raise StepError(missing_settings([variable]))
+    return resolve_target(spec, state or State(), lambda: "")
+
+
+def build_name_problem(name: str) -> str:
+    if name in ("base", "update", "other") or not BUILD_NAME_PATTERN.fullmatch(name):
+        return (f"{name!r} can't name a build: use up to 40 lowercase letters, digits, and hyphens, starting with "
+                "a letter, other than base, update, and other")
+    return ""
+
+
+def image_build(args: argparse.Namespace) -> None:
+    import omaha
+
+    name = args.name
+    if build_name_problem(name):
+        die(build_name_problem(name))
+    if not args.files and not args.config:
+        die("give --files DIR, --config FILE, or both")
+    if args.version and not omaha.is_semver(args.version):
+        die(f"--version {args.version!r} isn't a semver version, which the update server offers builds as")
+    files_dir = Path(args.files).expanduser().resolve() if args.files else None
+    config = Path(args.config).expanduser().resolve() if args.config else None
+    if config and not config.is_file():
+        die(f"--config {config} isn't a file")
+    files = cosibuild.collect_files(files_dir) if files_dir else []
+    check_build_prerequisites()
+    state = State.load() if STATE_FILE.is_file() else None
+    if state:
+        use_images(state)
+    source = build_source(args.source, state)
+    previous = build_image(name)
+    version, count = build_version(name, source, previous)
+    version = args.version or version
+
+    BUILDS.mkdir(parents=True, exist_ok=True)
+    partial = BUILDS / f"{name}.partial"
+    shutil.rmtree(partial, ignore_errors=True)
+    partial.mkdir()
+    adding = []
+    if files:
+        adding.append(f"{len(files)} file{'s' if len(files) != 1 else ''} from {files_dir}")
+    if config:
+        adding.append(f"the config {config}")
+    log(f"building {name} from {source.name} (/usr root hash {short(source.roothash)}), adding {' and '.join(adding)}")
+    started = time.monotonic()
+    request = cosibuild.Request(source=source.path, files_dir=files_dir, files=files, config=config,
+                                image_customizer=IMAGE_CUSTOMIZER, work=BUILDS / f"{name}.work",
+                                output=partial / f"{name}.cosi", keep_work=args.keep_work)
+    try:
+        result = cosibuild.build(request, log)
+    except StepError as error:
+        raise StepError(f"{error}\nThe build's config and Image Customizer's log are in {partial}") from error
+    if config:
+        shutil.copy2(config, partial / f"config-{config.name}")
+    info = describe_file(request.output, "cosi")
+    info["built"] = {"from": {"target": args.source, "name": source.name, "roothash": source.roothash,
+                              "path": str(source.path)},
+                     "version": version, "count": count, "created": now_iso(),
+                     "filesDir": str(files_dir) if files_dir else None, "config": str(config) if config else None,
+                     **result}
+    (partial / "info.json").write_text(json.dumps(info, indent=2) + "\n")
+    shutil.rmtree(BUILDS / name, ignore_errors=True)
+    partial.rename(BUILDS / name)
+    image = build_image(name)
+    if image is None:
+        raise StepError(f"the build left no image in {BUILDS / name}")
+    if previous and previous.roothash != image.roothash:
+        log(f"replaced the previous {name}, whose /usr root hash was {short(previous.roothash)}")
+    log(f"built {image.describe()}, in {duration(time.monotonic() - started)}")
+    log(f"update to it with `{PROG} update --to {name}`")
+    if _json_output:
+        print(json.dumps(info, indent=2))
+
+
+def image_delete(args: argparse.Namespace) -> None:
+    name = args.name
+    directories = [BUILDS / name, BUILDS / f"{name}.partial", BUILDS / f"{name}.work"]
+    if BUILD_NAME_PATTERN.fullmatch(name) and any(directory.exists() for directory in directories):
+        for directory in directories:
+            cosibuild.remove_work(directory)
+        log(f"deleted build {name}")
+        return
+    if STATE_FILE.is_file():
+        use_images(State.load())
+    cached = [IMAGES / repo / name for repo in dict.fromkeys((ISO_REPO, COSI_REPO))
+              if repo and TAG_PATTERN.fullmatch(name) and (IMAGES / repo / name).is_dir()]
+    if not cached:
+        die(f"there's no build or cached tag {name!r}; `image list` shows them")
+    for directory in cached:
+        shutil.rmtree(directory)
+        log(f"deleted {directory}")
+
+
+def cmd_image(args: argparse.Namespace) -> None:
+    {"fetch": image_fetch, "list": image_list, "build": image_build, "delete": image_delete}[args.action](args)
 
 
 def check_cluster_prerequisites() -> None:
@@ -4040,7 +4216,7 @@ def positive(value: str) -> int:
     return int(value)
 
 
-TARGET_HELP = "base, update, other (whichever of those the VM doesn't run), a registry tag, or a .cosi file"
+TARGET_HELP = "base, update, other (whichever of those the VM doesn't run), a build, a registry tag, or a .cosi file"
 NO_DRAIN_HELP = "in cluster mode, don't cordon and drain the node around the reboot"
 
 
@@ -4056,12 +4232,25 @@ def build_parser() -> argparse.ArgumentParser:
         sub.set_defaults(func=func)
         return sub
 
-    fetch = command("fetch", cmd_fetch, "pull the base tag's installer ISO and the base and update COSIs, "
-                                        "or the COSIs of the tags given, into the cache")
+    image = command("image", cmd_image, "fetch, list, build, or delete images")
+    image_actions = image.add_subparsers(dest="action", required=True, metavar="ACTION")
+    fetch = image_actions.add_parser("fetch", help="pull the base tag's installer ISO and the base and update COSIs, "
+                                                   "or the COSIs of the tags given, into the cache")
     fetch.add_argument("tags", nargs="*", metavar="TAG")
     fetch.add_argument("--iso", action="store_true", help="pull the given tags' installer ISOs too")
     fetch.add_argument("--refresh", action="store_true", help="pull again what the cache has")
-    command("images", cmd_images, "list the cached images and installed bases")
+    image_actions.add_parser("list", help="list the cached images, builds, and installed bases")
+    build = image_actions.add_parser("build", help="build a COSI from a base and your files or Image Customizer "
+                                                   "config, to update to; see README.md")
+    build.add_argument("name", metavar="NAME", help="the build's name, which targets take")
+    build.add_argument("--files", metavar="DIR", help="files to add, laid out like the root: usr/... and etc/...")
+    build.add_argument("--config", metavar="FILE", help="an Image Customizer config to apply too")
+    build.add_argument("--from", dest="source", default="base", metavar="TARGET",
+                       help="the image to build on: base, update, a build, a tag, or a .cosi file (default base)")
+    build.add_argument("--version", default="", help="the semver version the update server offers it as "
+                                                     "(default: its source's, with -NAME.N)")
+    build.add_argument("--keep-work", action="store_true", help="keep the work directory, with its raw disks")
+    image_actions.add_parser("delete", help="delete a build, or a tag's cached images").add_argument("name")
 
     up = command("up", cmd_up, "install the base image in a new VM, or start from the base installed "
                                "earlier, check it (B1), and save snapshot base")

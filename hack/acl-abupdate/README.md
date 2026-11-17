@@ -16,8 +16,11 @@ It has two modes:
   `sudo`; see [Cluster mode](#cluster-mode).
 
 You can run whole scenarios, run each step by hand, and save and restore the VM,
-memory included, at any point. It's a tool for answering how ACL Flex nodes
-take OS updates; see [OS updates](../../docs/usage/azure-container-linux.md#os-updates).
+memory included, at any point. You can also build an update of your own, an ACL
+build with your files or an Image Customizer config added, and update the VM to
+it; see [Custom builds](#custom-builds). It's a tool for answering how ACL Flex
+nodes take OS updates; see
+[OS updates](../../docs/usage/azure-container-linux.md#os-updates).
 
 ## Requirements
 
@@ -32,6 +35,8 @@ take OS updates; see [OS updates](../../docs/usage/azure-container-linux.md#os-u
   installed.
 - For cluster mode, also `podman`, `kind`, `kubectl`, `go`, and `sudo` without
   a password prompt
+- For custom builds, `podman`, `zstd`, mtools, and `sudo` without a password
+  prompt
 
 ## Quick start
 
@@ -80,11 +85,13 @@ stderr.
 
 | Command | |
 |---|---|
-| `fetch [TAG...]` | Pulls the base tag's installer ISO and the base and update COSIs, or the COSIs of the tags given. `--iso` also pulls the given tags' ISOs, and `--refresh` pulls again what's cached. |
-| `images` | Lists the cached images and installed bases: each one's build, OS version, `/usr` verity root hash, and `metadata.json` sha384. |
+| `image fetch [TAG...]` | Pulls the base tag's installer ISO and the base and update COSIs, or the COSIs of the tags given. `--iso` also pulls the given tags' ISOs, and `--refresh` pulls again what's cached. |
+| `image list` | Lists the cached images, builds, and installed bases: each one's build or source, OS version, `/usr` verity root hash, and `metadata.json` sha384. |
+| `image build NAME` | Builds a COSI from an existing one and your files or Image Customizer config; see [Custom builds](#custom-builds). |
+| `image delete NAME` | Deletes a build, or a tag's cached images. |
 
 `up` and the update commands pull anything they need that isn't cached, so
-`fetch` is only needed to download ahead of time.
+`image fetch` is only needed to download ahead of time.
 
 ### The VM
 
@@ -180,11 +187,106 @@ A `TARGET` is one of:
 
 - `base` or `update`: the tags `up` was given
 - `other`: whichever of those two the VM doesn't run
+- a build's name, from [`image build`](#custom-builds)
 - a build tag in `ACL_AB_COSI_REPO`, pulled if it isn't cached
 - a path to a `.cosi` file
 
 The harness identifies the booted image by comparing `/usr`'s dm-verity root
 hash with the COSIs it knows.
+
+## Custom builds
+
+`image build` makes an update of your own: an existing build of ACL with your
+files, or an [Image Customizer](https://github.com/microsoft/azure-linux-image-tools)
+config, added. It's a COSI that the VM can A/B-update to like any other target,
+so you can try a change to the OS image without an image pipeline. To try it:
+
+```bash
+mkdir -p my-build/usr/bin my-build/etc/hello
+printf '#!/bin/sh\necho "hello from my build: $(cat /etc/hello/hello.conf)"\n' > my-build/usr/bin/hello
+chmod 755 my-build/usr/bin/hello
+echo greeting=hi > my-build/etc/hello/hello.conf
+
+hack/acl-abupdate/abupdate.py image build hello --files my-build   # about a minute
+hack/acl-abupdate/abupdate.py update --to hello                    # the usual checks, A1-A4
+hack/acl-abupdate/abupdate.py ssh -- hello
+hack/acl-abupdate/abupdate.py update --to base                     # and back
+```
+
+Building needs no VM. Once built, every command and scenario that takes a
+target takes the build's name, as in `run annotation-update --from base --to
+hello` in cluster mode.
+
+| Option | |
+|---|---|
+| `--files DIR` | Files to add, laid out like the root: `usr/...` goes in `/usr`, and `etc/...` in `/etc`. Each keeps its mode and is owned by root, and new `/etc` files get their SELinux label from the image's policy. Other top-level directories, symlinks, and special files are refused, with the reason: `opt/`, `var/`, and `home/`, for example, are on the root partition, which both slots share and an update doesn't write. |
+| `--config FILE` | An [Image Customizer config](https://github.com/microsoft/azure-linux-image-tools/blob/v1.7.0/docs/imagecustomizer/api/configuration/configuration.md) to apply too, for scripts, services, users, and more files. Paths in it are relative to its directory. |
+| `--from TARGET` | The image to build on: `base` (the default), `update`, a tag, another build, or a `.cosi` file. |
+| `--version VERSION` | The semver version the update server offers the build as in annotation-driven scenarios. By default, its source's, with `-NAME.N` for the Nth build of NAME. |
+| `--keep-work` | Keeps the work directory, with its raw disks, to look inside. |
+
+Give at least one of `--files` and `--config`. A config like this adds a
+systemd service and enables it, and runs a script in the image:
+
+```yaml
+os:
+  additionalFiles:
+  - source: files/hello-world.service
+    destination: /usr/lib/systemd/system/hello-world.service
+  services:
+    enable:
+    - hello-world
+scripts:
+  postCustomization:
+  - name: stamp
+    content: |
+      echo "stamped by the world build" > /usr/share/hello-stamp
+```
+
+Building a name again replaces the build. `image list` lists the builds, and
+`image delete NAME` removes one. Each is kept in the cache's `builds/NAME/`,
+with `info.json` (what it was built from and with), the config the harness gave
+Image Customizer, and Image Customizer's log.
+
+### How a build works
+
+Image Customizer v1.7.0 does the customizing, in its released container, which
+the harness runs with `sudo podman`, privileged, for loop devices. Its support
+for ACL is a preview: it adds the files, folds changes to `/etc` into `/etc`'s
+baseline in `/usr/share/distro/etc`, and re-seals `/usr`'s dm-verity. It doesn't
+know ACL's A/B layout, so the harness does the rest:
+
+1. It expands the source COSI into a sparse raw disk, since Image Customizer
+   takes a disk, and gives `/usr` a new btrfs filesystem UUID, so the two slots
+   don't carry the same filesystem.
+2. Of Image Customizer's output, it keeps `/usr` and its hash partition, and
+   checks the new root hash by recomputing the hash tree.
+3. It keeps the source's boot partition, and patches the new root hash into the
+   UKI addons that carry `usrhash=`: both slots' templates in
+   `/acl/uki-addons`, and the UKI's own. Image Customizer would give the update
+   slot an addon with slot A's arguments.
+4. It repacks the source COSI with those three partitions replaced and its
+   `metadata.json` updated.
+
+The limits that follow:
+
+- **Secure Boot:** the patched addons aren't signed, so a build boots only with
+  Secure Boot off, as in the harness's VM.
+- **The boot partition** is the source's, so a config can't change the kernel
+  command line, the SELinux mode, the kernel, or the initramfs. The harness
+  compares Image Customizer's boot partition with the source's, and stops if it
+  changed more than the verity arguments.
+- **Packages:** Image Customizer installs packages only on images that have
+  `tdnf`, which stock ACL doesn't.
+- **`/etc`:** an update changes only the overlay's lower layer, so a file the
+  node changed or removed in `/etc` keeps the node's version. Files a config
+  adds to `/etc`, such as a service's enablement link, aren't given SELinux
+  labels, as `--files`' are; a script in the config can run `setfiles` on them.
+- **Space:** `/usr` has about 1.5 GiB free. A build needs about 10 GiB free in
+  the cache while it runs.
+
+The Image Customizer container is pinned by digest; `ACL_AB_IMAGE_CUSTOMIZER`
+names another, such as a later release.
 
 ## What the checks cover
 
@@ -464,7 +566,8 @@ The image's `sha384` in the Host Configuration is the SHA-384 of the COSI's
 | `ACL_AB_GUEST_DIR` | `/var/tmp/acl-abupdate` | Where COSIs are copied in the VM; `/tmp` may be in memory |
 | `ACL_AB_INSTALL_TIMEOUT`, `ACL_AB_BOOT_TIMEOUT`, `ACL_AB_STAGE_TIMEOUT` | `2400`, `900`, `3600` | Seconds |
 | `ACL_AB_STATE_DIR` | `.vm/acl-abupdate` | VM disk overlay, UEFI variables, SSH key, snapshots, and run artifacts |
-| `ACL_AB_CACHE_DIR` | `.vm/acl-abupdate-cache` | Downloads, installed bases, and ORAS; `down` keeps it |
+| `ACL_AB_CACHE_DIR` | `.vm/acl-abupdate-cache` | Downloads, builds, installed bases, and ORAS; `down` keeps it |
+| `ACL_AB_IMAGE_CUSTOMIZER` | v1.7.0, by digest | The Image Customizer container image `image build` runs |
 | `ACL_AB_KIND_CLUSTER` | `aclab` | Cluster mode's kind cluster |
 | `ACL_AB_KIND_NODE_IMAGE` | kind's default | Its node image, for another Kubernetes version |
 | `ACL_AB_CLUSTER_SUBNET` | `192.168.113` | First three octets of the cluster's bridge network |

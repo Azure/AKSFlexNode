@@ -599,5 +599,101 @@ class AnnotationContractTest(unittest.TestCase):
         self.assertNotIn("TRIDENT_ACL_AGENT_ORCHESTRATION_NODE_GONE_MAX_WAIT", pinned)
 
 
+class BuildTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.addCleanup(setattr, abupdate, "BUILDS", abupdate.BUILDS)
+        self.addCleanup(setattr, abupdate, "BASE_TAG", abupdate.BASE_TAG)
+        abupdate.BUILDS = self.directory
+
+    def add_build(self, name: str, roothash: str, version: str, count: int = 1) -> abupdate.Image:
+        directory = self.directory / name
+        directory.mkdir()
+        metadata = json.loads(json.dumps(COSI_METADATA))
+        metadata["images"][1]["verity"]["roothash"] = roothash
+        make_cosi(directory / f"{name}.cosi", metadata)
+        info = abupdate.describe_file(directory / f"{name}.cosi", "cosi")
+        info["built"] = {"from": {"name": "20261105.1"}, "version": version, "count": count}
+        (directory / "info.json").write_text(json.dumps(info))
+        image = abupdate.build_image(name)
+        assert image is not None
+        return image
+
+    def test_names(self) -> None:
+        for name in ("hello", "my-build2", "a" * 40):
+            with self.subTest(name=name):
+                self.assertEqual(abupdate.build_name_problem(name), "")
+        for name in ("Hello", "1abc", "a_b", "a.b", "a" * 41, "base", "update", "other", ""):
+            with self.subTest(name=name):
+                self.assertIn("can't name a build", abupdate.build_name_problem(name))
+
+    def test_versions(self) -> None:
+        tagged = abupdate.Image("20261105.1", Path("/a.cosi"), "cosi", {"osRelease": {"VERSION": "3.0.20261104"}})
+        self.assertEqual(abupdate.build_version("hello", tagged, None), ("20261105.1.0-hello.1", 1))
+        previous = self.add_build("hello", "aa" * 32, "20261105.1.0-hello.2", count=2)
+        self.assertEqual(abupdate.build_version("hello", tagged, previous), ("20261105.1.0-hello.3", 3))
+        # A build on a build keeps the first's core version.
+        self.assertEqual(abupdate.build_version("world", previous, None), ("20261105.1.0-world.1", 1))
+        local = abupdate.Image("custom.cosi", Path("/custom.cosi"), "cosi", {"osRelease": {"VERSION": "3.0.20261104"}})
+        self.assertEqual(abupdate.build_version("x", local, None), ("3.0.20261104-x.1", 1))
+        unversioned = abupdate.Image("custom.cosi", Path("/custom.cosi"), "cosi", {})
+        self.assertEqual(abupdate.build_version("x", unversioned, None), ("0.0.0-x.1", 1))
+
+    def test_a_build_is_a_target(self) -> None:
+        roothash = "cd" * 32
+        image = self.add_build("hello", roothash, "20261105.1.0-hello.1")
+        for leftover in ("hello.partial", "hello.work", "Upper"):
+            (self.directory / leftover).mkdir()
+        self.assertEqual([build.name for build in abupdate.known_builds()], ["hello"])
+        resolved = abupdate.resolve_target("hello", abupdate.State(), lambda: "")
+        self.assertEqual((resolved.name, resolved.roothash), ("hello", roothash))
+        self.assertEqual(abupdate.image_name(roothash), "hello")
+        self.assertIn("built from 20261105.1, version 20261105.1.0-hello.1", image.describe())
+        package = abupdate.package_for(image)
+        self.assertEqual((package.name, package.version), ("hello", "20261105.1.0-hello.1"))
+        self.assertIsNone(abupdate.build_image("missing"))
+        self.assertIsNone(abupdate.offer_version(abupdate.Image("20261105.1", Path("/a.cosi"), "cosi", {})))
+
+    def test_build_source(self) -> None:
+        abupdate.BASE_TAG = ""
+        with self.assertRaisesRegex(abupdate.StepError, "ACL_AB_BASE_TAG"):
+            abupdate.build_source("base", None)
+        with self.assertRaisesRegex(abupdate.StepError, "--from takes"):
+            abupdate.build_source("other", abupdate.State())
+        self.add_build("hello", "ef" * 32, "20261105.1.0-hello.1")
+        self.assertEqual(abupdate.build_source("hello", None).name, "hello")
+
+    def test_delete(self) -> None:
+        builds = self.directory / "builds"
+        builds.mkdir()
+        abupdate.BUILDS = builds
+        (builds / "hello").mkdir()
+        (builds / "hello.work").mkdir()
+        (self.directory / "victim.work").mkdir()
+        parser = abupdate.build_parser()
+        with mock.patch.object(abupdate.cosibuild, "reclaim"), \
+                mock.patch.object(abupdate, "STATE_FILE", self.directory / "no-state.json"):
+            abupdate.image_delete(parser.parse_args(["image", "delete", "hello"]))
+            self.assertEqual(list(builds.iterdir()), [])
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                abupdate.image_delete(parser.parse_args(["image", "delete", "../victim"]))
+        self.assertTrue((self.directory / "victim.work").is_dir())
+
+    def test_parser(self) -> None:
+        parser = abupdate.build_parser()
+        args = parser.parse_args(["image", "build", "hello", "--files", "d", "--config", "c.yaml", "--from", "update"])
+        self.assertEqual((args.action, args.name, args.files, args.config, args.source),
+                         ("build", "hello", "d", "c.yaml", "update"))
+        self.assertFalse(args.keep_work)
+        self.assertEqual(parser.parse_args(["image", "build", "hello", "--files", "d"]).source, "base")
+        self.assertEqual(parser.parse_args(["image", "fetch", "1", "2", "--iso"]).tags, ["1", "2"])
+        self.assertEqual(parser.parse_args(["image", "delete", "hello"]).name, "hello")
+        self.assertEqual(parser.parse_args(["image", "list"]).action, "list")
+        for retired in (["fetch"], ["images"]):
+            with self.subTest(command=retired), self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                parser.parse_args(retired)
+
+
 if __name__ == "__main__":
     unittest.main()

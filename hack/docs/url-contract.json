@@ -555,6 +555,8 @@
         "azure-container-linux-ab-update-harness",
         "cluster-mode",
         "commands",
+        "custom-builds",
+        "how-a-build-works",
         "images",
         "quick-start",
         "requirements",
