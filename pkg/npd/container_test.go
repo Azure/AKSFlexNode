@@ -36,7 +36,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "ExecStart="+root.Path(BinaryPath)+" ") || !strings.Contains(string(data), "container-worker") {
+	if !strings.Contains(string(data), "ExecStart="+root.Path(npdBinaryPath)+" ") || !strings.Contains(string(data), "container-worker") {
 		t.Fatalf("incorrect container service: %s", data)
 	}
 	if entries, err := os.ReadDir(decoy); err != nil || len(entries) != 0 {
@@ -47,7 +47,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	}
 	// The download and rendered command must name the same binary. A local
 	// version probe avoids downloading external artifacts in this test.
-	binary := root.Path(BinaryPath)
+	binary := root.Path(npdBinaryPath)
 	if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
 		t.Fatal(err)
 	}
