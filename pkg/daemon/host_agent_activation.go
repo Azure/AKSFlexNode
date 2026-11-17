@@ -15,6 +15,10 @@ import (
 // PreflightHostAgentActivation validates the applied mode against a private
 // candidate and plans activation without changing the installed layout or units.
 func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
+	if log == nil {
+		return agentbinary.ActivationPlan{}, fmt.Errorf("logger is nil")
+	}
+
 	if agentdeployment.Containerized() {
 		return agentbinary.ActivationPlan{}, agentdeployment.ErrDirectActivationInContainer
 	}
