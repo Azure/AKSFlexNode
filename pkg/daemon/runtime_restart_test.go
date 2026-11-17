@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -28,10 +27,10 @@ func TestRestartUsesAppliedMachineVersion(t *testing.T) {
 		runtime: worker,
 		state:   worker,
 		cfg:     cfg,
-		resolve: func(_ context.Context, _ *slog.Logger, resolved *config.Config, machine string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+		resolve: func(_ context.Context, _ *slog.Logger, resolved *config.Config, machine string) (config.ResolvedMachineGoal, error) {
 			resolvedMachine = machine
 			resolvedVersion = resolved.Components.Kubernetes
-			return nil, &goalstates.MachineGoalState{}, nil, nil
+			return config.ResolvedMachineGoal{GoalState: &goalstates.MachineGoalState{}}, nil
 		},
 	}
 

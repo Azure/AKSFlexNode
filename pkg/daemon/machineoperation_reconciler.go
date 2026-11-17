@@ -208,11 +208,12 @@ func (h *machineOperationHandlers) restartNode(ctx context.Context) error {
 		if active.State.AppliedKubernetesVersion != "" {
 			cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 		}
-		_, gs, archives, err := h.resolve(ctx, h.log, cfg, active.Name)
+		resolved, err := h.resolve(ctx, h.log, cfg, active.Name)
 		if err != nil {
 			return fmt.Errorf("resolve goal state for node restart: %w", err)
 		}
-		input.Node.GoalState, input.Archives = gs, archives
+		input.Node.GoalState = resolved.GoalState
+		input.Archives = resolved.ContainerImageArchives
 	}
 	return h.runtime.Restart(h.log, input).Do(ctx)
 }

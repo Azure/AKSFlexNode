@@ -7,7 +7,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -36,9 +35,9 @@ func TestOCIRestartUsesAppliedSlotAndConfiguration(t *testing.T) {
 				Kubernetes: "1.35.0",
 			},
 		},
-		resolve: func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+		resolve: func(context.Context, *slog.Logger, *config.Config, string) (config.ResolvedMachineGoal, error) {
 			t.Fatal("resolved fresh configuration for OCI restart")
-			return nil, nil, nil, nil
+			return config.ResolvedMachineGoal{}, nil
 		},
 	}
 	if err := h.restartNode(t.Context()); err != nil {
