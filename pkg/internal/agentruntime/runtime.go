@@ -39,15 +39,48 @@ type WorkerContext struct {
 	Mode        isolation.Mode
 }
 
-// Runtime executes worker actions. The daemon owns sequencing and persistence.
+// Runtime constructs worker execution tasks. The daemon owns lifecycle decisions,
+// applied State, and remote status publication; the SDK owns runtime recovery.
+//
+// The daemon drives these transitions:
+//
+//	Bootstrap: Start -> save applied State
+//	Reapply:   Recover(applied) -> Restart, without advancing applied State
+//	Repave:    PrepareUpgrade(previous) -> agent hooks or host Hub cleanup
+//	           -> Start(target) -> save applied State -> Retire(previous)
+//	Reset:     host Hub cleanup if needed -> Reset -> clear configuration/State
+//
+// An error stops the sequence without implying that earlier actions rolled back.
+// Start must succeed before persistence, and persistence must succeed before
+// Retire. Recovery guarantees are backend-specific; this interface adds no journal.
 type Runtime interface {
+	// Worker resolves the selected worker's filesystem, executor, and service
+	// context for components without loading or updating daemon State.
 	Worker(*slog.Logger, Node) (WorkerContext, error)
+
+	// Start provisions the first worker or applies a replacement when Previous
+	// is supplied, then starts the worker and converges its NPD service.
 	Start(*slog.Logger, Inputs) phases.Task
+
+	// Restart restarts the installed worker in place without provisioning a
+	// replacement, replacing kubelet identity, or advancing applied State.
 	Restart(*slog.Logger, Inputs) phases.Task
+
+	// PrepareUpgrade stops/cleans nspawn or recovers none SDK state before
+	// replacement. OCI preparation is handled inside the SDK upgrade itself.
 	PrepareUpgrade(*slog.Logger, Inputs) phases.Task
+
+	// Recover reconciles the applied worker before startup or reapply using the
+	// SDK's recovery support. OCI only rewrites its unit; it does not provide
+	// durable recovery for interrupted upgrades.
 	Recover(*slog.Logger, Inputs) phases.Task
-	// Retire runs after the daemon saves applied state.
+
+	// Retire removes the superseded slot or commits/prunes a none SDK upgrade.
+	// The daemon must successfully save the target as applied before invoking it.
 	Retire(*slog.Logger, Inputs) phases.Task
+
+	// Reset tears down worker runtimes and their owned host artifacts. Daemon
+	// configuration/State cleanup, status publication, and uninstall stay external.
 	Reset(*slog.Logger) phases.Task
 }
 
