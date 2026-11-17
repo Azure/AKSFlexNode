@@ -135,9 +135,12 @@ func TestOrphanArtifactsDoNotSelectNativeTeardown(t *testing.T) {
 	machine := &testResetWorker{name: "nspawn", events: &events}
 	shared := hostnode.Func("shared", func(context.Context) error { return nil })
 	for range 2 {
-		plan := discoverReset(native.log, machine, native, shared, cleanupNoneUpgradeArtifacts(root))
-		if plan.HasNone() {
+		plan := discoverReset(native.log, machine, native, shared, cleanupNoneUpgradeArtifacts(root), true)
+		if plan.none != nil {
 			t.Fatal("recovery artifacts incorrectly imply SDK ownership")
+		}
+		if !plan.HasHostNativeState() {
+			t.Fatal("orphan artifacts would skip independently owned host-component cleanup")
 		}
 		if err := phases.Serial(native.log, plan.Stop(), plan.Finish()).Do(t.Context()); err != nil {
 			t.Fatal(err)

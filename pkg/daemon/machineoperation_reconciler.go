@@ -319,7 +319,7 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}
-	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime)); err != nil {
+	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime, ResetHostHub(h.log))); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,

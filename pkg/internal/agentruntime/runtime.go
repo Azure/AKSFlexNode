@@ -75,7 +75,7 @@ type Runtime interface {
 	// PlanReset discovers owned worker runtimes at execution time, independently
 	// of applied State. Callers stop workers before component cleanup and Finish;
 	// State deletion, status publication and uninstall stay outside the plan.
-	PlanReset(*slog.Logger) ResetPlan
+	PlanReset(*slog.Logger) (ResetPlan, error)
 }
 
 // New selects an already validated worker mode.

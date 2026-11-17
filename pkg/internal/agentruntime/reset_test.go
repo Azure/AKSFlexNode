@@ -87,8 +87,8 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 				})
 			}
 			log := slog.New(slog.DiscardHandler)
-			plan := discoverReset(log, machine, native, record("shared"), record("orphan-artifacts"))
-			if plan.HasNone() != tc.present {
+			plan := discoverReset(log, machine, native, record("shared"), record("orphan-artifacts"), false)
+			if (plan.none != nil) != tc.present {
 				t.Fatal("incorrect discovery")
 			}
 			err := phases.Serial(log, plan.Stop(), plan.Finish()).Do(t.Context())

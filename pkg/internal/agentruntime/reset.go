@@ -27,8 +27,9 @@ type discoveredWorker interface {
 // ResetPlan captures runtime ownership before cleanup removes its evidence.
 // The daemon runs Stop, cleans host components, then runs Finish.
 type ResetPlan interface {
-	// HasNone reports whether SDK-owned host-native traces were discovered.
-	HasNone() bool
+	// HasHostNativeState includes recovery artifacts without treating them as
+	// ownership of a native runtime. Components apply their own ownership checks.
+	HasHostNativeState() bool
 	// Stop stops every discovered worker before any teardown runs.
 	Stop() phases.Task
 	// Finish destroys the discovered workers, then cleans shared host resources.
@@ -41,22 +42,28 @@ type resetPlan struct {
 	none      resetWorker
 	shared    phases.Task
 	artifacts phases.Task
+	hostState bool
 }
 
-func discoverReset(log *slog.Logger, nspawn resetWorker, native discoveredWorker, shared, artifacts phases.Task) *resetPlan {
-	plan := &resetPlan{log: log, nspawn: nspawn, shared: shared, artifacts: artifacts}
+func discoverReset(log *slog.Logger, nspawn resetWorker, native discoveredWorker, shared, artifacts phases.Task, hostArtifacts bool) *resetPlan {
+	plan := &resetPlan{log: log, nspawn: nspawn, shared: shared, artifacts: artifacts, hostState: hostArtifacts}
 	if native.Present() {
 		plan.none = native
+		plan.hostState = true
 	}
 	return plan
 }
 
 // PlanReset discovers all installed runtimes independently of applied state.
-func (NSpawn) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
+func (NSpawn) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
 
-func (noneRuntime) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
+func (noneRuntime) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
 
-func planReset(log *slog.Logger) ResetPlan {
+func planReset(log *slog.Logger) (ResetPlan, error) {
+	hostArtifacts, err := NoneUpgradeArtifactsPresent()
+	if err != nil {
+		return nil, err
+	}
 	native := &noneTeardown{
 		log: log,
 		sdk: &noneops.Teardown{Log: log},
@@ -70,11 +77,10 @@ func planReset(log *slog.Logger) ResetPlan {
 		removeHostHelpers(log),
 		reset.ReloadSystemd(log),
 	)
-	return discoverReset(log, nspawnTeardown{log: log}, native, shared, cleanupNoneUpgradeArtifacts(""))
+	return discoverReset(log, nspawnTeardown{log: log}, native, shared, cleanupNoneUpgradeArtifacts(""), hostArtifacts), nil
 }
 
-// HasNone reports whether SDK-owned host-native traces were discovered.
-func (p *resetPlan) HasNone() bool { return p.none != nil }
+func (p *resetPlan) HasHostNativeState() bool { return p.hostState }
 
 func (p *resetPlan) Stop() phases.Task {
 	tasks := []phases.Task{p.nspawn.Stop()}

@@ -83,7 +83,9 @@ func (*bootstrapTestRuntime) Retire(*slog.Logger, agentruntime.Inputs) phases.Ta
 	return hostnode.Func("retire", func(context.Context) error { return nil })
 }
 
-func (*bootstrapTestRuntime) PlanReset(*slog.Logger) agentruntime.ResetPlan { return nil }
+func (*bootstrapTestRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
+	return nil, nil
+}
 
 func TestNoneReapplyUsesInstalledConfigWithoutSavingOrProvisioning(t *testing.T) {
 	t.Parallel()

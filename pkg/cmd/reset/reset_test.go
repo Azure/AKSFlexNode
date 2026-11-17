@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -22,12 +23,12 @@ type resetRuntime struct {
 	events *[]string
 }
 
-func (r resetRuntime) PlanReset(*slog.Logger) agentruntime.ResetPlan {
+func (r resetRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
 	*r.events = append(*r.events, "discover")
-	return r
+	return r, nil
 }
 
-func (resetRuntime) HasNone() bool { return false }
+func (resetRuntime) HasHostNativeState() bool { return true }
 
 func (r resetRuntime) Stop() phases.Task {
 	return hostnode.Func("stop", func(context.Context) error {
@@ -85,13 +86,18 @@ func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 				events = append(events, "clear")
 				return os.RemoveAll(dir)
 			})
-			err := runReset(t.Context(), slog.New(slog.DiscardHandler), uninstall, worker, clear)
+			log := slog.New(slog.DiscardHandler)
+			hub := hostnode.Func("hub", func(context.Context) error {
+				events = append(events, "hub")
+				return nil
+			})
+			err := runReset(t.Context(), log, uninstall, daemon.ResetWorker(log, worker, hub), clear)
 			if (err != nil) != tc.fail {
 				t.Fatalf("reset error = %v", err)
 			}
-			want := []string{"uninstall", "discover", "stop", "worker", "clear"}
+			want := []string{"uninstall", "discover", "stop", "hub", "worker", "clear"}
 			if tc.fail {
-				want = want[:4]
+				want = want[:5]
 				if contents, err := os.ReadFile(state); err != nil || string(contents) != tc.state {
 					t.Fatalf("state not retained: %q, %v", contents, err)
 				}

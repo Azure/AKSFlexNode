@@ -220,7 +220,7 @@ func (f *fakeWorkerRuntime) Retire(_ *slog.Logger, _ agentruntime.Inputs) phases
 	return testTask{name: "retire"}
 }
 
-func (f *fakeWorkerRuntime) PlanReset(_ *slog.Logger) agentruntime.ResetPlan {
+func (f *fakeWorkerRuntime) PlanReset(_ *slog.Logger) (agentruntime.ResetPlan, error) {
 	return testResetPlan{
 		stop: testTask{name: "stop-reset-workers"},
 		finish: testTask{
@@ -230,7 +230,7 @@ func (f *fakeWorkerRuntime) PlanReset(_ *slog.Logger) agentruntime.ResetPlan {
 				return f.resetErr
 			},
 		},
-	}
+	}, nil
 }
 
 func (f *fakeWorkerRuntime) uninstall(*slog.Logger) phases.Task {

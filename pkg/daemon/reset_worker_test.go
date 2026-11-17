@@ -7,34 +7,45 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 type testResetPlan struct {
-	native bool
-	stop   phases.Task
-	finish phases.Task
+	hostState bool
+	stop      phases.Task
+	finish    phases.Task
 }
 
-func (p testResetPlan) HasNone() bool       { return p.native }
-func (p testResetPlan) Stop() phases.Task   { return p.stop }
-func (p testResetPlan) Finish() phases.Task { return p.finish }
+func (p testResetPlan) HasHostNativeState() bool { return p.hostState }
+func (p testResetPlan) Stop() phases.Task        { return p.stop }
+func (p testResetPlan) Finish() phases.Task      { return p.finish }
+
+type testResetRuntime struct {
+	agentruntime.Runtime
+	plan agentruntime.ResetPlan
+}
+
+func (r testResetRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
+	return r.plan, nil
+}
 
 func TestResetPlanCoordinatesHub(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name   string
-		native bool
-		fail   string
-		want   []string
+		name      string
+		hostState bool
+		fail      string
+		want      []string
 	}{
-		{name: "native", native: true, want: []string{"stop", "hub", "destroy"}},
+		{name: "native worker reset", hostState: true, want: []string{"stop", "hub", "destroy"}},
 		{name: "nspawn only", want: []string{"stop", "destroy"}},
-		{name: "stop fails", native: true, fail: "stop", want: []string{"stop"}},
-		{name: "hub fails", native: true, fail: "hub", want: []string{"stop", "hub"}},
-		{name: "destroy fails", native: true, fail: "destroy", want: []string{"stop", "hub", "destroy"}},
+		{name: "orphan Hub still receives ownership-checked cleanup", hostState: true, want: []string{"stop", "hub", "destroy"}},
+		{name: "stop fails", hostState: true, fail: "stop", want: []string{"stop"}},
+		{name: "hub fails", hostState: true, fail: "hub", want: []string{"stop", "hub"}},
+		{name: "destroy fails", hostState: true, fail: "destroy", want: []string{"stop", "hub", "destroy"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -49,8 +60,8 @@ func TestResetPlanCoordinatesHub(t *testing.T) {
 					return nil
 				})
 			}
-			plan := testResetPlan{native: tc.native, stop: task("stop"), finish: task("destroy")}
-			err := runResetPlan(t.Context(), slog.New(slog.DiscardHandler), plan, task("hub"))
+			plan := testResetPlan{hostState: tc.hostState, stop: task("stop"), finish: task("destroy")}
+			err := ResetWorker(slog.New(slog.DiscardHandler), testResetRuntime{plan: plan}, task("hub")).Do(t.Context())
 			if (err != nil) != (tc.fail != "") {
 				t.Fatalf("reset error = %v", err)
 			}
