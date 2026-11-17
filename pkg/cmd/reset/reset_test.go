@@ -1,127 +1,112 @@
 package reset
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
-	"strings"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-func TestSelectResetMode(t *testing.T) {
+type resetRuntime struct {
+	agentruntime.Runtime
+	task   phases.Task
+	events *[]string
+}
+
+func (r resetRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
+	*r.events = append(*r.events, "discover")
+	return r, nil
+}
+
+func (resetRuntime) HasHostNativeState() bool { return true }
+
+func (r resetRuntime) Stop() phases.Task {
+	return hostnode.Func("stop", func(context.Context) error {
+		*r.events = append(*r.events, "stop")
+		return nil
+	})
+}
+
+func (r resetRuntime) Finish() phases.Task { return r.task }
+
+func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 	t.Parallel()
 
-	corruptState := errors.New("daemon state checksum mismatch")
 	for _, tc := range []struct {
-		name          string
-		state         *daemon.State
-		loadErr       error
-		requestedMode isolation.Mode
-		want          isolation.Mode
-		wantErr       string
-		wantCause     error
+		name    string
+		state   string
+		missing bool
+		fail    bool
 	}{
-		{
-			name:  "healthy state selects the applied worker",
-			state: &daemon.State{Isolation: isolation.ModeNone},
-			want:  isolation.ModeNone,
-		},
-		{
-			name:          "matching override",
-			state:         &daemon.State{Isolation: isolation.ModeNone},
-			requestedMode: isolation.ModeNone,
-			want:          isolation.ModeNone,
-		},
-		{
-			name:          "conflicting override cannot replace trusted state",
-			state:         &daemon.State{Isolation: isolation.ModeNone},
-			requestedMode: isolation.ModeNSpawn,
-			wantErr:       "conflicts with applied worker isolation",
-		},
-		{
-			name: "missing state leaves runtime discovery in control",
-		},
-		{
-			name:          "missing state accepts explicit mode",
-			requestedMode: isolation.ModeNone,
-			want:          isolation.ModeNone,
-		},
-		{
-			name:      "unreadable state requires explicit recovery selection",
-			loadErr:   corruptState,
-			wantErr:   "reset --isolation <mode>",
-			wantCause: corruptState,
-		},
-		{
-			name:          "none recovery ignores untrusted state contents",
-			state:         &daemon.State{Isolation: isolation.ModeNSpawn},
-			loadErr:       corruptState,
-			requestedMode: isolation.ModeNone,
-			want:          isolation.ModeNone,
-		},
-		{
-			name:          "nspawn recovery ignores untrusted state contents",
-			state:         &daemon.State{Isolation: isolation.ModeNone},
-			loadErr:       corruptState,
-			requestedMode: isolation.ModeNSpawn,
-			want:          isolation.ModeNSpawn,
-		},
-		{
-			name:          "OCI recovery ignores untrusted state contents",
-			state:         &daemon.State{Isolation: isolation.ModeNone},
-			loadErr:       corruptState,
-			requestedMode: isolation.ModeContainer,
-			want:          isolation.ModeContainer,
-		},
-		{
-			name:          "healthy OCI state accepts matching override",
-			state:         &daemon.State{Isolation: isolation.ModeContainer},
-			requestedMode: isolation.ModeContainer,
-			want:          isolation.ModeContainer,
-		},
-		{
-			name:          "unknown override is rejected",
-			requestedMode: "other",
-			wantErr:       "invalid reset isolation",
-		},
-		{
-			name:          "unreadable state cannot bypass override validation",
-			loadErr:       corruptState,
-			requestedMode: "other",
-			wantErr:       "invalid reset isolation",
-		},
+		{name: "absent", missing: true},
+		{name: "corrupt", state: "not json"},
+		{name: "stale", state: `{"isolation":"nspawn","activeMachine":"kube1"}`},
+		{name: "cleanup failure", state: "corrupt", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mode, err := selectResetMode(tc.state, tc.loadErr, tc.requestedMode)
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("selectResetMode() error = %v", err)
+			dir := t.TempDir()
+			state := filepath.Join(dir, "daemon-state.json")
+			if !tc.missing {
+				if err := os.WriteFile(state, []byte(tc.state), 0o600); err != nil {
+					t.Fatal(err)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("selectResetMode() error = %v, want %q", err, tc.wantErr)
+				if tc.name == "stale" {
+					sum := sha256.Sum256([]byte(tc.state))
+					if err := os.WriteFile(state+".sha256", []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
-			if tc.wantCause != nil && !errors.Is(err, tc.wantCause) {
-				t.Fatalf("selectResetMode() error = %v does not wrap %v", err, tc.wantCause)
+
+			var events []string
+			uninstall := hostnode.Func("uninstall", func(context.Context) error {
+				events = append(events, "uninstall")
+				return nil
+			})
+			worker := resetRuntime{events: &events, task: hostnode.Func("worker", func(context.Context) error {
+				events = append(events, "worker")
+				if tc.fail {
+					return errors.New("cleanup failed")
+				}
+				return nil
+			})}
+			clear := hostnode.Func("clear", func(context.Context) error {
+				events = append(events, "clear")
+				return os.RemoveAll(dir)
+			})
+			log := slog.New(slog.DiscardHandler)
+			hub := hostnode.Func("hub", func(context.Context) error {
+				events = append(events, "hub")
+				return nil
+			})
+			err := runReset(t.Context(), log, uninstall, daemon.ResetWorker(log, worker, hub), clear)
+			if (err != nil) != tc.fail {
+				t.Fatalf("reset error = %v", err)
 			}
-			if mode != tc.want {
-				t.Fatalf("selectResetMode() mode = %q, want %q", mode, tc.want)
+			want := []string{"uninstall", "discover", "stop", "hub", "worker", "clear"}
+			if tc.fail {
+				want = want[:5]
+				if contents, err := os.ReadFile(state); err != nil || string(contents) != tc.state {
+					t.Fatalf("state not retained: %q, %v", contents, err)
+				}
+			} else if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("configuration directory remains: %v", err)
+			}
+			if !slices.Equal(events, want) {
+				t.Fatalf("events = %v, want %v", events, want)
 			}
 		})
-	}
-}
-
-func TestResetCommandHasExplicitIsolationOverride(t *testing.T) {
-	t.Parallel()
-
-	cmd := NewCommand()
-	if err := cmd.ParseFlags([]string{"--isolation", "none"}); err != nil {
-		t.Fatalf("ParseFlags() error = %v", err)
-	}
-	mode, err := cmd.Flags().GetString("isolation")
-	if err != nil || mode != string(isolation.ModeNone) {
-		t.Fatalf("isolation flag = %q, %v; want none", mode, err)
 	}
 }

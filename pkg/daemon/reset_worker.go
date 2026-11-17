@@ -7,7 +7,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -28,10 +27,20 @@ func ResetHostHub(log *slog.Logger) phases.Task {
 	})
 }
 
-// ResetWorker coordinates host Hub cleanup before runtime teardown.
-func ResetWorker(log *slog.Logger, worker agentruntime.Runtime, mode isolation.Mode) phases.Task {
-	if mode != isolation.ModeNone {
-		return worker.Reset(log)
-	}
-	return phases.Serial(log, ResetHostHub(log), worker.Reset(log))
+// ResetWorker discovers ownership at execution time, after CLI daemon shutdown.
+func ResetWorker(log *slog.Logger, worker agentruntime.Runtime, hostHub phases.Task) phases.Task {
+	return hostnode.Func("reset-worker", func(ctx context.Context) error {
+		plan, err := worker.PlanReset(log)
+		if err != nil {
+			return err
+		}
+		tasks := []phases.Task{plan.Stop()}
+		// Recovery artifacts can outlive SDK runtime traces. Hub independently
+		// checks its own ownership rather than treating those artifacts as proof.
+		if plan.HasHostNativeState() {
+			tasks = append(tasks, hostHub)
+		}
+		tasks = append(tasks, plan.Finish())
+		return phases.Serial(log, tasks...).Do(ctx)
+	})
 }

@@ -50,7 +50,6 @@ type machineOperationHandlers struct {
 	resolve      machineGoalResolver
 	uninstall    func(*slog.Logger) phases.Task
 	clearConfig  phases.Task
-	mode         isolation.Mode
 	agentUpgrade agentUpgradeExecutor
 }
 
@@ -121,7 +120,6 @@ func machineOperationReconciler(
 		resolve:      opts.Resolve,
 		uninstall:    opts.Uninstall,
 		clearConfig:  opts.ClearConfig,
-		mode:         opts.Config.Bootstrap.Isolation,
 		agentUpgrade: opts.AgentUpgrade,
 	}
 	// Whether an operation is still to run is read from the API server. A handler's own status
@@ -321,7 +319,7 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}
-	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime, h.mode)); err != nil {
+	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime, ResetHostHub(h.log))); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,
