@@ -41,7 +41,8 @@ SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
 mkdir -p "$MANAGED_BINARY_DIR" "$(dirname "$SERVICE_UNIT_PATH")"
 
 running_binary=$(type -P sleep)
-replacement_binary=$(type -P printf)
+# Bash remains executable after renaming; multicall coreutils dispatch on argv[0].
+replacement_binary=$(type -P bash)
 
 # Minimal images can omit an empty /usr/local/bin. The installer owns creation
 # of its configured destination before atomically staging the binary there.
@@ -49,7 +50,7 @@ replacement_binary=$(type -P printf)
 install_binary "$replacement_binary" >/dev/null || fail "installer did not create a missing install directory"
 [[ -d "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] || fail "installer did not create a regular install directory"
 [[ "$(stat -c '%a %U %G' "$INSTALL_DIR")" == "755 root root" ]] || fail "installer created install directory with incorrect ownership or mode"
-[[ "$($INSTALL_DIR/aks-flex-node missing-dir)" == "missing-dir" ]] || fail "binary installed into newly created directory is not executable"
+[[ "$("$INSTALL_DIR/aks-flex-node" -c 'printf "%s" "$1"' _ missing-dir)" == "missing-dir" ]] || fail "binary installed into newly created directory is not executable"
 rm "$INSTALL_DIR/aks-flex-node"
 
 # Existing host-managed directory permissions must not be rewritten.
@@ -60,14 +61,14 @@ rm "$INSTALL_DIR/aks-flex-node"
 chmod 0755 "$INSTALL_DIR"
 
 cp "$running_binary" "$INSTALL_DIR/aks-flex-node"
-"$INSTALL_DIR/aks-flex-node" 30 &
+(exec -a sleep "$INSTALL_DIR/aks-flex-node" 30) &
 RUNNING_PID=$!
 sleep 0.1
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "test binary did not remain running"
 
 install_binary "$replacement_binary" >/dev/null || fail "could not replace a running binary"
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "replacement stopped the old process"
-[[ "$("$INSTALL_DIR/aks-flex-node" replacement)" == "replacement" ]] || fail "new executions did not use the replacement"
+[[ "$("$INSTALL_DIR/aks-flex-node" -c 'printf "%s" "$1"' _ replacement)" == "replacement" ]] || fail "new executions did not use the replacement"
 
 assert_no_staged_files() {
     [[ -z "$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)" ]] || fail "staged binary was not cleaned up"
@@ -140,7 +141,7 @@ install_binary "$replacement_binary" >/dev/null
 if install_binary "$WORK_DIR/missing" >/dev/null 2>&1; then
     fail "installer accepted a missing source"
 fi
-[[ "$("$INSTALL_DIR/aks-flex-node" replacement)" == "replacement" ]] || fail "failed staging replaced the installed binary"
+[[ "$("$INSTALL_DIR/aks-flex-node" -c 'printf "%s" "$1"' _ replacement)" == "replacement" ]] || fail "failed staging replaced the installed binary"
 assert_no_staged_files
 
 # Installer and managed activation paths must serialize on the same lock.
