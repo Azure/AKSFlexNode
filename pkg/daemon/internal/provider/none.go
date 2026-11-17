@@ -212,7 +212,7 @@ func (p None) StartNode(params StartParams) phases.Task {
 		if err := InstallNoneNPD(ctx, log, cfg, gs); err != nil {
 			return err
 		}
-		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart).Do(ctx); err != nil {
+		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart, isolation.ModeNone).Do(ctx); err != nil {
 			return err
 		}
 		SeedNoneState(params.State, ac)
