@@ -18,7 +18,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
-func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
+func TestOfflineNPDUsesSuppliedRootAndFixedUnit(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"nspawn", "container", "none"} {
 		t.Run(mode, func(t *testing.T) {
@@ -48,8 +48,7 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 					case "none":
 						root = none.Root{HostRoot: t.TempDir(), Layout: none.Layout{Base: t.TempDir()}, Version: "offline"}
 					}
-					const unit = "chosen-worker-npd.service"
-					unitPath := root.Path("/etc/systemd/system/" + unit)
+					unitPath := root.Path("/etc/systemd/system/" + UnitName)
 					if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 						t.Fatal(err)
 					}
@@ -64,14 +63,13 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 						}
 					}
 					decoyRoot := isolation.DirRoot{Dir: t.TempDir()}
-					decoyUnit := decoyRoot.Path("/etc/systemd/system/" + unit)
+					decoyUnit := decoyRoot.Path("/etc/systemd/system/" + UnitName)
 					if err := os.MkdirAll(filepath.Dir(decoyUnit), 0o755); err != nil {
 						t.Fatal(err)
 					}
 					untouched := []string{
 						decoyUnit,
-						root.Path("/etc/systemd/system/" + systemdUnitNPD),
-						root.Path("/etc/systemd/system/" + HostUnitNPD),
+						root.Path("/etc/systemd/system/unrelated.service"),
 					}
 					for _, path := range untouched {
 						if err := os.WriteFile(path, []byte("unrelated service"), 0o644); err != nil {
@@ -92,7 +90,7 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 							if gotCtx != ctx || gotLog != log {
 								t.Fatal("offline NPD did not propagate context and logger")
 							}
-							if len(args) != 3 || args[0] != "systemctl" || args[2] != unit {
+							if len(args) != 3 || args[0] != "systemctl" || args[2] != UnitName {
 								t.Fatalf("unexpected cleanup command: %v", args)
 							}
 							calls = append(calls, strings.Join(args, " "))
@@ -108,7 +106,7 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 					cfg := &config.Config{Bootstrap: config.BootstrapConfig{
 						OfflineArtifacts: config.OfflineArtifactsConfig{Source: "https://example.invalid/artifacts"},
 					}}
-					task := Start(log, cfg, root, ns, StartOptions{UnitName: unit})
+					task := Start(log, cfg, root, ns, BinaryPath)
 					if task.Name() != "start-npd" {
 						t.Fatalf("task name = %q", task.Name())
 					}
@@ -129,9 +127,9 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 					}
 					var want []string
 					if !tc.absent && !tc.statFailure && tc.cancelAfter != "before" {
-						want = append(want, "systemctl stop "+unit)
+						want = append(want, "systemctl stop "+UnitName)
 						if tc.failAction != "stop" && tc.cancelAfter != "stop" {
-							want = append(want, "systemctl disable "+unit)
+							want = append(want, "systemctl disable "+UnitName)
 						}
 					}
 					if !slices.Equal(calls, want) {
@@ -153,7 +151,7 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 						}
 						want = nil
 						if !tc.absent {
-							want = []string{"systemctl stop " + unit, "systemctl disable " + unit}
+							want = []string{"systemctl stop " + UnitName, "systemctl disable " + UnitName}
 						}
 						if !slices.Equal(calls, want) {
 							t.Fatalf("retry calls = %v, want %v", calls, want)

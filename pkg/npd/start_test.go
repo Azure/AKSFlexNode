@@ -51,7 +51,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 			APIServer: "https://example.hcp.westus.azmk8s.io:443",
 		},
 	}
-	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart).(*startTask)
+	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart, BinaryPath).(*startTask)
 	if !ok {
 		t.Fatalf("Start did not return *startTask")
 	}
@@ -59,7 +59,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 		t.Fatalf("ensureServiceFile: %v", err)
 	}
 
-	unitPath := filepath.Join(machineDir, "etc/systemd/system", systemdUnitNPD)
+	unitPath := filepath.Join(machineDir, "etc/systemd/system", UnitName)
 	data, err := os.ReadFile(unitPath) //nolint:gosec // path built from test TempDir
 	if err != nil {
 		t.Fatalf("read rendered unit: %v", err)
@@ -87,8 +87,7 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			var root isolation.NodeRoot = isolation.DirRoot{Dir: dir}
-			unit, binary := systemdUnitNPD, BinaryPath
-			var options []StartOptions
+			binary := BinaryPath
 			var calls []string
 			ns := &goalstates.NodeStart{
 				MachineDir: t.TempDir(), MachineName: "kube2", NodeName: "flex-worker",
@@ -105,15 +104,14 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 				ns.InContainer = true
 			case "none":
 				root = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
-				unit, binary = "versioned-npd.service", root.Path(BinaryPath)
-				options = []StartOptions{{UnitName: unit, BinaryPath: binary}}
+				binary = root.Path(BinaryPath)
 			}
 			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
-			path := root.Path("/etc/systemd/system/" + unit)
-			if err := Start(log, cfg, root, ns, options...).Do(t.Context()); err != nil {
+			path := root.Path("/etc/systemd/system/" + UnitName)
+			if err := Start(log, cfg, root, ns, binary).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"systemctl is-active " + unit, "systemctl restart " + unit}
+			want := []string{"systemctl is-active " + UnitName, "systemctl restart " + UnitName}
 			if !slices.Equal(calls, want) {
 				t.Fatalf("initial NPD commands = %v, want %v", calls, want)
 			}
@@ -135,10 +133,10 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			}
 			for range 2 {
 				calls = nil
-				if err := Start(log, cfg, root, ns, options...).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, root, ns, binary).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				if want := []string{"systemctl is-active " + unit}; !slices.Equal(calls, want) {
+				if want := []string{"systemctl is-active " + UnitName}; !slices.Equal(calls, want) {
 					t.Fatalf("unchanged NPD commands = %v, want %v", calls, want)
 				}
 			}
@@ -198,7 +196,7 @@ func TestNPDSystemdActions(t *testing.T) {
 					return "active", nil
 				},
 			}
-			task, ok := Start(log, &config.Config{}, ns.Root(), ns).(*startTask)
+			task, ok := Start(log, &config.Config{}, ns.Root(), ns, BinaryPath).(*startTask)
 			if !ok {
 				t.Fatal("Start did not return *startTask")
 			}
@@ -214,7 +212,7 @@ func TestNPDSystemdActions(t *testing.T) {
 			for _, action := range tc.want {
 				command := "systemctl " + action
 				if action != "daemon-reload" {
-					command += " " + systemdUnitNPD
+					command += " " + UnitName
 				}
 				want = append(want, command)
 			}

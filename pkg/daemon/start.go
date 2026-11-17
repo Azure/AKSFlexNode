@@ -64,7 +64,7 @@ func StartNode(
 		),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, machineName),
-		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart),
+		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, npd.BinaryPath),
 		saveState(store, state),
 	)
 }
