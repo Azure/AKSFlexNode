@@ -166,7 +166,7 @@ func TestResetNodeAppliedStateRouting(t *testing.T) {
 			}
 			ipam := putNoneResetFile(t, root, "var/lib/cni/networks/site/10.0.0.2", "site-owned")
 			config := putNoneResetFile(t, root, "etc/cni/net.d/site.conflist", "site-owned")
-			provider, err := discoverResetProvider(t.Context(), store.Load, discardLogger(), nil)
+			provider, err := discoverResetProvider(t.Context(), store, discardLogger(), nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("reset=%v, wantErr=%v", err, tc.wantErr)
 			}

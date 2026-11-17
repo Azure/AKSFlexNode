@@ -192,7 +192,7 @@ func TestNoneResetRetriesUsingAppliedStateAfterSDKFootprintsDisappear(t *testing
 		t.Fatalf("failed cleanup lost IPAM: %v", err)
 	}
 	for pass := 1; pass <= 2; pass++ {
-		provider, err := discoverResetProvider(t.Context(), store.Load, td.Log, nil)
+		provider, err := discoverResetProvider(t.Context(), store, td.Log, nil)
 		if err != nil || provider.Mode() != isolation.ModeNone {
 			t.Fatalf("partial reset provider=%v, error=%v", provider, err)
 		}
