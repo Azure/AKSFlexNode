@@ -9,15 +9,15 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
-type containerProvider = provider.Container
+type containerProvider = runtimeprovider.Container
 
-var requireNoContainerStartupForAgentActivation = provider.RequireNoContainerStartupForAgentActivation
+var requireNoContainerStartupForAgentActivation = runtimeprovider.RequireNoContainerStartupForAgentActivation
 
 func containerTestProvider(t *testing.T, startup containerStartupStore) containerProvider {
 	t.Helper()
@@ -41,7 +41,7 @@ func TestContainerProviderDiscoversStartupWithoutAppliedState(t *testing.T) {
 			if p.Teardown.Present() {
 				t.Fatal("fixture has SDK footprints")
 			}
-			selected, err := discoverNodeProvider(nil, discardLogger(), []NodeProvider{p})
+			selected, err := discoverNodeProvider(nil, discardLogger(), []runtimeprovider.NodeProvider{p})
 			if err != nil || selected.Mode() != isolation.ModeContainer {
 				t.Fatalf("discovery=%T, %v", selected, err)
 			}

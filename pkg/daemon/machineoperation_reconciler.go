@@ -13,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -28,13 +29,13 @@ type machineOperationReconcilerOptions struct {
 	NodeName             string
 	AKSMachineName       string
 	MachineOperationMode string
-	Operator             nodeOperator
+	Operator             runtimeprovider.Operator
 	AgentUpgrade         agentUpgradeExecutor
 }
 
 type machineOperationHandlers struct {
 	log          *slog.Logger
-	operator     nodeOperator
+	operator     runtimeprovider.Operator
 	agentUpgrade agentUpgradeExecutor
 }
 

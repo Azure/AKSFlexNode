@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -92,7 +92,7 @@ func TestContainerAgentUpgradeSignal(t *testing.T) {
 	if signal.Isolation != isolation.ModeContainer || signal.ActiveMachine != "kube2" {
 		t.Fatalf("wrong signal: %+v", signal)
 	}
-	if strings.Contains(provider.ContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
+	if strings.Contains(runtimeprovider.ContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
 		t.Fatal("container signal selects nspawn synchronization")
 	}
 }

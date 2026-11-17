@@ -7,7 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -46,7 +46,7 @@ type nspawnNodeOperator struct {
 	*operatorBase
 }
 
-func newNSpawnOperator(ctx context.Context, cfg *config.Config, state stateStore, worker NodeProvider) (nodeOperator, error) {
+func newNSpawnOperator(ctx context.Context, cfg *config.Config, state stateStore, worker runtimeprovider.NodeProvider) (runtimeprovider.Operator, error) {
 	base, _, err := newOperatorBase(ctx, cfg, state, worker)
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (*nspawnNodeOperator) ResumeRepave(context.Context, *slog.Logger, *corev1.N
 	return false, nil
 }
 
-func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*activeMachine, error) {
+func (o *nspawnNodeOperator) findActiveMachine(ctx context.Context) (*runtimeprovider.ActiveMachine, error) {
 	return activeMachineFromStore(ctx, o.state)
 }
 
@@ -84,12 +84,12 @@ func (o *nspawnNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
-	newState := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
+	newState := nextAppliedState(active.State, goal, &runtimeprovider.ActiveMachine{Name: newMachine})
 
 	tasks := phases.Serial(log,
 		nodestop.StopNode(log, oldMachine),
 		reset.CleanupNetwork(log),
-		o.provider.StartNode(StartParams{
+		o.provider.StartNode(runtimeprovider.StartParams{
 			Config: cfg, Log: log, MachineName: newMachine, GoalState: gs,
 			ContainerImageArchives: containerImageArchives, Store: o.state, State: newState,
 		}),

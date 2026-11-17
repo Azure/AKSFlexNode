@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
@@ -79,7 +80,7 @@ const hostRootRestartWait = 2 * time.Minute
 // A failure is logged, never returned: the daemon is healthy either way, and
 // the next start retries; see holdForHostRoot for a failure that leaves the
 // layout moved under the running daemon.
-func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor, provider NodeProvider) bool {
+func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor, provider runtimeprovider.NodeProvider) bool {
 	lock, err := upgrades.Acquire()
 	if err != nil {
 		log.Warn("not moving the agent's files to the host root: an activation holds the lock", "error", err)
@@ -193,7 +194,7 @@ func awaitReplacement(ctx context.Context, log *slog.Logger, reason string, wait
 
 // rewriteHostRootUnits points every unit and script that names the host-side
 // files at the files under the host root.
-func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, provider NodeProvider) error {
+func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, provider runtimeprovider.NodeProvider) error {
 	// The agent unit, the recovery unit and the recovery script.
 	if err := ensureAgentUpgradeServiceAssets(ctx, log, agentServiceOptionsFor(cfg, provider)); err != nil {
 		return err

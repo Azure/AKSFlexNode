@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 

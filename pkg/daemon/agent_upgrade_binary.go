@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -250,7 +251,7 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 	}, nil
 }
 
-func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, actions agentActions) error {
+func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, actions runtimeprovider.AgentActions) error {
 	opts, err := secureAgentInstallOptions(rawURL, expectedDigest)
 	if err != nil {
 		return err

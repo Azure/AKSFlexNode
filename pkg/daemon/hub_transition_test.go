@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"

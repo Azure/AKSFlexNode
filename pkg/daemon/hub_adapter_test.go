@@ -17,7 +17,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 )
 

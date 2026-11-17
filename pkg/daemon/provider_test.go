@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -22,7 +22,7 @@ type noneProvider = runtimeprovider.None
 var newNoneRuntime = runtimeprovider.NewNoneRuntime
 var resetNoneRuntime = runtimeprovider.ResetNoneRuntime
 
-func mustNodeProvider(t *testing.T, mode isolation.Mode) NodeProvider {
+func mustNodeProvider(t *testing.T, mode isolation.Mode) runtimeprovider.NodeProvider {
 	t.Helper()
 	provider, err := NewNodeProvider(mode)
 	if err != nil {
@@ -61,7 +61,8 @@ func TestBootstrapProviderAppliedStatePolicy(t *testing.T) {
 }
 
 type resetActionProvider struct {
-	NodeProvider
+	runtimeprovider.NodeProvider
+
 	resets *int
 }
 
@@ -74,7 +75,7 @@ func TestResetInvokesDiscoveredActions(t *testing.T) {
 	t.Parallel()
 	resets := 0
 	provider := resetActionProvider{NodeProvider: mustNodeProvider(t, "none"), resets: &resets}
-	task, err := resetNodeFromState(t.Context(), discardLogger(), &testStateStore{}, []NodeProvider{provider})
+	task, err := resetNodeFromState(t.Context(), discardLogger(), &testStateStore{}, []runtimeprovider.NodeProvider{provider})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,8 @@ func TestResetInvokesDiscoveredActions(t *testing.T) {
 }
 
 type presenceProvider struct {
-	NodeProvider
+	runtimeprovider.NodeProvider
+
 	present bool
 	probes  *int
 }
@@ -116,7 +118,7 @@ func TestResetProviderDiscovery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			probes := 0
-			var candidates []NodeProvider
+			var candidates []runtimeprovider.NodeProvider
 			for _, mode := range tc.present {
 				candidates = append(candidates, presenceProvider{NodeProvider: mustNodeProvider(t, mode), present: true, probes: &probes})
 			}
@@ -135,7 +137,8 @@ func TestResetProviderDiscovery(t *testing.T) {
 }
 
 type recordingProvider struct {
-	NodeProvider
+	runtimeprovider.NodeProvider
+
 	calls     *[]string
 	guards    int
 	failGuard int
@@ -215,7 +218,7 @@ func TestActivationDiscoversPendingRuntimeWithoutAppliedState(t *testing.T) {
 		NodeProvider: presenceProvider{NodeProvider: mustNodeProvider(t, "none"), present: true, probes: &probes},
 		calls:        &calls, failGuard: 1,
 	}
-	selected, err := discoverNodeProvider(nil, discardLogger(), []NodeProvider{pending})
+	selected, err := discoverNodeProvider(nil, discardLogger(), []runtimeprovider.NodeProvider{pending})
 	if err != nil || selected != pending {
 		t.Fatalf("discovered=%v, error=%v", selected, err)
 	}

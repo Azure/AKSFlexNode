@@ -21,7 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
@@ -68,7 +68,7 @@ type repaveReconciler struct {
 	log      *slog.Logger
 	machines aksmachine.MachineClient
 	client   client.Client
-	operator nodeOperator
+	operator runtimeprovider.Operator
 	nodeName string
 	hub      hubMachineReconciler
 	// machineEvents queues AKS-machine-driven reconciles so cached Node
@@ -82,7 +82,7 @@ type repaveReconcilerOptions struct {
 	Log      *slog.Logger
 	Machines aksmachine.MachineClient
 	Client   client.Client
-	Operator nodeOperator
+	Operator runtimeprovider.Operator
 	NodeName string
 	// Hub reconciles disconnect-tolerance intent from Machine reads. Optional so
 	// tests and callers without Hub support can omit it.

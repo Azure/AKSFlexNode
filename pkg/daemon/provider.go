@@ -5,15 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
-type NodeProvider = runtimeprovider.NodeProvider
-type StartParams = runtimeprovider.StartParams
-type agentActions = runtimeprovider.AgentActions
-
-var nodeProviders = map[isolation.Mode]func() NodeProvider{
+var nodeProviders = map[isolation.Mode]func() runtimeprovider.NodeProvider{
 	isolation.ModeNSpawn:    newNSpawnProvider,
 	isolation.ModeNone:      newNoneProvider,
 	isolation.ModeContainer: newContainerProvider,
@@ -27,7 +23,7 @@ func hostProviderServices() runtimeprovider.HostServices {
 	}
 }
 
-func newNSpawnProvider() NodeProvider {
+func newNSpawnProvider() runtimeprovider.NodeProvider {
 	return runtimeprovider.NSpawn{BinaryPath: runtimeprovider.NSpawnAgentBinaryPath, Services: runtimeprovider.NSpawnServices{
 		HostServices: hostProviderServices(), NewOperator: newNSpawnOperator,
 		CheckMachinesTarget: CheckMachinesTarget, ConvergeContainerAgent: convergeNSpawnContainerAgent,
@@ -37,7 +33,7 @@ func newNSpawnProvider() NodeProvider {
 	}}
 }
 
-func newNoneProvider() NodeProvider {
+func newNoneProvider() runtimeprovider.NodeProvider {
 	return runtimeprovider.None{Host: hostProviderServices(), OperatorFactory: newNoneOperator}
 }
 
@@ -54,7 +50,7 @@ func convergeNSpawnContainerAgent(ctx context.Context, log *slog.Logger, state a
 }
 
 // NewNodeProvider constructs the runtime for an explicitly selected mode.
-func NewNodeProvider(mode isolation.Mode) (NodeProvider, error) {
+func NewNodeProvider(mode isolation.Mode) (runtimeprovider.NodeProvider, error) {
 	create, ok := nodeProviders[mode]
 	if !ok {
 		return nil, fmt.Errorf("unsupported node isolation %q", mode)
@@ -62,7 +58,7 @@ func NewNodeProvider(mode isolation.Mode) (NodeProvider, error) {
 	return create(), nil
 }
 
-func validateAppliedProvider(provider NodeProvider, applied *runtimeprovider.State) error {
+func validateAppliedProvider(provider runtimeprovider.NodeProvider, applied *runtimeprovider.State) error {
 	if applied != nil && applied.Isolation != provider.Mode() {
 		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.Isolation)
 	}
@@ -71,7 +67,7 @@ func validateAppliedProvider(provider NodeProvider, applied *runtimeprovider.Sta
 
 // CheckBootstrapIsolation runs before registration or host mutation, even when
 // the optional preflight command was not run.
-func CheckBootstrapIsolation(ctx context.Context, log *slog.Logger, provider NodeProvider) error {
+func CheckBootstrapIsolation(ctx context.Context, log *slog.Logger, provider runtimeprovider.NodeProvider) error {
 	if err := provider.ValidateEnvironment(Containerized()); err != nil {
 		return err
 	}
@@ -86,7 +82,7 @@ func CheckBootstrapIsolation(ctx context.Context, log *slog.Logger, provider Nod
 	return checkBootstrapProvider(ctx, log, provider, applied, registeredNodeProviders())
 }
 
-func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider NodeProvider, applied *runtimeprovider.State, candidates []NodeProvider) error {
+func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider runtimeprovider.NodeProvider, applied *runtimeprovider.State, candidates []runtimeprovider.NodeProvider) error {
 	if err := validateAppliedProvider(provider, applied); err != nil {
 		return err
 	}
@@ -102,7 +98,7 @@ func checkBootstrapProvider(ctx context.Context, log *slog.Logger, provider Node
 // discoverResetProvider loads Flex state first: SDK Destroy can remove all SDK
 // footprints before later cleanup fails. A corrupt journal must never route to
 // the legacy runtime's destructive cleanup.
-func discoverResetProvider(ctx context.Context, store stateStore, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
+func discoverResetProvider(ctx context.Context, store stateStore, log *slog.Logger, candidates []runtimeprovider.NodeProvider) (runtimeprovider.NodeProvider, error) {
 	applied, err := store.Load(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load applied state for reset: %w", err)
@@ -121,11 +117,11 @@ func discoverResetProvider(ctx context.Context, store stateStore, log *slog.Logg
 
 // discoverNodeProvider preserves applied ownership, including after SDK cleanup.
 // Without applied state, runtime footprints can identify a partial bootstrap.
-func discoverNodeProvider(applied *runtimeprovider.State, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
+func discoverNodeProvider(applied *runtimeprovider.State, log *slog.Logger, candidates []runtimeprovider.NodeProvider) (runtimeprovider.NodeProvider, error) {
 	if applied != nil {
 		return NewNodeProvider(applied.Isolation)
 	}
-	var found NodeProvider
+	var found runtimeprovider.NodeProvider
 	for _, provider := range candidates {
 		if !provider.BootstrapPresent(log) {
 			continue
@@ -141,7 +137,7 @@ func discoverNodeProvider(applied *runtimeprovider.State, log *slog.Logger, cand
 	return NewNodeProvider(isolation.ModeNSpawn)
 }
 
-func installedNodeProvider(ctx context.Context, log *slog.Logger) (NodeProvider, stateStore, error) {
+func installedNodeProvider(ctx context.Context, log *slog.Logger) (runtimeprovider.NodeProvider, stateStore, error) {
 	store, err := NewFileStateStore()
 	if err != nil {
 		return nil, nil, err
@@ -157,8 +153,8 @@ func installedNodeProvider(ctx context.Context, log *slog.Logger) (NodeProvider,
 	return provider, store, nil
 }
 
-func registeredNodeProviders() []NodeProvider {
-	providers := make([]NodeProvider, 0, len(nodeProviders))
+func registeredNodeProviders() []runtimeprovider.NodeProvider {
+	providers := make([]runtimeprovider.NodeProvider, 0, len(nodeProviders))
 	for _, create := range nodeProviders {
 		providers = append(providers, create())
 	}

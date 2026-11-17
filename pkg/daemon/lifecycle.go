@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -75,7 +76,7 @@ type installServiceTask struct {
 
 // InstallService returns a task that installs, enables, and starts the systemd unit. In the
 // agent's container, the unit runs the agent's image instead of a binary on the host.
-func InstallService(cfg *config.Config, log *slog.Logger, provider NodeProvider) phases.Task {
+func InstallService(cfg *config.Config, log *slog.Logger, provider runtimeprovider.NodeProvider) phases.Task {
 	return installService(agentServiceOptionsFor(cfg, provider), log, Containerized())
 }
 
@@ -179,7 +180,7 @@ type agentServiceOptions struct {
 	WantedTargets []string
 }
 
-func agentServiceOptionsFor(cfg *config.Config, provider NodeProvider) agentServiceOptions {
+func agentServiceOptionsFor(cfg *config.Config, provider runtimeprovider.NodeProvider) agentServiceOptions {
 	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled(), WantedTargets: provider.WantedTargets()}
 }
 

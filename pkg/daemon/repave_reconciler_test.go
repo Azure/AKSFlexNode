@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -92,7 +92,7 @@ func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 	}
 }
 
-func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator nodeOperator) *repaveReconciler {
+func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator runtimeprovider.Operator) *repaveReconciler {
 	t.Helper()
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:      slog.Default(),

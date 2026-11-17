@@ -9,7 +9,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
@@ -141,7 +141,7 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err != nil {
 		return nil, fmt.Errorf("resolve container repave: %w", err)
 	}
-	next := nextAppliedState(state, goal, &activeMachine{Name: slot})
+	next := nextAppliedState(state, goal, &runtimeprovider.ActiveMachine{Name: slot})
 	next.Isolation, next.NodeConfig = isolation.ModeContainer, ac
 	next = next.DeepCopy()
 	node, err := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})

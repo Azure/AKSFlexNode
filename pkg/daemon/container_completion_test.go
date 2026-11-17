@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 )
 
 func TestContainerCompletionSyncFailureKeepsStartupAndSource(t *testing.T) {

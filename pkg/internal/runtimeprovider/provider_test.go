@@ -1,4 +1,4 @@
-package provider_test
+package runtimeprovider_test
 
 import (
 	"log/slog"

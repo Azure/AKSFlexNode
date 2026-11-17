@@ -1,4 +1,4 @@
-package provider
+package runtimeprovider
 
 import (
 	"context"

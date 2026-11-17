@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -113,7 +114,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 
 	tasks := phases.Serial(logger,
 		provider.SetupHost(cfg, logger, containerized),
-		provider.StartNode(daemon.StartParams{
+		provider.StartNode(runtimeprovider.StartParams{
 			Config: cfg, Log: logger, MachineName: machineName, GoalState: gs,
 			ContainerImageArchives: containerImageArchives, Store: stateStore, State: state,
 		}),

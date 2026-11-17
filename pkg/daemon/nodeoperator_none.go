@@ -7,7 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -39,7 +39,7 @@ type noneNodeOperator struct {
 	recovered bool
 }
 
-func newNoneOperator(ctx context.Context, cfg *config.Config, store stateStore, worker NodeProvider) (nodeOperator, error) {
+func newNoneOperator(ctx context.Context, cfg *config.Config, store stateStore, worker runtimeprovider.NodeProvider) (runtimeprovider.Operator, error) {
 	base, state, err := newOperatorBase(ctx, cfg, store, worker)
 	if err != nil {
 		return nil, err

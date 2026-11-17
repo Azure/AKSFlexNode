@@ -1,4 +1,4 @@
-package provider_test
+package runtimeprovider_test
 
 import (
 	"context"
@@ -8,12 +8,12 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
-func mustNodeProvider(t *testing.T, mode isolation.Mode) provider.NodeProvider {
+func mustNodeProvider(t *testing.T, mode isolation.Mode) runtimeprovider.NodeProvider {
 	t.Helper()
 	p, err := daemon.NewNodeProvider(mode)
 	if err != nil {
@@ -22,11 +22,13 @@ func mustNodeProvider(t *testing.T, mode isolation.Mode) provider.NodeProvider {
 	return p
 }
 
-type memoryStateStore struct{ state *provider.State }
+type memoryStateStore struct{ state *runtimeprovider.State }
 
-func (s *memoryStateStore) Load(ctx context.Context) (*provider.State, error)     { return s.state, nil }
-func (s *memoryStateStore) Save(ctx context.Context, state *provider.State) error { return nil }
-func (s *memoryStateStore) Delete(ctx context.Context) error                      { return nil }
+func (s *memoryStateStore) Load(ctx context.Context) (*runtimeprovider.State, error) {
+	return s.state, nil
+}
+func (s *memoryStateStore) Save(ctx context.Context, state *runtimeprovider.State) error { return nil }
+func (s *memoryStateStore) Delete(ctx context.Context) error                             { return nil }
 
 func TestContainerSelectionAndEnvironment(t *testing.T) {
 	t.Parallel()
@@ -47,7 +49,7 @@ func TestContainerSelectionAndEnvironment(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: tc.configured, ExperimentalContainerIsolation: tc.optIn}}
 			appliedCfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeContainer, ExperimentalContainerIsolation: true}}
-			state := &provider.State{Isolation: tc.applied, ActiveMachine: "kube1", AppliedSettingsVersion: "old", NodeConfig: config.ToAgentConfig(appliedCfg, "kube1").DeepCopy()}
+			state := &runtimeprovider.State{Isolation: tc.applied, ActiveMachine: "kube1", AppliedSettingsVersion: "old", NodeConfig: config.ToAgentConfig(appliedCfg, "kube1").DeepCopy()}
 			p := mustNodeProvider(t, tc.configured)
 			err := p.ValidateEnvironment(tc.containerized)
 			if err == nil {
@@ -73,9 +75,9 @@ func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
 			if mode == isolation.ModeContainer {
 				want = filepath.Join(container.Layout{}.RootfsDir("kube2"), "usr/local/bin/aks-flex-node")
 			}
-			path := provider.NSpawnAgentBinaryPath
+			path := runtimeprovider.NSpawnAgentBinaryPath
 			if mode == isolation.ModeContainer {
-				path = provider.ContainerAgentBinaryPath
+				path = runtimeprovider.ContainerAgentBinaryPath
 			}
 			if got := path("kube2"); got != want {
 				t.Fatalf("binary sync path = %s, want %s", got, want)

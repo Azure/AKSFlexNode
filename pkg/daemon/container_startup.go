@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
@@ -19,7 +19,7 @@ const containerStartupFileName = "container-startup.json"
 // SDK error requires operator recovery; the record cannot identify a safe slot.
 // Starting records a successful SDK return with Flex completion still pending,
 // not a pre-kubelet publication. Finished records completed local work.
-type containerStartup = provider.ContainerStartup
+type containerStartup = runtimeprovider.ContainerStartup
 
 type containerStartupStore struct{ path string }
 
@@ -39,7 +39,7 @@ func (s containerStartupStore) Load() (*containerStartup, error) {
 	if err := json.Unmarshal(data, &startup); err != nil {
 		return nil, fmt.Errorf("decode container startup: %w", err)
 	}
-	if !provider.ValidContainerState(startup.Next) || !provider.ValidContainerState(startup.Previous) ||
+	if !runtimeprovider.ValidContainerState(startup.Next) || !runtimeprovider.ValidContainerState(startup.Previous) ||
 		startup.Next.ActiveMachine == startup.Previous.ActiveMachine || startup.Next.AppliedSettingsVersion == "" {
 		return nil, fmt.Errorf("container startup has invalid frozen configuration or slots")
 	}

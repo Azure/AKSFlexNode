@@ -7,22 +7,18 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
-
-type activeMachine = runtimeprovider.ActiveMachine
-
-type nodeOperator = runtimeprovider.Operator
 
 type operatorBase struct {
 	cfg                    *config.Config
 	state                  stateStore
 	bootstrapDataRefresher bootstrapDataRefresher
-	provider               NodeProvider
+	provider               runtimeprovider.NodeProvider
 }
 
-func newOperatorBase(ctx context.Context, cfg *config.Config, store stateStore, provider NodeProvider) (*operatorBase, *runtimeprovider.State, error) {
+func newOperatorBase(ctx context.Context, cfg *config.Config, store stateStore, provider runtimeprovider.NodeProvider) (*operatorBase, *runtimeprovider.State, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("state store is nil")
 	}
@@ -91,7 +87,7 @@ func (o *operatorBase) configForGoalState(ctx context.Context, log *slog.Logger,
 	return cfg, nil
 }
 
-func nextAppliedState(current *runtimeprovider.State, goal aksmachine.GoalState, active *activeMachine) *runtimeprovider.State {
+func nextAppliedState(current *runtimeprovider.State, goal aksmachine.GoalState, active *runtimeprovider.ActiveMachine) *runtimeprovider.State {
 	next := &runtimeprovider.State{AppliedSettingsVersion: goal.SettingsVersion, AppliedKubernetesVersion: goal.KubernetesVersion}
 	if current != nil {
 		next.Isolation = current.Isolation
