@@ -29,7 +29,7 @@ func TestHostNativeNPD(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	task := Start(slog.New(slog.DiscardHandler), cfg, ns)
+	task := Start(slog.New(slog.DiscardHandler), cfg, ns.Root(), ns, StartOptions{})
 	for range 2 {
 		if err := task.Do(t.Context()); err != nil {
 			t.Fatal(err)
@@ -91,7 +91,7 @@ func TestHostNativeNPDForcedRestart(t *testing.T) {
 				},
 			}
 			log, cfg := slog.New(slog.DiscardHandler), &config.Config{}
-			if err := Start(log, cfg, ns).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, ns.Root(), ns, StartOptions{}).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			path := root.Path(filepath.Join("/etc/systemd/system", HostUnitNPD))
@@ -105,9 +105,9 @@ func TestHostNativeNPDForcedRestart(t *testing.T) {
 			}
 			for range 2 {
 				calls, active = nil, tc.active
-				task := Start(log, cfg, ns)
+				task := Start(log, cfg, ns.Root(), ns, StartOptions{})
 				if tc.force {
-					task = Restart(log, cfg, ns)
+					task = Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true})
 				}
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)

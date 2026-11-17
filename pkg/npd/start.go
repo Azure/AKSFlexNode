@@ -41,11 +41,17 @@ type startTask struct {
 	run            func(context.Context, *slog.Logger, ...string) (string, error)
 }
 
-// Start renders and starts NPD through the node's filesystem and executor.
-func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart) phases.Task {
+// StartOptions controls reconciliation of an existing NPD service.
+type StartOptions struct {
+	// ForceRestart picks up binary changes even when the unit text is unchanged.
+	ForceRestart bool
+}
+
+// Start renders NPD through root and manages it through the node's executor.
+func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, options StartOptions) phases.Task {
 	if disabledForOfflineArtifacts(cfg) {
 		if nodeStart.HostNative() {
-			return &disableHostTask{log: log, root: nodeStart.Root(), run: nodeStart.Exec}
+			return &disableHostTask{log: log, root: root, run: nodeStart.Exec}
 		}
 		return disabledTask{name: "start-npd", log: log}
 	}
@@ -54,25 +60,16 @@ func Start(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart
 		log:            log,
 		apiServer:      nodeStart.Kubelet.APIServer,
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
-		root:           nodeStart.Root(),
+		root:           root,
 		nodeName:       nodeStart.NodeName,
 		unit:           systemdUnitNPD,
 		binaryPath:     npdBinaryPath,
+		forceRestart:   options.ForceRestart,
 		run:            nodeStart.Exec,
 	}
 	if nodeStart.HostNative() {
 		task.unit = HostUnitNPD
 		task.binaryPath = filepath.Join(none.Layout{}.BinDir(), "node-problem-detector")
-	}
-	return task
-}
-
-// Restart makes the service pick up the active version's binary even when its
-// unit text is unchanged after a host-native version-directory switch.
-func Restart(log *slog.Logger, cfg *config.Config, nodeStart *goalstates.NodeStart) phases.Task {
-	task := Start(log, cfg, nodeStart)
-	if start, ok := task.(*startTask); ok {
-		start.forceRestart = true
 	}
 	return task
 }

@@ -145,7 +145,7 @@ func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineG
 		if err := installNoneNPD(ctx, log, cfg, gs); err != nil {
 			return err
 		}
-		if err := npd.Start(log, cfg, gs.NodeStart).Do(ctx); err != nil {
+		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart, npd.StartOptions{}).Do(ctx); err != nil {
 			return err
 		}
 		seedNoneState(state, ac, noneNPDVersion(cfg))
