@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 
 func TestCandidateIsolationProbe(t *testing.T) {
 	t.Parallel()
+
 	for _, tc := range []struct {
 		name    string
 		mode    isolation.Mode
@@ -53,6 +55,7 @@ func TestCandidateIsolationProbe(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			path := filepath.Join(t.TempDir(), "candidate")
 			if err := os.WriteFile(path, []byte("#!/bin/sh\n"+tc.script+"\n"), 0o755); err != nil {
 				t.Fatal(err)
@@ -64,8 +67,19 @@ func TestCandidateIsolationProbe(t *testing.T) {
 	}
 }
 
-func TestNoneUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
+func TestUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
 	t.Parallel()
+
+	for _, mode := range []isolation.Mode{isolation.ModeNone, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			testUpgradeUnsupportedCandidate(t, mode)
+		})
+	}
+}
+
+func testUpgradeUnsupportedCandidate(t *testing.T, mode isolation.Mode) {
+	t.Helper()
 
 	archive := agentUpgradeTestArchive(t, "#!/bin/sh\nif [ \"$1\" = version ]; then echo v1; exit 0; fi\nexit 1\n")
 	digest := sha256.Sum256(archive)
@@ -87,7 +101,7 @@ func TestNoneUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := installAndSwitchBinary(t.Context(), slog.New(slog.DiscardHandler), server.URL, hex.EncodeToString(digest[:]), paths, isolation.ModeNone); err == nil {
+	if err := installAndSwitchBinary(t.Context(), slog.New(slog.DiscardHandler), server.URL, hex.EncodeToString(digest[:]), paths, mode); err == nil {
 		t.Fatal("unsupported candidate was accepted")
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
@@ -97,10 +111,11 @@ func TestNoneUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
 type snapshotActivationService struct {
 	candidate string
 	original  string
+	mode      isolation.Mode
 }
 
 func (s snapshotActivationService) Preflight(ctx context.Context, _ string) (agentbinary.ServicePlan, error) {
-	if err := CheckIsolation(ctx, s.candidate, isolation.ModeNone); err != nil {
+	if err := CheckIsolation(ctx, s.candidate, s.mode); err != nil {
 		return agentbinary.ServicePlan{}, err
 	}
 	// Replacing the caller's candidate after its compatibility check must not
@@ -120,8 +135,19 @@ func (snapshotActivationService) WaitHealthy(context.Context, string) error { re
 func TestActivationUsesPrivateCompatibilityCandidate(t *testing.T) {
 	t.Parallel()
 
+	for _, mode := range []isolation.Mode{isolation.ModeNone, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			testActivationPrivateCandidate(t, mode)
+		})
+	}
+}
+
+func testActivationPrivateCandidate(t *testing.T, mode isolation.Mode) {
+	t.Helper()
+
 	original := filepath.Join(t.TempDir(), "candidate")
-	const content = "#!/bin/sh\ncase \"$1\" in version) echo v1;; supports-isolation) test \"$2\" = none;; *) exit 1;; esac\n"
+	content := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in version) echo v1;; supports-isolation) test \"$2\" = %s;; *) exit 1;; esac\n", mode)
 	writeTestFile(t, original, content)
 	candidate, cleanup, err := SnapshotCandidate(original)
 	if err != nil {
@@ -143,6 +169,7 @@ func TestActivationUsesPrivateCompatibilityCandidate(t *testing.T) {
 	result, err := agentbinary.ActivateHostDaemon(t.Context(), discardLogger(), opts, snapshotActivationService{
 		candidate: candidate,
 		original:  original,
+		mode:      mode,
 	})
 	if err != nil || !result.Changed || result.RolledBack {
 		t.Fatalf("activation result = %+v, %v", result, err)

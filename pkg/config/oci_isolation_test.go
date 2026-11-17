@@ -8,9 +8,14 @@ import (
 
 func TestOCIWorkerUsesGuestCredentialHelper(t *testing.T) {
 	t.Parallel()
+
 	cfg := &Config{
-		Bootstrap: BootstrapConfig{Isolation: isolation.ModeContainer},
-		Azure:     AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}},
+		Bootstrap: BootstrapConfig{
+			Isolation: isolation.ModeContainer,
+		},
+		Azure: AzureConfig{
+			ManagedIdentity: &ManagedIdentityConfig{},
+		},
 	}
 	if err := cfg.Bootstrap.validate(); err != nil {
 		t.Fatalf("OCI mode rejected: %v", err)

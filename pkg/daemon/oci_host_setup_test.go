@@ -11,7 +11,12 @@ import (
 
 func TestOCIHostSetupOrdersRuntimePrerequisites(t *testing.T) {
 	t.Parallel()
-	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeContainer}}
+
+	cfg := &config.Config{
+		Bootstrap: config.BootstrapConfig{
+			Isolation: isolation.ModeContainer,
+		},
+	}
 	name := setupHost(cfg, slog.New(slog.DiscardHandler), false).Name()
 	modules := strings.Index(name, "load-kernel-modules")
 	containerd := strings.Index(name, "disable-containerd")

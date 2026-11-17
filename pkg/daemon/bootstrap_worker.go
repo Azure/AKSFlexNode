@@ -73,7 +73,7 @@ func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.
 	return nil
 }
 
-// BootstrapState selects the installed worker for a host-native reapply.
+// BootstrapState selects the installed worker for a none/OCI reapply.
 // Nspawn retains its existing bootstrap behavior.
 func BootstrapState(applied, seeded *State, cfg *config.Config) (*State, bool, error) {
 	if applied == nil || cfg.Bootstrap.Isolation == isolation.ModeNSpawn {

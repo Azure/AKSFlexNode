@@ -44,16 +44,21 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			}
 			helper := filepath.Join(t.TempDir(), "worker", "agent")
 			executor := &HostUpgrade{
-				log:         discardLogger(),
-				paths:       paths,
-				mode:        mode,
-				signals:     NewUpgradeSignalStore(paths.SignalPath),
-				helperPaths: map[string]string{slot: helper},
+				log:     discardLogger(),
+				paths:   paths,
+				mode:    mode,
+				signals: NewUpgradeSignalStore(paths.SignalPath),
+				helperPaths: map[string]string{
+					slot: helper,
+				},
 			}
 			if err := executor.signals.RecordPending("upgrade", slot, "initiator"); err != nil {
 				t.Fatal(err)
 			}
-			request := UpgradeRequest{DownloadURL: server.URL, SHA256: hex.EncodeToString(digest[:])}
+			request := UpgradeRequest{
+				DownloadURL: server.URL,
+				SHA256:      hex.EncodeToString(digest[:]),
+			}
 			if err := executor.Validate(request); err != nil {
 				t.Fatal(err)
 			}
@@ -98,8 +103,19 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 	}
 }
 
-func TestNoneInstallerVerifiesChecksumBeforeExecutingCandidate(t *testing.T) {
+func TestInstallerVerifiesChecksumBeforeExecutingCandidate(t *testing.T) {
 	t.Parallel()
+
+	for _, mode := range []isolation.Mode{isolation.ModeNone, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			testInstallerChecksumBeforeExecution(t, mode)
+		})
+	}
+}
+
+func testInstallerChecksumBeforeExecution(t *testing.T, mode isolation.Mode) {
+	t.Helper()
 
 	marker := filepath.Join(t.TempDir(), "executed")
 	archive := agentUpgradeTestArchive(t, fmt.Sprintf("#!/bin/sh\necho executed > %q\nexit 0\n", marker))
@@ -115,7 +131,7 @@ func TestNoneInstallerVerifiesChecksumBeforeExecutingCandidate(t *testing.T) {
 	if err := ensureUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
 		t.Fatal(err)
 	}
-	if err := installAndSwitchBinary(t.Context(), discardLogger(), server.URL, strings.Repeat("0", 64), paths, isolation.ModeNone); err == nil || !strings.Contains(err.Error(), "SHA-256 does not match") {
+	if err := installAndSwitchBinary(t.Context(), discardLogger(), server.URL, strings.Repeat("0", 64), paths, mode); err == nil || !strings.Contains(err.Error(), "SHA-256 does not match") {
 		t.Fatalf("checksum error = %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

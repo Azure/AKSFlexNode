@@ -159,6 +159,17 @@ func TestActivationPreservesEarlierHealthDeadline(t *testing.T) {
 func TestActivationWorkerSyncFailureRollsBackAndReloadsState(t *testing.T) {
 	t.Parallel()
 
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			testActivationWorkerSyncRollback(t, mode)
+		})
+	}
+}
+
+func testActivationWorkerSyncRollback(t *testing.T, mode isolation.Mode) {
+	t.Helper()
+
 	dir := t.TempDir()
 	paths := agentdeployment.UpgradePathsUnder(dir)
 	if err := os.MkdirAll(filepath.Dir(paths.BluePath), 0o750); err != nil {
@@ -182,11 +193,11 @@ func TestActivationWorkerSyncFailureRollsBackAndReloadsState(t *testing.T) {
 
 	store := &activationStateFixture{states: []*State{
 		{
-			Isolation:     isolation.ModeNSpawn,
+			Isolation:     mode,
 			ActiveMachine: "kube1",
 		},
 		{
-			Isolation:     isolation.ModeNSpawn,
+			Isolation:     mode,
 			ActiveMachine: "kube2",
 		},
 	}}
@@ -216,9 +227,13 @@ func TestActivationWorkerSyncFailureRollsBackAndReloadsState(t *testing.T) {
 	if service.restarts != 2 || store.loads != 2 {
 		t.Fatalf("restarts = %d, state loads = %d; want 2 each", service.restarts, store.loads)
 	}
+	root := "/var/lib/machines"
+	if mode == isolation.ModeContainer {
+		root = "/var/lib/unbounded/containers"
+	}
 	want := []string{
-		filepath.Base(paths.GreenPath) + ":/var/lib/machines/kube1/usr/local/bin/aks-flex-node",
-		filepath.Base(paths.BluePath) + ":/var/lib/machines/kube2/usr/local/bin/aks-flex-node",
+		filepath.Base(paths.GreenPath) + ":" + root + "/kube1/usr/local/bin/aks-flex-node",
+		filepath.Base(paths.BluePath) + ":" + root + "/kube2/usr/local/bin/aks-flex-node",
 	}
 	if !slices.Equal(copies, want) {
 		t.Fatalf("worker copies = %v, want %v", copies, want)

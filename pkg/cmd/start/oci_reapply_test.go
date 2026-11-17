@@ -14,6 +14,7 @@ import (
 
 func TestOCIReapplyUsesPersistedAlternateSlotAndConfig(t *testing.T) {
 	t.Parallel()
+
 	cfg := bootstrapConfig(isolation.ModeContainer)
 	appliedConfig := config.ToAgentConfig(cfg, "kube2")
 	appliedConfig.Cluster.Version = "1.35.0"
@@ -28,16 +29,21 @@ func TestOCIReapplyUsesPersistedAlternateSlotAndConfig(t *testing.T) {
 	if err != nil || !reapply || state != applied {
 		t.Fatalf("select installed worker: reapply=%t, err=%v", reapply, err)
 	}
+
 	machines := &bootstrapTestMachine{}
 	log := slog.New(slog.DiscardHandler)
 	if err := registerBootstrap(t.Context(), log, cfg, machines, &goal, state, reapply); err != nil {
 		t.Fatal(err)
 	}
+
 	worker := &bootstrapTestRuntime{}
 	store := &bootstrapTestStore{state: applied}
 	input := agentruntime.Inputs{
 		Config: cfg,
-		Node:   agentruntime.Node{Slot: state.ActiveMachine, Config: state.NodeConfig},
+		Node: agentruntime.Node{
+			Slot:   state.ActiveMachine,
+			Config: state.NodeConfig,
+		},
 	}
 	if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, daemon.SaveState(store, state))...).Do(t.Context()); err != nil {
 		t.Fatal(err)

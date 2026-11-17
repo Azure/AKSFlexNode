@@ -198,7 +198,18 @@ func (containerRuntime) Reset(log *slog.Logger) phases.Task {
 }
 
 func containerTeardown(teardown *containerops.Teardown) phases.Task {
-	return hostnode.Func("reset-oci-node", func(ctx context.Context) error {
+	return hostnode.Func("reset-oci-node", func(ctx context.Context) (err error) {
+		defer func() {
+			if err == nil {
+				return
+			}
+			// Destroy can remove all slots before returning an error. Retain the
+			// existing SDK ownership trace so a no-State CLI retry still selects OCI.
+			if keepErr := os.MkdirAll(teardown.Layout.RootfsDir(""), 0o750); keepErr != nil {
+				err = errors.Join(err, fmt.Errorf("retain OCI reset ownership: %w", keepErr))
+			}
+		}()
+
 		// Destroy stops existing supervisors and checks that every container is
 		// gone, including slots whose unit was never written or was removed.
 		if err := teardown.Destroy().Do(ctx); err != nil {
