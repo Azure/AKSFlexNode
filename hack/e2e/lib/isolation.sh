@@ -8,47 +8,165 @@ readonly _E2E_ISOLATION_LOADED=1
 _isolation_snapshot() {
   remote_exec "$1" 'sudo bash -s' <<'REMOTE'
 set -euo pipefail
+probe() {
+  local name="$1" output rc
+  shift
+  if output="$("$@" && printf '\034')"; then
+    printf '%s' "${output%$'\034'}"
+    return 0
+  else
+    rc=$?
+  fi
+  printf 'snapshot check %s failed (exit %s)\n' "${name}" "${rc}" >&2
+  case "${name}" in
+    host-kubelet|host-containerd|supervisor|runc-running|guest-kubelet|guest-containerd|kubelet-version|node-location)
+      [[ -z "${output}" ]] || printf 'check stdout (first 4096 bytes): %q\n' "${output:0:4096}" >&2
+      ;;
+  esac
+  return "${rc}"
+}
 state=/etc/aks-flex-node/daemon-state.json
-mode="$(jq -er '.isolation' "${state}")"
-slot="$(jq -er '.activeMachine' "${state}")"
-case "${slot}" in kube1|kube2) ;; *) exit 1 ;; esac
-settings="$(jq -er '.appliedSettingsVersion' "${state}")"
+mode="$(probe isolation jq -er '.isolation' "${state}")"
+slot="$(probe activeMachine jq -er '.activeMachine' "${state}")"
+case "${slot}" in kube1|kube2) ;; *) echo 'snapshot check activeMachine: invalid slot' >&2; exit 1 ;; esac
+settings="$(probe appliedSettingsVersion jq -er '.appliedSettingsVersion' "${state}")"
 case "${mode}" in
   none)
-    systemctl is-active --quiet unbounded-kubelet.service
-    systemctl is-active --quiet unbounded-containerd.service
-    version="$(/opt/unbounded/node/current/bin/kubelet --version)"
-    location="$(readlink -f /opt/unbounded/node/current)"
+    probe host-kubelet systemctl is-active --quiet unbounded-kubelet.service
+    probe host-containerd systemctl is-active --quiet unbounded-containerd.service
+    version="$(probe kubelet-version /opt/unbounded/node/current/bin/kubelet --version)"
+    location="$(probe node-location readlink -f /opt/unbounded/node/current)"
     ;;
   container)
-    systemctl is-active --quiet "unbounded-node-${slot}.service"
-    /opt/unbounded/runtime/runc state "unbounded-${slot}" | jq -e '.status == "running"' >/dev/null
-    timeout 20 /opt/unbounded/runtime/runc exec "unbounded-${slot}" systemctl is-active --quiet kubelet.service
-    timeout 20 /opt/unbounded/runtime/runc exec "unbounded-${slot}" systemctl is-active --quiet containerd.service
-    version="$(timeout 20 /opt/unbounded/runtime/runc exec "unbounded-${slot}" /usr/local/bin/kubelet --version)"
+    probe supervisor systemctl is-active --quiet "unbounded-node-${slot}.service"
+    runtime_state="$(probe runc-state /opt/unbounded/runtime/runc state "unbounded-${slot}")"
+    probe runc-running jq -e '.status == "running"' <<<"${runtime_state}" >/dev/null
+    # Foreground runc exec forwards stdin; it must not consume the remote script.
+    probe guest-kubelet timeout 20 /opt/unbounded/runtime/runc exec "unbounded-${slot}" systemctl is-active --quiet kubelet.service </dev/null
+    probe guest-containerd timeout 20 /opt/unbounded/runtime/runc exec "unbounded-${slot}" systemctl is-active --quiet containerd.service </dev/null
+    version="$(probe kubelet-version timeout 20 /opt/unbounded/runtime/runc exec "unbounded-${slot}" /usr/local/bin/kubelet --version </dev/null)"
     location="/var/lib/unbounded/containers/${slot}"
     ;;
-  *) exit 1 ;;
+  *) echo 'snapshot check isolation: invalid mode' >&2; exit 1 ;;
 esac
 version="${version##* }"
 printf '%s|%s|%s|%s|%s\n' "${mode}" "${slot}" "${version#v}" "${settings}" "${location}"
 REMOTE
 }
 
+_isolation_runtime_diagnostics() {
+  local vm_ip="$1" expected="$2"
+  if remote_exec "${vm_ip}" "sudo bash -s -- ${expected}" <<'REMOTE'
+set -uo pipefail
+state=/etc/aks-flex-node/daemon-state.json
+run() {
+  local name="$1" rc
+  shift
+  printf '\n--- %s ---\n' "${name}"
+  # Drain excess output so truncation does not replace the command's exit with SIGPIPE.
+  timeout -k 2 20 "$@" </dev/null 2>&1 | { head -c 8192; cat >/dev/null; }
+  rc=${PIPESTATUS[0]}
+  printf '\nexit=%s\n' "${rc}"
+}
+# Process trees can include arbitrary workload command lines and credentials.
+# Journals below are restricted to systemd's own unit events for the same reason.
+run_status() {
+  local name="$1"
+  shift
+  run "${name}" bash -o pipefail -c '"$@" 2>&1 | awk '\''/^[[:space:]]*CGroup:/ {hidden=1} !hidden {print}'\''' _ "$@"
+}
+run_version() {
+  local name="$1"
+  shift
+  run "${name}" bash -c '
+    value="$("$@" && printf "\037")"
+    rc=$?
+    value="${value%$'"'"'\037'"'"'}"
+    printf "raw version (first 256 bytes): %q\n" "${value:0:256}"
+    exit "${rc}"
+  ' _ "$@"
+}
+# Only string-valued applied metadata is printed; the state also contains credentials.
+run applied-metadata jq -c '{isolation,activeMachine,appliedSettingsVersion,appliedKubernetesVersion} | with_entries(.value |= if type == "string" then .[0:256] else null end)' "${state}"
+mode="$(timeout -k 2 20 jq -r '.isolation | strings' "${state}" 2>/dev/null)"
+slot="$(timeout -k 2 20 jq -r '.activeMachine | strings' "${state}" 2>/dev/null)"
+case "${mode}" in none|container) ;; *) mode="$1" ;; esac
+case "${mode}" in
+  none)
+    for unit in unbounded-kubelet.service unbounded-containerd.service; do
+      run "${unit} properties" systemctl show "${unit}" --property=ActiveState,SubState,Result,InvocationID,MainPID
+      run_status "${unit} status" systemctl status "${unit}" --no-pager -l -n 0
+      run "${unit} journal" journalctl -u "${unit}" _PID=1 -n 30 --no-pager
+    done
+    run_version kubelet-version /opt/unbounded/node/current/bin/kubelet --version
+    ;;
+  container)
+    case "${slot}" in kube1|kube2) slots=("${slot}") ;; *) slots=(kube1 kube2) ;; esac
+    for slot in "${slots[@]}"; do
+      unit="unbounded-node-${slot}.service"
+      id="unbounded-${slot}"
+      run "${unit} properties" systemctl show "${unit}" --property=ActiveState,SubState,Result,InvocationID,MainPID
+      run_status "${unit} status" systemctl status "${unit}" --no-pager -l -n 0
+      run "${unit} journal" journalctl -u "${unit}" _PID=1 -n 30 --no-pager
+      # Do not print runc annotations: they are not needed to diagnose runtime state.
+      run "${id} state" bash -o pipefail -c '/opt/unbounded/runtime/runc state "$1" | jq -c '\''{id,status,pid}'\''' _ "${id}"
+      for unit in kubelet.service containerd.service; do
+        run_status "${id} ${unit} status" /opt/unbounded/runtime/runc exec "${id}" systemctl status "${unit}" --no-pager -l -n 0
+      done
+      run_version "${id} kubelet-version" /opt/unbounded/runtime/runc exec "${id}" /usr/local/bin/kubelet --version
+    done
+    ;;
+esac
+run 'host failed units' systemctl --failed --no-pager
+run 'agent journal' journalctl -u aks-flex-node-agent.service _PID=1 -n 100 --no-pager
+REMOTE
+  then
+    return 0
+  else
+    local rc=$?
+    log_error "Runtime diagnostics remote execution failed (exit ${rc})"
+  fi
+}
+
 _isolation_wait_runtime() {
   local vm_ip="$1" expected="$2" deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT)) snapshot mode slot version settings location
+  local stderr_file outcome=unattempted rc=0 desired_version="${E2E_KUBERNETES_VERSION#v}"
+  stderr_file="$(mktemp)"
   while (( SECONDS < deadline )); do
-    if snapshot="$(_isolation_snapshot "${vm_ip}" 2>/dev/null)"; then
-      IFS='|' read -r mode slot version settings location <<<"${snapshot}"
-      if [[ "${mode}" == "${expected}" && "${version}" == "${E2E_KUBERNETES_VERSION#v}" ]]; then
-        log_info "Worker ${mode}/${slot} runs Kubernetes ${version} at ${location}, settings ${settings}"
-        return 0
+    if snapshot="$(_isolation_snapshot "${vm_ip}" 2>"${stderr_file}")"; then
+      if [[ -z "${snapshot}" ]]; then
+        outcome=empty
+      else
+        outcome=mismatch
+        IFS='|' read -r mode slot version settings location <<<"${snapshot}"
+        if [[ "${mode}" == "${expected}" && "${version}" == "${desired_version}" ]]; then
+          rm -f "${stderr_file}"
+          log_info "Worker ${mode}/${slot} runs Kubernetes ${version} at ${location}, settings ${settings}"
+          return 0
+        fi
       fi
+    else
+      rc=$?
+      outcome=probe-failed
     fi
     sleep 5
   done
-  log_error "Worker ${expected} did not become active"
-  remote_exec "${vm_ip}" "sudo systemctl --failed --no-pager; sudo journalctl -u aks-flex-node-agent -n 100 --no-pager" || true
+  log_error "Worker ${expected} did not become active (last observation: ${outcome})"
+  case "${outcome}" in
+    empty)
+      log_error 'Snapshot exit=0 with empty stdout (0 bytes)'
+      ;;
+    probe-failed)
+      log_error "Snapshot exit=${rc}; last stderr (up to 4096 bytes):"
+      tail -c 4096 "${stderr_file}" >&2
+      ;;
+    mismatch)
+      printf 'Snapshot mismatch: expected mode=%q version=%q; observed mode=%q version=%q\n' \
+        "${expected:0:256}" "${desired_version:0:256}" "${mode:0:256}" "${version:0:256}" >&2
+      ;;
+  esac
+  rm -f "${stderr_file}"
+  _isolation_runtime_diagnostics "${vm_ip}" "${expected}"
   return 1
 }
 
