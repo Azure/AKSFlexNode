@@ -37,20 +37,46 @@ type None struct {
 	OperatorFactory OperatorFactory
 }
 
-func (None) Mode() isolation.Mode { return isolation.ModeNone }
+func (None) Mode() isolation.Mode {
+	return isolation.ModeNone
+}
+
 func (None) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
 	return nil
 }
+
 func (None) WantedTargets() []string {
 	return []string{"network-online.target", "systemd-udev-settle.service"}
 }
-func (None) SupportsDisconnectTolerance() bool                 { return false }
-func (None) NSpawnRuntime() NSpawnRuntime                      { return nil }
-func (None) ValidateAgentActivation(ctx context.Context) error { return nil }
-func (None) ValidateActiveSlot(slot string) error              { return nil }
-func (None) SynchronizeAgent(source string, slot string) error { return nil }
-func (None) ValidateAgent(source string, slot string) error    { return nil }
-func (None) RollbackAgent(source string, slot string) error    { return nil }
+
+func (None) SupportsDisconnectTolerance() bool {
+	return false
+}
+
+func (None) NSpawnRuntime() NSpawnRuntime {
+	return nil
+}
+
+func (None) ValidateAgentActivation(ctx context.Context) error {
+	return nil
+}
+
+func (None) ValidateActiveSlot(slot string) error {
+	return nil
+}
+
+func (None) SynchronizeAgent(source string, slot string) error {
+	return nil
+}
+
+func (None) ValidateAgent(source string, slot string) error {
+	return nil
+}
+
+func (None) RollbackAgent(source string, slot string) error {
+	return nil
+}
+
 func (None) CheckAgentCandidate(ctx context.Context, candidate string) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -59,25 +85,32 @@ func (None) CheckAgentCandidate(ctx context.Context, candidate string) error {
 	}
 	return nil
 }
+
 func (None) ValidateResetState(state *State) error {
 	if state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return fmt.Errorf("none node has no valid applied configuration for reset")
 	}
 	return nil
 }
+
 func (p None) ResetNode(log *slog.Logger) phases.Task {
 	return phases.Serial(log,
 		RemoveHostUnit(log, "node-problem-detector.service"),
 		ResetNoneRuntime(log, &noneops.Teardown{Log: log}, hostnode.ResetCNIState),
-		reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), reset.RemoveNFTablesFlush(log),
+		reset.CleanupNetwork(log),
+		reset.RemoveWireGuardKeys(log),
+		reset.RemoveNFTablesFlush(log),
 		p.Host.RemoveHostHelpers(log),
-		RemoveHostUnit(log, "static-routes.service"), RemoveHostUnit(log, "check-route-overlap.service"),
+		RemoveHostUnit(log, "static-routes.service"),
+		RemoveHostUnit(log, "check-route-overlap.service"),
 		hostnode.Func("remove-host-npd-config", func(ctx context.Context) error {
 			return p.Host.RemoveIfPresent("/etc/node-problem-detector/kernel-monitor.json")
 		}),
-		reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
+		reset.ReloadSystemd(log),
+		config.RemoveRuntimeDirs(log),
 	)
 }
+
 func (p None) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state StateStore) error {
 	applied, err := state.Load(ctx)
 	if err != nil {
@@ -98,15 +131,23 @@ func (p None) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *confi
 	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 		return err
 	}
-	return p.Host.SyncDirs(goalstates.SystemdSystemDir, filepath.Dir(p.Host.RecoveryScriptPathUnder(hostroot.Resolve())))
+	return p.Host.SyncDirs(
+		goalstates.SystemdSystemDir,
+		filepath.Dir(p.Host.RecoveryScriptPathUnder(hostroot.Resolve())),
+	)
 }
+
 func (None) ValidateEnvironment(containerized bool) error {
 	if containerized {
 		return fmt.Errorf("none isolation requires the host-installed agent; the containerized agent requires host containerd")
 	}
 	return nil
 }
-func (None) BootstrapPresent(log *slog.Logger) bool { return (&noneops.Teardown{Log: log}).Present() }
+
+func (None) BootstrapPresent(log *slog.Logger) bool {
+	return (&noneops.Teardown{Log: log}).Present()
+}
+
 func (p None) CheckBootstrap(ctx context.Context, log *slog.Logger, applied *State) error {
 	if applied != nil || p.BootstrapPresent(log) {
 		return fmt.Errorf("host contains an installed or partially reset none node; reset it before bootstrapping")
@@ -118,6 +159,7 @@ func (p None) CheckBootstrap(ctx context.Context, log *slog.Logger, applied *Sta
 	backend.LookPath = exec.LookPath
 	return backend.Preflight()
 }
+
 func (None) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	ac, gs, archives, err := config.ResolveMachineGoalState(ctx, log, cfg, slot)
 	if err != nil {
@@ -126,10 +168,22 @@ func (None) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *config.
 	gs, err = NewNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs}).GoalState()
 	return ac, gs, archives, err
 }
+
 func (None) SetupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
-	return phases.Serial(log, host.InstallPackagesFor(log, isolation.ModeNone), noneops.LoadKernelModules(log, nil),
-		phases.Parallel(log, host.ConfigureOS(log), host.ConfigureNFTablesFor(log, isolation.ModeNone), host.DisableDocker(log), host.DisableSwap(log), host.RemoveAPTHardening(log), hostrouting.Configure(cfg, log)))
+	return phases.Serial(log,
+		host.InstallPackagesFor(log, isolation.ModeNone),
+		noneops.LoadKernelModules(log, nil),
+		phases.Parallel(log,
+			host.ConfigureOS(log),
+			host.ConfigureNFTablesFor(log, isolation.ModeNone),
+			host.DisableDocker(log),
+			host.DisableSwap(log),
+			host.RemoveAPTHardening(log),
+			hostrouting.Configure(cfg, log),
+		),
+	)
 }
+
 func (p None) StartNode(params StartParams) phases.Task {
 	cfg, log, gs := params.Config, params.Log, params.GoalState
 	return hostnode.Func("start-none-node", func(ctx context.Context) error {
@@ -165,6 +219,7 @@ func (p None) StartNode(params StartParams) phases.Task {
 		return p.Host.SaveState(params.Store, params.State).Do(ctx)
 	})
 }
+
 func (p None) NewOperator(ctx context.Context, cfg *config.Config, store StateStore) (Operator, error) {
 	return p.OperatorFactory(ctx, cfg, store, p)
 }
@@ -182,7 +237,9 @@ func SeedNoneState(state *State, cfg *agentconfig.AgentConfig) {
 
 // ResetNoneRuntime ends runtime processes before reclaiming host CNI/IPAM state.
 func ResetNoneRuntime(log *slog.Logger, teardown *noneops.Teardown, resetCNI func(root string) error) phases.Task {
-	return phases.Serial(log, teardown.Stop(), teardown.Destroy(),
+	return phases.Serial(log,
+		teardown.Stop(),
+		teardown.Destroy(),
 		hostnode.Func("remove-none-cni-state", func(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -191,7 +248,9 @@ func ResetNoneRuntime(log *slog.Logger, teardown *noneops.Teardown, resetCNI fun
 				return fmt.Errorf("reset none CNI state: %w", err)
 			}
 			return nil
-		}), teardown.RemoveConfig())
+		}),
+		teardown.RemoveConfig(),
+	)
 }
 
 // RemoveHostUnit disables an owned host service before removing its unit file.
