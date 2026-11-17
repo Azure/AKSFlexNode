@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
@@ -10,6 +11,15 @@ import (
 
 func TestActivationRejectsNilLogger(t *testing.T) {
 	t.Parallel()
+
+	t.Run("preflight before candidate access", func(t *testing.T) {
+		t.Parallel()
+
+		candidate := filepath.Join(t.TempDir(), "missing")
+		if _, err := PreflightHostAgentActivation(t.Context(), nil, candidate); err == nil || err.Error() != "logger is nil" {
+			t.Fatalf("PreflightHostAgentActivation() error = %v, want logger is nil", err)
+		}
+	})
 
 	t.Run("direct activation", func(t *testing.T) {
 		t.Parallel()
