@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"reflect"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
@@ -41,7 +42,7 @@ type containerNodeOperator struct {
 	*operatorBase
 	startup            containerStartupStore
 	activationLockPath string
-	newNode            func(containerops.Params) containerNode
+	newNode            func(containerops.Params) (containerNode, error)
 	resolve            func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
 	stage              func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
 	startNPD           func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
@@ -54,8 +55,14 @@ func newContainerNodeOperator(base *operatorBase, state *runtimeprovider.State, 
 	}
 	return &containerNodeOperator{
 		operatorBase: base, startup: startup, activationLockPath: activationLockPath,
-		newNode: func(p containerops.Params) containerNode {
-			return managedContainerNode{runtimeprovider.NewContainerNode(p)}
+		newNode: func(p containerops.Params) (containerNode, error) {
+			p.HelperPath = config.HostBinaryPath()
+			p.ConfigSnapshotDir = filepath.Join(config.ConfigDir, "container-upgrade-config")
+			node, err := runtimeprovider.NewContainerNode(p, base.cfg)
+			if err != nil {
+				return nil, err
+			}
+			return managedContainerNode{node}, nil
 		},
 		resolve:      config.ResolveMachineGoalState,
 		syncPrepared: runtimeprovider.SyncContainerFilesystems,
@@ -98,7 +105,10 @@ func (o *containerNodeOperator) RestartNode(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return err
 	}
-	node := o.newNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
+	node, err := o.newNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
+	if err != nil {
+		return err
+	}
 	if err := node.Restart(ctx); err != nil {
 		return fmt.Errorf("restart container node: %w", err)
 	}
@@ -134,12 +144,15 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	next := nextAppliedState(state, goal, &activeMachine{Name: slot})
 	next.Isolation, next.NodeConfig = isolation.ModeContainer, ac
 	next = next.DeepCopy()
-	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
-	if err := runtimeprovider.WrapContainerArtifactUnpack(node, runtimeprovider.ContainerArtifacts(cfg, log, InstallBinary)); err != nil {
+	node, err := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
+	if err != nil {
 		return nil, err
 	}
 	node.Backend().UnitRequires = append(node.Backend().UnitRequires, runtimeprovider.NoneRequiredServices(cfg)...)
-	old := o.newNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
+	old, err := o.newNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
+	if err != nil {
+		return nil, err
+	}
 	if err := o.stage(ctx, log, archives); err != nil {
 		return nil, err
 	}
@@ -190,7 +203,10 @@ func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logg
 		return true, fmt.Errorf("container SDK upgrade did not record successful completion; operator recovery or reset required")
 	}
 	if startup.Phase == "starting" {
-		node := o.newNode(containerops.Params{Log: log, Config: startup.Next.NodeConfig, Slot: startup.Next.ActiveMachine})
+		node, err := o.newNode(containerops.Params{Log: log, Config: startup.Next.NodeConfig, Slot: startup.Next.ActiveMachine})
+		if err != nil {
+			return true, err
+		}
 		if err := node.Start(ctx, false, false, false); err != nil {
 			return true, fmt.Errorf("start upgraded container for completion: %w", err)
 		}
@@ -216,7 +232,10 @@ func (o *containerNodeOperator) lockAgentActivation(log *slog.Logger) (func(), e
 }
 
 func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Logger, startup *containerStartup) error {
-	node := o.newNode(containerops.Params{Log: log, Config: startup.Next.NodeConfig, Slot: startup.Next.ActiveMachine})
+	node, err := o.newNode(containerops.Params{Log: log, Config: startup.Next.NodeConfig, Slot: startup.Next.ActiveMachine})
+	if err != nil {
+		return err
+	}
 	gs, err := node.GoalState()
 	if err != nil {
 		return err
@@ -232,7 +251,10 @@ func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Log
 	if err := o.state.Save(ctx, startup.Next); err != nil {
 		return fmt.Errorf("persist frozen container state: %w", err)
 	}
-	old := o.newNode(containerops.Params{Log: log, Config: startup.Previous.NodeConfig, Slot: startup.Previous.ActiveMachine})
+	old, err := o.newNode(containerops.Params{Log: log, Config: startup.Previous.NodeConfig, Slot: startup.Previous.ActiveMachine})
+	if err != nil {
+		return err
+	}
 	if err := old.Destroy(ctx); err != nil {
 		return fmt.Errorf("retire source container slot: %w", err)
 	}

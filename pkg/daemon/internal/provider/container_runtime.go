@@ -23,7 +23,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
-// ContainerRuntime exposes the SDK state needed for artifact installation and persistence.
+// ContainerRuntime exposes the SDK state needed for filesystem persistence.
 type ContainerRuntime interface {
 	GoalState() (*goalstates.MachineGoalState, error)
 	Backend() *container.Backend
@@ -43,11 +43,9 @@ func (Container) SetupHost(cfg *config.Config, log *slog.Logger, containerized b
 	)
 }
 
-// NewContainerNode retains Flex's stable lifecycle helper instead of installing
-// the SDK agent over it.
-func NewContainerNode(p containerops.Params) *containerops.Node {
-	p.HelperPath = config.HostBinaryPath()
-	p.ConfigSnapshotDir = filepath.Join(config.ConfigDir, "container-upgrade-config")
+// NewContainerNode stages Flex artifacts through the SDK's unpack hook before
+// provisioning can start kubelet. The caller supplies the host lifecycle helper.
+func NewContainerNode(p containerops.Params, cfg *config.Config) (*containerops.Node, error) {
 	p.InstallHelper = func(ctx context.Context) error {
 		info, err := os.Stat(p.HelperPath)
 		if err != nil {
@@ -58,38 +56,23 @@ func NewContainerNode(p containerops.Params) *containerops.Node {
 		}
 		return nil
 	}
-	return containerops.New(p)
-}
-
-// ContainerArtifacts installs the Flex helper and NPD before kubelet can start.
-func ContainerArtifacts(cfg *config.Config, log *slog.Logger, installBinary func(root isolation.NodeRoot) phases.Task) func(ctx context.Context, goal *goalstates.MachineGoalState) error {
-	return func(ctx context.Context, gs *goalstates.MachineGoalState) error {
-		return phases.Serial(log,
-			installBinary(gs.RootFS.Root()),
-			npd.Download(log, cfg, gs.RootFS.Root()),
-		).Do(ctx)
+	node := containerops.New(p)
+	// The SDK installs its unpacker during goal resolution.
+	if _, err := node.GoalState(); err != nil {
+		return nil, err
 	}
-}
-
-// WrapContainerArtifactUnpack stages Flex artifacts through the SDK's unpack hook
-// because Upgrade calls Prepare internally.
-func WrapContainerArtifactUnpack(node ContainerRuntime, install func(ctx context.Context, goal *goalstates.MachineGoalState) error) error {
-	gs, err := node.GoalState()
-	if err != nil {
-		return err
-	}
-	backend := node.Backend()
-	unpack := backend.Unpack
-	backend.Unpack = func(ctx context.Context, spec isolation.NodeSpec, dir string) error {
+	unpack := node.Backend().Unpack
+	node.Backend().Unpack = func(ctx context.Context, spec isolation.NodeSpec, dir string) error {
 		if err := unpack(ctx, spec, dir); err != nil {
 			return err
 		}
-		if err := install(ctx, gs); err != nil {
+		root := isolation.DirRoot{Dir: dir}
+		if err := phases.Serial(p.Log, InstallBinary(root), npd.Download(p.Log, cfg, root)).Do(ctx); err != nil {
 			return fmt.Errorf("install Flex container artifacts: %w", err)
 		}
 		return nil
 	}
-	return nil
+	return node, nil
 }
 
 func (p Container) StartNode(params StartParams) phases.Task {
@@ -97,8 +80,10 @@ func (p Container) StartNode(params StartParams) phases.Task {
 	store, state := params.Store, params.State
 	return hostnode.Func("start-container-node", func(ctx context.Context) error {
 		ac := config.ToAgentConfig(cfg, slot).DeepCopy()
-		node := NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
-		if err := WrapContainerArtifactUnpack(node, ContainerArtifacts(cfg, log, p.Host.InstallBinary)); err != nil {
+		node, err := NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot,
+			Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()},
+			Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")}}, cfg)
+		if err != nil {
 			return err
 		}
 		resolved, err := node.GoalState()
@@ -154,7 +139,12 @@ func (p Container) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *
 	if !ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration")
 	}
-	node := NewContainerNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine})
+	node, err := NewContainerNode(containerops.Params{Log: log, Config: state.NodeConfig, Slot: state.ActiveMachine,
+		Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()},
+		Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")}}, cfg)
+	if err != nil {
+		return err
+	}
 	gs, err := node.GoalState()
 	if err != nil {
 		return err

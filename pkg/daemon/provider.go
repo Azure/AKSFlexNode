@@ -21,7 +21,7 @@ var nodeProviders = map[isolation.Mode]func() NodeProvider{
 
 func hostProviderServices() runtimeprovider.HostServices {
 	return runtimeprovider.HostServices{
-		InstallBinary: InstallBinary, CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
+		CopyExecutable: copyExecutable, FilesHaveEqualSHA256: filesHaveEqualSHA256,
 		RemoveHostHelpers: removeHostHelpers, RemoveIfPresent: removeIfPresent,
 		SaveState: saveState, SyncDirs: syncDirs, RecoveryScriptPathUnder: recoveryScriptPathUnder,
 	}
@@ -38,7 +38,7 @@ func newNSpawnProvider() NodeProvider {
 }
 
 func newNoneProvider() NodeProvider {
-	return runtimeprovider.None{Services: runtimeprovider.NoneServices{HostServices: hostProviderServices(), NewOperator: newNoneOperator}}
+	return runtimeprovider.None{Host: hostProviderServices(), OperatorFactory: newNoneOperator}
 }
 
 func convergeNSpawnContainerAgent(ctx context.Context, log *slog.Logger, state agentUpgradeStateLoader) (func(context.Context) error, error) {

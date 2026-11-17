@@ -18,6 +18,7 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode/hostnodetest"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	corev1 "k8s.io/api/core/v1"
@@ -83,8 +84,8 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 		t.Fatalf("operator = %T", operator)
 	}
 	op.bootstrapDataRefresher = &fakeBootstrapDataRefresher{}
-	op.newNode = func(p containerops.Params) containerNode {
-		return &fakeContainerNode{params: p, events: events, fail: fail}
+	op.newNode = func(p containerops.Params) (containerNode, error) {
+		return &fakeContainerNode{params: p, events: events, fail: fail}, nil
 	}
 	op.syncPrepared = func(context.Context, runtimeprovider.ContainerRuntime) error {
 		*events = append(*events, "sync-prepared")
@@ -205,7 +206,12 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	if strings.Contains(recipe, "harden-apt") || strings.Contains(recipe, "install-systemd-container") {
 		t.Fatalf("container recipe includes nspawn host preparation: %s", recipe)
 	}
-	node := runtimeprovider.NewContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1"})
+	node, err := runtimeprovider.NewContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1",
+		GoalState: hostnodetest.GoalState("kube1", false),
+		Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()}}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if node.Backend().HelperPath != defaultAgentUpgradePaths().BinaryPath {
 		t.Fatal("container helper is not the stable Flex executable")
 	}

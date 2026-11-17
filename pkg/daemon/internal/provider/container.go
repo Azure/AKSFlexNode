@@ -13,6 +13,7 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
@@ -82,7 +83,13 @@ func (p Container) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	gs, err = NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot}).GoalState()
+	node, err := NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot,
+		Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()},
+		Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")}}, cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	gs, err = node.GoalState()
 	return ac, gs, archives, err
 }
 func (Container) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
