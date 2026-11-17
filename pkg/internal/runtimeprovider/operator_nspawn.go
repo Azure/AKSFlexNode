@@ -51,7 +51,7 @@ func newNSpawnOperator(ctx context.Context, cfg *config.Config, state StateStore
 	return &nspawnNodeOperator{operatorBase: base}, nil
 }
 
-func (*nspawnNodeOperator) ResumeRepave(context.Context, *slog.Logger, *corev1.Node) (bool, error) {
+func (*nspawnNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logger, node *corev1.Node) (bool, error) {
 	return false, nil
 }
 
