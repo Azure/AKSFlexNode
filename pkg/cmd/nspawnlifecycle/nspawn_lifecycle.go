@@ -116,12 +116,15 @@ func newPhaseCommand(
 
 func newLifecycle(log *slog.Logger, configPath string) (lifecycle, error) {
 	cfg, err := flexconfig.LoadConfig(configPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
-	}
 	var mode isolation.Mode
-	if err == nil {
+	switch {
+	case err == nil:
 		mode = cfg.Bootstrap.Isolation
+	case errors.Is(err, os.ErrNotExist):
+		err = nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
 	}
 	provider, err := daemon.NewNodeProvider(mode)
 	if err != nil {
