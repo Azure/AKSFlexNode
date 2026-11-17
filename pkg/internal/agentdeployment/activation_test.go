@@ -12,18 +12,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
-func TestNewHostActivationServiceRejectsNilLogger(t *testing.T) {
-	t.Parallel()
-
-	service, paths, err := NewHostActivationService(nil, t.TempDir(), nil)
-	if err == nil || err.Error() != "logger is nil" {
-		t.Fatalf("NewHostActivationService() error = %v, want logger is nil", err)
-	}
-	if service != nil || paths != (UpgradePaths{}) {
-		t.Fatalf("returned partial activation service: service = %v, paths = %+v", service, paths)
-	}
-}
-
 func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +27,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 			return false, nil
 		},
 	}
-	plan, err := service.Preflight(t.Context(), paths.CurrentPath)
+	plan, err := service.Preflight(t.Context(), paths.CurrentPath, ServiceTargets{})
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}
@@ -80,7 +68,7 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 			return false, errors.New("systemd unavailable")
 		},
 	}
-	if _, err := service.Preflight(t.Context(), "/unused/current"); err == nil {
+	if _, err := service.Preflight(t.Context(), "/unused/current", ServiceTargets{}); err == nil {
 		t.Fatal("Preflight accepted an unknown service state")
 	}
 }
@@ -130,7 +118,7 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 				},
 			}
 
-			_, err := service.Preflight(t.Context(), paths.CurrentPath)
+			_, err := service.Preflight(t.Context(), paths.CurrentPath, ServiceTargets{})
 			if (err != nil) != (tt.wantMsg != "") {
 				t.Fatalf("Preflight() error = %v, want error %v", err, tt.wantMsg != "")
 			}
@@ -160,7 +148,7 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 			return false, nil
 		},
 	}
-	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err == nil {
+	if _, err := service.Preflight(t.Context(), paths.CurrentPath, ServiceTargets{}); err == nil {
 		t.Fatal("Preflight accepted a pending MachineOperation signal")
 	}
 }

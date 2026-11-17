@@ -134,7 +134,7 @@ func ensureServiceAssetsUnderHostRoot(
 		ctx,
 		log,
 		UpgradePathsUnder(root),
-		agentServiceOptionsFromConfig(cfg),
+		ServiceTargetsFromConfig(cfg, cfg.Bootstrap.Isolation),
 		SystemdSystemDir,
 		RecoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
@@ -146,7 +146,7 @@ func ensureAgentUpgradeServiceAssetsAt(
 	ctx context.Context,
 	log *slog.Logger,
 	binaryPaths UpgradePaths,
-	serviceOptions agentServiceOptions,
+	targets ServiceTargets,
 	systemdDir, recoveryScript string,
 	reload func(context.Context, *slog.Logger) error,
 	holdDuringUpgrade bool,
@@ -165,7 +165,7 @@ func ensureAgentUpgradeServiceAssetsAt(
 		}
 		held = pending
 	}
-	if err := writeAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, binaryPaths.CurrentPath, held); err != nil {
+	if err := writeAgentServiceAssets(binaryPaths, targets, systemdDir, recoveryScript, binaryPaths.CurrentPath, held); err != nil {
 		return false, err
 	}
 	if err := reload(ctx, log); err != nil {
@@ -174,16 +174,28 @@ func ensureAgentUpgradeServiceAssetsAt(
 	return held, nil
 }
 
-type agentServiceOptions struct {
-	ARCEnabled         bool
-	OmitMachinesTarget bool
+// ServiceTargets contains the complete dependency lists for the host agent unit.
+type ServiceTargets struct {
+	AfterTargets []string
+	WantsTargets []string
 }
 
-func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
-	return agentServiceOptions{
-		ARCEnabled:         cfg.IsARCEnabled(),
-		OmitMachinesTarget: cfg.Bootstrap.Isolation == isolation.ModeNone || cfg.Bootstrap.Isolation == isolation.ModeContainer,
+// ServiceTargetsFromConfig selects dependencies using the effective worker mode,
+// which may come from applied state rather than the desired bootstrap config.
+func ServiceTargetsFromConfig(cfg *config.Config, mode isolation.Mode) ServiceTargets {
+	targets := ServiceTargets{
+		AfterTargets: []string{"network-online.target", "systemd-udev-settle.service"},
+		WantsTargets: []string{"network-online.target", "systemd-udev-settle.service"},
 	}
+	if mode == isolation.ModeNSpawn {
+		targets.WantsTargets = append(targets.WantsTargets, "machines.target")
+	}
+	if cfg.IsARCEnabled() {
+		targets.AfterTargets = append(targets.AfterTargets, arcSystemdDependency)
+		targets.WantsTargets = append(targets.WantsTargets, arcSystemdDependency)
+	}
+
+	return targets
 }
 
 type agentServiceAsset struct {
@@ -192,8 +204,8 @@ type agentServiceAsset struct {
 	mode    os.FileMode
 }
 
-func desiredAgentServiceAssets(binaryPaths UpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) ([]agentServiceAsset, error) {
-	serviceContent, err := renderAgentServiceUnit(currentBinaryPath, serviceOptions)
+func desiredAgentServiceAssets(binaryPaths UpgradePaths, targets ServiceTargets, systemdDir, recoveryScript, currentBinaryPath string) ([]agentServiceAsset, error) {
+	serviceContent, err := renderAgentServiceUnit(currentBinaryPath, targets)
 	if err != nil {
 		return nil, err
 	}
@@ -317,38 +329,16 @@ func (t *ensureNSpawnLifecycleUnitsTask) Do(ctx context.Context) error {
 	return nil
 }
 
-func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error) {
-	path := filepath.Join(systemdDir, ServiceUnitName)
-	content, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- path is built from the agent-owned systemd directory and fixed unit name
-	if errors.Is(err, os.ErrNotExist) {
-		return agentServiceOptions{}, nil
-	}
-	if err != nil {
-		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
-	}
-	return agentServiceOptions{
-		ARCEnabled:         bytes.Contains(content, []byte(arcSystemdDependency)),
-		OmitMachinesTarget: !bytes.Contains(content, []byte("machines.target")),
-	}, nil
-}
-
 type agentServiceTemplateData struct {
-	CurrentBinaryPath  string
-	Dependencies       []string
-	OmitMachinesTarget bool
+	CurrentBinaryPath string
+	ServiceTargets
 }
 
-func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
-	dependencies := []string{}
-	if serviceOptions.ARCEnabled {
-		dependencies = append(dependencies, arcSystemdDependency)
-	}
-
+func renderAgentServiceUnit(currentBinaryPath string, targets ServiceTargets) ([]byte, error) {
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
-		CurrentBinaryPath:  currentBinaryPath,
-		Dependencies:       dependencies,
-		OmitMachinesTarget: serviceOptions.OmitMachinesTarget,
+		CurrentBinaryPath: currentBinaryPath,
+		ServiceTargets:    targets,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}
@@ -419,8 +409,8 @@ func agentUpgradePending(signalPath string) (bool, error) {
 
 // writeAgentServiceAssets writes the agent's service assets, but with keepExisting, only those
 // that are missing.
-func writeAgentServiceAssets(binaryPaths UpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
-	assets, err := desiredAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, currentBinaryPath)
+func writeAgentServiceAssets(binaryPaths UpgradePaths, targets ServiceTargets, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
+	assets, err := desiredAgentServiceAssets(binaryPaths, targets, systemdDir, recoveryScript, currentBinaryPath)
 	if err != nil {
 		return err
 	}

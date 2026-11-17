@@ -32,7 +32,7 @@ func testDirectActivationUnsupported(t *testing.T, mode isolation.Mode) {
 		t.Fatal(err)
 	}
 	service := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		log:                   slog.New(slog.DiscardHandler),
 		candidatePath:         path,
 		state: &testStateStore{
