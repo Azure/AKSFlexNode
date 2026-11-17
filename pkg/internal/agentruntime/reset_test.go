@@ -43,6 +43,15 @@ func (w *testResetWorker) task(stage string) phases.Task {
 func (w *testResetWorker) Stop() phases.Task    { return w.task("stop") }
 func (w *testResetWorker) Destroy() phases.Task { return w.task("destroy") }
 
+func TestResetPlanRejectsNilLogger(t *testing.T) {
+	t.Parallel()
+
+	plan, err := (NSpawn{}).PlanReset(nil)
+	if err == nil || err.Error() != "logger is nil" || plan != nil {
+		t.Fatalf("PlanReset(nil) = %v, %v; want nil plan and logger error", plan, err)
+	}
+}
+
 func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 	t.Parallel()
 
