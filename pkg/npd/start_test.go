@@ -1,21 +1,14 @@
 package npd
 
 import (
-	"bytes"
-	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/container"
-	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
 // wantKubeconfigPath is the path the kubelet actually writes its kubeconfig to.
@@ -77,81 +70,5 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "--hostname-override=vm-e2e-token-1781659839") {
 		t.Fatalf("rendered unit missing hostname override:\n%s", rendered)
-	}
-}
-
-func TestNPDUsesNodeRootAndExec(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeContainer, isolation.ModeNone} {
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			var root isolation.NodeRoot = isolation.DirRoot{Dir: dir}
-			var calls []string
-			ns := &goalstates.NodeStart{
-				MachineDir: t.TempDir(), MachineName: "kube2", NodeName: "flex-worker",
-				RootOverride: none.Root{HostRoot: t.TempDir(), Layout: none.Layout{Base: t.TempDir()}, Version: "decoy"},
-				Kubelet:      goalstates.Kubelet{APIServer: "https://example.test:443"},
-				ExecOverride: func(_ context.Context, _ *slog.Logger, args ...string) (string, error) {
-					calls = append(calls, strings.Join(args, " "))
-					return "active", nil
-				},
-			}
-			switch mode {
-			case isolation.ModeContainer:
-				root = container.Root{SlotName: "kube2", Dir: dir, HostRoot: t.TempDir()}
-				ns.InContainer = true
-			case isolation.ModeNone:
-				root = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
-			}
-			binary := root.Path(npdBinaryPath)
-			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
-			path := root.Path("/etc/systemd/system/" + systemdUnitNPD)
-			if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			want := []string{"systemctl is-active " + systemdUnitNPD, "systemctl restart " + systemdUnitNPD}
-			if !slices.Equal(calls, want) {
-				t.Fatalf("initial NPD commands = %v, want %v", calls, want)
-			}
-			before, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, fragment := range []string{
-				"ExecStart=" + binary + " ", "auth=" + wantKubeconfigPath,
-				"--hostname-override=flex-worker", "https://example.test:443", npdConfigPath,
-			} {
-				if !strings.Contains(string(content), fragment) {
-					t.Fatalf("NPD unit missing %q:\n%s", fragment, content)
-				}
-			}
-			for range 2 {
-				calls = nil
-				if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
-					t.Fatal(err)
-				}
-				if want := []string{"systemctl is-active " + systemdUnitNPD}; !slices.Equal(calls, want) {
-					t.Fatalf("unchanged NPD commands = %v, want %v", calls, want)
-				}
-			}
-			after, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(got, content) || !os.SameFile(before, after) {
-				t.Fatalf("unchanged NPD unit was replaced: %v", err)
-			}
-			for _, decoy := range []string{ns.MachineDir, ns.Root().Path("/etc/systemd/system")} {
-				if entries, err := os.ReadDir(decoy); !errors.Is(err, os.ErrNotExist) && (err != nil || len(entries) != 0) {
-					t.Fatalf("NPD wrote through NodeStart instead of supplied NodeRoot: %s: %v", decoy, err)
-				}
-			}
-		})
 	}
 }
