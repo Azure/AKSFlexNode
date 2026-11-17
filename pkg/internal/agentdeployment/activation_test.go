@@ -12,6 +12,18 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
+func TestNewHostActivationServiceRejectsNilLogger(t *testing.T) {
+	t.Parallel()
+
+	service, paths, err := NewHostActivationService(nil, t.TempDir(), nil)
+	if err == nil || err.Error() != "logger is nil" {
+		t.Fatalf("NewHostActivationService() error = %v, want logger is nil", err)
+	}
+	if service != nil || paths != (UpgradePaths{}) {
+		t.Fatalf("returned partial activation service: service = %v, paths = %+v", service, paths)
+	}
+}
+
 func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
 	t.Parallel()
 
