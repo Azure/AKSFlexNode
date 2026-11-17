@@ -11,7 +11,9 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -104,11 +106,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
-	tasks := phases.Serial(logger,
-		daemon.SetupHost(cfg, logger),
-		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
-		daemon.InstallService(cfg, logger),
-	)
+	tasks := bootstrapTasks(cfg, logger, machineName, gs, containerImageArchives, daemon.SaveState(stateStore, state))
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
@@ -122,4 +120,14 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	logger.Info("operation completed successfully", "operation", "bootstrap", "duration", time.Since(start))
 
 	return nil
+}
+
+func bootstrapTasks(cfg *config.Config, log *slog.Logger, machine string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, save phases.Task) phases.Task {
+	return phases.Serial(log,
+		daemon.SetupHost(cfg, log),
+		daemon.EnsureNSpawnLifecycleUnits(log),
+		(agentruntime.NSpawn{}).Start(cfg, log, machine, gs, archives),
+		save,
+		daemon.InstallService(cfg, log),
+	)
 }

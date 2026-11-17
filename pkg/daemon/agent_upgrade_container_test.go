@@ -38,7 +38,7 @@ func newTestContainerUpgrade(t *testing.T, runningImage string) (*containerAgent
 	}
 	return &containerAgentUpgradeExecutor{
 		log:           discardLogger(),
-		state:         &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
+		state:         &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}},
 		signals:       agentUpgradeSignalStore{path: filepath.Join(dir, "agent-upgrade-signal.json")},
 		images:        agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
 		runningImage:  runningImage,
@@ -671,7 +671,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 			reloads := 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
-				state:             &fakeNodeOperator{state: tc.state},
+				state:             &fakeWorkerRuntime{state: tc.state},
 				unitDir:           unitDir,
 				signalPath:        filepath.Join(dir, "agent-upgrade-signal.json"),
 				reload:            func(context.Context) error { reloads++; return nil },
@@ -875,7 +875,7 @@ func TestContainerAgentConvergenceHoldsTheUnitsWhileAnUpgradeIsPending(t *testin
 			reloads := 0
 			convergence := &containerAgentConvergence{
 				log:               discardLogger(),
-				state:             &fakeNodeOperator{},
+				state:             &fakeWorkerRuntime{},
 				unitDir:           unitDir,
 				signalPath:        signalPath,
 				reload:            func(context.Context) error { reloads++; return nil },

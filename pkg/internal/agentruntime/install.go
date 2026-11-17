@@ -1,4 +1,4 @@
-package daemon
+package agentruntime
 
 import (
 	"context"
@@ -15,8 +15,8 @@ type installBinaryTask struct {
 	root isolation.NodeRoot
 }
 
-// InstallBinary installs the credential helper in the node's filesystem.
-func InstallBinary(root isolation.NodeRoot) phases.Task {
+// installBinary installs the credential helper in the node's filesystem.
+func installBinary(root isolation.NodeRoot) phases.Task {
 	return &installBinaryTask{root: root}
 }
 

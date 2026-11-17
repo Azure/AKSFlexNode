@@ -33,12 +33,18 @@ type State struct {
 	ActiveMachine             string `json:"activeMachine,omitempty"`
 }
 
+type activeMachine struct {
+	Name  string
+	State *State
+}
+
 type saveStateTask struct {
 	store stateStore
 	state *State
 }
 
-func saveState(store stateStore, state *State) phases.Task {
+// SaveState persists the applied goal after the worker starts successfully.
+func SaveState(store stateStore, state *State) phases.Task {
 	return &saveStateTask{store: store, state: state}
 }
 
@@ -163,4 +169,21 @@ func (s *fileStateStore) checksumPath() string {
 func checksum(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
+	next := &State{
+		AppliedSettingsVersion:    goal.SettingsVersion,
+		AppliedKubernetesVersion:  goal.KubernetesVersion,
+		PreviousSettingsVersion:   "",
+		PreviousKubernetesVersion: "",
+	}
+	if current != nil {
+		next.PreviousSettingsVersion = current.AppliedSettingsVersion
+		next.PreviousKubernetesVersion = current.AppliedKubernetesVersion
+	}
+	if active != nil {
+		next.ActiveMachine = active.Name
+	}
+	return next
 }

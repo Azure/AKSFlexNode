@@ -1,4 +1,4 @@
-package daemon
+package agentruntime
 
 import (
 	"bytes"
@@ -23,9 +23,9 @@ type configureNSpawnDependenciesTask struct {
 	reload            func(context.Context, *slog.Logger) error
 }
 
-// ConfigureNSpawnDependencies orders the machine after host services that
+// configureNSpawnDependencies orders the machine after host services that
 // must finish changing host devices before nspawn starts.
-func ConfigureNSpawnDependencies(log *slog.Logger, rootFS *goalstates.RootFS, requiredServices []string) phases.Task {
+func configureNSpawnDependencies(log *slog.Logger, rootFS *goalstates.RootFS, requiredServices []string) phases.Task {
 	return &configureNSpawnDependenciesTask{
 		log:               log,
 		serviceDropInPath: filepath.Join(filepath.Dir(rootFS.ServiceOverrideFile), nspawnDependenciesDropIn),

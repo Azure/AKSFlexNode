@@ -1,23 +1,25 @@
-package daemon
+package agentruntime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"os"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
-// ResetNode returns the task that removes the node runtime from the host.
+// Reset returns the task that removes the node runtime from the host.
 //
 // Helpers the agent library installs under the host root, the nspawn lifecycle
 // helper and the LocalDNS network helper, are removed under the resolved host
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
-func ResetNode(log *slog.Logger) phases.Task {
+func (NSpawn) Reset(log *slog.Logger) phases.Task {
 	return phases.Serial(log,
 		phases.Parallel(log,
 			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
@@ -36,7 +38,6 @@ func ResetNode(log *slog.Logger) phases.Task {
 		),
 		removeHostHelpers(log),
 		reset.ReloadSystemd(log),
-		config.RemoveRuntimeDirs(log),
 	)
 }
 
@@ -82,5 +83,16 @@ func (t *removeFilesTask) Do(context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+// On a read-only legacy root, unlinking an absent file can return EROFS.
+func removeIfPresent(path string) error {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
 	return nil
 }

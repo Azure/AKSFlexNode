@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -85,7 +86,7 @@ func (h *handler) execute(ctx context.Context) error {
 
 	failMachinesTargetForMissing := daemon.Containerized() || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
 	checks := daemon.PreflightChecks(preflight.Flatten(
-		[]preflight.Checker{daemon.CheckMachinesTarget(
+		[]preflight.Checker{agentruntime.CheckMachinesTarget(
 			log,
 			failMachinesTargetForMissing,
 		)},

@@ -13,9 +13,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const machineOperationModeDisable = "disable"
@@ -28,13 +30,23 @@ type machineOperationReconcilerOptions struct {
 	NodeName             string
 	AKSMachineName       string
 	MachineOperationMode string
-	Operator             nodeOperator
+	Runtime              workerRuntime
+	State                stateStore
+	Config               *config.Config
+	Uninstall            func(*slog.Logger) phases.Task
+	ClearConfig          phases.Task
+	Resolve              machineGoalResolver
 	AgentUpgrade         agentUpgradeExecutor
 }
 
 type machineOperationHandlers struct {
 	log          *slog.Logger
-	operator     nodeOperator
+	runtime      workerRuntime
+	state        stateStore
+	cfg          *config.Config
+	resolve      machineGoalResolver
+	uninstall    func(*slog.Logger) phases.Task
+	clearConfig  phases.Task
 	agentUpgrade agentUpgradeExecutor
 }
 
@@ -49,8 +61,8 @@ func machineOperationReconciler(
 	if opts.Client == nil {
 		return nil, fmt.Errorf("kubernetes client is nil")
 	}
-	if opts.Operator == nil {
-		return nil, fmt.Errorf("node operator is nil")
+	if opts.Runtime == nil {
+		return nil, fmt.Errorf("worker runtime is nil")
 	}
 	if opts.AgentUpgrade == nil {
 		return nil, fmt.Errorf("agent upgrade executor is nil")
@@ -81,10 +93,30 @@ func machineOperationReconciler(
 	if opts.AKSMachineName == "" {
 		return nil, fmt.Errorf("AKS machine name is empty")
 	}
+	if opts.State == nil {
+		return nil, fmt.Errorf("state store is nil")
+	}
+	if opts.Config == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	if opts.Uninstall == nil {
+		return nil, fmt.Errorf("uninstall task factory is nil")
+	}
+	if opts.ClearConfig == nil {
+		return nil, fmt.Errorf("config cleanup task is nil")
+	}
+	if opts.Resolve == nil {
+		return nil, fmt.Errorf("machine goal resolver is nil")
+	}
 
 	handlers := &machineOperationHandlers{
 		log:          opts.Log,
-		operator:     opts.Operator,
+		runtime:      opts.Runtime,
+		state:        opts.State,
+		cfg:          opts.Config,
+		resolve:      opts.Resolve,
+		uninstall:    opts.Uninstall,
+		clearConfig:  opts.ClearConfig,
 		agentUpgrade: opts.AgentUpgrade,
 	}
 	// Whether an operation is still to run is read from the API server. A handler's own status
@@ -133,7 +165,7 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 	if err := store.MarkInProgress(ctx, op, "restarting active nspawn node"); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark NodeReboot MachineOperation in progress: %w", err)
 	}
-	if err := h.operator.RestartNode(ctx, h.log); err != nil {
+	if err := h.restartNode(ctx); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,
@@ -152,6 +184,22 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 		return ctrl.Result{}, fmt.Errorf("finish NodeReboot MachineOperation: %w", err)
 	}
 	return ctrl.Result{}, nil
+}
+
+func (h *machineOperationHandlers) restartNode(ctx context.Context) error {
+	active, err := activeMachineFromStore(ctx, h.state)
+	if err != nil {
+		return err
+	}
+	cfg := h.cfg.DeepCopy()
+	if active.State.AppliedKubernetesVersion != "" {
+		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
+	}
+	_, gs, archives, err := h.resolve(ctx, h.log, cfg, active.Name)
+	if err != nil {
+		return fmt.Errorf("resolve goal state for node restart: %w", err)
+	}
+	return h.runtime.Restart(cfg, h.log, active.Name, gs, archives).Do(ctx)
 }
 
 func (h *machineOperationHandlers) reconcileAgentUpgrade(
@@ -257,7 +305,7 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}
-	if err := h.operator.ResetNode(ctx, h.log); err != nil {
+	if err := phases.ExecuteTask(ctx, h.log, h.runtime.Reset(h.log)); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,
@@ -265,6 +313,9 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 			"ExecutionFailed",
 			err.Error(),
 		)
+	}
+	if err := phases.ExecuteTask(ctx, h.log, h.clearConfig); err != nil {
+		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", fmt.Sprintf("%s: %v", h.clearConfig.Name(), err))
 	}
 	// FlexNode does not have a Machina Machine CR, so observed machine
 	// generation is intentionally unset.
@@ -275,7 +326,7 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("finish AgentReset MachineOperation: %w", err)
 	}
-	if err := h.operator.StopDaemon(ctx, h.log); err != nil {
+	if err := phases.ExecuteTask(ctx, h.log, h.uninstall(h.log)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("stop daemon after AgentReset MachineOperation: %w", err)
 	}
 	return ctrl.Result{}, nil

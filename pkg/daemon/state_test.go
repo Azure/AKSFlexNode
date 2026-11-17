@@ -137,17 +137,17 @@ func TestSeededState(t *testing.T) {
 func TestSaveStateValidation(t *testing.T) {
 	t.Parallel()
 
-	if err := saveState(nil, &State{}).Do(t.Context()); err == nil {
+	if err := SaveState(nil, &State{}).Do(t.Context()); err == nil {
 		t.Fatalf("SaveState nil store error = nil")
 	}
 	store, err := newFileStateStore(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatalf("newFileStateStore: %v", err)
 	}
-	if err := saveState(store, nil).Do(t.Context()); err == nil {
+	if err := SaveState(store, nil).Do(t.Context()); err == nil {
 		t.Fatalf("SaveState nil state error = nil")
 	}
-	if task := saveState(store, &State{}); task.Name() != "save-daemon-state" {
+	if task := SaveState(store, &State{}); task.Name() != "save-daemon-state" {
 		t.Fatalf("Name = %q, want save-daemon-state", task.Name())
 	}
 }

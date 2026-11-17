@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -310,21 +309,6 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 				t.Errorf("helper links to %q, %v; want %q", target, err, binaryName)
 			}
 		})
-	}
-}
-
-// TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst: the machine's hooks start the nspawn
-// lifecycle units, so they have to be there before anything starts the machine.
-func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
-	t.Parallel()
-
-	gs := &goalstates.MachineGoalState{
-		RootFS:    &goalstates.RootFS{MachineDir: t.TempDir()},
-		NodeStart: &goalstates.NodeStart{},
-	}
-	name := StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
-	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
-		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)
 	}
 }
 
