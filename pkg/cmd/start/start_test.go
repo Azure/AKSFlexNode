@@ -1,13 +1,14 @@
 package start
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 )
 
 func TestBootstrapOrdersHooksBeforeWorkerAndState(t *testing.T) {
@@ -18,7 +19,8 @@ func TestBootstrapOrdersHooksBeforeWorkerAndState(t *testing.T) {
 		NodeStart: &goalstates.NodeStart{},
 	}
 	log := slog.New(slog.DiscardHandler)
-	name := bootstrapTasks(&config.Config{}, log, "kube1", gs, nil, daemon.SaveState(nil, &daemon.State{})).Name()
+	saveTask := hostnode.Func("save-daemon-state", func(context.Context) error { return nil })
+	name := bootstrapTasks(&config.Config{}, log, "kube1", gs, nil, saveTask).Name()
 
 	hooks := strings.Index(name, "ensure-nspawn-lifecycle-units")
 	archives := strings.Index(name, "download-container-image-archives")

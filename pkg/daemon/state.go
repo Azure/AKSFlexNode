@@ -15,7 +15,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const (
@@ -41,11 +40,6 @@ type activeMachine struct {
 type saveStateTask struct {
 	store stateStore
 	state *State
-}
-
-// SaveState persists the applied goal after the worker starts successfully.
-func SaveState(store stateStore, state *State) phases.Task {
-	return &saveStateTask{store: store, state: state}
 }
 
 func (t *saveStateTask) Name() string { return "save-daemon-state" }
