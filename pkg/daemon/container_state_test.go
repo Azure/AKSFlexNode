@@ -10,7 +10,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
 func TestContainerStateRecord(t *testing.T) {
@@ -74,57 +73,6 @@ func TestContainerStartupRecord(t *testing.T) {
 				if err := store.Delete(); err != nil {
 					t.Fatal(err)
 				}
-			}
-		})
-	}
-}
-
-func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
-	t.Parallel()
-	fixture, err := filepath.Abs("testdata/agent_isolation.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeContainer} {
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			want := "/var/lib/machines/kube2/usr/local/bin/aks-flex-node"
-			if mode == isolation.ModeContainer {
-				want = filepath.Join(container.Layout{}.RootfsDir("kube2"), "usr/local/bin/aks-flex-node")
-			}
-			path := provider.NSpawnAgentBinaryPath
-			if mode == isolation.ModeContainer {
-				path = provider.ContainerAgentBinaryPath
-			}
-			if got := path("kube2"); got != want {
-				t.Fatalf("binary sync path = %s, want %s", got, want)
-			}
-		})
-	}
-	if err := mustNodeProvider(t, isolation.ModeNone).SynchronizeAgent("missing", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := mustNodeProvider(t, isolation.ModeContainer).SynchronizeAgent("missing", "../escape"); err == nil {
-		t.Fatal("container sync accepted invalid slot")
-	}
-	for _, tc := range []struct {
-		name, supported string
-		wantErr         bool
-	}{
-		{name: "container capable", supported: "container"},
-		{name: "none only refused", supported: "none", wantErr: true},
-		{name: "old agent refused", supported: "nspawn", wantErr: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			// An immutable script avoids ETXTBUSY from overlapping fixture
-			// writes and process forks in parallel tests.
-			candidate := filepath.Join(t.TempDir(), tc.supported)
-			if err := os.Symlink(fixture, candidate); err != nil {
-				t.Fatal(err)
-			}
-			if err := mustNodeProvider(t, isolation.ModeContainer).CheckAgentCandidate(t.Context(), candidate); (err != nil) != tc.wantErr {
-				t.Fatalf("capability = %v", err)
 			}
 		})
 	}

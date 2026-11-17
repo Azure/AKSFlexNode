@@ -345,7 +345,7 @@ func recordPendingAgentUpgrade(
 	if err := validateAppliedProvider(provider, loaded); err != nil {
 		return err
 	}
-	mode := loaded.IsolationMode()
+	mode := loaded.Isolation
 	if err := provider.ValidateActiveSlot(loaded.ActiveMachine); err != nil {
 		return fmt.Errorf("no valid active node for AgentUpgrade: %w", err)
 	}

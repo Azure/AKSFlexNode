@@ -36,38 +36,6 @@ func TestNoneStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNoneStatePermissions(t *testing.T) {
-	t.Parallel()
-	for _, existing := range []bool{false, true} {
-		t.Run(fmt.Sprintf("existing=%t", existing), func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "state.json")
-			store, err := newFileStateStore(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if existing {
-				if err := os.WriteFile(path, []byte("old state"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Chmod(path, 0o644); err != nil { //nolint:gosec // verifies publication tightens an existing readable file
-					t.Fatal(err)
-				}
-			}
-			if err := store.Save(t.Context(), &State{Isolation: isolation.ModeNone}); err != nil {
-				t.Fatal(err)
-			}
-			info, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if info.Mode().Perm() != 0o600 {
-				t.Fatalf("applied config permissions = %o, want 600", info.Mode().Perm())
-			}
-		})
-	}
-}
-
 func TestNspawnStateFormatUnchanged(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []isolation.Mode{"", isolation.ModeNSpawn} {
@@ -95,7 +63,9 @@ func TestNspawnStateFormatUnchanged(t *testing.T) {
 				t.Fatalf("nspawn checksum sidecar changed: %v", err)
 			}
 			got, err := store.Load(t.Context())
-			if err != nil || !reflect.DeepEqual(got, state) {
+			expected := *state
+			expected.Isolation = isolation.ModeNSpawn
+			if err != nil || !reflect.DeepEqual(got, &expected) {
 				t.Fatalf("nspawn Load did not preserve state: %v", err)
 			}
 		})

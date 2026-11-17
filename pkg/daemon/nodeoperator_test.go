@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/bootstrapdata"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestFindActiveMachine(t *testing.T) {
@@ -296,7 +297,14 @@ type testStateStore struct {
 }
 
 func (s *testStateStore) Load(context.Context) (*State, error) {
-	return s.state, nil
+	if s.state == nil {
+		return nil, nil
+	}
+	loaded := *s.state
+	if loaded.Isolation == "" {
+		loaded.Isolation = isolation.ModeNSpawn
+	}
+	return &loaded, nil
 }
 
 func (s *testStateStore) Save(context.Context, *State) error {

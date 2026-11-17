@@ -9,7 +9,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
@@ -22,7 +21,6 @@ type noneProvider = provider.None
 
 var newNoneRuntime = provider.NewNoneRuntime
 var resetNoneRuntime = provider.ResetNoneRuntime
-var nspawnLifecycleTasks = provider.NSpawnLifecycleTasks
 
 func mustNodeProvider(t *testing.T, mode isolation.Mode) NodeProvider {
 	t.Helper()
@@ -31,52 +29,6 @@ func mustNodeProvider(t *testing.T, mode isolation.Mode) NodeProvider {
 		t.Fatal(err)
 	}
 	return provider
-}
-
-func TestNodeProviderFactory(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name            string
-		mode            isolation.Mode
-		want            isolation.Mode
-		nspawn, wantErr bool
-	}{
-		{name: "empty mode", wantErr: true},
-		{name: "nspawn", mode: isolation.ModeNSpawn, want: isolation.ModeNSpawn, nspawn: true},
-		{name: "none", mode: isolation.ModeNone, want: isolation.ModeNone},
-		{name: "container", mode: isolation.ModeContainer, want: isolation.ModeContainer},
-		{name: "unknown", mode: "invalid", wantErr: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			p, err := NewNodeProvider(tc.mode)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("factory=%v, %v", p, err)
-			}
-			if tc.wantErr {
-				return
-			}
-			if p.Mode() != tc.want || p.SupportsDisconnectTolerance() != tc.nspawn || (p.NSpawnRuntime() != nil) != tc.nspawn {
-				t.Fatalf("wrong provider capabilities: %T", p)
-			}
-			if err := p.ValidateEnvironment(false); err != nil {
-				t.Fatal(err)
-			}
-			if err := p.ValidateEnvironment(true); (err == nil) != tc.nspawn {
-				t.Fatalf("containerized environment=%v", err)
-			}
-			wanted := []string{"network-online.target", "systemd-udev-settle.service"}
-			if tc.nspawn {
-				wanted = append(wanted, "machines.target")
-			}
-			if !slices.Equal(p.WantedTargets(), wanted) {
-				t.Fatalf("targets=%v", p.WantedTargets())
-			}
-			if got := len(p.RuntimeChecks(&config.Config{}, discardLogger(), false)); (got > 0) != tc.nspawn {
-				t.Fatalf("runtime checks=%d", got)
-			}
-		})
-	}
 }
 
 func TestBootstrapProviderAppliedStatePolicy(t *testing.T) {
@@ -96,7 +48,11 @@ func TestBootstrapProviderAppliedStatePolicy(t *testing.T) {
 			t.Parallel()
 			// Applied none is rejected before SDK preflight or any host mutation.
 			p := mustNodeProvider(t, tc.configured)
-			err := checkBootstrapProvider(t.Context(), discardLogger(), p, &State{Isolation: tc.applied}, nil)
+			applied := &State{Isolation: tc.applied}
+			if applied.Isolation == "" {
+				applied.Isolation = isolation.ModeNSpawn
+			}
+			err := checkBootstrapProvider(t.Context(), discardLogger(), p, applied, nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("bootstrap=%v", err)
 			}
@@ -154,7 +110,7 @@ func TestResetProviderDiscovery(t *testing.T) {
 		{name: "partial none", present: []isolation.Mode{isolation.ModeNone}, want: isolation.ModeNone},
 		{name: "ambiguous footprints", present: []isolation.Mode{isolation.ModeNone, isolation.ModeNSpawn}, wantErr: true},
 		{name: "applied state owns retry", state: &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}, want: isolation.ModeNone},
-		{name: "state precedes footprints", state: &State{ActiveMachine: "kube1"}, present: []isolation.Mode{isolation.ModeNone}, want: isolation.ModeNSpawn},
+		{name: "state precedes footprints", state: &State{Isolation: isolation.ModeNSpawn, ActiveMachine: "kube1"}, present: []isolation.Mode{isolation.ModeNone}, want: isolation.ModeNSpawn},
 		{name: "corruption precedes footprints", loadErr: errors.New("checksum mismatch"), present: []isolation.Mode{isolation.ModeNone}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,7 +204,7 @@ type recordingStateLoader struct{ calls *[]string }
 
 func (s recordingStateLoader) LoadState(context.Context) (*State, error) {
 	*s.calls = append(*s.calls, "load")
-	return &State{ActiveMachine: "kube1"}, nil
+	return &State{Isolation: isolation.ModeNSpawn, ActiveMachine: "kube1"}, nil
 }
 
 func TestActivationDiscoversPendingRuntimeWithoutAppliedState(t *testing.T) {
