@@ -66,7 +66,7 @@ func TestInactiveActivationSkipsMissingWorker(t *testing.T) {
 	writeExecutable(t, binary, "candidate")
 	store := &activationStateFixture{states: []*State{nil}}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 		synchronize: func(string, string) error {
@@ -94,7 +94,7 @@ func TestNoneActivationSkipsGuestSynchronization(t *testing.T) {
 		},
 	}}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 		synchronize: func(string, string) error {
@@ -115,7 +115,7 @@ func TestActivationHealthFailureDoesNotLoadState(t *testing.T) {
 
 	store := &activationStateFixture{}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 		synchronize: func(string, string) error {
@@ -144,7 +144,7 @@ func TestActivationPreservesEarlierHealthDeadline(t *testing.T) {
 		wantDeadline: deadline,
 	}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 	}
@@ -204,7 +204,7 @@ func testActivationWorkerSyncRollback(t *testing.T, mode isolation.Mode) {
 	var copies []string
 	syncErr := errors.New("worker copy failed")
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 		synchronize: func(path, destination string) error {

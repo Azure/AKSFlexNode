@@ -1,8 +1,7 @@
 package agentdeployment
 
 import (
-	"os"
-	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,25 +17,17 @@ func TestOCIServiceDoesNotRequireMachinesTarget(t *testing.T) {
 			Isolation: isolation.ModeContainer,
 		},
 	}
-	options := agentServiceOptionsFromConfig(cfg)
-	if !options.OmitMachinesTarget {
-		t.Fatal("OCI service requires machines.target")
+	targets := ServiceTargetsFromConfig(cfg, cfg.Bootstrap.Isolation)
+	base := []string{"network-online.target", "systemd-udev-settle.service"}
+	if !slices.Equal(targets.AfterTargets, base) || !slices.Equal(targets.WantsTargets, base) {
+		t.Fatalf("OCI targets = %+v, want only network and udev dependencies", targets)
 	}
 
-	unit, err := renderAgentServiceUnit("/opt/unbounded/agent/bin/aks-flex-node", options)
+	unit, err := renderAgentServiceUnit("/opt/unbounded/agent/bin/aks-flex-node", targets)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(unit), "machines.target") {
 		t.Fatal("OCI service references machines.target")
-	}
-
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ServiceUnitName), unit, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	installed, err := installedAgentServiceOptions(dir)
-	if err != nil || installed != options {
-		t.Fatalf("installed options = %+v, %v; want %+v", installed, err, options)
 	}
 }

@@ -270,7 +270,7 @@ func TestContainerNSpawnLifecycleUnits(t *testing.T) {
 func TestDaemonUnitsWantMachinesTarget(t *testing.T) {
 	t.Parallel()
 
-	hostUnit, err := renderAgentServiceUnit("/usr/local/bin/aks-flex-node", agentServiceOptions{})
+	hostUnit, err := renderAgentServiceUnit("/usr/local/bin/aks-flex-node", ServiceTargetsFromConfig(&config.Config{}, config.DefaultIsolationMode))
 	if err != nil {
 		t.Fatal(err)
 	}
