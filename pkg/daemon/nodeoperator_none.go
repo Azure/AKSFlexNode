@@ -147,9 +147,6 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	}
 	next := nextAppliedState(state, goal, nil)
 	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeNone, ac, noneNPDVersion(cfg)
-	next = registrationState(next)
-	ac = next.NodeConfig
-	gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
 	node := o.newNode(noneops.Params{
 		Log: log, Config: ac, GoalState: gs, Previous: state.NodeConfig,
 	})

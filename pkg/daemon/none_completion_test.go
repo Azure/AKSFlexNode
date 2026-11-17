@@ -100,16 +100,12 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Components: config.ComponentsConfig{Kubernetes: "1.34.1"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 	ac := config.ToAgentConfig(cfg, noneops.Slot)
-	ac.Kubelet.Labels = map[string]string{runtimeGenerationLabel: "source-nonce"}
 	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, NPDVersion: "v1.35.1", AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
 	factory := func(p noneops.Params) noneNode {
 		p.Overrides, p.Hooks = f.params.Overrides, f.params.Hooks
 		p.Resolve = func(string) (*goalstates.MachineGoalState, error) { return completionGoal(p.Config), nil }
 		if p.Previous != nil {
 			p.PreviousGoalState = completionGoal(p.Previous)
-		}
-		if p.GoalState != nil && p.GoalState.NodeStart.Kubelet.NodeLabels[runtimeGenerationLabel] != p.Config.Kubelet.Labels[runtimeGenerationLabel] {
-			t.Fatal("resolved goal lost the stamped registration label")
 		}
 		node := newNoneRuntime(p)
 		if f.fail == "commit" {
@@ -200,22 +196,6 @@ func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
 	if len(f.npdVersions) == 0 || f.npdVersions[len(f.npdVersions)-1] != state.NPDVersion {
 		t.Fatal("NPD restart did not select applied version")
 	}
-	args, err := os.ReadFile(filepath.Join(f.params.SystemdDir, none.UnitKubelet+".d", "20-node-config.conf"))
-	if err != nil || !strings.Contains(string(args), runtimeGenerationLabel+"="+state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]) {
-		t.Fatalf("running kubelet configuration does not match applied nonce: %v", err)
-	}
-}
-
-func TestNoneRegistrationFenceChangesOnEveryRepave(t *testing.T) {
-	t.Parallel()
-	state := &State{AppliedSettingsVersion: "41", NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
-	first, second := registrationState(state), registrationState(state)
-	if first.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] == second.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] {
-		t.Fatal("reapplying the same settings reused its old registration nonce")
-	}
-	if state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] != "" {
-		t.Fatal("registration preparation mutated the applied state")
-	}
 }
 
 func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
@@ -240,8 +220,8 @@ func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
 					t.Fatalf("expected SDK rollback: %v", err)
 				}
 				if failure == "" || failure == "commit" {
-					if next.AppliedSettingsVersion != "42" || next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] == "source-nonce" {
-						t.Fatal("repave did not publish new settings and a fresh registration nonce")
+					if next.AppliedSettingsVersion != "42" {
+						t.Fatal("repave did not publish new settings")
 					}
 				} else {
 					applied, err := json.Marshal(f.store.state)
@@ -261,8 +241,8 @@ func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
 				} else {
 					f.assertCommitted(t)
 				}
-				// A replacement daemon recovers solely from the original applied
-				// config. Before Save this restores source, after Save it commits.
+				// The SDK commits matching configs; changed configs roll back
+				// unless the target was saved as applied.
 				f.fail, f.store.failSave = "", false
 				restarted := *f.op
 				restarted.recovered = false
@@ -271,9 +251,9 @@ func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
 				if handled, err := f.op.ResumeRepave(t.Context(), discardLogger(), nil); err != nil || handled {
 					t.Fatalf("ResumeRepave = %t, %v", handled, err)
 				}
-				if failure == "" || failure == "commit" || failure == "kubelet" {
+				if failure == "" || failure == "commit" || failure == "kubelet" || version == "1.34.1" {
 					if f.cleanups != cleanups {
-						t.Fatal("recovery rolled back a completed upgrade or repeated a completed rollback")
+						t.Fatal("recovery rolled back a matching configuration or repeated a completed rollback")
 					}
 				} else if f.cleanups != cleanups+1 {
 					t.Fatal("uncommitted upgrade did not use base rollback")
