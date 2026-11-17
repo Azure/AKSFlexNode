@@ -101,6 +101,8 @@ func New(mode isolation.Mode) (Provider, error) {
 		return nspawnProvider{}, nil
 	case isolation.ModeNone:
 		return newNoneProvider(), nil
+	case isolation.ModeContainer:
+		return containerProvider{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported worker isolation %q", mode)
 	}

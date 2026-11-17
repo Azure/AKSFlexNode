@@ -15,7 +15,7 @@ func TestIsolationDefaultsAndValidation(t *testing.T) {
 		want  isolation.Mode
 		valid bool
 	}{
-		{"", isolation.ModeNSpawn, true}, {isolation.ModeNSpawn, isolation.ModeNSpawn, true}, {isolation.ModeNone, isolation.ModeNone, true}, {isolation.ModeContainer, isolation.ModeContainer, false}, {"unknown", "unknown", false},
+		{"", isolation.ModeNSpawn, true}, {isolation.ModeNSpawn, isolation.ModeNSpawn, true}, {isolation.ModeNone, isolation.ModeNone, true}, {isolation.ModeContainer, isolation.ModeContainer, true}, {"unknown", "unknown", false},
 	} {
 		t.Run(string(tc.mode), func(t *testing.T) {
 			t.Parallel()
@@ -33,7 +33,7 @@ func TestIsolationDefaultsAndValidation(t *testing.T) {
 
 func TestIsolationAuthenticationMapping(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone} {
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			for _, auth := range []struct {
@@ -72,6 +72,9 @@ func TestIsolationAuthenticationMapping(t *testing.T) {
 					}
 					if got.Isolation != string(mode) || got.NodeName != cfg.Agent.NodeName || got.MachineName != "kube1" || got.Kubelet.Labels["custom"] != "value" {
 						t.Fatal("mode or node configuration was not preserved")
+					}
+					if mode == isolation.ModeContainer && (got.Experimental == nil || !got.Experimental.ContainerIsolation) {
+						t.Fatal("missing SDK experimental opt-in")
 					}
 					if got.NSpawnLifecycle == nil || got.NSpawnLifecycle.PreStartCommand == "" {
 						t.Fatal("missing SDK lifecycle configuration")

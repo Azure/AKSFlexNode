@@ -945,7 +945,7 @@ func (c *BootstrapTokenConfig) validate() error {
 // ValidateIsolation checks the worker modes this agent implements.
 func ValidateIsolation(mode isolation.Mode) error {
 	switch mode {
-	case isolation.ModeNSpawn, isolation.ModeNone:
+	case isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer:
 		return nil
 	default:
 		return fmt.Errorf("unsupported worker isolation %q", mode)

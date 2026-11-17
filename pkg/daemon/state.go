@@ -145,7 +145,7 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 		state.Isolation = isolation.ModeNSpawn
 	}
 	switch state.Isolation {
-	case isolation.ModeNSpawn, isolation.ModeNone:
+	case isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer:
 	default:
 		return nil, fmt.Errorf("invalid applied isolation %q", state.Isolation)
 	}

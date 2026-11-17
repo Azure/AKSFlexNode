@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
@@ -44,6 +45,15 @@ func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.
 	}
 	if state != nil && state.Isolation != cfg.Bootstrap.Isolation {
 		return fmt.Errorf("worker isolation change requires reset")
+	}
+	if containerops.Present() && cfg.Bootstrap.Isolation != isolation.ModeContainer {
+		return fmt.Errorf("OCI worker is present; reset before changing isolation")
+	}
+	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
+		if noneops.Present() {
+			return fmt.Errorf("host-native worker is present; reset before changing isolation")
+		}
+		return host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNSpawn)
 	}
 	if cfg.Bootstrap.Isolation == isolation.ModeNone {
 		if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNSpawn); err != nil {

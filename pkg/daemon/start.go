@@ -24,8 +24,11 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 	if !containerized {
 		tasks = append(tasks, host.InstallPackagesFor(log, mode))
 	}
-	if mode == isolation.ModeNone {
+	if mode != isolation.ModeNSpawn {
 		tasks = append(tasks, noneops.LoadKernelModules(log, nil))
+	}
+	if mode == isolation.ModeContainer {
+		tasks = append(tasks, phases.Parallel(log, host.DisableContainerd(log), host.DisableKubelet(log)))
 	}
 	preparation := []phases.Task{host.ConfigureOS(log), host.ConfigureNFTablesFor(log, mode), host.DisableDocker(log), host.DisableSwap(log), hostrouting.Configure(cfg, log)}
 	if mode == isolation.ModeNSpawn {

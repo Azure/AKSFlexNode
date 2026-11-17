@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
@@ -34,6 +35,8 @@ func ResetNode(ctx context.Context, log *slog.Logger) (phases.Task, error) {
 		mode = state.Isolation
 	} else if noneops.Present() {
 		mode = isolation.ModeNone
+	} else if containerops.Present() {
+		mode = isolation.ModeContainer
 	}
 	return resetNodeFor(mode, log)
 }
