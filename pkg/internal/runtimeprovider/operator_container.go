@@ -22,10 +22,10 @@ import (
 type containerNode interface {
 	ContainerRuntime
 
-	Start(context.Context, bool, bool, bool) error
-	Restart(context.Context) error
-	Destroy(context.Context) error
-	Upgrade(context.Context, containerNode) error
+	Start(ctx context.Context, wasRunning bool, containerdChanged bool, kubeletChanged bool) error
+	Restart(ctx context.Context) error
+	Destroy(ctx context.Context) error
+	Upgrade(ctx context.Context, previous containerNode) error
 }
 
 type managedContainerNode struct{ *containerops.Node }
@@ -42,11 +42,11 @@ type containerNodeOperator struct {
 	*operatorBase
 	startup            ContainerStartupStore
 	activationLockPath string
-	newNode            func(containerops.Params) (containerNode, error)
-	resolve            func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
-	stage              func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
-	startNPD           func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
-	syncPrepared       func(context.Context, ContainerRuntime) error
+	newNode            func(params containerops.Params) (containerNode, error)
+	resolve            func(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
+	stage              func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error
+	startNPD           func(ctx context.Context, log *slog.Logger, cfg *config.Config, node *goalstates.NodeStart) error
+	syncPrepared       func(ctx context.Context, node ContainerRuntime) error
 }
 
 func newContainerNodeOperator(base *operatorBase, state *State, startup ContainerStartupStore, activationLockPath string) (*containerNodeOperator, error) {
