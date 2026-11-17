@@ -18,9 +18,9 @@ import (
 // The SDK journals host changes and rolls back failures. Flex persists the
 // applied configuration before committing that journal.
 type noneNode interface {
-	RecoverUpgrade(context.Context) error
-	Restart(context.Context) error
-	Upgrade(context.Context) error
+	RecoverUpgrade(ctx context.Context) error
+	Restart(ctx context.Context) error
+	Upgrade(ctx context.Context) error
 	Commit() error
 	PruneVersions() error
 	GoalState() (*goalstates.MachineGoalState, error)
@@ -28,12 +28,12 @@ type noneNode interface {
 
 type noneNodeOperator struct {
 	*operatorBase
-	newNode      func(noneops.Params) noneNode
-	stage        func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
-	dependencies func(context.Context, *slog.Logger, *config.Config) error
-	installNPD   func(context.Context, *slog.Logger, *config.Config, *goalstates.MachineGoalState) error
-	startNPD     func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
-	resolve      func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
+	newNode      func(params noneops.Params) noneNode
+	stage        func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error
+	dependencies func(ctx context.Context, log *slog.Logger, cfg *config.Config) error
+	installNPD   func(ctx context.Context, log *slog.Logger, cfg *config.Config, goal *goalstates.MachineGoalState) error
+	startNPD     func(ctx context.Context, log *slog.Logger, cfg *config.Config, node *goalstates.NodeStart) error
+	resolve      func(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
 	// Reconciliation and MachineOperations share a serialized queue.
 	recovered bool
 }
