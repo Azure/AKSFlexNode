@@ -8,7 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Select worker isolation with `bootstrap.isolation`: `nspawn` (default) or host-native `none`. None requires the host-installed agent and supports mode-aware preflight, reset, soft reboot, repave, and agent upgrades through existing Unbounded lifecycle APIs. Changing isolation requires reset and bootstrap; disconnect tolerance remains nspawn-only.
 - Disconnect tolerance: when AKS enables it for a node, the agent downloads and runs OpenYurt YurtHub in the worker and routes kubelet through it, so workloads keep running while the node is disconnected from the API server. Enabling it requires outbound HTTPS to `packages.microsoft.com`; joining does not. State is reported as a `DisconnectTolerance` Node condition on every node; with paired agent and kubelet kubeconfigs, grant the agent principal `patch` on its own `nodes/status` ([#390](https://github.com/Azure/AKSFlexNode/pull/390), [#391](https://github.com/Azure/AKSFlexNode/pull/391), [#392](https://github.com/Azure/AKSFlexNode/pull/392)).
 - `agent.machineClient.apiVersion` overrides the ARM Machine API version ([#390](https://github.com/Azure/AKSFlexNode/pull/390)).
 
@@ -18,8 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Clean up host-native CNI/IPAM state after successful runtime destruction and retain applied-mode routing for retries after partial reset.
-- Stop and disable agent-owned host NPD when a repave selects offline artifacts, including retries after partial disablement.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
 - Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
 
