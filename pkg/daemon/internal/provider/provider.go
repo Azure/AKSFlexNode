@@ -23,8 +23,13 @@ type State struct {
 	ActiveMachine             string                   `json:"activeMachine,omitempty"`
 	Isolation                 isolation.Mode           `json:"isolation,omitempty"`
 	NodeConfig                *agentconfig.AgentConfig `json:"nodeConfig,omitempty"`
-	// NPDVersion identifies the applied NPD binary; empty means disabled or legacy.
-	NPDVersion string `json:"npdVersion,omitempty"`
+}
+
+// DeepCopy copies the state and its runtime configuration.
+func (s *State) DeepCopy() *State {
+	next := *s
+	next.NodeConfig = s.NodeConfig.DeepCopy()
+	return &next
 }
 
 // IsolationMode interprets records written before isolation was configurable.

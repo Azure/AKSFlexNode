@@ -75,7 +75,7 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 			var events []string
 			previous := &agentconfig.AgentConfig{Isolation: "none"}
 			previous.Cluster.Version = "1.35.0"
-			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old", NPDVersion: "v1.35.1"}}
+			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old"}}
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 			op := &noneNodeOperator{
 				operatorBase: &operatorBase{cfg: cfg, state: store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}},
@@ -117,7 +117,7 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 				t.Fatalf("events = %v, want %v", events, tc.want)
 			}
 			if !tc.wantErr {
-				if got.Isolation != isolation.ModeNone || got.ActiveMachine != "" || got.NodeConfig.Cluster.Version != "1.36.2" || got.PreviousSettingsVersion != "old" || got.NPDVersion != "v1.36.0" {
+				if got.Isolation != isolation.ModeNone || got.ActiveMachine != "" || got.NodeConfig.Cluster.Version != "1.36.2" || got.PreviousSettingsVersion != "old" {
 					t.Fatalf("incorrect persisted state: mode=%s slot=%s version=%s", got.Isolation, got.ActiveMachine, got.NodeConfig.Cluster.Version)
 				}
 			}

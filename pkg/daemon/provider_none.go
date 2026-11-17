@@ -165,7 +165,7 @@ func (noneProvider) StartNode(params StartParams) phases.Task {
 		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart).Do(ctx); err != nil {
 			return err
 		}
-		seedNoneState(params.State, ac, noneNPDVersion(cfg))
+		seedNoneState(params.State, ac)
 		return saveState(params.Store, params.State).Do(ctx)
 	})
 }
@@ -219,16 +219,6 @@ func removeNoneHostUnit(log *slog.Logger, unit string) phases.Task {
 		}
 		return os.Remove(path)
 	})
-}
-
-func noneNPDVersion(cfg *config.Config) string {
-	if strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != "" {
-		return ""
-	}
-	if cfg.Npd.Version != "" {
-		return cfg.Npd.Version
-	}
-	return npd.DefaultVersion
 }
 
 func noneRequiredServices(cfg *config.Config) []string {

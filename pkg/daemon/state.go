@@ -37,14 +37,6 @@ type noneStateRecord struct {
 
 type State = provider.State
 
-func npdConfigFromState(state *State) *config.Config {
-	cfg := &config.Config{Npd: config.NPDConfig{Version: state.NPDVersion}}
-	if offline := state.NodeConfig.OfflineArtifacts; offline != nil {
-		cfg.Bootstrap.OfflineArtifacts.Source = offline.Source
-	}
-	return cfg
-}
-
 type saveStateTask struct {
 	store stateStore
 	state *State

@@ -110,7 +110,7 @@ func (o *containerNodeOperator) RestartNode(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return err
 	}
-	return o.startNPD(ctx, log, npdConfigFromState(state), gs.NodeStart)
+	return o.startNPD(ctx, log, o.cfg, gs.NodeStart)
 }
 
 func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
@@ -135,9 +135,9 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	if err != nil {
 		return nil, fmt.Errorf("resolve container repave: %w", err)
 	}
-	ac = ac.DeepCopy()
 	next := nextAppliedState(state, goal, &activeMachine{Name: slot})
-	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeContainer, ac, noneNPDVersion(cfg)
+	next.Isolation, next.NodeConfig = isolation.ModeContainer, ac
+	next = next.DeepCopy()
 	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
 	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Log
 	if err != nil {
 		return err
 	}
-	if err := o.startNPD(ctx, log, npdConfigFromState(startup.Next), gs.NodeStart); err != nil {
+	if err := o.startNPD(ctx, log, o.cfg, gs.NodeStart); err != nil {
 		return err
 	}
 	// Persist the supervisor and NPD boot state before recording Flex completion

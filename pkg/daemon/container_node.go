@@ -134,7 +134,6 @@ func startContainerNode(params StartParams) phases.Task {
 			return fmt.Errorf("persist bootstrapped container: %w", err)
 		}
 		state.Isolation, state.ActiveMachine, state.NodeConfig = isolation.ModeContainer, slot, ac
-		state.NPDVersion = noneNPDVersion(cfg)
 		return saveState(store, state).Do(ctx)
 	})
 }
