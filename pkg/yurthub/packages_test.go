@@ -163,7 +163,7 @@ func TestInstallBinary(t *testing.T) {
 	counted := func(ctx context.Context, url string) ([]byte, error) { downloads++; return fetch(ctx, url) }
 	root, dir := openTestRoot(t, ubuntu2404)
 	for i := range 2 {
-		version, err := installBinary(t.Context(), root, packages, "amd64", counted)
+		version, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, packages, "amd64", counted)
 		if err != nil || version != "test-1" {
 			t.Fatalf("installBinary #%d = %q, %v", i, version, err)
 		}
@@ -184,7 +184,7 @@ func TestInstallBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	offline := func(context.Context, string) ([]byte, error) { return nil, errors.New("offline") }
-	if _, err := installBinary(t.Context(), root, packages, "amd64", offline); err != nil {
+	if _, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, packages, "amd64", offline); err != nil {
 		t.Fatalf("mode repair: %v", err)
 	}
 	if info, err := os.Stat(filepath.Join(dir, installedBinary)); err != nil || info.Mode().Perm() != 0o755 {
@@ -197,10 +197,10 @@ func TestInstallBinary(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(dir, installedBinary), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := installedSHA256(root); got != "" {
+	if got := installedSHA256(root, testWorker("kube1", dir).Root); got != "" {
 		t.Fatalf("FIFO hashed as %q", got)
 	}
-	if _, err := installBinary(t.Context(), root, packages, "amd64", counted); err != nil {
+	if _, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, packages, "amd64", counted); err != nil {
 		t.Fatalf("replace FIFO: %v", err)
 	}
 	if info, err := os.Lstat(filepath.Join(dir, installedBinary)); err != nil || !info.Mode().IsRegular() {
@@ -210,7 +210,7 @@ func TestInstallBinary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, installedBinary), []byte("stale"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := installBinary(t.Context(), root, packages, "amd64", counted); err != nil {
+	if _, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, packages, "amd64", counted); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, installedBinary)); !bytes.Equal(got, binary) {
@@ -233,7 +233,7 @@ func TestInstallBinaryUnsupported(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			root, dir := openTestRoot(t, tt.osRelease)
-			_, err := installBinary(t.Context(), root, packages, tt.arch, fetch)
+			_, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, packages, tt.arch, fetch)
 			if !errors.Is(err, ErrUnsupportedWorker) {
 				t.Fatalf("error = %v, want ErrUnsupportedWorker", err)
 			}
@@ -261,7 +261,7 @@ func TestInstallBinaryRejectsBadPackage(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			root, dir := openTestRoot(t, ubuntu2404)
-			_, err := installBinary(t.Context(), root, tt.packages, "amd64", tt.fetch)
+			_, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, tt.packages, "amd64", tt.fetch)
 			if !errors.Is(err, ErrPackageDownload) {
 				t.Fatalf("error = %v, want ErrPackageDownload", err)
 			}
@@ -297,14 +297,14 @@ func TestPackagesCoverAgreedMatrix(t *testing.T) {
 func TestInstallBinaryBoundsDownload(t *testing.T) {
 	t.Parallel()
 	packages, fetch := testPackages(t, []byte("fake"))
-	root, _ := openTestRoot(t, ubuntu2404)
+	root, dir := openTestRoot(t, ubuntu2404)
 	bounded := func(ctx context.Context, url string) ([]byte, error) {
 		if _, ok := ctx.Deadline(); !ok {
 			return nil, errors.New("download has no deadline")
 		}
 		return fetch(ctx, url)
 	}
-	if _, err := installBinary(t.Context(), root, packages, "amd64", bounded); err != nil {
+	if _, err := installBinary(t.Context(), root, testWorker("kube1", dir).Root, packages, "amd64", bounded); err != nil {
 		t.Fatal(err)
 	}
 }

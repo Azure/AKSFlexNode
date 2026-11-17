@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,8 +22,11 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/nspawn"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -251,19 +253,27 @@ func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machine
 	if r.hub == nil || nodeSnap.node == nil || machineSnap.machine == nil {
 		return
 	}
-	worker, root := "", ""
+	var worker yurthub.Worker
 	if state != nil && validActiveMachine(state.ActiveMachine) {
-		worker = state.ActiveMachine
-		root = filepath.Join("/var/lib/machines", worker)
+		slot := state.ActiveMachine
+		worker = yurthub.Worker{
+			Scope: slot,
+			Root:  nspawn.Root(slot),
+			Exec: func(ctx context.Context, args ...string) (string, error) {
+				return nspawn.Exec(ctx, r.log, slot, args...)
+			},
+			KubeletUnit: "kubelet.service",
+			Mode:        isolation.ModeNSpawn,
+		}
 	}
-	if err := r.hub.Reconcile(ctx, machineSnap.machine.Goal.DisconnectToleranceEnabled, worker, root, nodeSnap.node); err != nil {
+	if err := r.hub.Reconcile(ctx, machineSnap.machine.Goal.DisconnectToleranceEnabled, worker, nodeSnap.node); err != nil {
 		r.log.Error("hub reconcile failed; will retry on a later read", "error", err)
 	}
 }
 
 // hubMachineReconciler runs on the same serialized queue as repave and MachineOperations.
 type hubMachineReconciler interface {
-	Reconcile(context.Context, *bool, string, string, *corev1.Node) error
+	Reconcile(context.Context, *bool, yurthub.Worker, *corev1.Node) error
 }
 
 func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot, error) {

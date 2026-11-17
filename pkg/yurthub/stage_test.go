@@ -2,11 +2,18 @@ package yurthub
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
+	"github.com/Azure/unbounded/pkg/agent/isolation/none"
+	"github.com/Azure/unbounded/pkg/agent/isolation/nspawn"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestStage(t *testing.T) {
@@ -194,6 +201,99 @@ func TestServiceRequiresActivationConfiguration(t *testing.T) {
 	}
 }
 
+func TestRuntimeFilesystemPaths(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			var view isolation.NodeRoot = nspawn.RootAt("kube1", dir)
+			unit := "kubelet.service"
+			if mode == isolation.ModeNone {
+				view = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
+				unit = none.UnitKubelet
+			}
+			if mode == isolation.ModeContainer {
+				view = container.Root{Dir: dir, HostRoot: t.TempDir(), SlotName: "kube1"}
+			}
+			if err := os.MkdirAll(view.Path("/usr/local/bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFixture(t, view.Path("/etc/os-release"), ubuntu2404)
+			writeFixture(t, view.Path("/"+directKubeconfig), directFixture)
+			writeFixture(t, view.Path("/var/lib/kubelet/pki/client.pem"), "client")
+			if err := os.Symlink("/var/lib/kubelet/pki/client.pem", view.Path("/"+kubeletClientCert)); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(view.Path("/"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close() //nolint:errcheck // directory handle
+			if !workerClientCertExists(root, view) {
+				t.Fatal("mapped kubelet certificate not found")
+			}
+			packages, fetch := testPackages(t, []byte("hub"))
+			if _, err := installBinary(t.Context(), root, view, packages, "amd64", fetch); err != nil {
+				t.Fatal(err)
+			}
+			binary := "/" + installedBinary
+			if mode == isolation.ModeNone {
+				binary = view.Path(binary)
+			}
+			var commands []string
+			worker := Worker{
+				Scope:       "kube1",
+				Root:        view,
+				Mode:        mode,
+				KubeletUnit: unit,
+				Exec: func(_ context.Context, args ...string) (string, error) {
+					commands = append(commands, strings.Join(args, " "))
+					return "", nil
+				},
+			}
+			ops, err := NewOperations(Config{
+				Worker:    worker,
+				NodeName:  "node1",
+				NodePool:  "pool",
+				ServerURL: "https://api.example.test",
+				Nodes:     fake.NewClientset().CoreV1().Nodes(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ops.binaryPath != binary {
+				t.Fatalf("execution path = %q, want %q", ops.binaryPath, binary)
+			}
+			if err := restartKubelet(t.Context(), ops.cfg.Worker); err != nil || !containsCommand(commands, "systemctl restart "+unit) {
+				t.Fatalf("kubelet execution = %v, %v", commands, err)
+			}
+			if err := stageService(root, binary); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(view.Path("/" + servicePath))
+			if err != nil || !strings.Contains(string(data), "ExecStart="+binary+" ") {
+				t.Fatalf("unit executable: %q, %v", data, err)
+			}
+			if data, err := os.ReadFile(view.Path("/" + installedBinary)); err != nil || string(data) != "hub" {
+				t.Fatalf("mapped binary: %q, %v", data, err)
+			}
+			if err := configureRouting(view, unit); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(view.Path("/" + routingDropInFor(unit))); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []bool{true, false} {
+				removed, err := restoreRouting(view, unit)
+				if err != nil || removed != want {
+					t.Fatalf("restore = %t, %v; want %t", removed, err, want)
+				}
+			}
+		})
+	}
+}
+
 func writeFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -214,5 +314,5 @@ func stageFiles(dir string) error {
 	if err := ensureStateDirs(root); err != nil {
 		return err
 	}
-	return stageService(root)
+	return stageService(root, "/"+installedBinary)
 }

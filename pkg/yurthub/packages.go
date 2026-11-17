@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // installedBinary is agent-owned, so it never replaces a yurthub that a
@@ -103,7 +105,7 @@ func workerOS(root *os.Root) (id, versionID string, err error) {
 // installBinary installs the pinned Hub binary for the worker image and returns
 // its package version. It downloads only when the installed binary differs from
 // the pin, and verifies both the package and binary checksums before writing.
-func installBinary(ctx context.Context, root *os.Root, packages []hubPackage, arch string, fetch func(context.Context, string) ([]byte, error)) (string, error) {
+func installBinary(ctx context.Context, root *os.Root, view isolation.NodeRoot, packages []hubPackage, arch string, fetch func(context.Context, string) ([]byte, error)) (string, error) {
 	id, versionID, err := workerOS(root)
 	if err != nil {
 		return "", err
@@ -118,12 +120,17 @@ func installBinary(ctx context.Context, root *os.Root, packages []hubPackage, ar
 	if pkg == nil {
 		return "", fmt.Errorf("%w: no hub package for worker image %s %s on %s", ErrUnsupportedWorker, id, versionID, arch)
 	}
-	if installedSHA256(root) == pkg.BinarySHA256 {
+	binRoot, binary, closeRoot, err := openBinaryRoot(root, view)
+	if err != nil {
+		return "", fmt.Errorf("open hub binary directory: %w", err)
+	}
+	defer closeRoot()
+	if installedSHA256InRoot(binRoot, binary) == pkg.BinarySHA256 {
 		// The pinned content alone isn't enough: systemd can't run it without the
 		// execute bits, and nothing else would repair them.
-		if info, err := root.Lstat(installedBinary); err == nil && info.Mode().IsRegular() {
+		if info, err := binRoot.Lstat(binary); err == nil && info.Mode().IsRegular() {
 			if info.Mode().Perm() != 0o755 {
-				if err := root.Chmod(installedBinary, 0o755); err != nil {
+				if err := binRoot.Chmod(binary, 0o755); err != nil {
 					return "", fmt.Errorf("repair hub binary permissions: %w", err)
 				}
 			}
@@ -139,14 +146,14 @@ func installBinary(ctx context.Context, root *os.Root, packages []hubPackage, ar
 	if sha256Hex(data) != pkg.Package.SHA256 {
 		return "", fmt.Errorf("%w: %s does not match its pinned checksum", ErrPackageDownload, pkg.Package.URL)
 	}
-	binary, err := extractPackageFile(pkg.Package.Format, data, packageBinary)
+	content, err := extractPackageFile(pkg.Package.Format, data, packageBinary)
 	if err != nil {
 		return "", fmt.Errorf("%w: extract hub binary: %w", ErrPackageDownload, err)
 	}
-	if sha256Hex(binary) != pkg.BinarySHA256 {
+	if sha256Hex(content) != pkg.BinarySHA256 {
 		return "", fmt.Errorf("%w: hub binary does not match its pinned checksum", ErrPackageDownload)
 	}
-	if err := utilio.WriteFileInRoot(root, installedBinary, binary, 0o755); err != nil {
+	if err := utilio.WriteFileInRoot(binRoot, binary, content, 0o755); err != nil {
 		return "", fmt.Errorf("install hub binary: %w", err)
 	}
 	return pkg.Package.Version, nil
@@ -292,11 +299,34 @@ func readLimited(r io.Reader, size int64) ([]byte, error) {
 	return data, nil
 }
 
-// installedSHA256 streams the installed binary so routine checks don't hold a
-// second copy in memory. Empty means absent, unreadable or not a regular file.
-// O_NONBLOCK keeps a FIFO at the path from blocking the daemon queue on open.
-func installedSHA256(root *os.Root) string {
-	f, err := root.OpenFile(installedBinary, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+// openBinaryRoot confines binary I/O to the SDK's version directory in none mode.
+func openBinaryRoot(root *os.Root, view isolation.NodeRoot) (*os.Root, string, func(), error) {
+	mapped := view.Path("/" + installedBinary)
+	if mapped == filepath.Join(view.Path("/"), installedBinary) {
+		return root, installedBinary, func() {}, nil
+	}
+	// None installs binaries below its version directory rather than the host root.
+	binDir := filepath.Dir(mapped)
+	versionRoot, err := os.OpenRoot(filepath.Dir(binDir))
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return versionRoot, filepath.Join(filepath.Base(binDir), filepath.Base(mapped)), func() { _ = versionRoot.Close() }, nil
+}
+
+// installedSHA256 streams the installed binary. Empty means absent, unreadable
+// or not a regular file; O_NONBLOCK prevents a FIFO from blocking the queue.
+func installedSHA256(root *os.Root, view isolation.NodeRoot) string {
+	binRoot, binary, closeRoot, err := openBinaryRoot(root, view)
+	if err != nil {
+		return ""
+	}
+	defer closeRoot()
+	return installedSHA256InRoot(binRoot, binary)
+}
+
+func installedSHA256InRoot(root *os.Root, binary string) string {
+	f, err := root.OpenFile(binary, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return ""
 	}
