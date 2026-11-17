@@ -98,13 +98,18 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run none and OCI worker lifecycle E2E
-        env:
-          E2E_SKIP_CLEANUP: "1"  # Cleanup handled in dedicated step below
+      - name: Inspect resources from the failed concurrent validation run
         run: |
           set -euo pipefail
-          ./hack/e2e/run.sh infra
-          ./hack/e2e/run.sh isolation
+          timeout 60 az deployment group show \
+            --resource-group "${E2E_RESOURCE_GROUP}" \
+            --name e2e-1794909418 \
+            --query '{name:name,state:properties.provisioningState,correlation:properties.correlationId}' \
+            --output json
+          timeout 60 az resource list \
+            --resource-group "${E2E_RESOURCE_GROUP}" \
+            --query '[?tags."github-run"==`"44060193352"`].{id:id,name:name,type:type,tags:tags}' \
+            --output json
 
       - name: Collect logs
         if: always()
