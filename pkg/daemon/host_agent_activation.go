@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
@@ -86,7 +86,7 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	return agentbinary.ActivateHostDaemon(ctx, log, hostAgentActivationOptions(paths, candidatePath), service)
 }
 
-func checkAgentActivationCandidate(ctx context.Context, candidate string, actions agentActions) error {
+func checkAgentActivationCandidate(ctx context.Context, candidate string, actions runtimeprovider.AgentActions) error {
 	if err := actions.ValidateAgentActivation(ctx); err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ type flexDaemonActivationService struct {
 	moveUnfinished   func() (bool, error)
 	paths            agentUpgradePaths
 	state            stateStore
-	provider         NodeProvider
+	provider         runtimeprovider.NodeProvider
 	systemdDir       string
 	recoveryScript   string
 	serviceOptions   agentServiceOptions
@@ -124,7 +124,7 @@ type flexDaemonActivationService struct {
 	serviceWasActive bool
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, provider NodeProvider, state stateStore) (*flexDaemonActivationService, agentUpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, provider runtimeprovider.NodeProvider, state stateStore) (*flexDaemonActivationService, agentUpgradePaths, error) {
 	if log == nil {
 		return nil, agentUpgradePaths{}, fmt.Errorf("logger is nil")
 	}
@@ -329,7 +329,7 @@ func (s *flexDaemonActivationService) loadActivationState(ctx context.Context) (
 	if err := s.provider.ValidateAgentActivation(ctx); err != nil {
 		return nil, err
 	}
-	if err := validateAppliedProvider(s.provider, state); err != nil {
+	if err := runtimeprovider.ValidateAppliedState(s.provider, state); err != nil {
 		return nil, err
 	}
 	return state, nil

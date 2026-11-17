@@ -90,11 +90,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
 	if containerized {
-		if runtime := provider.NSpawnRuntime(); runtime != nil {
-			convergeHeldAssets, err = runtime.ConvergeContainerAgent(ctx, log, operator)
-			if err != nil {
-				return err
-			}
+		convergence := newContainerAgentConvergence(log, operator)
+		held, err := convergence.converge(ctx)
+		if err != nil {
+			return err
+		}
+		convergeHeldAssets = noHeldAssets
+		if held {
+			convergeHeldAssets = convergence.writeUnits
 		}
 	}
 	if cfg.UsesKubeconfigCredentials() {

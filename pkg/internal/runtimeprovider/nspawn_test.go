@@ -1,11 +1,11 @@
-package provider_test
+package runtimeprovider_test
 
 import (
 	"log/slog"
 	"slices"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
@@ -17,7 +17,7 @@ import (
 func TestNspawnLifecycleTasksInstallTheHelperFirst(t *testing.T) {
 	t.Parallel()
 	var names []string
-	for _, task := range provider.NSpawnLifecycleTasks(slog.New(slog.DiscardHandler), &goalstates.RootFS{}) {
+	for _, task := range runtimeprovider.NSpawnLifecycleTasks(slog.New(slog.DiscardHandler), &goalstates.RootFS{}) {
 		names = append(names, task.Name())
 	}
 	if want := []string{"ensure-nspawn-lifecycle-helper", "ensure-nspawn-config"}; !slices.Equal(names, want) {

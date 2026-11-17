@@ -1,4 +1,4 @@
-package provider
+package runtimeprovider
 
 import (
 	"context"
@@ -131,12 +131,4 @@ type HostActions interface {
 	ValidateResetState(state *State) error
 	// RewriteNodeUnits updates runtime units after the host-agent root moves.
 	RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, store StateStore) error
-	// NSpawnRuntime returns nspawn-only agent hooks, or nil for another runtime.
-	NSpawnRuntime() NSpawnRuntime
-}
-
-// NSpawnRuntime converges the existing containerized agent's nspawn installation.
-type NSpawnRuntime interface {
-	// ConvergeContainerAgent returns the unit rewrite needed before releasing old assets.
-	ConvergeContainerAgent(ctx context.Context, log *slog.Logger, state StateLoader) (func(ctx context.Context) error, error)
 }

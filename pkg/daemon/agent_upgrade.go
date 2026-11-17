@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -238,7 +238,7 @@ type agentUpgrader interface {
 
 type agentUpgradeStateLoader = runtimeprovider.StateLoader
 
-func loadAgentActivationState(ctx context.Context, loader agentUpgradeStateLoader, actions agentActions) (*runtimeprovider.State, error) {
+func loadAgentActivationState(ctx context.Context, loader agentUpgradeStateLoader, actions runtimeprovider.AgentActions) (*runtimeprovider.State, error) {
 	if err := actions.ValidateAgentActivation(ctx); err != nil {
 		return nil, err
 	}
@@ -261,14 +261,14 @@ type hostAgentUpgradeExecutor struct {
 	runSystemdRun          func(context.Context, ...string) error
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 	runningExecutable      func() (string, error)
-	provider               NodeProvider
+	provider               runtimeprovider.NodeProvider
 	// guardLegacySeed runs before Stage switches anything; see the function
 	// of the same name. Nil skips it.
 	guardLegacySeed func() error
 	instanceID      string
 }
 
-func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader, provider NodeProvider) (*hostAgentUpgradeExecutor, error) {
+func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader, provider runtimeprovider.NodeProvider) (*hostAgentUpgradeExecutor, error) {
 	paths := defaultAgentUpgradePaths()
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
@@ -322,7 +322,7 @@ func recordPendingAgentUpgrade(
 	signals agentUpgradeSignalStore,
 	state agentUpgradeStateLoader,
 	operationName, instanceID string,
-	provider NodeProvider,
+	provider runtimeprovider.NodeProvider,
 ) error {
 	existing, err := signals.read()
 	if err != nil {
@@ -341,7 +341,7 @@ func recordPendingAgentUpgrade(
 	if loaded == nil {
 		return fmt.Errorf("no valid active node for AgentUpgrade")
 	}
-	if err := validateAppliedProvider(provider, loaded); err != nil {
+	if err := runtimeprovider.ValidateAppliedState(provider, loaded); err != nil {
 		return err
 	}
 	mode := loaded.Isolation
@@ -739,7 +739,7 @@ func wrapOptionalError(context string, err error) error {
 	return fmt.Errorf("%s: %w", context, err)
 }
 
-func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSignal, actions agentActions) error {
+func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSignal, actions runtimeprovider.AgentActions) error {
 	if err := actions.ValidateAgentActivation(context.Background()); err != nil {
 		return err
 	}
@@ -767,7 +767,7 @@ func agentUpgradeCandidateIsActive(paths agentUpgradePaths, signal *agentUpgrade
 	return current == signal.CandidatePath, nil
 }
 
-func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal, actions agentActions) error {
+func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal, actions runtimeprovider.AgentActions) error {
 	if signal == nil {
 		return nil
 	}

@@ -1,4 +1,4 @@
-package daemon
+package runtimeprovider
 
 import (
 	"context"
@@ -8,12 +8,12 @@ import (
 )
 
 type bootstrapDataRefresher interface {
-	Fetch(context.Context, *config.Config) (*bootstrapdata.Data, error)
+	Fetch(ctx context.Context, cfg *config.Config) (*bootstrapdata.Data, error)
 }
 
 type noopBootstrapDataRefresher struct{}
 
-func (noopBootstrapDataRefresher) Fetch(context.Context, *config.Config) (*bootstrapdata.Data, error) {
+func (noopBootstrapDataRefresher) Fetch(ctx context.Context, cfg *config.Config) (*bootstrapdata.Data, error) {
 	return nil, nil
 }
 
