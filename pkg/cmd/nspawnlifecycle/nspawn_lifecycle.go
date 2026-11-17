@@ -69,7 +69,8 @@ func newCommand(log *slog.Logger, factory lifecycleFactory, migrate func(*slog.L
 	return cmd
 }
 
-// newPhaseCommand skips disabled lifecycles before migrating the host root.
+// newPhaseCommand leaves disabled nspawn hooks as no-ops, so stale units cannot
+// mutate a host configured for another runtime.
 // When the host root cannot be migrated, the phase is skipped
 // and the machine starts with the config it has, rather than not at all. The
 // daemon refuses to start on such a host, which is where the problem is
