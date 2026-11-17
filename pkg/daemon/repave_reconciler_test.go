@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestRepaveReconcilerApplyGoalState(t *testing.T) {
@@ -145,7 +146,14 @@ type fakeNodeOperator struct {
 }
 
 func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
-	return f.state, f.err
+	if f.state == nil {
+		return nil, f.err
+	}
+	loaded := *f.state
+	if loaded.Isolation == "" {
+		loaded.Isolation = isolation.ModeNSpawn
+	}
+	return &loaded, f.err
 }
 
 func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error) {

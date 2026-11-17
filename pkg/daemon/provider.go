@@ -62,8 +62,8 @@ func NewNodeProvider(mode isolation.Mode) (NodeProvider, error) {
 }
 
 func validateAppliedProvider(provider NodeProvider, applied *State) error {
-	if applied != nil && applied.IsolationMode() != provider.Mode() {
-		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.IsolationMode())
+	if applied != nil && applied.Isolation != provider.Mode() {
+		return fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", provider.Mode(), applied.Isolation)
 	}
 	return nil
 }
@@ -122,7 +122,7 @@ func discoverResetProvider(ctx context.Context, load func(context.Context) (*Sta
 // Without applied state, runtime footprints can identify a partial bootstrap.
 func discoverNodeProvider(applied *State, log *slog.Logger, candidates []NodeProvider) (NodeProvider, error) {
 	if applied != nil {
-		return NewNodeProvider(applied.IsolationMode())
+		return NewNodeProvider(applied.Isolation)
 	}
 	var found NodeProvider
 	for _, provider := range candidates {

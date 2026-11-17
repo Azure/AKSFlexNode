@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -50,8 +51,9 @@ func (t *saveStateTask) Do(ctx context.Context) error {
 	return nil
 }
 
-func SeededState(goal aksmachine.GoalState) *State {
+func SeededState(goal aksmachine.GoalState, mode isolation.Mode) *State {
 	return &State{
+		Isolation:                mode,
 		AppliedSettingsVersion:   goal.SettingsVersion,
 		AppliedKubernetesVersion: goal.KubernetesVersion,
 		ActiveMachine:            goalstates.NSpawnMachineKube1,
@@ -114,6 +116,9 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
+	if state.Isolation == "" {
+		state.Isolation = isolation.ModeNSpawn
+	}
 	return &state, nil
 }
 
@@ -126,9 +131,6 @@ func (s *fileStateStore) Save(_ context.Context, state *State) error {
 		return fmt.Errorf("marshal daemon state: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.Chmod(s.path, stateFileMode); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("set daemon state permissions %s: %w", s.path, err)
-	}
 	if err := utilio.WriteFile(s.path, data, stateFileMode); err != nil {
 		return fmt.Errorf("write daemon state %s: %w", s.path, err)
 	}

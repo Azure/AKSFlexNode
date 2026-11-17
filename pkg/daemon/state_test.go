@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestFileStateStoreSaveLoad(t *testing.T) {
@@ -119,7 +120,7 @@ func TestFileStateStoreDelete(t *testing.T) {
 func TestSeededState(t *testing.T) {
 	t.Parallel()
 
-	state := SeededState(aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"})
+	state := SeededState(aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}, isolation.ModeNSpawn)
 	if state.AppliedSettingsVersion != "42" {
 		t.Fatalf("AppliedSettingsVersion = %q, want 42", state.AppliedSettingsVersion)
 	}

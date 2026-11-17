@@ -92,6 +92,7 @@ func (o *operatorBase) configForGoalState(ctx context.Context, log *slog.Logger,
 func nextAppliedState(current *State, goal aksmachine.GoalState, active *activeMachine) *State {
 	next := &State{AppliedSettingsVersion: goal.SettingsVersion, AppliedKubernetesVersion: goal.KubernetesVersion}
 	if current != nil {
+		next.Isolation = current.Isolation
 		next.PreviousSettingsVersion = current.AppliedSettingsVersion
 		next.PreviousKubernetesVersion = current.AppliedKubernetesVersion
 	}

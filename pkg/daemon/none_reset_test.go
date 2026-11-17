@@ -184,7 +184,7 @@ func TestNoneResetRetriesUsingAppliedStateAfterSDKFootprintsDisappear(t *testing
 	if td.Present() {
 		t.Fatal("SDK footprints remain; test does not exercise applied-state routing")
 	}
-	if applied, err := store.Load(t.Context()); err != nil || applied == nil || applied.IsolationMode() != isolation.ModeNone {
+	if applied, err := store.Load(t.Context()); err != nil || applied == nil || applied.Isolation != isolation.ModeNone {
 		t.Fatalf("failed reset lost applied state: %+v, %v", applied, err)
 	}
 	if _, err := os.Stat(filepath.Join(td.Root, hostnode.CNIStateDir)); err != nil {
