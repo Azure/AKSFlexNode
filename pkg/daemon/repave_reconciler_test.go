@@ -18,6 +18,18 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
+func TestRepaveReconcilerRejectsNilLogger(t *testing.T) {
+	t.Parallel()
+
+	reconciler, err := newRepaveReconciler(repaveReconcilerOptions{})
+	if err == nil || err.Error() != "logger is nil" {
+		t.Fatalf("newRepaveReconciler() error = %v, want logger is nil", err)
+	}
+	if reconciler != nil {
+		t.Fatal("returned a reconciler after rejecting nil logger")
+	}
+}
+
 func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 

@@ -16,6 +16,14 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
+func TestRunRejectsNilLogger(t *testing.T) {
+	t.Parallel()
+
+	if err := Run(t.Context(), &config.Config{}, nil); err == nil || err.Error() != "logger is nil" {
+		t.Fatalf("Run() error = %v, want logger is nil", err)
+	}
+}
+
 func TestBootstrapCredentialRESTConfig(t *testing.T) {
 	t.Parallel()
 
