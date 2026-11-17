@@ -75,7 +75,9 @@ func TestNoneRecoveryRestoresOfflineNPDPolicy(t *testing.T) {
 	f.store.failSave = false
 	f.op.installNPD = installNoneNPD
 	f.op.startNPD = func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
-		return npd.Start(log, cfg, ns.Root(), ns, npd.StartOptions{ForceRestart: true}).Do(ctx)
+		return npd.Start(log, cfg, ns.Root(), ns, npd.StartOptions{
+			ForceRestart: true, UnitName: npd.HostUnitNPD, BinaryPath: ns.Root().Path(npd.BinaryPath),
+		}).Do(ctx)
 	}
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))

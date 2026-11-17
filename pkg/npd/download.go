@@ -22,8 +22,9 @@ const (
 
 	defaultNPDURLTemplate = "https://github.com/kubernetes/node-problem-detector/releases/download/%s/node-problem-detector-%s-linux_%s.tar.gz"
 
-	// Paths in the node's filesystem view.
-	npdBinaryPath = "/usr/local/bin/node-problem-detector"
+	// BinaryPath is the canonical NPD binary path inside a node.
+	BinaryPath = "/usr/local/bin/node-problem-detector"
+
 	npdConfigPath = "/etc/node-problem-detector/kernel-monitor.json"
 
 	npdArtifactCheckName = "npd-artifact"
@@ -75,7 +76,7 @@ func Download(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot) pha
 func (t *downloadTask) Name() string { return "download-npd" }
 
 func (t *downloadTask) Do(ctx context.Context) error {
-	hostBinaryPath := t.root.Path(npdBinaryPath)
+	hostBinaryPath := t.root.Path(BinaryPath)
 	hostConfigPath := t.root.Path(npdConfigPath)
 
 	if versionMatch(hostBinaryPath, t.version) {

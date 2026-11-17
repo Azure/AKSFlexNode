@@ -29,7 +29,9 @@ func TestHostNativeNPD(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	task := Start(slog.New(slog.DiscardHandler), cfg, ns.Root(), ns, StartOptions{})
+	task := Start(slog.New(slog.DiscardHandler), cfg, root, ns, StartOptions{
+		UnitName: HostUnitNPD, BinaryPath: root.Path(BinaryPath),
+	})
 	for range 2 {
 		if err := task.Do(t.Context()); err != nil {
 			t.Fatal(err)
@@ -40,7 +42,7 @@ func TestHostNativeNPD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "/opt/unbounded/node/current/bin/node-problem-detector") || !strings.Contains(string(content), "flex-worker") {
+	if !strings.Contains(string(content), "ExecStart="+root.Path(BinaryPath)+" ") || !strings.Contains(string(content), "flex-worker") {
 		t.Fatalf("incorrect NPD service: %s", content)
 	}
 	for _, call := range calls {
@@ -91,7 +93,8 @@ func TestHostNativeNPDForcedRestart(t *testing.T) {
 				},
 			}
 			log, cfg := slog.New(slog.DiscardHandler), &config.Config{}
-			if err := Start(log, cfg, ns.Root(), ns, StartOptions{}).Do(t.Context()); err != nil {
+			options := StartOptions{UnitName: HostUnitNPD, BinaryPath: root.Path(BinaryPath)}
+			if err := Start(log, cfg, root, ns, options).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			path := root.Path(filepath.Join("/etc/systemd/system", HostUnitNPD))
@@ -105,10 +108,8 @@ func TestHostNativeNPDForcedRestart(t *testing.T) {
 			}
 			for range 2 {
 				calls, active = nil, tc.active
-				task := Start(log, cfg, ns.Root(), ns, StartOptions{})
-				if tc.force {
-					task = Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true})
-				}
+				options.ForceRestart = tc.force
+				task := Start(log, cfg, root, ns, options)
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}

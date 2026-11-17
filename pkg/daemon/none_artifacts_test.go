@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -63,15 +64,37 @@ func TestNoneOperatorForcesNPDRefresh(t *testing.T) {
 			return "active", nil
 		},
 	}
-	if err := npd.Start(discardLogger(), cfg, ns.Root(), ns, npd.StartOptions{}).Do(t.Context()); err != nil {
+	if err := npd.Start(discardLogger(), cfg, ns.Root(), ns, npd.StartOptions{
+		UnitName: npd.HostUnitNPD, BinaryPath: ns.Root().Path(npd.BinaryPath),
+	}).Do(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	unit := ns.Root().Path("/etc/systemd/system/" + npd.HostUnitNPD)
+	before, err := os.Stat(unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "ExecStart="+ns.Root().Path(npd.BinaryPath)+" ") {
+		t.Fatalf("NPD does not execute the versioned root's binary: %s", content)
 	}
 	calls = nil
 	if err := op.startNPD(t.Context(), discardLogger(), cfg, ns); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(calls, "systemctl restart "+npd.HostUnitNPD) {
+	want := []string{"systemctl is-active " + npd.HostUnitNPD, "systemctl restart " + npd.HostUnitNPD}
+	if !slices.Equal(calls, want) {
 		t.Fatalf("operator did not force NPD to reload its binary: %v", calls)
+	}
+	after, err := os.Stat(unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(unit); err != nil || string(got) != string(content) || !os.SameFile(before, after) {
+		t.Fatalf("forced NPD refresh replaced an unchanged unit: %v", err)
 	}
 }
 

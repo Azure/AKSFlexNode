@@ -134,14 +134,14 @@ func TestOfflineArtifactsDisableNPD(t *testing.T) {
 		t.Fatalf("Download() = %T, want disabledTask", download)
 	}
 
-	start := Start(slog.Default(), cfg, isolation.DirRoot{Dir: t.TempDir()}, &goalstates.NodeStart{}, StartOptions{})
+	start := Start(slog.Default(), cfg, isolation.DirRoot{Dir: t.TempDir()}, &goalstates.NodeStart{})
 	if start.Name() != "start-npd" {
 		t.Fatalf("Start().Name() = %q", start.Name())
 	}
 	if err := start.Do(context.Background()); err != nil {
 		t.Fatalf("Start().Do() error = %v", err)
 	}
-	if _, ok := start.(disabledTask); !ok {
-		t.Fatalf("Start() = %T, want disabledTask", start)
+	if _, ok := start.(*disableTask); !ok {
+		t.Fatalf("Start() = %T, want *disableTask", start)
 	}
 }
