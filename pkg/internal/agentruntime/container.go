@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
@@ -190,7 +192,30 @@ type ociTeardown struct {
 
 func (t *ociTeardown) Present() bool { return t.sdk.Present() }
 
-func (t *ociTeardown) Stop() phases.Task { return t.sdk.Stop() }
+func (t *ociTeardown) Stop() phases.Task {
+	stop := *t.sdk
+	run := stop.Run
+	if run == nil {
+		run = utilexec.OutputCmd
+	}
+	stop.Run = func(ctx context.Context, log *slog.Logger, name string, args ...string) (string, error) {
+		out, err := run(ctx, log, name, args...)
+		if err == nil || ctx.Err() != nil || name != "systemctl" || len(args) != 2 || args[0] != "stop" {
+			return out, err
+		}
+		// SDK Stop treats an absent supervisor as a failure even though it still
+		// verifies runtime shutdown. Suppress only systemd-confirmed absence.
+		state, inspectErr := run(ctx, log, "systemctl", "show", "--property=LoadState", "--value", args[1])
+		if inspectErr != nil {
+			return out, errors.Join(err, fmt.Errorf("inspect OCI supervisor: %w", inspectErr))
+		}
+		if strings.TrimSpace(state) == "not-found" {
+			return out, nil
+		}
+		return out, err
+	}
+	return stop.Stop()
+}
 
 func (t *ociTeardown) Destroy() phases.Task { return containerTeardown(t.sdk) }
 

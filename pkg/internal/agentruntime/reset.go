@@ -78,7 +78,12 @@ func planReset(log *slog.Logger) (ResetPlan, error) {
 		log: log,
 		sdk: &noneops.Teardown{Log: log},
 	}
-	shared := phases.Serial(log,
+	artifacts := phases.Serial(log, cleanupNoneUpgradeArtifacts(""), CleanupContainerUpgradeArtifact())
+	return discoverReset(log, nspawnTeardown{log: log}, native, oci, sharedReset(log), artifacts, hostArtifacts), nil
+}
+
+func sharedReset(log *slog.Logger) phases.Task {
+	return phases.Serial(log,
 		phases.Parallel(log,
 			reset.CleanupNetwork(log),
 			reset.RemoveWireGuardKeys(log),
@@ -87,8 +92,6 @@ func planReset(log *slog.Logger) (ResetPlan, error) {
 		removeHostHelpers(log),
 		reset.ReloadSystemd(log),
 	)
-	artifacts := phases.Serial(log, cleanupNoneUpgradeArtifacts(""), CleanupContainerUpgradeArtifact())
-	return discoverReset(log, nspawnTeardown{log: log}, native, oci, shared, artifacts, hostArtifacts), nil
 }
 
 func (p *resetPlan) HasHostNativeState() bool { return p.hostState }
