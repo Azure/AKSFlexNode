@@ -1,6 +1,7 @@
 package start
 
 import (
+	"context"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -53,7 +55,10 @@ func TestOCIReapplyUsesPersistedSlotAndConfig(t *testing.T) {
 					Config: state.NodeConfig,
 				},
 			}
-			if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, daemon.SaveState(store, state))...).Do(t.Context()); err != nil {
+			saveTask := hostnode.Func("save-daemon-state", func(ctx context.Context) error {
+				return store.Save(ctx, state)
+			})
+			if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, saveTask)...).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if machines.gets != 0 || machines.creates != 0 || store.saves != 0 {

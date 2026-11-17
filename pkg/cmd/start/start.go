@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -131,7 +132,13 @@ func runStart(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	tasks := bootstrapTasks(cfg, logger, worker, input, reapply, daemon.SaveState(stateStore, state))
+	save := hostnode.Func("save-daemon-state", func(ctx context.Context) error {
+		if err := stateStore.Save(ctx, state); err != nil {
+			return fmt.Errorf("save daemon state: %w", err)
+		}
+		return nil
+	})
+	tasks := bootstrapTasks(cfg, logger, worker, input, reapply, save)
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
