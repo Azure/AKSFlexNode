@@ -132,9 +132,7 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 				}
 			}
 			candidate := filepath.Join(dir, "candidate")
-			if err := utilio.InstallFile(candidate, strings.NewReader("#!/bin/sh\n[ \"$1\" = supports-isolation ] && { [ \"$2\" = none ] || [ \"$2\" = container ]; }\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			linkActivationCandidate(t, candidate)
 			var state *State
 			if tc.applied != "" {
 				state = &State{Isolation: tc.applied}
