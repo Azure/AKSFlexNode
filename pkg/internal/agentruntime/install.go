@@ -8,16 +8,11 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
+// installBinaryTask supplies the worker-local executable used by kubelet's exec credentials.
 type installBinaryTask struct {
 	root isolation.NodeRoot
-}
-
-// installBinary installs the credential helper in the node's filesystem.
-func installBinary(root isolation.NodeRoot) phases.Task {
-	return &installBinaryTask{root: root}
 }
 
 func (t *installBinaryTask) Name() string { return "install-binary-in-rootfs" }
