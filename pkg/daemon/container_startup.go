@@ -56,9 +56,6 @@ func (s containerStartupStore) Save(_ context.Context, startup *containerStartup
 	if err != nil {
 		return fmt.Errorf("encode container startup: %w", err)
 	}
-	if err := os.Chmod(s.path, stateFileMode); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	if err := utilio.WriteFileDurable(s.path, append(data, '\n'), stateFileMode); err != nil {
 		return fmt.Errorf("publish container startup: %w", err)
 	}
