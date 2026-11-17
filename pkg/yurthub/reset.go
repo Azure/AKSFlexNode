@@ -26,7 +26,7 @@ func ResetHost(ctx context.Context, worker Worker) error {
 }
 
 func resetHost(ctx context.Context, root *os.Root, worker Worker) error {
-	// Keep one existing ownership marker until sensitive state and links are gone.
+	// Keep one existing ownership marker until state, links and journal are gone.
 	marker := ""
 	for _, path := range []string{envFile, servicePath, startedFingerprint} {
 		if _, err := root.Lstat(path); err == nil {
@@ -45,14 +45,8 @@ func resetHost(ctx context.Context, root *os.Root, worker Worker) error {
 		}
 	}
 	if marker == "" {
-		// A journal alone can precede Hub mutation; don't infer ownership of
-		// /var/lib/yurthub. Reload also finishes a retry after the last unit
-		// marker was removed but systemd reload failed.
-		if _, err := root.Lstat(hubWorkerJournal); errors.Is(err, os.ErrNotExist) {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("inspect hub journal: %w", err)
-		}
+		// Without a marker, the journal does not prove ownership of Hub state.
+		// Reload even without a journal to finish an interrupted final reload.
 		if _, err := worker.Exec(ctx, "systemctl", "daemon-reload"); err != nil {
 			return fmt.Errorf("reload systemd after host hub cleanup: %w", err)
 		}
@@ -87,6 +81,10 @@ func resetHost(ctx context.Context, root *os.Root, worker Worker) error {
 			return fmt.Errorf("reload systemd after host hub cleanup: %w", err)
 		}
 	}
+	// The marker must survive a journal removal failure so cleanup can retry.
+	if err := root.Remove(hubWorkerJournal); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove hub journal: %w", err)
+	}
 	if err := root.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove hub marker %s: %w", marker, err)
 	}
@@ -94,9 +92,6 @@ func resetHost(ctx context.Context, root *os.Root, worker Worker) error {
 		if _, err := worker.Exec(ctx, "systemctl", "daemon-reload"); err != nil {
 			return fmt.Errorf("reload systemd after host hub cleanup: %w", err)
 		}
-	}
-	if err := root.Remove(hubWorkerJournal); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove hub journal: %w", err)
 	}
 	return nil
 }

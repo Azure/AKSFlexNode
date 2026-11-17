@@ -995,6 +995,73 @@ func TestHostResetRetainsMarkerUntilOwnedLinksRemoved(t *testing.T) {
 	}
 }
 
+func TestHostResetJournalRemovalFailureRetainsMarker(t *testing.T) {
+	t.Parallel()
+	for name, marker := range map[string]string{
+		"service":     servicePath,
+		"environment": envFile,
+		"fingerprint": startedFingerprint,
+		"routing":     routingDropInFor(none.UnitKubelet),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			content := "owned"
+			if name == "routing" {
+				content = string(routingUnit)
+			}
+			writeFixture(t, filepath.Join(dir, marker), content)
+			writeFixture(t, filepath.Join(dir, hubWorkerJournal, "blocker"), "not empty")
+			writeFixture(t, filepath.Join(dir, "var/lib/yurthub/cache/secret"), "secret")
+			writeFixture(t, filepath.Join(dir, "var/lib/yurthub/pki/cert"), "identity")
+			if err := os.MkdirAll(filepath.Join(dir, "etc/kubernetes"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(hubKubeconfigDest, filepath.Join(dir, hubKubeconfigLink)); err != nil {
+				t.Fatal(err)
+			}
+
+			worker := Worker{
+				Root:        none.Root{HostRoot: dir},
+				Mode:        isolation.ModeNone,
+				KubeletUnit: none.UnitKubelet,
+				Exec: func(_ context.Context, args ...string) (string, error) {
+					if strings.Contains(strings.Join(args, " "), "--property=ActiveState") {
+						return "inactive", nil
+					}
+					return "", nil
+				},
+			}
+			if err := ResetHost(t.Context(), worker); err == nil || !strings.Contains(err.Error(), "remove hub journal") {
+				t.Fatalf("journal removal failure = %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, marker)); err != nil {
+				t.Fatalf("journal failure lost ownership marker: %v", err)
+			}
+			for _, path := range []string{"var/lib/yurthub", hubKubeconfigLink} {
+				if _, err := os.Lstat(filepath.Join(dir, path)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("cleanup did not remove %s: %v", path, err)
+				}
+			}
+
+			if err := os.RemoveAll(filepath.Join(dir, hubWorkerJournal)); err != nil {
+				t.Fatal(err)
+			}
+			writeFixture(t, filepath.Join(dir, hubWorkerJournal), "journal")
+			for range 2 {
+				if err := ResetHost(t.Context(), worker); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, path := range []string{marker, hubWorkerJournal} {
+				if _, err := os.Lstat(filepath.Join(dir, path)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("cleanup retained %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
 func TestHostResetRetriesSystemdReload(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1020,8 +1087,8 @@ func TestHostResetRetriesSystemdReload(t *testing.T) {
 	if err := ResetHost(t.Context(), worker); err == nil {
 		t.Fatal("ignored systemd reload failure")
 	}
-	if _, err := os.Stat(filepath.Join(dir, hubWorkerJournal)); err != nil {
-		t.Fatalf("lost journal before reload: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, hubWorkerJournal)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal not removed before final reload: %v", err)
 	}
 	failReload = false
 	for range 2 {
@@ -1031,6 +1098,68 @@ func TestHostResetRetriesSystemdReload(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, hubWorkerJournal)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("journal retained: %v", err)
+	}
+}
+
+func TestHostResetRetriesFinalReloadWithoutJournal(t *testing.T) {
+	t.Parallel()
+	for name, marker := range map[string]string{
+		"service": servicePath,
+		"routing": routingDropInFor(none.UnitKubelet),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			content := "unit"
+			if name == "routing" {
+				content = string(routingUnit)
+			}
+			writeFixture(t, filepath.Join(dir, marker), content)
+			writeFixture(t, filepath.Join(dir, "var/lib/yurthub/cache/secret"), "secret")
+			writeFixture(t, filepath.Join(dir, "var/lib/yurthub/pki/cert"), "identity")
+
+			reloads := 0
+			failReload := true
+			worker := Worker{
+				Root:        none.Root{HostRoot: dir},
+				Mode:        isolation.ModeNone,
+				KubeletUnit: none.UnitKubelet,
+				Exec: func(_ context.Context, args ...string) (string, error) {
+					command := strings.Join(args, " ")
+					if strings.Contains(command, "--property=ActiveState") {
+						return "inactive", nil
+					}
+					if command == "systemctl daemon-reload" {
+						reloads++
+						if failReload {
+							return "", errors.New("reload failed")
+						}
+					}
+					return "", nil
+				},
+			}
+			if err := ResetHost(t.Context(), worker); err == nil || !strings.Contains(err.Error(), "reload systemd") {
+				t.Fatalf("final reload failure = %v", err)
+			}
+			for _, path := range []string{marker, hubWorkerJournal, "var/lib/yurthub"} {
+				if _, err := os.Lstat(filepath.Join(dir, path)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("cleanup retained %s: %v", path, err)
+				}
+			}
+			if reloads != 1 {
+				t.Fatalf("reload attempts = %d, want 1", reloads)
+			}
+
+			failReload = false
+			for range 2 {
+				if err := ResetHost(t.Context(), worker); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if reloads != 3 {
+				t.Fatalf("reload attempts = %d, want failure and two retries", reloads)
+			}
+		})
 	}
 }
 
