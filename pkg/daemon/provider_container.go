@@ -76,10 +76,10 @@ func (containerProvider) ResolveGoalState(ctx context.Context, log *slog.Logger,
 func (containerProvider) SetupHost(cfg *config.Config, log *slog.Logger, _ bool) phases.Task {
 	return setupContainerHost(cfg, log)
 }
-func (containerProvider) StartNode(cfg *config.Config, log *slog.Logger, slot string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
-	return startContainerNode(cfg, log, slot, gs, archives, store, state)
+func (containerProvider) StartNode(params StartParams) phases.Task {
+	return startContainerNode(params)
 }
-func (containerProvider) RuntimeChecks(*config.Config, *slog.Logger, bool) []preflight.Checker {
+func (containerProvider) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
 	return nil
 }
 func (containerProvider) WantedTargets() []string {
@@ -105,7 +105,7 @@ func (p containerProvider) RewriteNodeUnits(ctx context.Context, log *slog.Logge
 	}
 	return rewriteContainerHostRootUnits(ctx, log, cfg, state, p.startup)
 }
-func (p containerProvider) ValidateAgentActivation(context.Context) error {
+func (p containerProvider) ValidateAgentActivation(ctx context.Context) error {
 	return requireNoContainerStartupForAgentActivation(p.startup)
 }
 func (containerProvider) ValidateActiveSlot(slot string) error {

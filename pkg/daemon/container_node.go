@@ -94,7 +94,9 @@ func wrapContainerArtifactUnpack(node containerNode, install func(context.Contex
 	return nil
 }
 
-func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
+func startContainerNode(params StartParams) phases.Task {
+	cfg, log, slot, gs := params.Config, params.Log, params.MachineName, params.GoalState
+	store, state := params.Store, params.State
 	return hostnode.Func("start-container-node", func(ctx context.Context) error {
 		ac := config.ToAgentConfig(cfg, slot).DeepCopy()
 		node := newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
@@ -106,7 +108,7 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 			return err
 		}
 		node.Backend().UnitRequires = append(node.Backend().UnitRequires, noneRequiredServices(cfg)...)
-		if err := stageContainerImageArchiveBindSource(log, archives).Do(ctx); err != nil {
+		if err := stageContainerImageArchiveBindSource(log, params.ContainerImageArchives).Do(ctx); err != nil {
 			return err
 		}
 		running, err := node.Running(ctx)

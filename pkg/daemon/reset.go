@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -15,27 +14,20 @@ import (
 // helper and the LocalDNS network helper, are removed under the resolved host
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
-func ResetNode(log *slog.Logger) phases.Task {
-	return resetNodeFromState(log, func(ctx context.Context) (*State, error) {
-		store, err := NewFileStateStore()
-		if err != nil {
-			return nil, err
-		}
-		return store.Load(ctx)
-	}, registeredNodeProviders())
+func ResetNode(ctx context.Context, log *slog.Logger) (phases.Task, error) {
+	store, err := NewFileStateStore()
+	if err != nil {
+		return nil, err
+	}
+	return resetNodeFromState(ctx, log, store.Load, registeredNodeProviders())
 }
 
-func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, error), candidates []NodeProvider) phases.Task {
-	return hostnode.Func("reset-discovered-node", func(ctx context.Context) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		provider, err := discoverResetProvider(ctx, load, log, candidates)
-		if err != nil {
-			return err
-		}
-		return phases.ExecuteTask(ctx, log, provider.ResetNode(log))
-	})
+func resetNodeFromState(ctx context.Context, log *slog.Logger, load func(context.Context) (*State, error), candidates []NodeProvider) (phases.Task, error) {
+	provider, err := discoverResetProvider(ctx, load, log, candidates)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ResetNode(log), nil
 }
 
 // hostHelperPaths returns every location the agent library may have installed

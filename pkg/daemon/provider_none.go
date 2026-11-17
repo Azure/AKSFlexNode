@@ -34,18 +34,20 @@ var _ nodeOperator = (*noneNodeOperator)(nil)
 
 type noneProvider struct{}
 
-func (noneProvider) Mode() isolation.Mode                                                 { return isolation.ModeNone }
-func (noneProvider) RuntimeChecks(*config.Config, *slog.Logger, bool) []preflight.Checker { return nil }
+func (noneProvider) Mode() isolation.Mode { return isolation.ModeNone }
+func (noneProvider) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
+	return nil
+}
 func (noneProvider) WantedTargets() []string {
 	return []string{"network-online.target", "systemd-udev-settle.service"}
 }
-func (noneProvider) SupportsDisconnectTolerance() bool             { return false }
-func (noneProvider) NSpawnRuntime() nspawnRuntime                  { return nil }
-func (noneProvider) ValidateAgentActivation(context.Context) error { return nil }
-func (noneProvider) ValidateActiveSlot(string) error               { return nil }
-func (noneProvider) SynchronizeAgent(string, string) error         { return nil }
-func (noneProvider) ValidateAgent(string, string) error            { return nil }
-func (noneProvider) RollbackAgent(string, string) error            { return nil }
+func (noneProvider) SupportsDisconnectTolerance() bool                 { return false }
+func (noneProvider) NSpawnRuntime() nspawnRuntime                      { return nil }
+func (noneProvider) ValidateAgentActivation(ctx context.Context) error { return nil }
+func (noneProvider) ValidateActiveSlot(slot string) error              { return nil }
+func (noneProvider) SynchronizeAgent(source string, slot string) error { return nil }
+func (noneProvider) ValidateAgent(source string, slot string) error    { return nil }
+func (noneProvider) RollbackAgent(source string, slot string) error    { return nil }
 func (noneProvider) CheckAgentCandidate(ctx context.Context, candidate string) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -132,11 +134,12 @@ func (noneProvider) SetupHost(cfg *config.Config, log *slog.Logger, _ bool) phas
 	)
 }
 
-func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
+func (noneProvider) StartNode(params StartParams) phases.Task {
+	cfg, log, gs := params.Config, params.Log, params.GoalState
 	return hostnode.Func("start-none-node", func(ctx context.Context) error {
 		ac := config.ToAgentConfig(cfg, noneops.Slot).DeepCopy()
 		node := newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs})
-		if err := stageContainerImageArchiveBindSource(log, archives).Do(ctx); err != nil {
+		if err := stageContainerImageArchiveBindSource(log, params.ContainerImageArchives).Do(ctx); err != nil {
 			return err
 		}
 		if err := node.Provision(ctx); err != nil {
@@ -162,8 +165,8 @@ func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs
 		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart).Do(ctx); err != nil {
 			return err
 		}
-		seedNoneState(state, ac, noneNPDVersion(cfg))
-		return saveState(store, state).Do(ctx)
+		seedNoneState(params.State, ac, noneNPDVersion(cfg))
+		return saveState(params.Store, params.State).Do(ctx)
 	})
 }
 

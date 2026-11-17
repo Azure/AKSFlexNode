@@ -49,7 +49,7 @@ type containerNodeOperator struct {
 }
 
 func validContainerState(state *State) bool {
-	return state != nil && state.isolationMode() == isolation.ModeContainer && validActiveMachine(state.ActiveMachine) &&
+	return state != nil && state.IsolationMode() == isolation.ModeContainer && validActiveMachine(state.ActiveMachine) &&
 		state.NodeConfig != nil && state.NodeConfig.Isolation == string(isolation.ModeContainer) && state.NodeConfig.MachineName == state.ActiveMachine &&
 		state.NodeConfig.Experimental != nil && state.NodeConfig.Experimental.ContainerIsolation
 }

@@ -113,7 +113,10 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 
 	tasks := phases.Serial(logger,
 		provider.SetupHost(cfg, logger, containerized),
-		provider.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
+		provider.StartNode(daemon.StartParams{
+			Config: cfg, Log: logger, MachineName: machineName, GoalState: gs,
+			ContainerImageArchives: containerImageArchives, Store: stateStore, State: state,
+		}),
 		daemon.InstallService(cfg, logger, provider),
 	)
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {

@@ -31,11 +31,13 @@ func activeNspawnAgentBinaryPath(machine string) string {
 	return filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 }
 
-func (nspawnProvider) Mode() isolation.Mode                                       { return isolation.ModeNSpawn }
-func (nspawnProvider) ValidateEnvironment(bool) error                             { return nil }
-func (nspawnProvider) ValidateResetState(*State) error                            { return nil }
-func (nspawnProvider) BootstrapPresent(*slog.Logger) bool                         { return false }
-func (nspawnProvider) CheckBootstrap(context.Context, *slog.Logger, *State) error { return nil }
+func (nspawnProvider) Mode() isolation.Mode                         { return isolation.ModeNSpawn }
+func (nspawnProvider) ValidateEnvironment(containerized bool) error { return nil }
+func (nspawnProvider) ValidateResetState(state *State) error        { return nil }
+func (nspawnProvider) BootstrapPresent(log *slog.Logger) bool       { return false }
+func (nspawnProvider) CheckBootstrap(ctx context.Context, log *slog.Logger, applied *State) error {
+	return nil
+}
 func (nspawnProvider) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	return config.ResolveMachineGoalState(ctx, log, cfg, slot)
 }
@@ -58,14 +60,14 @@ func (nspawnProvider) ConvergeContainerAgent(ctx context.Context, log *slog.Logg
 	}
 	return noHeldAssets, nil
 }
-func (nspawnProvider) ValidateAgentActivation(context.Context) error { return nil }
+func (nspawnProvider) ValidateAgentActivation(ctx context.Context) error { return nil }
 func (nspawnProvider) ValidateActiveSlot(slot string) error {
 	if !validNspawnMachine(slot) {
 		return fmt.Errorf("no valid active node slot %q", slot)
 	}
 	return nil
 }
-func (nspawnProvider) CheckAgentCandidate(context.Context, string) error { return nil }
+func (nspawnProvider) CheckAgentCandidate(ctx context.Context, candidate string) error { return nil }
 func (p nspawnProvider) SynchronizeAgent(source, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
@@ -110,19 +112,12 @@ func (nspawnProvider) SetupHost(cfg *config.Config, log *slog.Logger, containeri
 	return phases.Serial(log, tasks...)
 }
 
-func (nspawnProvider) StartNode(
-	cfg *config.Config,
-	log *slog.Logger,
-	machineName string,
-	gs *goalstates.MachineGoalState,
-	containerImageArchives *goalstates.ContainerImageArchiveStaging,
-	store stateStore,
-	state *State,
-) phases.Task {
+func (nspawnProvider) StartNode(params StartParams) phases.Task {
+	cfg, log, gs := params.Config, params.Log, params.GoalState
 	return phases.Serial(log,
 		// Before anything starts the machine: its hooks start these units.
 		EnsureNSpawnLifecycleUnits(log),
-		stageContainerImageArchiveBindSource(log, containerImageArchives),
+		stageContainerImageArchiveBindSource(log, params.ContainerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
 		ConfigureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log,
@@ -130,8 +125,8 @@ func (nspawnProvider) StartNode(
 			InstallBinary(gs.RootFS.Root()),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
-		nodestart.WaitForKubelet(log, machineName),
+		nodestart.WaitForKubelet(log, params.MachineName),
 		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart),
-		saveState(store, state),
+		saveState(params.Store, params.State),
 	)
 }

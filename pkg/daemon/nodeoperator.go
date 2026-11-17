@@ -7,8 +7,8 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/phases"
-	corev1 "k8s.io/api/core/v1"
 )
 
 type activeMachine struct {
@@ -16,18 +16,7 @@ type activeMachine struct {
 	State *State
 }
 
-type nodeOperator interface {
-	LoadState(context.Context) (*State, error)
-	ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error)
-	RestartNode(context.Context, *slog.Logger) error
-	// ResumeRepave recovers durable work before accepting a new goal. True means
-	// this reconciliation completed previously prepared work rather than a new goal.
-	ResumeRepave(context.Context, *slog.Logger, *corev1.Node) (bool, error)
-	// ResetNode removes runtime and persisted state without stopping this daemon.
-	// The controller publishes completion before StopDaemon removes the service.
-	ResetNode(context.Context, *slog.Logger) error
-	StopDaemon(context.Context, *slog.Logger) error
-}
+type nodeOperator = provider.Operator
 
 type operatorBase struct {
 	cfg                    *config.Config
