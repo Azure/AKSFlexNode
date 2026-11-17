@@ -31,6 +31,10 @@ func TestConstructDownloadSource(t *testing.T) {
 
 func TestDownloadUsesNodeRoot(t *testing.T) {
 	t.Parallel()
+	fixture, err := filepath.Abs("testdata/version.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, mode := range []string{"nspawn", "container", "none"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -64,12 +68,18 @@ func TestDownloadUsesNodeRoot(t *testing.T) {
 					if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
 						t.Fatal(err)
 					}
-					// An installed version probe keeps this idempotency test offline.
-					if err := os.WriteFile(binary, []byte("#!/bin/sh\necho "+tc.wantVersion+"\n"), 0o700); err != nil {
+					// Keep the executable immutable across parallel process forks.
+					if err := os.WriteFile(binary+".version", []byte(tc.wantVersion+"\n"), 0o600); err != nil {
 						t.Fatal(err)
 					}
+					if err := os.Symlink(fixture, binary); err != nil {
+						t.Fatal(err)
+					}
+					// Reuse must succeed without initiating a release download.
+					ctx, cancel := context.WithCancel(t.Context())
+					cancel()
 					for range 2 {
-						if err := task.Do(t.Context()); err != nil {
+						if err := task.Do(ctx); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -124,7 +134,7 @@ func TestOfflineArtifactsDisableNPD(t *testing.T) {
 		t.Fatalf("Download() = %T, want disabledTask", download)
 	}
 
-	start := Start(slog.Default(), cfg, &goalstates.NodeStart{})
+	start := Start(slog.Default(), cfg, isolation.DirRoot{Dir: t.TempDir()}, &goalstates.NodeStart{}, StartOptions{})
 	if start.Name() != "start-npd" {
 		t.Fatalf("Start().Name() = %q", start.Name())
 	}

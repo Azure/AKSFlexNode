@@ -63,7 +63,7 @@ func TestNoneOperatorForcesNPDRefresh(t *testing.T) {
 			return "active", nil
 		},
 	}
-	if err := npd.Start(discardLogger(), cfg, ns).Do(t.Context()); err != nil {
+	if err := npd.Start(discardLogger(), cfg, ns.Root(), ns, npd.StartOptions{}).Do(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	calls = nil

@@ -129,7 +129,7 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 		if err := node.Start(ctx, running, containerdChanged, kubeletChanged); err != nil {
 			return err
 		}
-		if err := npd.Start(log, cfg, resolved.NodeStart).Do(ctx); err != nil {
+		if err := npd.Start(log, cfg, resolved.NodeStart.Root(), resolved.NodeStart, npd.StartOptions{}).Do(ctx); err != nil {
 			return err
 		}
 		if err := syncContainerFilesystems(ctx, managedContainerNode{node}); err != nil {
