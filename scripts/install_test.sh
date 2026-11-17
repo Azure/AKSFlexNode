@@ -41,7 +41,7 @@ SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
 mkdir -p "$MANAGED_BINARY_DIR" "$(dirname "$SERVICE_UNIT_PATH")"
 
 running_binary=$(type -P sleep)
-# Bash remains executable after renaming; multicall coreutils dispatch on argv[0].
+# Bash remains executable after renaming; multicall coreutils need their applet names.
 replacement_binary=$(type -P bash)
 
 # Minimal images can omit an empty /usr/local/bin. The installer owns creation
@@ -61,7 +61,9 @@ rm "$INSTALL_DIR/aks-flex-node"
 chmod 0755 "$INSTALL_DIR"
 
 cp "$running_binary" "$INSTALL_DIR/aks-flex-node"
-(exec -a sleep "$INSTALL_DIR/aks-flex-node" 30) &
+# Preserve the applet name while executing the installed inode.
+ln "$INSTALL_DIR/aks-flex-node" "$WORK_DIR/sleep"
+"$WORK_DIR/sleep" 30 &
 RUNNING_PID=$!
 sleep 0.1
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "test binary did not remain running"
