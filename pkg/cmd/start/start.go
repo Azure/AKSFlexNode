@@ -99,7 +99,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
 
-	state := daemon.SeededState(goal)
+	state := daemon.SeededState(goal, cfg.Bootstrap.Isolation)
 	machineName := state.ActiveMachine
 	stateStore, err := daemon.NewFileStateStore()
 	if err != nil {

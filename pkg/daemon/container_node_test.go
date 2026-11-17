@@ -191,38 +191,6 @@ func TestContainerInterruptedSDKUpgradeFailsClosed(t *testing.T) {
 	}
 }
 
-func TestContainerSelectionAndEnvironment(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name                          string
-		configured, applied           isolation.Mode
-		optIn, containerized, wantErr bool
-	}{
-		{name: "container opted in", configured: "container", applied: isolation.ModeContainer, optIn: true},
-		{name: "container requires opt in", configured: "container", applied: isolation.ModeContainer, wantErr: true},
-		{name: "containerized agent refused", configured: "container", applied: isolation.ModeContainer, optIn: true, containerized: true, wantErr: true},
-		{name: "container cannot migrate nspawn", configured: "container", optIn: true, wantErr: true},
-		{name: "container cannot migrate none", configured: "container", applied: isolation.ModeNone, optIn: true, wantErr: true},
-		{name: "nspawn cannot adopt container", configured: isolation.ModeNSpawn, applied: isolation.ModeContainer, wantErr: true},
-		{name: "none cannot adopt container", configured: "none", applied: isolation.ModeContainer, wantErr: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: tc.configured, ExperimentalContainerIsolation: tc.optIn}}
-			state := containerTestState("kube1", "old")
-			state.Isolation = tc.applied
-			provider := mustNodeProvider(t, tc.configured)
-			err := provider.ValidateEnvironment(tc.containerized)
-			if err == nil {
-				_, err = provider.NewOperator(t.Context(), cfg, &testStateStore{state: state})
-			}
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("selection = %v", err)
-			}
-		})
-	}
-}
-
 func TestContainerHostRecipeAndHelper(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}

@@ -32,14 +32,6 @@ func (s *State) DeepCopy() *State {
 	return &next
 }
 
-// IsolationMode interprets records written before isolation was configurable.
-func (s *State) IsolationMode() isolation.Mode {
-	if s.Isolation == "" {
-		return isolation.ModeNSpawn
-	}
-	return s.Isolation
-}
-
 // StateStore persists the applied goal independently of runtime-owned files.
 type StateStore interface {
 	// Load returns the last applied state, or nil when no state exists.

@@ -160,7 +160,7 @@ func (p Container) NewOperator(ctx context.Context, cfg *config.Config, store St
 
 // ValidContainerState checks persisted container slot and configuration ownership.
 func ValidContainerState(state *State) bool {
-	return state != nil && state.IsolationMode() == isolation.ModeContainer &&
+	return state != nil && state.Isolation == isolation.ModeContainer &&
 		(state.ActiveMachine == goalstates.NSpawnMachineKube1 || state.ActiveMachine == goalstates.NSpawnMachineKube2) &&
 		state.NodeConfig != nil && state.NodeConfig.Isolation == string(isolation.ModeContainer) && state.NodeConfig.MachineName == state.ActiveMachine &&
 		state.NodeConfig.Experimental != nil && state.NodeConfig.Experimental.ContainerIsolation

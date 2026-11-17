@@ -123,12 +123,15 @@ func TestAgentActivationWithoutContainerStartup(t *testing.T) {
 			t.Parallel()
 			startup := activationFenceJournal(t, "absent")
 			state := &State{Isolation: mode, ActiveMachine: "kube1"}
+			if state.Isolation == "" {
+				state.Isolation = isolation.ModeNSpawn
+			}
 			if mode == isolation.ModeNone {
 				state.ActiveMachine = ""
 			}
 			service := activationFenceService(t, startup, state)
 			if mode != isolation.ModeContainer {
-				service.provider = mustNodeProvider(t, state.IsolationMode())
+				service.provider = mustNodeProvider(t, state.Isolation)
 			}
 			guardErr := errors.New("reached legacy guard")
 			executor := &hostAgentUpgradeExecutor{
@@ -139,7 +142,7 @@ func TestAgentActivationWithoutContainerStartup(t *testing.T) {
 				t.Fatal(err)
 			}
 			signal, err := executor.signals.read()
-			if err != nil || signal.ActiveMachine != state.ActiveMachine || signal.Isolation != state.IsolationMode() {
+			if err != nil || signal.ActiveMachine != state.ActiveMachine || signal.Isolation != state.Isolation {
 				t.Fatalf("signal = %+v, %v", signal, err)
 			}
 			if err := executor.Stage(t.Context(), agentUpgradeRequest{}); !errors.Is(err, guardErr) {
@@ -356,7 +359,10 @@ func TestRecordPendingAgentUpgradeRejectsMissingActiveNode(t *testing.T) {
 			for range 2 {
 				mode := isolation.ModeNSpawn
 				if tc.state != nil {
-					mode = tc.state.IsolationMode()
+					mode = tc.state.Isolation
+					if mode == "" {
+						mode = isolation.ModeNSpawn
+					}
 				}
 				provider := mustNodeProvider(t, mode)
 				if mode == isolation.ModeContainer {
