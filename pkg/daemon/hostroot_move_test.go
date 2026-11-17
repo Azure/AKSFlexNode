@@ -63,45 +63,7 @@ func TestHostLayout(t *testing.T) {
 	}
 }
 
-// TestRestartFromHostRoot: the move's planned restart must not be refused for
-// the unit's start limit, so the limit is cleared first, on this unit alone,
-// and a denied reset does not stop the restart.
-func TestSyncDirs(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "missing")
-
-	tests := []struct {
-		name    string
-		dirs    []string
-		wantErr string
-	}{
-		{name: "nothing to sync"},
-		{name: "existing directories, repeated", dirs: []string{dir, dir, t.TempDir()}},
-		{name: "a missing directory is reported", dirs: []string{dir, missing}, wantErr: missing},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := syncDirs(tt.dirs...)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Fatalf("syncDirs() error = %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("syncDirs() error = %v, want one naming %s", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-// TestHoldForHostRoot keeps the reconcile gate closed whenever the daemon must
-// not take work after reconciling the host root.
+// The gate stays closed until a moved or restarted agent is safely replaced.
 func TestHoldForHostRoot(t *testing.T) {
 	t.Parallel()
 
@@ -140,102 +102,6 @@ func TestHoldForHostRoot(t *testing.T) {
 	}
 }
 
-func TestHostRootMoveUnfinished(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		// setup puts something at root; dir is a scratch directory.
-		setup   func(t *testing.T, root, dir string)
-		want    bool
-		wantErr bool
-	}{
-		{name: "no host root", setup: func(*testing.T, string, string) {}},
-		{
-			name: "a finished installation",
-			setup: func(t *testing.T, root, _ string) {
-				if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-			},
-		},
-		{
-			name: "a move that has not finished",
-			setup: func(t *testing.T, root, _ string) {
-				if err := os.MkdirAll(root, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(root, hostRootMovingMarker), nil, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: true,
-		},
-		{
-			// A host linked to the legacy root, even one whose target holds
-			// a file of that name, is not moving.
-			name: "a host linked to the legacy root",
-			setup: func(t *testing.T, root, dir string) {
-				legacy := filepath.Join(dir, "legacy")
-				if err := os.MkdirAll(legacy, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(legacy, hostRootMovingMarker), nil, 0o644); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(legacy, root); err != nil {
-					t.Fatal(err)
-				}
-			},
-		},
-		{
-			name: "a file in its place",
-			setup: func(t *testing.T, root, _ string) {
-				if err := os.WriteFile(root, nil, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			},
-		},
-		{
-			// Its parent is a file, so it cannot be inspected.
-			name: "an unreadable host root",
-			setup: func(t *testing.T, root, _ string) {
-				if err := os.Remove(filepath.Dir(root)); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Dir(root), nil, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			dir := t.TempDir()
-			root := filepath.Join(dir, "opt", "unbounded", "agent")
-			if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			tt.setup(t, root, dir)
-
-			got, err := hostRootMoveUnfinished(root)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("hostRootMoveUnfinished() error = %v, want error %v", err, tt.wantErr)
-			}
-			if got != tt.want {
-				t.Fatalf("hostRootMoveUnfinished() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestAwaitReplacement: a daemon that may not take work is idle until systemd
-// stops it, and exits with an error if that does not come, so Restart= starts
-// it from the units as they are.
 func TestAwaitReplacement(t *testing.T) {
 	t.Parallel()
 
@@ -284,9 +150,9 @@ func TestHostRootRestartWaitStaysClearOfTheStartLimit(t *testing.T) {
 func renderedAgentUnitForTest(t *testing.T) string {
 	t.Helper()
 
-	unit, err := renderAgentServiceUnit(agentdeployment.UpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
+	unit, err := os.ReadFile(filepath.Join("..", "internal", "agentdeployment", "assets", "aks-flex-node-agent.service"))
 	if err != nil {
-		t.Fatalf("renderAgentServiceUnit() error = %v", err)
+		t.Fatalf("read embedded agent unit: %v", err)
 	}
 
 	return string(unit)

@@ -16,10 +16,10 @@ func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
 	if err := store.RecordPending("operation-1", "kube1", "instance-1"); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
-	if err := store.RecordCandidate("/slots/green"); err != nil {
+	if err := store.recordCandidate("/slots/green"); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
-	if err := store.RecordSwitchCommitted(); err != nil {
+	if err := store.recordSwitchCommitted(); err != nil {
 		t.Fatalf("recordSwitchCommitted: %v", err)
 	}
 	if err := store.RecordFailure("rolled back"); err != nil {

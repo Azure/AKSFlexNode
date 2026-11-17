@@ -51,9 +51,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup,
-	// except while an AgentUpgrade is pending; see ensureDaemonServiceAssets.
+	// except while an AgentUpgrade is pending; see agentdeployment.EnsureDaemonServiceAssets.
 	if !containerized {
-		if err := InstallHostBinary(ctx, log); err != nil {
+		if err := agentdeployment.InstallHostBinary(ctx, log); err != nil {
 			return err
 		}
 	}
@@ -65,7 +65,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// an AgentUpgrade is pending they are the last-good version's, which name it
 	// only on a host not yet moved off /usr/local, where nothing is removed.
 	if !containerized {
-		if err := removeDaemonLegacySeed(log); err != nil {
+		if err := agentdeployment.RemoveDaemonLegacySeed(log); err != nil {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
@@ -78,13 +78,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
 	if containerized {
-		convergence := newContainerAgentConvergence(log, store)
-		held, err := convergence.converge(ctx)
+		convergence := agentdeployment.NewContainerConvergence(log)
+		held, err := convergeContainerStartup(ctx, store, convergence)
 		if err != nil {
 			return err
 		}
 		if held {
-			convergeHeldAssets = convergence.writeUnits
+			convergeHeldAssets = convergence.WriteUnits
 		}
 	}
 	if cfg.UsesKubeconfigCredentials() {
@@ -122,14 +122,21 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
-	var upgrades agentUpgrader
-	if containerized {
-		upgrades, err = newContainerAgentUpgradeExecutor(log, store)
-	} else {
-		upgrades, err = newHostAgentUpgradeExecutor(log, store)
+	var deploymentUpgrade agentdeployment.UpgradeExecutor
+	if !containerized {
+		deploymentUpgrade = agentdeployment.NewHostUpgrade(log)
 	}
+	instanceID, err := newDaemonInstanceID()
 	if err != nil {
-		return err
+		return fmt.Errorf("create daemon instance ID: %w", err)
+	}
+	if containerized {
+		deploymentUpgrade = agentdeployment.NewContainerUpgrade(log)
+	}
+	upgrades := &agentUpgradeCoordinator{
+		UpgradeExecutor: deploymentUpgrade,
+		state:           store,
+		instanceID:      instanceID,
 	}
 	directClient, err := client.New(restCfg, client.Options{Scheme: newScheme()})
 	if err != nil {
@@ -151,8 +158,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		State:                    store,
 		Config:                   cfg,
 		Refresher:                bootstrapDataRefresherForConfig(cfg),
-		HookUnits:                EnsureNSpawnLifecycleUnits,
-		Uninstall:                UninstallService,
+		HookUnits:                agentdeployment.EnsureNSpawnLifecycleUnits,
+		Uninstall:                agentdeployment.UninstallService,
 		ClearConfig:              config.RemoveRuntimeDirs(log),
 		NodeName:                 nodeName,
 		MachineReconcileInterval: time.Duration(cfg.Agent.MachineReconcileInterval),
@@ -171,7 +178,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Runtime:              runtime,
 		State:                store,
 		Config:               cfg,
-		Uninstall:            UninstallService,
+		Uninstall:            agentdeployment.UninstallService,
 		ClearConfig:          config.RemoveRuntimeDirs(log),
 		Resolve:              config.ResolveMachineGoalState,
 		AgentUpgrade:         upgrades,
@@ -210,21 +217,21 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			func(ctx context.Context) error {
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},
-			upgrades.signalStore().Read,
+			upgrades.SignalStore().Read,
 			convergeHeldAssets,
 			func() {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
 				// it waits for is gone. In its container the agent has no
 				// install on the host to move.
-				if hostUpgrades, ok := upgrades.(*hostAgentUpgradeExecutor); ok {
+				if hostUpgrades, ok := deploymentUpgrade.(*agentdeployment.HostUpgrade); ok {
 					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades)
-					unfinished, err := hostRootMoveUnfinishedHere()
+					unfinished, err := agentdeployment.HostRootMoveUnfinishedHere()
 					if err != nil {
 						log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
 						unfinished = true
 					}
-					if reason := holdForHostRoot(restarted, unfinished, hostUpgrades.paths, agentdeployment.DefaultUpgradePaths()); reason != "" {
+					if reason := holdForHostRoot(restarted, unfinished, hostUpgrades.Paths(), agentdeployment.DefaultUpgradePaths()); reason != "" {
 						// The gate stays closed; the next process opens it.
 						if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
 							stopManager(err)

@@ -43,7 +43,7 @@ func TestBootstrapCredentialRESTConfigExecCredential(t *testing.T) {
 	cfg.Azure.ServicePrincipal = &config.ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret"}
 	cfg.Components.Kubernetes = "1.34.0"
 
-	plugin := filepath.Join(t.TempDir(), "bin", agentdeployment.BinaryName)
+	plugin := filepath.Join(t.TempDir(), "bin", "aks-flex-node")
 	if err := os.MkdirAll(filepath.Dir(plugin), 0o755); err != nil {
 		t.Fatal(err)
 	}

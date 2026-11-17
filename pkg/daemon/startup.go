@@ -2,11 +2,36 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 )
+
+type containerStartupConvergence interface {
+	Converge(context.Context) (bool, error)
+	SyncActiveWorker(string) error
+}
+
+func convergeContainerStartup(ctx context.Context, store stateStore, convergence containerStartupConvergence) (bool, error) {
+	held, err := convergence.Converge(ctx)
+	if err != nil {
+		return held, err
+	}
+
+	state, err := store.Load(ctx)
+	if err != nil {
+		return held, fmt.Errorf("load daemon state: %w", err)
+	}
+	if state != nil && validActiveMachine(state.ActiveMachine) {
+		if err := convergence.SyncActiveWorker(state.ActiveMachine); err != nil {
+			return held, err
+		}
+	}
+	return held, nil
+}
 
 // openGateAfterAgentUpgradeJudgment publishes the result of an AgentUpgrade the daemon started
 // for, retrying, and then runs proceed, which opens the startup gate, unless the daemon has to be
@@ -52,3 +77,30 @@ func openGateAfterAgentUpgradeJudgment(
 		}
 	}
 }
+
+// ensureHostInstall converges the agent's binary layout and units on the host, as
+// agentdeployment.EnsureDaemonServiceAssets does, and returns what writes those it held back while an
+// AgentUpgrade was pending, for the daemon to run once the upgrade is judged. In its container
+// the agent has no binary layout, the image carries it, and container convergence handles
+// its units, so it does nothing there.
+func ensureHostInstall(
+	ctx context.Context,
+	log *slog.Logger,
+	cfg *config.Config,
+	containerized bool,
+) (func(context.Context) error, error) {
+	if containerized {
+		return noHeldAssets, nil
+	}
+	held, err := agentdeployment.EnsureDaemonServiceAssets(ctx, log, cfg)
+	if err != nil || !held {
+		return noHeldAssets, err
+	}
+	return func(ctx context.Context) error {
+		_, err := agentdeployment.EnsureDaemonServiceAssets(ctx, log, cfg)
+		return err
+	}, nil
+}
+
+// noHeldAssets is what the daemon runs once an upgrade is judged when it held nothing back.
+func noHeldAssets(context.Context) error { return nil }

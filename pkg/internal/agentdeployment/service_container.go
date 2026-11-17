@@ -1,14 +1,17 @@
-package daemon
+package agentdeployment
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 // containerServiceUnitContent is the agent's unit in its container: it runs the daemon in a
@@ -38,37 +41,18 @@ var containerNSpawnPostStartUnitContent []byte
 // names the machines' hooks start; see config.NSpawnPreStartUnit.
 func containerNSpawnLifecycleUnitAssets(systemdDir string) []agentServiceAsset {
 	return []agentServiceAsset{
-		{path: filepath.Join(systemdDir, config.NSpawnPreStartUnit), content: containerNSpawnPreStartUnitContent, mode: 0o644},
-		{path: filepath.Join(systemdDir, config.NSpawnPostStartUnit), content: containerNSpawnPostStartUnitContent, mode: 0o644},
+		{
+			path:    filepath.Join(systemdDir, config.NSpawnPreStartUnit),
+			content: containerNSpawnPreStartUnitContent,
+			mode:    0o644,
+		},
+		{
+			path:    filepath.Join(systemdDir, config.NSpawnPostStartUnit),
+			content: containerNSpawnPostStartUnitContent,
+			mode:    0o644,
+		},
 	}
 }
-
-// ensureHostInstall converges the agent's binary layout and units on the host, as
-// ensureDaemonServiceAssets does, and returns what writes those it held back while an
-// AgentUpgrade was pending, for the daemon to run once the upgrade is judged. In its container
-// the agent has no binary layout, the image carries it, and containerAgentConvergence converges
-// its units, so it does nothing there.
-func ensureHostInstall(
-	ctx context.Context,
-	log *slog.Logger,
-	cfg *config.Config,
-	containerized bool,
-) (func(context.Context) error, error) {
-	if containerized {
-		return noHeldAssets, nil
-	}
-	held, err := ensureDaemonServiceAssets(ctx, log, cfg)
-	if err != nil || !held {
-		return noHeldAssets, err
-	}
-	return func(ctx context.Context) error {
-		_, err := ensureDaemonServiceAssets(ctx, log, cfg)
-		return err
-	}, nil
-}
-
-// noHeldAssets is what the daemon runs once an upgrade is judged when it held nothing back.
-func noHeldAssets(context.Context) error { return nil }
 
 // installContainerServiceTask installs, enables, and starts the agent's unit in its container,
 // with its recovery unit, as installServiceTask does on a host. They have the same names, so
@@ -82,7 +66,7 @@ type installContainerServiceTask struct {
 func newInstallContainerServiceTask(log *slog.Logger) *installContainerServiceTask {
 	return &installContainerServiceTask{
 		log:     log,
-		unitDir: systemdSystemDir,
+		unitDir: SystemdSystemDir,
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
@@ -106,4 +90,58 @@ func (t *installContainerServiceTask) Do(ctx context.Context) error {
 	}
 	t.log.Info("systemd service installed and started", "unit", ServiceUnitName)
 	return nil
+}
+
+// agentScopeAnnotations has runc set up a container's scope as the agent's units set up theirs,
+// for unit, a unit name or %n in a unit: bound to the unit, so stopping it stops the container;
+// killed 30 s into a stop, within the units' stop timeouts, so their stops end only once their
+// containers have; and unloaded even when it fails, as a failed scope keeps the next container
+// from its name, and on ACL nothing may reset it.
+func agentScopeAnnotations(unit string) []string {
+	return []string{
+		"--annotation", fmt.Sprintf("org.systemd.property.BindsTo=['%s']", unit),
+		"--annotation", "org.systemd.property.TimeoutStopUSec=uint64 30000000",
+		"--annotation", "org.systemd.property.CollectMode='inactive-or-failed'",
+	}
+}
+
+// writeContainerUnits writes the agent's units from its image, but with keepExisting, only those
+// that are missing, and reports whether it changed any.
+func writeContainerUnits(unitDir string, keepExisting bool) (bool, error) {
+	changed := false
+	// The agent's unit last, as on a host, so an interrupted write never leaves it pointing at a
+	// recovery unit that isn't there.
+	for _, unit := range []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    config.NSpawnPreStartUnit,
+			content: containerNSpawnPreStartUnitContent,
+		},
+		{
+			name:    config.NSpawnPostStartUnit,
+			content: containerNSpawnPostStartUnitContent,
+		},
+		{
+			name:    recoveryServiceUnitName,
+			content: containerRecoveryUnitContent,
+		},
+		{
+			name:    ServiceUnitName,
+			content: containerServiceUnitContent,
+		},
+	} {
+		name, content := unit.name, unit.content
+		path := filepath.Join(unitDir, name)
+		current, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- path is built from the agent-owned systemd directory and fixed unit name
+		if err == nil && (keepExisting || bytes.Equal(current, content)) {
+			continue
+		}
+		if err := utilio.WriteFile(path, content, 0o644); err != nil {
+			return changed, fmt.Errorf("write %s: %w", path, err)
+		}
+		changed = true
+	}
+	return changed, nil
 }

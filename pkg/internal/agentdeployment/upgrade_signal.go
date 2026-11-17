@@ -11,8 +11,8 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
-// ValidNspawnMachine reports whether machine is one of the two managed slots.
-func ValidNspawnMachine(machine string) bool {
+// validNspawnMachine reports whether machine is one of the two managed slots.
+func validNspawnMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
 }
 
@@ -48,7 +48,7 @@ func (s UpgradeSignalStore) RecordPending(operationName, activeMachine, daemonIn
 	})
 }
 
-func (s UpgradeSignalStore) RecordCandidate(candidatePath string) error {
+func (s UpgradeSignalStore) recordCandidate(candidatePath string) error {
 	signal, err := s.Read()
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (s UpgradeSignalStore) RecordCandidate(candidatePath string) error {
 	return s.Write(*signal)
 }
 
-func (s UpgradeSignalStore) RecordCandidateImage(candidate, previous string) error {
+func (s UpgradeSignalStore) recordCandidateImage(candidate, previous string) error {
 	signal, err := s.Read()
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (s UpgradeSignalStore) RecordCandidateImage(candidate, previous string) err
 	return s.Write(*signal)
 }
 
-func (s UpgradeSignalStore) RecordSwitchCommitted() error {
+func (s UpgradeSignalStore) recordSwitchCommitted() error {
 	signal, err := s.Read()
 	if err != nil {
 		return err
@@ -121,7 +121,7 @@ func (s UpgradeSignalStore) Read() (*UpgradeSignal, error) {
 	if signal.OperationName == "" {
 		return nil, fmt.Errorf("AgentUpgrade signal has no operation name")
 	}
-	if signal.ActiveMachine != "" && !ValidNspawnMachine(signal.ActiveMachine) {
+	if signal.ActiveMachine != "" && !validNspawnMachine(signal.ActiveMachine) {
 		return nil, fmt.Errorf("AgentUpgrade signal has invalid active machine %q", signal.ActiveMachine)
 	}
 	return &signal, nil

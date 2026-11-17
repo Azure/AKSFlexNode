@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +12,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
-	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
@@ -82,7 +79,7 @@ const hostRootRestartWait = 2 * time.Minute
 // A failure is logged, never returned: the daemon is healthy either way, and
 // the next start retries; see holdForHostRoot for a failure that leaves the
 // layout moved under the running daemon.
-func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor) bool {
+func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *agentdeployment.HostUpgrade) bool {
 	lock, err := upgrades.Acquire()
 	if err != nil {
 		log.Warn("not moving the agent's files to the host root: an activation holds the lock", "error", err)
@@ -104,9 +101,9 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 		RewriteUnits: func(ctx context.Context) error {
 			return rewriteHostRootUnits(ctx, log, cfg, state)
 		},
-		Verify: verifyMovedAgent,
+		Verify: agentdeployment.VerifyMovedAgent,
 		// Restart resets the agent unit's start limit first, which the move's
-		// restart needs most; see hostAgentUpgradeExecutor.Restart.
+		// restart needs most; see agentdeployment.HostUpgrade.Restart.
 		Restart: upgrades.Restart,
 	})
 	if err != nil {
@@ -114,13 +111,6 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 	}
 
 	return restarted
-}
-
-// verifyMovedAgent runs the current agent binary from a copy of the layout
-// under root, before any unit names it. A move whose copy fails this is undone,
-// and the host stays linked to /usr/local.
-func verifyMovedAgent(ctx context.Context, root string) error {
-	return agentbinary.Verify(ctx, agentdeployment.UpgradePathsUnder(root).CurrentPath)
 }
 
 // holdForHostRoot reports why this process may not take work after reconciling
@@ -146,39 +136,6 @@ func holdForHostRoot(restarted, unfinished bool, startup, current agentdeploymen
 	}
 }
 
-// hostRootMovingMarker is the file the agent library keeps in the host root
-// until a move has removed the files under the legacy root. The library
-// doesn't export it (movingMarker in
-// github.com/Azure/unbounded/internal/hostroot); uninstall.sh names it too.
-const hostRootMovingMarker = ".moving"
-
-// hostRootMoveUnfinishedHere is hostRootMoveUnfinished for this host's root.
-func hostRootMoveUnfinishedHere() (bool, error) {
-	return hostRootMoveUnfinished(hostroot.Path)
-}
-
-// hostRootMoveUnfinished reports whether a move of the agent's files to root
-// has started and not finished: root is a real directory that still holds the
-// library's marker. A host linked to the legacy root has none.
-func hostRootMoveUnfinished(root string) (bool, error) {
-	info, err := os.Lstat(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect %s: %w", root, err)
-	}
-	if !info.IsDir() {
-		return false, nil
-	}
-	if _, err := os.Lstat(filepath.Join(root, hostRootMovingMarker)); errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("inspect %s: %w", root, err)
-	}
-	return true, nil
-}
-
 // awaitReplacement keeps a daemon that may not take work idle until systemd
 // stops it, which ends ctx, and returns nil then. If that has not happened
 // within wait it returns an error, so the daemon exits and Restart= starts it
@@ -198,7 +155,7 @@ func awaitReplacement(ctx context.Context, log *slog.Logger, reason string, wait
 // files at the files under the host root.
 func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore) error {
 	// The agent unit, the recovery unit and the recovery script.
-	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
+	if err := agentdeployment.EnsureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
 		return err
 	}
 
@@ -224,34 +181,10 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 
 	// The writers fsync each file before renaming it into place; the renames
 	// need their directories synced before the legacy files go.
-	return syncDirs(
-		systemdSystemDir,
+	return agentdeployment.SyncDirs(
+		agentdeployment.SystemdSystemDir,
 		filepath.Dir(rootFS.ServiceOverrideFile),
 		filepath.Dir(agentdeployment.RecoveryScriptPathUnder(hostroot.Resolve())),
 		filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary),
 	)
-}
-
-// syncDirs makes the entries in each directory durable: the files renamed into
-// it or removed from it. Each directory is synced once.
-func syncDirs(dirs ...string) error {
-	var errs []error
-	seen := map[string]bool{}
-	for _, dir := range dirs {
-		if seen[dir] {
-			continue
-		}
-		seen[dir] = true
-
-		f, err := os.Open(dir) //nolint:gosec // The agent's own directories.
-		if err != nil {
-			errs = append(errs, fmt.Errorf("sync %s: %w", dir, err))
-			continue
-		}
-		if err := errors.Join(f.Sync(), f.Close()); err != nil {
-			errs = append(errs, fmt.Errorf("sync %s: %w", dir, err))
-		}
-	}
-
-	return errors.Join(errs...)
 }

@@ -39,7 +39,7 @@ func UpgradePathsUnder(root string) UpgradePaths {
 	binaryDir := filepath.Join(root, ManagedBinaryDir)
 
 	return UpgradePaths{
-		BinaryPath:   filepath.Join(root, "bin", BinaryName),
+		BinaryPath:   filepath.Join(root, "bin", binaryName),
 		BluePath:     filepath.Join(binaryDir, "aks-flex-node-blue"),
 		GreenPath:    filepath.Join(binaryDir, "aks-flex-node-green"),
 		CurrentPath:  filepath.Join(binaryDir, "aks-flex-node-current"),
@@ -55,9 +55,9 @@ func RecoveryScriptPathUnder(root string) string {
 }
 
 const (
-	UpgradeBinaryMode     = 0o755
-	UpgradeMaxBinaryBytes = 256 << 20
-	UpgradeLockPath       = "/run/aks-flex-node-agent-upgrade.lock"
+	upgradeBinaryMode     = 0o755
+	upgradeMaxBinaryBytes = 256 << 20
+	upgradeLockPath       = "/run/aks-flex-node-agent-upgrade.lock"
 )
 
 type UpgradePaths struct {
@@ -100,9 +100,9 @@ func (p UpgradePaths) sharedPaths() (goalstates.AgentUpgradePaths, error) {
 	return goalstates.AgentUpgradePaths{}, fmt.Errorf("resolve current agent binary: %w", err)
 }
 
-// EnsureUpgradeLayout adds Flex-specific ownership validation around the
+// ensureUpgradeLayout adds Flex-specific ownership validation around the
 // shared idempotent migration and link initialization implementation.
-func EnsureUpgradeLayout(ctx context.Context, log *slog.Logger, paths UpgradePaths) error {
+func ensureUpgradeLayout(ctx context.Context, log *slog.Logger, paths UpgradePaths) error {
 	if log == nil {
 		return fmt.Errorf("logger is nil")
 	}
@@ -166,12 +166,12 @@ func validateAgentUpgradePaths(paths UpgradePaths) error {
 	return nil
 }
 
-// FlattenLayout leaves the agent's binary under the host root as a regular file, a copy of
+// flattenLayout leaves the agent's binary under the host root as a regular file, a copy of
 // the binary the layout runs, and removes the blue/green layout, as reset does once the agent's
 // unit is gone: the aks-flex-node command still works, and the next start seeds a new layout from
 // the binary that runs it. It holds the activation lock, so it never runs beside an activation's
 // switch. Without a layout, it does nothing.
-func FlattenLayout(log *slog.Logger, paths UpgradePaths, lockPath string) error {
+func flattenLayout(log *slog.Logger, paths UpgradePaths, lockPath string) error {
 	layoutDir := filepath.Dir(paths.CurrentPath)
 	if _, err := os.Lstat(layoutDir); errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -184,15 +184,15 @@ func FlattenLayout(log *slog.Logger, paths UpgradePaths, lockPath string) error 
 	}
 	defer lock.Close() //nolint:errcheck // releasing the lock
 
-	active, err := ResolveExecutable(paths.CurrentPath)
+	active, err := resolveExecutable(paths.CurrentPath)
 	if err != nil {
-		active, err = ResolveExecutable(paths.LastGoodPath)
+		active, err = resolveExecutable(paths.LastGoodPath)
 	}
 	if err != nil {
 		return fmt.Errorf("find the binary the layout runs: %w", err)
 	}
 	// Renamed over the link, so the path is never missing or partial.
-	if err := CopyExecutable(active, paths.BinaryPath); err != nil {
+	if err := copyExecutable(active, paths.BinaryPath); err != nil {
 		return fmt.Errorf("install %s at %s: %w", active, paths.BinaryPath, err)
 	}
 	if err := os.RemoveAll(layoutDir); err != nil {
@@ -203,7 +203,7 @@ func FlattenLayout(log *slog.Logger, paths UpgradePaths, lockPath string) error 
 	return nil
 }
 
-func ResolveExecutable(path string) (string, error) {
+func resolveExecutable(path string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
@@ -218,7 +218,7 @@ func ResolveExecutable(path string) (string, error) {
 	return resolved, nil
 }
 
-func CopyExecutable(sourcePath, targetPath string) (err error) {
+func copyExecutable(sourcePath, targetPath string) (err error) {
 	source, err := os.Open(sourcePath) //nolint:gosec // paths are fixed daemon configuration
 	if err != nil {
 		return err
@@ -228,10 +228,10 @@ func CopyExecutable(sourcePath, targetPath string) (err error) {
 			err = closeErr
 		}
 	}()
-	return utilio.InstallFileWithLimitedSize(targetPath, source, UpgradeBinaryMode, UpgradeMaxBinaryBytes)
+	return utilio.InstallFileWithLimitedSize(targetPath, source, upgradeBinaryMode, upgradeMaxBinaryBytes)
 }
 
-func ReplaceSymlink(linkPath, targetPath string) error {
+func replaceSymlink(linkPath, targetPath string) error {
 	if err := os.MkdirAll(filepath.Dir(linkPath), 0o750); err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func ReplaceSymlink(linkPath, targetPath string) error {
 
 // The shared installer permits omitted digests; require one here so its version
 // probe cannot execute an unverified candidate.
-func SecureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
+func secureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTP or HTTPS, include a host, omit user information, and omit fragments")
@@ -277,13 +277,13 @@ func SecureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOpt
 		DownloadURL:    rawURL,
 		ExpectedSHA256: expectedDigest,
 		ExpectedMember: member,
-		Mode:           UpgradeBinaryMode,
+		Mode:           upgradeBinaryMode,
 		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 
-func InstallAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths) error {
-	opts, err := SecureInstallOptions(rawURL, expectedDigest)
+func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths) error {
+	opts, err := secureInstallOptions(rawURL, expectedDigest)
 	if err != nil {
 		return err
 	}

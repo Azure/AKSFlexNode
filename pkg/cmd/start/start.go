@@ -68,7 +68,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		if err := agentdeployment.PrepareHostRoot(ctx, logger); err != nil {
 			return fmt.Errorf("bootstrap failed: %w", err)
 		}
-		if err := daemon.InstallHostBinary(ctx, logger); err != nil {
+		if err := agentdeployment.InstallHostBinary(ctx, logger); err != nil {
 			return fmt.Errorf("bootstrap failed: %w", err)
 		}
 	}
@@ -114,7 +114,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	// The daemon removes it at startup too. Doing it here as well closes the
 	// window in which an AgentUpgrade to an earlier release could find it.
 	if !containerized {
-		if err := daemon.RemoveLegacySeed(logger); err != nil {
+		if err := agentdeployment.RemoveLegacySeed(logger); err != nil {
 			logger.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
@@ -126,9 +126,9 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 func bootstrapTasks(cfg *config.Config, log *slog.Logger, machine string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, save phases.Task) phases.Task {
 	return phases.Serial(log,
 		daemon.SetupHost(cfg, log),
-		daemon.EnsureNSpawnLifecycleUnits(log),
+		agentdeployment.EnsureNSpawnLifecycleUnits(log),
 		(agentruntime.NSpawn{}).Start(cfg, log, machine, gs, archives),
 		save,
-		daemon.InstallService(cfg, log),
+		agentdeployment.InstallService(cfg, log),
 	)
 }

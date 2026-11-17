@@ -27,7 +27,7 @@ func containerized(getenv func(string) string) bool {
 // CredentialPlugin is the agent binary used by its Kubernetes clients when
 // managed identity or a service principal supplies bootstrap credentials.
 func CredentialPlugin() (string, error) {
-	return credentialPlugin(Containerized(), RunningAgentExecutable, config.HostBinaryPath)
+	return credentialPlugin(Containerized(), runningAgentExecutable, config.HostBinaryPath)
 }
 
 func credentialPlugin(containerized bool, runningExecutable func() (string, error), hostBinary func() string) (string, error) {
@@ -37,8 +37,8 @@ func credentialPlugin(containerized bool, runningExecutable func() (string, erro
 	return runningExecutable()
 }
 
-// RunningAgentExecutable resolves the executable of this process, following symlinks.
-func RunningAgentExecutable() (string, error) {
+// runningAgentExecutable resolves the executable of this process, following symlinks.
+func runningAgentExecutable() (string, error) {
 	path, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve running agent executable: %w", err)

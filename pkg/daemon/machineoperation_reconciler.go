@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -238,7 +239,7 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
 	}
 	if err := store.MarkInProgress(ctx, op, "staging upgraded AKS Flex Node agent"); err != nil {
-		cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+		cleanupCtx, cancel := agentdeployment.UpgradeCleanupContext(ctx)
 		abortErr := h.agentUpgrade.Abort(cleanupCtx)
 		cancel()
 		return ctrl.Result{}, errors.Join(
@@ -278,7 +279,7 @@ func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
 		"operation", op.Name,
 		"error", rollbackErr,
 	)
-	cleanupCtx, cancel := agentUpgradeCleanupContext(ctx)
+	cleanupCtx, cancel := agentdeployment.UpgradeCleanupContext(ctx)
 	defer cancel()
 	restartErr := h.agentUpgrade.Restart(cleanupCtx)
 	if restartErr != nil {

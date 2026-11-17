@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -318,8 +319,8 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 		Name: "upgrade-1",
 		Kind: machinav1alpha3.OperationAgentUpgrade,
 		Parameters: map[string]string{
-			agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
-			agentUpgradeSHA256Parameter:      digest,
+			agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+			agentdeployment.UpgradeSHA256Parameter:      digest,
 		},
 	}
 
@@ -349,27 +350,27 @@ func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 		// agent in its container.
 		"parameters the agent can't carry out": {
 			parameters: map[string]string{
-				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
-				agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+				agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 			},
 			validateErr: errors.New(`the agent runs in its container, where "downloadURL" names an image`),
 			wantErr:     "runs in its container",
 		},
 		"missing digest": {
-			parameters: map[string]string{agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret"},
+			parameters: map[string]string{agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret"},
 			wantErr:    "sha256",
 		},
 		"blank digest": {
 			parameters: map[string]string{
-				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
-				agentUpgradeSHA256Parameter:      " \t\n",
+				agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentdeployment.UpgradeSHA256Parameter:      " \t\n",
 			},
 			wantErr: "sha256",
 		},
 		"invalid digest": {
 			parameters: map[string]string{
-				agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
-				agentUpgradeSHA256Parameter:      "bad",
+				agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz?sig=secret",
+				agentdeployment.UpgradeSHA256Parameter:      "bad",
 			},
 			wantErr: "64 hexadecimal",
 		},
@@ -411,8 +412,8 @@ func TestMachineOperationHandlersAgentUpgradeDuplicateReconcileIsNoop(t *testing
 	store := &fakeMachineOperationStore{}
 	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
@@ -433,8 +434,8 @@ func TestMachineOperationHandlersAgentUpgradeRequeuesWhenDirectActivationHoldsLo
 	store := &fakeMachineOperationStore{}
 	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 	result, err := target.reconcileAgentUpgrade(t.Context(), store, op)
 	if err != nil {
@@ -455,8 +456,8 @@ func TestMachineOperationHandlersAgentUpgradeMarkFailureClearsPendingSignal(t *t
 	store := &fakeMachineOperationStore{markErr: errors.New("status update failed")}
 	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	_, err := target.reconcileAgentUpgrade(t.Context(), store, op)
@@ -478,8 +479,8 @@ func TestMachineOperationHandlersAgentUpgradeStageFailureRollsBack(t *testing.T)
 	store := &fakeMachineOperationStore{}
 	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
@@ -503,8 +504,8 @@ func TestMachineOperationHandlersAgentUpgradeAbortFailureStartsRecovery(t *testi
 	store := &fakeMachineOperationStore{}
 	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	if _, err := target.reconcileAgentUpgrade(t.Context(), store, op); err != nil {
@@ -528,8 +529,8 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 	}
 	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
 	}}
 
 	_, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op)
@@ -634,7 +635,7 @@ func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
-func (f *fakeAgentUpgradeExecutor) Validate(agentUpgradeRequest) error {
+func (f *fakeAgentUpgradeExecutor) Validate(agentdeployment.UpgradeRequest) error {
 	return f.validateErr
 }
 
@@ -657,7 +658,7 @@ func (f *fakeAgentUpgradeExecutor) RecordFailure(message string) error {
 	return nil
 }
 
-func (f *fakeAgentUpgradeExecutor) Stage(context.Context, agentUpgradeRequest) error {
+func (f *fakeAgentUpgradeExecutor) Stage(context.Context, agentdeployment.UpgradeRequest) error {
 	f.staged = true
 	return f.stageErr
 }

@@ -25,8 +25,8 @@ func TestEnsureAgentUpgradeLayoutMigratesLegacyBinaryIdempotently(t *testing.T) 
 	}
 
 	for range 2 {
-		if err := EnsureUpgradeLayout(t.Context(), slog.Default(), paths); err != nil {
-			t.Fatalf("EnsureUpgradeLayout: %v", err)
+		if err := ensureUpgradeLayout(t.Context(), slog.Default(), paths); err != nil {
+			t.Fatalf("ensureUpgradeLayout: %v", err)
 		}
 	}
 
@@ -56,8 +56,8 @@ func TestEnsureAgentUpgradeLayoutRecoversInterruptedLastGoodInitialization(t *te
 		t.Fatalf("Symlink current: %v", err)
 	}
 
-	if err := EnsureUpgradeLayout(t.Context(), slog.Default(), paths); err != nil {
-		t.Fatalf("EnsureUpgradeLayout: %v", err)
+	if err := ensureUpgradeLayout(t.Context(), slog.Default(), paths); err != nil {
+		t.Fatalf("ensureUpgradeLayout: %v", err)
 	}
 
 	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
@@ -69,9 +69,9 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	t.Parallel()
 
 	digest := strings.Repeat("a", 64)
-	opts, err := SecureInstallOptions("https://example.com/agent.tar.gz?sig=secret", digest)
+	opts, err := secureInstallOptions("https://example.com/agent.tar.gz?sig=secret", digest)
 	if err != nil {
-		t.Fatalf("SecureInstallOptions: %v", err)
+		t.Fatalf("secureInstallOptions: %v", err)
 	}
 	wantMember, err := config.AgentBinaryArchiveMember(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -83,8 +83,8 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if opts.ExpectedSHA256 != digest {
 		t.Fatalf("ExpectedSHA256 = %q, want %q", opts.ExpectedSHA256, digest)
 	}
-	if _, err := SecureInstallOptions("http://127.0.0.1/agent.tar.gz", digest); err != nil {
-		t.Fatalf("SecureInstallOptions with HTTP: %v", err)
+	if _, err := secureInstallOptions("http://127.0.0.1/agent.tar.gz", digest); err != nil {
+		t.Fatalf("secureInstallOptions with HTTP: %v", err)
 	}
 }
 
@@ -127,8 +127,8 @@ func TestSecureAgentInstallOptionsRejectsInvalidInputs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := SecureInstallOptions(tt.url, tt.digest); err == nil {
-				t.Fatal("SecureInstallOptions error = nil")
+			if _, err := secureInstallOptions(tt.url, tt.digest); err == nil {
+				t.Fatal("secureInstallOptions error = nil")
 			}
 		})
 	}
@@ -148,7 +148,7 @@ func TestInstallAndSwitchAgentBinaryRejectsInvalidInputsWithoutSwitching(t *test
 		t.Fatalf("Symlink: %v", err)
 	}
 
-	err := InstallAndSwitchBinary(
+	err := installAndSwitchBinary(
 		t.Context(),
 		slog.Default(),
 		"ftp://example.com/agent.tar.gz",
@@ -156,7 +156,7 @@ func TestInstallAndSwitchAgentBinaryRejectsInvalidInputsWithoutSwitching(t *test
 		paths,
 	)
 	if err == nil {
-		t.Fatal("InstallAndSwitchBinary error = nil")
+		t.Fatal("installAndSwitchBinary error = nil")
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
 }
@@ -230,8 +230,8 @@ func TestFlattenAgentLayout(t *testing.T) {
 			}
 			if tc.layout {
 				writeExecutable(t, paths.BinaryPath, "agent")
-				if err := EnsureUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
-					t.Fatalf("EnsureUpgradeLayout: %v", err)
+				if err := ensureUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
+					t.Fatalf("ensureUpgradeLayout: %v", err)
 				}
 				if tc.breakCurrent {
 					if err := os.Remove(paths.CurrentPath); err != nil {
@@ -253,9 +253,9 @@ func TestFlattenAgentLayout(t *testing.T) {
 			}
 
 			for range 2 {
-				err := FlattenLayout(discardLogger(), paths, lockPath)
+				err := flattenLayout(discardLogger(), paths, lockPath)
 				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("FlattenLayout() error = %v, want %v", err, tc.wantErr)
+					t.Fatalf("flattenLayout() error = %v, want %v", err, tc.wantErr)
 				}
 			}
 			_, err := os.Lstat(filepath.Dir(paths.CurrentPath))

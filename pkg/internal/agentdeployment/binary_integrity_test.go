@@ -108,10 +108,10 @@ func TestInstallAndSwitchAgentBinaryIntegrity(t *testing.T) {
 				attempts = 2
 			}
 			for range attempts {
-				err := InstallAndSwitchBinary(t.Context(), log, server.URL+"/agent.tar.gz?sig=secret", tt.digest, paths)
+				err := installAndSwitchBinary(t.Context(), log, server.URL+"/agent.tar.gz?sig=secret", tt.digest, paths)
 				if tt.wantErr == "" {
 					if err != nil {
-						t.Fatalf("InstallAndSwitchBinary: %v", err)
+						t.Fatalf("installAndSwitchBinary: %v", err)
 					}
 					assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 					assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)

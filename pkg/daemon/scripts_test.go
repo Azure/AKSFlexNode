@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+
 	"sigs.k8s.io/yaml"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -100,8 +102,8 @@ type butaneNode struct {
 
 // TestBootstrapButaneTemplate ties the documented Butane template for hosts
 // provisioned by Ignition to the agent. Reset removes the first-boot unit by
-// FirstBootUnitName, and the unit must stop running once the agent unit exists
-// at ServiceUnitPath. Within the template, the unit has to run the files it
+// agentdeployment.FirstBootUnitName, and the unit must stop running once the agent unit exists
+// at agentdeployment.ServiceUnitPath. Within the template, the unit has to run the files it
 // writes, keep the ones that carry secrets private, and remove them once
 // bootstrap succeeds or can no longer be retried, and not retry the failures
 // bootstrap.sh says retrying can't fix. Rendering it is checked with Butane
@@ -156,8 +158,8 @@ func TestBootstrapButaneTemplate(t *testing.T) {
 		t.Fatalf("want one unit, got %d", len(cfg.Systemd.Units))
 	}
 	unit := cfg.Systemd.Units[0]
-	if unit.Name != FirstBootUnitName {
-		t.Errorf("unit name = %q, want %q, which reset removes", unit.Name, FirstBootUnitName)
+	if unit.Name != agentdeployment.FirstBootUnitName {
+		t.Errorf("unit name = %q, want %q, which reset removes", unit.Name, agentdeployment.FirstBootUnitName)
 	}
 	if unit.Enabled == nil || !*unit.Enabled {
 		t.Error("the unit is not enabled, so it never runs")
@@ -175,7 +177,7 @@ func TestBootstrapButaneTemplate(t *testing.T) {
 
 	lines := strings.Split(unit.Contents, "\n")
 	for _, want := range []string{
-		"ConditionPathExists=!" + ServiceUnitPath,
+		"ConditionPathExists=!" + agentdeployment.ServiceUnitPath,
 		"AssertPathExists=" + files["bootstrap.sh"],
 		"Environment=AKS_FLEX_NODE_BASE_CONFIG_FILE=" + files["base-config.json"],
 		"EnvironmentFile=" + files["bootstrap.env"],
@@ -192,7 +194,7 @@ func TestBootstrapButaneTemplate(t *testing.T) {
 		"RestartPreventExitStatus=" + string(permanent[1]),
 		// Once the agent unit is installed no retry can succeed, so the inputs
 		// go then, whatever the outcome; until then, a retry needs them.
-		"ExecStopPost=/bin/sh -c 'test ! -e " + ServiceUnitPath + " || rm -rf " + firstBootDir + "'",
+		"ExecStopPost=/bin/sh -c 'test ! -e " + agentdeployment.ServiceUnitPath + " || rm -rf " + firstBootDir + "'",
 		"StartLimitIntervalSec=0",
 		"WantedBy=multi-user.target",
 	} {

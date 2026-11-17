@@ -1,4 +1,4 @@
-package daemon
+package agentdeployment
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
@@ -19,7 +19,7 @@ import (
 // legacySeedPath is where install scripts put the binary on a host whose
 // /usr/local/bin is writable, as earlier releases were installed, so that such a
 // release finds itself there.
-var legacySeedPath = filepath.Join(hostroot.LegacyPath, "bin", agentdeployment.BinaryName)
+var legacySeedPath = filepath.Join(hostroot.LegacyPath, "bin", binaryName)
 
 // InstallHostBinary puts the binary under the host root, <host root>/bin/aks-flex-node, which
 // the agent's blue/green layout is seeded from:
@@ -37,11 +37,11 @@ func InstallHostBinary(ctx context.Context, log *slog.Logger) error {
 	return installHostBinary(
 		ctx,
 		log,
-		agentdeployment.UpgradePathsUnder(hostroot.Resolve()),
+		UpgradePathsUnder(hostroot.Resolve()),
 		ServiceUnitPath,
-		agentdeployment.UpgradeLockPath,
-		func() error { return agentdeployment.PrepareHostRoot(ctx, log) },
-		agentdeployment.RunningAgentExecutable,
+		upgradeLockPath,
+		func() error { return PrepareHostRoot(ctx, log) },
+		runningAgentExecutable,
 		agentbinary.Verify,
 	)
 }
@@ -49,7 +49,7 @@ func InstallHostBinary(ctx context.Context, log *slog.Logger) error {
 func installHostBinary(
 	ctx context.Context,
 	log *slog.Logger,
-	paths agentdeployment.UpgradePaths,
+	paths UpgradePaths,
 	unitPath, lockPath string,
 	prepare func() error,
 	executable func() (string, error),
@@ -91,7 +91,7 @@ func installHostBinary(
 
 // removeStaleLayout removes the agent's blue/green layout when its current binary isn't the
 // running one: seeded again, it would point the binary under the host root back at it.
-func removeStaleLayout(log *slog.Logger, paths agentdeployment.UpgradePaths, running os.FileInfo) error {
+func removeStaleLayout(log *slog.Logger, paths UpgradePaths, running os.FileInfo) error {
 	layoutDir := filepath.Dir(paths.CurrentPath)
 	if _, err := os.Lstat(layoutDir); errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -128,7 +128,7 @@ func copyHostBinary(
 
 	log.Info("installing the agent binary under the host root", "path", target, "from", self)
 
-	if err := agentdeployment.CopyExecutable(self, target); err != nil {
+	if err := copyExecutable(self, target); err != nil {
 		return fmt.Errorf("install the agent binary at %s: %w", target, err)
 	}
 
@@ -162,12 +162,12 @@ func copyHostBinary(
 // It is for start, which runs from that binary on a host whose /usr/local/bin is
 // writable, and removes it as its last step, once it has copied itself
 // everywhere it is needed and is about to exit. The daemon keeps it while it
-// runs from it; see removeDaemonLegacySeed.
+// runs from it; see RemoveDaemonLegacySeed.
 func RemoveLegacySeed(log *slog.Logger) error {
 	return removeLegacySeed(log, hostroot.LegacyReleased, legacySeedPath, nil)
 }
 
-// removeDaemonLegacySeed is RemoveLegacySeed for the daemon, which keeps the
+// RemoveDaemonLegacySeed is RemoveLegacySeed for the daemon, which keeps the
 // binary while it runs from it.
 //
 // On a host a release before the blue/green layout installed directly in
@@ -177,7 +177,7 @@ func RemoveLegacySeed(log *slog.Logger) error {
 // restarts the daemon. Removed, every later copy of the running binary, such as
 // the one a repave installs in the machine, fails until the daemon restarts. The
 // next start runs from the host root, and removes it then.
-func removeDaemonLegacySeed(log *slog.Logger) error {
+func RemoveDaemonLegacySeed(log *slog.Logger) error {
 	return removeLegacySeed(log, hostroot.LegacyReleased, legacySeedPath, runningFrom)
 }
 
@@ -292,7 +292,7 @@ func runningOrServingFrom(info os.FileInfo, self func(os.FileInfo) (bool, error)
 // archive before it is staged, so every switch is guarded.
 //
 // A seed running reports the agent runs from, this process or, for direct
-// activation, the agent service, is kept, as removeDaemonLegacySeed explains, so
+// activation, the agent service, is kept, as RemoveDaemonLegacySeed explains, so
 // the switch is refused until the agent runs from somewhere else.
 //
 // So is a switch while unfinished reports a move to the host root that has not
@@ -340,4 +340,30 @@ func adoptableByEarlierRelease(path string) bool {
 	info, err := os.Stat(path)
 
 	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+}
+
+func SynchronizeNspawnAgentBinary(sourcePath, machine string) error {
+	if !validNspawnMachine(machine) {
+		return fmt.Errorf("invalid nspawn machine %q", machine)
+	}
+	destination := filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
+	if err := copyExecutable(sourcePath, destination); err != nil {
+		return fmt.Errorf("copy agent binary to %s: %w", machine, err)
+	}
+	return nil
+}
+
+// guardUpgradeLegacySeed prevents an upgrade from making an old install adopt the legacy seed.
+func guardUpgradeLegacySeed(log *slog.Logger) error {
+	return guardLegacySeed(log, hostroot.LegacyReleased, HostRootMoveUnfinishedHere, legacySeedPath, runningFrom)
+}
+
+// GuardActivationLegacySeed also keeps a seed used by the running service.
+func GuardActivationLegacySeed(ctx context.Context, log *slog.Logger) error {
+	running := func(info os.FileInfo) (bool, error) {
+		return runningOrServingFrom(info, runningFrom, func() (string, error) {
+			return utilexec.OutputCmd(ctx, log, "systemctl", "show", "--property", "MainPID", "--value", ServiceUnitName)
+		}, "/proc")
+	}
+	return guardLegacySeed(log, hostroot.LegacyReleased, HostRootMoveUnfinishedHere, legacySeedPath, running)
 }
