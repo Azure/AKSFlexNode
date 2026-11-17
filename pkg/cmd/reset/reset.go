@@ -19,31 +19,37 @@ import (
 )
 
 func NewCommand() *cobra.Command {
-	return &cobra.Command{
+	var requestedMode string
+	cmd := &cobra.Command{
 		Use:     "reset",
 		Aliases: []string{"unbootstrap"},
 		Short:   "Remove AKS node configuration",
 		Long:    "Clean up and remove AKS Flex Node components while preserving externally managed Azure Arc state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := logger.CreateLogger("info", "")
-			return runReset(cmd.Context(), log)
+			return runReset(cmd.Context(), log, isolation.Mode(requestedMode))
 		},
 	}
+	cmd.Flags().StringVar(&requestedMode, "isolation", "", "Worker isolation for recovery when applied state is missing or unreadable (nspawn, none, container)")
+	return cmd
 }
 
-func runReset(ctx context.Context, logger *slog.Logger) error {
+func runReset(ctx context.Context, logger *slog.Logger, requestedMode isolation.Mode) error {
 	store, err := daemon.NewFileStateStore()
 	if err != nil {
 		return err
 	}
-	state, err := store.Load(ctx)
+	state, loadErr := store.Load(ctx)
+	mode, err := selectResetMode(state, loadErr, requestedMode)
 	if err != nil {
 		return err
 	}
-	mode := config.DefaultIsolationMode
-	if state != nil {
-		mode = state.Isolation
-	} else {
+	if loadErr != nil {
+		logger.Warn("resetting explicitly selected worker without trusting unreadable applied state", "isolation", mode, "error", loadErr)
+	}
+
+	if mode == "" {
+		mode = config.DefaultIsolationMode
 		nonePresent, ociPresent := noneops.Present(), containerops.Present()
 		if nonePresent && ociPresent {
 			return fmt.Errorf("both host-native and OCI worker traces exist; inspect before reset")
@@ -87,4 +93,27 @@ func runReset(ctx context.Context, logger *slog.Logger) error {
 		config.RemoveRuntimeDirs(logger),
 	)
 	return phases.ExecuteTask(ctx, logger, tasks)
+}
+
+// selectResetMode ignores any State returned with an error. An empty result
+// leaves runtime discovery in control when State is absent, not unreadable.
+func selectResetMode(state *daemon.State, loadErr error, requestedMode isolation.Mode) (isolation.Mode, error) {
+	if requestedMode != "" {
+		if err := config.ValidateIsolation(requestedMode); err != nil {
+			return "", fmt.Errorf("invalid reset isolation: %w", err)
+		}
+	}
+	if loadErr != nil {
+		if requestedMode == "" {
+			return "", fmt.Errorf("cannot read applied worker state; verify the worker isolation and rerun reset --isolation <mode>: %w", loadErr)
+		}
+		return requestedMode, nil
+	}
+	if state != nil {
+		if requestedMode != "" && requestedMode != state.Isolation {
+			return "", fmt.Errorf("reset isolation %q conflicts with applied worker isolation %q", requestedMode, state.Isolation)
+		}
+		return state.Isolation, nil
+	}
+	return requestedMode, nil
 }
