@@ -79,7 +79,7 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old", NPDVersion: "v1.35.1"}}
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 			op := &noneNodeOperator{
-				nspawnNodeOperator: &nspawnNodeOperator{cfg: cfg, state: store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}},
+				operatorBase: &operatorBase{cfg: cfg, state: store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}},
 				newNode: func(p noneops.Params) noneNode {
 					if p.Previous != nil {
 						if p.Previous != previous {
@@ -147,7 +147,8 @@ func TestNodeOperatorIsolationSelection(t *testing.T) {
 			if !tc.missingConfig {
 				state.NodeConfig = &agentconfig.AgentConfig{Isolation: string(tc.applied)}
 			}
-			op, err := newNodeOperator(t.Context(), cfg, &testStateStore{state: state})
+			provider := mustNodeProvider(t, tc.configured)
+			op, err := provider.NewOperator(t.Context(), cfg, &testStateStore{state: state})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("newNodeOperator = %v", err)
 			}
@@ -177,7 +178,7 @@ func TestIsolationEnvironment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: tc.mode}}
-			if err := validateIsolationEnvironment(cfg, tc.containerized); (err != nil) != tc.wantErr {
+			if err := mustNodeProvider(t, cfg.Bootstrap.Isolation).ValidateEnvironment(tc.containerized); (err != nil) != tc.wantErr {
 				t.Fatalf("validation = %v", err)
 			}
 		})
@@ -187,13 +188,14 @@ func TestIsolationEnvironment(t *testing.T) {
 func TestNoneHostPreparationAndService(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}}
-	name := SetupHost(cfg, discardLogger()).Name()
+	provider := mustNodeProvider(t, cfg.Bootstrap.Isolation)
+	name := provider.SetupHost(cfg, discardLogger(), false).Name()
 	for _, forbidden := range []string{"harden-apt", "disable-containerd", "disable-kubelet", "install-systemd-container"} {
 		if strings.Contains(name, forbidden) {
 			t.Fatalf("none setup contains %s: %s", forbidden, name)
 		}
 	}
-	unit, err := renderAgentServiceUnit("/agent", agentServiceOptionsFromConfig(cfg))
+	unit, err := renderAgentServiceUnit("/agent", agentServiceOptionsFor(cfg, provider))
 	if err != nil {
 		t.Fatal(err)
 	}

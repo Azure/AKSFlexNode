@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
@@ -29,15 +30,13 @@ func TestHostNativeNPD(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	task := Start(slog.New(slog.DiscardHandler), cfg, root, ns, StartOptions{
-		UnitName: HostUnitNPD, BinaryPath: root.Path(BinaryPath),
-	})
+	task := Start(slog.New(slog.DiscardHandler), cfg, root, ns, isolation.ModeNone)
 	for range 2 {
 		if err := task.Do(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	path := root.Path(filepath.Join("/etc/systemd/system", HostUnitNPD))
+	path := root.Path(filepath.Join("/etc/systemd/system", UnitName))
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +45,7 @@ func TestHostNativeNPD(t *testing.T) {
 		t.Fatalf("incorrect NPD service: %s", content)
 	}
 	for _, call := range calls {
-		if !strings.HasPrefix(call, "systemctl ") || !strings.Contains(call, HostUnitNPD) && call != "systemctl daemon-reload" {
+		if !strings.HasPrefix(call, "systemctl ") || !strings.Contains(call, UnitName) && call != "systemctl daemon-reload" {
 			t.Fatalf("unexpected host NPD command %s", call)
 		}
 	}
@@ -66,11 +65,11 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 	}{
 		{
 			name: "unchanged active start", active: true,
-			want: []string{"systemctl is-active " + HostUnitNPD},
+			want: []string{"systemctl is-active " + UnitName},
 		},
 		{
 			name: "inactive start",
-			want: []string{"systemctl is-active " + HostUnitNPD, "systemctl daemon-reload", "systemctl enable --now " + HostUnitNPD},
+			want: []string{"systemctl is-active " + UnitName, "systemctl daemon-reload", "systemctl enable --now " + UnitName},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,11 +88,10 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 				},
 			}
 			log, cfg := slog.New(slog.DiscardHandler), &config.Config{}
-			options := StartOptions{UnitName: HostUnitNPD, BinaryPath: root.Path(BinaryPath)}
-			if err := Start(log, cfg, root, ns, options).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, root, ns, isolation.ModeNone).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			path := root.Path(filepath.Join("/etc/systemd/system", HostUnitNPD))
+			path := root.Path(filepath.Join("/etc/systemd/system", UnitName))
 			before, err := os.Stat(path)
 			if err != nil {
 				t.Fatal(err)
@@ -104,7 +102,7 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 			}
 			for range 2 {
 				calls, active = nil, tc.active
-				task := Start(log, cfg, root, ns, options)
+				task := Start(log, cfg, root, ns, isolation.ModeNone)
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}

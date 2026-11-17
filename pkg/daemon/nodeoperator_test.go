@@ -48,7 +48,7 @@ func TestFindActiveMachine(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := (&nspawnNodeOperator{state: &testStateStore{state: tt.state}}).findActiveMachine(t.Context())
+			got, err := (&nspawnNodeOperator{operatorBase: &operatorBase{state: &testStateStore{state: tt.state}}}).findActiveMachine(t.Context())
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("findActiveMachine error = nil, want error")
@@ -84,7 +84,7 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 		ClusterFQDN:    "new.example.test",
 		CACertData:     "bmV3",
 	}}
-	operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
+	operator := &operatorBase{cfg: cfg, bootstrapDataRefresher: refresher}
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
@@ -144,7 +144,7 @@ func TestConfigForGoalStateSkipsBootstrapDataRefreshWithoutBothAuthTypes(t *test
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			refresher := bootstrapDataRefresherForConfig(cfg)
-			operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
+			operator := &operatorBase{cfg: cfg, bootstrapDataRefresher: refresher}
 			if _, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{}); err != nil {
 				t.Fatalf("configForGoalState() error = %v", err)
 			}
@@ -175,7 +175,7 @@ func TestConfigForGoalStateBootstrapDataRefreshFailure(t *testing.T) {
 		BootstrapToken:  &config.BootstrapTokenConfig{Token: "oldtok.0123456789abcdef"},
 		ManagedIdentity: &config.ManagedIdentityConfig{},
 	}}
-	operator := &nspawnNodeOperator{
+	operator := &operatorBase{
 		cfg:                    cfg,
 		bootstrapDataRefresher: &fakeBootstrapDataRefresher{err: errors.New("ARM unavailable")},
 	}

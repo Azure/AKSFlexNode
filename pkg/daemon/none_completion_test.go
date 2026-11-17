@@ -126,32 +126,39 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	if _, _, err := old.Configure(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	f.op = &noneNodeOperator{
-		nspawnNodeOperator: &nspawnNodeOperator{cfg: cfg, state: f.store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}}, newNode: factory,
-		resolve: func(_ context.Context, _ *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
-			ac := config.ToAgentConfig(cfg, slot)
-			return ac, completionGoal(ac), nil, nil
-		},
-		stage:        func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error { return nil },
-		dependencies: func(context.Context, *slog.Logger, *config.Config) error { f.prepared = true; return nil },
-		installNPD: func(_ context.Context, _ *slog.Logger, cfg *config.Config, gs *goalstates.MachineGoalState) error {
-			if f.fail == "artifacts" && cfg.Npd.Version == "v1.36.0" {
-				return errors.New("NPD install interrupted")
-			}
-			// Simulate different NPD versions sharing an SDK binary directory.
-			path := gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector")
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return err
-			}
-			return os.WriteFile(path, []byte(cfg.Npd.Version), 0o600)
-		},
-		startNPD: func(_ context.Context, _ *slog.Logger, cfg *config.Config, _ *goalstates.NodeStart) error {
-			f.npdVersions = append(f.npdVersions, cfg.Npd.Version)
-			if f.fail == "npd" && cfg.Npd.Version == "v1.36.0" {
-				return errors.New("NPD start interrupted")
-			}
-			return nil
-		},
+	selected, err := mustNodeProvider(t, cfg.Bootstrap.Isolation).NewOperator(t.Context(), cfg, f.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ok bool
+	f.op, ok = selected.(*noneNodeOperator)
+	if !ok {
+		t.Fatalf("selected operator=%T", selected)
+	}
+	f.op.newNode = factory
+	f.op.resolve = func(_ context.Context, _ *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+		ac := config.ToAgentConfig(cfg, slot)
+		return ac, completionGoal(ac), nil, nil
+	}
+	f.op.stage = func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error { return nil }
+	f.op.dependencies = func(context.Context, *slog.Logger, *config.Config) error { f.prepared = true; return nil }
+	f.op.installNPD = func(_ context.Context, _ *slog.Logger, cfg *config.Config, gs *goalstates.MachineGoalState) error {
+		if f.fail == "artifacts" && cfg.Npd.Version == "v1.36.0" {
+			return errors.New("NPD install interrupted")
+		}
+		// Simulate different NPD versions sharing an SDK binary directory.
+		path := gs.RootFS.Root().Path("/usr/local/bin/node-problem-detector")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(cfg.Npd.Version), 0o600)
+	}
+	f.op.startNPD = func(_ context.Context, _ *slog.Logger, cfg *config.Config, _ *goalstates.NodeStart) error {
+		f.npdVersions = append(f.npdVersions, cfg.Npd.Version)
+		if f.fail == "npd" && cfg.Npd.Version == "v1.36.0" {
+			return errors.New("NPD start interrupted")
+		}
+		return nil
 	}
 	return f
 }

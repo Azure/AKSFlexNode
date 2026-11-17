@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
@@ -68,16 +69,14 @@ func TestNoneRecoveryRestoresOfflineNPDPolicy(t *testing.T) {
 	if _, err := f.op.ApplyGoalState(t.Context(), discardLogger(), aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.1"}); err == nil {
 		t.Fatal("expected persistence failure")
 	}
-	unit := filepath.Join(f.params.HostRoot, "etc/systemd/system", npd.HostUnitNPD)
+	unit := filepath.Join(f.params.HostRoot, "etc/systemd/system", npd.UnitName)
 	if err := os.WriteFile(unit, []byte("owned host NPD unit"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f.store.failSave = false
 	f.op.installNPD = installNoneNPD
 	f.op.startNPD = func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
-		return npd.Start(log, cfg, ns.Root(), ns, npd.StartOptions{
-			UnitName: npd.HostUnitNPD, BinaryPath: ns.Root().Path(npd.BinaryPath),
-		}).Do(ctx)
+		return npd.Start(log, cfg, ns.Root(), ns, isolation.ModeNone).Do(ctx)
 	}
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
@@ -85,7 +84,7 @@ func TestNoneRecoveryRestoresOfflineNPDPolicy(t *testing.T) {
 	if _, err := f.op.ResumeRepave(t.Context(), log, nil); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"systemctl stop " + npd.HostUnitNPD, "systemctl disable " + npd.HostUnitNPD}
+	want := []string{"systemctl stop " + npd.UnitName, "systemctl disable " + npd.UnitName}
 	if !slices.Equal(f.calls[len(f.calls)-2:], want) || len(f.calls) <= calls {
 		t.Fatalf("recovery did not stop/disable offline source NPD: %v", f.calls[calls:])
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -72,27 +71,27 @@ var nspawnLifecycleHelperName = filepath.Base(goalstates.LegacyHostPaths().NSpaw
 var recoveryScriptContent []byte
 
 type installServiceTask struct {
-	cfg *config.Config
-	log *slog.Logger
+	options agentServiceOptions
+	log     *slog.Logger
 }
 
 // InstallService returns a task that installs, enables, and starts the systemd unit. In the
 // agent's container, the unit runs the agent's image instead of a binary on the host.
-func InstallService(cfg *config.Config, log *slog.Logger) phases.Task {
-	return installService(cfg, log, Containerized())
+func InstallService(cfg *config.Config, log *slog.Logger, provider NodeProvider) phases.Task {
+	return installService(agentServiceOptionsFor(cfg, provider), log, Containerized())
 }
 
-func installService(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
+func installService(options agentServiceOptions, log *slog.Logger, containerized bool) phases.Task {
 	if containerized {
 		return newInstallContainerServiceTask(log)
 	}
-	return &installServiceTask{cfg: cfg, log: log}
+	return &installServiceTask{options: options, log: log}
 }
 
 func (t *installServiceTask) Name() string { return "install-service" }
 
 func (t *installServiceTask) Do(ctx context.Context) error {
-	if err := ensureAgentUpgradeServiceAssets(ctx, t.log, t.cfg); err != nil {
+	if err := ensureAgentUpgradeServiceAssets(ctx, t.log, t.options); err != nil {
 		return err
 	}
 	if err := utilexec.RunCmd(ctx, t.log, utilexec.Systemctl(), "enable", ServiceUnitName); err != nil {
@@ -106,8 +105,8 @@ func (t *installServiceTask) Do(ctx context.Context) error {
 	return nil
 }
 
-func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) error {
-	_, err := ensureServiceAssetsUnderHostRoot(ctx, log, cfg, false)
+func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, options agentServiceOptions) error {
+	_, err := ensureServiceAssetsUnderHostRoot(ctx, log, options, false)
 
 	return err
 }
@@ -119,8 +118,8 @@ func ensureAgentUpgradeServiceAssets(ctx context.Context, log *slog.Logger, cfg 
 // binary, run through them, so a candidate's broken assets would break its own rollback. It
 // keeps them, writing only missing ones, and reports that it held them back, for the daemon to
 // converge them once the upgrade is judged.
-func ensureDaemonServiceAssets(ctx context.Context, log *slog.Logger, cfg *config.Config) (bool, error) {
-	return ensureServiceAssetsUnderHostRoot(ctx, log, cfg, true)
+func ensureDaemonServiceAssets(ctx context.Context, log *slog.Logger, options agentServiceOptions) (bool, error) {
+	return ensureServiceAssetsUnderHostRoot(ctx, log, options, true)
 }
 
 // ensureServiceAssetsUnderHostRoot resolves the host root once, so the binary layout, the
@@ -128,7 +127,7 @@ func ensureDaemonServiceAssets(ctx context.Context, log *slog.Logger, cfg *confi
 func ensureServiceAssetsUnderHostRoot(
 	ctx context.Context,
 	log *slog.Logger,
-	cfg *config.Config,
+	options agentServiceOptions,
 	holdDuringUpgrade bool,
 ) (bool, error) {
 	root := hostroot.Resolve()
@@ -137,7 +136,7 @@ func ensureServiceAssetsUnderHostRoot(
 		ctx,
 		log,
 		agentUpgradePathsUnder(root),
-		agentServiceOptionsFromConfig(cfg),
+		options,
 		systemdSystemDir,
 		recoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
@@ -178,17 +177,12 @@ func ensureAgentUpgradeServiceAssetsAt(
 }
 
 type agentServiceOptions struct {
-	ARCEnabled         bool
-	NoneIsolation      bool
-	ContainerIsolation bool
+	ARCEnabled    bool
+	WantedTargets []string
 }
 
-func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
-	return agentServiceOptions{
-		ARCEnabled:         cfg.IsARCEnabled(),
-		NoneIsolation:      cfg.Bootstrap.Isolation == isolation.ModeNone,
-		ContainerIsolation: cfg.Bootstrap.Isolation == isolation.ModeContainer,
-	}
+func agentServiceOptionsFor(cfg *config.Config, provider NodeProvider) agentServiceOptions {
+	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled(), WantedTargets: provider.WantedTargets()}
 }
 
 type agentServiceAsset struct {
@@ -327,10 +321,7 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	if serviceOptions.ARCEnabled {
 		dependencies = append(dependencies, arcSystemdDependency)
 	}
-	wantedTargets := []string{"network-online.target", "systemd-udev-settle.service"}
-	if !serviceOptions.NoneIsolation && !serviceOptions.ContainerIsolation {
-		wantedTargets = append(wantedTargets, "machines.target")
-	}
+	wantedTargets := append([]string(nil), serviceOptions.WantedTargets...)
 	wantedTargets = append(wantedTargets, dependencies...)
 
 	var content bytes.Buffer

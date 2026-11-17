@@ -17,7 +17,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
@@ -70,11 +69,15 @@ func (h *handler) execute(ctx context.Context) error {
 		return fmt.Errorf("failed to load config from %s: %w", h.configPath, err)
 	}
 	log := createPreflightLogger(cfg.Agent.LogLevel)
-	if err := daemon.ValidateIsolationEnvironment(cfg); err != nil {
+	provider, err := daemon.NewNodeProvider(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return err
+	}
+	if err := provider.ValidateEnvironment(daemon.Containerized()); err != nil {
 		return err
 	}
 
-	agentCfg, gs, _, err := daemon.ResolveNodeGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
+	agentCfg, gs, _, err := provider.ResolveGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
@@ -87,11 +90,7 @@ func (h *handler) execute(ctx context.Context) error {
 		}
 	}
 
-	failMachinesTargetForMissing := daemon.Containerized() || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
-	var runtimeChecks []preflight.Checker
-	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
-		runtimeChecks = append(runtimeChecks, daemon.CheckMachinesTarget(log, failMachinesTargetForMissing))
-	}
+	runtimeChecks := provider.RuntimeChecks(cfg, log, daemon.Containerized())
 	checks := daemon.PreflightChecks(preflight.Flatten(
 		runtimeChecks,
 		arc.Preflight(cfg, log),

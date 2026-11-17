@@ -3,6 +3,8 @@ package supportsisolation
 import (
 	"errors"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon"
+
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +21,11 @@ func NewCommand() *cobra.Command {
 			if args[0] == "" {
 				return errors.New("no isolation mode named")
 			}
-			_, err := isolation.ParseMode(args[0])
+			mode, err := isolation.ParseMode(args[0])
+			if err != nil {
+				return err
+			}
+			_, err = daemon.NewNodeProvider(mode)
 			return err
 		},
 	}

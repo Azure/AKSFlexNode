@@ -127,15 +127,19 @@ func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
 			if mode == isolation.ModeContainer {
 				want = filepath.Join(container.Layout{}.RootfsDir("kube2"), "usr/local/bin/aks-flex-node")
 			}
-			if got := activeNodeAgentBinaryPath(mode, "kube2"); got != want {
+			path := activeNspawnAgentBinaryPath
+			if mode == isolation.ModeContainer {
+				path = activeContainerAgentBinaryPath
+			}
+			if got := path("kube2"); got != want {
 				t.Fatalf("binary sync path = %s, want %s", got, want)
 			}
 		})
 	}
-	if err := synchronizeNodeAgentBinary("missing", isolation.ModeNone, ""); err != nil {
+	if err := mustNodeProvider(t, isolation.ModeNone).SynchronizeAgent("missing", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := synchronizeNodeAgentBinary("missing", isolation.ModeContainer, "../escape"); err == nil {
+	if err := mustNodeProvider(t, isolation.ModeContainer).SynchronizeAgent("missing", "../escape"); err == nil {
 		t.Fatal("container sync accepted invalid slot")
 	}
 	for _, tc := range []struct {
@@ -154,7 +158,7 @@ func TestContainerAgentUpgradeRoutingAndCapability(t *testing.T) {
 			if err := os.Symlink(fixture, candidate); err != nil {
 				t.Fatal(err)
 			}
-			if err := checkAgentIsolation(t.Context(), candidate, isolation.ModeContainer); (err != nil) != tc.wantErr {
+			if err := mustNodeProvider(t, isolation.ModeContainer).CheckAgentCandidate(t.Context(), candidate); (err != nil) != tc.wantErr {
 				t.Fatalf("capability = %v", err)
 			}
 		})
@@ -165,7 +169,7 @@ func TestContainerAgentUpgradeSignal(t *testing.T) {
 	t.Parallel()
 	state := containerTestState("kube2", "42")
 	store := agentUpgradeSignalStore{path: filepath.Join(t.TempDir(), "upgrade.json")}
-	if err := recordPendingAgentUpgrade(context.Background(), store, &fakeNodeOperator{state: state}, "upgrade", "daemon"); err != nil {
+	if err := recordPendingAgentUpgrade(context.Background(), store, &fakeNodeOperator{state: state}, "upgrade", "daemon", containerTestProvider(t, activationFenceJournal(t, "absent"))); err != nil {
 		t.Fatal(err)
 	}
 	signal, err := store.read()
@@ -175,7 +179,7 @@ func TestContainerAgentUpgradeSignal(t *testing.T) {
 	if signal.Isolation != isolation.ModeContainer || signal.ActiveMachine != "kube2" {
 		t.Fatalf("wrong signal: %+v", signal)
 	}
-	if strings.Contains(activeNodeAgentBinaryPath(signal.Isolation, signal.ActiveMachine), "/var/lib/machines/") {
+	if strings.Contains(activeContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
 		t.Fatal("container signal selects nspawn synchronization")
 	}
 }

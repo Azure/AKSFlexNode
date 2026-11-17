@@ -42,6 +42,21 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// In its container the agent keeps nothing on the host to migrate, install,
 	// or remove: the image carries it.
 	containerized := Containerized()
+	provider, err := NewNodeProvider(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return err
+	}
+	if err := provider.ValidateEnvironment(containerized); err != nil {
+		return err
+	}
+	store, err := NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	operator, err := provider.NewOperator(ctx, cfg, store)
+	if err != nil {
+		return err
+	}
 
 	// After an AgentUpgrade from a release that predates the host root, this is
 	// the first time the new agent runs on the host.
@@ -59,7 +74,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			return err
 		}
 	}
-	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, containerized)
+	convergeHeldAssets, err := ensureHostInstall(ctx, log, agentServiceOptionsFor(cfg, provider), containerized)
 	if err != nil {
 		return err
 	}
@@ -71,29 +86,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
-	store, err := NewFileStateStore()
-	if err != nil {
-		return err
-	}
-	operator, err := newNodeOperator(ctx, cfg, store)
-	if err != nil {
-		return err
-	}
 	// In its container, the agent's units and its binary in the active machine converge here,
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
 	if containerized {
-		nspawnOperator, ok := operator.(*nspawnNodeOperator)
-		if !ok {
-			return fmt.Errorf("containerized agent requires nspawn isolation")
-		}
-		convergence := newContainerAgentConvergence(log, nspawnOperator)
-		held, err := convergence.converge(ctx)
-		if err != nil {
-			return err
-		}
-		if held {
-			convergeHeldAssets = convergence.writeUnits
+		if runtime := provider.NSpawnRuntime(); runtime != nil {
+			convergeHeldAssets, err = runtime.ConvergeContainerAgent(ctx, log, operator)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if cfg.UsesKubeconfigCredentials() {
@@ -133,9 +134,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	var upgrades agentUpgrader
 	if containerized {
-		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
+		upgrades, err = newContainerAgentUpgradeExecutor(log, operator, provider)
 	} else {
-		upgrades, err = newHostAgentUpgradeExecutor(log, operator)
+		upgrades, err = newHostAgentUpgradeExecutor(log, operator, provider)
 	}
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create direct Kubernetes client: %w", err)
 	}
-	hub, err := newDaemonHubAdapter(cfg, log, restCfg)
+	hub, err := newDaemonHubAdapter(cfg, log, restCfg, provider)
 	if err != nil {
 		return err
 	}
@@ -212,7 +213,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				// it waits for is gone. In its container the agent has no
 				// install on the host to move.
 				if hostUpgrades, ok := upgrades.(*hostAgentUpgradeExecutor); ok {
-					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades)
+					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades, provider)
 					unfinished, err := hostRootMoveUnfinishedHere()
 					if err != nil {
 						log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)

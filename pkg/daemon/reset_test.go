@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -24,7 +23,7 @@ import (
 func TestResetNodeCleansUpLocalDNS(t *testing.T) {
 	t.Parallel()
 
-	name := ResetNode(slog.New(slog.DiscardHandler)).Name()
+	name := mustNodeProvider(t, "nspawn").ResetNode(slog.New(slog.DiscardHandler)).Name()
 
 	for _, want := range []string{
 		"cleanup-localdns-rules",
@@ -177,25 +176,17 @@ func TestResetNodeAppliedStateRouting(t *testing.T) {
 			}
 			ipam := putNoneResetFile(t, root, "var/lib/cni/networks/site/10.0.0.2", "site-owned")
 			config := putNoneResetFile(t, root, "etc/cni/net.d/site.conflist", "site-owned")
-			var modes []string
-			marker := func(mode string) func(context.Context) error {
-				return func(context.Context) error {
-					modes = append(modes, mode)
-					return nil
-				}
-			}
-			noneTask := hostnode.Func("none", func(context.Context) error {
-				modes = append(modes, "none")
-				return hostnode.ResetCNIState(root)
-			})
-			task := resetNodeFromState(slog.New(slog.DiscardHandler), store.Load, noneTask,
-				hostnode.Func("container", marker("container")), hostnode.Func("nspawn", marker("nspawn")))
-			err = task.Do(t.Context())
+			provider, err := discoverResetProvider(t.Context(), store.Load, discardLogger(), nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("reset=%v, wantErr=%v", err, tc.wantErr)
 			}
-			if tc.wantErr && len(modes) != 0 || !tc.wantErr && (len(modes) != 1 || modes[0] != tc.want) {
-				t.Fatalf("reset modes=%v, want %q", modes, tc.want)
+			if tc.wantErr && provider != nil || !tc.wantErr && string(provider.Mode()) != tc.want {
+				t.Fatalf("reset provider=%v, want %q", provider, tc.want)
+			}
+			if !tc.wantErr && provider.Mode() == isolation.ModeNone {
+				if err := hostnode.ResetCNIState(root); err != nil {
+					t.Fatal(err)
+				}
 			}
 			for _, path := range []string{ipam, config} {
 				if tc.want == "none" {

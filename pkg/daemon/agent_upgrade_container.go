@@ -108,10 +108,11 @@ func (s agentImageEnvFile) write(current, lastGood string) error {
 }
 
 type containerAgentUpgradeExecutor struct {
-	log     *slog.Logger
-	state   agentUpgradeStateLoader
-	signals agentUpgradeSignalStore
-	images  agentImageEnvFile
+	log      *slog.Logger
+	state    agentUpgradeStateLoader
+	provider NodeProvider
+	signals  agentUpgradeSignalStore
+	images   agentImageEnvFile
 	// runningImage is the image this daemon runs, which its unit passes in.
 	runningImage           string
 	pullArgs               []string
@@ -121,11 +122,10 @@ type containerAgentUpgradeExecutor struct {
 	runSystemdRun          func(context.Context, ...string) error
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 	runningExecutable      func() (string, error)
-	nspawnBinaryPath       func(string) string
 	instanceID             string
 }
 
-func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader) (*containerAgentUpgradeExecutor, error) {
+func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader, provider NodeProvider) (*containerAgentUpgradeExecutor, error) {
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
 		return nil, fmt.Errorf("create daemon instance ID: %w", err)
@@ -133,6 +133,7 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 	return &containerAgentUpgradeExecutor{
 		log:          log,
 		state:        state,
+		provider:     provider,
 		signals:      agentUpgradeSignalStore{path: defaultAgentUpgradePaths().SignalPath},
 		images:       agentImageEnvFile{path: agentImageSelectionPath},
 		runningImage: os.Getenv(agentImageEnv),
@@ -150,7 +151,6 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 		},
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
 		runningExecutable:      runningAgentExecutable,
-		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
 		instanceID:             instanceID,
 	}, nil
 }
@@ -208,7 +208,7 @@ func agentUpgradeImage(request agentUpgradeRequest) (string, error) {
 }
 
 func (e *containerAgentUpgradeExecutor) RecordPending(ctx context.Context, operationName string) error {
-	return recordPendingAgentUpgrade(ctx, e.signals, e.state, operationName, e.instanceID)
+	return recordPendingAgentUpgrade(ctx, e.signals, e.state, operationName, e.instanceID, e.provider)
 }
 
 func (e *containerAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error {
@@ -353,6 +353,9 @@ func (e *containerAgentUpgradeExecutor) signalStore() agentUpgradeSignalStore { 
 func (e *containerAgentUpgradeExecutor) daemonInstance() string { return e.instanceID }
 
 func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
+	if err := e.provider.ValidateAgentActivation(context.Background()); err != nil {
+		return err
+	}
 	if signal.CandidateImage == "" {
 		return fmt.Errorf("AgentUpgrade was interrupted before selecting a candidate image")
 	}
@@ -366,22 +369,11 @@ func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSign
 	if e.runningImage != signal.CandidateImage {
 		return fmt.Errorf("the agent restarted on %q rather than the candidate image", e.runningImage)
 	}
-	if !validNspawnMachine(signal.ActiveMachine) {
-		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
-	}
 	running, err := e.runningExecutable()
 	if err != nil {
 		return err
 	}
-	// convergeContainerAgent copies the running agent into the active machine at startup.
-	equal, err := filesHaveEqualSHA256(running, e.nspawnBinaryPath(signal.ActiveMachine))
-	if err != nil {
-		return fmt.Errorf("verify synchronized nspawn agent binary: %w", err)
-	}
-	if !equal {
-		return fmt.Errorf("upgraded agent and nspawn agent binaries do not match")
-	}
-	return nil
+	return e.provider.ValidateAgent(running, signal.ActiveMachine)
 }
 
 func (e *containerAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSignal) (bool, error) {

@@ -28,7 +28,7 @@ func newTestHubAdapter(t *testing.T, ops *testHubOperations) (*hubMachineAdapter
 			t.Fatal(err)
 		}
 	}
-	adapter, err := newHubMachineAdapter(func(string) (hubTransitionOperations, error) { return ops, nil })
+	adapter, err := newHubMachineAdapter(func(string) (hubTransitionOperations, error) { return ops, nil }, mustNodeProvider(t, "nspawn"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestHubAdapterRejectsInvalidState(t *testing.T) {
 			}
 		})
 	}
-	if _, err := newHubMachineAdapter(nil); err == nil {
+	if _, err := newHubMachineAdapter(nil, mustNodeProvider(t, "nspawn")); err == nil {
 		t.Fatal("nil operations factory accepted")
 	}
 }

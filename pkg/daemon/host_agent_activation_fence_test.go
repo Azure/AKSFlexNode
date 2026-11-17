@@ -85,7 +85,7 @@ func TestDirectAgentActivationFencesBeforeHostSwitch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			startup := activationFenceJournal(t, "absent")
-			base := activationFenceService(t, startup, &State{Isolation: isolation.ModeNone})
+			base := activationFenceService(t, startup, containerTestState("kube1", "old"))
 			paths := base.paths
 			const previous = "#!/bin/sh\nexit 0\n# previous\n"
 			const candidate = "#!/bin/sh\nexit 0\n# candidate\n"

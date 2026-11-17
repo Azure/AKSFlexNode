@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
 
@@ -28,11 +29,11 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	}
 	cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 	for range 2 {
-		if err := Start(log, cfg, ns.Root(), ns).Do(t.Context()); err != nil {
+		if err := Start(log, cfg, ns.Root(), ns, isolation.ModeContainer).Do(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	data, err := os.ReadFile(root.Path("/etc/systemd/system/" + systemdUnitNPD))
+	data, err := os.ReadFile(root.Path("/etc/systemd/system/" + UnitName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	if entries, err := os.ReadDir(decoy); err != nil || len(entries) != 0 {
 		t.Fatalf("NPD wrote through MachineDir: %v", err)
 	}
-	if !slices.Contains(calls, "systemctl restart "+systemdUnitNPD) {
+	if !slices.Contains(calls, "systemctl restart "+UnitName) {
 		t.Fatalf("NPD was not restarted through the container executor: %v", calls)
 	}
 	// The download and rendered command must name the same binary. A local

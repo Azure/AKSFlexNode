@@ -75,11 +75,11 @@ func activationFenceJournal(t *testing.T, scenario string) containerStartupStore
 	return store
 }
 
-func activationFenceService(t *testing.T, startup containerStartupReader, state *State) *flexDaemonActivationService {
+func activationFenceService(t *testing.T, startup containerStartupStore, state *State) *flexDaemonActivationService {
 	t.Helper()
 	return &flexDaemonActivationService{
 		log: discardLogger(), paths: testAgentUpgradePaths(t),
-		startup: startup, state: &testStateStore{state: state},
+		provider: containerTestProvider(t, startup), state: &testStateStore{state: state},
 		systemdDir: t.TempDir(), recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) { return false, nil },
 	}
@@ -97,7 +97,7 @@ func TestAgentActivationFencesPendingContainerStartup(t *testing.T) {
 					state := &State{Isolation: mode, ActiveMachine: "kube1"}
 					service := activationFenceService(t, startup, state)
 					executor := &hostAgentUpgradeExecutor{
-						log: discardLogger(), paths: service.paths, startup: startup,
+						log: discardLogger(), paths: service.paths, provider: service.provider,
 						state: &fakeNodeOperator{state: state}, signals: agentUpgradeSignalStore{path: service.paths.SignalPath},
 					}
 					for range 2 {
@@ -140,9 +140,12 @@ func TestAgentActivationWithoutContainerStartup(t *testing.T) {
 				state.ActiveMachine = ""
 			}
 			service := activationFenceService(t, startup, state)
+			if mode != isolation.ModeContainer {
+				service.provider = mustNodeProvider(t, mode)
+			}
 			guardErr := errors.New("reached legacy guard")
 			executor := &hostAgentUpgradeExecutor{
-				state: &fakeNodeOperator{state: state}, startup: startup,
+				state: &fakeNodeOperator{state: state}, provider: service.provider,
 				signals: agentUpgradeSignalStore{path: service.paths.SignalPath}, guardLegacySeed: func() error { return guardErr },
 			}
 			if err := executor.RecordPending(t.Context(), "upgrade"); err != nil {
@@ -179,14 +182,13 @@ func TestAgentActivationRechecksStartupAfterLoadingState(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			startup := activationFenceJournal(t, "absent")
-			loader := agentActivationStateLoader{startup: startup, load: func(context.Context) (*State, error) {
+			loader := activationFencePublishingState{testStateStore: &testStateStore{state: containerTestState("kube1", "old")}, publish: func() {
 				published := activationFenceJournal(t, scenario)
 				if err := os.Rename(published.path, startup.path); err != nil {
 					t.Fatal(err)
 				}
-				return &State{Isolation: isolation.ModeContainer, ActiveMachine: "kube1"}, nil
 			}}
-			if state, err := loader.LoadState(t.Context()); err == nil || state != nil {
+			if state, err := loadAgentActivationState(t.Context(), &operatorBase{state: loader}, containerTestProvider(t, startup)); err == nil || state != nil {
 				t.Fatalf("LoadState accepted a newly published startup: %+v, %v", state, err)
 			}
 		})
@@ -225,7 +227,7 @@ func TestAgentActivationRejectsStoppedSourceDuringContainerRepave(t *testing.T) 
 	}
 	service := activationFenceService(t, op.startup, store.state)
 	executor := &hostAgentUpgradeExecutor{
-		log: discardLogger(), state: op, startup: op.startup, paths: service.paths,
+		log: discardLogger(), state: op, provider: service.provider, paths: service.paths,
 		signals: agentUpgradeSignalStore{path: service.paths.SignalPath},
 	}
 	handler := machineOperationHandlers{log: discardLogger(), agentUpgrade: activationFenceUpgrade{executor, filepath.Join(t.TempDir(), "lock")}}
@@ -295,7 +297,7 @@ func TestPendingAgentUpgradeRecoveryBypassesContainerStartupFence(t *testing.T) 
 			}
 			restarts, finished := 0, 0
 			executor := &hostAgentUpgradeExecutor{
-				log: discardLogger(), paths: paths, startup: startup, signals: signals, instanceID: "recovery",
+				log: discardLogger(), paths: paths, provider: containerTestProvider(t, startup), signals: signals, instanceID: "recovery",
 				state:             &fakeNodeOperator{err: errors.New("recovery must not load applied state")},
 				systemctl:         func(context.Context, ...string) error { return nil },
 				runSystemdRun:     func(context.Context, ...string) error { restarts++; return nil },
@@ -342,10 +344,13 @@ func TestAgentActivationDoesNotValidateMatchingStoppedSource(t *testing.T) {
 	}
 	signal := &agentUpgradeSignal{OperationName: "upgrade", Isolation: isolation.ModeContainer, ActiveMachine: "kube1", CandidatePath: paths.BluePath}
 	helperPath := func(string) string { return helper }
-	if err := validateStartedAgentUpgrade(paths, signal, helperPath); err != nil {
+	provider := containerTestProvider(t, activationFenceJournal(t, "absent"))
+	provider.binaryPath = helperPath
+	if err := validateStartedAgentUpgrade(paths, signal, provider); err != nil {
 		t.Fatalf("expected matching source to pass binary checks: %v", err)
 	}
-	executor := &hostAgentUpgradeExecutor{paths: paths, startup: activationFenceJournal(t, "starting"), nspawnBinaryPath: helperPath}
+	provider.startup = activationFenceJournal(t, "starting")
+	executor := &hostAgentUpgradeExecutor{paths: paths, provider: provider}
 	if err := executor.validateStarted(signal); err == nil || !strings.Contains(err.Error(), "container startup") {
 		t.Fatalf("stopped-source upgrade judged successful: %v", err)
 	}
@@ -369,8 +374,16 @@ func TestRecordPendingAgentUpgradeRejectsMissingActiveNode(t *testing.T) {
 			t.Parallel()
 			signals := agentUpgradeSignalStore{path: filepath.Join(t.TempDir(), "upgrade.json")}
 			for range 2 {
-				err := recordPendingAgentUpgrade(t.Context(), signals, &fakeNodeOperator{state: tc.state}, "upgrade", "daemon")
-				if err == nil || err.Error() != "no valid active node for AgentUpgrade" {
+				mode := isolation.ModeNSpawn
+				if tc.state != nil {
+					mode = tc.state.isolationMode()
+				}
+				provider := mustNodeProvider(t, mode)
+				if mode == isolation.ModeContainer {
+					provider = containerTestProvider(t, activationFenceJournal(t, "absent"))
+				}
+				err := recordPendingAgentUpgrade(t.Context(), signals, &fakeNodeOperator{state: tc.state}, "upgrade", "daemon", provider)
+				if err == nil || !strings.Contains(err.Error(), "no valid active node for AgentUpgrade") {
 					t.Fatalf("RecordPending error = %v, want no valid active node", err)
 				}
 				if signal, err := signals.read(); err != nil || signal != nil {
@@ -383,7 +396,7 @@ func TestRecordPendingAgentUpgradeRejectsMissingActiveNode(t *testing.T) {
 
 func TestDirectAgentActivationRequiresLogger(t *testing.T) {
 	t.Parallel()
-	if _, _, err := newFlexDaemonActivationService(nil, func() string { t.Fatal("resolved root without logger"); return "" }); err == nil {
+	if _, _, err := newFlexDaemonActivationService(nil, func() string { t.Fatal("resolved root without logger"); return "" }, mustNodeProvider(t, "nspawn"), &testStateStore{}); err == nil {
 		t.Fatal("accepted nil direct activation logger")
 	}
 }

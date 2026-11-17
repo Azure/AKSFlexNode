@@ -38,7 +38,7 @@ func (n managedContainerNode) Upgrade(ctx context.Context, old containerNode) er
 }
 
 type containerNodeOperator struct {
-	*nspawnNodeOperator
+	*operatorBase
 	startup            containerStartupStore
 	activationLockPath string
 	newNode            func(containerops.Params) containerNode
@@ -54,12 +54,12 @@ func validContainerState(state *State) bool {
 		state.NodeConfig.Experimental != nil && state.NodeConfig.Experimental.ContainerIsolation
 }
 
-func newContainerNodeOperator(base *nspawnNodeOperator, state *State) (*containerNodeOperator, error) {
+func newContainerNodeOperator(base *operatorBase, state *State, startup containerStartupStore, activationLockPath string) (*containerNodeOperator, error) {
 	if !validContainerState(state) {
 		return nil, fmt.Errorf("container node has no valid applied configuration or slot")
 	}
 	return &containerNodeOperator{
-		nspawnNodeOperator: base, startup: defaultContainerStartupStore(), activationLockPath: agentUpgradeLockPath,
+		operatorBase: base, startup: startup, activationLockPath: activationLockPath,
 		newNode:      func(p containerops.Params) containerNode { return managedContainerNode{newContainerNode(p)} },
 		resolve:      config.ResolveMachineGoalState,
 		syncPrepared: syncContainerFilesystems,
@@ -67,7 +67,7 @@ func newContainerNodeOperator(base *nspawnNodeOperator, state *State) (*containe
 			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
 		startNPD: func(ctx context.Context, log *slog.Logger, cfg *config.Config, ns *goalstates.NodeStart) error {
-			return npd.Start(log, cfg, ns.Root(), ns).Do(ctx)
+			return npd.Start(log, cfg, ns.Root(), ns, isolation.ModeContainer).Do(ctx)
 		},
 	}, nil
 }

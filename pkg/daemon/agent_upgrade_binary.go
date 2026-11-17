@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -252,24 +250,12 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 	}, nil
 }
 
-func checkAgentIsolation(ctx context.Context, candidate string, mode isolation.Mode) error {
-	if mode != isolation.ModeNone && mode != isolation.ModeContainer {
-		return nil
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err := exec.CommandContext(checkCtx, candidate, "supports-isolation", string(mode)).Run(); err != nil { //nolint:gosec // candidate is verified before this capability probe
-		return fmt.Errorf("candidate agent cannot operate isolation mode %s: %w", mode, err)
-	}
-	return nil
-}
-
-func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, mode isolation.Mode) error {
+func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, actions agentActions) error {
 	opts, err := secureAgentInstallOptions(rawURL, expectedDigest)
 	if err != nil {
 		return err
 	}
-	opts.Check = func(ctx context.Context, candidate string) error { return checkAgentIsolation(ctx, candidate, mode) }
+	opts.Check = actions.CheckAgentCandidate
 	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, paths.layout(), opts)
 	return err
 }

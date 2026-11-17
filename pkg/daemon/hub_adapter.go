@@ -18,7 +18,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -34,7 +33,10 @@ const (
 // waits (1 minute, doubling to 15) so Node events don't repeat 2-minute readiness
 // waits on the shared queue; a changed intent or worker runs immediately. Only
 // the serialized daemon queue calls it, so retry state needs no lock.
+type disconnectToleranceCapability interface{ SupportsDisconnectTolerance() bool }
+
 type hubMachineAdapter struct {
+	worker      disconnectToleranceCapability
 	log         *slog.Logger
 	machinesDir string
 	operations  func(machineDir string) (hubTransitionOperations, error)
@@ -64,16 +66,16 @@ const (
 	hubHeartbeatDefault = 10 * time.Minute
 )
 
-func newHubMachineAdapter(operations func(machineDir string) (hubTransitionOperations, error)) (*hubMachineAdapter, error) {
+func newHubMachineAdapter(operations func(machineDir string) (hubTransitionOperations, error), worker disconnectToleranceCapability) (*hubMachineAdapter, error) {
 	if operations == nil {
 		return nil, fmt.Errorf("hub operations factory is nil")
 	}
-	return &hubMachineAdapter{log: slog.Default(), machinesDir: nspawnMachinesDir, operations: operations, now: time.Now, heartbeat: hubHeartbeatDefault}, nil
+	return &hubMachineAdapter{worker: worker, log: slog.Default(), machinesDir: nspawnMachinesDir, operations: operations, now: time.Now, heartbeat: hubHeartbeatDefault}, nil
 }
 
 // newDaemonHubAdapter builds production Hub operations and the Node condition
 // writer, both using the daemon's own node credential (restCfg).
-func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Config) (*hubMachineAdapter, error) {
+func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Config, worker disconnectToleranceCapability) (*hubMachineAdapter, error) {
 	// Per-request timeout so a stalled Node call can't hold the daemon queue.
 	nodeCfg := rest.CopyConfig(restCfg)
 	nodeCfg.Timeout = 30 * time.Second
@@ -90,7 +92,7 @@ func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Con
 			ServerURL:  cfg.APIServerURL(),
 			Nodes:      clientset.CoreV1().Nodes(),
 		})
-	})
+	}, worker)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +114,7 @@ func (a *hubMachineAdapter) ReconcileHub(ctx context.Context, goal aksmachine.Go
 	if intent == nil {
 		return nil
 	}
-	if state != nil && state.isolationMode() != isolation.ModeNSpawn {
+	if !a.worker.SupportsDisconnectTolerance() {
 		var err error
 		if *intent {
 			err = yurthub.ErrUnsupportedWorker
