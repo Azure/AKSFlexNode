@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/Azure/unbounded/pkg/agent/containerops"
-
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -19,9 +18,15 @@ var implementations = map[isolation.Mode]func(HostServices) NodeProvider{
 	},
 	isolation.ModeContainer: func(host HostServices) NodeProvider {
 		startup := defaultContainerStartupStore()
-		return Container{Host: host, PlannedHostRoot: host.PlannedHostRoot,
-			Startup: startup, StartupPath: startup.Path, ActivationLockPath: host.ActivationLockPath,
-			BinaryPath: ContainerAgentBinaryPath, Teardown: &containerops.Teardown{}}
+		return Container{
+			Host:               host,
+			PlannedHostRoot:    host.PlannedHostRoot,
+			Startup:            startup,
+			StartupPath:        startup.Path,
+			ActivationLockPath: host.ActivationLockPath,
+			BinaryPath:         ContainerAgentBinaryPath,
+			Teardown:           &containerops.Teardown{},
+		}
 	},
 }
 

@@ -50,13 +50,17 @@ func ContainerAgentBinaryPath(slot string) string {
 	return filepath.Join(container.Layout{}.RootfsDir(slot), "usr/local/bin/aks-flex-node")
 }
 
-func (Container) Mode() isolation.Mode { return isolation.ModeContainer }
+func (Container) Mode() isolation.Mode {
+	return isolation.ModeContainer
+}
+
 func (Container) ValidateEnvironment(containerized bool) error {
 	if containerized {
 		return fmt.Errorf("container isolation requires the host-installed agent; the containerized agent requires host containerd")
 	}
 	return nil
 }
+
 func (p Container) BootstrapPresent(log *slog.Logger) bool {
 	// PREPARING can precede applied state and SDK footprints. An unreadable
 	// journal also retains ownership so activation fails closed.
@@ -67,6 +71,7 @@ func (p Container) BootstrapPresent(log *slog.Logger) bool {
 	teardown.Log = log
 	return teardown.Present()
 }
+
 func (p Container) CheckBootstrap(ctx context.Context, log *slog.Logger, applied *State) error {
 	if applied != nil || p.BootstrapPresent(log) {
 		return fmt.Errorf("host contains an installed or partially reset container node; reset it before bootstrapping")
@@ -77,42 +82,57 @@ func (p Container) CheckBootstrap(ctx context.Context, log *slog.Logger, applied
 	// Prepare installs the runtime; other backend requirements must already hold.
 	return (&container.Backend{Log: log, RuntimeProvisioned: true}).Preflight()
 }
+
 func (p Container) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	ac, gs, archives, err := config.ResolveMachineGoalState(ctx, log, cfg, slot)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	node, err := NewContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot,
+	node, err := NewContainerNode(containerops.Params{
+		Log:       log,
+		Config:    ac,
+		GoalState: gs,
+		Slot:      slot,
 		Overrides: containerops.Overrides{HelperPath: config.HostBinaryPath()},
-		Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")}}, cfg)
+		Hooks:     hostnode.Hooks{ConfigSnapshotDir: filepath.Join(config.ConfigDir, "container-upgrade-config")},
+	}, cfg)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	gs, err = node.GoalState()
 	return ac, gs, archives, err
 }
+
 func (Container) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
 	return nil
 }
+
 func (Container) WantedTargets() []string {
 	return []string{"network-online.target", "systemd-udev-settle.service"}
 }
-func (Container) SupportsDisconnectTolerance() bool { return false }
+
+func (Container) SupportsDisconnectTolerance() bool {
+	return false
+}
+
 func (Container) ValidateResetState(state *State) error {
 	if !ValidContainerState(state) {
 		return fmt.Errorf("container node has no valid applied configuration for reset")
 	}
 	return nil
 }
+
 func (p Container) ValidateAgentActivation(ctx context.Context) error {
 	return RequireNoContainerStartupForAgentActivation(p.Startup)
 }
+
 func (Container) ValidateActiveSlot(slot string) error {
 	if slot != goalstates.NSpawnMachineKube1 && slot != goalstates.NSpawnMachineKube2 {
 		return fmt.Errorf("no valid active node slot %q", slot)
 	}
 	return nil
 }
+
 func (Container) CheckAgentCandidate(ctx context.Context, candidate string) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -121,12 +141,14 @@ func (Container) CheckAgentCandidate(ctx context.Context, candidate string) erro
 	}
 	return nil
 }
+
 func (p Container) SynchronizeAgent(source string, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
 	}
 	return p.Host.CopyExecutable(source, p.BinaryPath(slot))
 }
+
 func (p Container) ValidateAgent(source string, slot string) error {
 	if err := p.ValidateActiveSlot(slot); err != nil {
 		return err
@@ -140,12 +162,14 @@ func (p Container) ValidateAgent(source string, slot string) error {
 	}
 	return nil
 }
+
 func (p Container) RollbackAgent(source string, slot string) error {
 	if slot != goalstates.NSpawnMachineKube1 && slot != goalstates.NSpawnMachineKube2 {
 		return nil
 	}
 	return p.SynchronizeAgent(source, slot)
 }
+
 func (p Container) NewOperator(ctx context.Context, cfg *config.Config, store StateStore) (Operator, error) {
 	if !cfg.Bootstrap.ExperimentalContainerIsolation {
 		return nil, fmt.Errorf("container isolation requires bootstrap.experimentalContainerIsolation=true")
@@ -161,8 +185,11 @@ func (p Container) NewOperator(ctx context.Context, cfg *config.Config, store St
 func ValidContainerState(state *State) bool {
 	return state != nil && state.Isolation == isolation.ModeContainer &&
 		(state.ActiveMachine == goalstates.NSpawnMachineKube1 || state.ActiveMachine == goalstates.NSpawnMachineKube2) &&
-		state.NodeConfig != nil && state.NodeConfig.Isolation == string(isolation.ModeContainer) && state.NodeConfig.MachineName == state.ActiveMachine &&
-		state.NodeConfig.Experimental != nil && state.NodeConfig.Experimental.ContainerIsolation
+		state.NodeConfig != nil &&
+		state.NodeConfig.Isolation == string(isolation.ModeContainer) &&
+		state.NodeConfig.MachineName == state.ActiveMachine &&
+		state.NodeConfig.Experimental != nil &&
+		state.NodeConfig.Experimental.ContainerIsolation
 }
 
 // RequireNoContainerStartupForAgentActivation fences the stopped source while
