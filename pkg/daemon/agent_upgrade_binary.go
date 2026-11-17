@@ -20,6 +20,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -224,7 +225,7 @@ func replaceSymlink(linkPath, targetPath string) error {
 
 // The shared installer permits omitted digests; require one here so its version
 // probe cannot execute an unverified candidate.
-func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
+func secureAgentInstallOptions(rawURL, expectedDigest string, mode isolation.Mode) (agentbinary.InstallOptions, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTP or HTTPS, include a host, omit user information, and omit fragments")
@@ -247,11 +248,12 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 		ExpectedMember: member,
 		Mode:           agentUpgradeBinaryMode,
 		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
+		Check:          func(ctx context.Context, path string) error { return checkAgentIsolation(ctx, path, mode) },
 	}, nil
 }
 
-func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths) error {
-	opts, err := secureAgentInstallOptions(rawURL, expectedDigest)
+func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths, mode isolation.Mode) error {
+	opts, err := secureAgentInstallOptions(rawURL, expectedDigest, mode)
 	if err != nil {
 		return err
 	}

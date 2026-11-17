@@ -42,6 +42,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// In its container the agent keeps nothing on the host to migrate, install,
 	// or remove: the image carries it.
 	containerized := Containerized()
+	store, err := NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	operator, err := newNodeOperator(ctx, cfg, log, store)
+	if err != nil {
+		return err
+	}
 
 	// After an AgentUpgrade from a release that predates the host root, this is
 	// the first time the new agent runs on the host.
@@ -71,13 +79,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
-	store, err := NewFileStateStore()
-	if err != nil {
-		return err
-	}
-	operator, err := newNSpawnNodeOperator(cfg, store)
-	if err != nil {
-		return err
+	if err := operator.Recover(ctx, log); err != nil {
+		// Keep reset and repave available; repave retries SDK recovery first.
+		log.Error("worker recovery failed; startup or repave will retry", "error", err)
 	}
 	// In its container, the agent's units and its binary in the active machine converge here,
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
@@ -131,7 +135,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if containerized {
 		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
 	} else {
-		upgrades, err = newHostAgentUpgradeExecutor(log, operator)
+		upgrades, err = newHostAgentUpgradeExecutor(log, operator, operator.runtime)
 	}
 	if err != nil {
 		return err
@@ -140,7 +144,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create direct Kubernetes client: %w", err)
 	}
-	hub, err := newDaemonHubAdapter(cfg, log, restCfg)
+	hub, err := newDaemonHubAdapter(cfg, log, restCfg, operator)
 	if err != nil {
 		return err
 	}

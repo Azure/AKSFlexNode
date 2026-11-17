@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -32,7 +34,7 @@ func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candida
 	if Containerized() {
 		return agentbinary.ActivationPlan{}, errDirectActivationInContainer
 	}
-	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot)
+	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot, candidatePath)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
@@ -64,7 +66,7 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, running); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve)
+	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve, candidatePath)
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
@@ -81,7 +83,9 @@ func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) a
 }
 
 type flexDaemonActivationService struct {
-	log *slog.Logger
+	mode          isolation.Mode
+	candidatePath string
+	log           *slog.Logger
 	// root is the host root paths were built under, and resolveRoot what
 	// resolved it; see Preflight. A nil resolveRoot skips the check.
 	root        string
@@ -98,7 +102,7 @@ type flexDaemonActivationService struct {
 	serviceWasActive bool
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentUpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, candidatePath string) (*flexDaemonActivationService, agentUpgradePaths, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -112,8 +116,15 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 	if err != nil {
 		return nil, agentUpgradePaths{}, err
 	}
+	runtime, err := loadWorkerProvider(context.Background())
+	if err != nil {
+		return nil, agentUpgradePaths{}, err
+	}
+	serviceOptions.WorkerTargets = strings.Join(runtime.Layout().Targets, " ")
 	return &flexDaemonActivationService{
 		log:            log,
+		mode:           runtime.Layout().Mode,
+		candidatePath:  candidatePath,
 		root:           root,
 		resolveRoot:    resolveRoot,
 		moveUnfinished: hostRootMoveUnfinishedHere,
@@ -168,6 +179,9 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 		return agentbinary.ServicePlan{}, fmt.Errorf("AgentUpgrade MachineOperation signal exists at %s", s.paths.SignalPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
+	}
+	if err := checkAgentIsolation(ctx, s.candidatePath, s.mode); err != nil {
+		return agentbinary.ServicePlan{}, err
 	}
 	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
 	if err != nil {
@@ -246,7 +260,7 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 		return fmt.Errorf("resolve expected daemon binary: %w", err)
 	}
 	if !s.serviceWasActive {
-		return s.synchronizeActiveNspawn(healthCtx, expected)
+		return s.synchronizeActiveWorker(healthCtx, expected)
 	}
 	var healthySince time.Time
 	ticker := time.NewTicker(hostAgentHealthPoll)
@@ -257,7 +271,7 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 			if healthySince.IsZero() {
 				healthySince = time.Now()
 			} else if time.Since(healthySince) >= hostAgentStableDuration {
-				return s.synchronizeActiveNspawn(healthCtx, expected)
+				return s.synchronizeActiveWorker(healthCtx, expected)
 			}
 		} else {
 			healthySince = time.Time{}
@@ -273,20 +287,24 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 	}
 }
 
-func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Context, expected string) error {
+func (s *flexDaemonActivationService) synchronizeActiveWorker(ctx context.Context, expected string) error {
 	state, err := s.state.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("load active nspawn state: %w", err)
+		return fmt.Errorf("load active worker state: %w", err)
 	}
 	if state == nil {
-		s.log.Info("activated host agent without active nspawn synchronization")
+		s.log.Info("activated host agent without an active worker")
 		return nil
 	}
 	if !validNspawnMachine(state.ActiveMachine) {
-		return fmt.Errorf("no valid active nspawn machine for agent activation")
+		return fmt.Errorf("no valid active worker for agent activation")
 	}
-	if err := synchronizeNspawnAgentBinary(expected, state.ActiveMachine); err != nil {
-		return fmt.Errorf("synchronize active nspawn agent binary: %w", err)
+	runtime, err := provider.New(state.Isolation)
+	if err != nil {
+		return err
+	}
+	if err := synchronizeWorkerAgentBinary(expected, runtime.Layout().CredentialHelperPath(state.ActiveMachine)); err != nil {
+		return fmt.Errorf("synchronize worker credential helper: %w", err)
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ func NewCommand() *cobra.Command {
 		Use:     "start",
 		Aliases: []string{"bootstrap"},
 		Short:   "Bootstrap the node and start the agent service",
-		Long:    "Install the systemd unit, bootstrap the nspawn-based AKS worker node, then enable and start the agent daemon through systemd.",
+		Long:    "Install the systemd unit, bootstrap the configured AKS worker runtime, then enable and start the agent daemon through systemd.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.LoadConfig(configPath)
 			if err != nil {
@@ -53,6 +53,9 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	// In its container the agent keeps nothing on the host: the image carries
 	// it, and its clients' credential plugin is the running binary.
 	containerized := daemon.Containerized()
+	if err := daemon.ValidateWorkerBootstrap(ctx, cfg, logger); err != nil {
+		return err
+	}
 	if !containerized {
 		if err := daemon.MigrateHostRoot(logger); err != nil {
 			return err
@@ -99,14 +102,19 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
+	agentCfg, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
+	state.Isolation, state.NodeConfig = cfg.Bootstrap.Isolation, agentCfg.DeepCopy()
+	worker, err := daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state)
+	if err != nil {
+		return err
+	}
 	tasks := phases.Serial(logger,
 		daemon.SetupHost(cfg, logger),
-		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
+		worker,
 		daemon.InstallService(cfg, logger),
 	)
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {

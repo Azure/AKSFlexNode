@@ -2,12 +2,15 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
@@ -17,16 +20,34 @@ import (
 // helper and the LocalDNS network helper, are removed under the resolved host
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
-func ResetNode(log *slog.Logger) phases.Task {
-	return phases.Serial(log,
-		phases.Parallel(log,
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube2),
-		),
-		phases.Parallel(log,
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube1),
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube2),
-		),
+func ResetNode(ctx context.Context, log *slog.Logger) (phases.Task, error) {
+	store, err := NewFileStateStore()
+	if err != nil {
+		return nil, err
+	}
+	state, err := store.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mode := isolation.ModeNSpawn
+	if state != nil {
+		mode = state.Isolation
+	} else if noneops.Present() {
+		mode = isolation.ModeNone
+	}
+	return resetNodeFor(mode, log)
+}
+
+func resetNodeFor(mode isolation.Mode, log *slog.Logger) (phases.Task, error) {
+	runtime, err := provider.New(mode)
+	if err != nil {
+		return nil, fmt.Errorf("select reset runtime: %w", err)
+	}
+	var tasks []phases.Task
+	if mode == isolation.ModeNone {
+		tasks = append(tasks, &clearHostHubTask{log: log})
+	}
+	tasks = append(tasks, runtime.Reset(log),
 		phases.Parallel(log,
 			// CleanupNetwork also removes the LocalDNS unit, nft table, dummy
 			// interface and helper, which reset previously left behind.
@@ -38,6 +59,7 @@ func ResetNode(log *slog.Logger) phases.Task {
 		reset.ReloadSystemd(log),
 		config.RemoveRuntimeDirs(log),
 	)
+	return phases.Serial(log, tasks...), nil
 }
 
 // hostHelperPaths returns every location the agent library may have installed

@@ -26,7 +26,7 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -64,12 +64,15 @@ var loopbackOnlyArgs = []string{"--node-ip=127.0.0.1", "--enable-dummy-if=false"
 
 // Config identifies the worker and node a set of Hub operations acts on.
 type Config struct {
-	Log        *slog.Logger
-	MachineDir string // host path of the worker rootfs, e.g. /var/lib/machines/kube1
-	NodeName   string
-	NodePool   string // Flex agent pool name, used as the apps.openyurt.io/nodepool label
-	ServerURL  string // direct HTTPS API server URL
-	Nodes      typedcorev1.NodeInterface
+	Log         *slog.Logger
+	Root        isolation.NodeRoot
+	Run         func(ctx context.Context, args ...string) (string, error)
+	KubeletUnit string
+	Mode        isolation.Mode
+	NodeName    string
+	NodePool    string // Flex agent pool name, used as the apps.openyurt.io/nodepool label
+	ServerURL   string // direct HTTPS API server URL
+	Nodes       typedcorev1.NodeInterface
 }
 
 // Operations implements the daemon's Hub transition steps for one worker. Each
@@ -77,6 +80,7 @@ type Config struct {
 type Operations struct {
 	cfg            Config
 	machine        string
+	binaryPath     string
 	machineRun     func(ctx context.Context, args ...string) (string, error)
 	httpClient     *http.Client
 	healthURL      string
@@ -96,8 +100,8 @@ func NewOperations(cfg Config) (*Operations, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	if !filepath.IsAbs(cfg.MachineDir) || cfg.Nodes == nil {
-		return nil, fmt.Errorf("hub operations require an absolute worker path and node client")
+	if cfg.Root == nil || cfg.Run == nil || cfg.KubeletUnit == "" || cfg.Nodes == nil {
+		return nil, fmt.Errorf("hub operations require worker filesystem, executor, kubelet unit and node client")
 	}
 	if len(validation.IsDNS1123Subdomain(cfg.NodeName)) != 0 {
 		return nil, fmt.Errorf("invalid node name for hub")
@@ -113,13 +117,16 @@ func NewOperations(cfg Config) (*Operations, error) {
 	if err != nil {
 		return nil, err
 	}
-	machine := filepath.Base(cfg.MachineDir)
+	machine := cfg.Root.Slot()
+	binaryPath := "/" + installedBinary
+	if cfg.Mode == isolation.ModeNone {
+		binaryPath = cfg.Root.Path(binaryPath)
+	}
 	return &Operations{
-		cfg:     cfg,
-		machine: machine,
-		machineRun: func(ctx context.Context, args ...string) (string, error) {
-			return utilexec.MachineRun(ctx, cfg.Log, machine, args...)
-		},
+		cfg:          cfg,
+		machine:      machine,
+		binaryPath:   binaryPath,
+		machineRun:   cfg.Run,
 		httpClient:   &http.Client{Timeout: 5 * time.Second},
 		healthURL:    hubHealthURL,
 		proxyBaseURL: proxyURL,
@@ -141,7 +148,7 @@ func NewOperations(cfg Config) (*Operations, error) {
 // retry while its serving CSR is pending), it is restarted only when the files
 // it would load differ from what the agent last started it with.
 func (o *Operations) Prepare(ctx context.Context) error {
-	root, err := os.OpenRoot(o.cfg.MachineDir)
+	root, err := openWorkerRoot(o.cfg.Root, o.cfg.KubeletUnit)
 	if err != nil {
 		return fmt.Errorf("open worker rootfs: %w", err)
 	}
@@ -168,7 +175,7 @@ func (o *Operations) Prepare(ctx context.Context) error {
 	if err := ensureStateDirs(root); err != nil {
 		return err
 	}
-	if err := stageService(root); err != nil {
+	if err := stageService(root, o.binaryPath); err != nil {
 		return err
 	}
 	if err := o.ensureEnv(root); err != nil {
@@ -199,7 +206,7 @@ func (o *Operations) Prepare(ctx context.Context) error {
 // and restarts Hub only if they differ from what it was last started with;
 // otherwise it checks readiness. It never touches kubelet or Node metadata.
 func (o *Operations) Converge(ctx context.Context) error {
-	root, err := os.OpenRoot(o.cfg.MachineDir)
+	root, err := openWorkerRoot(o.cfg.Root, o.cfg.KubeletUnit)
 	if err != nil {
 		return fmt.Errorf("open worker rootfs: %w", err)
 	}
@@ -222,7 +229,7 @@ func (o *Operations) Converge(ctx context.Context) error {
 	if err := o.ensureEnv(root); err != nil {
 		return err
 	}
-	if err := stageService(root); err != nil {
+	if err := stageService(root, o.binaryPath); err != nil {
 		return err
 	}
 	if startedWithCurrentFiles(root) {
@@ -242,14 +249,14 @@ func (o *Operations) Converge(ctx context.Context) error {
 // the fingerprint of the files Hub was started with. The record is written only
 // after the restart command succeeds, so a failed or interrupted restart is
 // retried on the next read.
-func (o *Operations) restartHub(ctx context.Context, root *os.Root) error {
+func (o *Operations) restartHub(ctx context.Context, root *workerRoot) error {
 	if _, err := o.machineRun(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("reload worker systemd: %w", err)
 	}
 	if _, err := o.machineRun(ctx, "systemctl", "restart", serviceName); err != nil {
 		return fmt.Errorf("restart hub: %w", err)
 	}
-	if err := utilio.WriteFileInRoot(root, startedFingerprint, []byte(filesFingerprint(root)+"\n"), 0o600); err != nil {
+	if err := root.WriteFile(startedFingerprint, []byte(filesFingerprint(root)+"\n"), 0o600); err != nil {
 		return fmt.Errorf("record hub start: %w", err)
 	}
 	return nil
@@ -259,7 +266,7 @@ func (o *Operations) restartHub(ctx context.Context, root *os.Root) error {
 // longer match it, before the agent repairs them. Otherwise a repair back to
 // the recorded files followed by a failed restart would look current on the
 // next read while Hub still runs the drifted files.
-func invalidateDriftedStart(root *os.Root) error {
+func invalidateDriftedStart(root *workerRoot) error {
 	if _, err := root.Lstat(startedFingerprint); errors.Is(err, os.ErrNotExist) || startedWithCurrentFiles(root) {
 		return nil
 	}
@@ -271,13 +278,13 @@ func invalidateDriftedStart(root *os.Root) error {
 
 // startedWithCurrentFiles reports whether Hub was last started by the agent
 // with the binary, arguments and unit currently on disk.
-func startedWithCurrentFiles(root *os.Root) bool {
+func startedWithCurrentFiles(root *workerRoot) bool {
 	recorded, err := root.ReadFile(startedFingerprint)
 	return err == nil && strings.TrimSpace(string(recorded)) == filesFingerprint(root)
 }
 
 // filesFingerprint hashes what a Hub start loads: binary, arguments and unit.
-func filesFingerprint(root *os.Root) string {
+func filesFingerprint(root *workerRoot) string {
 	h := sha256.New()
 	h.Write([]byte(installedSHA256(root)))
 	for _, name := range []string{envFile, servicePath} {
@@ -290,7 +297,7 @@ func filesFingerprint(root *os.Root) string {
 
 // ensureEnv writes Hub's arguments when they differ. The CA hash is recomputed so
 // a rotated API server CA converges too.
-func (o *Operations) ensureEnv(root *os.Root) error {
+func (o *Operations) ensureEnv(root *workerRoot) error {
 	caHash, err := caPublicKeyHash(root)
 	if err != nil {
 		return err
@@ -299,7 +306,7 @@ func (o *Operations) ensureEnv(root *os.Root) error {
 	if current, err := root.ReadFile(envFile); err == nil && bytes.Equal(current, want) {
 		return nil
 	}
-	if err := utilio.WriteFileInRoot(root, envFile, want, 0o600); err != nil {
+	if err := root.WriteFile(envFile, want, 0o600); err != nil {
 		return fmt.Errorf("write hub configuration: %w", err)
 	}
 	return nil
@@ -315,7 +322,7 @@ func (o *Operations) Route(ctx context.Context) error {
 	if err := o.getNodeThroughHub(ctx); err != nil {
 		return fmt.Errorf("hub cannot forward before routing kubelet: %w", err)
 	}
-	if err := configureRouting(o.cfg.MachineDir); err != nil {
+	if err := configureRouting(o.cfg.Root, o.cfg.KubeletUnit); err != nil {
 		return err
 	}
 	return o.restartKubelet(ctx)
@@ -348,7 +355,7 @@ func (o *Operations) Verify(ctx context.Context) error {
 // Restore returns kubelet to the direct API server and proves the live process
 // uses it before anything stops Hub.
 func (o *Operations) Restore(ctx context.Context) error {
-	removed, err := restoreRouting(o.cfg.MachineDir)
+	removed, err := restoreRouting(o.cfg.Root, o.cfg.KubeletUnit)
 	if err != nil {
 		return err
 	}
@@ -370,7 +377,7 @@ func (o *Operations) Cleanup(context.Context) error { return nil }
 // older agent. A missing unit (enable failed before staging) counts as stopped
 // if systemd agrees. The interface is removed only if this agent configured Hub.
 func (o *Operations) Stop(ctx context.Context) error {
-	root, err := os.OpenRoot(o.cfg.MachineDir)
+	root, err := openWorkerRoot(o.cfg.Root, o.cfg.KubeletUnit)
 	if err != nil {
 		return fmt.Errorf("open worker rootfs: %w", err)
 	}
@@ -429,7 +436,7 @@ func (o *Operations) restartKubelet(ctx context.Context) error {
 	if _, err := o.machineRun(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("reload worker systemd: %w", err)
 	}
-	if _, err := o.machineRun(ctx, "systemctl", "restart", "kubelet.service"); err != nil {
+	if _, err := o.machineRun(ctx, "systemctl", "restart", o.cfg.KubeletUnit); err != nil {
 		return fmt.Errorf("restart kubelet: %w", err)
 	}
 	return nil
@@ -437,7 +444,7 @@ func (o *Operations) restartKubelet(ctx context.Context) error {
 
 // expectKubeletArg checks the running kubelet, not just files on disk.
 func (o *Operations) expectKubeletArg(ctx context.Context, want string) error {
-	pid, err := o.machineRun(ctx, "systemctl", "show", "--property=MainPID", "--value", "kubelet.service")
+	pid, err := o.machineRun(ctx, "systemctl", "show", "--property=MainPID", "--value", o.cfg.KubeletUnit)
 	pid = strings.TrimSpace(pid)
 	if err != nil || pid == "" || pid == "0" || strings.ContainsAny(pid, "/ .") {
 		return fmt.Errorf("kubelet is not running")
@@ -482,7 +489,7 @@ func (o *Operations) waitReadyFor(parent context.Context, timeout time.Duration)
 
 // hasServingCert reports whether Hub has written its approved serving cert.
 func (o *Operations) hasServingCert() bool {
-	root, err := os.OpenRoot(o.cfg.MachineDir)
+	root, err := openWorkerRoot(o.cfg.Root, o.cfg.KubeletUnit)
 	if err != nil {
 		return false
 	}
@@ -530,7 +537,7 @@ func (o *Operations) get(ctx context.Context, target, userAgent string, into any
 // workerFileExists follows symlinks the way they resolve inside the worker.
 // Kubelet links kubelet-client-current.pem with an absolute path, which os.Root
 // refuses to follow, so absolute targets are re-rooted at the worker.
-func workerFileExists(root *os.Root, name string) bool {
+func workerFileExists(root *workerRoot, name string) bool {
 	for range 8 {
 		info, err := root.Lstat(name)
 		if err != nil {
@@ -552,7 +559,7 @@ func workerFileExists(root *os.Root, name string) bool {
 	return false
 }
 
-func caPublicKeyHash(root *os.Root) (string, error) {
+func caPublicKeyHash(root *workerRoot) (string, error) {
 	data, err := root.ReadFile(workerCA)
 	if err != nil {
 		return "", fmt.Errorf("read worker API server CA: %w", err)
@@ -571,7 +578,7 @@ func caPublicKeyHash(root *os.Root) (string, error) {
 
 // ensureLink creates a relative symlink or accepts an identical one. Anything
 // else at the path belongs to someone else and fails rather than being replaced.
-func ensureLink(root *os.Root, path, target string) error {
+func ensureLink(root *workerRoot, path, target string) error {
 	current, err := root.Readlink(path)
 	if err == nil {
 		if current == target {

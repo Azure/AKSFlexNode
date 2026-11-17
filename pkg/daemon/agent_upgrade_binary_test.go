@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestEnsureAgentUpgradeLayoutMigratesLegacyBinaryIdempotently(t *testing.T) {
@@ -69,7 +70,7 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	t.Parallel()
 
 	digest := strings.Repeat("a", 64)
-	opts, err := secureAgentInstallOptions("https://example.com/agent.tar.gz?sig=secret", digest)
+	opts, err := secureAgentInstallOptions("https://example.com/agent.tar.gz?sig=secret", digest, isolation.ModeNSpawn)
 	if err != nil {
 		t.Fatalf("secureAgentInstallOptions: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestSecureAgentInstallOptions(t *testing.T) {
 	if opts.ExpectedSHA256 != digest {
 		t.Fatalf("ExpectedSHA256 = %q, want %q", opts.ExpectedSHA256, digest)
 	}
-	if _, err := secureAgentInstallOptions("http://127.0.0.1/agent.tar.gz", digest); err != nil {
+	if _, err := secureAgentInstallOptions("http://127.0.0.1/agent.tar.gz", digest, isolation.ModeNSpawn); err != nil {
 		t.Fatalf("secureAgentInstallOptions with HTTP: %v", err)
 	}
 }
@@ -126,7 +127,7 @@ func TestSecureAgentInstallOptionsRejectsInvalidInputs(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := secureAgentInstallOptions(tt.url, tt.digest); err == nil {
+			if _, err := secureAgentInstallOptions(tt.url, tt.digest, isolation.ModeNSpawn); err == nil {
 				t.Fatal("secureAgentInstallOptions error = nil")
 			}
 		})
@@ -153,6 +154,7 @@ func TestInstallAndSwitchAgentBinaryRejectsInvalidInputsWithoutSwitching(t *test
 		"ftp://example.com/agent.tar.gz",
 		strings.Repeat("0", 64),
 		paths,
+		isolation.ModeNSpawn,
 	)
 	if err == nil {
 		t.Fatal("installAndSwitchAgentBinary error = nil")

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -102,7 +104,7 @@ func testPackages(t *testing.T, fakeBinary []byte) ([]hubPackage, func(context.C
 	}
 }
 
-func openTestRoot(t *testing.T, osRelease string) (*os.Root, string) {
+func openTestRoot(t *testing.T, osRelease string) (*workerRoot, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if osRelease != "" {
@@ -115,7 +117,7 @@ func openTestRoot(t *testing.T, osRelease string) (*os.Root, string) {
 			t.Fatal(err)
 		}
 	}
-	root, err := os.OpenRoot(dir)
+	root, err := openWorkerRoot(isolation.DirRoot{Dir: dir}, "kubelet.service")
 	if err != nil {
 		t.Fatal(err)
 	}

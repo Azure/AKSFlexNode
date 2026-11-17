@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -36,7 +38,7 @@ func TestRoutingRoundTrip(t *testing.T) {
 	writeFixture(t, filepath.Join(dir, directKubeconfig), directFixture)
 	writeFixture(t, filepath.Join(dir, "etc/systemd/system/kubelet.service.d/10-customer.conf"), "customer")
 	for range 2 {
-		if err := configureRouting(dir); err != nil {
+		if err := configureRouting(isolation.DirRoot{Dir: dir}, "kubelet.service"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +58,7 @@ func TestRoutingRoundTrip(t *testing.T) {
 		t.Fatalf("proxy config permissions: %v, %v", info, err)
 	}
 	for i, wantRemoved := range []bool{true, false} {
-		removed, err := restoreRouting(dir)
+		removed, err := restoreRouting(isolation.DirRoot{Dir: dir}, "kubelet.service")
 		if err != nil || removed != wantRemoved {
 			t.Fatalf("restoreRouting #%d = %v, %v; want removed=%v", i, removed, err, wantRemoved)
 		}
@@ -113,7 +115,7 @@ func TestRoutingRejectsAmbiguousConfiguration(t *testing.T) {
 				}
 			}
 			writeFixture(t, filepath.Join(dir, directKubeconfig), config)
-			err := configureRouting(dir)
+			err := configureRouting(isolation.DirRoot{Dir: dir}, "kubelet.service")
 			if err == nil || strings.Contains(err.Error(), "sensitive-token") {
 				t.Fatalf("configureRouting error = %v", err)
 			}
@@ -133,7 +135,7 @@ func TestRoutingRejectsAmbiguousConfiguration(t *testing.T) {
 				}
 			}
 			if name == "conflicting override" || name == "masked override" {
-				if _, err := restoreRouting(dir); err == nil {
+				if _, err := restoreRouting(isolation.DirRoot{Dir: dir}, "kubelet.service"); err == nil {
 					t.Fatal("restoration removed unowned/masked override")
 				}
 			}

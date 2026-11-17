@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // TestResetNodeCleansUpLocalDNS pins that reset runs the library's full
@@ -19,7 +20,11 @@ import (
 func TestResetNodeCleansUpLocalDNS(t *testing.T) {
 	t.Parallel()
 
-	name := ResetNode(slog.New(slog.DiscardHandler)).Name()
+	task, err := resetNodeFor(isolation.ModeNSpawn, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := task.Name()
 
 	for _, want := range []string{
 		"cleanup-localdns-rules",

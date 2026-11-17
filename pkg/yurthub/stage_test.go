@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestStage(t *testing.T) {
@@ -206,7 +208,7 @@ func writeFixture(t *testing.T, path, content string) {
 
 // stageFiles runs the staging Prepare does before it writes Hub's configuration.
 func stageFiles(dir string) error {
-	root, err := os.OpenRoot(dir)
+	root, err := openWorkerRoot(isolation.DirRoot{Dir: dir}, "kubelet.service")
 	if err != nil {
 		return err
 	}
@@ -214,5 +216,5 @@ func stageFiles(dir string) error {
 	if err := ensureStateDirs(root); err != nil {
 		return err
 	}
-	return stageService(root)
+	return stageService(root, "/"+installedBinary)
 }

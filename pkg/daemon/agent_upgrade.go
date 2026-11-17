@@ -17,6 +17,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -24,6 +25,7 @@ import (
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -236,6 +238,7 @@ type agentUpgradeStateLoader interface {
 }
 
 type hostAgentUpgradeExecutor struct {
+	mode                   isolation.Mode
 	log                    *slog.Logger
 	paths                  agentUpgradePaths
 	state                  agentUpgradeStateLoader
@@ -244,14 +247,14 @@ type hostAgentUpgradeExecutor struct {
 	runSystemdRun          func(context.Context, ...string) error
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 	runningExecutable      func() (string, error)
-	nspawnBinaryPath       func(string) string
+	workerBinaryPath       func(string) string
 	// guardLegacySeed runs before Stage switches anything; see the function
 	// of the same name. Nil skips it.
 	guardLegacySeed func() error
 	instanceID      string
 }
 
-func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader) (*hostAgentUpgradeExecutor, error) {
+func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader, runtime provider.Provider) (*hostAgentUpgradeExecutor, error) {
 	paths := defaultAgentUpgradePaths()
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
@@ -259,6 +262,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 	}
 	return &hostAgentUpgradeExecutor{
 		log:     log,
+		mode:    runtime.Layout().Mode,
 		paths:   paths,
 		state:   state,
 		signals: agentUpgradeSignalStore{path: paths.SignalPath},
@@ -270,7 +274,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		},
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
 		runningExecutable:      runningAgentExecutable,
-		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
+		workerBinaryPath:       runtime.Layout().CredentialHelperPath,
 		guardLegacySeed: func() error {
 			return guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, runningFrom)
 		},
@@ -292,7 +296,7 @@ func (e *hostAgentUpgradeExecutor) Acquire() (io.Closer, error) {
 
 // Validate takes an archive's HTTP or HTTPS URL, and refuses an image's, as any other URL.
 func (e *hostAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
-	_, err := secureAgentInstallOptions(request.downloadURL, request.sha256)
+	_, err := secureAgentInstallOptions(request.downloadURL, request.sha256, e.mode)
 	return err
 }
 
@@ -373,7 +377,7 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if err := e.signals.recordCandidate(candidate); err != nil {
 		return err
 	}
-	if err := installAndSwitchAgentBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths); err != nil {
+	if err := installAndSwitchAgentBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths, e.mode); err != nil {
 		return err
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
@@ -394,8 +398,8 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if current != candidate {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("staged agent binary resolved to unexpected slot"))
 	}
-	if err := synchronizeNspawnAgentBinary(current, signal.ActiveMachine); err != nil {
-		return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize active nspawn agent binary: %w", err))
+	if err := synchronizeWorkerAgentBinary(current, e.workerBinaryPath(signal.ActiveMachine)); err != nil {
+		return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize worker credential helper: %w", err))
 	}
 	return nil
 }
@@ -431,7 +435,7 @@ func (e *hostAgentUpgradeExecutor) rollback(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return rollbackAgentUpgradeFiles(e.paths, signal)
+	return rollbackAgentUpgradeFiles(e.paths, signal, e.workerBinaryPath)
 }
 
 func (e *hostAgentUpgradeExecutor) Restart(ctx context.Context) error {
@@ -502,13 +506,12 @@ func validNspawnMachine(machine string) bool {
 	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
 }
 
-func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
-	if !validNspawnMachine(machine) {
-		return fmt.Errorf("invalid nspawn machine %q", machine)
+func synchronizeWorkerAgentBinary(sourcePath, destination string) error {
+	if destination == "" {
+		return nil
 	}
-	destination := filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 	if err := copyExecutable(sourcePath, destination); err != nil {
-		return fmt.Errorf("copy agent binary to %s: %w", machine, err)
+		return fmt.Errorf("copy worker credential helper: %w", err)
 	}
 	return nil
 }
@@ -547,7 +550,11 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	if err != nil {
 		return err
 	}
-	if err := rollbackAgentUpgradeFiles(paths, signal); err != nil {
+	runtime, err := loadWorkerProvider(ctx)
+	if err != nil {
+		return err
+	}
+	if err := rollbackAgentUpgradeFiles(paths, signal, runtime.Layout().CredentialHelperPath); err != nil {
 		return err
 	}
 	return ctx.Err()
@@ -645,11 +652,7 @@ var _ agentUpgrader = (*hostAgentUpgradeExecutor)(nil)
 func (e *hostAgentUpgradeExecutor) daemonInstance() string { return e.instanceID }
 
 func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
-	nspawnBinaryPath := e.nspawnBinaryPath
-	if nspawnBinaryPath == nil {
-		nspawnBinaryPath = activeNspawnAgentBinaryPath
-	}
-	return validateStartedAgentUpgrade(e.paths, signal, nspawnBinaryPath)
+	return validateStartedAgentUpgrade(e.paths, signal, e.workerBinaryPath)
 }
 
 func (e *hostAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSignal) (bool, error) {
@@ -657,7 +660,7 @@ func (e *hostAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSignal) (
 }
 
 func (e *hostAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSignal) error {
-	return rollbackAgentUpgradeFiles(e.paths, signal)
+	return rollbackAgentUpgradeFiles(e.paths, signal, e.workerBinaryPath)
 }
 
 func (e *hostAgentUpgradeExecutor) runningLastGood(*agentUpgradeSignal) (bool, error) {
@@ -708,7 +711,7 @@ func wrapOptionalError(context string, err error) error {
 	return fmt.Errorf("%s: %w", context, err)
 }
 
-func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSignal, nspawnBinaryPath func(string) string) error {
+func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSignal, workerBinaryPath func(string) string) error {
 	if signal.CandidatePath != paths.BluePath && signal.CandidatePath != paths.GreenPath {
 		return fmt.Errorf("AgentUpgrade was interrupted before selecting a candidate slot")
 	}
@@ -722,13 +725,16 @@ func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSi
 	if !validNspawnMachine(signal.ActiveMachine) {
 		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
 	}
-	nspawnPath := nspawnBinaryPath(signal.ActiveMachine)
-	equal, err := filesHaveEqualSHA256(current, nspawnPath)
+	workerPath := workerBinaryPath(signal.ActiveMachine)
+	if workerPath == "" {
+		return nil
+	}
+	equal, err := filesHaveEqualSHA256(current, workerPath)
 	if err != nil {
-		return fmt.Errorf("verify synchronized nspawn agent binary: %w", err)
+		return fmt.Errorf("verify synchronized worker credential helper: %w", err)
 	}
 	if !equal {
-		return fmt.Errorf("upgraded host and nspawn agent binaries do not match")
+		return fmt.Errorf("upgraded host and worker agent binaries do not match")
 	}
 	return nil
 }
@@ -748,7 +754,7 @@ func activeNspawnAgentBinaryPath(machine string) string {
 	return filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 }
 
-func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal) error {
+func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal, workerBinaryPath func(string) string) error {
 	if signal == nil {
 		return nil
 	}
@@ -767,7 +773,7 @@ func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSign
 		return fmt.Errorf("restore last-good agent binary: %w", err)
 	}
 	if validNspawnMachine(signal.ActiveMachine) {
-		if err := synchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
+		if err := synchronizeWorkerAgentBinary(lastGood, workerBinaryPath(signal.ActiveMachine)); err != nil {
 			return err
 		}
 	}

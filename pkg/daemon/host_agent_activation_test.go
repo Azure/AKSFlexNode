@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
@@ -21,6 +22,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	service := &flexDaemonActivationService{
 		log:            slog.Default(),
 		paths:          paths,
+		mode:           isolation.ModeNSpawn,
 		systemdDir:     systemdDir,
 		recoveryScript: recoveryScript,
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
@@ -108,6 +110,7 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 			service := &flexDaemonActivationService{
 				log:            slog.Default(),
 				root:           tt.root,
+				mode:           isolation.ModeNSpawn,
 				resolveRoot:    func() string { return tt.now },
 				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
 				paths:          paths,

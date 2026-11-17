@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -21,10 +20,8 @@ import (
 )
 
 const (
-	// nspawnMachinesDir mirrors the Unbounded goal-state machine root.
-	nspawnMachinesDir = "/var/lib/machines"
-	// hubWorkerJournal is relative to the worker rootfs, so the journal shares the
-	// worker generation's lifetime and is never inherited by a repaved worker.
+	// hubWorkerJournal is relative to the worker filesystem. Guest rootfs removal
+	// deletes it; none explicitly clears it before replacing kubelet identity.
 	hubWorkerJournal = "var/lib/aks-flex-node/hub-transition.json"
 )
 
@@ -34,10 +31,10 @@ const (
 // waits on the shared queue; a changed intent or worker runs immediately. Only
 // the serialized daemon queue calls it, so retry state needs no lock.
 type hubMachineAdapter struct {
-	log         *slog.Logger
-	machinesDir string
-	operations  func(machineDir string) (hubTransitionOperations, error)
-	now         func() time.Time
+	log        *slog.Logger
+	directory  func(slot string) string
+	operations func(state *State) (hubTransitionOperations, error)
+	now        func() time.Time
 
 	// setCondition writes the Node's DT condition; nil disables reporting.
 	setCondition func(context.Context, corev1.NodeCondition) error
@@ -63,16 +60,16 @@ const (
 	hubHeartbeatDefault = 10 * time.Minute
 )
 
-func newHubMachineAdapter(operations func(machineDir string) (hubTransitionOperations, error)) (*hubMachineAdapter, error) {
-	if operations == nil {
+func newHubMachineAdapter(directory func(slot string) string, operations func(state *State) (hubTransitionOperations, error)) (*hubMachineAdapter, error) {
+	if directory == nil || operations == nil {
 		return nil, fmt.Errorf("hub operations factory is nil")
 	}
-	return &hubMachineAdapter{log: slog.Default(), machinesDir: nspawnMachinesDir, operations: operations, now: time.Now, heartbeat: hubHeartbeatDefault}, nil
+	return &hubMachineAdapter{log: slog.Default(), directory: directory, operations: operations, now: time.Now, heartbeat: hubHeartbeatDefault}, nil
 }
 
 // newDaemonHubAdapter builds production Hub operations and the Node condition
 // writer, both using the daemon's own node credential (restCfg).
-func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Config) (*hubMachineAdapter, error) {
+func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Config, operator *workerNodeOperator) (*hubMachineAdapter, error) {
 	// Per-request timeout so a stalled Node call can't hold the daemon queue.
 	nodeCfg := rest.CopyConfig(restCfg)
 	nodeCfg.Timeout = 30 * time.Second
@@ -80,14 +77,21 @@ func newDaemonHubAdapter(cfg *config.Config, log *slog.Logger, restCfg *rest.Con
 	if err != nil {
 		return nil, fmt.Errorf("create hub node client: %w", err)
 	}
-	adapter, err := newHubMachineAdapter(func(machineDir string) (hubTransitionOperations, error) {
+	adapter, err := newHubMachineAdapter(operator.runtime.Layout().Directory, func(state *State) (hubTransitionOperations, error) {
+		gs, err := operator.runtime.GoalState(log, operator.appliedNode(&activeMachine{Name: state.ActiveMachine, State: state}))
+		if err != nil {
+			return nil, err
+		}
 		return yurthub.NewOperations(yurthub.Config{
-			Log:        log,
-			MachineDir: machineDir,
-			NodeName:   cfg.Agent.NodeName,
-			NodePool:   cfg.Azure.TargetAgentPoolName,
-			ServerURL:  cfg.APIServerURL(),
-			Nodes:      clientset.CoreV1().Nodes(),
+			Log:         log,
+			Root:        gs.RootFS.Root(),
+			Run:         func(ctx context.Context, args ...string) (string, error) { return gs.NodeStart.Exec(ctx, log, args...) },
+			KubeletUnit: operator.runtime.Layout().KubeletUnit,
+			Mode:        state.Isolation,
+			NodeName:    cfg.Agent.NodeName,
+			NodePool:    cfg.Azure.TargetAgentPoolName,
+			ServerURL:   cfg.APIServerURL(),
+			Nodes:       clientset.CoreV1().Nodes(),
 		})
 	})
 	if err != nil {
@@ -132,7 +136,7 @@ func (a *hubMachineAdapter) ReconcileHub(ctx context.Context, goal aksmachine.Go
 		a.backoff(key, 0, err)
 		return err
 	}
-	err := a.reconcile(ctx, machine, intent)
+	err := a.reconcile(ctx, state, intent)
 	result := hubCondition(*intent, err)
 	a.last = &result
 	a.reportCondition(ctx, currentHubCondition(node), result)
@@ -255,8 +259,9 @@ func (a *hubMachineAdapter) backoff(key string, fixed time.Duration, err error) 
 	a.retryAfter = a.now().Add(a.retryDelay)
 }
 
-func (a *hubMachineAdapter) reconcile(ctx context.Context, machine string, intent *bool) error {
-	machineDir := filepath.Join(a.machinesDir, machine)
+func (a *hubMachineAdapter) reconcile(ctx context.Context, state *State, intent *bool) error {
+	machine := state.ActiveMachine
+	machineDir := a.directory(machine)
 	store := fileHubTransitionStore{root: machineDir, path: hubWorkerJournal}
 	// A worker that never started a transition has nothing to disable. Skip
 	// building operations, which validate settings only enabling needs.
@@ -265,7 +270,7 @@ func (a *hubMachineAdapter) reconcile(ctx context.Context, machine string, inten
 			return nil
 		}
 	}
-	ops, err := a.operations(machineDir)
+	ops, err := a.operations(state)
 	if err != nil {
 		return fmt.Errorf("create hub operations: %w", err)
 	}

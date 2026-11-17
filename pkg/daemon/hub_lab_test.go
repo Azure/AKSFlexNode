@@ -56,12 +56,28 @@ func TestHubLab(t *testing.T) {
 	restCfg.ExecProvider = nil
 	restCfg.CertFile = "/etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem"
 	restCfg.KeyFile = restCfg.CertFile
-	adapter, err := newDaemonHubAdapter(cfg, slog.Default(), restCfg)
+	store, err := NewFileStateStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := newNodeOperator(t.Context(), cfg, slog.Default(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil {
+		t.Fatal("lab worker has no applied daemon state")
+	}
+	state.ActiveMachine = input.ActiveMachine
+	adapter, err := newDaemonHubAdapter(cfg, slog.Default(), restCfg, operator)
 	if err != nil {
 		t.Fatal(err)
 	}
 	goal := aksmachine.GoalState{DisconnectToleranceEnabled: input.Enabled}
-	if err := adapter.ReconcileHub(t.Context(), goal, &State{ActiveMachine: input.ActiveMachine}, nil); err != nil {
+	if err := adapter.ReconcileHub(t.Context(), goal, state, nil); err != nil {
 		t.Fatal(err)
 	}
 }

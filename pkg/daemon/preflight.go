@@ -5,9 +5,23 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
+
+// WorkerPreflightGoalState applies the selected SDK's root and executor before
+// callers construct checks against the resolved worker configuration.
+func WorkerPreflightGoalState(log *slog.Logger, mode isolation.Mode, cfg *agentconfig.AgentConfig, gs *goalstates.MachineGoalState) (*goalstates.MachineGoalState, error) {
+	runtime, err := provider.New(mode)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.GoalState(log, provider.Node{Slot: cfg.MachineName, Config: cfg, GoalState: gs})
+}
 
 type machinesTargetChecker struct {
 	log            *slog.Logger

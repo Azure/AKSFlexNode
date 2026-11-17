@@ -28,11 +28,10 @@ func newTestHubAdapter(t *testing.T, ops *testHubOperations) (*hubMachineAdapter
 			t.Fatal(err)
 		}
 	}
-	adapter, err := newHubMachineAdapter(func(string) (hubTransitionOperations, error) { return ops, nil })
+	adapter, err := newHubMachineAdapter(func(slot string) string { return filepath.Join(machinesDir, slot) }, func(*State) (hubTransitionOperations, error) { return ops, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter.machinesDir = machinesDir
 	return adapter, machinesDir
 }
 
@@ -191,7 +190,7 @@ func TestHubAdapterFalseWithoutJournalSkipsOperations(t *testing.T) {
 				}
 			}
 			built := 0
-			adapter.operations = func(string) (hubTransitionOperations, error) {
+			adapter.operations = func(*State) (hubTransitionOperations, error) {
 				built++
 				return nil, errors.New("invalid hub settings")
 			}
@@ -228,7 +227,7 @@ func TestHubAdapterRejectsInvalidState(t *testing.T) {
 			}
 		})
 	}
-	if _, err := newHubMachineAdapter(nil); err == nil {
+	if _, err := newHubMachineAdapter(nil, nil); err == nil {
 		t.Fatal("nil operations factory accepted")
 	}
 }

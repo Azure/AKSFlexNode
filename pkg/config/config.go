@@ -24,6 +24,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -217,6 +218,9 @@ type GantryConfig struct {
 // BootstrapConfig holds bootstrap settings that are not Kubernetes component
 // versions.
 type BootstrapConfig struct {
+	// Isolation selects the worker runtime independently of agent deployment.
+	Isolation isolation.Mode `json:"isolation,omitempty"`
+
 	// OCIImage is the nspawn rootfs OCI image used by the shared agent library.
 	// When empty, the agent uses its built-in default image selection.
 	OCIImage string `json:"ociImage,omitempty"`
@@ -440,6 +444,9 @@ func (cfg *Config) DeepCopy() *Config {
 }
 
 func (c *Config) setDefaults() {
+	if c.Bootstrap.Isolation == "" {
+		c.Bootstrap.Isolation = isolation.ModeNSpawn
+	}
 	c.setAzureDefaults()
 	c.setAgentDefaults()
 	c.setNodeDefaults()
@@ -935,7 +942,20 @@ func (c *BootstrapTokenConfig) validate() error {
 	return nil
 }
 
+// ValidateIsolation checks the worker modes this agent implements.
+func ValidateIsolation(mode isolation.Mode) error {
+	switch mode {
+	case isolation.ModeNSpawn, isolation.ModeNone:
+		return nil
+	default:
+		return fmt.Errorf("unsupported worker isolation %q", mode)
+	}
+}
+
 func (c *BootstrapConfig) validate() error {
+	if err := ValidateIsolation(c.Isolation); err != nil {
+		return fmt.Errorf("invalid bootstrap.isolation: %w", err)
+	}
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
 	}

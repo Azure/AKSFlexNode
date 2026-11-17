@@ -14,7 +14,9 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -26,11 +28,25 @@ const (
 // State records the last safely applied AKS machine goal and the previous
 // known-good goal needed for rollback-oriented reconciliation.
 type State struct {
-	AppliedSettingsVersion    string `json:"appliedSettingsVersion,omitempty"`
-	AppliedKubernetesVersion  string `json:"appliedKubernetesVersion,omitempty"`
-	PreviousSettingsVersion   string `json:"previousSettingsVersion,omitempty"`
-	PreviousKubernetesVersion string `json:"previousKubernetesVersion,omitempty"`
-	ActiveMachine             string `json:"activeMachine,omitempty"`
+	Isolation                 isolation.Mode           `json:"isolation,omitempty"`
+	NodeConfig                *agentconfig.AgentConfig `json:"nodeConfig,omitempty"`
+	AppliedSettingsVersion    string                   `json:"appliedSettingsVersion,omitempty"`
+	AppliedKubernetesVersion  string                   `json:"appliedKubernetesVersion,omitempty"`
+	PreviousSettingsVersion   string                   `json:"previousSettingsVersion,omitempty"`
+	PreviousKubernetesVersion string                   `json:"previousKubernetesVersion,omitempty"`
+	ActiveMachine             string                   `json:"activeMachine,omitempty"`
+}
+
+// DeepCopy preserves applied intent without sharing mutable runtime config.
+func (s *State) DeepCopy() *State {
+	if s == nil {
+		return nil
+	}
+	copy := *s
+	if s.NodeConfig != nil {
+		copy.NodeConfig = s.NodeConfig.DeepCopy()
+	}
+	return &copy
 }
 
 type saveStateTask struct {
@@ -124,6 +140,20 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
+	}
+	if state.Isolation == "" {
+		state.Isolation = isolation.ModeNSpawn
+	}
+	switch state.Isolation {
+	case isolation.ModeNSpawn, isolation.ModeNone:
+	default:
+		return nil, fmt.Errorf("invalid applied isolation %q", state.Isolation)
+	}
+	if state.NodeConfig != nil && state.NodeConfig.Isolation != string(state.Isolation) {
+		return nil, fmt.Errorf("applied runtime configuration has a different isolation mode")
+	}
+	if state.Isolation != isolation.ModeNSpawn && state.NodeConfig == nil {
+		return nil, fmt.Errorf("applied %s worker has no runtime configuration", state.Isolation)
 	}
 	return &state, nil
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
@@ -71,7 +72,7 @@ func TestNspawnLifecycleTasksInstallTheHelperFirst(t *testing.T) {
 	t.Parallel()
 
 	var names []string
-	for _, task := range nspawnLifecycleTasks(slog.New(slog.DiscardHandler), &goalstates.RootFS{}) {
+	for _, task := range provider.NSpawnLifecycleTasks(slog.New(slog.DiscardHandler), &goalstates.RootFS{}) {
 		names = append(names, task.Name())
 	}
 	if want := []string{"ensure-nspawn-lifecycle-helper", "ensure-nspawn-config"}; !slices.Equal(names, want) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
@@ -213,7 +214,7 @@ func TestSetupHostInstallsPackagesOnlyOnTheHost(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			task := setupHost(&config.Config{}, discardLogger(), tc.containerized)
+			task := setupHost(&config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNSpawn}}, discardLogger(), tc.containerized)
 			if got := strings.Contains(task.Name(), "install-packages"); got != tc.wantInstall {
 				t.Errorf("setupHost(containerized=%v) installs packages = %v, want %v (tasks: %s)",
 					tc.containerized, got, tc.wantInstall, task.Name())

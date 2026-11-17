@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -36,8 +36,8 @@ Environment="KUBELET_KUBECONFIG_ARGS=` + bootstrapKubeconfigArg + ` ` + proxyKub
 // configureRouting writes the proxy kubeconfig, then the kubelet drop-in that
 // selects it. The direct kubeconfig stays for certificate operations and disable.
 // It doesn't restart kubelet.
-func configureRouting(machineDir string) error {
-	root, err := os.OpenRoot(machineDir)
+func configureRouting(view isolation.NodeRoot, kubeletUnit string) error {
+	root, err := openWorkerRoot(view, kubeletUnit)
 	if err != nil {
 		return fmt.Errorf("open worker for hub routing: %w", err)
 	}
@@ -81,10 +81,10 @@ func configureRouting(machineDir string) error {
 	if err != nil {
 		return fmt.Errorf("encode proxy kubelet config")
 	}
-	if err := utilio.WriteFileInRoot(root, proxyKubeconfig, data, 0o600); err != nil {
+	if err := root.WriteFile(proxyKubeconfig, data, 0o600); err != nil {
 		return fmt.Errorf("write proxy kubelet config: %w", err)
 	}
-	if err := utilio.WriteFileInRoot(root, routingDropIn, routingUnit, 0o644); err != nil {
+	if err := root.WriteFile(routingDropIn, routingUnit, 0o644); err != nil {
 		return fmt.Errorf("write hub kubelet drop-in: %w", err)
 	}
 	return nil
@@ -92,16 +92,20 @@ func configureRouting(machineDir string) error {
 
 // restoreRouting removes the agent's kubelet drop-in and reports whether it was
 // present. It doesn't restart kubelet.
-func restoreRouting(machineDir string) (bool, error) {
-	root, err := os.OpenRoot(machineDir)
+func restoreRouting(view isolation.NodeRoot, kubeletUnit string) (bool, error) {
+	root, err := openWorkerRoot(view, kubeletUnit)
 	if err != nil {
 		return false, fmt.Errorf("open worker for direct routing: %w", err)
 	}
 	defer root.Close() //nolint:errcheck // directory handle
+	return restoreRoutingInRoot(root)
+}
+
+func restoreRoutingInRoot(root *workerRoot) (bool, error) {
 	if err := checkRoutingOwnership(root); err != nil {
 		return false, err
 	}
-	err = root.Remove(routingDropIn)
+	err := root.Remove(routingDropIn)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -111,7 +115,7 @@ func restoreRouting(machineDir string) (bool, error) {
 	return true, nil
 }
 
-func checkRoutingOwnership(root *os.Root) error {
+func checkRoutingOwnership(root *workerRoot) error {
 	info, err := root.Lstat(routingDropIn)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

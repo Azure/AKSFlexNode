@@ -74,7 +74,7 @@ func loadPackages() ([]hubPackage, error) {
 }
 
 // workerOS reads ID and VERSION_ID from the worker image's os-release.
-func workerOS(root *os.Root) (id, versionID string, err error) {
+func workerOS(root *workerRoot) (id, versionID string, err error) {
 	var data []byte
 	for _, name := range []string{"etc/os-release", "usr/lib/os-release"} {
 		if data, err = root.ReadFile(name); err == nil {
@@ -103,7 +103,7 @@ func workerOS(root *os.Root) (id, versionID string, err error) {
 // installBinary installs the pinned Hub binary for the worker image and returns
 // its package version. It downloads only when the installed binary differs from
 // the pin, and verifies both the package and binary checksums before writing.
-func installBinary(ctx context.Context, root *os.Root, packages []hubPackage, arch string, fetch func(context.Context, string) ([]byte, error)) (string, error) {
+func installBinary(ctx context.Context, root *workerRoot, packages []hubPackage, arch string, fetch func(context.Context, string) ([]byte, error)) (string, error) {
 	id, versionID, err := workerOS(root)
 	if err != nil {
 		return "", err
@@ -146,7 +146,7 @@ func installBinary(ctx context.Context, root *os.Root, packages []hubPackage, ar
 	if sha256Hex(binary) != pkg.BinarySHA256 {
 		return "", fmt.Errorf("%w: hub binary does not match its pinned checksum", ErrPackageDownload)
 	}
-	if err := utilio.WriteFileInRoot(root, installedBinary, binary, 0o755); err != nil {
+	if err := root.WriteFile(installedBinary, binary, 0o755); err != nil {
 		return "", fmt.Errorf("install hub binary: %w", err)
 	}
 	return pkg.Package.Version, nil
@@ -295,7 +295,7 @@ func readLimited(r io.Reader, size int64) ([]byte, error) {
 // installedSHA256 streams the installed binary so routine checks don't hold a
 // second copy in memory. Empty means absent, unreadable or not a regular file.
 // O_NONBLOCK keeps a FIFO at the path from blocking the daemon queue on open.
-func installedSHA256(root *os.Root) string {
+func installedSHA256(root *workerRoot) string {
 	f, err := root.OpenFile(installedBinary, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return ""

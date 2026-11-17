@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
-	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
-	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 // hostRootAgentsPath records the digest of every binary that has run as the
@@ -215,14 +215,24 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 	}
 	agentCfg := config.ToAgentConfig(machineCfg, active.Name)
 
-	// The nspawn lifecycle helper, the machine's service override and its
-	// config regeneration unit.
-	rootFS, err := goalstates.ResolveNSpawnConfig(agentCfg, active.Name)
-	if err != nil {
-		return fmt.Errorf("resolve machine nspawn config: %w", err)
+	if active.State.NodeConfig != nil {
+		agentCfg = active.State.NodeConfig.DeepCopy()
 	}
-	if err := phases.Serial(log, nspawnLifecycleTasks(log, rootFS)...).Do(ctx); err != nil {
+	runtime, err := provider.New(active.State.Isolation)
+	if err != nil {
 		return err
+	}
+	node := provider.Node{Slot: active.Name, Config: agentCfg}
+	if err := runtime.RewriteUnits(ctx, log, node); err != nil {
+		return err
+	}
+	dirs := []string{systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())), filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary)}
+	if active.State.Isolation == isolation.ModeNSpawn {
+		gs, err := runtime.GoalState(log, node)
+		if err != nil {
+			return err
+		}
+		dirs = append(dirs, filepath.Dir(gs.RootFS.ServiceOverrideFile))
 	}
 
 	// The LocalDNS network unit and its helper, on a host that has them. The
@@ -245,32 +255,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 
 	// The writers fsync each file before renaming it into place; the renames
 	// need their directories synced before the legacy files go.
-	return syncDirs(
-		systemdSystemDir,
-		filepath.Dir(rootFS.ServiceOverrideFile),
-		filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())),
-		filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary),
-	)
-}
-
-// nspawnLifecycleTasks returns what rewriting the units does for the nspawn
-// machine, in order.
-//
-// This release's config supplies the machine's hooks' commands, which start
-// the agent's nspawn lifecycle units, written under the host root by then, so
-// the hooks name nothing under it, and unbounded installs no helper for them.
-// The helper the earlier release installed, which the move copies, is a link
-// to the agent's binary by then too; see ensureNSpawnLifecycleHelperLink.
-//
-// For hooks that run the helper, it would be installed first, from the running
-// binary, before the units name it: the earlier release's copy regenerates the
-// units with the helper path that release knows, under /usr/local, which the
-// move removes, and the machine would not start again.
-func nspawnLifecycleTasks(log *slog.Logger, rootFS *goalstates.RootFS) []phases.Task {
-	return []phases.Task{
-		rootfs.EnsureNSpawnLifecycleHelperFor(rootFS),
-		rootfs.EnsureNSpawnConfig(log, rootFS),
-	}
+	return syncDirs(dirs...)
 }
 
 // syncDirs makes the entries in each directory durable: the files renamed into

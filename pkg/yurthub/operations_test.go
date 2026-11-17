@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -122,7 +124,7 @@ func newTestOperations(t *testing.T, worker *fakeWorker, hubReady bool) (*Operat
 	t.Cleanup(hub.Close)
 	client := fake.NewClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", UID: "uid1", ResourceVersion: "1"}})
 	ops, err := NewOperations(Config{
-		MachineDir: worker.dir, NodeName: "node1", NodePool: "flexpool",
+		Root: isolation.DirRoot{Dir: worker.dir}, Run: worker.run, KubeletUnit: "kubelet.service", Mode: isolation.ModeNSpawn, NodeName: "node1", NodePool: "flexpool",
 		ServerURL: "https://api.example.test:443", Nodes: client.CoreV1().Nodes(),
 	})
 	if err != nil {
@@ -719,15 +721,17 @@ func TestOperationsVerifyRequiresLiveRouting(t *testing.T) {
 func TestNewOperationsValidatesInputs(t *testing.T) {
 	t.Parallel()
 	client := fake.NewClientset()
-	base := Config{MachineDir: "/var/lib/machines/kube1", NodeName: "node1", NodePool: "flexpool", ServerURL: "https://api.example.test:443", Nodes: client.CoreV1().Nodes()}
+	base := Config{Root: isolation.DirRoot{Dir: "/var/lib/machines/kube1"}, Run: func(context.Context, ...string) (string, error) { return "", nil }, KubeletUnit: "kubelet.service", Mode: isolation.ModeNSpawn, NodeName: "node1", NodePool: "flexpool", ServerURL: "https://api.example.test:443", Nodes: client.CoreV1().Nodes()}
 	for name, mutate := range map[string]func(*Config){
-		"relative dir":   func(c *Config) { c.MachineDir = "kube1" },
-		"no client":      func(c *Config) { c.Nodes = nil },
-		"bad node":       func(c *Config) { c.NodeName = "Node 1" },
-		"bad pool":       func(c *Config) { c.NodePool = "pool_1" },
-		"http server":    func(c *Config) { c.ServerURL = "http://api.example.test" },
-		"quoted server":  func(c *Config) { c.ServerURL = `https://api.example.test/" --v=10` },
-		"user in server": func(c *Config) { c.ServerURL = "https://u:p@api.example.test" },
+		"missing root":         func(c *Config) { c.Root = nil },
+		"missing executor":     func(c *Config) { c.Run = nil },
+		"missing kubelet unit": func(c *Config) { c.KubeletUnit = "" },
+		"no client":            func(c *Config) { c.Nodes = nil },
+		"bad node":             func(c *Config) { c.NodeName = "Node 1" },
+		"bad pool":             func(c *Config) { c.NodePool = "pool_1" },
+		"http server":          func(c *Config) { c.ServerURL = "http://api.example.test" },
+		"quoted server":        func(c *Config) { c.ServerURL = `https://api.example.test/" --v=10` },
+		"user in server":       func(c *Config) { c.ServerURL = "https://u:p@api.example.test" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

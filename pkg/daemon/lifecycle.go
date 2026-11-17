@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -128,12 +130,16 @@ func ensureServiceAssetsUnderHostRoot(
 	holdDuringUpgrade bool,
 ) (bool, error) {
 	root := hostroot.Resolve()
+	options, err := agentServiceOptionsFromConfig(cfg)
+	if err != nil {
+		return false, err
+	}
 
 	return ensureAgentUpgradeServiceAssetsAt(
 		ctx,
 		log,
 		agentUpgradePathsUnder(root),
-		agentServiceOptionsFromConfig(cfg),
+		options,
 		systemdSystemDir,
 		recoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
@@ -174,11 +180,16 @@ func ensureAgentUpgradeServiceAssetsAt(
 }
 
 type agentServiceOptions struct {
-	ARCEnabled bool
+	ARCEnabled    bool
+	WorkerTargets string
 }
 
-func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
-	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled()}
+func agentServiceOptionsFromConfig(cfg *config.Config) (agentServiceOptions, error) {
+	runtime, err := provider.New(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return agentServiceOptions{}, err
+	}
+	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled(), WorkerTargets: strings.Join(runtime.Layout().Targets, " ")}, nil
 }
 
 type agentServiceAsset struct {
@@ -306,6 +317,7 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 
 type agentServiceTemplateData struct {
 	CurrentBinaryPath string
+	WorkerTargets     string
 	Dependencies      []string
 }
 
@@ -318,6 +330,7 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	var content bytes.Buffer
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
 		CurrentBinaryPath: currentBinaryPath,
+		WorkerTargets:     serviceOptions.WorkerTargets,
 		Dependencies:      dependencies,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)

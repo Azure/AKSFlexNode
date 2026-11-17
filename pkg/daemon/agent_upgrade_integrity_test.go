@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
@@ -108,7 +110,7 @@ func TestInstallAndSwitchAgentBinaryIntegrity(t *testing.T) {
 				attempts = 2
 			}
 			for range attempts {
-				err := installAndSwitchAgentBinary(t.Context(), log, server.URL+"/agent.tar.gz?sig=secret", tt.digest, paths)
+				err := installAndSwitchAgentBinary(t.Context(), log, server.URL+"/agent.tar.gz?sig=secret", tt.digest, paths, isolation.ModeNSpawn)
 				if tt.wantErr == "" {
 					if err != nil {
 						t.Fatalf("installAndSwitchAgentBinary: %v", err)

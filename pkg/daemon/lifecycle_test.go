@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.T) {
@@ -322,7 +323,11 @@ func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
 		RootFS:    &goalstates.RootFS{MachineDir: t.TempDir()},
 		NodeStart: &goalstates.NodeStart{},
 	}
-	name := StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
+	task, err := StartNode(&config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNSpawn}}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := task.Name()
 	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
 		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)
 	}
@@ -383,9 +388,9 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 		serviceOptions agentServiceOptions
 		golden         string
 	}{
-		"default": {golden: "aks-flex-node-agent.service.golden"},
+		"default": {serviceOptions: agentServiceOptions{WorkerTargets: "machines.target"}, golden: "aks-flex-node-agent.service.golden"},
 		"Arc": {
-			serviceOptions: agentServiceOptions{ARCEnabled: true},
+			serviceOptions: agentServiceOptions{ARCEnabled: true, WorkerTargets: "machines.target"},
 			golden:         "aks-flex-node-agent-arc.service.golden",
 		},
 	}

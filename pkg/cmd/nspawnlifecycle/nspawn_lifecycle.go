@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	sharedlifecycle "github.com/Azure/unbounded/pkg/agent/nspawnlifecycle"
 )
 
@@ -118,14 +119,15 @@ func newLifecycle(log *slog.Logger, configPath string) (*sharedlifecycle.Lifecyc
 func configLoader(configPath string) sharedlifecycle.ConfigLoader {
 	return func(_ context.Context, machineName string) (*agentconfig.AgentConfig, bool, error) {
 		cfg, err := flexconfig.LoadConfig(configPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, false, nil
-		}
-		if err != nil {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			err = nil
+		case err != nil:
 			return nil, false, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
+		case cfg.Bootstrap.Isolation == isolation.ModeNSpawn:
+			return flexconfig.ToAgentConfig(cfg, machineName), true, nil
 		}
-
-		return flexconfig.ToAgentConfig(cfg, machineName), true, nil
+		return nil, false, err
 	}
 }
 

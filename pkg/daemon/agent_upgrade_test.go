@@ -373,7 +373,7 @@ func TestPublishAgentUpgradeSignalPreservesSignalWhenRollbackFails(t *testing.T)
 	}); err != nil {
 		t.Fatalf("write signal: %v", err)
 	}
-	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "current-instance"}
+	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "current-instance", workerBinaryPath: func(string) string { return filepath.Join(t.TempDir(), "missing-worker-agent") }}
 	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err == nil {
 		t.Fatal("publishAndClearAgentUpgradeSignal error = nil")
 	}
@@ -486,7 +486,7 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 		paths:      paths,
 		signals:    signals,
 		instanceID: "restarted-instance",
-		nspawnBinaryPath: func(string) string {
+		workerBinaryPath: func(string) string {
 			return nspawnBinary
 		},
 		finishMachineOperation: func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
@@ -544,7 +544,7 @@ func TestRollbackAgentUpgradeFilesDoesNotDowngradeBeforeSwitch(t *testing.T) {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
 
-	if err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{CandidatePath: paths.BluePath}); err != nil {
+	if err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{CandidatePath: paths.BluePath}, activeNspawnAgentBinaryPath); err != nil {
 		t.Fatalf("rollbackAgentUpgradeFiles: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
@@ -569,7 +569,7 @@ func TestRollbackAgentUpgradeFilesRetriesAfterHostLinkWasRestored(t *testing.T) 
 	err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{
 		CandidatePath:    paths.BluePath,
 		RecoveryRequired: true,
-	})
+	}, activeNspawnAgentBinaryPath)
 	if err == nil || !strings.Contains(err.Error(), "resolve last-good") {
 		t.Fatalf("rollbackAgentUpgradeFiles error = %v, want retry to resolve last-good", err)
 	}
