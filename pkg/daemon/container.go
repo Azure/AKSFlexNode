@@ -105,18 +105,18 @@ func preflightChecks(checks []preflight.Checker, containerized bool) []preflight
 func ensureHostInstall(
 	ctx context.Context,
 	log *slog.Logger,
-	cfg *config.Config,
+	options agentServiceOptions,
 	containerized bool,
 ) (func(context.Context) error, error) {
 	if containerized {
 		return noHeldAssets, nil
 	}
-	held, err := ensureDaemonServiceAssets(ctx, log, cfg)
+	held, err := ensureDaemonServiceAssets(ctx, log, options)
 	if err != nil || !held {
 		return noHeldAssets, err
 	}
 	return func(ctx context.Context) error {
-		_, err := ensureDaemonServiceAssets(ctx, log, cfg)
+		_, err := ensureDaemonServiceAssets(ctx, log, options)
 		return err
 	}, nil
 }

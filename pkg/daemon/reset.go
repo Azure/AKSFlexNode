@@ -2,17 +2,11 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
-	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
 // ResetNode returns the task that removes the node runtime from the host.
@@ -22,64 +16,25 @@ import (
 // root and under the legacy root, so reset does not depend on the host root
 // having been migrated. The managed agent binaries are intentionally kept.
 func ResetNode(log *slog.Logger) phases.Task {
-	teardown := &noneops.Teardown{Log: log}
-	if teardown.Present() {
-		return resetNoneNode(log, teardown)
-	}
-	legacy := phases.Serial(log,
-		phases.Parallel(log,
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube2),
-		),
-		phases.Parallel(log,
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube1),
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube2),
-		),
-		phases.Parallel(log,
-			// CleanupNetwork also removes the LocalDNS unit, nft table, dummy
-			// interface and helper, which reset previously left behind.
-			reset.CleanupNetwork(log),
-			reset.RemoveWireGuardKeys(log),
-			cleanupLegacyBridgeCNI(log),
-		),
-		removeHostHelpers(log),
-		reset.ReloadSystemd(log),
-		config.RemoveRuntimeDirs(log),
-	)
 	return resetNodeFromState(log, func(ctx context.Context) (*State, error) {
 		store, err := NewFileStateStore()
 		if err != nil {
 			return nil, err
 		}
 		return store.Load(ctx)
-	}, resetNoneNode(log, teardown), legacy)
+	}, registeredNodeProviders())
 }
 
-func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, error), noneTask, legacy phases.Task) phases.Task {
-	// Destroy can remove all SDK footprints before a later cleanup fails. Flex's
-	// applied state survives until RemoveRuntimeDirs, retaining reset ownership.
-	return hostnode.Func("resume-applied-reset-or-"+legacy.Name(), func(ctx context.Context) error {
+func resetNodeFromState(log *slog.Logger, load func(context.Context) (*State, error), candidates []NodeProvider) phases.Task {
+	return hostnode.Func("reset-discovered-node", func(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		applied, err := load(ctx)
+		provider, err := discoverResetProvider(ctx, load, log, candidates)
 		if err != nil {
-			return fmt.Errorf("load applied state for reset: %w", err)
+			return err
 		}
-		task := legacy
-		if applied != nil {
-			switch applied.isolationMode() {
-			case isolation.ModeNone:
-				if applied.NodeConfig == nil || applied.NodeConfig.Isolation != string(isolation.ModeNone) {
-					return fmt.Errorf("none node has no valid applied configuration for reset")
-				}
-				task = noneTask
-			case isolation.ModeNSpawn:
-			default:
-				return fmt.Errorf("unsupported applied isolation %q for reset", applied.Isolation)
-			}
-		}
-		return phases.ExecuteTask(ctx, log, task)
+		return phases.ExecuteTask(ctx, log, provider.ResetNode(log))
 	})
 }
 

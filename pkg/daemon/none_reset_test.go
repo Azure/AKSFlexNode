@@ -190,12 +190,12 @@ func TestNoneResetRetriesUsingAppliedStateAfterSDKFootprintsDisappear(t *testing
 	if _, err := os.Stat(filepath.Join(td.Root, hostnode.CNIStateDir)); err != nil {
 		t.Fatalf("failed cleanup lost IPAM: %v", err)
 	}
-	wrongMode := hostnode.Func("wrong-mode", func(context.Context) error {
-		t.Fatal("partial none reset routed to another isolation mode")
-		return nil
-	})
 	for pass := 1; pass <= 2; pass++ {
-		if err := resetNodeFromState(td.Log, store.Load, runtime, wrongMode).Do(t.Context()); err != nil {
+		provider, err := discoverResetProvider(t.Context(), store.Load, td.Log, nil)
+		if err != nil || provider.Mode() != isolation.ModeNone {
+			t.Fatalf("partial reset provider=%v, error=%v", provider, err)
+		}
+		if err := runtime.Do(t.Context()); err != nil {
 			t.Fatalf("retry %d: %v", pass, err)
 		}
 		assertNoneResetAbsent(t, td.Root, hostnode.CNIStateDir, none.ContainerdConfigPath)

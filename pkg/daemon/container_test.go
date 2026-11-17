@@ -20,10 +20,10 @@ import (
 func TestInstallServiceRunsTheImageInAContainer(t *testing.T) {
 	t.Parallel()
 
-	if _, ok := installService(&config.Config{}, discardLogger(), true).(*installContainerServiceTask); !ok {
+	if _, ok := installService(agentServiceOptions{}, discardLogger(), true).(*installContainerServiceTask); !ok {
 		t.Error("installService(containerized=true) doesn't install the container's unit")
 	}
-	if _, ok := installService(&config.Config{}, discardLogger(), false).(*installServiceTask); !ok {
+	if _, ok := installService(agentServiceOptions{}, discardLogger(), false).(*installServiceTask); !ok {
 		t.Error("installService(containerized=false) doesn't install the host's unit")
 	}
 }
@@ -189,7 +189,7 @@ func TestEnsureHostInstallDoesNothingInAContainer(t *testing.T) {
 
 	// A nil config would fail any attempt to converge the host install, and the host install
 	// itself writes under /usr/local and /etc/systemd, which a test must not touch.
-	convergeHeld, err := ensureHostInstall(t.Context(), discardLogger(), nil, true)
+	convergeHeld, err := ensureHostInstall(t.Context(), discardLogger(), agentServiceOptions{}, true)
 	if err != nil {
 		t.Fatalf("ensureHostInstall(containerized=true) = %v, want nil", err)
 	}
@@ -213,7 +213,7 @@ func TestSetupHostInstallsPackagesOnlyOnTheHost(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			task := setupHost(&config.Config{}, discardLogger(), tc.containerized)
+			task := mustNodeProvider(t, "nspawn").SetupHost(&config.Config{}, discardLogger(), tc.containerized)
 			if got := strings.Contains(task.Name(), "install-packages"); got != tc.wantInstall {
 				t.Errorf("setupHost(containerized=%v) installs packages = %v, want %v (tasks: %s)",
 					tc.containerized, got, tc.wantInstall, task.Name())

@@ -20,6 +20,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	systemdDir := filepath.Join(t.TempDir(), "systemd")
 	recoveryScript := filepath.Join(t.TempDir(), "recovery.sh")
 	service := &flexDaemonActivationService{
+		provider:       mustNodeProvider(t, "nspawn"),
 		log:            slog.Default(),
 		paths:          paths,
 		state:          &testStateStore{},
@@ -51,8 +52,9 @@ func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	service := &flexDaemonActivationService{
-		log:   slog.Default(),
-		state: &testStateStore{},
+		provider: mustNodeProvider(t, "nspawn"),
+		log:      slog.Default(),
+		state:    &testStateStore{},
 	}
 	if err := service.Restart(t.Context()); err != nil {
 		t.Fatalf("Restart: %v", err)
@@ -66,8 +68,9 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 	t.Parallel()
 
 	service := &flexDaemonActivationService{
-		log:   slog.Default(),
-		state: &testStateStore{},
+		provider: mustNodeProvider(t, "nspawn"),
+		log:      slog.Default(),
+		state:    &testStateStore{},
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 			return false, errors.New("systemd unavailable")
 		},
@@ -110,6 +113,7 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 			inspected := false
 			service := &flexDaemonActivationService{
 				log:            slog.Default(),
+				provider:       mustNodeProvider(t, "nspawn"),
 				root:           tt.root,
 				resolveRoot:    func() string { return tt.now },
 				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
@@ -145,6 +149,7 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 		t.Fatalf("WriteFile: %v", err)
 	}
 	service := &flexDaemonActivationService{
+		provider:       mustNodeProvider(t, "nspawn"),
 		log:            slog.Default(),
 		paths:          paths,
 		state:          &testStateStore{},
@@ -195,7 +200,8 @@ func TestFlexDaemonActivationRejectsCorruptAppliedState(t *testing.T) {
 				state:          store,
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
-				serviceOptions: agentServiceOptions{NoneIsolation: true},
+				serviceOptions: agentServiceOptions{WantedTargets: (noneProvider{}).WantedTargets()},
+				provider:       mustNodeProvider(t, tc.mode),
 				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 					return false, nil
 				},

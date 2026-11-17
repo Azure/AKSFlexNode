@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -319,7 +320,7 @@ func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
 	t.Parallel()
 
 	gs := &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{}, NodeStart: &goalstates.NodeStart{}}
-	name := StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
+	name := mustNodeProvider(t, "nspawn").StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
 	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
 		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)
 	}
@@ -380,17 +381,17 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 		serviceOptions agentServiceOptions
 		golden         string
 	}{
-		"default": {golden: "aks-flex-node-agent.service.golden"},
+		"default": {serviceOptions: agentServiceOptions{WantedTargets: (nspawnProvider{}).WantedTargets()}, golden: "aks-flex-node-agent.service.golden"},
 		"Arc": {
-			serviceOptions: agentServiceOptions{ARCEnabled: true},
+			serviceOptions: agentServiceOptions{ARCEnabled: true, WantedTargets: (nspawnProvider{}).WantedTargets()},
 			golden:         "aks-flex-node-agent-arc.service.golden",
 		},
 		"none": {
-			serviceOptions: agentServiceOptions{NoneIsolation: true},
+			serviceOptions: agentServiceOptions{WantedTargets: (noneProvider{}).WantedTargets()},
 			golden:         "aks-flex-node-agent-none.service.golden",
 		},
 		"none Arc": {
-			serviceOptions: agentServiceOptions{ARCEnabled: true, NoneIsolation: true},
+			serviceOptions: agentServiceOptions{ARCEnabled: true, WantedTargets: (noneProvider{}).WantedTargets()},
 			golden:         "aks-flex-node-agent-none-arc.service.golden",
 		},
 	}
@@ -425,8 +426,8 @@ func TestAgentServiceWantedTargets(t *testing.T) {
 		options agentServiceOptions
 		wanted  []string
 	}{
-		{name: "nspawn", wanted: []string{"network-online.target", "systemd-udev-settle.service", "machines.target"}},
-		{name: "none", options: agentServiceOptions{NoneIsolation: true}, wanted: []string{"network-online.target", "systemd-udev-settle.service"}},
+		{name: "nspawn", options: agentServiceOptions{WantedTargets: (nspawnProvider{}).WantedTargets()}, wanted: []string{"network-online.target", "systemd-udev-settle.service", "machines.target"}},
+		{name: "none", options: agentServiceOptions{WantedTargets: (noneProvider{}).WantedTargets()}, wanted: []string{"network-online.target", "systemd-udev-settle.service"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -480,11 +481,11 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 		},
 		"none unit": {
 			writeUnit:      true,
-			serviceOptions: agentServiceOptions{NoneIsolation: true},
+			serviceOptions: agentServiceOptions{WantedTargets: (noneProvider{}).WantedTargets()},
 		},
 		"none Arc unit": {
 			writeUnit:      true,
-			serviceOptions: agentServiceOptions{ARCEnabled: true, NoneIsolation: true},
+			serviceOptions: agentServiceOptions{ARCEnabled: true, WantedTargets: (noneProvider{}).WantedTargets()},
 			want:           agentServiceOptions{ARCEnabled: true},
 		},
 		"legacy unit without machines target": {
@@ -520,7 +521,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("installedAgentServiceOptions() error = %v", err)
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("installedAgentServiceOptions() = %#v, want %#v", got, tt.want)
 			}
 		})
@@ -530,7 +531,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
-	serviceContent, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
+	serviceContent, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{WantedTargets: (nspawnProvider{}).WantedTargets()})
 	if err != nil {
 		t.Fatalf("renderAgentServiceUnit() error = %v", err)
 	}

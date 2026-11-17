@@ -15,7 +15,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -33,11 +32,15 @@ func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candida
 	if Containerized() {
 		return agentbinary.ActivationPlan{}, errDirectActivationInContainer
 	}
-	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot)
+	provider, store, err := installedNodeProvider(ctx, log)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
-	if err := checkInstalledNodeIsolation(ctx, candidatePath); err != nil {
+	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot, provider, store)
+	if err != nil {
+		return agentbinary.ActivationPlan{}, err
+	}
+	if err := checkAgentActivationCandidate(ctx, candidatePath, service.provider); err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
 	return agentbinary.PreflightHostDaemonActivation(ctx, hostAgentActivationOptions(paths, candidatePath), service)
@@ -57,7 +60,11 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if os.Geteuid() != 0 {
 		return agentbinary.ActivationResult{}, fmt.Errorf("host agent upgrade requires root privileges")
 	}
-	if err := checkInstalledNodeIsolation(ctx, candidatePath); err != nil {
+	provider, store, err := installedNodeProvider(ctx, log)
+	if err != nil {
+		return agentbinary.ActivationResult{}, err
+	}
+	if err := checkAgentActivationCandidate(ctx, candidatePath, provider); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
 	if err := MigrateHostRoot(log); err != nil {
@@ -71,26 +78,21 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, running); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve)
+	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve, provider, store)
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
 	return agentbinary.ActivateHostDaemon(ctx, log, hostAgentActivationOptions(paths, candidatePath), service)
 }
 
-func checkInstalledNodeIsolation(ctx context.Context, candidate string) error {
-	store, err := NewFileStateStore()
-	if err != nil {
-		return err
-	}
-	state, err := store.Load(ctx)
-	if err != nil || state == nil || state.isolationMode() == isolation.ModeNSpawn {
+func checkAgentActivationCandidate(ctx context.Context, candidate string, actions agentActions) error {
+	if err := actions.ValidateAgentActivation(ctx); err != nil {
 		return err
 	}
 	if err := agentbinary.Verify(ctx, candidate); err != nil {
 		return err
 	}
-	return checkAgentIsolation(ctx, candidate, state.isolationMode())
+	return actions.CheckAgentCandidate(ctx, candidate)
 }
 
 func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) agentbinary.ActivationOptions {
@@ -113,6 +115,7 @@ type flexDaemonActivationService struct {
 	moveUnfinished   func() (bool, error)
 	paths            agentUpgradePaths
 	state            stateStore
+	provider         NodeProvider
 	systemdDir       string
 	recoveryScript   string
 	serviceOptions   agentServiceOptions
@@ -120,15 +123,11 @@ type flexDaemonActivationService struct {
 	serviceWasActive bool
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentUpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, provider NodeProvider, state stateStore) (*flexDaemonActivationService, agentUpgradePaths, error) {
 	if log == nil {
 		return nil, agentUpgradePaths{}, fmt.Errorf("logger is nil")
 	}
 	root := resolveRoot()
-	state, err := NewFileStateStore()
-	if err != nil {
-		return nil, agentUpgradePaths{}, err
-	}
 	paths := agentUpgradePathsUnder(root)
 	serviceOptions, err := installedAgentServiceOptions(systemdSystemDir)
 	if err != nil {
@@ -141,6 +140,7 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 		moveUnfinished: hostRootMoveUnfinishedHere,
 		paths:          paths,
 		state:          state,
+		provider:       provider,
 		systemdDir:     systemdSystemDir,
 		recoveryScript: recoveryScriptPathUnder(root),
 		serviceOptions: serviceOptions,
@@ -191,11 +191,10 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
-	state, err := s.state.Load(ctx)
-	if err != nil {
-		return agentbinary.ServicePlan{}, fmt.Errorf("load active node state: %w", err)
+	if _, err := s.loadActivationState(ctx); err != nil {
+		return agentbinary.ServicePlan{}, err
 	}
-	s.serviceOptions.NoneIsolation = state != nil && state.isolationMode() == isolation.ModeNone
+	s.serviceOptions.WantedTargets = s.provider.WantedTargets()
 	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
 	if err != nil {
 		return agentbinary.ServicePlan{}, err
@@ -239,7 +238,10 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 	}
 }
 
-func (s *flexDaemonActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
+func (s *flexDaemonActivationService) Prepare(ctx context.Context, currentBinaryPath string) error {
+	if _, err := s.loadActivationState(ctx); err != nil {
+		return err
+	}
 	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
 }
 
@@ -301,21 +303,35 @@ func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedB
 }
 
 func (s *flexDaemonActivationService) synchronizeActiveNode(ctx context.Context, expected string) error {
-	state, err := s.state.Load(ctx)
+	state, err := s.loadActivationState(ctx)
 	if err != nil {
-		return fmt.Errorf("load active node state: %w", err)
+		return err
 	}
-	if state == nil || state.isolationMode() == isolation.ModeNone {
+	if state == nil {
 		s.log.Info("activated host agent without active node binary synchronization")
 		return nil
 	}
-	if !validNspawnMachine(state.ActiveMachine) {
-		return fmt.Errorf("no valid active node slot for agent activation")
-	}
-	if err := synchronizeNodeAgentBinary(expected, state.isolationMode(), state.ActiveMachine); err != nil {
+	if err := s.provider.SynchronizeAgent(expected, state.ActiveMachine); err != nil {
 		return fmt.Errorf("synchronize active node agent binary: %w", err)
 	}
 	return nil
+}
+
+func (s *flexDaemonActivationService) loadActivationState(ctx context.Context) (*State, error) {
+	if err := s.provider.ValidateAgentActivation(ctx); err != nil {
+		return nil, err
+	}
+	state, err := s.state.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load active node state: %w", err)
+	}
+	if err := s.provider.ValidateAgentActivation(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateAppliedProvider(s.provider, state); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
 func (s *flexDaemonActivationService) isExpectedDaemonActive(ctx context.Context, expected string) (bool, error) {

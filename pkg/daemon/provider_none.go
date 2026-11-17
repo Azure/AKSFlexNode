@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
@@ -17,56 +18,90 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
+	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
+	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
-// ValidateIsolationEnvironment rejects node modes this execution environment
-// cannot operate. The containerized agent depends on a separate host containerd.
-func ValidateIsolationEnvironment(cfg *config.Config) error {
-	return validateIsolationEnvironment(cfg, Containerized())
+var _ NodeProvider = noneProvider{}
+var _ nodeOperator = (*noneNodeOperator)(nil)
+
+type noneProvider struct{}
+
+func (noneProvider) Mode() isolation.Mode                                                 { return isolation.ModeNone }
+func (noneProvider) RuntimeChecks(*config.Config, *slog.Logger, bool) []preflight.Checker { return nil }
+func (noneProvider) WantedTargets() []string {
+	return []string{"network-online.target", "systemd-udev-settle.service"}
+}
+func (noneProvider) SupportsDisconnectTolerance() bool             { return false }
+func (noneProvider) NSpawnRuntime() nspawnRuntime                  { return nil }
+func (noneProvider) ValidateAgentActivation(context.Context) error { return nil }
+func (noneProvider) ValidateActiveSlot(string) error               { return nil }
+func (noneProvider) SynchronizeAgent(string, string) error         { return nil }
+func (noneProvider) ValidateAgent(string, string) error            { return nil }
+func (noneProvider) RollbackAgent(string, string) error            { return nil }
+func (noneProvider) CheckAgentCandidate(ctx context.Context, candidate string) error {
+	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(checkCtx, candidate, "supports-isolation", string(isolation.ModeNone)).Run(); err != nil { //nolint:gosec // candidate is verified before this capability probe
+		return fmt.Errorf("candidate agent cannot operate isolation mode none: %w", err)
+	}
+	return nil
+}
+func (noneProvider) ValidateResetState(state *State) error {
+	if state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
+		return fmt.Errorf("none node has no valid applied configuration for reset")
+	}
+	return nil
 }
 
-func validateIsolationEnvironment(cfg *config.Config, containerized bool) error {
-	switch cfg.Bootstrap.Isolation {
-	case isolation.ModeNSpawn:
-		return nil
-	case isolation.ModeNone:
-		if containerized {
-			return fmt.Errorf("%s isolation requires the host-installed agent; the containerized agent requires host containerd", cfg.Bootstrap.Isolation)
+func (noneProvider) ResetNode(log *slog.Logger) phases.Task {
+	return resetNoneNode(log, &noneops.Teardown{Log: log})
+}
+
+func (noneProvider) RewriteNodeUnits(ctx context.Context, log *slog.Logger, _ *config.Config, state stateStore) error {
+	applied, err := state.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if applied == nil || applied.NodeConfig == nil {
+		return fmt.Errorf("none node has no applied configuration")
+	}
+	gs, err := newNoneRuntime(noneops.Params{Log: log, Config: applied.NodeConfig}).GoalState()
+	if err != nil {
+		return err
+	}
+	if gs.NodeStart.LocalDNS.Enabled {
+		if err := nodestart.WriteLocalDNSNetworkFiles(gs.NodeStart); err != nil {
+			return err
 		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported node isolation %q", cfg.Bootstrap.Isolation)
 	}
+	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+		return err
+	}
+	return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())))
 }
 
-// CheckBootstrapIsolation runs before registration or host mutation, even when
-// the optional preflight command was not run.
-func CheckBootstrapIsolation(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	if err := ValidateIsolationEnvironment(cfg); err != nil {
-		return err
+func (noneProvider) ValidateEnvironment(containerized bool) error {
+	if containerized {
+		return fmt.Errorf("none isolation requires the host-installed agent; the containerized agent requires host containerd")
 	}
-	store, err := NewFileStateStore()
-	if err != nil {
-		return err
-	}
-	applied, err := store.Load(ctx)
-	if err != nil {
-		return err
-	}
-	if applied != nil && applied.isolationMode() != cfg.Bootstrap.Isolation {
-		return fmt.Errorf("host has an applied %s node; reset it before changing isolation", applied.isolationMode())
-	}
-	if (&noneops.Teardown{Log: log}).Present() || applied != nil && applied.isolationMode() == isolation.ModeNone {
+	return nil
+}
+
+func (noneProvider) BootstrapPresent(log *slog.Logger) bool {
+	return (&noneops.Teardown{Log: log}).Present()
+}
+
+func (p noneProvider) CheckBootstrap(ctx context.Context, log *slog.Logger, applied *State) error {
+	if applied != nil || p.BootstrapPresent(log) {
 		return fmt.Errorf("host contains an installed or partially reset none node; reset it before bootstrapping")
-	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
-		return nil
 	}
 	if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNone); err != nil {
 		return err
@@ -76,20 +111,16 @@ func CheckBootstrapIsolation(ctx context.Context, cfg *config.Config, log *slog.
 	return backend.Preflight()
 }
 
-// ResolveNodeGoalState applies the filesystem and execution view preflight
-// will use, without installing artifacts or changing host configuration.
-func ResolveNodeGoalState(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+func (noneProvider) ResolveGoalState(ctx context.Context, log *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 	ac, gs, archives, err := config.ResolveMachineGoalState(ctx, log, cfg, slot)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
-		gs, err = newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs}).GoalState()
-	}
+	gs, err = newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs}).GoalState()
 	return ac, gs, archives, err
 }
 
-func setupNoneHost(cfg *config.Config, log *slog.Logger) phases.Task {
+func (noneProvider) SetupHost(cfg *config.Config, log *slog.Logger, _ bool) phases.Task {
 	return phases.Serial(log,
 		host.InstallPackagesFor(log, isolation.ModeNone),
 		noneops.LoadKernelModules(log, nil),
@@ -101,7 +132,7 @@ func setupNoneHost(cfg *config.Config, log *slog.Logger) phases.Task {
 	)
 }
 
-func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
+func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, store stateStore, state *State) phases.Task {
 	return hostnode.Func("start-none-node", func(ctx context.Context) error {
 		ac := config.ToAgentConfig(cfg, noneops.Slot)
 		registration := *state

@@ -37,6 +37,7 @@ func newTestContainerUpgrade(t *testing.T, runningImage string) (*containerAgent
 		}
 	}
 	return &containerAgentUpgradeExecutor{
+		provider:      mustNodeProvider(t, "nspawn"),
 		log:           discardLogger(),
 		state:         &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
 		signals:       agentUpgradeSignalStore{path: filepath.Join(dir, "agent-upgrade-signal.json")},
@@ -388,7 +389,7 @@ func startedContainerUpgrade(t *testing.T, runningImage, machineBinary string) (
 	running := writeTestFile(t, filepath.Join(dir, "running"), "candidate agent")
 	machine := writeTestFile(t, filepath.Join(dir, "machine"), machineBinary)
 	executor.runningExecutable = func() (string, error) { return running, nil }
-	executor.nspawnBinaryPath = func(string) string { return machine }
+	executor.provider = nspawnProvider{binaryPath: func(string) string { return machine }}
 	phases := &[]machinav1alpha3.OperationPhase{}
 	executor.finishMachineOperation = func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
 		*phases = append(*phases, result.Phase)

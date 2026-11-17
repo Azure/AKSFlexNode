@@ -27,7 +27,7 @@ type noneNode interface {
 }
 
 type noneNodeOperator struct {
-	*nspawnNodeOperator
+	*operatorBase
 	newNode      func(noneops.Params) noneNode
 	stage        func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
 	dependencies func(context.Context, *slog.Logger, *config.Config) error
@@ -38,34 +38,20 @@ type noneNodeOperator struct {
 	recovered bool
 }
 
-func newNodeOperator(ctx context.Context, cfg *config.Config, store stateStore) (nodeOperator, error) {
-	if err := ValidateIsolationEnvironment(cfg); err != nil {
-		return nil, err
-	}
-	base, err := newNSpawnNodeOperator(cfg, store)
+func (p noneProvider) NewOperator(ctx context.Context, cfg *config.Config, store stateStore) (nodeOperator, error) {
+	base, state, err := newOperatorBase(ctx, cfg, store, p)
 	if err != nil {
 		return nil, err
-	}
-	state, err := store.Load(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if state != nil && state.isolationMode() != cfg.Bootstrap.Isolation {
-		return nil, fmt.Errorf("configured isolation %s differs from applied isolation %s; reset the node before changing modes", cfg.Bootstrap.Isolation, state.isolationMode())
-	}
-	switch cfg.Bootstrap.Isolation {
-	case isolation.ModeNSpawn:
-		return base, nil
 	}
 	if state == nil || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return nil, fmt.Errorf("none node has no valid applied configuration")
 	}
 	return &noneNodeOperator{
-		nspawnNodeOperator: base,
-		newNode:            func(p noneops.Params) noneNode { return newNoneRuntime(p) },
-		resolve:            config.ResolveMachineGoalState,
-		dependencies:       prepareNoneDependencies,
-		installNPD:         installNoneNPD,
+		operatorBase: base,
+		newNode:      func(p noneops.Params) noneNode { return newNoneRuntime(p) },
+		resolve:      config.ResolveMachineGoalState,
+		dependencies: prepareNoneDependencies,
+		installNPD:   installNoneNPD,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
 			return stageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},

@@ -44,7 +44,7 @@ func TestNoneOperatorReconcilesNPD(t *testing.T) {
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}}
 	state := &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
-	operator, err := newNodeOperator(t.Context(), cfg, &noneTestStore{events: &events, state: state})
+	operator, err := mustNodeProvider(t, cfg.Bootstrap.Isolation).NewOperator(t.Context(), cfg, &noneTestStore{events: &events, state: state})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestNoneRestartUsesAppliedNPDVersion(t *testing.T) {
 	}
 	store := &noneTestStore{events: &events, state: state}
 	op := &noneNodeOperator{
-		nspawnNodeOperator: &nspawnNodeOperator{
+		operatorBase: &operatorBase{
 			cfg: &config.Config{Npd: config.NPDConfig{Version: "v1.36.0"}}, state: store,
 		},
 		newNode: func(p noneops.Params) noneNode {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,15 +11,9 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/noneops"
-	"github.com/Azure/unbounded/pkg/agent/phases"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
-	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 // hostRootAgentsPath records the digest of every binary that has run as the
@@ -86,7 +79,7 @@ const hostRootRestartWait = 2 * time.Minute
 // A failure is logged, never returned: the daemon is healthy either way, and
 // the next start retries; see holdForHostRoot for a failure that leaves the
 // layout moved under the running daemon.
-func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor) bool {
+func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, upgrades *hostAgentUpgradeExecutor, provider NodeProvider) bool {
 	lock, err := upgrades.Acquire()
 	if err != nil {
 		log.Warn("not moving the agent's files to the host root: an activation holds the lock", "error", err)
@@ -106,7 +99,7 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 		CurrentPath:  paths.CurrentPath,
 		LastGoodPath: paths.LastGoodPath,
 		RewriteUnits: func(ctx context.Context) error {
-			return rewriteHostRootUnits(ctx, log, cfg, state)
+			return rewriteHostRootUnits(ctx, log, cfg, state, provider)
 		},
 		Verify: verifyMovedAgent,
 		// Restart resets the agent unit's start limit first, which the move's
@@ -200,101 +193,13 @@ func awaitReplacement(ctx context.Context, log *slog.Logger, reason string, wait
 
 // rewriteHostRootUnits points every unit and script that names the host-side
 // files at the files under the host root.
-func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore) error {
+func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state stateStore, provider NodeProvider) error {
 	// The agent unit, the recovery unit and the recovery script.
-	if err := ensureAgentUpgradeServiceAssets(ctx, log, cfg); err != nil {
+	if err := ensureAgentUpgradeServiceAssets(ctx, log, agentServiceOptionsFor(cfg, provider)); err != nil {
 		return err
 	}
 
-	applied, err := state.Load(ctx)
-	if err != nil {
-		return err
-	}
-	if applied != nil && applied.isolationMode() == isolation.ModeNone {
-		if applied.NodeConfig == nil {
-			return fmt.Errorf("none node has no applied configuration")
-		}
-		gs, err := newNoneRuntime(noneops.Params{Log: log, Config: applied.NodeConfig}).GoalState()
-		if err != nil {
-			return err
-		}
-		if gs.NodeStart.LocalDNS.Enabled {
-			if err := nodestart.WriteLocalDNSNetworkFiles(gs.NodeStart); err != nil {
-				return err
-			}
-		}
-		if err := utilexec.ReloadSystemd(ctx, log); err != nil {
-			return err
-		}
-		return syncDirs(systemdSystemDir, filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())))
-	}
-	active, err := activeMachineFromStore(ctx, state)
-	if err != nil {
-		return err
-	}
-
-	machineCfg := cfg.DeepCopy()
-	if active.State.AppliedKubernetesVersion != "" {
-		machineCfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
-	}
-	agentCfg := config.ToAgentConfig(machineCfg, active.Name)
-
-	// The nspawn lifecycle helper, the machine's service override and its
-	// config regeneration unit.
-	rootFS, err := goalstates.ResolveNSpawnConfig(agentCfg, active.Name)
-	if err != nil {
-		return fmt.Errorf("resolve machine nspawn config: %w", err)
-	}
-	if err := phases.Serial(log, nspawnLifecycleTasks(log, rootFS)...).Do(ctx); err != nil {
-		return err
-	}
-
-	// The LocalDNS network unit and its helper, on a host that has them. The
-	// network they configure is already up, so the unit is not run again.
-	if _, err := os.Stat(filepath.Join(goalstates.SystemdSystemDir, goalstates.LocalDNSNetworkUnit)); err == nil {
-		gs, err := goalstates.ResolveMachine(log, agentCfg, active.Name, nil)
-		if err != nil {
-			return fmt.Errorf("resolve machine goal state: %w", err)
-		}
-		if err := nodestart.WriteLocalDNSNetworkFiles(gs.NodeStart); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-
-	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
-		return fmt.Errorf("reload systemd after moving to the host root: %w", err)
-	}
-
-	// The writers fsync each file before renaming it into place; the renames
-	// need their directories synced before the legacy files go.
-	return syncDirs(
-		systemdSystemDir,
-		filepath.Dir(rootFS.ServiceOverrideFile),
-		filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())),
-		filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary),
-	)
-}
-
-// nspawnLifecycleTasks returns what rewriting the units does for the nspawn
-// machine, in order.
-//
-// This release's config supplies the machine's hooks' commands, which start
-// the agent's nspawn lifecycle units, written under the host root by then, so
-// the hooks name nothing under it, and unbounded installs no helper for them.
-// The helper the earlier release installed, which the move copies, is a link
-// to the agent's binary by then too; see ensureNSpawnLifecycleHelperLink.
-//
-// For hooks that run the helper, it would be installed first, from the running
-// binary, before the units name it: the earlier release's copy regenerates the
-// units with the helper path that release knows, under /usr/local, which the
-// move removes, and the machine would not start again.
-func nspawnLifecycleTasks(log *slog.Logger, rootFS *goalstates.RootFS) []phases.Task {
-	return []phases.Task{
-		rootfs.EnsureNSpawnLifecycleHelperFor(rootFS),
-		rootfs.EnsureNSpawnConfig(log, rootFS),
-	}
+	return provider.RewriteNodeUnits(ctx, log, cfg, state)
 }
 
 // syncDirs makes the entries in each directory durable: the files renamed into

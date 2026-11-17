@@ -154,7 +154,7 @@ func TestInstallAndSwitchAgentBinaryRejectsInvalidInputsWithoutSwitching(t *test
 		"ftp://example.com/agent.tar.gz",
 		strings.Repeat("0", 64),
 		paths,
-		isolation.ModeNSpawn,
+		mustNodeProvider(t, isolation.ModeNSpawn),
 	)
 	if err == nil {
 		t.Fatal("installAndSwitchAgentBinary error = nil")

@@ -157,6 +157,10 @@ func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmach
 	return f.state, nil
 }
 
+func (*fakeNodeOperator) ResumeRepave(context.Context, *slog.Logger, *corev1.Node) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeNodeOperator) RestartNode(context.Context, *slog.Logger) error {
 	f.restarted = true
 	return f.restartErr

@@ -43,7 +43,7 @@ func TestNoneUpgradeRejectsUnsupportedCandidateBeforeSwitch(t *testing.T) {
 			sum := sha256.Sum256(archive)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) }))
 			defer server.Close()
-			err := installAndSwitchAgentBinary(t.Context(), discardLogger(), server.URL, hex.EncodeToString(sum[:]), paths, isolation.ModeNone)
+			err := installAndSwitchAgentBinary(t.Context(), discardLogger(), server.URL, hex.EncodeToString(sum[:]), paths, mustNodeProvider(t, isolation.ModeNone))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("install = %v", err)
 			}
@@ -100,7 +100,7 @@ func TestNoneAgentUpgradeSignal(t *testing.T) {
 	paths := testAgentUpgradePaths(t)
 	store := agentUpgradeSignalStore{path: paths.SignalPath}
 	loader := &fakeNodeOperator{state: &State{Isolation: isolation.ModeNone}}
-	if err := recordPendingAgentUpgrade(t.Context(), store, loader, "upgrade", "daemon"); err != nil {
+	if err := recordPendingAgentUpgrade(t.Context(), store, loader, "upgrade", "daemon", mustNodeProvider(t, "none")); err != nil {
 		t.Fatal(err)
 	}
 	signal, err := store.read()
@@ -120,7 +120,7 @@ func TestNoneAgentUpgradeSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	signal.CandidatePath = paths.BluePath
-	if err := validateStartedAgentUpgrade(paths, signal, func(string) string { t.Fatal("none upgraded agent must not read an nspawn binary"); return "" }); err != nil {
+	if err := validateStartedAgentUpgrade(paths, signal, mustNodeProvider(t, "none")); err != nil {
 		t.Fatal(err)
 	}
 }
