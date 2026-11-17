@@ -2,26 +2,74 @@
 
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
-    exec sudo -E bash "$0" "$@"
-fi
+fail() {
+    printf 'install_test: %s\n' "$*" >&2
+    exit 1
+}
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# sudo can reset PATH. Build before escalation, without depending on renamed
+# multicall utilities, so the test exercises real executable-inode replacement.
+if [[ "${1:-}" != --run-privileged ]]; then
+    command -v go >/dev/null || fail "Go is required to build native test fixtures"
+    BUILD_DIR=$(mktemp -d)
+    trap 'rm -rf "$BUILD_DIR"' EXIT
+    cat > "$BUILD_DIR/fixture.go" <<'GO'
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+var version string
+
+func main() {
+	switch {
+	case len(os.Args) == 3 && os.Args[1] == "print":
+		if _, err := fmt.Printf("%s:%s\n", version, os.Args[2]); err != nil {
+			os.Exit(1)
+		}
+	case len(os.Args) == 2 && os.Args[1] == "wait":
+		if _, err := fmt.Printf("%s:ready\n", version); err != nil {
+			os.Exit(1)
+		}
+		time.Sleep(time.Minute)
+	default:
+		os.Exit(2)
+	}
+}
+GO
+    for version in old new; do
+        CGO_ENABLED=0 GO111MODULE=off GOTOOLCHAIN=local go build \
+            -ldflags "-X main.version=$version" -o "$BUILD_DIR/$version" "$BUILD_DIR/fixture.go"
+    done
+    if [[ $EUID -eq 0 ]]; then
+        bash "$0" --run-privileged "$BUILD_DIR/old" "$BUILD_DIR/new"
+    else
+        sudo -E bash "$0" --run-privileged "$BUILD_DIR/old" "$BUILD_DIR/new"
+    fi
+    exit
+fi
+[[ $EUID -eq 0 && $# -eq 3 ]] || fail "privileged phase requires root and both native fixtures"
+running_binary="$2"
+replacement_binary="$3"
+
 SCRIPT="$REPO_ROOT/scripts/install.sh"
 WORK_DIR=$(mktemp -d)
 RUNNING_PID=""
 cleanup() {
-    [[ -z "$RUNNING_PID" ]] || kill "$RUNNING_PID" 2>/dev/null || true
+    if [[ -n "$RUNNING_PID" ]]; then
+        kill "$RUNNING_PID" 2>/dev/null || true
+        wait "$RUNNING_PID" 2>/dev/null || true
+    fi
     umount "$WORK_DIR/readonly/usr/local" 2>/dev/null || true
     umount "$WORK_DIR/readonly-staged/usr/local" 2>/dev/null || true
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
-
-fail() {
-    printf 'install_test: %s\n' "$*" >&2
-    exit 1
-}
 
 bash -n "$SCRIPT"
 command -v flock >/dev/null || fail "flock is required"
@@ -40,8 +88,17 @@ SERVICE_UNIT="aks-flex-node-agent-install-test-$RANDOM.service"
 SERVICE_UNIT_PATH="$WORK_DIR/systemd/$SERVICE_UNIT"
 mkdir -p "$MANAGED_BINARY_DIR" "$(dirname "$SERVICE_UNIT_PATH")"
 
-running_binary=$(type -P sleep)
-replacement_binary=$(type -P printf)
+[[ "$("$running_binary" print fixture)" == "old:fixture" ]] || fail "old fixture did not execute"
+[[ "$("$replacement_binary" print '%s value with spaces')" == "new:%s value with spaces" ]] || fail "new fixture did not print its literal argument"
+for fixture in "$running_binary" "$replacement_binary"; do
+    if "$fixture" unexpected >/dev/null 2>&1; then
+        fail "fixture accepted an unknown mode"
+    fi
+done
+
+run_replacement() {
+    "$INSTALL_DIR/aks-flex-node" print "$@"
+}
 
 # Minimal images can omit an empty /usr/local/bin. The installer owns creation
 # of its configured destination before atomically staging the binary there.
@@ -49,7 +106,7 @@ replacement_binary=$(type -P printf)
 install_binary "$replacement_binary" >/dev/null || fail "installer did not create a missing install directory"
 [[ -d "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] || fail "installer did not create a regular install directory"
 [[ "$(stat -c '%a %U %G' "$INSTALL_DIR")" == "755 root root" ]] || fail "installer created install directory with incorrect ownership or mode"
-[[ "$($INSTALL_DIR/aks-flex-node missing-dir)" == "missing-dir" ]] || fail "binary installed into newly created directory is not executable"
+[[ "$(run_replacement missing-dir)" == "new:missing-dir" ]] || fail "binary installed into newly created directory is not executable"
 rm "$INSTALL_DIR/aks-flex-node"
 
 # Existing host-managed directory permissions must not be rewritten.
@@ -60,14 +117,20 @@ rm "$INSTALL_DIR/aks-flex-node"
 chmod 0755 "$INSTALL_DIR"
 
 cp "$running_binary" "$INSTALL_DIR/aks-flex-node"
-"$INSTALL_DIR/aks-flex-node" 30 &
+mkfifo "$WORK_DIR/ready"
+"$INSTALL_DIR/aks-flex-node" wait > "$WORK_DIR/ready" &
 RUNNING_PID=$!
-sleep 0.1
+read -r -t 10 ready < "$WORK_DIR/ready" || fail "old fixture did not become ready"
+[[ "$ready" == "old:ready" ]] || fail "running fixture is not the old binary"
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "test binary did not remain running"
+[[ "/proc/$RUNNING_PID/exe" -ef "$INSTALL_DIR/aks-flex-node" ]] || fail "old process is not executing the installed native binary"
+old_inode=$(stat -Lc '%d:%i' "/proc/$RUNNING_PID/exe")
 
 install_binary "$replacement_binary" >/dev/null || fail "could not replace a running binary"
 kill -0 "$RUNNING_PID" 2>/dev/null || fail "replacement stopped the old process"
-[[ "$("$INSTALL_DIR/aks-flex-node" replacement)" == "replacement" ]] || fail "new executions did not use the replacement"
+[[ "$(stat -Lc '%d:%i' "/proc/$RUNNING_PID/exe")" == "$old_inode" ]] || fail "old process changed executable inode"
+[[ "$(stat -c '%d:%i' "$INSTALL_DIR/aks-flex-node")" != "$old_inode" ]] || fail "replacement reused the running executable inode"
+[[ "$(run_replacement replacement)" == "new:replacement" ]] || fail "new executions did not use the replacement"
 
 assert_no_staged_files() {
     [[ -z "$(find "$INSTALL_DIR" -name '.aks-flex-node.*' -print -quit)" ]] || fail "staged binary was not cleaned up"
@@ -140,7 +203,7 @@ install_binary "$replacement_binary" >/dev/null
 if install_binary "$WORK_DIR/missing" >/dev/null 2>&1; then
     fail "installer accepted a missing source"
 fi
-[[ "$("$INSTALL_DIR/aks-flex-node" replacement)" == "replacement" ]] || fail "failed staging replaced the installed binary"
+[[ "$(run_replacement replacement)" == "new:replacement" ]] || fail "failed staging replaced the installed binary"
 assert_no_staged_files
 
 # Installer and managed activation paths must serialize on the same lock.
