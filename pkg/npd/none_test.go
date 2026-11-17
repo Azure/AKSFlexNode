@@ -40,7 +40,7 @@ func TestHostNativeNPD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "ExecStart="+root.Path(BinaryPath)+" ") || !strings.Contains(string(content), "flex-worker") {
+	if !strings.Contains(string(content), "ExecStart="+root.Path(npdBinaryPath)+" ") || !strings.Contains(string(content), "flex-worker") {
 		t.Fatalf("incorrect NPD service: %s", content)
 	}
 	for _, call := range calls {
