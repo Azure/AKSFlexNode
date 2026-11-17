@@ -330,7 +330,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		r.runtime.CleanupNetwork(r.log),
 		r.hookUnits(r.log),
 		r.runtime.Start(cfg, r.log, newMachine, resolved.GoalState, resolved.ContainerImageArchives),
-		SaveState(r.state, next),
+		&saveStateTask{store: r.state, state: next},
 		r.runtime.Retire(r.log, oldMachine),
 	)
 	if err := tasks.Do(ctx); err != nil {
