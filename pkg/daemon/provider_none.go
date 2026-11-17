@@ -163,7 +163,7 @@ func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs
 		if err := installNoneNPD(ctx, log, cfg, gs); err != nil {
 			return err
 		}
-		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart, isolation.ModeNone).Do(ctx); err != nil {
+		if err := npd.Start(log, cfg, gs.NodeStart.Root(), gs.NodeStart).Do(ctx); err != nil {
 			return err
 		}
 		seedNoneState(state, ac, noneNPDVersion(cfg))
