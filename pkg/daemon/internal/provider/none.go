@@ -32,7 +32,10 @@ import (
 var _ NodeProvider = None{}
 
 // None implements the host-native worker lifecycle.
-type None struct{ Services NoneServices }
+type None struct {
+	Host            HostServices
+	OperatorFactory OperatorFactory
+}
 
 func (None) Mode() isolation.Mode { return isolation.ModeNone }
 func (None) RuntimeChecks(cfg *config.Config, log *slog.Logger, containerized bool) []preflight.Checker {
@@ -67,10 +70,10 @@ func (p None) ResetNode(log *slog.Logger) phases.Task {
 		RemoveHostUnit(log, "node-problem-detector.service"),
 		ResetNoneRuntime(log, &noneops.Teardown{Log: log}, hostnode.ResetCNIState),
 		reset.CleanupNetwork(log), reset.RemoveWireGuardKeys(log), reset.RemoveNFTablesFlush(log),
-		p.Services.RemoveHostHelpers(log),
+		p.Host.RemoveHostHelpers(log),
 		RemoveHostUnit(log, "static-routes.service"), RemoveHostUnit(log, "check-route-overlap.service"),
 		hostnode.Func("remove-host-npd-config", func(ctx context.Context) error {
-			return p.Services.RemoveIfPresent("/etc/node-problem-detector/kernel-monitor.json")
+			return p.Host.RemoveIfPresent("/etc/node-problem-detector/kernel-monitor.json")
 		}),
 		reset.ReloadSystemd(log), config.RemoveRuntimeDirs(log),
 	)
@@ -95,7 +98,7 @@ func (p None) RewriteNodeUnits(ctx context.Context, log *slog.Logger, cfg *confi
 	if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 		return err
 	}
-	return p.Services.SyncDirs(goalstates.SystemdSystemDir, filepath.Dir(p.Services.RecoveryScriptPathUnder(hostroot.Resolve())))
+	return p.Host.SyncDirs(goalstates.SystemdSystemDir, filepath.Dir(p.Host.RecoveryScriptPathUnder(hostroot.Resolve())))
 }
 func (None) ValidateEnvironment(containerized bool) error {
 	if containerized {
@@ -159,11 +162,11 @@ func (p None) StartNode(params StartParams) phases.Task {
 			return err
 		}
 		SeedNoneState(params.State, ac)
-		return p.Services.SaveState(params.Store, params.State).Do(ctx)
+		return p.Host.SaveState(params.Store, params.State).Do(ctx)
 	})
 }
 func (p None) NewOperator(ctx context.Context, cfg *config.Config, store StateStore) (Operator, error) {
-	return p.Services.NewOperator(ctx, cfg, store, p)
+	return p.OperatorFactory(ctx, cfg, store, p)
 }
 
 // NewNoneRuntime keeps SDK recovery files within Flex's reset ownership.

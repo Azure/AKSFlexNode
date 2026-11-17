@@ -47,6 +47,13 @@ func newContainerSDKFixture(t *testing.T) *containerSDKFixture {
 	if err := os.WriteFile(filepath.Join(f.base, "mountinfo"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	helper := filepath.Join(f.base, "agent/aks-flex-node")
+	if err := os.MkdirAll(filepath.Dir(helper), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("fixture helper"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -115,6 +122,10 @@ func (f *containerSDKFixture) rootPath(slot string) string {
 func (f *containerSDKFixture) snapshotPath() string { return filepath.Join(f.base, "snapshot") }
 
 func (f *containerSDKFixture) node(p containerops.Params) managedContainerNode {
+	return managedContainerNode{containerops.New(f.params(p))}
+}
+
+func (f *containerSDKFixture) params(p containerops.Params) containerops.Params {
 	if p.GoalState == nil {
 		p.GoalState = hostnodetest.GoalState(p.Slot, false)
 	}
@@ -129,7 +140,10 @@ func (f *containerSDKFixture) node(p containerops.Params) managedContainerNode {
 			if err := f.event("unpack-" + p.Slot); err != nil {
 				return err
 			}
-			return os.MkdirAll(filepath.Join(dir, "etc"), 0o750)
+			if err := os.MkdirAll(filepath.Join(dir, "etc"), 0o750); err != nil {
+				return err
+			}
+			return f.event("artifacts-" + p.Slot)
 		},
 		InstallRuntime: func(context.Context) error { return nil },
 		InstallHelper:  func(context.Context) error { return nil },
@@ -150,7 +164,7 @@ func (f *containerSDKFixture) node(p containerops.Params) managedContainerNode {
 		CleanupNetwork: func(context.Context) error { return f.event("cleanup-" + p.Slot) },
 		WaitLocalDNS:   func(context.Context, *goalstates.NodeStart) error { return nil },
 	}
-	return managedContainerNode{containerops.New(p)}
+	return p
 }
 
 func (f *containerSDKFixture) startSource() managedContainerNode {
@@ -193,11 +207,6 @@ func TestContainerOriginalSDKUpgradeRollback(t *testing.T) {
 			f := newContainerSDKFixture(t)
 			old := f.startSource()
 			next := f.node(containerops.Params{Log: discardLogger(), Slot: "kube2"})
-			if err := runtimeprovider.WrapContainerArtifactUnpack(next, func(context.Context, *goalstates.MachineGoalState) error {
-				return f.event("artifacts-kube2")
-			}); err != nil {
-				t.Fatal(err)
-			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			f.onEvent = func(event string) {
@@ -305,11 +314,6 @@ func TestContainerOriginalSDKUpgradeSuccessAndSlotRotation(t *testing.T) {
 		next := f.node(containerops.Params{Log: discardLogger(), Slot: slot})
 		stale := filepath.Join(f.rootPath(slot), "stale")
 		writeTestFile(t, stale, "stale image")
-		if err := runtimeprovider.WrapContainerArtifactUnpack(next, func(context.Context, *goalstates.MachineGoalState) error {
-			return f.event("artifacts-" + slot)
-		}); err != nil {
-			t.Fatal(err)
-		}
 		if err := next.Upgrade(t.Context(), old); err != nil {
 			t.Fatal(err)
 		}
@@ -351,7 +355,11 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 			}
 			gs := hostnodetest.GoalState("kube1", false)
 			gs.NodeStart.Kubelet.KubeletAuthInfo = ac.Kubelet.Auth
-			node := f.node(containerops.Params{Log: discardLogger(), Slot: "kube1", GoalState: gs})
+			params := f.params(containerops.Params{Log: discardLogger(), Config: ac, Slot: "kube1", GoalState: gs})
+			node, err := runtimeprovider.NewContainerNode(params, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !offline {
 				// The image already carries this NPD version; no network is needed.
 				fixture, err := filepath.Abs("testdata/container_npd.sh")
@@ -365,9 +373,6 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 				if err := os.Symlink(fixture, path); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := runtimeprovider.WrapContainerArtifactUnpack(node, runtimeprovider.ContainerArtifacts(cfg, discardLogger(), InstallBinary)); err != nil {
-				t.Fatal(err)
 			}
 			checked := 0
 			f.onEvent = func(event string) {
@@ -385,7 +390,7 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 					t.Fatalf("NPD availability before %s (offline=%t): %v", event, offline, err)
 				}
 			}
-			// A second prepare of a stopped slot exercises the wrapper's idempotency.
+			// A second prepare exercises artifact staging's idempotency.
 			for range 2 {
 				if _, err := node.Prepare(t.Context()); err != nil {
 					t.Fatal(err)
@@ -414,7 +419,13 @@ func TestContainerCompletionJournalWithOriginalSDK(t *testing.T) {
 			f.startSource()
 			op, _, store := containerOperatorFixture(t, "", false)
 			op.cfg.Bootstrap.OfflineArtifacts.Source = "file:///unused-offline-artifacts"
-			op.newNode = func(p containerops.Params) containerNode { return f.node(p) }
+			op.newNode = func(p containerops.Params) (containerNode, error) {
+				node, err := runtimeprovider.NewContainerNode(f.params(p), op.cfg)
+				if err != nil {
+					return nil, err
+				}
+				return managedContainerNode{node}, nil
+			}
 			op.resolve = func(_ context.Context, _ *slog.Logger, cfg *config.Config, slot string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 				return config.ToAgentConfig(cfg, slot), hostnodetest.GoalState(slot, false), nil, nil
 			}

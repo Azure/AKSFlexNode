@@ -6,7 +6,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
@@ -22,7 +21,6 @@ type OperatorFactory func(ctx context.Context, cfg *config.Config, store StateSt
 
 // HostServices supplies shared host-agent installation and filesystem operations.
 type HostServices struct {
-	InstallBinary           func(root isolation.NodeRoot) phases.Task
 	CopyExecutable          func(source string, destination string) error
 	FilesHaveEqualSHA256    func(first string, second string) (bool, error)
 	RemoveHostHelpers       func(log *slog.Logger) phases.Task
@@ -42,10 +40,4 @@ type NSpawnServices struct {
 	ConfigureDependencies  func(log *slog.Logger, rootFS *goalstates.RootFS, services []string) phases.Task
 	CleanupLegacyBridgeCNI func(log *slog.Logger) phases.Task
 	ActiveMachineFromStore func(ctx context.Context, store StateStore) (*ActiveMachine, error)
-}
-
-// NoneServices supplies host-agent integration for the host-native runtime.
-type NoneServices struct {
-	HostServices
-	NewOperator OperatorFactory
 }
