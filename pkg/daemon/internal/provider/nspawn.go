@@ -108,7 +108,7 @@ func (p NSpawn) StartNode(params StartParams) phases.Task {
 		StageContainerImageArchiveBindSource(log, params.ContainerImageArchives),
 		rootfs.Provision(log, gs.RootFS),
 		p.Services.ConfigureDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
-		phases.Parallel(log, npd.Download(log, cfg, gs.RootFS.Root()), p.Services.InstallBinary(gs.RootFS.Root())),
+		phases.Parallel(log, npd.Download(log, cfg, gs.RootFS.Root()), InstallBinary(gs.RootFS.Root())),
 		nodestart.StartNode(log, gs.NodeStart), nodestart.WaitForKubelet(log, params.MachineName),
 		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart), p.Services.SaveState(params.Store, params.State),
 	)
