@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -72,11 +75,22 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	return agentbinary.ActivateHostDaemon(ctx, log, agentdeployment.HostAgentActivationOptions(paths, candidate), service)
 }
 
+type hostActivationService interface {
+	Preflight(context.Context, string, agentdeployment.ServiceTargets) (agentbinary.ServicePlan, error)
+	WasActive() bool
+	Prepare(context.Context, string) error
+	Reload(context.Context) error
+	Restart(context.Context) error
+	WaitHealthyForBinary(context.Context, string) (string, error)
+}
+
 type flexDaemonActivationService struct {
-	*agentdeployment.HostActivationService
+	hostActivationService
 	state         stateStore
 	log           *slog.Logger
 	candidatePath string
+	configPath    string
+	unitPath      string
 	synchronize   func(string, string) error
 }
 
@@ -90,15 +104,14 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string,
 	if err != nil {
 		return nil, agentdeployment.UpgradePaths{}, err
 	}
-	service, paths, err := agentdeployment.NewHostActivationService(log, root, resolveRoot)
-	if err != nil {
-		return nil, agentdeployment.UpgradePaths{}, err
-	}
+	service, paths := agentdeployment.NewHostActivationService(log, root, resolveRoot)
 	return &flexDaemonActivationService{
-		HostActivationService: service,
+		hostActivationService: service,
 		state:                 state,
 		log:                   log,
 		candidatePath:         candidatePath,
+		configPath:            filepath.Join(config.ConfigDir, "config.json"),
+		unitPath:              agentdeployment.ServiceUnitPath,
 		synchronize:           agentdeployment.SynchronizeAgentBinary,
 	}, paths, nil
 }
@@ -112,10 +125,44 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 		if err := agentdeployment.CheckIsolation(ctx, s.candidatePath, state.Isolation); err != nil {
 			return agentbinary.ServicePlan{}, err
 		}
-		s.WorkerMode = state.Isolation
 	}
 
-	return s.HostActivationService.Preflight(ctx, currentBinaryPath)
+	cfg, err := config.ReadConfig(s.configPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) || state != nil {
+			return agentbinary.ServicePlan{}, fmt.Errorf("read host agent configuration: %w", err)
+		}
+		if _, unitErr := os.Lstat(s.unitPath); unitErr == nil {
+			return agentbinary.ServicePlan{}, fmt.Errorf("installed host agent requires configuration: %w", err)
+		} else if !errors.Is(unitErr, os.ErrNotExist) {
+			return agentbinary.ServicePlan{}, fmt.Errorf("inspect installed host agent unit: %w", unitErr)
+		}
+	}
+
+	configMissing := cfg == nil
+	mode := config.DefaultIsolationMode
+	if configMissing {
+		// Reset removed all deployment intent. The baseline unit stays stopped.
+		cfg = &config.Config{}
+	} else {
+		mode = cfg.Bootstrap.Isolation
+	}
+	if state != nil {
+		mode = state.Isolation
+	} else if err := config.ValidateIsolation(mode); err != nil {
+		return agentbinary.ServicePlan{}, err
+	}
+
+	targets := agentdeployment.ServiceTargetsFromConfig(cfg, mode)
+	plan, err := s.hostActivationService.Preflight(ctx, currentBinaryPath, targets)
+	if err != nil {
+		return agentbinary.ServicePlan{}, err
+	}
+	if configMissing && s.WasActive() {
+		return agentbinary.ServicePlan{}, fmt.Errorf("active host agent requires configuration at %s", s.configPath)
+	}
+
+	return plan, nil
 }
 
 func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedBinaryPath string) error {

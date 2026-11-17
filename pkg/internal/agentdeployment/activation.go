@@ -15,7 +15,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -38,9 +37,7 @@ func HostAgentActivationOptions(paths UpgradePaths, candidatePath string) agentb
 }
 
 type HostActivationService struct {
-	// WorkerMode overrides installed service detection when applied state exists.
-	WorkerMode isolation.Mode
-	log        *slog.Logger
+	log *slog.Logger
 	// root is the host root paths were built under, and resolveRoot what
 	// resolved it; see Preflight. A nil resolveRoot skips the check.
 	root        string
@@ -51,21 +48,13 @@ type HostActivationService struct {
 	paths            UpgradePaths
 	systemdDir       string
 	recoveryScript   string
-	serviceOptions   agentServiceOptions
+	targets          ServiceTargets
 	inspectService   func(context.Context, *slog.Logger, string) (bool, error)
 	serviceWasActive bool
 }
 
-func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() string) (*HostActivationService, UpgradePaths, error) {
-	if log == nil {
-		return nil, UpgradePaths{}, fmt.Errorf("logger is nil")
-	}
-
+func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() string) (*HostActivationService, UpgradePaths) {
 	paths := UpgradePathsUnder(root)
-	serviceOptions, err := installedAgentServiceOptions(SystemdSystemDir)
-	if err != nil {
-		return nil, UpgradePaths{}, err
-	}
 	return &HostActivationService{
 		log:            log,
 		root:           root,
@@ -74,9 +63,8 @@ func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() 
 		paths:          paths,
 		systemdDir:     SystemdSystemDir,
 		recoveryScript: RecoveryScriptPathUnder(root),
-		serviceOptions: serviceOptions,
 		inspectService: inspectAgentServiceActive,
-	}, paths, nil
+	}, paths
 }
 
 // Preflight checks the service before an activation switches anything. In an
@@ -94,7 +82,7 @@ func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() 
 // A move whose first pass renamed its copy into place just before the layout
 // was built leaves the root unchanged, but has not finished, so it is checked
 // here too, as guardLegacySeed checks it before the lock is held.
-func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
+func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath string, targets ServiceTargets) (agentbinary.ServicePlan, error) {
 	if s.resolveRoot != nil {
 		if current := s.resolveRoot(); current != s.root {
 			return agentbinary.ServicePlan{}, fmt.Errorf("the agent's host root moved from %s to %s while the activation was prepared; retry", s.root, current)
@@ -122,11 +110,9 @@ func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
-	if s.WorkerMode != "" {
-		s.serviceOptions.NoneWorker = s.WorkerMode == isolation.ModeNone
-	}
+	s.targets = targets
 
-	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
+	assets, err := desiredAgentServiceAssets(s.paths, s.targets, s.systemdDir, s.recoveryScript, currentBinaryPath)
 	if err != nil {
 		return agentbinary.ServicePlan{}, err
 	}
@@ -169,8 +155,13 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 	}
 }
 
+// WasActive reports the service state captured by Preflight under the activation lock.
+func (s *HostActivationService) WasActive() bool {
+	return s.serviceWasActive
+}
+
 func (s *HostActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
-	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
+	return writeAgentServiceAssets(s.paths, s.targets, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
 }
 
 func (s *HostActivationService) Reload(ctx context.Context) error {

@@ -3,80 +3,100 @@ package agentdeployment
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
-func TestNoneDaemonUnitDoesNotRequireMachinesTarget(t *testing.T) {
+func TestServiceTargetsFromConfig(t *testing.T) {
 	t.Parallel()
 
-	for _, arc := range []bool{false, true} {
-		name := "without ARC"
-		if arc {
-			name = "with ARC"
-		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone} {
+		for _, arc := range []bool{false, true} {
+			name := string(mode) + " without ARC"
+			if arc {
+				name = string(mode) + " with ARC"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 
-			unit, err := renderAgentServiceUnit("/opt/unbounded/agent/bin/aks-flex-node", agentServiceOptions{
-				NoneWorker: true,
-				ARCEnabled: arc,
+				cfg := &config.Config{
+					Azure: config.AzureConfig{
+						Arc: &config.ArcConfig{Enabled: arc},
+					},
+				}
+				targets := ServiceTargetsFromConfig(cfg, mode)
+				after := []string{"network-online.target", "systemd-udev-settle.service"}
+				wants := []string{"network-online.target", "systemd-udev-settle.service"}
+				if mode == isolation.ModeNSpawn {
+					wants = append(wants, "machines.target")
+				}
+				if arc {
+					after = append(after, "himdsd.service")
+					wants = append(wants, "himdsd.service")
+				}
+				if !slices.Equal(targets.AfterTargets, after) || !slices.Equal(targets.WantsTargets, wants) {
+					t.Fatalf("targets = %+v, want After=%q Wants=%q", targets, after, wants)
+				}
+
+				unit, err := renderAgentServiceUnit("/opt/unbounded/agent/bin/aks-flex-node", targets)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(unit), "machines.target") != (mode == isolation.ModeNSpawn) {
+					t.Fatal("service selected the wrong machines.target dependency")
+				}
+				if strings.Contains(string(unit), arcSystemdDependency) != arc {
+					t.Fatal("service lost ARC dependency selection")
+				}
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(string(unit), "machines.target") {
-				t.Fatal("none daemon unit references machines.target")
-			}
-			if strings.Contains(string(unit), arcSystemdDependency) != arc {
-				t.Fatal("none service lost ARC dependency selection")
-			}
-
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, ServiceUnitName), unit, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			options, err := installedAgentServiceOptions(dir)
-			if err != nil || !options.NoneWorker || options.ARCEnabled != arc {
-				t.Fatalf("installed options = %+v, %v", options, err)
-			}
-		})
+		}
 	}
 }
 
-func TestActivationPlansAppliedWorkerMode(t *testing.T) {
+func TestActivationPlansExplicitTargets(t *testing.T) {
 	t.Parallel()
 
 	paths := testAgentUpgradePaths(t)
 	dir := t.TempDir()
 	recovery := filepath.Join(t.TempDir(), "recovery.sh")
-	options := agentServiceOptions{NoneWorker: true, ARCEnabled: true}
-	if err := writeAgentServiceAssets(paths, options, dir, recovery, paths.CurrentPath, false); err != nil {
+	cfg := &config.Config{
+		Azure: config.AzureConfig{
+			Arc: &config.ArcConfig{Enabled: true},
+		},
+	}
+	targets := ServiceTargetsFromConfig(cfg, isolation.ModeNone)
+	if err := writeAgentServiceAssets(paths, targets, dir, recovery, paths.CurrentPath, false); err != nil {
 		t.Fatal(err)
 	}
 	service := &HostActivationService{
 		log:            discardLogger(),
-		WorkerMode:     isolation.ModeNone,
 		paths:          paths,
 		systemdDir:     dir,
 		recoveryScript: recovery,
-		// Simulate older service detection: applied state must override it.
-		serviceOptions: agentServiceOptions{ARCEnabled: true},
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 			return false, nil
 		},
 	}
-	plan, err := service.Preflight(t.Context(), paths.CurrentPath)
+	plan, err := service.Preflight(t.Context(), paths.CurrentPath, targets)
 	if err != nil || plan.UpdateRequired {
 		t.Fatalf("none plan = %+v, %v", plan, err)
 	}
-	service.WorkerMode = isolation.ModeNSpawn
-	plan, err = service.Preflight(t.Context(), paths.CurrentPath)
+
+	targets = ServiceTargetsFromConfig(cfg, isolation.ModeNSpawn)
+	plan, err = service.Preflight(t.Context(), paths.CurrentPath, targets)
 	if err != nil || !plan.UpdateRequired {
 		t.Fatalf("nspawn plan = %+v, %v", plan, err)
+	}
+	if err := service.Prepare(t.Context(), paths.CurrentPath); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = service.Preflight(t.Context(), paths.CurrentPath, targets)
+	if err != nil || plan.UpdateRequired {
+		t.Fatalf("prepared nspawn plan = %+v, %v", plan, err)
 	}
 }
