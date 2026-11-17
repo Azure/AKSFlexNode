@@ -196,11 +196,11 @@ func (h *machineOperationHandlers) restartNode(ctx context.Context) error {
 	if active.State.AppliedKubernetesVersion != "" {
 		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 	}
-	_, gs, archives, err := h.resolve(ctx, h.log, cfg, active.Name)
+	resolved, err := h.resolve(ctx, h.log, cfg, active.Name)
 	if err != nil {
 		return fmt.Errorf("resolve goal state for node restart: %w", err)
 	}
-	return h.runtime.Restart(cfg, h.log, active.Name, gs, archives).Do(ctx)
+	return h.runtime.Restart(cfg, h.log, active.Name, resolved.GoalState, resolved.ContainerImageArchives).Do(ctx)
 }
 
 func (h *machineOperationHandlers) reconcileAgentUpgrade(

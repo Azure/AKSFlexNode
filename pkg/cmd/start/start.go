@@ -102,12 +102,12 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
+	resolved, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
-	tasks := bootstrapTasks(cfg, logger, machineName, gs, containerImageArchives, daemon.SaveState(stateStore, state))
+	tasks := bootstrapTasks(cfg, logger, machineName, resolved.GoalState, resolved.ContainerImageArchives, daemon.SaveState(stateStore, state))
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}

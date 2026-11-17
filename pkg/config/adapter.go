@@ -223,21 +223,33 @@ func kubeletNodeLabels(cfg *Config) map[string]string {
 	return labels
 }
 
+// ResolvedMachineGoal keeps the SDK configuration, execution goal, and image
+// staging from the same resolution together.
+type ResolvedMachineGoal struct {
+	AgentConfig            *agentconfig.AgentConfig
+	GoalState              *goalstates.MachineGoalState
+	ContainerImageArchives *goalstates.ContainerImageArchiveStaging
+}
+
 // ResolveMachineGoalState converts FlexNode config to the shared agent config
 // and resolves the nspawn machine goal state. Bootstrap and preflight both use
 // this helper so preflight validates the same sources that bootstrap consumes.
-func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config, machineName string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
+func ResolveMachineGoalState(ctx context.Context, log *slog.Logger, cfg *Config, machineName string) (ResolvedMachineGoal, error) {
 	agentCfg := ToAgentConfig(cfg, machineName)
 	downloads, containerImageArchives, err := goalstates.ResolveDownloadOverridesWithOfflineArtifacts(ctx, agentCfg, nil)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve download overrides: %w", err)
+		return ResolvedMachineGoal{}, fmt.Errorf("resolve download overrides: %w", err)
 	}
 	gs, err := goalstates.ResolveMachine(log, agentCfg, machineName, downloads)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve machine goal state: %w", err)
+		return ResolvedMachineGoal{}, fmt.Errorf("resolve machine goal state: %w", err)
 	}
 
-	return agentCfg, gs, containerImageArchives, nil
+	return ResolvedMachineGoal{
+		AgentConfig:            agentCfg,
+		GoalState:              gs,
+		ContainerImageArchives: containerImageArchives,
+	}, nil
 }
 
 // HostBinaryPath returns the host's aks-flex-node, under the resolved host

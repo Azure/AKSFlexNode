@@ -320,7 +320,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		"settingsVersion", goal.SettingsVersion,
 		"kubernetesVersion", cfg.Components.Kubernetes,
 	)
-	_, gs, archives, err := r.resolve(ctx, r.log, cfg, newMachine)
+	resolved, err := r.resolve(ctx, r.log, cfg, newMachine)
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
@@ -329,7 +329,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		r.runtime.Stop(r.log, oldMachine),
 		r.runtime.CleanupNetwork(r.log),
 		r.hookUnits(r.log),
-		r.runtime.Start(cfg, r.log, newMachine, gs, archives),
+		r.runtime.Start(cfg, r.log, newMachine, resolved.GoalState, resolved.ContainerImageArchives),
 		SaveState(r.state, next),
 		r.runtime.Retire(r.log, oldMachine),
 	)
