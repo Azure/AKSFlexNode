@@ -77,6 +77,12 @@ func TestActivationPlansAppliedWorkerMode(t *testing.T) {
 	if err != nil || plan.UpdateRequired {
 		t.Fatalf("none plan = %+v, %v", plan, err)
 	}
+	service.WorkerMode = isolation.ModeContainer
+	plan, err = service.Preflight(t.Context(), paths.CurrentPath)
+	if err != nil || plan.UpdateRequired {
+		t.Fatalf("OCI plan = %+v, %v", plan, err)
+	}
+
 	service.WorkerMode = isolation.ModeNSpawn
 	plan, err = service.Preflight(t.Context(), paths.CurrentPath)
 	if err != nil || !plan.UpdateRequired {

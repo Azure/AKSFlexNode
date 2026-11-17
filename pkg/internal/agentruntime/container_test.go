@@ -27,6 +27,7 @@ func stageTestArchives(*slog.Logger, *goalstates.ContainerImageArchiveStaging) p
 
 func TestContainerStartPreflightAndRuntimeInstallation(t *testing.T) {
 	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		runtime  os.FileMode
@@ -37,16 +38,57 @@ func TestContainerStartPreflightAndRuntimeInstallation(t *testing.T) {
 		want     string
 		install  bool
 	}{
-		{name: "fresh host", cgroup: true, systemd: "systemd 255", install: true, want: "runtime installation reached"},
-		{name: "executable runtime", runtime: 0o700, cgroup: true, systemd: "systemd 255", install: true, want: "runtime installation reached"},
-		{name: "non-executable runtime", runtime: 0o600, cgroup: true, systemd: "systemd 255", want: "not executable"},
-		{name: "missing cgroup", systemd: "systemd 255", want: "cgroup v2"},
-		{name: "old systemd", cgroup: true, systemd: "systemd 253", want: "too old"},
-		{name: "read-only host", cgroup: true, systemd: "systemd 255", writable: errors.New("read only"), want: "read only"},
-		{name: "enforcing SELinux", cgroup: true, systemd: "systemd 255", selinux: true, want: "selinux label check"},
+		{
+			name:    "fresh host",
+			cgroup:  true,
+			systemd: "systemd 255",
+			install: true,
+			want:    "runtime installation reached",
+		},
+		{
+			name:    "executable runtime",
+			runtime: 0o700,
+			cgroup:  true,
+			systemd: "systemd 255",
+			install: true,
+			want:    "runtime installation reached",
+		},
+		{
+			name:    "non-executable runtime",
+			runtime: 0o600,
+			cgroup:  true,
+			systemd: "systemd 255",
+			want:    "not executable",
+		},
+		{
+			name:    "missing cgroup",
+			systemd: "systemd 255",
+			want:    "cgroup v2",
+		},
+		{
+			name:    "old systemd",
+			cgroup:  true,
+			systemd: "systemd 253",
+			want:    "too old",
+		},
+		{
+			name:     "read-only host",
+			cgroup:   true,
+			systemd:  "systemd 255",
+			writable: errors.New("read only"),
+			want:     "read only",
+		},
+		{
+			name:    "enforcing SELinux",
+			cgroup:  true,
+			systemd: "systemd 255",
+			selinux: true,
+			want:    "selinux label check",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			dir := t.TempDir()
 			runtimePath := filepath.Join(dir, "runc")
 			cgroupPath := filepath.Join(dir, "cgroup.controllers")
@@ -107,6 +149,7 @@ func TestContainerStartPreflightAndRuntimeInstallation(t *testing.T) {
 
 func TestContainerFreshStartInstallsHelperBeforeActivation(t *testing.T) {
 	t.Parallel()
+
 	dir := t.TempDir()
 	layout := container.Layout{Base: filepath.Join(dir, "containers")}
 	runtimePath := filepath.Join(dir, "runc")
@@ -176,6 +219,7 @@ func TestContainerFreshStartInstallsHelperBeforeActivation(t *testing.T) {
 
 func TestContainerUpgradeUnpackInstallsHelper(t *testing.T) {
 	t.Parallel()
+
 	for _, fail := range []bool{false, true} {
 		name := "success"
 		if fail {
@@ -183,6 +227,7 @@ func TestContainerUpgradeUnpackInstallsHelper(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+
 			layout := container.Layout{Base: t.TempDir()}
 			unpackErr := errors.New("unpack failed")
 			node := containerops.New(containerops.Params{
@@ -230,6 +275,7 @@ func TestContainerUpgradeUnpackInstallsHelper(t *testing.T) {
 
 func TestContainerUpgradeInstallsHelperBeforeProvisionAndActivation(t *testing.T) {
 	t.Parallel()
+
 	dir := t.TempDir()
 	layout := container.Layout{Base: filepath.Join(dir, "containers")}
 	mountInfo := filepath.Join(dir, "mountinfo")
@@ -287,6 +333,7 @@ func TestContainerUpgradeInstallsHelperBeforeProvisionAndActivation(t *testing.T
 
 func TestContainerResetRemovesOnlyUpgradeSnapshot(t *testing.T) {
 	t.Parallel()
+
 	root := t.TempDir()
 	dir := filepath.Join(root, goalstates.AgentConfigDir)
 	if err := os.MkdirAll(filepath.Join(dir, "container-upgrade-config"), 0o700); err != nil {
@@ -392,16 +439,24 @@ func (f *containerTeardownFixture) run(_ context.Context, _ *slog.Logger, name s
 
 func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
 	t.Parallel()
+
 	for _, tc := range []struct {
 		name       string
 		createUnit bool
 		wantStops  int
 	}{
-		{name: "interrupted prepare without unit"},
-		{name: "unit removed before mounted rootfs", createUnit: true, wantStops: 1},
+		{
+			name: "interrupted prepare without unit",
+		},
+		{
+			name:       "unit removed before mounted rootfs",
+			createUnit: true,
+			wantStops:  1,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			f := newContainerTeardownFixture(t)
 			if tc.createUnit {
 				if err := os.WriteFile(f.unit, nil, 0o600); err != nil {
@@ -449,6 +504,7 @@ func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
 
 func TestContainerTeardownStopsRunningSupervisor(t *testing.T) {
 	t.Parallel()
+
 	f := newContainerTeardownFixture(t)
 	if err := os.WriteFile(f.unit, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -472,15 +528,22 @@ func TestContainerTeardownStopsRunningSupervisor(t *testing.T) {
 
 func TestContainerTeardownPropagatesStopFailure(t *testing.T) {
 	t.Parallel()
+
 	for _, tc := range []struct {
 		name  string
 		alive bool
 	}{
-		{name: "container gone"},
-		{name: "container still alive", alive: true},
+		{
+			name: "container gone",
+		},
+		{
+			name:  "container still alive",
+			alive: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			f := newContainerTeardownFixture(t)
 			if err := os.WriteFile(f.unit, nil, 0o600); err != nil {
 				t.Fatal(err)
@@ -522,6 +585,7 @@ func TestContainerTeardownPropagatesStopFailure(t *testing.T) {
 
 func TestContainerWorkerUsesSDKRootAndExecutor(t *testing.T) {
 	t.Parallel()
+
 	dir := t.TempDir()
 	worker := containerRuntime{
 		newNode: func(params containerops.Params) *containerops.Node {
@@ -559,6 +623,7 @@ func TestContainerWorkerUsesSDKRootAndExecutor(t *testing.T) {
 
 func TestContainerHelperUsesStableHostAlias(t *testing.T) {
 	t.Parallel()
+
 	worker := containerRuntime{newNode: containerops.New}
 	node := worker.node(slog.New(slog.DiscardHandler), Node{Slot: "kube1"})
 	if node.Backend().HelperPath != "/opt/unbounded/agent/bin/aks-flex-node" {

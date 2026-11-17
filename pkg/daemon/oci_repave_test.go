@@ -59,16 +59,25 @@ func (r *ociRepaveRuntime) Retire(_ *slog.Logger, _ agentruntime.Inputs) phases.
 
 func TestOCIRepaveSavesAlternateSlotBeforeRetire(t *testing.T) {
 	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		failSave bool
 		want     []string
 	}{
-		{name: "success", want: []string{"prepare", "upgrade", "save", "retire"}},
-		{name: "save fails", failSave: true, want: []string{"prepare", "upgrade", "save"}},
+		{
+			name: "success",
+			want: []string{"prepare", "upgrade", "save", "retire"},
+		},
+		{
+			name:     "save fails",
+			failSave: true,
+			want:     []string{"prepare", "upgrade", "save"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			var events []string
 			store := &recordingStateStore{
 				state: &State{
@@ -76,7 +85,9 @@ func TestOCIRepaveSavesAlternateSlotBeforeRetire(t *testing.T) {
 					ActiveMachine: "kube1",
 					NodeConfig: &agentconfig.AgentConfig{
 						Isolation: "container",
-						Cluster:   agentconfig.AgentClusterConfig{Version: "1.34.0"},
+						Cluster: agentconfig.AgentClusterConfig{
+							Version: "1.34.0",
+						},
 					},
 				},
 				events: &events,
@@ -89,10 +100,15 @@ func TestOCIRepaveSavesAlternateSlotBeforeRetire(t *testing.T) {
 			r.resolve = func(_ context.Context, _ *slog.Logger, _ *config.Config, _ string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error) {
 				return &agentconfig.AgentConfig{
 					Isolation: "container",
-					Cluster:   agentconfig.AgentClusterConfig{Version: "1.35.0"},
+					Cluster: agentconfig.AgentClusterConfig{
+						Version: "1.35.0",
+					},
 				}, &goalstates.MachineGoalState{}, nil, nil
 			}
-			_, err := r.executeGoalState(t.Context(), aksmachine.GoalState{SettingsVersion: "new", KubernetesVersion: "1.35.0"})
+			_, err := r.executeGoalState(t.Context(), aksmachine.GoalState{
+				SettingsVersion:   "new",
+				KubernetesVersion: "1.35.0",
+			})
 			if (err != nil) != tc.failSave || !reflect.DeepEqual(events, tc.want) {
 				t.Fatalf("error=%v events=%v, want %v", err, events, tc.want)
 			}

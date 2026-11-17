@@ -9,7 +9,10 @@ import (
 
 // NewCommand supplies the OCI worker unit hooks.
 func NewCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "node-lifecycle", Hidden: true}
+	cmd := &cobra.Command{
+		Use:    "node-lifecycle",
+		Hidden: true,
+	}
 	for _, phase := range []string{"pre-start", "post-start", "reconcile"} {
 		cmd.AddCommand(&cobra.Command{
 			Use:    phase + " SLOT",

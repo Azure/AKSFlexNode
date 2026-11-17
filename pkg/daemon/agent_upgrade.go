@@ -118,6 +118,7 @@ func agentUpgradeHelperPaths(log *slog.Logger, mode isolation.Mode) (map[string]
 	helpers := make(map[string]string, 2)
 	for _, slot := range []string{goalstates.NSpawnMachineKube1, goalstates.NSpawnMachineKube2} {
 		if mode == isolation.ModeContainer {
+			// The private rootfs path needs no new goal resolution or device discovery.
 			helpers[slot] = filepath.Join((container.Layout{}).RootfsDir(slot), "usr/local/bin/aks-flex-node")
 			continue
 		}

@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
-	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -136,18 +135,11 @@ func (s *flexDaemonActivationService) synchronizeActiveWorker(ctx context.Contex
 		return nil
 	}
 
-	runtime, err := agentruntime.New(state.Isolation)
-	if err != nil {
-		return err
-	}
-	worker, err := runtime.Worker(s.log, agentruntime.Node{
-		Slot:   state.ActiveMachine,
-		Config: state.NodeConfig,
-	})
+	helpers, err := agentUpgradeHelperPaths(s.log, state.Isolation)
 	if err != nil {
 		return fmt.Errorf("resolve active worker for agent activation: %w", err)
 	}
-	if err := s.synchronize(expected, worker.Root.Path("/usr/local/bin/aks-flex-node")); err != nil {
+	if err := s.synchronize(expected, helpers[state.ActiveMachine]); err != nil {
 		return fmt.Errorf("synchronize worker credential helper: %w", err)
 	}
 	return nil
