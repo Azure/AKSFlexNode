@@ -30,6 +30,10 @@ func ValidateAgentDeployment(mode isolation.Mode, containerized bool) error {
 
 // ValidateWorkerBootstrap refuses an isolation switch or incompatible host before mutation.
 func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.Logger, applied *State, containerized bool) error {
+	return validateWorkerBootstrap(ctx, cfg, log, applied, containerized, host.EnsureNoExistingDeploymentFor)
+}
+
+func validateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.Logger, applied *State, containerized bool, ensureClean func(context.Context, *slog.Logger, isolation.Mode) error) error {
 	if err := ValidateAgentDeployment(cfg.Bootstrap.Isolation, containerized); err != nil {
 		return err
 	}
@@ -46,23 +50,32 @@ func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.
 		return err
 	}
 	ociPresent := ociArtifacts || containerops.Present()
-	if cfg.Bootstrap.Isolation != isolation.ModeContainer && ociPresent {
+	return validateBootstrapArtifacts(ctx, cfg.Bootstrap.Isolation, log, applied, present, ociPresent, ensureClean)
+}
+
+func validateBootstrapArtifacts(ctx context.Context, mode isolation.Mode, log *slog.Logger, applied *State, present, ociPresent bool, ensureClean func(context.Context, *slog.Logger, isolation.Mode) error) error {
+	if mode != isolation.ModeContainer && ociPresent {
 		return fmt.Errorf("OCI worker is present; reset before changing isolation")
 	}
-	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
+	if mode == isolation.ModeContainer {
 		if present {
 			return fmt.Errorf("host-native worker is present; reset before changing isolation")
 		}
 		if applied == nil && ociPresent {
 			return fmt.Errorf("OCI worker has no applied state; reset before bootstrap")
 		}
-		return host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNSpawn)
+		if applied != nil {
+			// State loading and selection validate the installed worker before mutation.
+			// Its owned bpffs paths are not evidence of a conflicting deployment.
+			return nil
+		}
+		return ensureClean(ctx, log, isolation.ModeNSpawn)
 	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+	if mode == isolation.ModeNone {
 		if applied == nil && present {
 			return fmt.Errorf("host-native worker has no applied state; reset before bootstrap")
 		}
-		if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNSpawn); err != nil {
+		if err := ensureClean(ctx, log, isolation.ModeNSpawn); err != nil {
 			return err
 		}
 		return none.NewDefault(log).PreflightOwnership()
