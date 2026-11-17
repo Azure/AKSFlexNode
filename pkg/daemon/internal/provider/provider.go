@@ -36,7 +36,7 @@ func (s *State) DeepCopy() *State {
 type StateStore interface {
 	// Load returns the last applied state, or nil when no state exists.
 	Load(ctx context.Context) (*State, error)
-	// Save durably publishes an applied runtime and its configuration.
+	// Save persists an applied runtime and its configuration.
 	Save(ctx context.Context, state *State) error
 	// Delete removes the applied state after runtime cleanup succeeds.
 	Delete(ctx context.Context) error
