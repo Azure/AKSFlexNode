@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -32,7 +33,7 @@ func (o *nspawnNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) 
 	}
 
 	return phases.Serial(log,
-		stageContainerImageArchiveBindSource(log, containerImageArchives),
+		provider.StageContainerImageArchiveBindSource(log, containerImageArchives),
 		nodestop.StopNode(log, active.Name),
 		nodestart.StartNode(log, gs.NodeStart),
 		nodestart.WaitForKubelet(log, active.Name),
@@ -44,8 +45,8 @@ type nspawnNodeOperator struct {
 	*operatorBase
 }
 
-func (p nspawnProvider) NewOperator(ctx context.Context, cfg *config.Config, state stateStore) (nodeOperator, error) {
-	base, _, err := newOperatorBase(ctx, cfg, state, p)
+func newNSpawnOperator(ctx context.Context, cfg *config.Config, state stateStore, worker NodeProvider) (nodeOperator, error) {
+	base, _, err := newOperatorBase(ctx, cfg, state, worker)
 	if err != nil {
 		return nil, err
 	}

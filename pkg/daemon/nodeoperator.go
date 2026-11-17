@@ -11,10 +11,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-type activeMachine struct {
-	Name  string
-	State *State
-}
+type activeMachine = provider.ActiveMachine
 
 type nodeOperator = provider.Operator
 

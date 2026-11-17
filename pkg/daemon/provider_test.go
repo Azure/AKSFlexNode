@@ -10,11 +10,19 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
+
+type nspawnProvider = provider.NSpawn
+type noneProvider = provider.None
+
+var newNoneRuntime = provider.NewNoneRuntime
+var resetNoneRuntime = provider.ResetNoneRuntime
+var nspawnLifecycleTasks = provider.NSpawnLifecycleTasks
 
 func mustNodeProvider(t *testing.T, mode isolation.Mode) NodeProvider {
 	t.Helper()

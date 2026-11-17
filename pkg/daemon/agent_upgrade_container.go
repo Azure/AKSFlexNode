@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -501,7 +502,7 @@ func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoade
 			return utilexec.ReloadSystemd(ctx, log)
 		},
 		runningExecutable: runningAgentExecutable,
-		nspawnBinaryPath:  activeNspawnAgentBinaryPath,
+		nspawnBinaryPath:  provider.NSpawnAgentBinaryPath,
 		images:            agentImageEnvFile{path: agentImageSelectionPath},
 		install:           agentImageEnvFile{path: agentInstallSettingsPath},
 		runningImage:      os.Getenv(agentImageEnv),
