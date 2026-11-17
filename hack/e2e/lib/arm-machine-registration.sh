@@ -36,7 +36,7 @@ _arm_machine_delete_url() {
 
 _require_arm_machine_preview() {
   local state
-  state="$(az feature show \
+  state="$(timeout --kill-after=5s 60s az feature show \
     --subscription "${AZURE_SUBSCRIPTION_ID}" \
     --namespace Microsoft.ContainerService \
     --name PutMachinePreview \
@@ -53,7 +53,7 @@ _arm_machine_count() {
   local machine_name="$2"
   local response_file="${E2E_LOG_DIR}/arm-machines.json"
 
-  az rest \
+  timeout --kill-after=5s 60s az rest \
     --only-show-errors \
     --method get \
     --url "$(_arm_machine_collection_url "${cluster_id}")" \
@@ -81,18 +81,20 @@ _wait_for_arm_machine_delete() {
   local operation_url="$1"
   local machine_name="$2"
   local response_file="${E2E_LOG_DIR}/arm-machine-delete-operation.json"
-  local deadline operation_status
+  local deadline operation_status remaining cli_timeout
   deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 
   while (( SECONDS < deadline )); do
-    if ! az rest \
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || break
+    cli_timeout=$((remaining < 60 ? remaining : 60))
+    if ! timeout --kill-after=5s "${cli_timeout}s" az rest \
       --only-show-errors \
       --method get \
       --url "${operation_url}" \
       --output json > "${response_file}"; then
-      log_warn "Failed to read ARM Machine delete operation; retrying..."
-      sleep 10
-      continue
+      log_error "Cannot read ARM Machine delete operation; check runner access and Azure CLI errors above"
+      return 1
     fi
 
     operation_status="$(jq -r '.status // empty' "${response_file}")"
@@ -100,7 +102,7 @@ _wait_for_arm_machine_delete() {
       succeeded)
         return 0
         ;;
-      failed|canceled)
+      failed|canceled|cancelled)
         log_error "ARM Machine '${machine_name}' delete operation ${operation_status}"
         jq '{status, error}' "${response_file}" >&2 || true
         return 1
@@ -135,7 +137,7 @@ _delete_arm_machine() {
   response_file="${E2E_LOG_DIR}/arm-machine-delete-response.json"
   install -m 0600 /dev/null "${headers_file}"
   install -m 0600 /dev/null "${response_file}"
-  token="$(az account get-access-token \
+  token="$(timeout --kill-after=5s 60s az account get-access-token \
     --only-show-errors \
     --subscription "${AZURE_SUBSCRIPTION_ID}" \
     --resource-type arm \
@@ -146,7 +148,7 @@ _delete_arm_machine() {
   # the curl process arguments.
   if ! http_status="$(
     printf 'header = "Authorization: Bearer %s"\n' "${token}" |
-      curl --silent --show-error \
+      curl --silent --show-error --connect-timeout 10 --max-time 60 \
         --config - \
         --request POST \
         --header 'Content-Type: application/json' \
@@ -214,7 +216,7 @@ set -euo pipefail
 response_file=/tmp/aks-flex-arm-machine-access.json
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while (( SECONDS < deadline )); do
-  token="$(curl -fsS \
+  token="$(curl -fsS --connect-timeout 5 --max-time 15 \
     -H Metadata:true \
     'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fmanagement.azure.com%2F' |
     python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])' 2>/dev/null || true)"
@@ -228,7 +230,7 @@ while (( SECONDS < deadline )); do
   # the curl process arguments.
   status="$(
     printf 'header = "Authorization: Bearer %s"\n' "${token}" |
-      curl --silent --show-error \
+      curl --silent --show-error --connect-timeout 10 --max-time 30 \
         --config - \
         --output "${response_file}" \
         --write-out '%{http_code}' \
@@ -263,7 +265,7 @@ _validate_arm_machine() {
   local response_file="${E2E_LOG_DIR}/arm-machine-registration.json"
 
   log_info "Reading the registered ARM Machine '${machine_name}'..."
-  az rest \
+  timeout --kill-after=5s 60s az rest \
     --only-show-errors \
     --method get \
     --url "$(_arm_machine_url "${cluster_id}" "${machine_name}")" \
