@@ -72,7 +72,7 @@ type Config struct {
 	Nodes      typedcorev1.NodeInterface
 }
 
-// Operations implements the daemon's Hub transition steps for one worker. Each
+// Operations implements Hub transition steps for one worker. Each
 // step is idempotent because the engine can repeat a step after a crash.
 type Operations struct {
 	cfg            Config

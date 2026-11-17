@@ -1,4 +1,4 @@
-package daemon
+package yurthub
 
 import (
 	"context"
@@ -10,11 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var errHubTest = errors.New("injected hub failure")
@@ -415,71 +411,6 @@ func writeHubJournal(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-type testHubMachineReconciler struct {
-	calls int
-	err   error
-}
-
-func (r *testHubMachineReconciler) ReconcileHub(context.Context, aksmachine.GoalState, *State, *corev1.Node) error {
-	r.calls++
-	return r.err
-}
-
-func TestHubUsesExistingMachineQueue(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"applied machine", "pending repave", "hub retry", "node absent", "deleting", "machine absent"} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.0"}}}
-			operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "42", ActiveMachine: "kube1"}}
-			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
-			hub := &testHubMachineReconciler{}
-			wantCalls := 1
-			switch name {
-			case "pending repave":
-				operator.state.AppliedSettingsVersion = "41"
-			case "hub retry":
-				hub.err = errHubTest
-			case "node absent", "deleting", "machine absent":
-				wantCalls = 0
-			}
-			if name == "deleting" {
-				node.Spec.Taints = []corev1.Taint{deletionTaint()}
-			}
-			if name == "machine absent" {
-				machines.notFound = true
-			}
-			var objects []client.Object
-			if name != "node absent" {
-				objects = append(objects, node)
-			}
-			r := newTestRepaveReconciler(t, machines, fakeClient(objects...), operator)
-			r.hub = hub
-			before := *operator.state
-			result, err := r.ReconcileRepave(t.Context(), repaveByAKSMachine)
-			// Hub failures are logged, never returned: the normal jittered poll
-			// must stay in effect instead of the controller's error backoff.
-			if err != nil || hub.calls != wantCalls {
-				t.Fatalf("hub queue calls = %d, error = %v", hub.calls, err)
-			}
-			if result.RequeueAfter < r.machineReconcileInterval {
-				t.Fatalf("RequeueAfter = %v, want the machine poll interval", result.RequeueAfter)
-			}
-			if *operator.state != before || operator.applied || operator.reset || operator.restarted {
-				t.Fatal("hub reconcile altered node lifecycle or acknowledged pending settings")
-			}
-			if name == "pending repave" && machines.status.ObservedSettingsVersion != "" {
-				t.Fatal("hub reconcile acknowledged Machine settings")
-			}
-			// A Hub failure must not skip the existing decision: already-applied
-			// Machine settings are still reported.
-			if name == "hub retry" && machines.status.ObservedSettingsVersion != "42" {
-				t.Fatal("hub failure skipped Machine status reporting")
-			}
-		})
 	}
 }
 
