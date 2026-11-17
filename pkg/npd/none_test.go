@@ -16,45 +16,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
-func TestHostNativeNPD(t *testing.T) {
-	t.Parallel()
-	root := none.Root{HostRoot: t.TempDir(), Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
-	var calls []string
-	ns := &goalstates.NodeStart{
-		RootOverride: root,
-		NodeName:     "flex-worker",
-		ExecOverride: func(_ context.Context, _ *slog.Logger, args ...string) (string, error) {
-			calls = append(calls, strings.Join(args, " "))
-			return "active", nil
-		},
-	}
-	cfg := &config.Config{}
-	task := Start(slog.New(slog.DiscardHandler), cfg, root, ns)
-	for range 2 {
-		if err := task.Do(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	path := root.Path(filepath.Join("/etc/systemd/system", systemdUnitNPD))
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(content), "ExecStart="+root.Path(npdBinaryPath)+" ") || !strings.Contains(string(content), "flex-worker") {
-		t.Fatalf("incorrect NPD service: %s", content)
-	}
-	for _, call := range calls {
-		if !strings.HasPrefix(call, "systemctl ") || !strings.Contains(call, systemdUnitNPD) && call != "systemctl daemon-reload" {
-			t.Fatalf("unexpected host NPD command %s", call)
-		}
-	}
-	assertRoot := Download(slog.New(slog.DiscardHandler), cfg, root)
-	download, ok := assertRoot.(*downloadTask)
-	if !ok || download.root != root {
-		t.Fatal("NPD download does not target the versioned root")
-	}
-}
-
 func TestHostNativeNPDReconciliation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
