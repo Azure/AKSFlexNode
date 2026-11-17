@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -82,9 +83,16 @@ func TestAgentUpgradeExecutorsTakeTheirOwnKindOfRequest(t *testing.T) {
 		request  UpgradeRequest
 		wantErr  string
 	}{
-		"a host takes an archive": {executor: &HostUpgrade{}, request: archive},
+		"a host takes an archive": {
+			executor: &HostUpgrade{mode: isolation.ModeNSpawn},
+			request:  archive,
+		},
 		// As main, which takes only archives, refuses any URL that isn't HTTP or HTTPS.
-		"a host refuses an image":      {executor: &HostUpgrade{}, request: testAgentUpgradeV2, wantErr: "must use HTTP or HTTPS"},
+		"a host refuses an image": {
+			executor: &HostUpgrade{mode: isolation.ModeNSpawn},
+			request:  testAgentUpgradeV2,
+			wantErr:  "must use HTTP or HTTPS",
+		},
 		"a container takes an image":   {executor: &ContainerUpgrade{}, request: testAgentUpgradeV2},
 		"a container refuses archives": {executor: &ContainerUpgrade{}, request: archive, wantErr: "runs in its container"},
 	}

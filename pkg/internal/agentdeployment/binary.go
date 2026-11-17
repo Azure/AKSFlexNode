@@ -21,6 +21,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // DefaultUpgradePaths returns the host-side agent upgrade layout under the
@@ -256,7 +257,11 @@ func replaceSymlink(linkPath, targetPath string) error {
 
 // The shared installer permits omitted digests; require one here so its version
 // probe cannot execute an unverified candidate.
-func secureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
+func secureInstallOptions(rawURL, expectedDigest string, mode isolation.Mode) (agentbinary.InstallOptions, error) {
+	if err := config.ValidateIsolation(mode); err != nil {
+		return agentbinary.InstallOptions{}, err
+	}
+
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTP or HTTPS, include a host, omit user information, and omit fragments")
@@ -273,17 +278,24 @@ func secureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOpt
 	if err != nil {
 		return agentbinary.InstallOptions{}, err
 	}
-	return agentbinary.InstallOptions{
+	opts := agentbinary.InstallOptions{
 		DownloadURL:    rawURL,
 		ExpectedSHA256: expectedDigest,
 		ExpectedMember: member,
 		Mode:           upgradeBinaryMode,
 		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
-	}, nil
+	}
+	if mode == isolation.ModeNone {
+		opts.Check = func(ctx context.Context, path string) error {
+			return CheckIsolation(ctx, path, mode)
+		}
+	}
+
+	return opts, nil
 }
 
-func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths) error {
-	opts, err := secureInstallOptions(rawURL, expectedDigest)
+func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths, mode isolation.Mode) error {
+	opts, err := secureInstallOptions(rawURL, expectedDigest, mode)
 	if err != nil {
 		return err
 	}

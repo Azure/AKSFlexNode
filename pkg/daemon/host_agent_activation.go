@@ -7,9 +7,34 @@ import (
 	"os"
 
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
+
+// PreflightHostAgentActivation validates the applied mode against a private
+// candidate and plans activation without changing the installed layout or units.
+func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
+	if agentdeployment.Containerized() {
+		return agentbinary.ActivationPlan{}, agentdeployment.ErrDirectActivationInContainer
+	}
+
+	candidate, cleanup, err := agentdeployment.SnapshotCandidate(candidatePath)
+	if err != nil {
+		return agentbinary.ActivationPlan{}, err
+	}
+	defer cleanup()
+
+	service, paths, err := newFlexDaemonActivationService(log, agentdeployment.PlannedHostRoot, candidate)
+	if err != nil {
+		return agentbinary.ActivationPlan{}, err
+	}
+	plan, err := agentbinary.PreflightHostDaemonActivation(ctx, agentdeployment.HostAgentActivationOptions(paths, candidate), service)
+	// Report the caller's path rather than the temporary input that is about to be removed.
+	plan.CandidatePath = candidatePath
+	return plan, err
+}
 
 // ActivateHostAgent activates a directly staged Flex agent binary. It uses the
 // same lock and binary layout as MachineOperation upgrades.
@@ -26,21 +51,28 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := agentdeployment.GuardActivationLegacySeed(ctx, log); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve)
+	candidate, cleanup, err := agentdeployment.SnapshotCandidate(candidatePath)
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	return agentbinary.ActivateHostDaemon(ctx, log, agentdeployment.HostAgentActivationOptions(paths, candidatePath), service)
+	defer cleanup()
+
+	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve, candidate)
+	if err != nil {
+		return agentbinary.ActivationResult{}, err
+	}
+	return agentbinary.ActivateHostDaemon(ctx, log, agentdeployment.HostAgentActivationOptions(paths, candidate), service)
 }
 
 type flexDaemonActivationService struct {
 	*agentdeployment.HostActivationService
-	state       stateStore
-	log         *slog.Logger
-	synchronize func(string, string) error
+	state         stateStore
+	log           *slog.Logger
+	candidatePath string
+	synchronize   func(string, string) error
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentdeployment.UpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, candidatePath string) (*flexDaemonActivationService, agentdeployment.UpgradePaths, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -57,8 +89,24 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 		HostActivationService: service,
 		state:                 state,
 		log:                   log,
-		synchronize:           agentdeployment.SynchronizeNspawnAgentBinary,
+		candidatePath:         candidatePath,
+		synchronize:           agentdeployment.SynchronizeAgentBinary,
 	}, paths, nil
+}
+
+func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
+	state, err := s.state.Load(ctx)
+	if err != nil {
+		return agentbinary.ServicePlan{}, fmt.Errorf("load applied worker state: %w", err)
+	}
+	if state != nil {
+		if err := agentdeployment.CheckIsolation(ctx, s.candidatePath, state.Isolation); err != nil {
+			return agentbinary.ServicePlan{}, err
+		}
+		s.WorkerMode = state.Isolation
+	}
+
+	return s.HostActivationService.Preflight(ctx, currentBinaryPath)
 }
 
 func (s *flexDaemonActivationService) WaitHealthy(ctx context.Context, expectedBinaryPath string) error {
@@ -84,7 +132,15 @@ func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Contex
 	if !validActiveMachine(state.ActiveMachine) {
 		return fmt.Errorf("no valid active nspawn machine for agent activation")
 	}
-	if err := s.synchronize(expected, state.ActiveMachine); err != nil {
+	if state.Isolation == isolation.ModeNone {
+		return nil
+	}
+
+	worker, err := (agentruntime.NSpawn{}).Worker(s.log, agentruntime.Node{Slot: state.ActiveMachine, Config: state.NodeConfig})
+	if err != nil {
+		return fmt.Errorf("resolve active worker for agent activation: %w", err)
+	}
+	if err := s.synchronize(expected, worker.Root.Path("/usr/local/bin/aks-flex-node")); err != nil {
 		return fmt.Errorf("synchronize active nspawn agent binary: %w", err)
 	}
 	return nil

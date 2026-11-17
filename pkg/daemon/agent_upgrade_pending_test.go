@@ -60,12 +60,12 @@ func TestRecordPendingReadsSignalBeforeState(t *testing.T) {
 			wantLoads: 1,
 		},
 		"missing state": {
-			wantErr:   "no valid active nspawn machine",
+			wantErr:   "no valid active worker",
 			wantLoads: 1,
 		},
 		"invalid worker": {
 			state:     &State{ActiveMachine: "invalid"},
-			wantErr:   "no valid active nspawn machine",
+			wantErr:   "no valid active worker",
 			wantLoads: 1,
 		},
 		"active worker": {

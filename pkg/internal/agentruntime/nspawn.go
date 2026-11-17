@@ -9,11 +9,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/nspawn"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
@@ -24,9 +24,22 @@ import (
 // NSpawn executes worker actions using resolved machine configuration.
 type NSpawn struct{}
 
-func (NSpawn) Start(cfg *config.Config, log *slog.Logger, machine string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging) phases.Task {
+func (NSpawn) Worker(log *slog.Logger, node Node) (WorkerContext, error) {
+	return WorkerContext{
+		Root: nspawn.Root(node.Slot),
+		Exec: func(ctx context.Context, args ...string) (string, error) {
+			return nspawn.Exec(ctx, log, node.Slot, args...)
+		},
+		KubeletUnit: "kubelet.service",
+		Mode:        isolation.ModeNSpawn,
+	}, nil
+}
+
+func (NSpawn) Start(log *slog.Logger, input Inputs) phases.Task {
+	gs := input.Node.GoalState
+	cfg := input.Config
 	return phases.Serial(log,
-		stageContainerImageArchiveBindSource(log, archives),
+		stageContainerImageArchiveBindSource(log, input.Archives),
 		rootfs.Provision(log, gs.RootFS),
 		configureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
 		phases.Parallel(log,
@@ -34,31 +47,31 @@ func (NSpawn) Start(cfg *config.Config, log *slog.Logger, machine string, gs *go
 			installBinary(gs.RootFS.Root()),
 		),
 		nodestart.StartNode(log, gs.NodeStart),
-		nodestart.WaitForKubelet(log, machine),
+		nodestart.WaitForKubelet(log, input.Node.Slot),
 		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn),
 	)
 }
 
-func (NSpawn) Restart(cfg *config.Config, log *slog.Logger, machine string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging) phases.Task {
+func (NSpawn) Restart(log *slog.Logger, input Inputs) phases.Task {
+	gs := input.Node.GoalState
 	return phases.Serial(log,
-		stageContainerImageArchiveBindSource(log, archives),
-		nodestop.StopNode(log, machine),
+		stageContainerImageArchiveBindSource(log, input.Archives),
+		nodestop.StopNode(log, input.Node.Slot),
 		nodestart.StartNode(log, gs.NodeStart),
-		nodestart.WaitForKubelet(log, machine),
-		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn),
+		nodestart.WaitForKubelet(log, input.Node.Slot),
+		npd.Start(log, input.Config, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn),
 	)
 }
 
-func (NSpawn) Stop(log *slog.Logger, machine string) phases.Task {
-	return nodestop.StopNode(log, machine)
+func (NSpawn) Prepare(log *slog.Logger, input Inputs) phases.Task {
+	return phases.Serial(log,
+		nodestop.StopNode(log, input.Previous.Slot),
+		reset.CleanupNetwork(log),
+	)
 }
 
-func (NSpawn) CleanupNetwork(log *slog.Logger) phases.Task {
-	return reset.CleanupNetwork(log)
-}
-
-func (NSpawn) Retire(log *slog.Logger, machine string) phases.Task {
-	return reset.CleanupMachine(log, machine)
+func (NSpawn) Retire(log *slog.Logger, input Inputs) phases.Task {
+	return reset.CleanupMachine(log, input.Previous.Slot)
 }
 
 func stageContainerImageArchiveBindSource(log *slog.Logger, staging *goalstates.ContainerImageArchiveStaging) phases.Task {

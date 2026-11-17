@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // hostRootAgentsPath records the digest of every binary that has run as the
@@ -162,6 +163,12 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 	active, err := activeMachineFromStore(ctx, state)
 	if err != nil {
 		return err
+	}
+	if active.State.Isolation == isolation.ModeNone {
+		if err := utilexec.ReloadSystemd(ctx, log); err != nil {
+			return fmt.Errorf("reload systemd after moving to the host root: %w", err)
+		}
+		return agentdeployment.SyncDirs(agentdeployment.SystemdSystemDir, filepath.Dir(agentdeployment.RecoveryScriptPathUnder(hostroot.Resolve())))
 	}
 
 	machineCfg := cfg.DeepCopy()

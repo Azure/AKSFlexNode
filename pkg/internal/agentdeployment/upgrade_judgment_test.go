@@ -27,7 +27,7 @@ func TestHostUpgradeJudgmentMechanics(t *testing.T) {
 	writeExecutable(t, worker, "candidate")
 	executor := &HostUpgrade{
 		paths:             paths,
-		nspawnBinaryPath:  func(string) string { return worker },
+		helperPaths:       map[string]string{"kube1": worker},
 		runningExecutable: func() (string, error) { return paths.BluePath, nil },
 	}
 	signal := &UpgradeSignal{
@@ -48,12 +48,11 @@ func TestHostUpgradeJudgmentMechanics(t *testing.T) {
 		t.Fatalf("candidate is last-good = %v, %v", lastGood, err)
 	}
 
-	// Do not write into a real machine while testing host-link rollback.
-	signal.ActiveMachine = ""
 	if err := executor.RollbackSwitch(signal); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
+	assertAgentUpgradeFileContent(t, worker, "last-good")
 	executor.runningExecutable = func() (string, error) { return paths.GreenPath, nil }
 	lastGood, err = executor.RunningLastGood(signal)
 	if err != nil || !lastGood {

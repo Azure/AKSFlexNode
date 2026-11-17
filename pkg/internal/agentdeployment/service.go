@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -175,10 +176,14 @@ func ensureAgentUpgradeServiceAssetsAt(
 
 type agentServiceOptions struct {
 	ARCEnabled bool
+	NoneWorker bool
 }
 
 func agentServiceOptionsFromConfig(cfg *config.Config) agentServiceOptions {
-	return agentServiceOptions{ARCEnabled: cfg.IsARCEnabled()}
+	return agentServiceOptions{
+		ARCEnabled: cfg.IsARCEnabled(),
+		NoneWorker: cfg.Bootstrap.Isolation == isolation.ModeNone,
+	}
 }
 
 type agentServiceAsset struct {
@@ -321,12 +326,16 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 	if err != nil {
 		return agentServiceOptions{}, fmt.Errorf("read installed agent service %s: %w", path, err)
 	}
-	return agentServiceOptions{ARCEnabled: bytes.Contains(content, []byte(arcSystemdDependency))}, nil
+	return agentServiceOptions{
+		ARCEnabled: bytes.Contains(content, []byte(arcSystemdDependency)),
+		NoneWorker: !bytes.Contains(content, []byte("machines.target")),
+	}, nil
 }
 
 type agentServiceTemplateData struct {
 	CurrentBinaryPath string
 	Dependencies      []string
+	NoneWorker        bool
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -339,6 +348,7 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
 		CurrentBinaryPath: currentBinaryPath,
 		Dependencies:      dependencies,
+		NoneWorker:        serviceOptions.NoneWorker,
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}

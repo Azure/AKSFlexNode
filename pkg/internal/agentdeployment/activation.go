@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -27,19 +28,6 @@ const (
 var ErrDirectActivationInContainer = errors.New("direct activation is not available in the agent's container; " +
 	"upgrade it with an AgentUpgrade that names an image")
 
-// PreflightHostAgentActivation plans a direct activation without changing host state.
-func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
-	if Containerized() {
-		return agentbinary.ActivationPlan{}, ErrDirectActivationInContainer
-	}
-	root := PlannedHostRoot()
-	service, paths, err := NewHostActivationService(log, root, PlannedHostRoot)
-	if err != nil {
-		return agentbinary.ActivationPlan{}, err
-	}
-	return agentbinary.PreflightHostDaemonActivation(ctx, HostAgentActivationOptions(paths, candidatePath), service)
-}
-
 func HostAgentActivationOptions(paths UpgradePaths, candidatePath string) agentbinary.ActivationOptions {
 	return agentbinary.ActivationOptions{
 		Layout:        paths.Layout(),
@@ -50,7 +38,9 @@ func HostAgentActivationOptions(paths UpgradePaths, candidatePath string) agentb
 }
 
 type HostActivationService struct {
-	log *slog.Logger
+	// WorkerMode overrides installed service detection when applied state exists.
+	WorkerMode isolation.Mode
+	log        *slog.Logger
 	// root is the host root paths were built under, and resolveRoot what
 	// resolved it; see Preflight. A nil resolveRoot skips the check.
 	root        string
@@ -131,6 +121,10 @@ func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
+	if s.WorkerMode != "" {
+		s.serviceOptions.NoneWorker = s.WorkerMode == isolation.ModeNone
+	}
+
 	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
 	if err != nil {
 		return agentbinary.ServicePlan{}, err

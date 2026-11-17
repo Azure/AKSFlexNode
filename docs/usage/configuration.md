@@ -126,11 +126,28 @@ Earlier configs can contain `azure.arc.machineName`, `azure.arc.resourceGroup`, 
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
+| `bootstrap.isolation` | string | Worker runtime: `nspawn` (default) or `none` (host-native kubelet/containerd). Changing modes requires reset. | `none` |
 | `bootstrap.ociImage` | string | Optional nspawn rootfs OCI image used during bootstrap. When omitted, the shared agent default image selection is used. | `ghcr.io/example/aks-flex-node-rootfs:ubuntu-24.04` |
 | `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. Preflight treats missing host packages as fatal when this is set. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
 | `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |
 | `bootstrap.additionalHostMounts` | array of objects | Optional non-device host paths to bind mount into the nspawn machine. `source` is required, `target` defaults to `source`, and `readOnly` defaults to `false`. Source and target must be clean absolute paths without whitespace, control characters, or `:`. Prefer read-only mounts unless write access is required. | `[{"source":"/opt/config","target":"/etc/config","readOnly":true}]` |
 | `bootstrap.additionalRequiredServices` | array of strings | Optional host systemd service units that the nspawn machine requires and starts after. Use this when a host service must finish configuring or renaming devices before nspawn starts. | `["ib_rdma_configure.service"]` |
+
+### Worker isolation and agent deployment
+
+Worker isolation and the agent's own deployment are independent settings.
+
+| Worker isolation | Host-installed agent | Containerized agent |
+|------------------|----------------------|---------------------|
+| `nspawn` | Supported | Existing support retained |
+| `none` | Supported on a host without unmanaged kubelet/containerd | Not yet supported |
+| `container` (OCI worker) | Not available in this layer | Not yet supported |
+
+Nspawn and none support disconnect tolerance with YurtHub and its kubelet client-certificate prerequisites. Exec-credential-only joins do not acquire that certificate. None soft restart preserves credentials and Hub state; repave restores direct API routing and clears Hub identity before replacing kubelet identity.
+
+The containerized agent depends on host containerd. None's ownership checks reject that containerd, and an OCI worker would conflict with its socket at `/run/containerd`. Agent-container mounts and lifecycle helpers also need changes before either combination can work. Bootstrap refuses these combinations before host mutation.
+
+**TODO:** Add containerized-agent support for none and OCI workers, resolving launcher ownership, socket/service separation, host mounts and lifecycle helpers while reusing the existing agent image-upgrade implementation.
 
 ## Host routing
 

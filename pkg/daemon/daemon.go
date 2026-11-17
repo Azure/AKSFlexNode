@@ -24,6 +24,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -40,6 +41,27 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// In its container the agent keeps nothing on the host to migrate, install,
 	// or remove: the image carries it.
 	containerized := agentdeployment.Containerized()
+	if err := ValidateAgentDeployment(cfg.Bootstrap.Isolation, containerized); err != nil {
+		return err
+	}
+	store, err := NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	applied, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if applied != nil && applied.Isolation != cfg.Bootstrap.Isolation {
+		return fmt.Errorf("worker isolation change requires reset")
+	}
+	if cfg.Bootstrap.Isolation == isolation.ModeNone && applied == nil {
+		return fmt.Errorf("applied none worker state is missing")
+	}
+	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return err
+	}
 
 	// After an AgentUpgrade from a release that predates the host root, this is
 	// the first time the new agent runs on the host.
@@ -69,11 +91,18 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
-	store, err := NewFileStateStore()
-	if err != nil {
-		return err
+	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+		input := agentruntime.Inputs{
+			Config: cfg,
+			Node: agentruntime.Node{
+				Slot:   applied.ActiveMachine,
+				Config: applied.NodeConfig,
+			},
+		}
+		if err := worker.Prepare(log, input).Do(ctx); err != nil {
+			return fmt.Errorf("recover worker at startup: %w", err)
+		}
 	}
-	runtime := agentruntime.NSpawn{}
 	// In its container, the agent's units and its binary in the active machine converge here,
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
@@ -124,7 +153,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	var deploymentUpgrade agentdeployment.UpgradeExecutor
 	if !containerized {
-		deploymentUpgrade = agentdeployment.NewHostUpgrade(log)
+		helpers, err := agentUpgradeHelperPaths(log, cfg.Bootstrap.Isolation)
+		if err != nil {
+			return err
+		}
+		deploymentUpgrade = agentdeployment.NewHostUpgrade(log, cfg.Bootstrap.Isolation, helpers)
 	}
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
@@ -154,7 +187,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Log:                      log,
 		Machines:                 machines,
 		Client:                   mgr.GetClient(),
-		Runtime:                  runtime,
+		Runtime:                  worker,
 		State:                    store,
 		Config:                   cfg,
 		Refresher:                bootstrapDataRefresherForConfig(cfg),
@@ -175,7 +208,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		NodeName:             nodeName,
 		AKSMachineName:       aksMachineName,
 		MachineOperationMode: cfg.Agent.MachineOperationMode,
-		Runtime:              runtime,
+		Runtime:              worker,
 		State:                store,
 		Config:               cfg,
 		Uninstall:            agentdeployment.UninstallService,

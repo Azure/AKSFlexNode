@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	corev1 "k8s.io/api/core/v1"
@@ -70,7 +71,7 @@ func TestHubTranslation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			hub := &testHubMachineReconciler{}
-			r := &repaveReconciler{hub: hub}
+			r := &repaveReconciler{hub: hub, runtime: agentruntime.NSpawn{}}
 			node := &corev1.Node{}
 			machine := &aksmachine.Machine{Goal: aksmachine.GoalState{DisconnectToleranceEnabled: tc.intent}}
 			r.reconcileHub(t.Context(), machineSnapshot{machine: machine}, nodeSnapshot{node: node}, tc.state)

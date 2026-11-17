@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst: a host that would
@@ -207,7 +209,7 @@ func TestRollbackAgentUpgradeFilesDoesNotDowngradeBeforeSwitch(t *testing.T) {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
 
-	if err := rollbackAgentUpgradeFiles(paths, &UpgradeSignal{CandidatePath: paths.BluePath}); err != nil {
+	if err := rollbackAgentUpgradeFiles(paths, &UpgradeSignal{CandidatePath: paths.BluePath}, isolation.ModeNSpawn, nil); err != nil {
 		t.Fatalf("rollbackAgentUpgradeFiles: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
@@ -232,7 +234,7 @@ func TestRollbackAgentUpgradeFilesRetriesAfterHostLinkWasRestored(t *testing.T) 
 	err := rollbackAgentUpgradeFiles(paths, &UpgradeSignal{
 		CandidatePath:    paths.BluePath,
 		RecoveryRequired: true,
-	})
+	}, isolation.ModeNSpawn, nil)
 	if err == nil || !strings.Contains(err.Error(), "resolve last-good") {
 		t.Fatalf("rollbackAgentUpgradeFiles error = %v, want retry to resolve last-good", err)
 	}

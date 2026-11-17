@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -64,13 +65,16 @@ type HostUpgrade struct {
 	systemctl         func(context.Context, ...string) error
 	runSystemdRun     func(context.Context, ...string) error
 	runningExecutable func() (string, error)
-	nspawnBinaryPath  func(string) string
+	mode              isolation.Mode
+	// helperPaths are concrete destinations resolved through the worker runtime.
+	// None has no guest helper and supplies no destinations.
+	helperPaths map[string]string
 	// guardLegacySeed runs before Stage switches anything; see the function
 	// of the same name. Nil skips it.
 	guardLegacySeed func() error
 }
 
-func NewHostUpgrade(log *slog.Logger) *HostUpgrade {
+func NewHostUpgrade(log *slog.Logger, mode isolation.Mode, helperPaths map[string]string) *HostUpgrade {
 	paths := DefaultUpgradePaths()
 	return &HostUpgrade{
 		log:     log,
@@ -83,7 +87,8 @@ func NewHostUpgrade(log *slog.Logger) *HostUpgrade {
 			return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
 		},
 		runningExecutable: runningAgentExecutable,
-		nspawnBinaryPath:  activeNspawnAgentBinaryPath,
+		mode:              mode,
+		helperPaths:       helperPaths,
 		guardLegacySeed: func() error {
 			return guardUpgradeLegacySeed(log)
 		},
@@ -101,7 +106,7 @@ func (e *HostUpgrade) Acquire() (io.Closer, error) {
 
 // Validate takes an archive's HTTP or HTTPS URL, and refuses an image's, as any other URL.
 func (e *HostUpgrade) Validate(request UpgradeRequest) error {
-	_, err := secureInstallOptions(request.DownloadURL, request.SHA256)
+	_, err := secureInstallOptions(request.DownloadURL, request.SHA256, e.mode)
 	return err
 }
 
@@ -149,7 +154,7 @@ func (e *HostUpgrade) Stage(ctx context.Context, request UpgradeRequest) error {
 	if err := e.signals.recordCandidate(candidate); err != nil {
 		return err
 	}
-	if err := installAndSwitchBinary(ctx, e.log, request.DownloadURL, request.SHA256, e.paths); err != nil {
+	if err := installAndSwitchBinary(ctx, e.log, request.DownloadURL, request.SHA256, e.paths, e.mode); err != nil {
 		return err
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
@@ -170,8 +175,10 @@ func (e *HostUpgrade) Stage(ctx context.Context, request UpgradeRequest) error {
 	if current != candidate {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("staged agent binary resolved to unexpected slot"))
 	}
-	if err := SynchronizeNspawnAgentBinary(current, signal.ActiveMachine); err != nil {
-		return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize active nspawn agent binary: %w", err))
+	if e.mode != isolation.ModeNone {
+		if err := copyExecutable(current, e.helperPaths[signal.ActiveMachine]); err != nil {
+			return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize active nspawn agent binary: %w", err))
+		}
 	}
 	return nil
 }
@@ -207,7 +214,7 @@ func (e *HostUpgrade) rollback(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return rollbackAgentUpgradeFiles(e.paths, signal)
+	return rollbackAgentUpgradeFiles(e.paths, signal, e.mode, e.helperPaths)
 }
 
 func (e *HostUpgrade) Restart(ctx context.Context) error {
@@ -283,7 +290,7 @@ const agentRestartTimerAccuracy = "100ms"
 // a failed upgrade back. A host root that cannot be migrated is logged and left
 // as it is, and the layout is the one this binary runs from: the recovery
 // script runs the resolved last-good link, so that is the layout systemd uses.
-func RecoverAgentUpgrade(ctx context.Context, message string) error {
+func RecoverAgentUpgrade(ctx context.Context, message string, mode isolation.Mode, helperPaths map[string]string) error {
 	log := slog.Default()
 	if Containerized() {
 		if err := recoverContainerAgentUpgrade(ctx, log, message,
@@ -308,7 +315,7 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	if err != nil {
 		return err
 	}
-	if err := rollbackAgentUpgradeFiles(paths, signal); err != nil {
+	if err := rollbackAgentUpgradeFiles(paths, signal, mode, helperPaths); err != nil {
 		return err
 	}
 	return ctx.Err()
@@ -331,11 +338,7 @@ func (e *HostUpgrade) SignalStore() UpgradeSignalStore { return e.signals }
 var _ UpgradeExecutor = (*HostUpgrade)(nil)
 
 func (e *HostUpgrade) ValidateStarted(signal *UpgradeSignal) error {
-	nspawnBinaryPath := e.nspawnBinaryPath
-	if nspawnBinaryPath == nil {
-		nspawnBinaryPath = activeNspawnAgentBinaryPath
-	}
-	return validateStartedAgentUpgrade(e.paths, signal, nspawnBinaryPath)
+	return validateStartedAgentUpgrade(e.paths, signal, e.mode, e.helperPaths)
 }
 
 func (e *HostUpgrade) CandidateActive(signal *UpgradeSignal) (bool, error) {
@@ -343,7 +346,7 @@ func (e *HostUpgrade) CandidateActive(signal *UpgradeSignal) (bool, error) {
 }
 
 func (e *HostUpgrade) RollbackSwitch(signal *UpgradeSignal) error {
-	return rollbackAgentUpgradeFiles(e.paths, signal)
+	return rollbackAgentUpgradeFiles(e.paths, signal, e.mode, e.helperPaths)
 }
 
 func (e *HostUpgrade) RunningLastGood(*UpgradeSignal) (bool, error) {
@@ -362,7 +365,7 @@ func (e *HostUpgrade) RunningLastGood(*UpgradeSignal) (bool, error) {
 	return running == lastGood, nil
 }
 
-func validateStartedAgentUpgrade(paths UpgradePaths, signal *UpgradeSignal, nspawnBinaryPath func(string) string) error {
+func validateStartedAgentUpgrade(paths UpgradePaths, signal *UpgradeSignal, mode isolation.Mode, helperPaths map[string]string) error {
 	if signal.CandidatePath != paths.BluePath && signal.CandidatePath != paths.GreenPath {
 		return fmt.Errorf("AgentUpgrade was interrupted before selecting a candidate slot")
 	}
@@ -376,8 +379,11 @@ func validateStartedAgentUpgrade(paths UpgradePaths, signal *UpgradeSignal, nspa
 	if !validNspawnMachine(signal.ActiveMachine) {
 		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
 	}
-	nspawnPath := nspawnBinaryPath(signal.ActiveMachine)
-	equal, err := filesHaveEqualSHA256(current, nspawnPath)
+	if mode == isolation.ModeNone {
+		return nil
+	}
+
+	equal, err := filesHaveEqualSHA256(current, helperPaths[signal.ActiveMachine])
 	if err != nil {
 		return fmt.Errorf("verify synchronized nspawn agent binary: %w", err)
 	}
@@ -402,7 +408,7 @@ func activeNspawnAgentBinaryPath(machine string) string {
 	return filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 }
 
-func rollbackAgentUpgradeFiles(paths UpgradePaths, signal *UpgradeSignal) error {
+func rollbackAgentUpgradeFiles(paths UpgradePaths, signal *UpgradeSignal, mode isolation.Mode, helperPaths map[string]string) error {
 	if signal == nil {
 		return nil
 	}
@@ -420,8 +426,8 @@ func rollbackAgentUpgradeFiles(paths UpgradePaths, signal *UpgradeSignal) error 
 	if err := replaceSymlink(paths.CurrentPath, lastGood); err != nil {
 		return fmt.Errorf("restore last-good agent binary: %w", err)
 	}
-	if validNspawnMachine(signal.ActiveMachine) {
-		if err := SynchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
+	if mode != isolation.ModeNone && validNspawnMachine(signal.ActiveMachine) {
+		if err := copyExecutable(lastGood, helperPaths[signal.ActiveMachine]); err != nil {
 			return err
 		}
 	}

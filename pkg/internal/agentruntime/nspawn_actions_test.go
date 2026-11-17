@@ -16,7 +16,10 @@ func TestRestartStagesArchivesBeforeStoppingAndRestartsNPD(t *testing.T) {
 		RootFS:    &goalstates.RootFS{MachineDir: t.TempDir()},
 		NodeStart: &goalstates.NodeStart{},
 	}
-	name := (NSpawn{}).Restart(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil).Name()
+	name := (NSpawn{}).Restart(slog.New(slog.DiscardHandler), Inputs{
+		Config: &config.Config{},
+		Node:   Node{Slot: "kube1", GoalState: gs},
+	}).Name()
 
 	previous := -1
 	for _, task := range []string{"download-container-image-archives", "stop-node", "start-nspawn-machine", "wait-for-kubelet", "start-npd"} {

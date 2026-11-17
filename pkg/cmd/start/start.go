@@ -14,7 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -24,15 +24,16 @@ func NewCommand() *cobra.Command {
 		Use:     "start",
 		Aliases: []string{"bootstrap"},
 		Short:   "Bootstrap the node and start the agent service",
-		Long:    "Install the systemd unit, bootstrap the nspawn-based AKS worker node, then enable and start the agent daemon through systemd.",
+		Long:    "Install the systemd unit, bootstrap the AKS worker node, then enable and start the agent daemon through systemd.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.LoadConfig(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 			}
-			logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
-
-			if err := runStart(cmd.Context(), cfg, logger); err != nil {
+			if err := daemon.ValidateAgentDeployment(cfg.Bootstrap.Isolation, agentdeployment.Containerized()); err != nil {
+				return err
+			}
+			if err := runStart(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -52,10 +53,30 @@ func NewCommand() *cobra.Command {
 	return cmd
 }
 
-func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+func runStart(ctx context.Context, cfg *config.Config) error {
 	// In its container the agent keeps nothing on the host: the image carries
 	// it, and its clients' credential plugin is the running binary.
 	containerized := agentdeployment.Containerized()
+	stateStore, err := daemon.NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	applied, err := stateStore.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if err := daemon.ValidateWorkerBootstrap(ctx, cfg, slog.Default(), applied, containerized); err != nil {
+		return err
+	}
+	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return err
+	}
+	state, goal, reapply, err := selectBootstrap(cfg, applied)
+	if err != nil {
+		return err
+	}
+	logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
 	if !containerized {
 		if err := agentdeployment.MigrateHostRoot(logger); err != nil {
 			return err
@@ -72,42 +93,43 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 			return fmt.Errorf("bootstrap failed: %w", err)
 		}
 	}
-	goal, err := aksmachine.GoalStateFromConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("build goal state from config: %w", err)
-	}
-	plugin, err := agentdeployment.CredentialPlugin()
-	if err != nil {
-		return fmt.Errorf("create AKS machine client: %w", err)
-	}
-	machines, err := aksmachine.NewMachineClient(cfg, logger, aksmachine.MachineClientOptions{CredentialPlugin: plugin})
-	if err != nil {
-		return fmt.Errorf("create AKS machine client: %w", err)
-	}
 	start := time.Now()
-	requireMachineRegistration := cfg.Agent.RequireMachineRegistration != nil && *cfg.Agent.RequireMachineRegistration
-	if err := phases.ExecuteTask(ctx, logger, aksmachine.EnsureMachine(
-		machines,
-		&goal,
-		requireMachineRegistration,
-		logger,
-	)); err != nil {
-		return fmt.Errorf("bootstrap failed: %w", err)
+	var machines aksmachine.MachineClient
+	if !reapply {
+		plugin, err := agentdeployment.CredentialPlugin()
+		if err != nil {
+			return fmt.Errorf("create AKS machine client: %w", err)
+		}
+		machines, err = aksmachine.NewMachineClient(cfg, logger, aksmachine.MachineClientOptions{
+			CredentialPlugin: plugin,
+		})
+		if err != nil {
+			return fmt.Errorf("create AKS machine client: %w", err)
+		}
 	}
-
-	state := daemon.SeededState(goal)
-	machineName := state.ActiveMachine
-	stateStore, err := daemon.NewFileStateStore()
-	if err != nil {
+	if err := registerBootstrap(ctx, logger, cfg, machines, &goal, state, reapply); err != nil {
 		return err
 	}
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
-	if err != nil {
-		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
+	input := agentruntime.Inputs{
+		Config: cfg,
+		Node: agentruntime.Node{
+			Slot:   state.ActiveMachine,
+			Config: state.NodeConfig,
+		},
+	}
+	if !reapply {
+		ac, gs, archives, err := config.ResolveMachineGoalState(ctx, logger, cfg, state.ActiveMachine)
+		if err != nil {
+			return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
+		}
+		input.Node.Config, input.Node.GoalState, input.Archives = ac, gs, archives
+		if cfg.Bootstrap.Isolation == isolation.ModeNone {
+			state.NodeConfig = ac.DeepCopy()
+		}
 	}
 
-	tasks := bootstrapTasks(cfg, logger, machineName, gs, containerImageArchives, daemon.SaveState(stateStore, state))
+	tasks := bootstrapTasks(cfg, logger, worker, input, reapply, daemon.SaveState(stateStore, state))
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
@@ -123,12 +145,55 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	return nil
 }
 
-func bootstrapTasks(cfg *config.Config, log *slog.Logger, machine string, gs *goalstates.MachineGoalState, archives *goalstates.ContainerImageArchiveStaging, save phases.Task) phases.Task {
-	return phases.Serial(log,
-		daemon.SetupHost(cfg, log),
-		agentdeployment.EnsureNSpawnLifecycleUnits(log),
-		(agentruntime.NSpawn{}).Start(cfg, log, machine, gs, archives),
-		save,
-		agentdeployment.InstallService(cfg, log),
-	)
+func selectBootstrap(cfg *config.Config, applied *daemon.State) (*daemon.State, aksmachine.GoalState, bool, error) {
+	seed := daemon.SeededState(aksmachine.GoalState{})
+	seed.Isolation = cfg.Bootstrap.Isolation
+	state, reapply, err := daemon.BootstrapState(applied, seed, cfg)
+	if err != nil {
+		return nil, aksmachine.GoalState{}, false, err
+	}
+	if reapply {
+		return state, aksmachine.GoalState{}, true, nil
+	}
+	goal, err := aksmachine.GoalStateFromConfig(cfg)
+	if err != nil {
+		return nil, aksmachine.GoalState{}, false, fmt.Errorf("build goal state from config: %w", err)
+	}
+	return state, goal, false, nil
+}
+
+func registerBootstrap(ctx context.Context, log *slog.Logger, cfg *config.Config, machines aksmachine.MachineClient, goal *aksmachine.GoalState, state *daemon.State, reapply bool) error {
+	if reapply {
+		// The caller's bootstrap goal is not authoritative for an installed worker.
+		return nil
+	}
+	required := cfg.Agent.RequireMachineRegistration != nil && *cfg.Agent.RequireMachineRegistration
+	if err := phases.ExecuteTask(ctx, log, aksmachine.EnsureMachine(machines, goal, required, log)); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
+	state.AppliedSettingsVersion = goal.SettingsVersion
+	state.AppliedKubernetesVersion = goal.KubernetesVersion
+
+	return nil
+}
+
+func workerBootstrapTasks(log *slog.Logger, worker agentruntime.Runtime, input agentruntime.Inputs, reapply bool, save phases.Task) []phases.Task {
+	if reapply {
+		return []phases.Task{worker.Prepare(log, input), worker.Restart(log, input)}
+	}
+
+	return []phases.Task{worker.Start(log, input), save}
+}
+
+func bootstrapTasks(cfg *config.Config, log *slog.Logger, worker agentruntime.Runtime, input agentruntime.Inputs, reapply bool, save phases.Task) phases.Task {
+	var tasks []phases.Task
+	if !reapply {
+		tasks = append(tasks, daemon.SetupHost(cfg, log))
+		if cfg.Bootstrap.Isolation != isolation.ModeNone {
+			tasks = append(tasks, agentdeployment.EnsureNSpawnLifecycleUnits(log))
+		}
+	}
+	tasks = append(tasks, workerBootstrapTasks(log, worker, input, reapply, save)...)
+	tasks = append(tasks, agentdeployment.InstallService(cfg, log))
+	return phases.Serial(log, tasks...)
 }

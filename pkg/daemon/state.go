@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,7 +15,9 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -26,6 +29,9 @@ const (
 // State records the last safely applied AKS machine goal and the previous
 // known-good goal needed for rollback-oriented reconciliation.
 type State struct {
+	Isolation  isolation.Mode           `json:"isolation,omitempty"`
+	NodeConfig *agentconfig.AgentConfig `json:"nodeConfig,omitempty"`
+
 	AppliedSettingsVersion    string `json:"appliedSettingsVersion,omitempty"`
 	AppliedKubernetesVersion  string `json:"appliedKubernetesVersion,omitempty"`
 	PreviousSettingsVersion   string `json:"previousSettingsVersion,omitempty"`
@@ -131,6 +137,20 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
+	if state.Isolation == "" {
+		state.Isolation = isolation.ModeNSpawn
+	}
+	if err := config.ValidateIsolation(state.Isolation); err != nil {
+		return nil, fmt.Errorf("invalid applied worker isolation: %w", err)
+	}
+	if state.Isolation == isolation.ModeNone {
+		if state.ActiveMachine != goalstates.NSpawnMachineKube1 {
+			return nil, fmt.Errorf("applied none worker has invalid slot %q", state.ActiveMachine)
+		}
+		if state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
+			return nil, fmt.Errorf("applied none worker has no matching runtime configuration")
+		}
+	}
 	return &state, nil
 }
 
@@ -143,10 +163,10 @@ func (s *fileStateStore) Save(_ context.Context, state *State) error {
 		return fmt.Errorf("marshal daemon state: %w", err)
 	}
 	data = append(data, '\n')
-	if err := utilio.WriteFile(s.path, data, stateFileMode); err != nil {
+	if err := utilio.InstallFile(s.path, bytes.NewReader(data), stateFileMode); err != nil {
 		return fmt.Errorf("write daemon state %s: %w", s.path, err)
 	}
-	if err := utilio.WriteFile(s.checksumPath(), []byte(checksum(data)+"\n"), stateFileMode); err != nil {
+	if err := utilio.InstallFile(s.checksumPath(), strings.NewReader(checksum(data)+"\n"), stateFileMode); err != nil {
 		return fmt.Errorf("write daemon state checksum %s: %w", s.checksumPath(), err)
 	}
 	return nil

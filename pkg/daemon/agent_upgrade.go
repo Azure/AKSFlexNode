@@ -13,8 +13,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
@@ -91,12 +94,62 @@ func recordPendingAgentUpgrade(
 		return fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
 	}
 	if loaded == nil || !validActiveMachine(loaded.ActiveMachine) {
-		return fmt.Errorf("no valid active nspawn machine for AgentUpgrade")
+		return fmt.Errorf("no valid active worker for AgentUpgrade")
 	}
 	if err := signals.RecordPending(operationName, loaded.ActiveMachine, instanceID); err != nil {
 		return err
 	}
 	return nil
+}
+
+// agentUpgradeHelperPaths resolves both nspawn slots because a later repave can
+// change the active slot without replacing the daemon's upgrade executor.
+func agentUpgradeHelperPaths(log *slog.Logger, mode isolation.Mode) (map[string]string, error) {
+	if mode == isolation.ModeNone {
+		return nil, nil
+	}
+
+	runtime, err := agentruntime.New(mode)
+	if err != nil {
+		return nil, err
+	}
+	helpers := make(map[string]string, 2)
+	for _, slot := range []string{goalstates.NSpawnMachineKube1, goalstates.NSpawnMachineKube2} {
+		worker, err := runtime.Worker(log, agentruntime.Node{Slot: slot})
+		if err != nil {
+			return nil, fmt.Errorf("resolve worker for agent upgrade: %w", err)
+		}
+		helpers[slot] = worker.Root.Path("/usr/local/bin/aks-flex-node")
+	}
+
+	return helpers, nil
+}
+
+// RecoverAgentUpgrade selects the applied worker before deployment restores the
+// last-good agent. Image deployments have no host worker mode to select.
+func RecoverAgentUpgrade(ctx context.Context, message string) error {
+	if agentdeployment.Containerized() {
+		return agentdeployment.RecoverAgentUpgrade(ctx, message, isolation.ModeNSpawn, nil)
+	}
+
+	store, err := NewFileStateStore()
+	if err != nil {
+		return err
+	}
+	state, err := store.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("load applied worker for AgentUpgrade recovery: %w", err)
+	}
+	mode := isolation.ModeNSpawn
+	if state != nil {
+		mode = state.Isolation
+	}
+	helpers, err := agentUpgradeHelperPaths(slog.Default(), mode)
+	if err != nil {
+		return err
+	}
+
+	return agentdeployment.RecoverAgentUpgrade(ctx, message, mode, helpers)
 }
 
 func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c client.Client, upgrade agentUpgradeHandoff) error {
