@@ -67,7 +67,7 @@ if ! grep -Eq "^maxPods: ${max_pods}$" "${config}"; then
   echo "Rendered kubelet maxPods differs from applied state (${max_pods})" >&2
   exit 1
 fi
-state_digest="$(jq -cS '.nodeConfig' "${state}" | sha256sum | awk '{print $1}')"
+state_digest="$(jq -cS '.' "${state}" | sha256sum | awk '{print $1}')"
 config_digest="$(sha256sum "${config}" | awk '{print $1}')"
 printf '%s|%s\n' "${state_digest}" "${config_digest}"
 REMOTE

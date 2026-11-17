@@ -292,6 +292,81 @@ _isolation_config_digests vm
 	}
 }
 
+func TestIsolationStateHistoryUnchanged(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		mutation string
+		success  bool
+	}{
+		{name: "canonical formatting", mutation: ".", success: true},
+		{name: "applied version", mutation: `.appliedKubernetesVersion = "0.0.0"`},
+		{name: "previous settings", mutation: `del(.previousSettingsVersion)`},
+		{name: "previous version", mutation: `del(.previousKubernetesVersion)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			state := `{
+  "previousKubernetesVersion": "1.34.0",
+  "previousSettingsVersion": "old-settings",
+  "appliedKubernetesVersion": "1.35.0",
+  "appliedSettingsVersion": "new-settings",
+  "activeMachine": "kube2",
+  "isolation": "container",
+  "nodeConfig": {
+    "Kubelet": {
+      "Configuration": {
+        "maxPods": 58
+      },
+      "Auth": {
+        "BootstrapToken": "fixture-secret"
+      }
+    }
+  }
+}`
+			if err := os.WriteFile(filepath.Join(root, "state.json"), []byte(state), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("maxPods: 58\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			output := runShellResult(t, []string{
+				"SCRIPT=" + isolationScript(t),
+				"ROOT=" + root,
+				"MUTATION=" + tc.mutation,
+			}, `
+source "$SCRIPT"
+remote_exec() {
+  local script
+  script="$(</dev/stdin)"
+  script="${script//\/etc\/aks-flex-node\/daemon-state.json/$ROOT\/state.json}"
+  script="${script//\/var\/lib\/kubelet\/config.yaml/$ROOT\/config.yaml}"
+  bash -s <<<"$script"
+}
+_isolation_snapshot() { echo 'container|kube2|1.35.0|new-settings|location'; }
+_isolation_credentials() { echo cert; }
+kubectl() { echo uid; }
+log_error() { echo "$*" >&2; }
+baseline="$(_isolation_config_digests vm)"
+_isolation_assert_unchanged vm node 'container|kube2|1.35.0|new-settings|location' uid cert "$baseline" baseline
+jq -S "$MUTATION" "$ROOT/state.json" > "$ROOT/next.json"
+mv "$ROOT/next.json" "$ROOT/state.json"
+_isolation_assert_unchanged vm node 'container|kube2|1.35.0|new-settings|location' uid cert "$baseline" reapply
+`, tc.success)
+			if strings.Contains(output, "fixture-secret") {
+				t.Fatalf("state contents leaked: %s", output)
+			}
+			if !tc.success && !strings.Contains(output, "reapply changed worker state") {
+				t.Fatalf("missing state-change diagnostic: %s", output)
+			}
+		})
+	}
+}
+
 func TestIsolationRestartObservation(t *testing.T) {
 	t.Parallel()
 
@@ -315,7 +390,11 @@ func TestIsolationRestartObservation(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "boot"), []byte("host-boot\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			runc := "#!/usr/bin/env bash\nprintf '%s\\n' \"$RUNC_STATE\"\n"
+			runc := `#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 2 && "$1" == state && "$2" == unbounded-kube2 ]]
+printf '%s\n' "$RUNC_STATE"
+`
 			if err := os.WriteFile(filepath.Join(root, "runc"), []byte(runc), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -328,7 +407,14 @@ func TestIsolationRestartObservation(t *testing.T) {
 				"RUNC_STATE=" + tc.state,
 			}, `
 source "$SCRIPT"
-systemctl() { printf '%s\n' "$INVOCATION"; }
+systemctl() {
+  [[ $# -eq 4 && "$1" == show && "$3" == --property=InvocationID && "$4" == --value ]] || return 1
+  case "$MODE:$2" in
+    none:unbounded-kubelet.service|container:unbounded-node-kube2.service) printf '%s\n' "$INVOCATION" ;;
+    none:unbounded-containerd.service) echo abcdefabcdefabcdefabcdefabcdefab ;;
+    *) return 1 ;;
+  esac
+}
 export -f systemctl
 remote_exec() {
   local script
@@ -339,8 +425,15 @@ remote_exec() {
 }
 _isolation_restart_observation vm "$MODE" kube2
 `, tc.success)
-			if tc.success && !strings.HasPrefix(output, "host-boot|"+tc.invocation+"|") {
-				t.Fatalf("unexpected observation: %s", output)
+			if tc.success {
+				second := "123"
+				if tc.mode == "none" {
+					second = "abcdefabcdefabcdefabcdefabcdefab"
+				}
+				want := "host-boot|" + tc.invocation + "|" + second
+				if strings.TrimSpace(output) != want {
+					t.Fatalf("observation = %q, want %q", output, want)
+				}
 			}
 		})
 	}
