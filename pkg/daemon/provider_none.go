@@ -173,7 +173,7 @@ func (noneProvider) StartNode(cfg *config.Config, log *slog.Logger, _ string, gs
 
 func resetNoneNode(log *slog.Logger, teardown *noneops.Teardown) phases.Task {
 	return phases.Serial(log,
-		removeNoneHostUnit(log, npd.UnitName),
+		removeNoneHostUnit(log, "node-problem-detector.service"),
 		resetNoneRuntime(log, teardown, hostnode.ResetCNIState),
 		reset.CleanupNetwork(log),
 		reset.RemoveWireGuardKeys(log),

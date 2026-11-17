@@ -59,7 +59,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 		t.Fatalf("ensureServiceFile: %v", err)
 	}
 
-	unitPath := filepath.Join(machineDir, "etc/systemd/system", UnitName)
+	unitPath := filepath.Join(machineDir, "etc/systemd/system", systemdUnitNPD)
 	data, err := os.ReadFile(unitPath) //nolint:gosec // path built from test TempDir
 	if err != nil {
 		t.Fatalf("read rendered unit: %v", err)
@@ -106,11 +106,11 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			}
 			binary := root.Path(BinaryPath)
 			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
-			path := root.Path("/etc/systemd/system/" + UnitName)
+			path := root.Path("/etc/systemd/system/" + systemdUnitNPD)
 			if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"systemctl is-active " + UnitName, "systemctl restart " + UnitName}
+			want := []string{"systemctl is-active " + systemdUnitNPD, "systemctl restart " + systemdUnitNPD}
 			if !slices.Equal(calls, want) {
 				t.Fatalf("initial NPD commands = %v, want %v", calls, want)
 			}
@@ -135,7 +135,7 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 				if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				if want := []string{"systemctl is-active " + UnitName}; !slices.Equal(calls, want) {
+				if want := []string{"systemctl is-active " + systemdUnitNPD}; !slices.Equal(calls, want) {
 					t.Fatalf("unchanged NPD commands = %v, want %v", calls, want)
 				}
 			}
@@ -208,7 +208,7 @@ func TestNPDSystemdActions(t *testing.T) {
 			for _, action := range tc.want {
 				command := "systemctl " + action
 				if action != "daemon-reload" {
-					command += " " + UnitName
+					command += " " + systemdUnitNPD
 				}
 				want = append(want, command)
 			}

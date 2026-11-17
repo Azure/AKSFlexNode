@@ -21,8 +21,7 @@ import (
 //go:embed assets/node-problem-detector.service
 var serviceTemplate string
 
-// UnitName is the NPD service unit in every node root.
-const UnitName = "node-problem-detector.service"
+const systemdUnitNPD = "node-problem-detector.service"
 
 var tmpl = template.Must(template.New("npd-service").Parse(serviceTemplate))
 
@@ -76,7 +75,7 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 		return false, fmt.Errorf("render npd service template: %w", err)
 	}
 
-	hostServicePath := t.root.Path(filepath.Join("/etc/systemd/system", UnitName))
+	hostServicePath := t.root.Path(filepath.Join("/etc/systemd/system", systemdUnitNPD))
 
 	current, err := os.ReadFile(hostServicePath) //nolint:gosec // path is constructed, not user input
 	switch {
@@ -97,22 +96,22 @@ func (t *startTask) ensureServiceFile() (updated bool, err error) {
 }
 
 func (t *startTask) ensureSystemdUnit(ctx context.Context, restart bool) error {
-	_, err := t.run(ctx, t.log, "systemctl", "is-active", UnitName)
+	_, err := t.run(ctx, t.log, "systemctl", "is-active", systemdUnitNPD)
 
 	switch {
 	case err != nil:
 		// Unit not active (or not loaded). Reload and start.
 		if _, reloadErr := t.run(ctx, t.log, "systemctl", "daemon-reload"); reloadErr != nil {
-			return fmt.Errorf("reload NPD unit %s: %w", UnitName, reloadErr)
+			return fmt.Errorf("reload NPD unit %s: %w", systemdUnitNPD, reloadErr)
 		}
-		if _, startErr := t.run(ctx, t.log, "systemctl", "enable", "--now", UnitName); startErr != nil {
-			return fmt.Errorf("start NPD unit %s: %w", UnitName, startErr)
+		if _, startErr := t.run(ctx, t.log, "systemctl", "enable", "--now", systemdUnitNPD); startErr != nil {
+			return fmt.Errorf("start NPD unit %s: %w", systemdUnitNPD, startErr)
 		}
 		return nil
 	default:
 		if restart {
-			if _, restartErr := t.run(ctx, t.log, "systemctl", "restart", UnitName); restartErr != nil {
-				return fmt.Errorf("restart NPD unit %s: %w", UnitName, restartErr)
+			if _, restartErr := t.run(ctx, t.log, "systemctl", "restart", systemdUnitNPD); restartErr != nil {
+				return fmt.Errorf("restart NPD unit %s: %w", systemdUnitNPD, restartErr)
 			}
 		}
 		return nil
