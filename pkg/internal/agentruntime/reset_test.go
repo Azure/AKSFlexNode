@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -42,6 +43,17 @@ func (w *testResetWorker) task(stage string) phases.Task {
 
 func (w *testResetWorker) Stop() phases.Task    { return w.task("stop") }
 func (w *testResetWorker) Destroy() phases.Task { return w.task("destroy") }
+
+func TestResetNodeCleansUpLocalDNS(t *testing.T) {
+	t.Parallel()
+
+	name := sharedReset(slog.New(slog.DiscardHandler)).Name()
+	for _, want := range []string{"cleanup-localdns-rules", "remove-network-interfaces", "cleanup-routes", "remove-host-helpers"} {
+		if !strings.Contains(name, want) {
+			t.Fatalf("shared reset does not run %s: %s", want, name)
+		}
+	}
+}
 
 func TestResetPlanRejectsNilLogger(t *testing.T) {
 	t.Parallel()
