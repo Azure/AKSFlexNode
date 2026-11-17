@@ -66,7 +66,7 @@ func TestContainerStartupRecord(t *testing.T) {
 		{name: "finished", mutate: func(s *containerStartup) { s.Phase = "finished" }},
 		{name: "unknown phase", mutate: func(s *containerStartup) { s.Phase = "unsafe" }, wantErr: true},
 		{name: "same slot", mutate: func(s *containerStartup) { s.Previous = s.Next }, wantErr: true},
-		{name: "missing registration", mutate: func(s *containerStartup) { delete(s.Next.NodeConfig.Kubelet.Labels, noneGenerationLabel) }, wantErr: true},
+		{name: "missing registration", mutate: func(s *containerStartup) { delete(s.Next.NodeConfig.Kubelet.Labels, runtimeGenerationLabel) }, wantErr: true},
 		{name: "wrong config slot", mutate: func(s *containerStartup) { s.Next.NodeConfig.MachineName = "kube1" }, wantErr: true},
 		{name: "wrong mode", mutate: func(s *containerStartup) { s.Next.Isolation = isolation.ModeNSpawn }, wantErr: true},
 		{name: "missing opt in", mutate: func(s *containerStartup) { s.Next.NodeConfig.Experimental = nil }, wantErr: true},

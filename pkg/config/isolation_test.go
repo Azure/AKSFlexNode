@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -127,7 +128,9 @@ func TestLoadConfigIsolation(t *testing.T) {
 			}
 			want := flexNodeBinaryPath
 			if tc.want == isolation.ModeNone {
-				want = HostBinaryPath()
+				// Unlike host-agent clients, persisted kubelet credentials must not
+				// resolve to a legacy directory that the host-root move removes.
+				want = filepath.Join(hostroot.Path, hostBinaryRelativePath)
 			}
 			if ac.Kubelet.Auth.ExecCredential == nil || ac.Kubelet.Auth.ExecCredential.Command != want {
 				t.Fatalf("exec plugin must use %s", want)

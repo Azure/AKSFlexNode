@@ -197,6 +197,12 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
+	state, err := s.state.Load(ctx)
+	if err != nil {
+		return agentbinary.ServicePlan{}, fmt.Errorf("load active node state: %w", err)
+	}
+	s.serviceOptions.NoneIsolation = state != nil && state.isolationMode() == isolation.ModeNone
+	s.serviceOptions.ContainerIsolation = state != nil && state.isolationMode() == isolation.ModeContainer
 	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
 	if err != nil {
 		return agentbinary.ServicePlan{}, err

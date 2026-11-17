@@ -100,7 +100,7 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Components: config.ComponentsConfig{Kubernetes: "1.34.1"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 	ac := config.ToAgentConfig(cfg, noneops.Slot)
-	ac.Kubelet.Labels = map[string]string{noneGenerationLabel: "source-nonce"}
+	ac.Kubelet.Labels = map[string]string{runtimeGenerationLabel: "source-nonce"}
 	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, NPDVersion: "v1.35.1", AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
 	factory := func(p noneops.Params) noneNode {
 		p.Overrides, p.Hooks = f.params.Overrides, f.params.Hooks
@@ -108,7 +108,7 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 		if p.Previous != nil {
 			p.PreviousGoalState = completionGoal(p.Previous)
 		}
-		if p.GoalState != nil && p.GoalState.NodeStart.Kubelet.NodeLabels[noneGenerationLabel] != p.Config.Kubelet.Labels[noneGenerationLabel] {
+		if p.GoalState != nil && p.GoalState.NodeStart.Kubelet.NodeLabels[runtimeGenerationLabel] != p.Config.Kubelet.Labels[runtimeGenerationLabel] {
 			t.Fatal("resolved goal lost the stamped registration label")
 		}
 		node := newNoneRuntime(p)
@@ -194,7 +194,7 @@ func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
 		t.Fatal("NPD restart did not select applied version")
 	}
 	args, err := os.ReadFile(filepath.Join(f.params.SystemdDir, none.UnitKubelet+".d", "20-node-config.conf"))
-	if err != nil || !strings.Contains(string(args), noneGenerationLabel+"="+state.NodeConfig.Kubelet.Labels[noneGenerationLabel]) {
+	if err != nil || !strings.Contains(string(args), runtimeGenerationLabel+"="+state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]) {
 		t.Fatalf("running kubelet configuration does not match applied nonce: %v", err)
 	}
 }
@@ -202,11 +202,11 @@ func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
 func TestNoneRegistrationFenceChangesOnEveryRepave(t *testing.T) {
 	t.Parallel()
 	state := &State{AppliedSettingsVersion: "41", NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
-	first, second := noneRegistrationState(state), noneRegistrationState(state)
-	if first.NodeConfig.Kubelet.Labels[noneGenerationLabel] == second.NodeConfig.Kubelet.Labels[noneGenerationLabel] {
+	first, second := registrationState(state), registrationState(state)
+	if first.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] == second.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] {
 		t.Fatal("reapplying the same settings reused its old registration nonce")
 	}
-	if state.NodeConfig.Kubelet.Labels[noneGenerationLabel] != "" {
+	if state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] != "" {
 		t.Fatal("registration preparation mutated the applied state")
 	}
 }
@@ -233,7 +233,7 @@ func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
 					t.Fatalf("expected SDK rollback: %v", err)
 				}
 				if failure == "" || failure == "commit" {
-					if next.AppliedSettingsVersion != "42" || next.NodeConfig.Kubelet.Labels[noneGenerationLabel] == "source-nonce" {
+					if next.AppliedSettingsVersion != "42" || next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] == "source-nonce" {
 						t.Fatal("repave did not publish new settings and a fresh registration nonce")
 					}
 				} else {

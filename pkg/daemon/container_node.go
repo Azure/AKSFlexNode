@@ -99,7 +99,7 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 		registration := *state
 		registration.Isolation, registration.ActiveMachine = isolation.ModeContainer, slot
 		registration.NodeConfig = config.ToAgentConfig(cfg, slot)
-		ac := noneRegistrationState(&registration).NodeConfig
+		ac := registrationState(&registration).NodeConfig
 		gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
 		node := newContainerNode(containerops.Params{Log: log, Config: ac, GoalState: gs, Slot: slot})
 		if err := wrapContainerArtifactUnpack(managedContainerNode{node}, containerArtifacts(cfg, log)); err != nil {

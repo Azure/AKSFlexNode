@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T) {
@@ -22,6 +23,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 		log:            slog.Default(),
 		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		paths:          paths,
+		state:          &testStateStore{},
 		systemdDir:     systemdDir,
 		recoveryScript: recoveryScript,
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
@@ -67,6 +69,7 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 
 	service := &flexDaemonActivationService{
 		log:     slog.Default(),
+		state:   &testStateStore{},
 		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 			return false, errors.New("systemd unavailable")
@@ -114,6 +117,7 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 				resolveRoot:    func() string { return tt.now },
 				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
 				paths:          paths,
+				state:          &testStateStore{},
 				startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
@@ -147,6 +151,7 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 	service := &flexDaemonActivationService{
 		log:            slog.Default(),
 		paths:          paths,
+		state:          &testStateStore{},
 		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		systemdDir:     t.TempDir(),
 		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
@@ -156,6 +161,65 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 	}
 	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err == nil {
 		t.Fatal("Preflight accepted a pending MachineOperation signal")
+	}
+}
+
+func TestFlexDaemonActivationRejectsCorruptAppliedState(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		mode isolation.Mode
+	}{
+		{name: "none", mode: isolation.ModeNone},
+		{name: "nspawn", mode: isolation.ModeNSpawn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := newFileStateStore(filepath.Join(t.TempDir(), stateFileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Save(t.Context(), &State{Isolation: tc.mode}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(store.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.ReplaceAll(string(data), string(tc.mode), "corrupt"))
+			if err := os.WriteFile(store.path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := filepath.Join(t.TempDir(), "candidate")
+			if err := os.WriteFile(candidate, []byte("candidate"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			service := &flexDaemonActivationService{
+				log:            discardLogger(),
+				paths:          testAgentUpgradePaths(t),
+				state:          store,
+				startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
+				systemdDir:     t.TempDir(),
+				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
+				serviceOptions: agentServiceOptions{NoneIsolation: true},
+				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
+					return false, nil
+				},
+			}
+			if _, err := service.Preflight(t.Context(), candidate); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+				t.Fatalf("Preflight accepted corrupt applied state: %v", err)
+			}
+			if err := service.WaitHealthy(t.Context(), candidate); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+				t.Fatalf("WaitHealthy accepted corrupt applied state: %v", err)
+			}
+			entries, err := os.ReadDir(service.systemdDir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("activation mutated systemd assets: %v, %v", entries, err)
+			}
+			if _, err := os.Stat(service.recoveryScript); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("activation wrote recovery assets: %v", err)
+			}
+		})
 	}
 }
 

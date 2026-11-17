@@ -119,7 +119,7 @@ func startNoneNode(cfg *config.Config, log *slog.Logger, gs *goalstates.MachineG
 		ac := config.ToAgentConfig(cfg, noneops.Slot)
 		registration := *state
 		registration.NodeConfig = ac
-		ac = noneRegistrationState(&registration).NodeConfig
+		ac = registrationState(&registration).NodeConfig
 		gs.NodeStart.Kubelet.NodeLabels = ac.Kubelet.Labels
 		node := newNoneRuntime(noneops.Params{Log: log, Config: ac, GoalState: gs})
 		if err := stageContainerImageArchiveBindSource(log, archives).Do(ctx); err != nil {

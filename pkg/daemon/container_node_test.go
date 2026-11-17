@@ -25,8 +25,9 @@ import (
 
 func containerTestState(slot, version string) *State {
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	return noneRegistrationState(&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
+	return registrationState(&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
 		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot), NPDVersion: "v1.35.1"})
+
 }
 
 type fakeContainerNode struct {
@@ -169,7 +170,7 @@ func TestContainerStartupResumeFrozenAndFenced(t *testing.T) {
 				case "match":
 					observed.Labels = frozen.NodeConfig.Kubelet.Labels
 				case "stale":
-					observed.Labels[noneGenerationLabel] = "old-registration"
+					observed.Labels[runtimeGenerationLabel] = "old-registration"
 				}
 			}
 			for range 2 {
@@ -268,16 +269,28 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(unit), "machines.target") || !strings.Contains(string(unit), "# Node isolation: container") {
+	if strings.Contains(string(unit), "machines.target") || strings.Contains(string(unit), "# Node isolation:") {
 		t.Fatalf("incorrect container agent service: %s", unit)
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ServiceUnitName), unit, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	installed, err := installedAgentServiceOptions(dir)
-	if err != nil || !installed.ContainerIsolation || installed.NoneIsolation {
-		t.Fatalf("installed service lost its mode: %+v, %v", installed, err)
+	paths := testAgentUpgradePaths(t)
+	service := &flexDaemonActivationService{
+		log:            discardLogger(),
+		paths:          paths,
+		state:          &testStateStore{state: containerTestState("kube1", "42")},
+		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
+		systemdDir:     dir,
+		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
+		inspectService: func(context.Context, *slog.Logger, string) (bool, error) { return false, nil },
+	}
+	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err != nil {
+		t.Fatal(err)
+	}
+	if !service.serviceOptions.ContainerIsolation || service.serviceOptions.NoneIsolation {
+		t.Fatalf("activation did not derive container mode from applied state: %+v", service.serviceOptions)
 	}
 }
 
@@ -287,14 +300,14 @@ func TestContainerRepaveRotatesSlotAndRegistration(t *testing.T) {
 		t.Run("settings="+settings, func(t *testing.T) {
 			t.Parallel()
 			op, _, store := containerOperatorFixture(t, "", false)
-			seen := map[string]bool{store.state.NodeConfig.Kubelet.Labels[noneGenerationLabel]: true}
+			seen := map[string]bool{store.state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]: true}
 			goal := aksmachine.GoalState{SettingsVersion: settings, KubernetesVersion: "1.36.2"}
 			for _, slot := range []string{"kube2", "kube1"} {
 				state, err := op.ApplyGoalState(t.Context(), discardLogger(), goal)
 				if err != nil {
 					t.Fatal(err)
 				}
-				generation := state.NodeConfig.Kubelet.Labels[noneGenerationLabel]
+				generation := state.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]
 				if state.ActiveMachine != slot || state.AppliedSettingsVersion != settings || generation == "" || seen[generation] {
 					t.Fatalf("repave did not rotate slot and registration: slot=%s settings=%s generation=%s", state.ActiveMachine, state.AppliedSettingsVersion, generation)
 				}
