@@ -13,7 +13,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
@@ -30,7 +29,7 @@ func TestHostNativeNPD(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	task := Start(slog.New(slog.DiscardHandler), cfg, root, ns, isolation.ModeNone)
+	task := Start(slog.New(slog.DiscardHandler), cfg, root, ns)
 	for range 2 {
 		if err := task.Do(t.Context()); err != nil {
 			t.Fatal(err)
@@ -88,7 +87,7 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 				},
 			}
 			log, cfg := slog.New(slog.DiscardHandler), &config.Config{}
-			if err := Start(log, cfg, root, ns, isolation.ModeNone).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			path := root.Path(filepath.Join("/etc/systemd/system", UnitName))
@@ -102,7 +101,7 @@ func TestHostNativeNPDReconciliation(t *testing.T) {
 			}
 			for range 2 {
 				calls, active = nil, tc.active
-				task := Start(log, cfg, root, ns, isolation.ModeNone)
+				task := Start(log, cfg, root, ns)
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}

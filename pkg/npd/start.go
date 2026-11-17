@@ -37,16 +37,9 @@ type startTask struct {
 }
 
 // Start renders NPD through root and manages it through the node's executor.
-// root maps the agent's filesystem. Only native execution uses its mapped
-// binary path; guest executors use the canonical in-node path.
-func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, mode isolation.Mode) phases.Task {
+func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart) phases.Task {
 	if disabledForOfflineArtifacts(cfg) {
 		return disabledTask{name: "start-npd", log: log}
-	}
-
-	binaryPath := BinaryPath
-	if mode == isolation.ModeNone {
-		binaryPath = root.Path(BinaryPath)
 	}
 
 	return &startTask{
@@ -55,7 +48,7 @@ func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeSt
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
 		root:           root,
 		nodeName:       nodeStart.NodeName,
-		binaryPath:     binaryPath,
+		binaryPath:     root.Path(BinaryPath),
 		run:            nodeStart.Exec,
 	}
 }
