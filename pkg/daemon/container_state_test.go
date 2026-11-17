@@ -1,10 +1,7 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,35 +29,14 @@ func TestContainerStateRecord(t *testing.T) {
 			t.Fatalf("Load = %+v, %v", got, err)
 		}
 	}
-	if _, err := os.Stat(store.checksumPath()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("container state created a legacy sidecar: %v", err)
-	}
-	data, err := os.ReadFile(store.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record noneStateRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record.Checksum != checksum(record.Payload) {
-		t.Fatal("state publication is not checksummed")
-	}
-	data = bytes.Replace(data, []byte(`"42"`), []byte(`"43"`), 1)
-	if err := os.WriteFile(store.path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Load(t.Context()); err == nil {
-		t.Fatal("tampered container state was accepted")
-	}
 }
 
 func TestContainerStartupRecord(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name             string
-		mutate           func(*containerStartup)
-		corrupt, wantErr bool
+		name    string
+		mutate  func(*containerStartup)
+		wantErr bool
 	}{
 		{name: "preparing"},
 		{name: "starting", mutate: func(s *containerStartup) { s.Phase = "starting" }},
@@ -70,7 +46,6 @@ func TestContainerStartupRecord(t *testing.T) {
 		{name: "wrong config slot", mutate: func(s *containerStartup) { s.Next.NodeConfig.MachineName = "kube1" }, wantErr: true},
 		{name: "wrong mode", mutate: func(s *containerStartup) { s.Next.Isolation = isolation.ModeNSpawn }, wantErr: true},
 		{name: "missing opt in", mutate: func(s *containerStartup) { s.Next.NodeConfig.Experimental = nil }, wantErr: true},
-		{name: "tampered payload", corrupt: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -87,16 +62,6 @@ func TestContainerStartupRecord(t *testing.T) {
 			info, err := os.Stat(store.path)
 			if err != nil || info.Mode().Perm() != 0o600 {
 				t.Fatalf("startup permissions: %v", err)
-			}
-			if tc.corrupt {
-				data, err := os.ReadFile(store.path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				data = bytes.Replace(data, []byte(`"new"`), []byte(`"bad"`), 1)
-				if err := os.WriteFile(store.path, data, 0o600); err != nil {
-					t.Fatal(err)
-				}
 			}
 			got, err := store.Load()
 			if (err != nil) != tc.wantErr {

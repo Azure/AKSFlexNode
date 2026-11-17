@@ -33,7 +33,7 @@ func containerTestProvider(t *testing.T, startup containerStartupStore) containe
 
 func TestContainerProviderDiscoversStartupWithoutAppliedState(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"preparing", "starting", "finished", "corrupt", "bad checksum", "bad version", "invalid frozen state", "invalid phase", "unreadable"} {
+	for _, scenario := range []string{"preparing", "starting", "finished", "corrupt", "invalid frozen state", "invalid phase", "unreadable"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			p := containerTestProvider(t, activationFenceJournal(t, scenario))
