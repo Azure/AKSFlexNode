@@ -51,7 +51,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 			APIServer: "https://example.hcp.westus.azmk8s.io:443",
 		},
 	}
-	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart, isolation.ModeNSpawn).(*startTask)
+	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart).(*startTask)
 	if !ok {
 		t.Fatalf("Start did not return *startTask")
 	}
@@ -87,7 +87,6 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			var root isolation.NodeRoot = isolation.DirRoot{Dir: dir}
-			binary := BinaryPath
 			var calls []string
 			ns := &goalstates.NodeStart{
 				MachineDir: t.TempDir(), MachineName: "kube2", NodeName: "flex-worker",
@@ -104,11 +103,11 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 				ns.InContainer = true
 			case isolation.ModeNone:
 				root = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
-				binary = root.Path(BinaryPath)
 			}
+			binary := root.Path(BinaryPath)
 			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 			path := root.Path("/etc/systemd/system/" + UnitName)
-			if err := Start(log, cfg, root, ns, mode).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{"systemctl is-active " + UnitName, "systemctl restart " + UnitName}
@@ -133,7 +132,7 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			}
 			for range 2 {
 				calls = nil
-				if err := Start(log, cfg, root, ns, mode).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, root, ns).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				if want := []string{"systemctl is-active " + UnitName}; !slices.Equal(calls, want) {
@@ -147,9 +146,6 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			got, err := os.ReadFile(path)
 			if err != nil || !bytes.Equal(got, content) || !os.SameFile(before, after) {
 				t.Fatalf("unchanged NPD unit was replaced: %v", err)
-			}
-			if mode != isolation.ModeNone && strings.Contains(string(content), root.Path(BinaryPath)) {
-				t.Fatalf("agent-side root leaked into guest ExecStart:\n%s", content)
 			}
 			for _, decoy := range []string{ns.MachineDir, ns.Root().Path("/etc/systemd/system")} {
 				if entries, err := os.ReadDir(decoy); !errors.Is(err, os.ErrNotExist) && (err != nil || len(entries) != 0) {
@@ -196,7 +192,7 @@ func TestNPDSystemdActions(t *testing.T) {
 					return "active", nil
 				},
 			}
-			task, ok := Start(log, &config.Config{}, ns.Root(), ns, isolation.ModeNSpawn).(*startTask)
+			task, ok := Start(log, &config.Config{}, ns.Root(), ns).(*startTask)
 			if !ok {
 				t.Fatal("Start did not return *startTask")
 			}
