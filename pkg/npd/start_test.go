@@ -51,7 +51,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 			APIServer: "https://example.hcp.westus.azmk8s.io:443",
 		},
 	}
-	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart, StartOptions{}).(*startTask)
+	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart).(*startTask)
 	if !ok {
 		t.Fatalf("Start did not return *startTask")
 	}
@@ -87,11 +87,13 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			var root isolation.NodeRoot = isolation.DirRoot{Dir: dir}
-			unit, binary := systemdUnitNPD, npdBinaryPath
+			unit, binary := systemdUnitNPD, BinaryPath
+			var options []StartOptions
 			var calls []string
 			ns := &goalstates.NodeStart{
-				MachineDir: dir, MachineName: "kube2", NodeName: "flex-worker",
-				Kubelet: goalstates.Kubelet{APIServer: "https://example.test:443"},
+				MachineDir: t.TempDir(), MachineName: "kube2", NodeName: "flex-worker",
+				RootOverride: none.Root{HostRoot: t.TempDir(), Layout: none.Layout{Base: t.TempDir()}, Version: "decoy"},
+				Kubelet:      goalstates.Kubelet{APIServer: "https://example.test:443"},
 				ExecOverride: func(_ context.Context, _ *slog.Logger, args ...string) (string, error) {
 					calls = append(calls, strings.Join(args, " "))
 					return "active", nil
@@ -100,16 +102,15 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			switch mode {
 			case "container":
 				root = container.Root{SlotName: "kube2", Dir: dir, HostRoot: t.TempDir()}
-				ns.RootOverride, ns.InContainer, ns.MachineDir = container.Root{SlotName: "kube2", Dir: t.TempDir()}, true, t.TempDir()
+				ns.InContainer = true
 			case "none":
 				root = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
-				ns.RootOverride, ns.MachineDir = none.Root{HostRoot: t.TempDir()}, t.TempDir()
-				unit, binary = HostUnitNPD, "/opt/unbounded/node/current/bin/node-problem-detector"
+				unit, binary = "versioned-npd.service", root.Path(BinaryPath)
+				options = []StartOptions{{UnitName: unit, BinaryPath: binary}}
 			}
-			ns.MachineDir = t.TempDir()
 			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 			path := root.Path("/etc/systemd/system/" + unit)
-			if err := Start(log, cfg, root, ns, StartOptions{}).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, root, ns, options...).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{"systemctl is-active " + unit, "systemctl restart " + unit}
@@ -134,14 +135,15 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			}
 			for range 2 {
 				calls = nil
-				if err := Start(log, cfg, root, ns, StartOptions{}).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, root, ns, options...).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				if want := []string{"systemctl is-active " + unit}; !slices.Equal(calls, want) {
 					t.Fatalf("unchanged NPD commands = %v, want %v", calls, want)
 				}
 				calls = nil
-				if err := Start(log, cfg, root, ns, StartOptions{ForceRestart: true}).Do(t.Context()); err != nil {
+				forced := append(slices.Clone(options), StartOptions{ForceRestart: true})
+				if err := Start(log, cfg, root, ns, forced...).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				if !slices.Equal(calls, want) {
@@ -156,9 +158,12 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			if err != nil || !bytes.Equal(got, content) || !os.SameFile(before, after) {
 				t.Fatalf("unchanged NPD unit was replaced: %v", err)
 			}
-			if ns.RootOverride != nil {
-				if entries, err := os.ReadDir(ns.MachineDir); err != nil || len(entries) != 0 {
-					t.Fatalf("NPD wrote through MachineDir instead of NodeRoot: %v", err)
+			if mode != "none" && strings.Contains(string(content), root.Path(BinaryPath)) {
+				t.Fatalf("agent-side root leaked into guest ExecStart:\n%s", content)
+			}
+			for _, decoy := range []string{ns.MachineDir, ns.Root().Path("/etc/systemd/system")} {
+				if entries, err := os.ReadDir(decoy); !errors.Is(err, os.ErrNotExist) && (err != nil || len(entries) != 0) {
+					t.Fatalf("NPD wrote through NodeStart instead of supplied NodeRoot: %s: %v", decoy, err)
 				}
 			}
 		})
@@ -201,7 +206,7 @@ func TestNPDSystemdActions(t *testing.T) {
 					return "active", nil
 				},
 			}
-			task, ok := Start(log, &config.Config{}, ns.Root(), ns, StartOptions{}).(*startTask)
+			task, ok := Start(log, &config.Config{}, ns.Root(), ns).(*startTask)
 			if !ok {
 				t.Fatal("Start did not return *startTask")
 			}
