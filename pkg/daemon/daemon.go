@@ -34,6 +34,10 @@ const (
 
 // Run starts the machine-driven daemon loop.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	if log == nil {
+		return fmt.Errorf("logger is nil")
+	}
+
 	// controller-runtime intentionally emits a warning and drops its internal
 	// logs unless the process explicitly configures its global logger.
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
@@ -151,20 +155,24 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
-	var deploymentUpgrade agentdeployment.UpgradeExecutor
-	if !containerized {
+	var (
+		deploymentUpgrade agentdeployment.UpgradeExecutor
+		hostUpgrades      *agentdeployment.HostUpgrade
+	)
+	if containerized {
+		deploymentUpgrade = agentdeployment.NewContainerUpgrade(log)
+	} else {
 		helpers, err := agentUpgradeHelperPaths(log, cfg.Bootstrap.Isolation)
 		if err != nil {
 			return err
 		}
-		deploymentUpgrade = agentdeployment.NewHostUpgrade(log, cfg.Bootstrap.Isolation, helpers)
+		hostUpgrades = agentdeployment.NewHostUpgrade(log, cfg.Bootstrap.Isolation, helpers)
+		deploymentUpgrade = hostUpgrades
 	}
+
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
 		return fmt.Errorf("create daemon instance ID: %w", err)
-	}
-	if containerized {
-		deploymentUpgrade = agentdeployment.NewContainerUpgrade(log)
 	}
 	upgrades := &agentUpgradeCoordinator{
 		UpgradeExecutor: deploymentUpgrade,
@@ -257,7 +265,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 				// before this binary has shown it can start, and so the signal
 				// it waits for is gone. In its container the agent has no
 				// install on the host to move.
-				if hostUpgrades, ok := deploymentUpgrade.(*agentdeployment.HostUpgrade); ok {
+				if !containerized {
 					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades)
 					unfinished, err := agentdeployment.HostRootMoveUnfinishedHere()
 					if err != nil {
