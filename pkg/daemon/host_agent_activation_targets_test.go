@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -117,7 +118,9 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 				}
 			}
 			candidate := filepath.Join(dir, "candidate")
-			writeExecutable(t, candidate, "#!/bin/sh\n[ \"$1\" = supports-isolation ] && [ \"$2\" = none ]\n")
+			if err := utilio.InstallFile(candidate, strings.NewReader("#!/bin/sh\n[ \"$1\" = supports-isolation ] && [ \"$2\" = none ]\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 			var state *State
 			if tc.applied != "" {
 				state = &State{Isolation: tc.applied}
@@ -302,7 +305,9 @@ func TestConfiglessBinaryActivation(t *testing.T) {
 				}
 			}
 			candidate := filepath.Join(dir, "candidate")
-			writeExecutable(t, candidate, "#!/bin/sh\n[ \"$1\" = version ]\n")
+			if err := utilio.InstallFile(candidate, strings.NewReader("#!/bin/sh\n[ \"$1\" = version ]\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 			unitPath := filepath.Join(dir, agentdeployment.ServiceUnitName)
 			const unit = "After=himdsd.service\n"
 			if tc.unit {
