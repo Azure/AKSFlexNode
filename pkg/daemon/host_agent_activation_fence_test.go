@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -52,6 +52,10 @@ type activationFencePublishingState struct {
 func (s activationFencePublishingState) Load(ctx context.Context) (*runtimeprovider.State, error) {
 	s.publish()
 	return s.testStateStore.Load(ctx)
+}
+
+func (s activationFencePublishingState) LoadState(ctx context.Context) (*runtimeprovider.State, error) {
+	return s.Load(ctx)
 }
 
 func TestDirectAgentActivationRechecksBeforeSynchronization(t *testing.T) {

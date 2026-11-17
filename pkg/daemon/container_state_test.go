@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -48,7 +48,7 @@ func TestContainerStartupRecord(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			store := containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
+			store := containerStartupStore{Path: filepath.Join(t.TempDir(), "startup.json")}
 			startup := &containerStartup{Phase: "preparing", Next: containerTestState("kube2", "new"), Previous: containerTestState("kube1", "old")}
 			if tc.mutate != nil {
 				tc.mutate(startup)
@@ -58,7 +58,7 @@ func TestContainerStartupRecord(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			info, err := os.Stat(store.path)
+			info, err := os.Stat(store.Path)
 			if err != nil || info.Mode().Perm() != 0o600 {
 				t.Fatalf("startup permissions: %v", err)
 			}
@@ -92,7 +92,7 @@ func TestContainerAgentUpgradeSignal(t *testing.T) {
 	if signal.Isolation != isolation.ModeContainer || signal.ActiveMachine != "kube2" {
 		t.Fatalf("wrong signal: %+v", signal)
 	}
-	if strings.Contains(provider.ContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
+	if strings.Contains(runtimeprovider.ContainerAgentBinaryPath(signal.ActiveMachine), "/var/lib/machines/") {
 		t.Fatal("container signal selects nspawn synchronization")
 	}
 }

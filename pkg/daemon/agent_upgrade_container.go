@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -111,7 +111,7 @@ func (s agentImageEnvFile) write(current, lastGood string) error {
 type containerAgentUpgradeExecutor struct {
 	log      *slog.Logger
 	state    agentUpgradeStateLoader
-	provider NodeProvider
+	provider runtimeprovider.NodeProvider
 	signals  agentUpgradeSignalStore
 	images   agentImageEnvFile
 	// runningImage is the image this daemon runs, which its unit passes in.
@@ -126,7 +126,7 @@ type containerAgentUpgradeExecutor struct {
 	instanceID             string
 }
 
-func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader, provider NodeProvider) (*containerAgentUpgradeExecutor, error) {
+func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader, provider runtimeprovider.NodeProvider) (*containerAgentUpgradeExecutor, error) {
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
 		return nil, fmt.Errorf("create daemon instance ID: %w", err)
@@ -502,7 +502,7 @@ func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoade
 			return utilexec.ReloadSystemd(ctx, log)
 		},
 		runningExecutable: runningAgentExecutable,
-		nspawnBinaryPath:  provider.NSpawnAgentBinaryPath,
+		nspawnBinaryPath:  runtimeprovider.NSpawnAgentBinaryPath,
 		images:            agentImageEnvFile{path: agentImageSelectionPath},
 		install:           agentImageEnvFile{path: agentInstallSettingsPath},
 		runningImage:      os.Getenv(agentImageEnv),

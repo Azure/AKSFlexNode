@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/runtimeprovider"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -22,7 +23,7 @@ func ResetNode(ctx context.Context, log *slog.Logger) (phases.Task, error) {
 	return resetNodeFromState(ctx, log, store, registeredNodeProviders())
 }
 
-func resetNodeFromState(ctx context.Context, log *slog.Logger, store stateStore, candidates []NodeProvider) (phases.Task, error) {
+func resetNodeFromState(ctx context.Context, log *slog.Logger, store stateStore, candidates []runtimeprovider.NodeProvider) (phases.Task, error) {
 	provider, err := discoverResetProvider(ctx, store, log, candidates)
 	if err != nil {
 		return nil, err
