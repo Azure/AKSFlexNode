@@ -51,7 +51,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 			APIServer: "https://example.hcp.westus.azmk8s.io:443",
 		},
 	}
-	task, ok := Start(slog.Default(), &config.Config{}, nodeStart).(*startTask)
+	task, ok := Start(slog.Default(), &config.Config{}, nodeStart.Root(), nodeStart, StartOptions{}).(*startTask)
 	if !ok {
 		t.Fatalf("Start did not return *startTask")
 	}
@@ -100,15 +100,16 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			switch mode {
 			case "container":
 				root = container.Root{SlotName: "kube2", Dir: dir, HostRoot: t.TempDir()}
-				ns.RootOverride, ns.InContainer, ns.MachineDir = root, true, t.TempDir()
+				ns.RootOverride, ns.InContainer, ns.MachineDir = container.Root{SlotName: "kube2", Dir: t.TempDir()}, true, t.TempDir()
 			case "none":
 				root = none.Root{HostRoot: dir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
-				ns.RootOverride, ns.MachineDir = root, t.TempDir()
+				ns.RootOverride, ns.MachineDir = none.Root{HostRoot: t.TempDir()}, t.TempDir()
 				unit, binary = HostUnitNPD, "/opt/unbounded/node/current/bin/node-problem-detector"
 			}
+			ns.MachineDir = t.TempDir()
 			cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 			path := root.Path("/etc/systemd/system/" + unit)
-			if err := Start(log, cfg, ns).Do(t.Context()); err != nil {
+			if err := Start(log, cfg, root, ns, StartOptions{}).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{"systemctl is-active " + unit, "systemctl restart " + unit}
@@ -133,14 +134,14 @@ func TestNPDUsesNodeRootAndExec(t *testing.T) {
 			}
 			for range 2 {
 				calls = nil
-				if err := Start(log, cfg, ns).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, root, ns, StartOptions{}).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				if want := []string{"systemctl is-active " + unit}; !slices.Equal(calls, want) {
 					t.Fatalf("unchanged NPD commands = %v, want %v", calls, want)
 				}
 				calls = nil
-				if err := Restart(log, cfg, ns).Do(t.Context()); err != nil {
+				if err := Start(log, cfg, root, ns, StartOptions{ForceRestart: true}).Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				if !slices.Equal(calls, want) {
@@ -200,7 +201,7 @@ func TestNPDSystemdActions(t *testing.T) {
 					return "active", nil
 				},
 			}
-			task, ok := Start(log, &config.Config{}, ns).(*startTask)
+			task, ok := Start(log, &config.Config{}, ns.Root(), ns, StartOptions{}).(*startTask)
 			if !ok {
 				t.Fatal("Start did not return *startTask")
 			}
