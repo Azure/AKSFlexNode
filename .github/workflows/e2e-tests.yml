@@ -98,18 +98,41 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Inspect resources from the failed concurrent validation run
+      - name: Clean only confirmed resources from the failed validation run
         run: |
           set -euo pipefail
-          timeout 60 az deployment group show \
-            --resource-group "${E2E_RESOURCE_GROUP}" \
-            --name e2e-1794909418 \
-            --query '{name:name,state:properties.provisioningState,correlation:properties.correlationId}' \
-            --output json
-          timeout 60 az resource list \
-            --resource-group "${E2E_RESOURCE_GROUP}" \
-            --query '[?tags."github-run"==`"44060193352"`].{id:id,name:name,type:type,tags:tags}' \
-            --output json
+          failed_run=44060193352
+          suffix=1794909418
+          inventory="$(timeout 60 az resource list --resource-group "${E2E_RESOURCE_GROUP}" --output json)"
+          owned="$(jq --arg run "${failed_run}" '[.[] | select(.tags["github-run"] == $run)]' <<<"${inventory}")"
+          jq --arg suffix "${suffix}" -e 'all(.[]; .tags.purpose == "e2e-test" and (
+            (.type == "Microsoft.ContainerService/managedClusters" and .name == "aks-e2e-" + $suffix) or
+            (.type == "Microsoft.Network/virtualNetworks" and .name == "vnet-e2e-" + $suffix) or
+            (.type == "Microsoft.Network/networkSecurityGroups" and .name == "nsg-e2e-" + $suffix)
+          ))' <<<"${owned}" >/dev/null
+          jq '[.[] | {id,name,type,tags}]' <<<"${owned}"
+          for type in Microsoft.ContainerService/managedClusters Microsoft.Network/virtualNetworks Microsoft.Network/networkSecurityGroups; do
+            while IFS= read -r id; do
+              [[ -n "${id}" ]] || continue
+              current="$(timeout 60 az resource show --ids "${id}" --output json)"
+              jq --arg run "${failed_run}" -e '.tags["github-run"] == $run and .tags.purpose == "e2e-test"' <<<"${current}" >/dev/null
+              echo "Deleting confirmed failed-run resource: ${id}"
+              case "${type}" in
+                Microsoft.ContainerService/managedClusters)
+                  timeout 600 az aks delete --resource-group "${E2E_RESOURCE_GROUP}" --name "aks-e2e-${suffix}" --yes --output none
+                  ;;
+                Microsoft.Network/virtualNetworks)
+                  timeout 180 az network vnet delete --resource-group "${E2E_RESOURCE_GROUP}" --name "vnet-e2e-${suffix}"
+                  ;;
+                Microsoft.Network/networkSecurityGroups)
+                  timeout 180 az network nsg delete --resource-group "${E2E_RESOURCE_GROUP}" --name "nsg-e2e-${suffix}"
+                  ;;
+              esac
+            done < <(jq -r --arg type "${type}" '.[] | select(.type == $type) | .id' <<<"${owned}")
+          done
+          remaining="$(timeout 60 az resource list --resource-group "${E2E_RESOURCE_GROUP}" --output json)"
+          jq --arg run "${failed_run}" -e '[.[] | select(.tags["github-run"] == $run)] | length == 0' <<<"${remaining}" >/dev/null
+          echo 'Confirmed no resources remain for the failed validation run.'
 
       - name: Collect logs
         if: always()
