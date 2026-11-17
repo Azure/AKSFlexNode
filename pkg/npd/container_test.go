@@ -28,7 +28,7 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	}
 	cfg, log := &config.Config{}, slog.New(slog.DiscardHandler)
 	for range 2 {
-		if err := Start(log, cfg, ns.Root(), ns, StartOptions{}).Do(t.Context()); err != nil {
+		if err := Start(log, cfg, ns.Root(), ns).Do(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,10 +41,6 @@ func TestContainerNPDUsesRootAndExec(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(decoy); err != nil || len(entries) != 0 {
 		t.Fatalf("NPD wrote through MachineDir: %v", err)
-	}
-	calls = nil
-	if err := Start(log, cfg, ns.Root(), ns, StartOptions{ForceRestart: true}).Do(t.Context()); err != nil {
-		t.Fatal(err)
 	}
 	if !slices.Contains(calls, "systemctl restart "+systemdUnitNPD) {
 		t.Fatalf("NPD was not restarted through the container executor: %v", calls)
