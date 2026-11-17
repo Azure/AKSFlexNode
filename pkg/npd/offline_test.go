@@ -108,7 +108,7 @@ func TestOfflineNPDUsesChosenRootAndUnit(t *testing.T) {
 					cfg := &config.Config{Bootstrap: config.BootstrapConfig{
 						OfflineArtifacts: config.OfflineArtifactsConfig{Source: "https://example.invalid/artifacts"},
 					}}
-					task := Start(log, cfg, root, ns, StartOptions{UnitName: unit, ForceRestart: true})
+					task := Start(log, cfg, root, ns, StartOptions{UnitName: unit})
 					if task.Name() != "start-npd" {
 						t.Fatalf("task name = %q", task.Name())
 					}
