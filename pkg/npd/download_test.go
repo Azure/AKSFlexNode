@@ -141,7 +141,7 @@ func TestOfflineArtifactsDisableNPD(t *testing.T) {
 	if err := start.Do(context.Background()); err != nil {
 		t.Fatalf("Start().Do() error = %v", err)
 	}
-	if _, ok := start.(*disableTask); !ok {
-		t.Fatalf("Start() = %T, want *disableTask", start)
+	if _, ok := start.(disabledTask); !ok {
+		t.Fatalf("Start() = %T, want disabledTask", start)
 	}
 }
