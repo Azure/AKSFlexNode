@@ -45,9 +45,7 @@ const (
 //go:embed assets/aks-flex-node-agent.service
 var serviceUnitContent []byte
 
-var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Funcs(template.FuncMap{
-	"join": strings.Join,
-}).Parse(string(serviceUnitContent)))
+var serviceUnitTemplate = template.Must(template.New(ServiceUnitName).Parse(string(serviceUnitContent)))
 
 //go:embed assets/aks-flex-node-agent-recovery.service
 var recoveryServiceUnitContent []byte
@@ -313,7 +311,7 @@ func installedAgentServiceOptions(systemdDir string) (agentServiceOptions, error
 type agentServiceTemplateData struct {
 	CurrentBinaryPath string
 	Dependencies      []string
-	WantedTargets     []string
+	WantedTargets     string
 }
 
 func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServiceOptions) ([]byte, error) {
@@ -328,7 +326,7 @@ func renderAgentServiceUnit(currentBinaryPath string, serviceOptions agentServic
 	if err := serviceUnitTemplate.Execute(&content, agentServiceTemplateData{
 		CurrentBinaryPath: currentBinaryPath,
 		Dependencies:      dependencies,
-		WantedTargets:     wantedTargets,
+		WantedTargets:     strings.Join(wantedTargets, " "),
 	}); err != nil {
 		return nil, fmt.Errorf("render agent systemd service: %w", err)
 	}

@@ -33,7 +33,7 @@ func TestNodeProviderFactory(t *testing.T) {
 		want            isolation.Mode
 		nspawn, wantErr bool
 	}{
-		{name: "default", want: isolation.ModeNSpawn, nspawn: true},
+		{name: "empty mode", wantErr: true},
 		{name: "nspawn", mode: isolation.ModeNSpawn, want: isolation.ModeNSpawn, nspawn: true},
 		{name: "none", mode: isolation.ModeNone, want: isolation.ModeNone},
 		{name: "container", mode: isolation.ModeContainer, want: isolation.ModeContainer},
@@ -110,7 +110,10 @@ func TestResetInvokesDiscoveredActions(t *testing.T) {
 	t.Parallel()
 	resets := 0
 	provider := resetActionProvider{NodeProvider: mustNodeProvider(t, "none"), resets: &resets}
-	task := resetNodeFromState(discardLogger(), (&testStateStore{}).Load, []NodeProvider{provider})
+	task, err := resetNodeFromState(t.Context(), discardLogger(), (&testStateStore{}).Load, []NodeProvider{provider})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
 		if err := task.Do(t.Context()); err != nil {
 			t.Fatal(err)

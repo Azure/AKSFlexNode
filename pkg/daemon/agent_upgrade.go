@@ -17,6 +17,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -236,9 +237,7 @@ type agentUpgrader interface {
 	agentUpgradeHandoff
 }
 
-type agentUpgradeStateLoader interface {
-	LoadState(context.Context) (*State, error)
-}
+type agentUpgradeStateLoader = provider.StateLoader
 
 func loadAgentActivationState(ctx context.Context, loader agentUpgradeStateLoader, actions agentActions) (*State, error) {
 	if err := actions.ValidateAgentActivation(ctx); err != nil {
@@ -346,7 +345,7 @@ func recordPendingAgentUpgrade(
 	if err := validateAppliedProvider(provider, loaded); err != nil {
 		return err
 	}
-	mode := loaded.isolationMode()
+	mode := loaded.IsolationMode()
 	if err := provider.ValidateActiveSlot(loaded.ActiveMachine); err != nil {
 		return fmt.Errorf("no valid active node for AgentUpgrade: %w", err)
 	}
@@ -576,7 +575,11 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	if signal == nil {
 		return ctx.Err()
 	}
-	provider, err := NewNodeProvider(signal.Isolation)
+	mode := signal.Isolation
+	if mode == "" {
+		mode = isolation.ModeNSpawn
+	}
+	provider, err := NewNodeProvider(mode)
 	if err != nil {
 		return err
 	}

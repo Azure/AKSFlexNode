@@ -24,8 +24,8 @@ import (
 
 func containerTestState(slot, version string) *State {
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	return &State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
-		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot).DeepCopy(), NPDVersion: "v1.35.1"}
+	return (&State{Isolation: isolation.ModeContainer, ActiveMachine: slot,
+		AppliedSettingsVersion: version, NodeConfig: config.ToAgentConfig(cfg, slot)}).DeepCopy()
 }
 
 type fakeContainerNode struct {

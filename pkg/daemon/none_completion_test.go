@@ -100,7 +100,7 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 	var events []string
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Components: config.ComponentsConfig{Kubernetes: "1.34.1"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 	ac := config.ToAgentConfig(cfg, noneops.Slot)
-	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, NPDVersion: "v1.35.1", AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
+	f.store = &noneTestStore{events: &events, state: &State{Isolation: isolation.ModeNone, NodeConfig: ac, AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.34.1"}}
 	factory := func(p noneops.Params) noneNode {
 		p.Overrides, p.Hooks = f.params.Overrides, f.params.Hooks
 		p.Resolve = func(string) (*goalstates.MachineGoalState, error) { return completionGoal(p.Config), nil }
@@ -142,7 +142,6 @@ func newCompletionFixture(t *testing.T) *completionFixture {
 		if f.fail == "artifacts" && cfg.Npd.Version == "v1.36.0" {
 			return errors.New("NPD install interrupted")
 		}
-		// Simulate different NPD versions sharing an SDK binary directory.
 		path := gs.RootFS.Root().Path("opt/aks-flex-node/bin/node-problem-detector")
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
@@ -190,11 +189,11 @@ func (f *completionFixture) assertAppliedRuntime(t *testing.T, state *State) {
 		t.Fatal(err)
 	}
 	binary, err := os.ReadFile(gs.RootFS.Root().Path("opt/aks-flex-node/bin/node-problem-detector"))
-	if err != nil || string(binary) != state.NPDVersion {
-		t.Fatalf("active NPD = %q, want %q: %v", binary, state.NPDVersion, err)
+	if err != nil || string(binary) != f.op.cfg.Npd.Version {
+		t.Fatalf("active NPD = %q, want %q: %v", binary, f.op.cfg.Npd.Version, err)
 	}
-	if len(f.npdVersions) == 0 || f.npdVersions[len(f.npdVersions)-1] != state.NPDVersion {
-		t.Fatal("NPD restart did not select applied version")
+	if len(f.npdVersions) == 0 || f.npdVersions[len(f.npdVersions)-1] != f.op.cfg.Npd.Version {
+		t.Fatal("NPD restart did not select configured version")
 	}
 }
 
@@ -205,6 +204,9 @@ func TestNoneBaseUpgradeAndRecovery(t *testing.T) {
 			t.Run(version+"/"+failure, func(t *testing.T) {
 				t.Parallel()
 				f := newCompletionFixture(t)
+				if err := f.op.recover(t.Context(), discardLogger()); err != nil {
+					t.Fatal(err)
+				}
 				source, err := json.Marshal(f.store.state)
 				if err != nil {
 					t.Fatal(err)

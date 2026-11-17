@@ -66,7 +66,7 @@ func (o *noneNodeOperator) applied(ctx context.Context) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if state == nil || state.isolationMode() != isolation.ModeNone || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
+	if state == nil || state.IsolationMode() != isolation.ModeNone || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeNone) {
 		return nil, fmt.Errorf("none node has no applied configuration")
 	}
 	return state, nil
@@ -92,11 +92,10 @@ func (o *noneNodeOperator) recover(ctx context.Context, log *slog.Logger) error 
 	if err != nil {
 		return err
 	}
-	cfg := npdConfigFromState(state)
-	if err := o.installNPD(ctx, log, cfg, gs); err != nil {
+	if err := o.installNPD(ctx, log, o.cfg, gs); err != nil {
 		return err
 	}
-	if err := o.startNPD(ctx, log, cfg, gs.NodeStart); err != nil {
+	if err := o.startNPD(ctx, log, o.cfg, gs.NodeStart); err != nil {
 		return err
 	}
 	o.recovered = true
@@ -125,7 +124,7 @@ func (o *noneNodeOperator) RestartNode(ctx context.Context, log *slog.Logger) er
 	if err != nil {
 		return err
 	}
-	return o.startNPD(ctx, log, npdConfigFromState(state), gs.NodeStart)
+	return o.startNPD(ctx, log, o.cfg, gs.NodeStart)
 }
 
 func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
@@ -144,9 +143,10 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	if err != nil {
 		return nil, err
 	}
-	ac = ac.DeepCopy()
 	next := nextAppliedState(state, goal, nil)
-	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeNone, ac, noneNPDVersion(cfg)
+	next.Isolation, next.NodeConfig = isolation.ModeNone, ac
+	next = next.DeepCopy()
+	ac = next.NodeConfig
 	node := o.newNode(noneops.Params{
 		Log: log, Config: ac, GoalState: gs, Previous: state.NodeConfig,
 	})
@@ -165,10 +165,10 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	if err != nil {
 		return nil, err
 	}
-	if err := o.installNPD(ctx, log, npdConfigFromState(next), gs); err != nil {
+	if err := o.installNPD(ctx, log, cfg, gs); err != nil {
 		return nil, err
 	}
-	if err := o.startNPD(ctx, log, npdConfigFromState(next), gs.NodeStart); err != nil {
+	if err := o.startNPD(ctx, log, cfg, gs.NodeStart); err != nil {
 		return nil, err
 	}
 	// Until this save succeeds, recovery restores the source configuration.
@@ -186,9 +186,8 @@ func (o *noneNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger,
 	return next, nil
 }
 
-func seedNoneState(state *State, cfg *agentconfig.AgentConfig, npdVersion string) {
+func seedNoneState(state *State, cfg *agentconfig.AgentConfig) {
 	state.Isolation = isolation.ModeNone
 	state.ActiveMachine = ""
 	state.NodeConfig = cfg
-	state.NPDVersion = npdVersion
 }
