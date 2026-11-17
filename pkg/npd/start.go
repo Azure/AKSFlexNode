@@ -36,14 +36,11 @@ type startTask struct {
 	nodeName       string
 	unit           string
 	binaryPath     string
-	forceRestart   bool
 	run            func(context.Context, *slog.Logger, ...string) (string, error)
 }
 
 // StartOptions controls NPD service reconciliation and execution paths.
 type StartOptions struct {
-	// ForceRestart picks up binary changes even when the unit text is unchanged.
-	ForceRestart bool
 	// UnitName defaults to node-problem-detector.service.
 	UnitName string
 	// BinaryPath is in the executor's filesystem view, not the agent's.
@@ -55,7 +52,7 @@ type StartOptions struct {
 // Options may override the default unit and execution path without changing
 // where files are installed. Later options override earlier nonempty values.
 func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, options ...StartOptions) phases.Task {
-	unit, binaryPath, forceRestart := systemdUnitNPD, BinaryPath, false
+	unit, binaryPath := systemdUnitNPD, BinaryPath
 	for _, option := range options {
 		if option.UnitName != "" {
 			unit = option.UnitName
@@ -63,7 +60,6 @@ func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeSt
 		if option.BinaryPath != "" {
 			binaryPath = option.BinaryPath
 		}
-		forceRestart = option.ForceRestart
 	}
 	if disabledForOfflineArtifacts(cfg) {
 		return &disableTask{log: log, root: root, unit: unit, run: nodeStart.Exec}
@@ -77,7 +73,6 @@ func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeSt
 		nodeName:       nodeStart.NodeName,
 		unit:           unit,
 		binaryPath:     binaryPath,
-		forceRestart:   forceRestart,
 		run:            nodeStart.Exec,
 	}
 }
@@ -127,7 +122,7 @@ func (t *startTask) Do(ctx context.Context) error {
 		return fmt.Errorf("ensure npd service file: %w", err)
 	}
 
-	return t.ensureSystemdUnit(ctx, serviceUpdated || t.forceRestart)
+	return t.ensureSystemdUnit(ctx, serviceUpdated)
 }
 
 func (t *startTask) ensureServiceFile() (updated bool, err error) {
