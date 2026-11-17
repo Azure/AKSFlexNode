@@ -7,7 +7,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -28,10 +27,18 @@ func ResetHostHub(log *slog.Logger) phases.Task {
 	})
 }
 
-// ResetWorker coordinates host Hub cleanup before runtime teardown.
-func ResetWorker(log *slog.Logger, worker agentruntime.Runtime, mode isolation.Mode) phases.Task {
-	if mode != isolation.ModeNone {
-		return worker.Reset(log)
+// ResetWorker discovers ownership at execution time, after CLI daemon shutdown.
+func ResetWorker(log *slog.Logger, worker agentruntime.Runtime) phases.Task {
+	return hostnode.Func("reset-worker", func(ctx context.Context) error {
+		return runResetPlan(ctx, log, worker.PlanReset(log), ResetHostHub(log))
+	})
+}
+
+func runResetPlan(ctx context.Context, log *slog.Logger, plan agentruntime.ResetPlan, hub phases.Task) error {
+	tasks := []phases.Task{plan.Stop()}
+	if plan.HasNone() {
+		tasks = append(tasks, hub)
 	}
-	return phases.Serial(log, ResetHostHub(log), worker.Reset(log))
+	tasks = append(tasks, plan.Finish())
+	return phases.Serial(log, tasks...).Do(ctx)
 }

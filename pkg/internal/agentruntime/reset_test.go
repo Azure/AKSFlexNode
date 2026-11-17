@@ -1,35 +1,107 @@
 package agentruntime
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-// TestResetNodeCleansUpLocalDNS pins that reset runs the library's full
-// network cleanup. It used to call the interface and route cleanups directly
-// and skip the LocalDNS one, so every reset of a LocalDNS node left the unit,
-// the nft table, the dummy interface and the helper on the host.
-func TestResetNodeCleansUpLocalDNS(t *testing.T) {
+type testResetWorker struct {
+	name       string
+	events     *[]string
+	present    bool
+	discovered int
+	fail       string
+}
+
+func (w *testResetWorker) Present() bool {
+	w.discovered++
+	return w.present
+}
+
+func (w *testResetWorker) task(stage string) phases.Task {
+	return hostnode.Func(stage, func(context.Context) error {
+		*w.events = append(*w.events, w.name+"-"+stage)
+		if stage == "stop" {
+			w.present = false
+		}
+		if stage == w.fail {
+			return errors.New("failed " + stage)
+		}
+		return nil
+	})
+}
+
+func (w *testResetWorker) Stop() phases.Task    { return w.task("stop") }
+func (w *testResetWorker) Destroy() phases.Task { return w.task("destroy") }
+
+func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 	t.Parallel()
 
-	name := (NSpawn{}).Reset(slog.New(slog.DiscardHandler)).Name()
-
-	for _, want := range []string{
-		"cleanup-localdns-rules",
-		"remove-network-interfaces",
-		"cleanup-routes",
-		"remove-host-helpers",
+	for _, tc := range []struct {
+		name    string
+		present bool
+		fail    string
+		want    []string
+	}{
+		{
+			name:    "both workers",
+			present: true,
+			want:    []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy", "shared"},
+		},
+		{
+			name: "native absent",
+			want: []string{"nspawn-stop", "nspawn-destroy", "orphan-artifacts", "shared"},
+		},
+		{
+			name:    "native stop fails",
+			present: true,
+			fail:    "stop",
+			want:    []string{"nspawn-stop", "none-stop"},
+		},
+		{
+			name:    "native destroy fails",
+			present: true,
+			fail:    "destroy",
+			want:    []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy"},
+		},
 	} {
-		if !strings.Contains(name, want) {
-			t.Fatalf("ResetNode does not run %s: %s", want, name)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var events []string
+			machine := &testResetWorker{name: "nspawn", events: &events}
+			native := &testResetWorker{name: "none", events: &events, present: tc.present, fail: tc.fail}
+			record := func(name string) phases.Task {
+				return hostnode.Func(name, func(context.Context) error {
+					events = append(events, name)
+					return nil
+				})
+			}
+			log := slog.New(slog.DiscardHandler)
+			plan := discoverReset(log, machine, native, record("shared"), record("orphan-artifacts"))
+			if plan.HasNone() != tc.present {
+				t.Fatal("incorrect discovery")
+			}
+			err := phases.Serial(log, plan.Stop(), plan.Finish()).Do(t.Context())
+			if (err != nil) != (tc.fail != "") {
+				t.Fatalf("reset error = %v", err)
+			}
+			if native.discovered != 1 {
+				t.Fatalf("discovery calls = %d", native.discovered)
+			}
+			if !slices.Equal(events, tc.want) {
+				t.Fatalf("events = %v, want %v", events, tc.want)
+			}
+		})
 	}
 }
 

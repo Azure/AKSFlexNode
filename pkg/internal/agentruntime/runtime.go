@@ -46,7 +46,7 @@ type WorkerContext struct {
 //	Reapply:   Prepare(applied) -> Restart, without advancing applied State
 //	Repave:    Prepare(previous) -> agent hooks or host Hub cleanup
 //	           -> Start(target) -> save applied State -> Retire(previous)
-//	Reset:     host Hub cleanup if needed -> Reset -> clear configuration/State
+//	Reset:     stop workers -> host Hub cleanup if needed -> teardown -> clear configuration/State
 //
 // An error stops the sequence without implying that earlier actions rolled back.
 // Start must succeed before persistence, and persistence must succeed before
@@ -72,9 +72,10 @@ type Runtime interface {
 	// The daemon must successfully save the target as applied before invoking it.
 	Retire(*slog.Logger, Inputs) phases.Task
 
-	// Reset tears down worker runtimes and their owned host artifacts. Daemon
-	// configuration/State cleanup, status publication, and uninstall stay external.
-	Reset(*slog.Logger) phases.Task
+	// PlanReset discovers owned worker runtimes at execution time, independently
+	// of applied State. Callers stop workers before component cleanup and Finish;
+	// State deletion, status publication and uninstall stay outside the plan.
+	PlanReset(*slog.Logger) ResetPlan
 }
 
 // New selects an already validated worker mode.

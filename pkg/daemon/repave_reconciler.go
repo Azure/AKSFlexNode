@@ -383,7 +383,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
 	// Stage 1 clears local runtime/settings while keeping this daemon alive.
-	if err := phases.ExecuteTask(ctx, r.log, ResetWorker(r.log, r.runtime, r.cfg.Bootstrap.Isolation)); err != nil {
+	if err := phases.ExecuteTask(ctx, r.log, ResetWorker(r.log, r.runtime)); err != nil {
 		return err
 	}
 	if err := phases.ExecuteTask(ctx, r.log, r.clearConfig); err != nil {
