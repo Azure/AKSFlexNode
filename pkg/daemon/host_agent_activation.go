@@ -126,10 +126,16 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 		}
 	}
 
-	cfg, err := config.ReadConfig(s.configPath)
+	cfg, err := config.LoadConfig(s.configPath)
 	if err != nil {
+		configErr := fmt.Errorf("load host agent configuration: %w", err)
 		if !errors.Is(err, os.ErrNotExist) || state != nil {
-			return agentbinary.ServicePlan{}, fmt.Errorf("read host agent configuration: %w", err)
+			return agentbinary.ServicePlan{}, configErr
+		}
+		// Validation may report a missing credential; only absence of the
+		// canonical config itself permits the inactive reset-host baseline.
+		if _, statErr := os.Lstat(s.configPath); !errors.Is(statErr, os.ErrNotExist) {
+			return agentbinary.ServicePlan{}, configErr
 		}
 		if _, unitErr := os.Lstat(s.unitPath); unitErr == nil {
 			return agentbinary.ServicePlan{}, fmt.Errorf("installed host agent requires configuration: %w", err)
@@ -148,8 +154,6 @@ func (s *flexDaemonActivationService) Preflight(ctx context.Context, currentBina
 	}
 	if state != nil {
 		mode = state.Isolation
-	} else if err := config.ValidateIsolation(mode); err != nil {
-		return agentbinary.ServicePlan{}, err
 	}
 
 	targets := agentdeployment.ServiceTargetsFromConfig(cfg, mode)
