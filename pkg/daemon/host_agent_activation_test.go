@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -179,7 +180,7 @@ func TestFlexDaemonActivationRejectsCorruptAppliedState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := store.Save(t.Context(), &State{Isolation: tc.mode}); err != nil {
+			if err := store.Save(t.Context(), &runtimeprovider.State{Isolation: tc.mode}); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(store.path)

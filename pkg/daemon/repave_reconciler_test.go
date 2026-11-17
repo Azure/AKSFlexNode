@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -20,7 +21,7 @@ func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
+	operator := &fakeNodeOperator{state: &runtimeprovider.State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &runtimeprovider.State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	if err := repaves.reconcileOnce(context.Background()); err != nil {
@@ -79,7 +80,7 @@ func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
+	operator := &fakeNodeOperator{state: &runtimeprovider.State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	err := repaves.reconcileOnce(t.Context())
@@ -133,8 +134,8 @@ func (f *fakeMachineClient) PatchStatus(_ context.Context, status aksmachine.Sta
 }
 
 type fakeNodeOperator struct {
-	state      *State
-	newState   *State
+	state      *runtimeprovider.State
+	newState   *runtimeprovider.State
 	err        error
 	restartErr error
 	resetErr   error
@@ -145,7 +146,7 @@ type fakeNodeOperator struct {
 	stopped    bool
 }
 
-func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
+func (f *fakeNodeOperator) LoadState(context.Context) (*runtimeprovider.State, error) {
 	if f.state == nil {
 		return nil, f.err
 	}
@@ -156,7 +157,7 @@ func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
 	return &loaded, f.err
 }
 
-func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error) {
+func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*runtimeprovider.State, error) {
 	f.applied = true
 	if f.newState != nil {
 		f.state = f.newState

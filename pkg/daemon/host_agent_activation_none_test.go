@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
@@ -50,7 +51,7 @@ func TestHostAgentActivationUsesAppliedIsolation(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					applied := &State{Isolation: tc.mode, ActiveMachine: tc.slot}
+					applied := &runtimeprovider.State{Isolation: tc.mode, ActiveMachine: tc.slot}
 					if applied.Isolation == "" {
 						applied.Isolation = isolation.ModeNSpawn
 					}

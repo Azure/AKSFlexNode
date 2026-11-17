@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
@@ -321,7 +322,7 @@ func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
 
 	gs := &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{MachineDir: t.TempDir()}, NodeStart: &goalstates.NodeStart{}}
 	name := mustNodeProvider(t, "nspawn").StartNode(StartParams{
-		Config: &config.Config{}, Log: slog.New(slog.DiscardHandler), MachineName: "kube1", GoalState: gs, State: &State{},
+		Config: &config.Config{}, Log: slog.New(slog.DiscardHandler), MachineName: "kube1", GoalState: gs, State: &runtimeprovider.State{},
 	}).Name()
 	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
 		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)

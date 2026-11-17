@@ -13,7 +13,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -25,14 +25,12 @@ const (
 	stateFileName = "daemon-state.json"
 )
 
-type State = provider.State
-
 type saveStateTask struct {
 	store stateStore
-	state *State
+	state *runtimeprovider.State
 }
 
-func saveState(store stateStore, state *State) phases.Task {
+func saveState(store stateStore, state *runtimeprovider.State) phases.Task {
 	return &saveStateTask{store: store, state: state}
 }
 
@@ -51,8 +49,8 @@ func (t *saveStateTask) Do(ctx context.Context) error {
 	return nil
 }
 
-func SeededState(goal aksmachine.GoalState, mode isolation.Mode) *State {
-	return &State{
+func SeededState(goal aksmachine.GoalState, mode isolation.Mode) *runtimeprovider.State {
+	return &runtimeprovider.State{
 		Isolation:                mode,
 		AppliedSettingsVersion:   goal.SettingsVersion,
 		AppliedKubernetesVersion: goal.KubernetesVersion,
@@ -78,7 +76,7 @@ func activeMachineFromStore(ctx context.Context, store stateStore) (*activeMachi
 	return &activeMachine{Name: state.ActiveMachine, State: state}, nil
 }
 
-type stateStore = provider.StateStore
+type stateStore = runtimeprovider.StateStore
 
 func NewFileStateStore() (stateStore, error) {
 	return newFileStateStore("")
@@ -95,7 +93,7 @@ func newFileStateStore(path string) (*fileStateStore, error) {
 	return &fileStateStore{path: path}, nil
 }
 
-func (s *fileStateStore) Load(context.Context) (*State, error) {
+func (s *fileStateStore) Load(context.Context) (*runtimeprovider.State, error) {
 	data, err := os.ReadFile(filepath.Clean(s.path))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -112,7 +110,7 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 		return nil, fmt.Errorf("daemon state checksum mismatch for %s", s.path)
 	}
 
-	var state State
+	var state runtimeprovider.State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode daemon state %s: %w", s.path, err)
 	}
@@ -122,7 +120,7 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 	return &state, nil
 }
 
-func (s *fileStateStore) Save(_ context.Context, state *State) error {
+func (s *fileStateStore) Save(_ context.Context, state *runtimeprovider.State) error {
 	if state == nil {
 		return fmt.Errorf("daemon state is nil")
 	}

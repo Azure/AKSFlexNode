@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -17,13 +18,13 @@ import (
 )
 
 type noneTestStore struct {
-	state    *State
+	state    *runtimeprovider.State
 	events   *[]string
 	failSave bool
 }
 
-func (s *noneTestStore) Load(context.Context) (*State, error) { return s.state, nil }
-func (s *noneTestStore) Save(_ context.Context, state *State) error {
+func (s *noneTestStore) Load(context.Context) (*runtimeprovider.State, error) { return s.state, nil }
+func (s *noneTestStore) Save(_ context.Context, state *runtimeprovider.State) error {
 	*s.events = append(*s.events, "persist")
 	if s.failSave {
 		return errors.New("disk full")
@@ -75,7 +76,7 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 			var events []string
 			previous := &agentconfig.AgentConfig{Isolation: "none"}
 			previous.Cluster.Version = "1.35.0"
-			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old"}}
+			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &runtimeprovider.State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old"}}
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 			op := &noneNodeOperator{
 				operatorBase: &operatorBase{cfg: cfg, state: store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}},
@@ -142,7 +143,7 @@ func TestNodeOperatorIsolationSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: tc.configured}}
-			state := &State{Isolation: tc.applied}
+			state := &runtimeprovider.State{Isolation: tc.applied}
 			if !tc.missingConfig {
 				state.NodeConfig = &agentconfig.AgentConfig{Isolation: string(tc.applied)}
 			}

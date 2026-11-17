@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -110,7 +110,7 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent-upgrade.json")
 	executor := &hostAgentUpgradeExecutor{
 		provider: mustNodeProvider(t, "nspawn"),
-		state:    &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
+		state:    &fakeNodeOperator{state: &runtimeprovider.State{ActiveMachine: "kube1"}},
 		signals:  agentUpgradeSignalStore{path: path},
 	}
 	if err := executor.RecordPending(t.Context(), "operation-1"); err != nil {
@@ -491,7 +491,7 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 		paths:      paths,
 		signals:    signals,
 		instanceID: "restarted-instance",
-		provider:   nspawnProvider{Services: provider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return nspawnBinary }},
+		provider:   nspawnProvider{Services: runtimeprovider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return nspawnBinary }},
 		finishMachineOperation: func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
 			finished++
 			if result.Phase != machinav1alpha3.OperationPhaseComplete {

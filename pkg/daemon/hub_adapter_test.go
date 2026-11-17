@@ -17,6 +17,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 )
 
@@ -41,7 +42,7 @@ func TestHubAdapterFollowsIntentWithUnchangedETag(t *testing.T) {
 	ops := &testHubOperations{}
 	adapter, machinesDir := newTestHubAdapter(t, ops)
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.0"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", ActiveMachine: "kube1"}}
+	operator := &fakeNodeOperator{state: &runtimeprovider.State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", ActiveMachine: "kube1"}}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
 	r := newTestRepaveReconciler(t, machines, fakeClient(node), operator)
 	r.hub = adapter
@@ -80,12 +81,12 @@ func TestHubAdapterRepavedWorkerStartsFresh(t *testing.T) {
 	ops := &testHubOperations{}
 	adapter, machinesDir := newTestHubAdapter(t, ops)
 	goal := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
-	if err := adapter.ReconcileHub(t.Context(), goal, &State{ActiveMachine: "kube1"}, nil); err != nil {
+	if err := adapter.ReconcileHub(t.Context(), goal, &runtimeprovider.State{ActiveMachine: "kube1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	ops.calls = nil
 	// A repaved worker has its own rootfs and no Hub yet, so enablement reruns.
-	if err := adapter.ReconcileHub(t.Context(), goal, &State{ActiveMachine: "kube2"}, nil); err != nil {
+	if err := adapter.ReconcileHub(t.Context(), goal, &runtimeprovider.State{ActiveMachine: "kube2"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(ops.calls, []hubPhase{hubPrepare, hubRoute, hubVerify}) {
@@ -102,7 +103,7 @@ func TestHubAdapterUnsupportedWorkerIsNotRetried(t *testing.T) {
 	adapter, _ := newTestHubAdapter(t, ops)
 	clock := time.Unix(0, 0)
 	adapter.now = func() time.Time { return clock }
-	state := &State{ActiveMachine: "kube1"}
+	state := &runtimeprovider.State{ActiveMachine: "kube1"}
 	for range 2 {
 		if err := adapter.ReconcileHub(t.Context(), aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}, state, nil); err != nil {
 			t.Fatalf("unsupported worker returned an error for retry: %v", err)
@@ -135,7 +136,7 @@ func TestHubAdapterBacksOffFailures(t *testing.T) {
 	adapter, _ := newTestHubAdapter(t, ops)
 	clock := time.Unix(0, 0)
 	adapter.now = func() time.Time { return clock }
-	state := &State{ActiveMachine: "kube1"}
+	state := &runtimeprovider.State{ActiveMachine: "kube1"}
 	enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
 	attempts := func() int { return len(ops.calls) }
 
@@ -198,7 +199,7 @@ func TestHubAdapterFalseWithoutJournalSkipsOperations(t *testing.T) {
 			node, writes := liveNode(adapter)
 			disable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(false)}
 			for range 2 {
-				if err := adapter.ReconcileHub(t.Context(), disable, &State{ActiveMachine: machine}, node); err != nil {
+				if err := adapter.ReconcileHub(t.Context(), disable, &runtimeprovider.State{ActiveMachine: machine}, node); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -217,7 +218,7 @@ func TestHubAdapterFalseWithoutJournalSkipsOperations(t *testing.T) {
 
 func TestHubAdapterRejectsInvalidState(t *testing.T) {
 	t.Parallel()
-	for name, state := range map[string]*State{"missing": nil, "invalid machine": {ActiveMachine: "kube3"}} {
+	for name, state := range map[string]*runtimeprovider.State{"missing": nil, "invalid machine": {ActiveMachine: "kube3"}} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ops := &testHubOperations{}
@@ -252,7 +253,7 @@ func TestHubAdapterReportsNodeCondition(t *testing.T) {
 	clock := time.Unix(0, 0)
 	adapter.now = func() time.Time { return clock }
 	node, writes := liveNode(adapter)
-	state := &State{ActiveMachine: "kube1"}
+	state := &runtimeprovider.State{ActiveMachine: "kube1"}
 	reconcile := func(intent bool) {
 		t.Helper()
 		_ = adapter.ReconcileHub(t.Context(), aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(intent)}, state, node)
@@ -322,7 +323,7 @@ func TestHubAdapterConditionFollowsLiveNode(t *testing.T) {
 	adapter.now = func() time.Time { return clock }
 	node, writes := liveNode(adapter)
 	enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
-	state := &State{ActiveMachine: "kube1"}
+	state := &runtimeprovider.State{ActiveMachine: "kube1"}
 	_ = adapter.ReconcileHub(t.Context(), enable, state, node)
 	// Someone deletes the condition.
 	node.Status.Conditions = nil
@@ -349,7 +350,7 @@ func TestHubAdapterConditionWriteFailureDoesNotFailReconcile(t *testing.T) {
 	adapter.setCondition = func(context.Context, corev1.NodeCondition) error { writes++; return errors.New("forbidden") }
 	goal := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
 	for range 2 {
-		if err := adapter.ReconcileHub(t.Context(), goal, &State{ActiveMachine: "kube1"}, nil); err != nil {
+		if err := adapter.ReconcileHub(t.Context(), goal, &runtimeprovider.State{ActiveMachine: "kube1"}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -390,7 +391,7 @@ type orderRecordingHub struct {
 	calls     int
 }
 
-func (h *orderRecordingHub) ReconcileHub(context.Context, aksmachine.GoalState, *State, *corev1.Node) error {
+func (h *orderRecordingHub) ReconcileHub(context.Context, aksmachine.GoalState, *runtimeprovider.State, *corev1.Node) error {
 	h.calls++
 	h.sawStatus = h.machines.status.ProvisioningState
 	return errHubTest
@@ -401,7 +402,7 @@ func (h *orderRecordingHub) ReconcileHub(context.Context, aksmachine.GoalState, 
 func TestReconcilerReportsMachineStatusBeforeHub(t *testing.T) {
 	t.Parallel()
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{SettingsVersion: "42", KubernetesVersion: "1.34.0", DisconnectToleranceEnabled: ptr.To(true)}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", ActiveMachine: "kube1"}}
+	operator := &fakeNodeOperator{state: &runtimeprovider.State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", ActiveMachine: "kube1"}}
 	r := newTestRepaveReconciler(t, machines, fakeClient(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}), operator)
 	hub := &orderRecordingHub{machines: machines}
 	r.hub = hub
@@ -429,11 +430,11 @@ func TestHubAdapterConditionNewNodeAndRetriedWrites(t *testing.T) {
 		return nil
 	}
 	enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
-	if err := adapter.ReconcileHub(t.Context(), enable, &State{ActiveMachine: "kube1"}, nil); err != nil {
+	if err := adapter.ReconcileHub(t.Context(), enable, &runtimeprovider.State{ActiveMachine: "kube1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// A repaved worker registers a new Node object without the condition.
-	if err := adapter.ReconcileHub(t.Context(), enable, &State{ActiveMachine: "kube2"}, &corev1.Node{}); err != nil {
+	if err := adapter.ReconcileHub(t.Context(), enable, &runtimeprovider.State{ActiveMachine: "kube2"}, &corev1.Node{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(written) != 2 || written[1].Reason != "Enabled" {
@@ -443,9 +444,9 @@ func TestHubAdapterConditionNewNodeAndRetriedWrites(t *testing.T) {
 	failWrites = true
 	disable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(false)}
 	ops.fail = hubRestore
-	_ = adapter.ReconcileHub(t.Context(), disable, &State{ActiveMachine: "kube2"}, nil)
+	_ = adapter.ReconcileHub(t.Context(), disable, &runtimeprovider.State{ActiveMachine: "kube2"}, nil)
 	failWrites = false
-	_ = adapter.ReconcileHub(t.Context(), disable, &State{ActiveMachine: "kube2"}, nil)
+	_ = adapter.ReconcileHub(t.Context(), disable, &runtimeprovider.State{ActiveMachine: "kube2"}, nil)
 	if len(written) != 3 || written[2].Reason != "DisableFailed" {
 		t.Fatalf("failed condition write not retried: %+v", written)
 	}
@@ -486,7 +487,7 @@ func TestHubAdapterHeartbeatEdgeCases(t *testing.T) {
 		adapter.now = func() time.Time { return clock }
 		node, writes := liveNode(adapter)
 		enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
-		state := &State{ActiveMachine: "kube1"}
+		state := &runtimeprovider.State{ActiveMachine: "kube1"}
 		_ = adapter.ReconcileHub(t.Context(), enable, state, node)
 		// Past the heartbeat but inside the 15-minute Unsupported retry delay.
 		clock = clock.Add(adapter.heartbeat + time.Minute)
@@ -503,7 +504,7 @@ func TestHubAdapterHeartbeatEdgeCases(t *testing.T) {
 		adapter.now = func() time.Time { return clock }
 		node, writes := liveNode(adapter)
 		enable := aksmachine.GoalState{DisconnectToleranceEnabled: ptr.To(true)}
-		state := &State{ActiveMachine: "kube1"}
+		state := &runtimeprovider.State{ActiveMachine: "kube1"}
 		_ = adapter.ReconcileHub(t.Context(), enable, state, node)
 		*writes = nil
 		future := metav1.NewTime(clock.Add(time.Hour))

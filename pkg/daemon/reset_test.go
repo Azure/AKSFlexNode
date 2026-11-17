@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
@@ -108,30 +109,30 @@ func TestRemoveFilesTaskIsIdempotent(t *testing.T) {
 
 func TestResetNodeAppliedStateRouting(t *testing.T) {
 	t.Parallel()
-	noneState := func() *State {
-		return &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
+	noneState := func() *runtimeprovider.State {
+		return &runtimeprovider.State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}
 	}
 	for _, tc := range []struct {
 		name    string
-		state   func() *State
+		state   func() *runtimeprovider.State
 		damage  string
 		want    string
 		wantErr bool
 	}{
 		{name: "missing state keeps legacy reset", want: "nspawn"},
-		{name: "legacy nspawn state", state: func() *State { return &State{ActiveMachine: "kube1"} }, want: "nspawn"},
-		{name: "explicit nspawn state", state: func() *State { return &State{Isolation: isolation.ModeNSpawn} }, want: "nspawn"},
+		{name: "legacy nspawn state", state: func() *runtimeprovider.State { return &runtimeprovider.State{ActiveMachine: "kube1"} }, want: "nspawn"},
+		{name: "explicit nspawn state", state: func() *runtimeprovider.State { return &runtimeprovider.State{Isolation: isolation.ModeNSpawn} }, want: "nspawn"},
 		{name: "none state", state: noneState, want: "none"},
-		{name: "none without config", state: func() *State { return &State{Isolation: isolation.ModeNone} }, wantErr: true},
-		{name: "none with container config", state: func() *State {
-			return &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "container"}}
+		{name: "none without config", state: func() *runtimeprovider.State { return &runtimeprovider.State{Isolation: isolation.ModeNone} }, wantErr: true},
+		{name: "none with container config", state: func() *runtimeprovider.State {
+			return &runtimeprovider.State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "container"}}
 		}, wantErr: true},
-		{name: "container unsupported", state: func() *State { return &State{Isolation: isolation.ModeContainer} }, wantErr: true},
-		{name: "unsupported mode", state: func() *State { return &State{Isolation: "unknown"} }, wantErr: true},
+		{name: "container unsupported", state: func() *runtimeprovider.State { return &runtimeprovider.State{Isolation: isolation.ModeContainer} }, wantErr: true},
+		{name: "unsupported mode", state: func() *runtimeprovider.State { return &runtimeprovider.State{Isolation: "unknown"} }, wantErr: true},
 		{name: "unreadable state", damage: "unreadable", wantErr: true},
 		{name: "malformed state", damage: "malformed", wantErr: true},
 		{name: "tampered none state", state: noneState, damage: "checksum", wantErr: true},
-		{name: "missing legacy checksum", state: func() *State { return &State{ActiveMachine: "kube1"} }, damage: "sidecar", wantErr: true},
+		{name: "missing legacy checksum", state: func() *runtimeprovider.State { return &runtimeprovider.State{ActiveMachine: "kube1"} }, damage: "sidecar", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

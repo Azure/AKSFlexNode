@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 )
@@ -40,7 +40,7 @@ func newTestContainerUpgrade(t *testing.T, runningImage string) (*containerAgent
 	return &containerAgentUpgradeExecutor{
 		provider:      mustNodeProvider(t, "nspawn"),
 		log:           discardLogger(),
-		state:         &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
+		state:         &fakeNodeOperator{state: &runtimeprovider.State{ActiveMachine: "kube1"}},
 		signals:       agentUpgradeSignalStore{path: filepath.Join(dir, "agent-upgrade-signal.json")},
 		images:        agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
 		runningImage:  runningImage,
@@ -390,7 +390,7 @@ func startedContainerUpgrade(t *testing.T, runningImage, machineBinary string) (
 	running := writeTestFile(t, filepath.Join(dir, "running"), "candidate agent")
 	machine := writeTestFile(t, filepath.Join(dir, "machine"), machineBinary)
 	executor.runningExecutable = func() (string, error) { return running, nil }
-	executor.provider = nspawnProvider{Services: provider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return machine }}
+	executor.provider = nspawnProvider{Services: runtimeprovider.NSpawnServices{HostServices: hostProviderServices()}, BinaryPath: func(slot string) string { return machine }}
 	phases := &[]machinav1alpha3.OperationPhase{}
 	executor.finishMachineOperation = func(_ context.Context, _ client.Client, _ agentdaemon.MachineOperation, result agentdaemon.MachineOperationResult[int64]) error {
 		*phases = append(*phases, result.Phase)
@@ -631,18 +631,18 @@ func TestContainerAgentConvergence(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		state      *State
+		state      *runtimeprovider.State
 		machine    bool
 		unitsThere bool
 		wantBinary string
 	}{
 		"writes the units and copies the agent into the machine, once": {
-			state:      &State{ActiveMachine: "kube1"},
+			state:      &runtimeprovider.State{ActiveMachine: "kube1"},
 			machine:    true,
 			wantBinary: "running agent",
 		},
 		"skips a machine that isn't there": {
-			state: &State{ActiveMachine: "kube1"},
+			state: &runtimeprovider.State{ActiveMachine: "kube1"},
 		},
 		"skips the machine before the node is started": {
 			machine:    true,
@@ -650,7 +650,7 @@ func TestContainerAgentConvergence(t *testing.T) {
 		},
 		// An earlier start wrote them, and ended before its reload, or its reload failed.
 		"reloads systemd although the units are the image's already": {
-			state:      &State{ActiveMachine: "kube1"},
+			state:      &runtimeprovider.State{ActiveMachine: "kube1"},
 			unitsThere: true,
 		},
 	}

@@ -9,18 +9,18 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
-type nspawnProvider = provider.NSpawn
-type noneProvider = provider.None
+type nspawnProvider = runtimeprovider.NSpawn
+type noneProvider = runtimeprovider.None
 
-var newNoneRuntime = provider.NewNoneRuntime
-var resetNoneRuntime = provider.ResetNoneRuntime
+var newNoneRuntime = runtimeprovider.NewNoneRuntime
+var resetNoneRuntime = runtimeprovider.ResetNoneRuntime
 
 func mustNodeProvider(t *testing.T, mode isolation.Mode) NodeProvider {
 	t.Helper()
@@ -48,7 +48,7 @@ func TestBootstrapProviderAppliedStatePolicy(t *testing.T) {
 			t.Parallel()
 			// Applied none is rejected before SDK preflight or any host mutation.
 			p := mustNodeProvider(t, tc.configured)
-			applied := &State{Isolation: tc.applied}
+			applied := &runtimeprovider.State{Isolation: tc.applied}
 			if applied.Isolation == "" {
 				applied.Isolation = isolation.ModeNSpawn
 			}
@@ -100,7 +100,7 @@ func TestResetProviderDiscovery(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
-		state   *State
+		state   *runtimeprovider.State
 		loadErr error
 		present []isolation.Mode
 		want    isolation.Mode
@@ -109,8 +109,8 @@ func TestResetProviderDiscovery(t *testing.T) {
 		{name: "default", want: isolation.ModeNSpawn},
 		{name: "partial none", present: []isolation.Mode{isolation.ModeNone}, want: isolation.ModeNone},
 		{name: "ambiguous footprints", present: []isolation.Mode{isolation.ModeNone, isolation.ModeNSpawn}, wantErr: true},
-		{name: "applied state owns retry", state: &State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}, want: isolation.ModeNone},
-		{name: "state precedes footprints", state: &State{Isolation: isolation.ModeNSpawn, ActiveMachine: "kube1"}, present: []isolation.Mode{isolation.ModeNone}, want: isolation.ModeNSpawn},
+		{name: "applied state owns retry", state: &runtimeprovider.State{Isolation: isolation.ModeNone, NodeConfig: &agentconfig.AgentConfig{Isolation: "none"}}, want: isolation.ModeNone},
+		{name: "state precedes footprints", state: &runtimeprovider.State{Isolation: isolation.ModeNSpawn, ActiveMachine: "kube1"}, present: []isolation.Mode{isolation.ModeNone}, want: isolation.ModeNSpawn},
 		{name: "corruption precedes footprints", loadErr: errors.New("checksum mismatch"), present: []isolation.Mode{isolation.ModeNone}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,7 +120,7 @@ func TestResetProviderDiscovery(t *testing.T) {
 			for _, mode := range tc.present {
 				candidates = append(candidates, presenceProvider{NodeProvider: mustNodeProvider(t, mode), present: true, probes: &probes})
 			}
-			p, err := discoverResetProvider(t.Context(), func(context.Context) (*State, error) { return tc.state, tc.loadErr }, discardLogger(), candidates)
+			p, err := discoverResetProvider(t.Context(), func(context.Context) (*runtimeprovider.State, error) { return tc.state, tc.loadErr }, discardLogger(), candidates)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("discover=%v, %v", p, err)
 			}
@@ -171,7 +171,7 @@ type recordingStateStore struct {
 	calls *[]string
 }
 
-func (s recordingStateStore) Load(ctx context.Context) (*State, error) {
+func (s recordingStateStore) Load(ctx context.Context) (*runtimeprovider.State, error) {
 	*s.calls = append(*s.calls, "load")
 	return s.stateStore.Load(ctx)
 }
@@ -202,9 +202,9 @@ func TestDirectActivationGuardsStateLoad(t *testing.T) {
 
 type recordingStateLoader struct{ calls *[]string }
 
-func (s recordingStateLoader) LoadState(context.Context) (*State, error) {
+func (s recordingStateLoader) LoadState(context.Context) (*runtimeprovider.State, error) {
 	*s.calls = append(*s.calls, "load")
-	return &State{Isolation: isolation.ModeNSpawn, ActiveMachine: "kube1"}, nil
+	return &runtimeprovider.State{Isolation: isolation.ModeNSpawn, ActiveMachine: "kube1"}, nil
 }
 
 func TestActivationDiscoversPendingRuntimeWithoutAppliedState(t *testing.T) {
@@ -296,7 +296,7 @@ func TestDirectActivationUsesSelectedActions(t *testing.T) {
 	p := &recordingProvider{NodeProvider: mustNodeProvider(t, "nspawn"), calls: &calls}
 	paths := testAgentUpgradePaths(t)
 	service := &flexDaemonActivationService{
-		provider: p, state: &testStateStore{state: &State{ActiveMachine: "kube1"}}, log: discardLogger(), paths: paths,
+		provider: p, state: &testStateStore{state: &runtimeprovider.State{ActiveMachine: "kube1"}}, log: discardLogger(), paths: paths,
 		systemdDir: t.TempDir(), recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) { return false, nil },
 	}

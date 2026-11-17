@@ -6,6 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 )
 
 func TestDecide(t *testing.T) {
@@ -13,8 +14,8 @@ func TestDecide(t *testing.T) {
 
 	goal := aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}
 	machine := machineSnapshot{machine: &aksmachine.Machine{Goal: goal}}
-	applied := &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0"}
-	stale := &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0"}
+	applied := &runtimeprovider.State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0"}
+	stale := &runtimeprovider.State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0"}
 	node := nodeSnapshot{node: &corev1.Node{}}
 	missingNode := nodeSnapshot{}
 	deleteNode := nodeSnapshot{node: &corev1.Node{Spec: corev1.NodeSpec{Taints: []corev1.Taint{deletionTaint()}}}}
@@ -22,7 +23,7 @@ func TestDecide(t *testing.T) {
 	tests := map[string]struct {
 		machine machineSnapshot
 		node    nodeSnapshot
-		state   *State
+		state   *runtimeprovider.State
 		want    decisionKind
 	}{
 		"reset waits for machine delete": {

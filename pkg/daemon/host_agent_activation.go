@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
@@ -317,7 +318,7 @@ func (s *flexDaemonActivationService) synchronizeActiveNode(ctx context.Context,
 	return nil
 }
 
-func (s *flexDaemonActivationService) loadActivationState(ctx context.Context) (*State, error) {
+func (s *flexDaemonActivationService) loadActivationState(ctx context.Context) (*runtimeprovider.State, error) {
 	if err := s.provider.ValidateAgentActivation(ctx); err != nil {
 		return nil, err
 	}
