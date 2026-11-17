@@ -18,7 +18,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
-	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
 const containerUpgradeSnapshot = "container-upgrade-config"
@@ -183,19 +182,17 @@ func (r containerRuntime) Retire(log *slog.Logger, input Inputs) phases.Task {
 	})
 }
 
-func (containerRuntime) Reset(log *slog.Logger) phases.Task {
-	teardown := &containerops.Teardown{Log: log}
-	return phases.Serial(log,
-		containerTeardown(teardown),
-		phases.Parallel(log,
-			reset.CleanupNetwork(log),
-			reset.RemoveWireGuardKeys(log),
-			cleanupLegacyBridgeCNI(log),
-		),
-		removeHostHelpers(log),
-		reset.ReloadSystemd(log),
-	)
+func (containerRuntime) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
+
+type ociTeardown struct {
+	sdk *containerops.Teardown
 }
+
+func (t *ociTeardown) Present() bool { return t.sdk.Present() }
+
+func (t *ociTeardown) Stop() phases.Task { return t.sdk.Stop() }
+
+func (t *ociTeardown) Destroy() phases.Task { return containerTeardown(t.sdk) }
 
 func containerTeardown(teardown *containerops.Teardown) phases.Task {
 	return hostnode.Func("reset-oci-node", func(ctx context.Context) (err error) {

@@ -14,7 +14,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
-	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
 // NoneUpgradeArtifactsPresent detects recovery files left by an interrupted upgrade.
@@ -30,47 +29,52 @@ func NoneUpgradeArtifactsPresent() (bool, error) {
 	return false, nil
 }
 
-// CleanupNoneUpgradeArtifacts removes only the SDK recovery files.
-func CleanupNoneUpgradeArtifacts() phases.Task {
+func cleanupNoneUpgradeArtifacts(root string) phases.Task {
 	return hostnode.Func("remove-none-upgrade-artifacts", func(context.Context) error {
-		return removeNoneUpgradeArtifacts("")
+		return removeNoneUpgradeArtifacts(root)
 	})
 }
 
-func (noneRuntime) Reset(log *slog.Logger) phases.Task {
-	return phases.Serial(log,
-		&noneResetTask{
-			log:      log,
-			teardown: &noneops.Teardown{Log: log},
-		},
-		phases.Parallel(log,
-			reset.CleanupNetwork(log),
-			reset.RemoveWireGuardKeys(log),
-			cleanupLegacyBridgeCNI(log),
-		),
-		removeHostHelpers(log),
-		reset.ReloadSystemd(log),
-	)
+type noneTeardown struct {
+	log *slog.Logger
+	sdk *noneops.Teardown
 }
 
-type noneResetTask struct {
-	log      *slog.Logger
-	teardown *noneops.Teardown
+func (t *noneTeardown) Present() bool { return t.sdk.Present() }
+
+func (t *noneTeardown) Stop() phases.Task { return t.sdk.Stop() }
+
+func (t *noneTeardown) Destroy() phases.Task {
+	return hostnode.Func("reset-none-node", func(ctx context.Context) error {
+		if err := npd.RemoveHost(t.log, none.Root{HostRoot: t.sdk.Root}).Do(ctx); err != nil {
+			return err
+		}
+		if err := t.sdk.RemoveConfig().Do(ctx); err != nil {
+			return fmt.Errorf("remove host-native configuration: %w", err)
+		}
+
+		err := t.destroy(ctx)
+		if err == nil {
+			return nil
+		}
+		// SDK Destroy may remove all ownership traces before a later unmount or
+		// data cleanup fails. Restore its layout directory for a fresh retry.
+		path := filepath.Dir(t.sdk.Layout.CurrentLink())
+		if restoreErr := os.MkdirAll(path, 0o750); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore none ownership trace %s: %w", path, restoreErr))
+		}
+		return err
+	})
 }
 
-func (*noneResetTask) Name() string { return "reset-none-node" }
-
-func (t *noneResetTask) Do(ctx context.Context) error {
-	if err := npd.RemoveHost(t.log, none.Root{HostRoot: t.teardown.Root}).Do(ctx); err != nil {
-		return err
+func (t *noneTeardown) destroy(ctx context.Context) error {
+	if err := t.sdk.Destroy().Do(ctx); err != nil {
+		return fmt.Errorf("destroy host-native worker: %w", err)
 	}
-	if err := phases.Serial(t.log, t.teardown.Stop(), t.teardown.RemoveConfig(), t.teardown.Destroy()).Do(ctx); err != nil {
-		return fmt.Errorf("tear down host-native worker: %w", err)
+	if err := hostnode.ResetCNIState(t.sdk.Root); err != nil {
+		return fmt.Errorf("clean host-native CNI state: %w", err)
 	}
-	if err := hostnode.ResetCNIState(t.teardown.Root); err != nil {
-		return err
-	}
-	return removeNoneUpgradeArtifacts(t.teardown.Root)
+	return removeNoneUpgradeArtifacts(t.sdk.Root)
 }
 
 func removeNoneUpgradeArtifacts(hostRoot string) error {
