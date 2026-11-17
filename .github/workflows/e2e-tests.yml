@@ -98,12 +98,13 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run E2E tests, including ARM Machine registration
+      - name: Run none and OCI worker lifecycle E2E
         env:
           E2E_SKIP_CLEANUP: "1"  # Cleanup handled in dedicated step below
         run: |
           set -euo pipefail
-          ./hack/e2e/run.sh all
+          ./hack/e2e/run.sh infra
+          ./hack/e2e/run.sh isolation
 
       - name: Collect logs
         if: always()
