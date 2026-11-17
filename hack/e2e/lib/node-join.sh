@@ -128,19 +128,6 @@ sudo systemd-run \
   --remain-after-exit \
   "${agent}" bootstrap --config /etc/aks-flex-node/config.json
 
-# ARM registration cleanup removes the guest journal, so collect NPD failures
-# before returning from bootstrap rather than relying on post-cleanup artifacts.
-dump_npd_failure_logs() {
-  sudo timeout 10 journalctl -u aks-flex-node-npd.service -n 80 --no-pager || true
-  for machine in kube1 kube2; do
-    if [[ "$(machinectl show "${machine}" --property=State --value 2>/dev/null)" == running ]]; then
-      echo "=== NPD journal inside ${machine} ==="
-      sudo timeout 20 systemd-run --machine="${machine}" --quiet --pipe --wait \
-        journalctl -u node-problem-detector.service -n 80 --no-pager || true
-    fi
-  done
-}
-
 echo "Waiting up to ${E2E_NODE_JOIN_TIMEOUT}s for aks-flex-node-agent.service to start..."
 deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
 while ! systemctl is-active --quiet aks-flex-node-agent.service; do
@@ -149,7 +136,6 @@ while ! systemctl is-active --quiet aks-flex-node-agent.service; do
     sudo systemctl status "${UNIT_NAME}" --no-pager -l || true
     sudo journalctl -u "${UNIT_NAME}" -n 50 --no-pager || true
     sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
-    dump_npd_failure_logs
     exit 1
   fi
 
@@ -160,7 +146,6 @@ while ! systemctl is-active --quiet aks-flex-node-agent.service; do
     sudo journalctl -u "${UNIT_NAME}" -n 50 --no-pager || true
     sudo journalctl -u aks-flex-node-agent.service -n 50 --no-pager || true
     sudo tail -n 50 /var/log/aks-flex-node/aks-flex-node.log 2>/dev/null || true
-    dump_npd_failure_logs
     exit 1
   fi
 
