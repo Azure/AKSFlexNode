@@ -15,7 +15,6 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -41,34 +40,83 @@ type startTask struct {
 	run            func(context.Context, *slog.Logger, ...string) (string, error)
 }
 
-// StartOptions controls reconciliation of an existing NPD service.
+// StartOptions controls NPD service reconciliation and execution paths.
 type StartOptions struct {
 	// ForceRestart picks up binary changes even when the unit text is unchanged.
 	ForceRestart bool
+	// UnitName defaults to node-problem-detector.service.
+	UnitName string
+	// BinaryPath is in the executor's filesystem view, not the agent's.
+	// It defaults to BinaryPath, the canonical in-node path.
+	BinaryPath string
 }
 
 // Start renders NPD through root and manages it through the node's executor.
-func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, options StartOptions) phases.Task {
+// Options may override the default unit and execution path without changing
+// where files are installed. Later options override earlier nonempty values.
+func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, options ...StartOptions) phases.Task {
+	unit, binaryPath, forceRestart := systemdUnitNPD, BinaryPath, false
+	for _, option := range options {
+		if option.UnitName != "" {
+			unit = option.UnitName
+		}
+		if option.BinaryPath != "" {
+			binaryPath = option.BinaryPath
+		}
+		forceRestart = option.ForceRestart
+	}
 	if disabledForOfflineArtifacts(cfg) {
-		return disabledTask{name: "start-npd", log: log}
+		return &disableTask{log: log, root: root, unit: unit, run: nodeStart.Exec}
 	}
 
-	task := &startTask{
+	return &startTask{
 		log:            log,
 		apiServer:      nodeStart.Kubelet.APIServer,
 		kubeconfigPath: goalstates.KubeletKubeconfigPath,
 		root:           root,
 		nodeName:       nodeStart.NodeName,
-		unit:           systemdUnitNPD,
-		binaryPath:     npdBinaryPath,
-		forceRestart:   options.ForceRestart,
+		unit:           unit,
+		binaryPath:     binaryPath,
+		forceRestart:   forceRestart,
 		run:            nodeStart.Exec,
 	}
-	if nodeStart.HostNative() {
-		task.unit = HostUnitNPD
-		task.binaryPath = filepath.Join(none.Layout{}.BinDir(), "node-problem-detector")
+}
+
+type disableTask struct {
+	log  *slog.Logger
+	root isolation.NodeRoot
+	unit string
+	run  func(context.Context, *slog.Logger, ...string) (string, error)
+}
+
+func (t *disableTask) Name() string { return "start-npd" }
+
+func (t *disableTask) Do(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("disable NPD unit %s: %w", t.unit, err)
 	}
-	return task
+	unitPath := t.root.Path(filepath.Join("/etc/systemd/system", t.unit))
+	if _, err := os.Stat(unitPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("stat NPD unit %s: %w", t.unit, err)
+	}
+
+	// Keep the unit file as the ownership record; stop and disable can be
+	// retried even after the active version no longer contains NPD.
+	for _, action := range []string{"stop", "disable"} {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("disable NPD unit %s: %w", t.unit, err)
+		}
+		if _, err := t.run(ctx, t.log, "systemctl", action, t.unit); err != nil {
+			return fmt.Errorf("%s NPD unit %s: %w", action, t.unit, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("disable NPD unit %s: %w", t.unit, err)
+	}
+	t.log.Info("NPD unit stopped and disabled for offline artifacts", "unit", t.unit)
+	return nil
 }
 
 func (t *startTask) Name() string { return "start-npd" }
