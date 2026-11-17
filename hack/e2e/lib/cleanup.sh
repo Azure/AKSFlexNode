@@ -55,7 +55,7 @@ _collect_vm_logs() {
     "sudo -n timeout 30 journalctl --no-pager -n 200 -u unbounded-containerd.service" \
     > "${E2E_LOG_DIR}/${prefix}-host-containerd.log" 2>&1 || true
   remote_exec "${vm_ip}" \
-    "sudo -n timeout 30 journalctl --no-pager -n 500 -u aks-flex-node-npd.service" \
+    "sudo -n timeout 30 journalctl --no-pager -n 500 -u node-problem-detector.service" \
     > "${E2E_LOG_DIR}/${prefix}-host-npd.log" 2>&1 || true
 
   # Route journals through the recorded active runtime, including kube2.
@@ -66,7 +66,7 @@ _collect_vm_logs() {
     -u containerd.service -u unbounded-containerd.service \
     > "${E2E_LOG_DIR}/${prefix}-containerd.log" 2>&1 || true
   runtime_on "${vm_ip}" exec -- journalctl --no-pager -n 500 \
-    -u node-problem-detector.service -u aks-flex-node-npd.service \
+    -u node-problem-detector.service \
     > "${E2E_LOG_DIR}/${prefix}-npd.log" 2>&1 || true
 
   # Collect CNI config and nspawn machine state for networking diagnostics.

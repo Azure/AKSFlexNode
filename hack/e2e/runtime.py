@@ -26,7 +26,7 @@ MARKERS = (
     "/etc/aks-flex-node/container-upgrade-config",
 )
 NONE_UNITS = ("unbounded-kubelet.service", "unbounded-containerd.service",
-              "unbounded-localdns.service", "aks-flex-node-npd.service")
+              "unbounded-localdns.service", "node-problem-detector.service")
 PROPERTIES = ("LoadState", "UnitFileState", "ActiveState", "SubState", "MainPID")
 
 
