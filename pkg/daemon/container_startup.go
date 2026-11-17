@@ -51,7 +51,7 @@ func (s containerStartupStore) Load() (*containerStartup, error) {
 	}
 	if !validContainerState(startup.Next) || !validContainerState(startup.Previous) ||
 		startup.Next.ActiveMachine == startup.Previous.ActiveMachine || startup.Next.AppliedSettingsVersion == "" ||
-		startup.Next.NodeConfig.Kubelet.Labels[noneGenerationLabel] == "" {
+		startup.Next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel] == "" {
 		return nil, fmt.Errorf("container startup has invalid frozen configuration or slots")
 	}
 	switch startup.Phase {

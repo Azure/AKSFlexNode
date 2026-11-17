@@ -75,7 +75,7 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 			var events []string
 			previous := &agentconfig.AgentConfig{Isolation: "none"}
 			previous.Cluster.Version = "1.35.0"
-			previous.Kubelet.Labels = map[string]string{noneGenerationLabel: "source-nonce"}
+			previous.Kubelet.Labels = map[string]string{runtimeGenerationLabel: "source-nonce"}
 			store := &noneTestStore{events: &events, failSave: tc.failSave, state: &State{Isolation: isolation.ModeNone, NodeConfig: previous, AppliedSettingsVersion: "old", NPDVersion: "v1.35.1"}}
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "none"}, Npd: config.NPDConfig{Version: "v1.36.0"}}
 			op := &noneNodeOperator{
@@ -85,7 +85,7 @@ func TestNoneRepavePersistenceOrder(t *testing.T) {
 						if p.Previous != previous {
 							t.Error("repave replaced the original applied configuration")
 						}
-						if p.Config.Cluster.Version != "1.36.2" || p.Config.Kubelet.Labels[noneGenerationLabel] == "source-nonce" {
+						if p.Config.Cluster.Version != "1.36.2" || p.Config.Kubelet.Labels[runtimeGenerationLabel] == "source-nonce" {
 							t.Error("repave lost the target version or fresh nonce")
 						}
 					} else if p.Config != previous {

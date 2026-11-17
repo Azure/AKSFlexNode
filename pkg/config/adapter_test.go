@@ -1,17 +1,250 @@
 package config
 
 import (
+	"encoding/base64"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
+
+func TestToAgentConfig_IsolationAuth(t *testing.T) {
+	t.Parallel()
+
+	certificateFile := filepath.Join(t.TempDir(), "client-certificate.pem")
+	writeTestClientCertificate(t, certificateFile)
+	certificateData, err := os.ReadFile(certificateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caData := base64.StdEncoding.EncodeToString(certificateData)
+	agentKubeconfig := strings.Replace(validEmbeddedKubeconfig, "Y2E=", caData, 1) + "\n# agent identity\n"
+	kubeletKubeconfig := strings.Replace(agentKubeconfig,
+		"command: /opt/unbounded/agent/bin/aks-flex-node", "command: /custom/bin/credential-plugin", 1) + "\n# kubelet identity\n"
+	secretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(secretFile, []byte("secret-789\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	token := &BootstrapTokenConfig{Token: "abcdef.0123456789abcdef"}
+	mi := &ManagedIdentityConfig{ClientID: "mi-client-id"}
+	sp := &ServicePrincipalConfig{TenantID: "tenant-123", ClientID: "client-456", ClientSecret: "secret-789"}
+	spFile := &ServicePrincipalConfig{TenantID: "tenant-123", ClientID: "client-456", ClientSecretFile: secretFile}
+	spCertificate := &ServicePrincipalConfig{TenantID: "tenant-123", ClientID: "client-456", ClientSecretFile: certificateFile}
+	miEnv := map[string]string{"AAD_LOGIN_METHOD": "msi", "AZURE_CLIENT_ID": "mi-client-id"}
+	spEnv := map[string]string{
+		"AAD_LOGIN_METHOD":                    "spn",
+		"AAD_SERVICE_PRINCIPAL_CLIENT_ID":     "client-456",
+		"AAD_SERVICE_PRINCIPAL_CLIENT_SECRET": "secret-789",
+		"AZURE_TENANT_ID":                     "tenant-123",
+	}
+	spCertificateEnv := map[string]string{
+		"AAD_LOGIN_METHOD":                "spn",
+		"AAD_SERVICE_PRINCIPAL_CLIENT_ID": "client-456",
+		"AZURE_TENANT_ID":                 "tenant-123",
+	}
+
+	tests := []struct {
+		name            string
+		azure           AzureConfig
+		paired          bool
+		wantToken       string
+		wantEnv         map[string]string
+		wantCertificate bool
+	}{
+		{name: "bootstrap token", azure: AzureConfig{BootstrapToken: token}, wantToken: token.Token},
+		{name: "managed identity client ID", azure: AzureConfig{ManagedIdentity: mi}, wantEnv: miEnv},
+		{name: "managed identity system assigned", azure: AzureConfig{ManagedIdentity: &ManagedIdentityConfig{}}, wantEnv: map[string]string{"AAD_LOGIN_METHOD": "msi"}},
+		{name: "SP secret", azure: AzureConfig{ServicePrincipal: sp}, wantEnv: spEnv},
+		{name: "SP secret file", azure: AzureConfig{ServicePrincipal: spFile}, wantEnv: spEnv},
+		{name: "SP certificate", azure: AzureConfig{ServicePrincipal: spCertificate}, wantEnv: spCertificateEnv, wantCertificate: true},
+		{name: "bootstrap token over MI", azure: AzureConfig{BootstrapToken: token, ManagedIdentity: mi}, wantToken: token.Token},
+		{name: "bootstrap token over SP secret", azure: AzureConfig{BootstrapToken: token, ServicePrincipal: sp}, wantToken: token.Token},
+		{name: "bootstrap token over SP certificate", azure: AzureConfig{BootstrapToken: token, ServicePrincipal: spCertificate}, wantToken: token.Token},
+		{name: "paired kubeconfigs", paired: true},
+		{name: "paired kubeconfigs over bootstrap token", paired: true, azure: AzureConfig{BootstrapToken: token}},
+		{name: "paired kubeconfigs over MI", paired: true, azure: AzureConfig{ManagedIdentity: mi}},
+		{name: "paired kubeconfigs over SP secret", paired: true, azure: AzureConfig{ServicePrincipal: sp}},
+		{name: "paired kubeconfigs over SP certificate", paired: true, azure: AzureConfig{ServicePrincipal: spCertificate}},
+		{name: "paired kubeconfigs over token and MI", paired: true, azure: AzureConfig{BootstrapToken: token, ManagedIdentity: mi}},
+		{name: "paired kubeconfigs over token and SP", paired: true, azure: AzureConfig{BootstrapToken: token, ServicePrincipal: spCertificate}},
+	}
+
+	for _, mode := range []struct {
+		name    string
+		mode    isolation.Mode
+		command string
+		image   string
+	}{
+		{name: "nspawn", mode: isolation.ModeNSpawn, command: "/usr/local/bin/aks-flex-node", image: "registry.example.test/flex/rootfs:ubuntu-24.04"},
+		{name: "container", mode: isolation.ModeContainer, command: "/usr/local/bin/aks-flex-node", image: "registry.example.test/flex/rootfs:ubuntu-24.04"},
+		// The host kubelet cannot use the guest binary or a resolved legacy path:
+		// its persisted command must survive the host-root link becoming a directory.
+		{name: "none", mode: isolation.ModeNone, command: filepath.Join(hostroot.Path, "bin", "aks-flex-node")},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+
+					cfg := (&Config{
+						Azure: tt.azure,
+						Agent: AgentConfig{NodeName: "flex-node"},
+						Bootstrap: BootstrapConfig{
+							Isolation:                      mode.mode,
+							ExperimentalContainerIsolation: mode.mode == isolation.ModeContainer,
+							OCIImage:                       mode.image,
+							AdditionalHostDevices:          []string{"/dev/uinput"},
+							AdditionalHostMounts: []AdditionalHostMount{
+								{Source: "/etc/kubernetes/credential-provider.yaml", Target: "/etc/kubernetes/credential-provider.yaml", ReadOnly: true},
+								{Source: "/usr/local/lib/kubelet-credential-providers", ReadOnly: true},
+							},
+							OfflineArtifacts: OfflineArtifactsConfig{Source: "/opt/artifacts/{{ .KubernetesVersion }}"},
+						},
+						Components: ComponentsConfig{
+							Kubernetes: "1.31.0", Containerd: "2.1.0", Runc: "1.2.0",
+							SandboxImage: "registry.example.test/pause:3.9",
+							Gantry:       &GantryConfig{Disabled: true},
+						},
+						Networking: NetworkingConfig{DNSServiceIP: "10.0.0.10", CNIVersion: "1.6.0"},
+						Node: NodeConfig{
+							MaxPods: 42,
+							Labels: map[string]string{
+								"workload": "edge", managedNodeLabel: "true", agentPoolNodeLabel: "stale-pool",
+								modeNodeLabel: "system", nodePoolTypeNodeLabel: "stale-type",
+							},
+							Taints: []string{"dedicated=infra:NoSchedule", "edge=true:PreferNoSchedule"},
+							Kubelet: KubeletConfig{
+								ClusterFQDN: "api.example.com:6443", CACertData: caData, NodeIP: "10.225.0.4",
+								Verbosity: 4, ImageGCHighThreshold: 90, ImageGCLowThreshold: 75,
+								SystemReserved: map[string]string{"cpu": "50m", "memory": "100Mi"},
+								KubeReserved:   map[string]string{"cpu": "200m", "memory": "650Mi"},
+								ImageCredentialProvider: &ImageCredentialProviderConfig{
+									ConfigPath: "/etc/kubernetes/credential-provider.yaml",
+									BinDir:     "/usr/local/lib/kubelet-credential-providers",
+								},
+							},
+						},
+					}).DeepCopy()
+					if cfg == nil {
+						t.Fatal("DeepCopy returned nil")
+					}
+					cfg.Azure.TargetAgentPoolName = "flexnode-edge"
+					if tt.paired {
+						cfg.Agent.KubeconfigData = agentKubeconfig
+						cfg.Node.Kubelet.KubeconfigData = kubeletKubeconfig
+						cfg.Node.Kubelet.ClusterFQDN = "stale.example"
+						cfg.Node.Kubelet.CACertData = "stale-ca"
+					}
+					if err := cfg.Bootstrap.validate(); err != nil {
+						t.Fatal(err)
+					}
+					if err := cfg.Azure.ServicePrincipal.validate(); err != nil {
+						t.Fatal(err)
+					}
+					if err := cfg.validateAuthSettings(); err != nil {
+						t.Fatal(err)
+					}
+					if err := cfg.Node.Kubelet.validate(); err != nil {
+						t.Fatal(err)
+					}
+
+					want := &agentconfig.AgentConfig{
+						Isolation: string(mode.mode), MachineName: "kube1", NodeName: "flex-node", OCIImage: mode.image,
+						AdditionalHostDevices: []string{"/dev/uinput"},
+						AdditionalHostMounts: []AdditionalHostMount{
+							{Source: "/etc/kubernetes/credential-provider.yaml", Target: "/etc/kubernetes/credential-provider.yaml", ReadOnly: true},
+							{Source: "/usr/local/lib/kubelet-credential-providers", ReadOnly: true},
+						},
+						NSpawnLifecycle: &agentconfig.NSpawnLifecycleConfig{
+							PreStartCommand:  "/usr/bin/systemctl start aks-flex-node-nspawn-pre-start@%i.service",
+							PostStartCommand: "/usr/bin/systemctl start aks-flex-node-nspawn-post-start@%i.service",
+						},
+						Cluster: agentconfig.AgentClusterConfig{Version: "1.31.0", ClusterDNS: "10.0.0.10", CaCertBase64: caData},
+						Kubelet: agentconfig.AgentKubeletConfig{
+							ApiServer: "https://api.example.com:6443", NodeIP: "10.225.0.4",
+							Labels: map[string]string{
+								"workload": "edge", managedNodeLabel: "false", agentPoolNodeLabel: "flexnode-edge",
+								modeNodeLabel: userNodeMode, nodePoolTypeNodeLabel: flexNodePoolType,
+							},
+							RegisterWithTaints: []string{"dedicated=infra:NoSchedule", "edge=true:PreferNoSchedule"},
+							Configuration: map[string]any{
+								"maxPods":                     42,
+								"systemReserved":              map[string]string{"cpu": "50m", "memory": "100Mi"},
+								"kubeReserved":                map[string]string{"cpu": "200m", "memory": "650Mi"},
+								"imageGCHighThresholdPercent": 90, "imageGCLowThresholdPercent": 75,
+								"logging": map[string]any{"verbosity": 4},
+							},
+							ImageCredentialProvider: &agentconfig.ImageCredentialProvider{
+								ConfigPath: "/etc/kubernetes/credential-provider.yaml",
+								BinDir:     "/usr/local/lib/kubelet-credential-providers",
+							},
+							Auth: agentconfig.KubeletAuthInfo{BootstrapToken: tt.wantToken},
+						},
+						CRI: agentconfig.CRIConfig{
+							Containerd: agentconfig.ContainerdConfig{Version: "2.1.0", SandboxImage: "registry.example.test/pause:3.9"},
+							Runc:       agentconfig.RuncConfig{Version: "1.2.0"},
+						},
+						CNI:              agentconfig.CNIConfig{PluginVersion: "1.6.0"},
+						Gantry:           &agentconfig.GantryConfig{Disabled: true},
+						OfflineArtifacts: &agentconfig.AgentOfflineArtifacts{Source: "/opt/artifacts/{{ .KubernetesVersion }}"},
+					}
+					if mode.mode == isolation.ModeContainer {
+						want.Experimental = &agentconfig.ExperimentalConfig{ContainerIsolation: true}
+					}
+					if tt.paired {
+						want.Kubelet.KubeconfigData = []byte(kubeletKubeconfig)
+						want.Kubelet.ApiServer = "https://cluster.example:443"
+					}
+					if tt.wantEnv != nil {
+						env := make([]clientcmdapi.ExecEnvVar, 0, len(tt.wantEnv))
+						for _, name := range slices.Sorted(maps.Keys(tt.wantEnv)) {
+							env = append(env, clientcmdapi.ExecEnvVar{Name: name, Value: tt.wantEnv[name]})
+						}
+						args := []string{"token", "kubelogin", "--server-id", "6dae42f8-4368-4678-94ff-3960e28e3630"}
+						if tt.wantCertificate {
+							args = append(args, "--client-certificate-file", certificateFile)
+						}
+						want.Kubelet.Auth.ExecCredential = &clientcmdapi.ExecConfig{
+							APIVersion: "client.authentication.k8s.io/v1", Command: mode.command,
+							Args: args, Env: env, InteractiveMode: clientcmdapi.NeverExecInteractiveMode,
+						}
+					}
+
+					before := cfg.DeepCopy()
+					for range 2 {
+						got := ToAgentConfig(cfg, "kube1")
+						if exec := got.Kubelet.Auth.ExecCredential; exec != nil {
+							slices.SortFunc(exec.Env, func(a, b clientcmdapi.ExecEnvVar) int {
+								return strings.Compare(a.Name, b.Name)
+							})
+						}
+						if !reflect.DeepEqual(got.Kubelet.Auth.ExecCredential, want.Kubelet.Auth.ExecCredential) {
+							t.Fatalf("ExecCredential = %+v, want %+v", got.Kubelet.Auth.ExecCredential, want.Kubelet.Auth.ExecCredential)
+						}
+						if !reflect.DeepEqual(got, want) {
+							t.Fatalf("ToAgentConfig() = %+v, want %+v", got, want)
+						}
+					}
+					if !reflect.DeepEqual(cfg, before) {
+						t.Fatal("ToAgentConfig mutated its input")
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestToAgentConfigKubeletLabels(t *testing.T) {
 	t.Parallel()

@@ -2,12 +2,6 @@
 Description=AKS Flex Node Agent
 After=network-online.target systemd-udev-settle.service{{range .Dependencies}} {{.}}{{end}}
 Wants={{join .WantedTargets " "}}
-{{- if .NoneIsolation}}
-# Node isolation: none
-{{- end}}
-{{- if .ContainerIsolation}}
-# Node isolation: container
-{{- end}}
 OnFailure=aks-flex-node-agent-recovery.service
 # Trigger last-good recovery after the upgraded daemon repeatedly fails.
 StartLimitIntervalSec=300

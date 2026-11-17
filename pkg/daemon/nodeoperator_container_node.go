@@ -110,7 +110,7 @@ func (o *containerNodeOperator) RestartNode(ctx context.Context, log *slog.Logge
 	if err != nil {
 		return err
 	}
-	return o.startNPD(ctx, log, noneNPDConfig(state), gs.NodeStart)
+	return o.startNPD(ctx, log, npdConfigFromState(state), gs.NodeStart)
 }
 
 func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Logger, goal aksmachine.GoalState) (*State, error) {
@@ -137,7 +137,7 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	}
 	next := nextAppliedState(state, goal, &activeMachine{Name: slot})
 	next.Isolation, next.NodeConfig, next.NPDVersion = isolation.ModeContainer, ac, noneNPDVersion(cfg)
-	next = noneRegistrationState(next)
+	next = registrationState(next)
 	gs.NodeStart.Kubelet.NodeLabels = next.NodeConfig.Kubelet.Labels
 	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
 	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
@@ -203,8 +203,8 @@ func (o *containerNodeOperator) ResumeRepave(ctx context.Context, log *slog.Logg
 			return true, err
 		}
 	}
-	expected := startup.Next.NodeConfig.Kubelet.Labels[noneGenerationLabel]
-	if observed != nil && observed.Labels[noneGenerationLabel] == expected {
+	expected := startup.Next.NodeConfig.Kubelet.Labels[runtimeGenerationLabel]
+	if observed != nil && observed.Labels[runtimeGenerationLabel] == expected {
 		if err := o.startup.Delete(); err != nil {
 			return true, err
 		}
@@ -232,7 +232,7 @@ func (o *containerNodeOperator) finishStartup(ctx context.Context, log *slog.Log
 	if err != nil {
 		return err
 	}
-	if err := o.startNPD(ctx, log, noneNPDConfig(startup.Next), gs.NodeStart); err != nil {
+	if err := o.startNPD(ctx, log, npdConfigFromState(startup.Next), gs.NodeStart); err != nil {
 		return err
 	}
 	// Persist the supervisor and NPD boot state before recording Flex completion
