@@ -34,7 +34,8 @@ func TestBootstrapOrdersHooksBeforeWorkerAndState(t *testing.T) {
 			GoalState: gs,
 		},
 	}
-	name := bootstrapTasks(cfg, log, agentruntime.NSpawn{}, input, false, daemon.SaveState(nil, &daemon.State{})).Name()
+	saveTask := hostnode.Func("save-daemon-state", func(context.Context) error { return nil })
+	name := bootstrapTasks(cfg, log, agentruntime.NSpawn{}, input, false, saveTask).Name()
 
 	hooks := strings.Index(name, "ensure-nspawn-lifecycle-units")
 	archives := strings.Index(name, "download-container-image-archives")
@@ -105,7 +106,8 @@ func TestNoneReapplyUsesInstalledConfigWithoutSavingOrProvisioning(t *testing.T)
 			Config: installed,
 		},
 	}
-	name := bootstrapTasks(cfg, slog.New(slog.DiscardHandler), worker, input, true, daemon.SaveState(nil, &daemon.State{})).Name()
+	saveTask := hostnode.Func("save-daemon-state", func(context.Context) error { return nil })
+	name := bootstrapTasks(cfg, slog.New(slog.DiscardHandler), worker, input, true, saveTask).Name()
 	if worker.input.Node.Config != installed || !strings.Contains(name, "recover") || !strings.Contains(name, "restart") {
 		t.Fatalf("reapply did not select installed config: %s", name)
 	}
@@ -238,7 +240,10 @@ func TestFreshBootstrapRegistersBeforeSavingAppliedState(t *testing.T) {
 			if tc.mode == isolation.ModeNone {
 				state.NodeConfig = input.Node.Config.DeepCopy()
 			}
-			if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, daemon.SaveState(store, state))...).Do(t.Context()); err != nil {
+			saveTask := hostnode.Func("save-daemon-state", func(ctx context.Context) error {
+				return store.Save(ctx, state)
+			})
+			if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, saveTask)...).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if machines.gets != 1 || machines.creates != wantCreates || store.saves != 1 || store.state.AppliedSettingsVersion != wantETag || store.state.AppliedKubernetesVersion != "1.34.0" {
@@ -289,7 +294,10 @@ func TestInstalledReapplyDoesNotContactOrRewriteMachine(t *testing.T) {
 			Config: state.NodeConfig,
 		},
 	}
-	if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, daemon.SaveState(store, state))...).Do(t.Context()); err != nil {
+	saveTask := hostnode.Func("save-daemon-state", func(ctx context.Context) error {
+		return store.Save(ctx, state)
+	})
+	if err := phases.Serial(log, workerBootstrapTasks(log, worker, input, reapply, saveTask)...).Do(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if machines.gets != 0 || machines.creates != 0 || store.saves != 0 {

@@ -372,7 +372,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	}
 	tasks = append(tasks,
 		r.runtime.Start(r.log, input),
-		SaveState(r.state, next),
+		&saveStateTask{store: r.state, state: next},
 		r.runtime.Retire(r.log, input),
 	)
 	if err := phases.Serial(r.log, tasks...).Do(ctx); err != nil {
