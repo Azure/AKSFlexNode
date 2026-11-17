@@ -12,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -75,7 +76,7 @@ type installServiceTask struct {
 // InstallService returns a task that installs, enables, and starts the systemd unit. In the
 // agent's container, the unit runs the agent's image instead of a binary on the host.
 func InstallService(cfg *config.Config, log *slog.Logger) phases.Task {
-	return installService(cfg, log, Containerized())
+	return installService(cfg, log, agentdeployment.Containerized())
 }
 
 func installService(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {
@@ -132,10 +133,10 @@ func ensureServiceAssetsUnderHostRoot(
 	return ensureAgentUpgradeServiceAssetsAt(
 		ctx,
 		log,
-		agentUpgradePathsUnder(root),
+		agentdeployment.UpgradePathsUnder(root),
 		agentServiceOptionsFromConfig(cfg),
 		systemdSystemDir,
-		recoveryScriptPathUnder(root),
+		agentdeployment.RecoveryScriptPathUnder(root),
 		utilexec.ReloadSystemd,
 		holdDuringUpgrade,
 	)
@@ -144,13 +145,13 @@ func ensureServiceAssetsUnderHostRoot(
 func ensureAgentUpgradeServiceAssetsAt(
 	ctx context.Context,
 	log *slog.Logger,
-	binaryPaths agentUpgradePaths,
+	binaryPaths agentdeployment.UpgradePaths,
 	serviceOptions agentServiceOptions,
 	systemdDir, recoveryScript string,
 	reload func(context.Context, *slog.Logger) error,
 	holdDuringUpgrade bool,
 ) (bool, error) {
-	if err := ensureAgentUpgradeLayout(ctx, log, binaryPaths); err != nil {
+	if err := agentdeployment.EnsureUpgradeLayout(ctx, log, binaryPaths); err != nil {
 		return false, fmt.Errorf("initialize agent binary layout: %w", err)
 	}
 	if err := ensureNSpawnLifecycleHelperLink(binaryPaths.BinaryPath); err != nil {
@@ -187,7 +188,7 @@ type agentServiceAsset struct {
 	mode    os.FileMode
 }
 
-func desiredAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) ([]agentServiceAsset, error) {
+func desiredAgentServiceAssets(binaryPaths agentdeployment.UpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string) ([]agentServiceAsset, error) {
 	serviceContent, err := renderAgentServiceUnit(currentBinaryPath, serviceOptions)
 	if err != nil {
 		return nil, err
@@ -249,9 +250,9 @@ func EnsureNSpawnLifecycleUnits(log *slog.Logger) phases.Task {
 	return &ensureNSpawnLifecycleUnitsTask{
 		log:           log,
 		systemdDir:    systemdSystemDir,
-		binaryPath:    func() string { return agentUpgradePathsUnder(hostroot.Resolve()).BinaryPath },
+		binaryPath:    func() string { return agentdeployment.UpgradePathsUnder(hostroot.Resolve()).BinaryPath },
 		reload:        utilexec.ReloadSystemd,
-		containerized: Containerized(),
+		containerized: agentdeployment.Containerized(),
 	}
 }
 
@@ -349,7 +350,7 @@ func ensureNSpawnLifecycleHelperLink(binaryPath string) error {
 	if current, err := os.Readlink(helper); err == nil && current == target {
 		return nil
 	}
-	if err := replaceSymlink(helper, target); err != nil {
+	if err := agentdeployment.ReplaceSymlink(helper, target); err != nil {
 		return fmt.Errorf("link the nspawn lifecycle helper %s to %s: %w", helper, target, err)
 	}
 	return nil
@@ -362,8 +363,8 @@ func ensureNSpawnLifecycleHelperLink(binaryPath string) error {
 // those literals are what gets replaced. Left alone on a host installed under
 // the host root, the script reads last-good from /usr/local, where there is no
 // binary, so a failed upgrade cannot be rolled back.
-func renderRecoveryScript(binaryPaths agentUpgradePaths) []byte {
-	embedded := agentUpgradePathsUnder(hostroot.LegacyPath)
+func renderRecoveryScript(binaryPaths agentdeployment.UpgradePaths) []byte {
+	embedded := agentdeployment.UpgradePathsUnder(hostroot.LegacyPath)
 	content := recoveryScriptContent
 
 	for oldPath, newPath := range map[string]string{
@@ -389,7 +390,7 @@ func agentUpgradePending(signalPath string) (bool, error) {
 
 // writeAgentServiceAssets writes the agent's service assets, but with keepExisting, only those
 // that are missing.
-func writeAgentServiceAssets(binaryPaths agentUpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
+func writeAgentServiceAssets(binaryPaths agentdeployment.UpgradePaths, serviceOptions agentServiceOptions, systemdDir, recoveryScript, currentBinaryPath string, keepExisting bool) error {
 	assets, err := desiredAgentServiceAssets(binaryPaths, serviceOptions, systemdDir, recoveryScript, currentBinaryPath)
 	if err != nil {
 		return err
@@ -432,7 +433,7 @@ type uninstallServiceTask struct {
 // The paths are resolved when the task is built. Nothing in reset changes the
 // host root, and ResetNode resolves the helper paths it removes the same way.
 func UninstallService(log *slog.Logger) phases.Task {
-	binaryPaths := agentUpgradePathsUnder(hostroot.Resolve())
+	binaryPaths := agentdeployment.UpgradePathsUnder(hostroot.Resolve())
 	return &uninstallServiceTask{
 		log: log,
 		systemctl: func(ctx context.Context, args ...string) error {
@@ -440,8 +441,8 @@ func UninstallService(log *slog.Logger) phases.Task {
 		},
 		unitDir:           systemdSystemDir,
 		paths:             uninstallPaths(),
-		flatten:           func() error { return flattenAgentLayout(log, binaryPaths, agentUpgradeLockPath) },
-		keepFirstBootUnit: Containerized(),
+		flatten:           func() error { return agentdeployment.FlattenLayout(log, binaryPaths, agentdeployment.UpgradeLockPath) },
+		keepFirstBootUnit: agentdeployment.Containerized(),
 	}
 }
 
@@ -458,13 +459,13 @@ func uninstallPathsUnder(root, legacy string) []string {
 		filepath.Join(systemdSystemDir, recoveryServiceUnitName),
 		filepath.Join(systemdSystemDir, config.NSpawnPreStartUnit),
 		filepath.Join(systemdSystemDir, config.NSpawnPostStartUnit),
-		recoveryScriptPathUnder(root),
+		agentdeployment.RecoveryScriptPathUnder(root),
 	}
 	if root != legacy {
-		paths = append(paths, recoveryScriptPathUnder(legacy))
+		paths = append(paths, agentdeployment.RecoveryScriptPathUnder(legacy))
 	}
 
-	return append(paths, agentUpgradePathsUnder(root).SignalPath)
+	return append(paths, agentdeployment.UpgradePathsUnder(root).SignalPath)
 }
 
 // removeIfPresent removes a file and treats its absence as success.

@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -54,9 +55,9 @@ func NewCommand() *cobra.Command {
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	// In its container the agent keeps nothing on the host: the image carries
 	// it, and its clients' credential plugin is the running binary.
-	containerized := daemon.Containerized()
+	containerized := agentdeployment.Containerized()
 	if !containerized {
-		if err := daemon.MigrateHostRoot(logger); err != nil {
+		if err := agentdeployment.MigrateHostRoot(logger); err != nil {
 			return err
 		}
 		// Before any client is built: one that authenticates with an exec
@@ -64,7 +65,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		// may have put in /usr/local/bin instead. Copying it first also fails a
 		// host whose host root cannot run programs before the machine is
 		// registered.
-		if err := daemon.PrepareHostRoot(ctx, logger); err != nil {
+		if err := agentdeployment.PrepareHostRoot(ctx, logger); err != nil {
 			return fmt.Errorf("bootstrap failed: %w", err)
 		}
 		if err := daemon.InstallHostBinary(ctx, logger); err != nil {
@@ -75,7 +76,7 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	if err != nil {
 		return fmt.Errorf("build goal state from config: %w", err)
 	}
-	plugin, err := daemon.CredentialPlugin()
+	plugin, err := agentdeployment.CredentialPlugin()
 	if err != nil {
 		return fmt.Errorf("create AKS machine client: %w", err)
 	}

@@ -5,20 +5,11 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"slices"
-	"strconv"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
-	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
-
-// ContainerizedEnv marks the agent as running in its container image, which sets it. There, the
-// image carries the agent and the host's provisioning its OS packages, so the agent installs
-// neither on the host, and the agent's unit runs the image rather than a binary.
-const ContainerizedEnv = "AKS_FLEX_NODE_CONTAINERIZED"
 
 // containerServiceUnitContent is the agent's unit in its container: it runs the daemon in a
 // container of the agent's image, which the host's provisioning names, or an AgentUpgrade
@@ -50,51 +41,6 @@ func containerNSpawnLifecycleUnitAssets(systemdDir string) []agentServiceAsset {
 		{path: filepath.Join(systemdDir, config.NSpawnPreStartUnit), content: containerNSpawnPreStartUnitContent, mode: 0o644},
 		{path: filepath.Join(systemdDir, config.NSpawnPostStartUnit), content: containerNSpawnPostStartUnitContent, mode: 0o644},
 	}
-}
-
-// Containerized reports whether the agent runs in its container image.
-func Containerized() bool {
-	return containerized(os.Getenv)
-}
-
-func containerized(getenv func(string) string) bool {
-	on, err := strconv.ParseBool(getenv(ContainerizedEnv))
-	return err == nil && on
-}
-
-// CredentialPlugin is the exec credential plugin the agent's own Kubernetes clients run with a
-// managed identity or a service principal and no bootstrap token, before the daemon has its
-// certificate: on a host, the host's agent, config.HostBinaryPath. In the container the host has
-// no agent, so they run the image's binary, which is running.
-func CredentialPlugin() (string, error) {
-	return credentialPlugin(Containerized(), runningAgentExecutable, config.HostBinaryPath)
-}
-
-func credentialPlugin(containerized bool, runningExecutable func() (string, error), hostBinary func() string) (string, error) {
-	if !containerized {
-		return hostBinary(), nil
-	}
-	return runningExecutable()
-}
-
-// containerSkippedPreflightChecks are host checks that don't apply to the agent in its
-// container. host-packages checks the image's package database, not the host's, whose packages
-// its provisioning provides. containerd-active warns that bootstrap will disable containerd,
-// which Flex never does; there, containerd runs the agent.
-var containerSkippedPreflightChecks = []string{"host-packages", "containerd-active"}
-
-// PreflightChecks leaves out, in the agent's container, the checks that don't apply there.
-func PreflightChecks(checks []preflight.Checker) []preflight.Checker {
-	return preflightChecks(checks, Containerized())
-}
-
-func preflightChecks(checks []preflight.Checker, containerized bool) []preflight.Checker {
-	if !containerized {
-		return checks
-	}
-	return slices.DeleteFunc(slices.Clone(checks), func(check preflight.Checker) bool {
-		return slices.Contains(containerSkippedPreflightChecks, check.Name())
-	})
 }
 
 // ensureHostInstall converges the agent's binary layout and units on the host, as

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -39,7 +41,7 @@ func newTestContainerUpgrade(t *testing.T, runningImage string) (*containerAgent
 	return &containerAgentUpgradeExecutor{
 		log:           discardLogger(),
 		state:         &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}},
-		signals:       agentUpgradeSignalStore{path: filepath.Join(dir, "agent-upgrade-signal.json")},
+		signals:       agentdeployment.NewUpgradeSignalStore(filepath.Join(dir, "agent-upgrade-signal.json")),
 		images:        agentImageEnvFile{path: filepath.Join(dir, "agent-image.env")},
 		runningImage:  runningImage,
 		pullArgs:      []string{"--plain-http"},
@@ -338,7 +340,7 @@ func TestContainerAgentUpgradeStage(t *testing.T) {
 			if !liveCleanup {
 				t.Error("the check's container was removed with a cancelled context")
 			}
-			signal, err := executor.signals.read()
+			signal, err := executor.signals.Read()
 			if err != nil || signal == nil {
 				t.Fatalf("signal = %#v, %v", signal, err)
 			}
@@ -373,7 +375,7 @@ func TestContainerAgentUpgradeAbortRestoresThePreviousImage(t *testing.T) {
 		t.Fatalf("Abort: %v", err)
 	}
 	assertSelectedImages(t, executor.images, testAgentImageV1, testAgentImageV1)
-	if signal, err := executor.signals.read(); err != nil || signal != nil {
+	if signal, err := executor.signals.Read(); err != nil || signal != nil {
 		t.Errorf("signal after Abort = %#v, %v", signal, err)
 	}
 }
@@ -394,7 +396,7 @@ func startedContainerUpgrade(t *testing.T, runningImage, machineBinary string) (
 		*phases = append(*phases, result.Phase)
 		return nil
 	}
-	if err := executor.signals.write(agentUpgradeSignal{
+	if err := executor.signals.Write(agentdeployment.UpgradeSignal{
 		OperationName:            "upgrade",
 		ActiveMachine:            "kube1",
 		InitiatingDaemonInstance: "initiator",
@@ -450,7 +452,7 @@ func TestPublishContainerAgentUpgrade(t *testing.T) {
 				t.Errorf("calls = %q, want none", *calls)
 			}
 			assertSelectedImages(t, executor.images, tc.wantSelected, tc.wantLastGood)
-			if signal, err := executor.signals.read(); err != nil || signal != nil {
+			if signal, err := executor.signals.Read(); err != nil || signal != nil {
 				t.Errorf("signal after publishing = %#v, %v", signal, err)
 			}
 		})
@@ -466,7 +468,7 @@ func TestPublishContainerAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSi
 		t.Fatalf("publish candidate recovery: %v", err)
 	}
 	assertSelectedImages(t, executor.images, testAgentImageV1, testAgentImageV1)
-	if signal, err := executor.signals.read(); err != nil || signal == nil || !signal.RecoveryRequired {
+	if signal, err := executor.signals.Read(); err != nil || signal == nil || !signal.RecoveryRequired {
 		t.Fatalf("signal before the last-good daemon starts = %#v, %v", signal, err)
 	}
 	// The restart into the last-good image doesn't count toward the unit's start limit.
@@ -487,7 +489,7 @@ func TestPublishContainerAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSi
 	if !slices.Equal(*phases, []machinav1alpha3.OperationPhase{machinav1alpha3.OperationPhaseFailed}) {
 		t.Errorf("published phases = %v, want Failed", *phases)
 	}
-	if signal, err := executor.signals.read(); err != nil || signal != nil {
+	if signal, err := executor.signals.Read(); err != nil || signal != nil {
 		t.Errorf("signal after the last-good daemon = %#v, %v", signal, err)
 	}
 }
@@ -529,7 +531,7 @@ func TestContainerAgentUpgradeInterruptedBeforeStage(t *testing.T) {
 		t.Errorf("calls = %q, want none: the agent already runs its image", *calls)
 	}
 	assertSelectedImages(t, executor.images, testAgentImageV2, testAgentImageV1)
-	if signal, err := executor.signals.read(); err != nil || signal != nil {
+	if signal, err := executor.signals.Read(); err != nil || signal != nil {
 		t.Errorf("signal after publishing = %#v, %v", signal, err)
 	}
 }
@@ -579,7 +581,7 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.pending {
-				signal := agentUpgradeSignal{
+				signal := agentdeployment.UpgradeSignal{
 					OperationName:   "upgrade",
 					ActiveMachine:   "kube1",
 					CandidateImage:  testAgentImageV2,
@@ -587,9 +589,9 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 					SwitchCommitted: true,
 				}
 				if tc.interrupted {
-					signal = agentUpgradeSignal{OperationName: "upgrade", ActiveMachine: "kube1"}
+					signal = agentdeployment.UpgradeSignal{OperationName: "upgrade", ActiveMachine: "kube1"}
 				}
-				if err := executor.signals.write(signal); err != nil {
+				if err := executor.signals.Write(signal); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -617,7 +619,7 @@ func TestRecoverContainerAgentUpgrade(t *testing.T) {
 			if err != nil || current != tc.wantSelected {
 				t.Errorf("selected image = %q, %v; want %q", current, err, tc.wantSelected)
 			}
-			signal, err := executor.signals.read()
+			signal, err := executor.signals.Read()
 			if tc.pending && (err != nil || signal == nil || !signal.RecoveryRequired || signal.Failure == "") {
 				t.Errorf("signal after recovery = %#v, %v; want the failure recorded", signal, err)
 			}

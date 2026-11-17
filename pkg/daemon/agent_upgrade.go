@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,12 +16,11 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -32,13 +30,6 @@ const (
 )
 
 var errAgentUpgradeAlreadyPending = errors.New("AgentUpgrade operation is already pending")
-
-// defaultAgentUpgradePaths returns the host-side agent upgrade layout under the
-// resolved host root. Callers that change the host migrate it first; see
-// MigrateHostRoot.
-func defaultAgentUpgradePaths() agentUpgradePaths {
-	return agentUpgradePathsUnder(hostroot.Resolve())
-}
 
 type agentUpgradeRequest struct {
 	downloadURL string
@@ -75,128 +66,6 @@ func agentUpgradeDigest(sha256Parameter string) (string, error) {
 	return digest, nil
 }
 
-type agentUpgradeSignal struct {
-	OperationName            string `json:"operationName"`
-	ActiveMachine            string `json:"activeMachine,omitempty"`
-	CandidatePath            string `json:"candidatePath,omitempty"`
-	InitiatingDaemonInstance string `json:"initiatingDaemonInstance,omitempty"`
-	SwitchCommitted          bool   `json:"switchCommitted,omitempty"`
-	RecoveryRequired         bool   `json:"recoveryRequired,omitempty"`
-	Failure                  string `json:"failure,omitempty"`
-	// In the agent's container, the image an upgrade switches to and the one it switches from.
-	CandidateImage string `json:"candidateImage,omitempty"`
-	PreviousImage  string `json:"previousImage,omitempty"`
-}
-
-type agentUpgradeSignalStore struct {
-	path string
-}
-
-func (s agentUpgradeSignalStore) recordPending(operationName, activeMachine, daemonInstance string) error {
-	return s.write(agentUpgradeSignal{
-		OperationName:            operationName,
-		ActiveMachine:            activeMachine,
-		InitiatingDaemonInstance: daemonInstance,
-	})
-}
-
-func (s agentUpgradeSignalStore) recordCandidate(candidatePath string) error {
-	signal, err := s.read()
-	if err != nil {
-		return err
-	}
-	if signal == nil {
-		return fmt.Errorf("no pending AgentUpgrade signal")
-	}
-	signal.CandidatePath = candidatePath
-	return s.write(*signal)
-}
-
-func (s agentUpgradeSignalStore) recordCandidateImage(candidate, previous string) error {
-	signal, err := s.read()
-	if err != nil {
-		return err
-	}
-	if signal == nil {
-		return fmt.Errorf("no pending AgentUpgrade signal")
-	}
-	signal.CandidateImage = candidate
-	signal.PreviousImage = previous
-	return s.write(*signal)
-}
-
-func (s agentUpgradeSignalStore) recordSwitchCommitted() error {
-	signal, err := s.read()
-	if err != nil {
-		return err
-	}
-	if signal == nil {
-		return fmt.Errorf("no pending AgentUpgrade signal")
-	}
-	signal.SwitchCommitted = true
-	return s.write(*signal)
-}
-
-func (s agentUpgradeSignalStore) recordFailure(message string) error {
-	signal, err := s.read()
-	if err != nil {
-		return err
-	}
-	if signal == nil {
-		return nil
-	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		message = "upgraded daemon failed to start; restored last-good binary"
-	}
-	signal.Failure = message
-	signal.RecoveryRequired = true
-	return s.write(*signal)
-}
-
-func (s agentUpgradeSignalStore) read() (*agentUpgradeSignal, error) {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read AgentUpgrade signal: %w", err)
-	}
-	var signal agentUpgradeSignal
-	if err := json.Unmarshal(data, &signal); err != nil {
-		return nil, fmt.Errorf("decode AgentUpgrade signal: %w", err)
-	}
-	signal.OperationName = strings.TrimSpace(signal.OperationName)
-	signal.ActiveMachine = strings.TrimSpace(signal.ActiveMachine)
-	signal.CandidatePath = strings.TrimSpace(signal.CandidatePath)
-	signal.Failure = strings.TrimSpace(signal.Failure)
-	if signal.OperationName == "" {
-		return nil, fmt.Errorf("AgentUpgrade signal has no operation name")
-	}
-	if signal.ActiveMachine != "" && !validNspawnMachine(signal.ActiveMachine) {
-		return nil, fmt.Errorf("AgentUpgrade signal has invalid active machine %q", signal.ActiveMachine)
-	}
-	return &signal, nil
-}
-
-func (s agentUpgradeSignalStore) write(signal agentUpgradeSignal) error {
-	data, err := json.Marshal(signal)
-	if err != nil {
-		return fmt.Errorf("encode AgentUpgrade signal: %w", err)
-	}
-	if err := utilio.WriteFile(s.path, append(data, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write AgentUpgrade signal: %w", err)
-	}
-	return nil
-}
-
-func (s agentUpgradeSignalStore) clear() error {
-	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove AgentUpgrade signal: %w", err)
-	}
-	return nil
-}
-
 type agentUpgradeExecutor interface {
 	Acquire() (io.Closer, error)
 	// Validate rejects a request this agent can't carry out: an image on a host, or a release
@@ -214,13 +83,13 @@ type agentUpgradeExecutor interface {
 // judge the upgrade and publish its result. On a host, the upgrade switches binaries; in the
 // agent's container, images.
 type agentUpgradeHandoff interface {
-	signalStore() agentUpgradeSignalStore
+	signalStore() agentdeployment.UpgradeSignalStore
 	daemonInstance() string
 	// validateStarted returns why this daemon isn't the fully switched candidate, if it isn't.
-	validateStarted(*agentUpgradeSignal) error
-	candidateActive(*agentUpgradeSignal) (bool, error)
-	rollbackSwitch(*agentUpgradeSignal) error
-	runningLastGood(*agentUpgradeSignal) (bool, error)
+	validateStarted(*agentdeployment.UpgradeSignal) error
+	candidateActive(*agentdeployment.UpgradeSignal) (bool, error)
+	rollbackSwitch(*agentdeployment.UpgradeSignal) error
+	runningLastGood(*agentdeployment.UpgradeSignal) (bool, error)
 	Restart(context.Context) error
 	finish(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
 }
@@ -237,9 +106,9 @@ type agentUpgradeStateLoader interface {
 
 type hostAgentUpgradeExecutor struct {
 	log                    *slog.Logger
-	paths                  agentUpgradePaths
+	paths                  agentdeployment.UpgradePaths
 	state                  agentUpgradeStateLoader
-	signals                agentUpgradeSignalStore
+	signals                agentdeployment.UpgradeSignalStore
 	systemctl              func(context.Context, ...string) error
 	runSystemdRun          func(context.Context, ...string) error
 	finishMachineOperation func(context.Context, client.Client, agentdaemon.MachineOperation, agentdaemon.MachineOperationResult[int64]) error
@@ -252,7 +121,7 @@ type hostAgentUpgradeExecutor struct {
 }
 
 func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader) (*hostAgentUpgradeExecutor, error) {
-	paths := defaultAgentUpgradePaths()
+	paths := agentdeployment.DefaultUpgradePaths()
 	instanceID, err := newDaemonInstanceID()
 	if err != nil {
 		return nil, fmt.Errorf("create daemon instance ID: %w", err)
@@ -261,7 +130,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 		log:     log,
 		paths:   paths,
 		state:   state,
-		signals: agentUpgradeSignalStore{path: paths.SignalPath},
+		signals: agentdeployment.NewUpgradeSignalStore(paths.SignalPath),
 		systemctl: func(ctx context.Context, args ...string) error {
 			return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
 		},
@@ -269,7 +138,7 @@ func newHostAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateLoader
 			return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
 		},
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
-		runningExecutable:      runningAgentExecutable,
+		runningExecutable:      agentdeployment.RunningAgentExecutable,
 		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
 		guardLegacySeed: func() error {
 			return guardLegacySeed(log, hostroot.LegacyReleased, hostRootMoveUnfinishedHere, legacySeedPath, runningFrom)
@@ -287,12 +156,12 @@ func newDaemonInstanceID() (string, error) {
 }
 
 func (e *hostAgentUpgradeExecutor) Acquire() (io.Closer, error) {
-	return agentbinary.AcquireHostActivationLock(agentUpgradeLockPath)
+	return agentbinary.AcquireHostActivationLock(agentdeployment.UpgradeLockPath)
 }
 
 // Validate takes an archive's HTTP or HTTPS URL, and refuses an image's, as any other URL.
 func (e *hostAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
-	_, err := secureAgentInstallOptions(request.downloadURL, request.sha256)
+	_, err := agentdeployment.SecureInstallOptions(request.downloadURL, request.sha256)
 	return err
 }
 
@@ -302,11 +171,11 @@ func (e *hostAgentUpgradeExecutor) RecordPending(ctx context.Context, operationN
 
 func recordPendingAgentUpgrade(
 	ctx context.Context,
-	signals agentUpgradeSignalStore,
+	signals agentdeployment.UpgradeSignalStore,
 	state agentUpgradeStateLoader,
 	operationName, instanceID string,
 ) error {
-	existing, err := signals.read()
+	existing, err := signals.Read()
 	if err != nil {
 		return err
 	}
@@ -320,10 +189,10 @@ func recordPendingAgentUpgrade(
 	if err != nil {
 		return fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
 	}
-	if loaded == nil || !validNspawnMachine(loaded.ActiveMachine) {
+	if loaded == nil || !agentdeployment.ValidNspawnMachine(loaded.ActiveMachine) {
 		return fmt.Errorf("no valid active nspawn machine for AgentUpgrade")
 	}
-	if err := signals.recordPending(operationName, loaded.ActiveMachine, instanceID); err != nil {
+	if err := signals.RecordPending(operationName, loaded.ActiveMachine, instanceID); err != nil {
 		return err
 	}
 	return nil
@@ -333,8 +202,8 @@ func (e *hostAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error {
 	return retryAgentUpgradeRecovery(ctx, e.signals, e.Restart)
 }
 
-func retryAgentUpgradeRecovery(ctx context.Context, signals agentUpgradeSignalStore, restart func(context.Context) error) error {
-	signal, err := signals.read()
+func retryAgentUpgradeRecovery(ctx context.Context, signals agentdeployment.UpgradeSignalStore, restart func(context.Context) error) error {
+	signal, err := signals.Read()
 	if err != nil {
 		return err
 	}
@@ -350,7 +219,7 @@ func retryAgentUpgradeRecovery(ctx context.Context, signals agentUpgradeSignalSt
 }
 
 func (e *hostAgentUpgradeExecutor) RecordFailure(message string) error {
-	return e.signals.recordFailure(message)
+	return e.signals.RecordFailure(message)
 }
 
 func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgradeRequest) error {
@@ -359,10 +228,10 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 			return err
 		}
 	}
-	if err := ensureAgentUpgradeLayout(ctx, e.log, e.paths); err != nil {
+	if err := agentdeployment.EnsureUpgradeLayout(ctx, e.log, e.paths); err != nil {
 		return fmt.Errorf("initialize agent binary layout: %w", err)
 	}
-	current, err := resolvedExecutable(e.paths.CurrentPath)
+	current, err := agentdeployment.ResolveExecutable(e.paths.CurrentPath)
 	if err != nil {
 		return fmt.Errorf("resolve current agent binary: %w", err)
 	}
@@ -370,24 +239,24 @@ func (e *hostAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgra
 	if current == e.paths.BluePath {
 		candidate = e.paths.GreenPath
 	}
-	if err := e.signals.recordCandidate(candidate); err != nil {
+	if err := e.signals.RecordCandidate(candidate); err != nil {
 		return err
 	}
-	if err := installAndSwitchAgentBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths); err != nil {
+	if err := agentdeployment.InstallAndSwitchBinary(ctx, e.log, request.downloadURL, request.sha256, e.paths); err != nil {
 		return err
 	}
-	if err := e.signals.recordSwitchCommitted(); err != nil {
+	if err := e.signals.RecordSwitchCommitted(); err != nil {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("record committed AgentUpgrade switch: %w", err))
 	}
 
-	signal, err := e.signals.read()
+	signal, err := e.signals.Read()
 	if err != nil {
 		return e.rollbackAfterStage(ctx, err)
 	}
-	if signal == nil || !validNspawnMachine(signal.ActiveMachine) {
+	if signal == nil || !agentdeployment.ValidNspawnMachine(signal.ActiveMachine) {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("pending AgentUpgrade signal has no valid active machine"))
 	}
-	current, err = resolvedExecutable(e.paths.CurrentPath)
+	current, err = agentdeployment.ResolveExecutable(e.paths.CurrentPath)
 	if err != nil {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("resolve staged agent binary: %w", err))
 	}
@@ -416,7 +285,7 @@ func (e *hostAgentUpgradeExecutor) Abort(ctx context.Context) error {
 		// Preserve the signal so startup recovery can retry the rollback.
 		return err
 	}
-	return e.signals.clear()
+	return e.signals.Clear()
 }
 
 func agentUpgradeCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -427,7 +296,7 @@ func (e *hostAgentUpgradeExecutor) rollback(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	signal, err := e.signals.read()
+	signal, err := e.signals.Read()
 	if err != nil {
 		return err
 	}
@@ -498,16 +367,12 @@ func scheduleAgentUnitCommand(
 // agentRestartTimerAccuracy bounds how late systemd may fire the timer that restarts the agent.
 const agentRestartTimerAccuracy = "100ms"
 
-func validNspawnMachine(machine string) bool {
-	return machine == goalstates.NSpawnMachineKube1 || machine == goalstates.NSpawnMachineKube2
-}
-
 func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
-	if !validNspawnMachine(machine) {
+	if !agentdeployment.ValidNspawnMachine(machine) {
 		return fmt.Errorf("invalid nspawn machine %q", machine)
 	}
 	destination := filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
-	if err := copyExecutable(sourcePath, destination); err != nil {
+	if err := agentdeployment.CopyExecutable(sourcePath, destination); err != nil {
 		return fmt.Errorf("copy agent binary to %s: %w", machine, err)
 	}
 	return nil
@@ -524,9 +389,9 @@ func synchronizeNspawnAgentBinary(sourcePath, machine string) error {
 // script runs the resolved last-good link, so that is the layout systemd uses.
 func RecoverAgentUpgrade(ctx context.Context, message string) error {
 	log := slog.Default()
-	if Containerized() {
+	if agentdeployment.Containerized() {
 		if err := recoverContainerAgentUpgrade(ctx, log, message,
-			agentUpgradeSignalStore{path: defaultAgentUpgradePaths().SignalPath},
+			agentdeployment.NewUpgradeSignalStore(agentdeployment.DefaultUpgradePaths().SignalPath),
 			agentImageEnvFile{path: agentImageSelectionPath},
 			func(ctx context.Context, args ...string) error {
 				return utilexec.RunCmd(ctx, log, utilexec.Systemctl(), args...)
@@ -535,15 +400,15 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 		}
 		return ctx.Err()
 	}
-	if err := MigrateHostRoot(log); err != nil {
+	if err := agentdeployment.MigrateHostRoot(log); err != nil {
 		log.Warn("recovering the agent without migrating the host root", "error", err)
 	}
-	paths := recoveryAgentUpgradePaths(runningAgentExecutable, hostroot.Resolve)
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordFailure(message); err != nil {
+	paths := recoveryAgentUpgradePaths(agentdeployment.RunningAgentExecutable, hostroot.Resolve)
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.RecordFailure(message); err != nil {
 		return err
 	}
-	signal, err := signals.read()
+	signal, err := signals.Read()
 	if err != nil {
 		return err
 	}
@@ -555,19 +420,19 @@ func RecoverAgentUpgrade(ctx context.Context, message string) error {
 
 // recoveryAgentUpgradePaths returns the layout the running binary is a slot
 // of, or the one under the resolved host root when it is not in a slot.
-func recoveryAgentUpgradePaths(executable func() (string, error), resolve func() string) agentUpgradePaths {
+func recoveryAgentUpgradePaths(executable func() (string, error), resolve func() string) agentdeployment.UpgradePaths {
 	if self, err := executable(); err == nil {
 		root := filepath.Dir(filepath.Dir(filepath.Dir(self)))
-		if paths := agentUpgradePathsUnder(root); self == paths.BluePath || self == paths.GreenPath {
+		if paths := agentdeployment.UpgradePathsUnder(root); self == paths.BluePath || self == paths.GreenPath {
 			return paths
 		}
 	}
-	return agentUpgradePathsUnder(resolve())
+	return agentdeployment.UpgradePathsUnder(resolve())
 }
 
 func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c client.Client, upgrade agentUpgradeHandoff) error {
 	signals := upgrade.signalStore()
-	signal, err := signals.read()
+	signal, err := signals.Read()
 	if err != nil {
 		return err
 	}
@@ -589,7 +454,7 @@ func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c 
 			} else {
 				signal.RecoveryRequired = candidateActive
 			}
-			if err := signals.write(*signal); err != nil {
+			if err := signals.Write(*signal); err != nil {
 				return err
 			}
 		}
@@ -631,20 +496,20 @@ func publishAndClearAgentUpgradeSignal(ctx context.Context, log *slog.Logger, c 
 	if finishErr != nil {
 		return fmt.Errorf("publish AgentUpgrade result: %w", finishErr)
 	}
-	if err := signals.clear(); err != nil {
+	if err := signals.Clear(); err != nil {
 		return err
 	}
 	log.Info("published AgentUpgrade result", "operation", signal.OperationName, "phase", result.Phase)
 	return nil
 }
 
-func (e *hostAgentUpgradeExecutor) signalStore() agentUpgradeSignalStore { return e.signals }
+func (e *hostAgentUpgradeExecutor) signalStore() agentdeployment.UpgradeSignalStore { return e.signals }
 
 var _ agentUpgrader = (*hostAgentUpgradeExecutor)(nil)
 
 func (e *hostAgentUpgradeExecutor) daemonInstance() string { return e.instanceID }
 
-func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
+func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentdeployment.UpgradeSignal) error {
 	nspawnBinaryPath := e.nspawnBinaryPath
 	if nspawnBinaryPath == nil {
 		nspawnBinaryPath = activeNspawnAgentBinaryPath
@@ -652,22 +517,22 @@ func (e *hostAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) e
 	return validateStartedAgentUpgrade(e.paths, signal, nspawnBinaryPath)
 }
 
-func (e *hostAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSignal) (bool, error) {
+func (e *hostAgentUpgradeExecutor) candidateActive(signal *agentdeployment.UpgradeSignal) (bool, error) {
 	return agentUpgradeCandidateIsActive(e.paths, signal)
 }
 
-func (e *hostAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSignal) error {
+func (e *hostAgentUpgradeExecutor) rollbackSwitch(signal *agentdeployment.UpgradeSignal) error {
 	return rollbackAgentUpgradeFiles(e.paths, signal)
 }
 
-func (e *hostAgentUpgradeExecutor) runningLastGood(*agentUpgradeSignal) (bool, error) {
-	lastGood, err := resolvedExecutable(e.paths.LastGoodPath)
+func (e *hostAgentUpgradeExecutor) runningLastGood(*agentdeployment.UpgradeSignal) (bool, error) {
+	lastGood, err := agentdeployment.ResolveExecutable(e.paths.LastGoodPath)
 	if err != nil {
 		return false, fmt.Errorf("resolve last-good agent for recovery restart: %w", err)
 	}
 	runningExecutable := e.runningExecutable
 	if runningExecutable == nil {
-		runningExecutable = runningAgentExecutable
+		runningExecutable = agentdeployment.RunningAgentExecutable
 	}
 	running, err := runningExecutable()
 	if err != nil {
@@ -689,18 +554,6 @@ func (e *hostAgentUpgradeExecutor) finish(
 	return finishOperation(ctx, c, operation, result)
 }
 
-func runningAgentExecutable() (string, error) {
-	path, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("resolve running agent executable: %w", err)
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve running agent executable symlinks: %w", err)
-	}
-	return resolved, nil
-}
-
 func wrapOptionalError(context string, err error) error {
 	if err == nil {
 		return nil
@@ -708,18 +561,18 @@ func wrapOptionalError(context string, err error) error {
 	return fmt.Errorf("%s: %w", context, err)
 }
 
-func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSignal, nspawnBinaryPath func(string) string) error {
+func validateStartedAgentUpgrade(paths agentdeployment.UpgradePaths, signal *agentdeployment.UpgradeSignal, nspawnBinaryPath func(string) string) error {
 	if signal.CandidatePath != paths.BluePath && signal.CandidatePath != paths.GreenPath {
 		return fmt.Errorf("AgentUpgrade was interrupted before selecting a candidate slot")
 	}
-	current, err := resolvedExecutable(paths.CurrentPath)
+	current, err := agentdeployment.ResolveExecutable(paths.CurrentPath)
 	if err != nil {
 		return fmt.Errorf("resolve current upgraded agent binary: %w", err)
 	}
 	if current != signal.CandidatePath {
 		return fmt.Errorf("AgentUpgrade was interrupted before switching the candidate binary")
 	}
-	if !validNspawnMachine(signal.ActiveMachine) {
+	if !agentdeployment.ValidNspawnMachine(signal.ActiveMachine) {
 		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
 	}
 	nspawnPath := nspawnBinaryPath(signal.ActiveMachine)
@@ -733,11 +586,11 @@ func validateStartedAgentUpgrade(paths agentUpgradePaths, signal *agentUpgradeSi
 	return nil
 }
 
-func agentUpgradeCandidateIsActive(paths agentUpgradePaths, signal *agentUpgradeSignal) (bool, error) {
+func agentUpgradeCandidateIsActive(paths agentdeployment.UpgradePaths, signal *agentdeployment.UpgradeSignal) (bool, error) {
 	if signal == nil || signal.CandidatePath != paths.BluePath && signal.CandidatePath != paths.GreenPath {
 		return false, nil
 	}
-	current, err := resolvedExecutable(paths.CurrentPath)
+	current, err := agentdeployment.ResolveExecutable(paths.CurrentPath)
 	if err != nil {
 		return false, fmt.Errorf("resolve current agent binary for rollback: %w", err)
 	}
@@ -748,7 +601,7 @@ func activeNspawnAgentBinaryPath(machine string) string {
 	return filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
 }
 
-func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSignal) error {
+func rollbackAgentUpgradeFiles(paths agentdeployment.UpgradePaths, signal *agentdeployment.UpgradeSignal) error {
 	if signal == nil {
 		return nil
 	}
@@ -759,14 +612,14 @@ func rollbackAgentUpgradeFiles(paths agentUpgradePaths, signal *agentUpgradeSign
 	if !signal.SwitchCommitted && !signal.RecoveryRequired && !candidateActive {
 		return nil
 	}
-	lastGood, err := resolvedExecutable(paths.LastGoodPath)
+	lastGood, err := agentdeployment.ResolveExecutable(paths.LastGoodPath)
 	if err != nil {
 		return fmt.Errorf("resolve last-good agent binary: %w", err)
 	}
-	if err := replaceSymlink(paths.CurrentPath, lastGood); err != nil {
+	if err := agentdeployment.ReplaceSymlink(paths.CurrentPath, lastGood); err != nil {
 		return fmt.Errorf("restore last-good agent binary: %w", err)
 	}
-	if validNspawnMachine(signal.ActiveMachine) {
+	if agentdeployment.ValidNspawnMachine(signal.ActiveMachine) {
 		if err := synchronizeNspawnAgentBinary(lastGood, signal.ActiveMachine); err != nil {
 			return err
 		}
@@ -794,13 +647,13 @@ func fileSHA256(path string) ([sha256.Size]byte, error) {
 	}
 	defer file.Close() //nolint:errcheck // read result is authoritative
 	hasher := sha256.New()
-	limited := io.LimitReader(file, agentUpgradeMaxBinaryBytes+1)
+	limited := io.LimitReader(file, agentdeployment.UpgradeMaxBinaryBytes+1)
 	n, err := io.Copy(hasher, limited)
 	if err != nil {
 		return digest, err
 	}
-	if n > agentUpgradeMaxBinaryBytes {
-		return digest, fmt.Errorf("agent binary exceeds %d-byte limit", agentUpgradeMaxBinaryBytes)
+	if n > agentdeployment.UpgradeMaxBinaryBytes {
+		return digest, fmt.Errorf("agent binary exceeds %d-byte limit", agentdeployment.UpgradeMaxBinaryBytes)
 	}
 	copy(digest[:], hasher.Sum(nil))
 	return digest, nil

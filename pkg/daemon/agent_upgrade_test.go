@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
@@ -108,7 +110,7 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent-upgrade.json")
 	executor := &hostAgentUpgradeExecutor{
 		state:   &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}},
-		signals: agentUpgradeSignalStore{path: path},
+		signals: agentdeployment.NewUpgradeSignalStore(path),
 	}
 	if err := executor.RecordPending(t.Context(), "operation-1"); err != nil {
 		t.Fatalf("first RecordPending: %v", err)
@@ -132,7 +134,7 @@ func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
 	executor := &hostAgentUpgradeExecutor{
 		log:             slog.New(slog.DiscardHandler),
 		paths:           paths,
-		signals:         agentUpgradeSignalStore{path: paths.SignalPath},
+		signals:         agentdeployment.NewUpgradeSignalStore(paths.SignalPath),
 		guardLegacySeed: func() error { return guardErr },
 	}
 
@@ -144,58 +146,6 @@ func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("Stage() changed %s before the guard passed: %v", path, err)
 		}
-	}
-}
-
-func TestAgentUpgradeSignalStoreLifecycle(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "signals", "agent-upgrade.json")
-	store := agentUpgradeSignalStore{path: path}
-	if err := store.recordPending("operation-1", "kube1", "instance-1"); err != nil {
-		t.Fatalf("recordPending: %v", err)
-	}
-	if err := store.recordCandidate("/slots/green"); err != nil {
-		t.Fatalf("recordCandidate: %v", err)
-	}
-	if err := store.recordSwitchCommitted(); err != nil {
-		t.Fatalf("recordSwitchCommitted: %v", err)
-	}
-	if err := store.recordFailure("rolled back"); err != nil {
-		t.Fatalf("recordFailure: %v", err)
-	}
-	signal, err := store.read()
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if signal == nil || signal.OperationName != "operation-1" || signal.ActiveMachine != "kube1" || signal.CandidatePath != "/slots/green" || signal.InitiatingDaemonInstance != "instance-1" || !signal.SwitchCommitted || signal.Failure != "rolled back" || !signal.RecoveryRequired {
-		t.Fatalf("signal = %#v", signal)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("signal mode = %o, want 600", info.Mode().Perm())
-	}
-	if err := store.clear(); err != nil {
-		t.Fatalf("clear: %v", err)
-	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("signal still exists: %v", err)
-	}
-}
-
-func TestAgentUpgradeSignalStoreRejectsInvalidMachine(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "signal.json")
-	if err := os.WriteFile(path, []byte(`{"operationName":"operation-1","activeMachine":"../../etc"}`), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	_, err := (agentUpgradeSignalStore{path: path}).read()
-	if err == nil || !strings.Contains(err.Error(), "invalid active machine") {
-		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -312,11 +262,11 @@ func TestHostAgentUpgradeExecutorAbortUsesCleanupContext(t *testing.T) {
 	if err := os.Symlink(paths.BluePath, paths.LastGoodPath); err != nil {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordPending("operation-1", "", "instance-1"); err != nil {
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.RecordPending("operation-1", "", "instance-1"); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
-	if err := signals.recordCandidate(paths.GreenPath); err != nil {
+	if err := signals.RecordCandidate(paths.GreenPath); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
 	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "instance-1"}
@@ -326,7 +276,7 @@ func TestHostAgentUpgradeExecutorAbortUsesCleanupContext(t *testing.T) {
 		t.Fatalf("Abort: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
-	if signal, err := signals.read(); err != nil || signal != nil {
+	if signal, err := signals.Read(); err != nil || signal != nil {
 		t.Fatalf("signal after Abort = %#v, %v", signal, err)
 	}
 }
@@ -335,18 +285,18 @@ func TestHostAgentUpgradeExecutorAbortPreservesSignalOnRollbackFailure(t *testin
 	t.Parallel()
 
 	paths := testAgentUpgradePaths(t)
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordPending("operation-1", "", "instance-1"); err != nil {
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.RecordPending("operation-1", "", "instance-1"); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
-	if err := signals.recordCandidate(paths.BluePath); err != nil {
+	if err := signals.RecordCandidate(paths.BluePath); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
 	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "instance-1"}
 	if err := executor.Abort(t.Context()); err == nil {
 		t.Fatal("Abort error = nil")
 	}
-	if signal, err := signals.read(); err != nil || signal == nil {
+	if signal, err := signals.Read(); err != nil || signal == nil {
 		t.Fatalf("signal after failed Abort = %#v, %v", signal, err)
 	}
 }
@@ -364,8 +314,8 @@ func TestPublishAgentUpgradeSignalPreservesSignalWhenRollbackFails(t *testing.T)
 	if err := os.Symlink(paths.BluePath, paths.CurrentPath); err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.write(agentUpgradeSignal{
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.Write(agentdeployment.UpgradeSignal{
 		OperationName:            "operation-1",
 		ActiveMachine:            "kube1",
 		CandidatePath:            paths.BluePath,
@@ -377,7 +327,7 @@ func TestPublishAgentUpgradeSignalPreservesSignalWhenRollbackFails(t *testing.T)
 	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err == nil {
 		t.Fatal("publishAndClearAgentUpgradeSignal error = nil")
 	}
-	if signal, err := signals.read(); err != nil || signal == nil {
+	if signal, err := signals.Read(); err != nil || signal == nil {
 		t.Fatalf("signal after failed rollback = %#v, %v", signal, err)
 	}
 }
@@ -400,8 +350,8 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 	if err := os.Symlink(paths.GreenPath, paths.LastGoodPath); err != nil {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.write(agentUpgradeSignal{
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.Write(agentdeployment.UpgradeSignal{
 		OperationName:            "operation-1",
 		CandidatePath:            paths.BluePath,
 		InitiatingDaemonInstance: "initiator",
@@ -434,7 +384,7 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 		t.Fatalf("publish candidate recovery: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
-	if signal, err := signals.read(); err != nil || signal == nil {
+	if signal, err := signals.Read(); err != nil || signal == nil {
 		t.Fatalf("signal cleared before last-good startup: %#v, %v", signal, err)
 	}
 	if restarts != 1 || finished != 0 {
@@ -446,7 +396,7 @@ func TestPublishAgentUpgradeFailureRestartsIntoLastGoodBeforeClearingSignal(t *t
 	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err != nil {
 		t.Fatalf("publish last-good recovery: %v", err)
 	}
-	if signal, err := signals.read(); err != nil || signal != nil {
+	if signal, err := signals.Read(); err != nil || signal != nil {
 		t.Fatalf("signal after last-good startup = %#v, %v", signal, err)
 	}
 	if restarts != 1 || finished != 1 {
@@ -471,8 +421,8 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 	if err := os.WriteFile(nspawnBinary, []byte("candidate"), 0o755); err != nil {
 		t.Fatalf("WriteFile nspawn: %v", err)
 	}
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.write(agentUpgradeSignal{
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.Write(agentdeployment.UpgradeSignal{
 		OperationName:            "operation-1",
 		ActiveMachine:            "kube1",
 		CandidatePath:            paths.BluePath,
@@ -503,7 +453,7 @@ func TestPublishAgentUpgradeSuccessCompletesAndClearsSignal(t *testing.T) {
 	if finished != 1 {
 		t.Fatalf("finish calls = %d, want 1", finished)
 	}
-	if signal, err := signals.read(); err != nil || signal != nil {
+	if signal, err := signals.Read(); err != nil || signal != nil {
 		t.Fatalf("signal after success = %#v, %v", signal, err)
 	}
 }
@@ -512,15 +462,15 @@ func TestPublishAgentUpgradeSignalIgnoresInitiatingProcess(t *testing.T) {
 	t.Parallel()
 
 	paths := testAgentUpgradePaths(t)
-	signals := agentUpgradeSignalStore{path: paths.SignalPath}
-	if err := signals.recordPending("operation-1", "kube1", "current-instance"); err != nil {
+	signals := agentdeployment.NewUpgradeSignalStore(paths.SignalPath)
+	if err := signals.RecordPending("operation-1", "kube1", "current-instance"); err != nil {
 		t.Fatalf("recordPending: %v", err)
 	}
 	executor := &hostAgentUpgradeExecutor{paths: paths, signals: signals, instanceID: "current-instance"}
 	if err := publishAndClearAgentUpgradeSignal(t.Context(), slog.Default(), nil, executor); err != nil {
 		t.Fatalf("publishAndClearAgentUpgradeSignal: %v", err)
 	}
-	if signal, err := signals.read(); err != nil || signal == nil {
+	if signal, err := signals.Read(); err != nil || signal == nil {
 		t.Fatalf("initiating process consumed signal: %#v, %v", signal, err)
 	}
 }
@@ -544,7 +494,7 @@ func TestRollbackAgentUpgradeFilesDoesNotDowngradeBeforeSwitch(t *testing.T) {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
 
-	if err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{CandidatePath: paths.BluePath}); err != nil {
+	if err := rollbackAgentUpgradeFiles(paths, &agentdeployment.UpgradeSignal{CandidatePath: paths.BluePath}); err != nil {
 		t.Fatalf("rollbackAgentUpgradeFiles: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
@@ -566,7 +516,7 @@ func TestRollbackAgentUpgradeFilesRetriesAfterHostLinkWasRestored(t *testing.T) 
 		t.Fatalf("Symlink current: %v", err)
 	}
 
-	err := rollbackAgentUpgradeFiles(paths, &agentUpgradeSignal{
+	err := rollbackAgentUpgradeFiles(paths, &agentdeployment.UpgradeSignal{
 		CandidatePath:    paths.BluePath,
 		RecoveryRequired: true,
 	})
@@ -638,7 +588,7 @@ func TestAgentUpgradePathsUnder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			paths := agentUpgradePathsUnder(tt.root)
+			paths := agentdeployment.UpgradePathsUnder(tt.root)
 			if paths.BinaryPath != tt.wantBinary {
 				t.Errorf("BinaryPath = %q, want %q", paths.BinaryPath, tt.wantBinary)
 			}

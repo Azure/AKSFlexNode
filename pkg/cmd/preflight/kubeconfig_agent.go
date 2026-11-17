@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
@@ -24,7 +24,7 @@ func pairedKubeconfigChecks(cfg *config.Config, checks []preflight.Checker) ([]p
 		return nil, fmt.Errorf("upstream node preflight is missing check %q", checkAPIServerReachableName)
 	}
 	// The plugin start's clients run, so preflight checks the credential they'll use.
-	plugin, err := daemon.CredentialPlugin()
+	plugin, err := agentdeployment.CredentialPlugin()
 	if err != nil {
 		return nil, fmt.Errorf("find the agent's credential plugin: %w", err)
 	}

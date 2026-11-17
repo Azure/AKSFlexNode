@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -30,7 +31,7 @@ const hostRootAgentsPath = "/etc/aks-flex-node/host-root-agents"
 func hostLayout() []string {
 	// Built under an empty root, so each path comes out relative to the host
 	// root.
-	own := agentUpgradePathsUnder("")
+	own := agentdeployment.UpgradePathsUnder("")
 	library := goalstates.LegacyHostPaths()
 
 	files := []string{
@@ -39,7 +40,7 @@ func hostLayout() []string {
 		own.GreenPath,
 		own.CurrentPath,
 		own.LastGoodPath,
-		recoveryScriptPathUnder(""),
+		agentdeployment.RecoveryScriptPathUnder(""),
 	}
 	// The library builds its paths only under a root it resolves itself, so
 	// its legacy root is trimmed. TestHostLayout checks the result.
@@ -55,7 +56,7 @@ func hostLayout() []string {
 // Flex Node alone, so moving a linked host removes them from the legacy root
 // once they are empty. bin and libexec are shared, and stay.
 func hostLayoutDirs() []string {
-	return []string{managedBinaryDir}
+	return []string{agentdeployment.ManagedBinaryDir}
 }
 
 // hostRootRestartWait bounds how long a daemon that may not take work waits for
@@ -90,12 +91,12 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 	}
 	defer func() { _ = lock.Close() }()
 
-	paths := defaultAgentUpgradePaths()
+	paths := agentdeployment.DefaultUpgradePaths()
 	restarted, err := hostroot.ReconcileMove(ctx, log, hostroot.MoveOptions{
 		Files: hostLayout(),
 		Dirs:  hostLayoutDirs(),
 		// The directories a fresh installation's PrepareHostRoot creates.
-		Subdirs:      []string{"bin", managedBinaryDir, "libexec"},
+		Subdirs:      []string{"bin", agentdeployment.ManagedBinaryDir, "libexec"},
 		Record:       hostRootAgentsPath,
 		SignalPath:   paths.SignalPath,
 		CurrentPath:  paths.CurrentPath,
@@ -119,7 +120,7 @@ func reconcileHostRootUnderLock(ctx context.Context, log *slog.Logger, cfg *conf
 // under root, before any unit names it. A move whose copy fails this is undone,
 // and the host stays linked to /usr/local.
 func verifyMovedAgent(ctx context.Context, root string) error {
-	return agentbinary.Verify(ctx, agentUpgradePathsUnder(root).CurrentPath)
+	return agentbinary.Verify(ctx, agentdeployment.UpgradePathsUnder(root).CurrentPath)
 }
 
 // holdForHostRoot reports why this process may not take work after reconciling
@@ -131,7 +132,7 @@ func verifyMovedAgent(ctx context.Context, root string) error {
 // failed, and the files under /usr/local it would have removed are what a
 // release before the host root would take as its own installation after an
 // AgentUpgrade to it. The next start retries that step.
-func holdForHostRoot(restarted, unfinished bool, startup, current agentUpgradePaths) string {
+func holdForHostRoot(restarted, unfinished bool, startup, current agentdeployment.UpgradePaths) string {
 	switch {
 	case restarted:
 		return "the daemon queued its restart from the host root"
@@ -226,7 +227,7 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 	return syncDirs(
 		systemdSystemDir,
 		filepath.Dir(rootFS.ServiceOverrideFile),
-		filepath.Dir(recoveryScriptPathUnder(hostroot.Resolve())),
+		filepath.Dir(agentdeployment.RecoveryScriptPathUnder(hostroot.Resolve())),
 		filepath.Dir(goalstates.ResolveHostPaths().NSpawnLifecycleBinary),
 	)
 }

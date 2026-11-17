@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
@@ -29,10 +30,10 @@ const (
 // It does not migrate the host root, so it plans against the root the host
 // will resolve once migrated.
 func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
-	if Containerized() {
+	if agentdeployment.Containerized() {
 		return agentbinary.ActivationPlan{}, errDirectActivationInContainer
 	}
-	service, paths, err := newFlexDaemonActivationService(log, PlannedHostRoot)
+	service, paths, err := newFlexDaemonActivationService(log, agentdeployment.PlannedHostRoot)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
@@ -47,13 +48,13 @@ var errDirectActivationInContainer = errors.New("direct activation is not availa
 // ActivateHostAgent activates a directly staged Flex agent binary. It uses the
 // same lock and binary layout as MachineOperation upgrades.
 func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationResult, error) {
-	if Containerized() {
+	if agentdeployment.Containerized() {
 		return agentbinary.ActivationResult{}, errDirectActivationInContainer
 	}
 	if os.Geteuid() != 0 {
 		return agentbinary.ActivationResult{}, fmt.Errorf("host agent upgrade requires root privileges")
 	}
-	if err := MigrateHostRoot(log); err != nil {
+	if err := agentdeployment.MigrateHostRoot(log); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
 	running := func(info os.FileInfo) (bool, error) {
@@ -71,12 +72,12 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	return agentbinary.ActivateHostDaemon(ctx, log, hostAgentActivationOptions(paths, candidatePath), service)
 }
 
-func hostAgentActivationOptions(paths agentUpgradePaths, candidatePath string) agentbinary.ActivationOptions {
+func hostAgentActivationOptions(paths agentdeployment.UpgradePaths, candidatePath string) agentbinary.ActivationOptions {
 	return agentbinary.ActivationOptions{
-		Layout:        paths.layout(),
+		Layout:        paths.Layout(),
 		CandidatePath: candidatePath,
-		BinaryMode:    agentUpgradeBinaryMode,
-		LockPath:      agentUpgradeLockPath,
+		BinaryMode:    agentdeployment.UpgradeBinaryMode,
+		LockPath:      agentdeployment.UpgradeLockPath,
 	}
 }
 
@@ -89,7 +90,7 @@ type flexDaemonActivationService struct {
 	// moveUnfinished reports a move to the host root that has not finished;
 	// see Preflight. A nil moveUnfinished skips the check.
 	moveUnfinished   func() (bool, error)
-	paths            agentUpgradePaths
+	paths            agentdeployment.UpgradePaths
 	state            stateStore
 	systemdDir       string
 	recoveryScript   string
@@ -98,19 +99,19 @@ type flexDaemonActivationService struct {
 	serviceWasActive bool
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentUpgradePaths, error) {
+func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string) (*flexDaemonActivationService, agentdeployment.UpgradePaths, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	root := resolveRoot()
 	state, err := NewFileStateStore()
 	if err != nil {
-		return nil, agentUpgradePaths{}, err
+		return nil, agentdeployment.UpgradePaths{}, err
 	}
-	paths := agentUpgradePathsUnder(root)
+	paths := agentdeployment.UpgradePathsUnder(root)
 	serviceOptions, err := installedAgentServiceOptions(systemdSystemDir)
 	if err != nil {
-		return nil, agentUpgradePaths{}, err
+		return nil, agentdeployment.UpgradePaths{}, err
 	}
 	return &flexDaemonActivationService{
 		log:            log,
@@ -120,7 +121,7 @@ func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string)
 		paths:          paths,
 		state:          state,
 		systemdDir:     systemdSystemDir,
-		recoveryScript: recoveryScriptPathUnder(root),
+		recoveryScript: agentdeployment.RecoveryScriptPathUnder(root),
 		serviceOptions: serviceOptions,
 		inspectService: inspectAgentServiceActive,
 	}, paths, nil
@@ -282,7 +283,7 @@ func (s *flexDaemonActivationService) synchronizeActiveNspawn(ctx context.Contex
 		s.log.Info("activated host agent without active nspawn synchronization")
 		return nil
 	}
-	if !validNspawnMachine(state.ActiveMachine) {
+	if !agentdeployment.ValidNspawnMachine(state.ActiveMachine) {
 		return fmt.Errorf("no valid active nspawn machine for agent activation")
 	}
 	if err := synchronizeNspawnAgentBinary(expected, state.ActiveMachine); err != nil {

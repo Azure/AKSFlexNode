@@ -1,4 +1,4 @@
-package daemon
+package agentdeployment
 
 import (
 	"archive/tar"
@@ -108,10 +108,10 @@ func TestInstallAndSwitchAgentBinaryIntegrity(t *testing.T) {
 				attempts = 2
 			}
 			for range attempts {
-				err := installAndSwitchAgentBinary(t.Context(), log, server.URL+"/agent.tar.gz?sig=secret", tt.digest, paths)
+				err := InstallAndSwitchBinary(t.Context(), log, server.URL+"/agent.tar.gz?sig=secret", tt.digest, paths)
 				if tt.wantErr == "" {
 					if err != nil {
-						t.Fatalf("installAndSwitchAgentBinary: %v", err)
+						t.Fatalf("InstallAndSwitchBinary: %v", err)
 					}
 					assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 					assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)

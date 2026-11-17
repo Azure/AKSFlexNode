@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
@@ -110,7 +111,7 @@ func (s agentImageEnvFile) write(current, lastGood string) error {
 type containerAgentUpgradeExecutor struct {
 	log     *slog.Logger
 	state   agentUpgradeStateLoader
-	signals agentUpgradeSignalStore
+	signals agentdeployment.UpgradeSignalStore
 	images  agentImageEnvFile
 	// runningImage is the image this daemon runs, which its unit passes in.
 	runningImage           string
@@ -133,7 +134,7 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 	return &containerAgentUpgradeExecutor{
 		log:          log,
 		state:        state,
-		signals:      agentUpgradeSignalStore{path: defaultAgentUpgradePaths().SignalPath},
+		signals:      agentdeployment.NewUpgradeSignalStore(agentdeployment.DefaultUpgradePaths().SignalPath),
 		images:       agentImageEnvFile{path: agentImageSelectionPath},
 		runningImage: os.Getenv(agentImageEnv),
 		pullArgs: append(strings.Fields(os.Getenv(agentSnapshotterPullArgsEnv)),
@@ -149,7 +150,7 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 			return utilexec.RunCmd(ctx, log, utilexec.SystemdRun(), args...)
 		},
 		finishMachineOperation: agentdaemon.FinishMachineOperation,
-		runningExecutable:      runningAgentExecutable,
+		runningExecutable:      agentdeployment.RunningAgentExecutable,
 		nspawnBinaryPath:       activeNspawnAgentBinaryPath,
 		instanceID:             instanceID,
 	}, nil
@@ -158,7 +159,7 @@ func newContainerAgentUpgradeExecutor(log *slog.Logger, state agentUpgradeStateL
 var _ agentUpgrader = (*containerAgentUpgradeExecutor)(nil)
 
 func (e *containerAgentUpgradeExecutor) Acquire() (io.Closer, error) {
-	return agentbinary.AcquireHostActivationLock(agentUpgradeLockPath)
+	return agentbinary.AcquireHostActivationLock(agentdeployment.UpgradeLockPath)
 }
 
 func (e *containerAgentUpgradeExecutor) Validate(request agentUpgradeRequest) error {
@@ -216,7 +217,7 @@ func (e *containerAgentUpgradeExecutor) RetryRecovery(ctx context.Context) error
 }
 
 func (e *containerAgentUpgradeExecutor) RecordFailure(message string) error {
-	return e.signals.recordFailure(message)
+	return e.signals.RecordFailure(message)
 }
 
 func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agentUpgradeRequest) error {
@@ -228,7 +229,7 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 	if err != nil {
 		return err
 	}
-	if err := e.signals.recordCandidateImage(image, previous); err != nil {
+	if err := e.signals.RecordCandidateImage(image, previous); err != nil {
 		return err
 	}
 	pullCtx, cancelPull := context.WithTimeout(ctx, agentImagePullTimeout)
@@ -244,7 +245,7 @@ func (e *containerAgentUpgradeExecutor) Stage(ctx context.Context, request agent
 	if err := e.images.write(image, previous); err != nil {
 		return e.rollbackAfterStage(ctx, err)
 	}
-	if err := e.signals.recordSwitchCommitted(); err != nil {
+	if err := e.signals.RecordSwitchCommitted(); err != nil {
 		return e.rollbackAfterStage(ctx, fmt.Errorf("record committed AgentUpgrade switch: %w", err))
 	}
 	e.log.Info("selected the agent's upgraded image", "image", image, "previous", previous)
@@ -329,14 +330,14 @@ func (e *containerAgentUpgradeExecutor) Abort(ctx context.Context) error {
 		// Preserve the signal so startup recovery can retry the rollback.
 		return err
 	}
-	return e.signals.clear()
+	return e.signals.Clear()
 }
 
 func (e *containerAgentUpgradeExecutor) rollback(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	signal, err := e.signals.read()
+	signal, err := e.signals.Read()
 	if err != nil {
 		return err
 	}
@@ -348,11 +349,13 @@ func (e *containerAgentUpgradeExecutor) Restart(ctx context.Context) error {
 	return restartAgentAfterUpgrade(ctx, e.log, e.systemctl, e.runSystemdRun)
 }
 
-func (e *containerAgentUpgradeExecutor) signalStore() agentUpgradeSignalStore { return e.signals }
+func (e *containerAgentUpgradeExecutor) signalStore() agentdeployment.UpgradeSignalStore {
+	return e.signals
+}
 
 func (e *containerAgentUpgradeExecutor) daemonInstance() string { return e.instanceID }
 
-func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSignal) error {
+func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentdeployment.UpgradeSignal) error {
 	if signal.CandidateImage == "" {
 		return fmt.Errorf("AgentUpgrade was interrupted before selecting a candidate image")
 	}
@@ -366,7 +369,7 @@ func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSign
 	if e.runningImage != signal.CandidateImage {
 		return fmt.Errorf("the agent restarted on %q rather than the candidate image", e.runningImage)
 	}
-	if !validNspawnMachine(signal.ActiveMachine) {
+	if !agentdeployment.ValidNspawnMachine(signal.ActiveMachine) {
 		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
 	}
 	running, err := e.runningExecutable()
@@ -384,12 +387,12 @@ func (e *containerAgentUpgradeExecutor) validateStarted(signal *agentUpgradeSign
 	return nil
 }
 
-func (e *containerAgentUpgradeExecutor) candidateActive(signal *agentUpgradeSignal) (bool, error) {
+func (e *containerAgentUpgradeExecutor) candidateActive(signal *agentdeployment.UpgradeSignal) (bool, error) {
 	return candidateImageActive(e.images, signal)
 }
 
 // candidateImageActive reports whether the agent's selection names the upgrade's candidate.
-func candidateImageActive(images agentImageEnvFile, signal *agentUpgradeSignal) (bool, error) {
+func candidateImageActive(images agentImageEnvFile, signal *agentdeployment.UpgradeSignal) (bool, error) {
 	if signal == nil || signal.CandidateImage == "" {
 		return false, nil
 	}
@@ -400,7 +403,7 @@ func candidateImageActive(images agentImageEnvFile, signal *agentUpgradeSignal) 
 	return current == signal.CandidateImage, nil
 }
 
-func (e *containerAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSignal) error {
+func (e *containerAgentUpgradeExecutor) rollbackSwitch(signal *agentdeployment.UpgradeSignal) error {
 	return rollbackImageSwitch(e.images, signal)
 }
 
@@ -408,7 +411,7 @@ func (e *containerAgentUpgradeExecutor) rollbackSwitch(signal *agentUpgradeSigna
 // candidate, or may have. Stage records the candidate, with the previous image, before it changes
 // the selection, so an upgrade without one never switched, even when recovery ran for it, as after
 // the daemon ended between RecordPending and Stage.
-func rollbackImageSwitch(images agentImageEnvFile, signal *agentUpgradeSignal) error {
+func rollbackImageSwitch(images agentImageEnvFile, signal *agentdeployment.UpgradeSignal) error {
 	if signal == nil || signal.CandidateImage == "" {
 		return nil
 	}
@@ -425,7 +428,7 @@ func rollbackImageSwitch(images agentImageEnvFile, signal *agentUpgradeSignal) e
 	return images.write(signal.PreviousImage, signal.PreviousImage)
 }
 
-func (e *containerAgentUpgradeExecutor) runningLastGood(signal *agentUpgradeSignal) (bool, error) {
+func (e *containerAgentUpgradeExecutor) runningLastGood(signal *agentdeployment.UpgradeSignal) (bool, error) {
 	// Without a previous image, the upgrade never switched away from the running one.
 	return signal.PreviousImage == "" || e.runningImage == signal.PreviousImage, nil
 }
@@ -448,14 +451,14 @@ func recoverContainerAgentUpgrade(
 	ctx context.Context,
 	log *slog.Logger,
 	message string,
-	signals agentUpgradeSignalStore,
+	signals agentdeployment.UpgradeSignalStore,
 	images agentImageEnvFile,
 	systemctl func(context.Context, ...string) error,
 ) error {
-	if err := signals.recordFailure(message); err != nil {
+	if err := signals.RecordFailure(message); err != nil {
 		return err
 	}
-	signal, err := signals.read()
+	signal, err := signals.Read()
 	if err != nil {
 		return err
 	}
@@ -504,11 +507,11 @@ func newContainerAgentConvergence(log *slog.Logger, state agentUpgradeStateLoade
 		log:        log,
 		state:      state,
 		unitDir:    systemdSystemDir,
-		signalPath: defaultAgentUpgradePaths().SignalPath,
+		signalPath: agentdeployment.DefaultUpgradePaths().SignalPath,
 		reload: func(ctx context.Context) error {
 			return utilexec.ReloadSystemd(ctx, log)
 		},
-		runningExecutable: runningAgentExecutable,
+		runningExecutable: agentdeployment.RunningAgentExecutable,
 		nspawnBinaryPath:  activeNspawnAgentBinaryPath,
 		images:            agentImageEnvFile{path: agentImageSelectionPath},
 		install:           agentImageEnvFile{path: agentInstallSettingsPath},
@@ -552,7 +555,7 @@ func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) 
 	if err != nil {
 		return held, fmt.Errorf("load daemon state: %w", err)
 	}
-	if state == nil || !validNspawnMachine(state.ActiveMachine) {
+	if state == nil || !agentdeployment.ValidNspawnMachine(state.ActiveMachine) {
 		return held, nil
 	}
 	destination := c.nspawnBinaryPath(state.ActiveMachine)
@@ -566,7 +569,7 @@ func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) 
 	if equal, err := filesHaveEqualSHA256(running, destination); err == nil && equal {
 		return held, nil
 	}
-	if err := copyExecutable(running, destination); err != nil {
+	if err := agentdeployment.CopyExecutable(running, destination); err != nil {
 		return held, fmt.Errorf("synchronize the agent binary in %s: %w", state.ActiveMachine, err)
 	}
 	c.log.Info("synchronized the agent binary in the active machine", "machine", state.ActiveMachine)

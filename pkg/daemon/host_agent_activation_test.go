@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
 
@@ -158,7 +160,7 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 // layout to switch, and an AgentUpgrade switches images instead. It sets the environment, so it
 // doesn't run in parallel.
 func TestDirectActivationIsRefusedInAContainer(t *testing.T) {
-	t.Setenv(ContainerizedEnv, "true")
+	t.Setenv(agentdeployment.ContainerizedEnv, "true")
 	log := slog.New(slog.DiscardHandler)
 
 	if _, err := PreflightHostAgentActivation(t.Context(), log, "/nonexistent/aks-flex-node"); !errors.Is(err, errDirectActivationInContainer) {

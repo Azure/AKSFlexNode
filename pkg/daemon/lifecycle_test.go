@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
@@ -263,7 +265,7 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 			if err := os.MkdirAll(bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			binary := filepath.Join(bin, binaryName)
+			binary := filepath.Join(bin, agentdeployment.BinaryName)
 			writeExecutable(t, binary, "agent")
 			for _, unit := range tc.existing {
 				if err := os.WriteFile(filepath.Join(systemdDir, unit), []byte("existing\n"), 0o644); err != nil {
@@ -305,8 +307,8 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 			switch {
 			case tc.containerized && !errors.Is(err, os.ErrNotExist):
 				t.Errorf("helper links to %q, %v; want none", target, err)
-			case !tc.containerized && (err != nil || target != binaryName):
-				t.Errorf("helper links to %q, %v; want %q", target, err, binaryName)
+			case !tc.containerized && (err != nil || target != agentdeployment.BinaryName):
+				t.Errorf("helper links to %q, %v; want %q", target, err, agentdeployment.BinaryName)
 			}
 		})
 	}
@@ -330,7 +332,7 @@ func TestEnsureNSpawnLifecycleHelperLink(t *testing.T) {
 			}
 		},
 		"the link": func(t *testing.T, helper string) {
-			if err := os.Symlink(binaryName, helper); err != nil {
+			if err := os.Symlink(agentdeployment.BinaryName, helper); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -342,7 +344,7 @@ func TestEnsureNSpawnLifecycleHelperLink(t *testing.T) {
 			if err := os.MkdirAll(bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			binary := filepath.Join(bin, binaryName)
+			binary := filepath.Join(bin, agentdeployment.BinaryName)
 			writeExecutable(t, binary, "agent")
 			helper := filepath.Join(bin, nspawnLifecycleHelperName)
 			setup(t, helper)
@@ -350,8 +352,8 @@ func TestEnsureNSpawnLifecycleHelperLink(t *testing.T) {
 			if err := ensureNSpawnLifecycleHelperLink(binary); err != nil {
 				t.Fatalf("ensureNSpawnLifecycleHelperLink: %v", err)
 			}
-			if target, err := os.Readlink(helper); err != nil || target != binaryName {
-				t.Fatalf("helper links to %q, %v; want %q, relative, so it survives a move of the root", target, err, binaryName)
+			if target, err := os.Readlink(helper); err != nil || target != agentdeployment.BinaryName {
+				t.Fatalf("helper links to %q, %v; want %q, relative, so it survives a move of the root", target, err, agentdeployment.BinaryName)
 			}
 			if got, err := os.ReadFile(helper); err != nil || string(got) != "agent" {
 				t.Fatalf("the helper runs %q, %v; want the agent's binary", got, err)
@@ -376,7 +378,7 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
+			got, err := renderAgentServiceUnit(agentdeployment.UpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
 			if err != nil {
 				t.Fatalf("renderAgentServiceUnit() error = %v", err)
 			}
@@ -418,7 +420,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 			t.Parallel()
 			systemdDir := t.TempDir()
 			if tt.writeUnit {
-				unit, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
+				unit, err := renderAgentServiceUnit(agentdeployment.UpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
 				if err != nil {
 					t.Fatalf("renderAgentServiceUnit() error = %v", err)
 				}
@@ -440,7 +442,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
-	serviceContent, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
+	serviceContent, err := renderAgentServiceUnit(agentdeployment.UpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
 	if err != nil {
 		t.Fatalf("renderAgentServiceUnit() error = %v", err)
 	}
@@ -500,8 +502,8 @@ func TestRecoveryScriptPathUnder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := recoveryScriptPathUnder(tt.root); got != tt.want {
-				t.Errorf("recoveryScriptPathUnder(%q) = %q, want %q", tt.root, got, tt.want)
+			if got := agentdeployment.RecoveryScriptPathUnder(tt.root); got != tt.want {
+				t.Errorf("agentdeployment.RecoveryScriptPathUnder(%q) = %q, want %q", tt.root, got, tt.want)
 			}
 		})
 	}
@@ -535,7 +537,7 @@ func TestRenderRecoveryScriptFollowsTheHostRoot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			script := string(renderRecoveryScript(agentUpgradePathsUnder(tt.root)))
+			script := string(renderRecoveryScript(agentdeployment.UpgradePathsUnder(tt.root)))
 
 			if !strings.Contains(script, "readlink -f "+tt.lastGood) {
 				t.Fatalf("recovery script does not read %s:\n%s", tt.lastGood, script)
@@ -553,7 +555,7 @@ func TestRenderRecoveryScriptFollowsTheHostRoot(t *testing.T) {
 func TestEmbeddedRecoveryScriptNamesTheLegacyPaths(t *testing.T) {
 	t.Parallel()
 
-	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
+	legacy := agentdeployment.UpgradePathsUnder(hostroot.LegacyPath)
 	script := string(recoveryScriptContent)
 
 	for _, path := range []string{legacy.LastGoodPath, legacy.SignalPath} {

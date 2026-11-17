@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	flexconfig "github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	sharedlifecycle "github.com/Azure/unbounded/pkg/agent/nspawnlifecycle"
@@ -33,8 +33,8 @@ type lifecycleFactory func(*slog.Logger) (lifecycle, error)
 // install on the host, no phase migrates the host root.
 func NewCommand() *cobra.Command {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	migrate := daemon.MigrateHostRoot
-	if daemon.Containerized() {
+	migrate := agentdeployment.MigrateHostRoot
+	if agentdeployment.Containerized() {
 		migrate = nil
 	}
 	return newCommand(log, func(log *slog.Logger) (lifecycle, error) {

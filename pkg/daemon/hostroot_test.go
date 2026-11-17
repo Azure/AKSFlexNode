@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
@@ -21,8 +22,8 @@ import (
 func TestHostRootMarkersAreTheReleasedBinaryLayout(t *testing.T) {
 	t.Parallel()
 
-	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
-	markers := HostRootMarkers()
+	legacy := agentdeployment.UpgradePathsUnder(hostroot.LegacyPath)
+	markers := agentdeployment.HostRootMarkers()
 
 	tests := []struct {
 		name   string
@@ -37,7 +38,7 @@ func TestHostRootMarkersAreTheReleasedBinaryLayout(t *testing.T) {
 		{name: "last-good link", path: legacy.LastGoodPath, marker: true},
 		// Not part of the binary layout, and an older reset can leave the
 		// library helpers behind.
-		{name: "recovery script", path: recoveryScriptPathUnder(hostroot.LegacyPath), marker: false},
+		{name: "recovery script", path: agentdeployment.RecoveryScriptPathUnder(hostroot.LegacyPath), marker: false},
 		{name: "nspawn lifecycle helper", path: "/usr/local/bin/unbounded-agent-nspawn-lifecycle", marker: false},
 	}
 
@@ -64,11 +65,11 @@ func TestInstallHostBinary(t *testing.T) {
 
 	// layout seeds a blue/green layout from a binary "installed", which leaves the binary under
 	// the host root a link to its current slot, as a reset by an earlier release keeps it.
-	layout := func(t *testing.T, paths agentUpgradePaths) {
+	layout := func(t *testing.T, paths agentdeployment.UpgradePaths) {
 		t.Helper()
 		writeExecutable(t, paths.BinaryPath, "installed")
-		if err := ensureAgentUpgradeLayout(t.Context(), slog.New(slog.DiscardHandler), paths); err != nil {
-			t.Fatalf("ensureAgentUpgradeLayout: %v", err)
+		if err := agentdeployment.EnsureUpgradeLayout(t.Context(), slog.New(slog.DiscardHandler), paths); err != nil {
+			t.Fatalf("agentdeployment.EnsureUpgradeLayout: %v", err)
 		}
 	}
 	tests := []struct {
@@ -76,7 +77,7 @@ func TestInstallHostBinary(t *testing.T) {
 		unitInstalled bool
 		// setup lays out the host root, and returns the binary that runs, or "" for one
 		// elsewhere, "running".
-		setup       func(t *testing.T, paths agentUpgradePaths) string
+		setup       func(t *testing.T, paths agentdeployment.UpgradePaths) string
 		lockHeld    bool
 		verifyErr   error
 		wantContent string
@@ -84,14 +85,14 @@ func TestInstallHostBinary(t *testing.T) {
 		wantErr     string
 		wantErrIs   error
 	}{
-		{name: "fresh host", setup: func(*testing.T, agentUpgradePaths) string { return "" }, wantContent: "running"},
+		{name: "fresh host", setup: func(*testing.T, agentdeployment.UpgradePaths) string { return "" }, wantContent: "running"},
 
 		// The daemon's: with the agent's unit installed, the binary changes only through an
 		// activation.
 		{
 			name:          "a usable binary is kept while the unit is installed",
 			unitInstalled: true,
-			setup: func(t *testing.T, paths agentUpgradePaths) string {
+			setup: func(t *testing.T, paths agentdeployment.UpgradePaths) string {
 				writeExecutable(t, paths.BinaryPath, "installed")
 				return ""
 			},
@@ -100,14 +101,14 @@ func TestInstallHostBinary(t *testing.T) {
 		{
 			name:          "a layout is kept while the unit is installed",
 			unitInstalled: true,
-			setup:         func(t *testing.T, paths agentUpgradePaths) string { layout(t, paths); return "" },
+			setup:         func(t *testing.T, paths agentdeployment.UpgradePaths) string { layout(t, paths); return "" },
 			wantContent:   "installed",
 			wantLayout:    true,
 		},
 		{
 			name:          "a dangling link is replaced while the unit is installed",
 			unitInstalled: true,
-			setup: func(t *testing.T, paths agentUpgradePaths) string {
+			setup: func(t *testing.T, paths agentdeployment.UpgradePaths) string {
 				if err := os.Symlink(filepath.Join(filepath.Dir(paths.BinaryPath), "missing"), paths.BinaryPath); err != nil {
 					t.Fatal(err)
 				}
@@ -119,7 +120,7 @@ func TestInstallHostBinary(t *testing.T) {
 		// start's, before the agent's unit is installed: the binary is the one running.
 		{
 			name: "start replaces the binary a reset left",
-			setup: func(t *testing.T, paths agentUpgradePaths) string {
+			setup: func(t *testing.T, paths agentdeployment.UpgradePaths) string {
 				writeExecutable(t, paths.BinaryPath, "installed")
 				return ""
 			},
@@ -127,7 +128,7 @@ func TestInstallHostBinary(t *testing.T) {
 		},
 		{
 			name: "start keeps the binary it runs from",
-			setup: func(t *testing.T, paths agentUpgradePaths) string {
+			setup: func(t *testing.T, paths agentdeployment.UpgradePaths) string {
 				writeExecutable(t, paths.BinaryPath, "installed")
 				return paths.BinaryPath
 			},
@@ -135,12 +136,12 @@ func TestInstallHostBinary(t *testing.T) {
 		},
 		{
 			name:        "start replaces a layout an earlier release's reset kept",
-			setup:       func(t *testing.T, paths agentUpgradePaths) string { layout(t, paths); return "" },
+			setup:       func(t *testing.T, paths agentdeployment.UpgradePaths) string { layout(t, paths); return "" },
 			wantContent: "running",
 		},
 		{
 			name: "start run from the layout keeps it",
-			setup: func(t *testing.T, paths agentUpgradePaths) string {
+			setup: func(t *testing.T, paths agentdeployment.UpgradePaths) string {
 				layout(t, paths)
 				current, err := filepath.EvalSymlinks(paths.CurrentPath)
 				if err != nil {
@@ -154,7 +155,7 @@ func TestInstallHostBinary(t *testing.T) {
 		{
 			// An install script replaced the layout's link with the binary it runs.
 			name: "start removes a layout beside the binary it runs from",
-			setup: func(t *testing.T, paths agentUpgradePaths) string {
+			setup: func(t *testing.T, paths agentdeployment.UpgradePaths) string {
 				layout(t, paths)
 				if err := os.Remove(paths.BinaryPath); err != nil {
 					t.Fatal(err)
@@ -166,7 +167,7 @@ func TestInstallHostBinary(t *testing.T) {
 		},
 		{
 			name:        "start doesn't run beside an activation",
-			setup:       func(t *testing.T, paths agentUpgradePaths) string { layout(t, paths); return "" },
+			setup:       func(t *testing.T, paths agentdeployment.UpgradePaths) string { layout(t, paths); return "" },
 			lockHeld:    true,
 			wantContent: "installed",
 			wantLayout:  true,
@@ -175,7 +176,7 @@ func TestInstallHostBinary(t *testing.T) {
 		{
 			// As under /opt mounted noexec.
 			name:      "a copy that cannot run is removed",
-			setup:     func(*testing.T, agentUpgradePaths) string { return "" },
+			setup:     func(*testing.T, agentdeployment.UpgradePaths) string { return "" },
 			verifyErr: errors.New("permission denied"),
 			wantErr:   "must not be mounted noexec",
 		},
@@ -186,7 +187,7 @@ func TestInstallHostBinary(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			paths := agentUpgradePathsUnder(filepath.Join(dir, "root"))
+			paths := agentdeployment.UpgradePathsUnder(filepath.Join(dir, "root"))
 			if err := os.MkdirAll(filepath.Dir(paths.BinaryPath), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -243,8 +244,8 @@ func TestInstallHostBinary(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !info.Mode().IsRegular() || info.Mode().Perm() != agentUpgradeBinaryMode {
-					t.Fatalf("installed binary is %v, want a regular file with mode %v", info.Mode(), os.FileMode(agentUpgradeBinaryMode))
+				if !info.Mode().IsRegular() || info.Mode().Perm() != agentdeployment.UpgradeBinaryMode {
+					t.Fatalf("installed binary is %v, want a regular file with mode %v", info.Mode(), os.FileMode(agentdeployment.UpgradeBinaryMode))
 				}
 			}
 			_, err = os.Lstat(filepath.Dir(paths.CurrentPath))
@@ -307,7 +308,7 @@ func TestRemoveLegacySeed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			seed := filepath.Join(t.TempDir(), "usr", "local", "bin", binaryName)
+			seed := filepath.Join(t.TempDir(), "usr", "local", "bin", agentdeployment.BinaryName)
 			if err := os.MkdirAll(filepath.Dir(seed), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -478,7 +479,7 @@ func TestGuardLegacySeed(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			seed := filepath.Join(dir, "usr", "local", "bin", binaryName)
+			seed := filepath.Join(dir, "usr", "local", "bin", agentdeployment.BinaryName)
 			if err := os.MkdirAll(filepath.Dir(seed), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -521,12 +522,12 @@ func TestGuardLegacySeed(t *testing.T) {
 
 	finished := func() (bool, error) { return false, nil }
 	if err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return false, errors.New("permission denied") },
-		finished, filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
+		finished, filepath.Join(t.TempDir(), agentdeployment.BinaryName), runningFrom); err == nil {
 		t.Fatal("guardLegacySeed() allowed a switch on a host root it could not inspect")
 	}
 	if err := guardLegacySeed(slog.New(slog.DiscardHandler), func() (bool, error) { return true, nil },
 		func() (bool, error) { return false, errors.New("permission denied") },
-		filepath.Join(t.TempDir(), binaryName), runningFrom); err == nil {
+		filepath.Join(t.TempDir(), agentdeployment.BinaryName), runningFrom); err == nil {
 		t.Fatal("guardLegacySeed() allowed a switch where it could not tell whether a move has finished")
 	}
 }
@@ -612,7 +613,7 @@ func TestRunningFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 	copied := filepath.Join(t.TempDir(), "copy")
-	if err := copyExecutable(self, copied); err != nil {
+	if err := agentdeployment.CopyExecutable(self, copied); err != nil {
 		t.Fatal(err)
 	}
 
@@ -647,15 +648,15 @@ func TestRunningFrom(t *testing.T) {
 func TestRecoveryAgentUpgradePaths(t *testing.T) {
 	t.Parallel()
 
-	moved := agentUpgradePathsUnder(hostroot.Path)
-	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
+	moved := agentdeployment.UpgradePathsUnder(hostroot.Path)
+	legacy := agentdeployment.UpgradePathsUnder(hostroot.LegacyPath)
 
 	tests := []struct {
 		name     string
 		running  string
 		runErr   error
 		resolved string
-		want     agentUpgradePaths
+		want     agentdeployment.UpgradePaths
 	}{
 		{name: "blue slot under the host root", running: moved.BluePath, resolved: hostroot.LegacyPath, want: moved},
 		{name: "green slot under the legacy root", running: legacy.GreenPath, resolved: hostroot.Path, want: legacy},
@@ -684,7 +685,7 @@ func TestVerifyMovedAgent(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	paths := agentUpgradePathsUnder(root)
+	paths := agentdeployment.UpgradePathsUnder(root)
 	if err := os.MkdirAll(filepath.Dir(paths.CurrentPath), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -5,12 +5,13 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 )
 
 func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
-	return setupHost(cfg, log, Containerized())
+	return setupHost(cfg, log, agentdeployment.Containerized())
 }
 
 func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.Task {

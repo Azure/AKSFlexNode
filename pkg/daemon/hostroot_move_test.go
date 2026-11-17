@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
@@ -21,11 +22,11 @@ import (
 func TestHostLayout(t *testing.T) {
 	t.Parallel()
 
-	paths := agentUpgradePathsUnder(hostroot.Path)
+	paths := agentdeployment.UpgradePathsUnder(hostroot.Path)
 	library := goalstates.LegacyHostPaths()
 	want := []string{
 		paths.BinaryPath, paths.BluePath, paths.GreenPath, paths.CurrentPath, paths.LastGoodPath,
-		recoveryScriptPathUnder(hostroot.Path),
+		agentdeployment.RecoveryScriptPathUnder(hostroot.Path),
 		filepath.Join(hostroot.Path, strings.TrimPrefix(library.NSpawnLifecycleBinary, hostroot.LegacyPath)),
 		filepath.Join(hostroot.Path, strings.TrimPrefix(library.LocalDNSNetworkHelper, hostroot.LegacyPath)),
 	}
@@ -38,7 +39,7 @@ func TestHostLayout(t *testing.T) {
 		t.Fatalf("hostLayout() = %v, want %v", got, want)
 	}
 
-	for _, marker := range HostRootMarkers() {
+	for _, marker := range agentdeployment.HostRootMarkers() {
 		if !slices.Contains(hostLayout(), marker) {
 			t.Fatalf("marker %s is not part of the layout a move copies", marker)
 		}
@@ -104,14 +105,14 @@ func TestSyncDirs(t *testing.T) {
 func TestHoldForHostRoot(t *testing.T) {
 	t.Parallel()
 
-	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
-	root := agentUpgradePathsUnder(hostroot.Path)
+	legacy := agentdeployment.UpgradePathsUnder(hostroot.LegacyPath)
+	root := agentdeployment.UpgradePathsUnder(hostroot.Path)
 
 	tests := []struct {
 		name             string
 		restarted        bool
 		unfinished       bool
-		startup, current agentUpgradePaths
+		startup, current agentdeployment.UpgradePaths
 		wantHold         bool
 	}{
 		{name: "nothing moved", startup: legacy, current: legacy},
@@ -283,7 +284,7 @@ func TestHostRootRestartWaitStaysClearOfTheStartLimit(t *testing.T) {
 func renderedAgentUnitForTest(t *testing.T) string {
 	t.Helper()
 
-	unit, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
+	unit, err := renderAgentServiceUnit(agentdeployment.UpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
 	if err != nil {
 		t.Fatalf("renderAgentServiceUnit() error = %v", err)
 	}
