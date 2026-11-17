@@ -86,7 +86,7 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	op.newNode = func(p containerops.Params) containerNode {
 		return &fakeContainerNode{params: p, events: events, fail: fail}
 	}
-	op.syncPrepared = func(context.Context, containerNode) error {
+	op.syncPrepared = func(context.Context, runtimeprovider.ContainerRuntime) error {
 		*events = append(*events, "sync-prepared")
 		if fail == "sync-prepared" {
 			return errors.New("prepared filesystem could not be persisted")
@@ -205,7 +205,7 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	if strings.Contains(recipe, "harden-apt") || strings.Contains(recipe, "install-systemd-container") {
 		t.Fatalf("container recipe includes nspawn host preparation: %s", recipe)
 	}
-	node := newContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1"})
+	node := runtimeprovider.NewContainerNode(containerops.Params{Log: discardLogger(), Slot: "kube1"})
 	if node.Backend().HelperPath != defaultAgentUpgradePaths().BinaryPath {
 		t.Fatal("container helper is not the stable Flex executable")
 	}

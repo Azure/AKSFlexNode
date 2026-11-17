@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -23,6 +22,7 @@ type OperatorFactory func(ctx context.Context, cfg *config.Config, store StateSt
 
 // HostServices supplies shared host-agent installation and filesystem operations.
 type HostServices struct {
+	InstallBinary           func(root isolation.NodeRoot) phases.Task
 	CopyExecutable          func(source string, destination string) error
 	FilesHaveEqualSHA256    func(first string, second string) (bool, error)
 	RemoveHostHelpers       func(log *slog.Logger) phases.Task
@@ -40,21 +40,8 @@ type NSpawnServices struct {
 	ConvergeContainerAgent func(ctx context.Context, log *slog.Logger, state StateLoader) (func(ctx context.Context) error, error)
 	EnsureLifecycleUnits   func(log *slog.Logger) phases.Task
 	ConfigureDependencies  func(log *slog.Logger, rootFS *goalstates.RootFS, services []string) phases.Task
-	InstallBinary          func(root isolation.NodeRoot) phases.Task
 	CleanupLegacyBridgeCNI func(log *slog.Logger) phases.Task
 	ActiveMachineFromStore func(ctx context.Context, store StateStore) (*ActiveMachine, error)
-}
-
-// ContainerServices supplies host integration for the OCI worker runtime.
-type ContainerServices struct {
-	HostServices
-	NewOperator      OperatorFactory
-	NewNode          func(params containerops.Params) *containerops.Node
-	CheckBootstrap   func(ctx context.Context, log *slog.Logger) error
-	SetupHost        func(cfg *config.Config, log *slog.Logger) phases.Task
-	StartNode        func(params StartParams) phases.Task
-	ResetNode        func(log *slog.Logger, teardown *containerops.Teardown) phases.Task
-	RewriteNodeUnits func(ctx context.Context, log *slog.Logger, cfg *config.Config, state *State, startup ContainerStartupReader) error
 }
 
 // NoneServices supplies host-agent integration for the host-native runtime.

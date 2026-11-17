@@ -15,6 +15,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	runtimeprovider "github.com/Azure/AKSFlexNode/pkg/daemon/internal/provider"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
@@ -192,7 +193,7 @@ func TestContainerOriginalSDKUpgradeRollback(t *testing.T) {
 			f := newContainerSDKFixture(t)
 			old := f.startSource()
 			next := f.node(containerops.Params{Log: discardLogger(), Slot: "kube2"})
-			if err := wrapContainerArtifactUnpack(next, func(context.Context, *goalstates.MachineGoalState) error {
+			if err := runtimeprovider.WrapContainerArtifactUnpack(next, func(context.Context, *goalstates.MachineGoalState) error {
 				return f.event("artifacts-kube2")
 			}); err != nil {
 				t.Fatal(err)
@@ -304,7 +305,7 @@ func TestContainerOriginalSDKUpgradeSuccessAndSlotRotation(t *testing.T) {
 		next := f.node(containerops.Params{Log: discardLogger(), Slot: slot})
 		stale := filepath.Join(f.rootPath(slot), "stale")
 		writeTestFile(t, stale, "stale image")
-		if err := wrapContainerArtifactUnpack(next, func(context.Context, *goalstates.MachineGoalState) error {
+		if err := runtimeprovider.WrapContainerArtifactUnpack(next, func(context.Context, *goalstates.MachineGoalState) error {
 			return f.event("artifacts-" + slot)
 		}); err != nil {
 			t.Fatal(err)
@@ -365,7 +366,7 @@ func TestContainerArtifactUnpackBeforeProvisionAndStart(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, discardLogger())); err != nil {
+			if err := runtimeprovider.WrapContainerArtifactUnpack(node, runtimeprovider.ContainerArtifacts(cfg, discardLogger(), InstallBinary)); err != nil {
 				t.Fatal(err)
 			}
 			checked := 0

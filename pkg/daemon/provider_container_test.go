@@ -23,8 +23,9 @@ func containerTestProvider(t *testing.T, startup containerStartupStore) containe
 	t.Helper()
 	root := t.TempDir()
 	return containerProvider{
-		Services: containerProviderServices(startup, filepath.Join(root, "activation.lock")),
-		Startup:  startup, StartupPath: startup.path, ActivationLockPath: filepath.Join(root, "activation.lock"),
+		Host: hostProviderServices(), OperatorFactory: newContainerOperatorFactory(startup, filepath.Join(root, "activation.lock")),
+		PlannedHostRoot: PlannedHostRoot,
+		Startup:         startup, StartupPath: startup.path, ActivationLockPath: filepath.Join(root, "activation.lock"),
 		BinaryPath: func(slot string) string { return filepath.Join(root, "slots", slot, "aks-flex-node") },
 		Teardown: &containerops.Teardown{Root: root, Layout: container.Layout{Base: filepath.Join(root, "containers")},
 			SystemdDir: filepath.Join(root, "systemd"), RuntimePath: filepath.Join(root, "runc")},

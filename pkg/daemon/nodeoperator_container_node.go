@@ -20,12 +20,11 @@ import (
 )
 
 type containerNode interface {
+	runtimeprovider.ContainerRuntime
 	Start(context.Context, bool, bool, bool) error
 	Restart(context.Context) error
 	Destroy(context.Context) error
 	Upgrade(context.Context, containerNode) error
-	GoalState() (*goalstates.MachineGoalState, error)
-	Backend() *container.Backend
 }
 
 type managedContainerNode struct{ *containerops.Node }
@@ -46,7 +45,7 @@ type containerNodeOperator struct {
 	resolve            func(context.Context, *slog.Logger, *config.Config, string) (*agentconfig.AgentConfig, *goalstates.MachineGoalState, *goalstates.ContainerImageArchiveStaging, error)
 	stage              func(context.Context, *slog.Logger, *goalstates.ContainerImageArchiveStaging) error
 	startNPD           func(context.Context, *slog.Logger, *config.Config, *goalstates.NodeStart) error
-	syncPrepared       func(context.Context, containerNode) error
+	syncPrepared       func(context.Context, runtimeprovider.ContainerRuntime) error
 }
 
 func newContainerNodeOperator(base *operatorBase, state *runtimeprovider.State, startup containerStartupStore, activationLockPath string) (*containerNodeOperator, error) {
@@ -55,9 +54,11 @@ func newContainerNodeOperator(base *operatorBase, state *runtimeprovider.State, 
 	}
 	return &containerNodeOperator{
 		operatorBase: base, startup: startup, activationLockPath: activationLockPath,
-		newNode:      func(p containerops.Params) containerNode { return managedContainerNode{newContainerNode(p)} },
+		newNode: func(p containerops.Params) containerNode {
+			return managedContainerNode{runtimeprovider.NewContainerNode(p)}
+		},
 		resolve:      config.ResolveMachineGoalState,
-		syncPrepared: syncContainerFilesystems,
+		syncPrepared: runtimeprovider.SyncContainerFilesystems,
 		stage: func(ctx context.Context, log *slog.Logger, archives *goalstates.ContainerImageArchiveStaging) error {
 			return runtimeprovider.StageContainerImageArchiveBindSource(log, archives).Do(ctx)
 		},
@@ -134,7 +135,7 @@ func (o *containerNodeOperator) ApplyGoalState(ctx context.Context, log *slog.Lo
 	next.Isolation, next.NodeConfig = isolation.ModeContainer, ac
 	next = next.DeepCopy()
 	node := o.newNode(containerops.Params{Log: log, Config: next.NodeConfig, GoalState: gs, Slot: slot})
-	if err := wrapContainerArtifactUnpack(node, containerArtifacts(cfg, log)); err != nil {
+	if err := runtimeprovider.WrapContainerArtifactUnpack(node, runtimeprovider.ContainerArtifacts(cfg, log, InstallBinary)); err != nil {
 		return nil, err
 	}
 	node.Backend().UnitRequires = append(node.Backend().UnitRequires, runtimeprovider.NoneRequiredServices(cfg)...)
