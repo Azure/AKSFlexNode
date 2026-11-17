@@ -20,8 +20,8 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	systemdDir := filepath.Join(t.TempDir(), "systemd")
 	recoveryScript := filepath.Join(t.TempDir(), "recovery.sh")
 	service := &flexDaemonActivationService{
+		provider:       mustNodeProvider(t, "nspawn"),
 		log:            slog.Default(),
-		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		paths:          paths,
 		state:          &testStateStore{},
 		systemdDir:     systemdDir,
@@ -52,9 +52,9 @@ func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	service := &flexDaemonActivationService{
-		log:     slog.Default(),
-		state:   &testStateStore{},
-		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
+		provider: mustNodeProvider(t, "nspawn"),
+		log:      slog.Default(),
+		state:    &testStateStore{},
 	}
 	if err := service.Restart(t.Context()); err != nil {
 		t.Fatalf("Restart: %v", err)
@@ -68,9 +68,9 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 	t.Parallel()
 
 	service := &flexDaemonActivationService{
-		log:     slog.Default(),
-		state:   &testStateStore{},
-		startup: containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
+		provider: mustNodeProvider(t, "nspawn"),
+		log:      slog.Default(),
+		state:    &testStateStore{},
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 			return false, errors.New("systemd unavailable")
 		},
@@ -113,12 +113,12 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 			inspected := false
 			service := &flexDaemonActivationService{
 				log:            slog.Default(),
+				provider:       mustNodeProvider(t, "nspawn"),
 				root:           tt.root,
 				resolveRoot:    func() string { return tt.now },
 				moveUnfinished: func() (bool, error) { return tt.unfinished, tt.unfinishedErr },
 				paths:          paths,
 				state:          &testStateStore{},
-				startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
@@ -149,10 +149,10 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 		t.Fatalf("WriteFile: %v", err)
 	}
 	service := &flexDaemonActivationService{
+		provider:       mustNodeProvider(t, "nspawn"),
 		log:            slog.Default(),
 		paths:          paths,
 		state:          &testStateStore{},
-		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 		systemdDir:     t.TempDir(),
 		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
@@ -198,10 +198,10 @@ func TestFlexDaemonActivationRejectsCorruptAppliedState(t *testing.T) {
 				log:            discardLogger(),
 				paths:          testAgentUpgradePaths(t),
 				state:          store,
-				startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
 				systemdDir:     t.TempDir(),
 				recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
-				serviceOptions: agentServiceOptions{NoneIsolation: true},
+				serviceOptions: agentServiceOptions{WantedTargets: (noneProvider{}).WantedTargets()},
+				provider:       mustNodeProvider(t, tc.mode),
 				inspectService: func(context.Context, *slog.Logger, string) (bool, error) {
 					return false, nil
 				},

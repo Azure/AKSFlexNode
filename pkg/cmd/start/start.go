@@ -50,7 +50,11 @@ func NewCommand() *cobra.Command {
 }
 
 func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	if err := daemon.CheckBootstrapIsolation(ctx, cfg, logger); err != nil {
+	provider, err := daemon.NewNodeProvider(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return err
+	}
+	if err := daemon.CheckBootstrapIsolation(ctx, logger, provider); err != nil {
 		return fmt.Errorf("bootstrap isolation: %w", err)
 	}
 	// In its container the agent keeps nothing on the host: the image carries
@@ -102,15 +106,15 @@ func runStart(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 
-	_, gs, containerImageArchives, err := config.ResolveMachineGoalState(ctx, logger, cfg, machineName)
+	_, gs, containerImageArchives, err := provider.ResolveGoalState(ctx, logger, cfg, machineName)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed to resolve goal state: %w", err)
 	}
 
 	tasks := phases.Serial(logger,
-		daemon.SetupHost(cfg, logger),
-		daemon.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
-		daemon.InstallService(cfg, logger),
+		provider.SetupHost(cfg, logger, containerized),
+		provider.StartNode(cfg, logger, machineName, gs, containerImageArchives, stateStore, state),
+		daemon.InstallService(cfg, logger, provider),
 	)
 	if err := phases.ExecuteTask(ctx, logger, tasks); err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)

@@ -179,11 +179,9 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 
 	// Reset/deletion signals take precedence over starting a prepared worker.
 	// Completion may bypass Node absence, but never authorizes a newer goal.
-	if completion, ok := r.operator.(interface {
-		ResumeRepave(context.Context, *slog.Logger, *corev1.Node) (bool, error)
-	}); ok && !machineSnap.notFound && machineSnap.machine != nil &&
+	if !machineSnap.notFound && machineSnap.machine != nil &&
 		(nodeSnap.node == nil || !hasDeletionSignal(nodeSnap.node.Spec.Taints)) {
-		handled, err := completion.ResumeRepave(ctx, r.log, nodeSnap.node)
+		handled, err := r.operator.ResumeRepave(ctx, r.log, nodeSnap.node)
 		if err != nil {
 			_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
 			return err

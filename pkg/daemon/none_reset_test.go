@@ -193,12 +193,12 @@ func TestNoneResetRetriesUsingAppliedStateAfterSDKFootprintsDisappear(t *testing
 	if _, err := os.Stat(filepath.Join(td.Root, hostnode.CNIStateDir)); err != nil {
 		t.Fatalf("failed cleanup lost IPAM: %v", err)
 	}
-	wrongMode := hostnode.Func("wrong-mode", func(context.Context) error {
-		t.Fatal("partial none reset routed to another isolation mode")
-		return nil
-	})
 	for pass := 1; pass <= 2; pass++ {
-		if err := resetNodeFromState(td.Log, store.Load, runtime, wrongMode, wrongMode).Do(t.Context()); err != nil {
+		provider, err := discoverResetProvider(t.Context(), store.Load, td.Log, nil)
+		if err != nil || provider.Mode() != isolation.ModeNone {
+			t.Fatalf("partial reset provider=%v, error=%v", provider, err)
+		}
+		if err := runtime.Do(t.Context()); err != nil {
 			t.Fatalf("retry %d: %v", pass, err)
 		}
 		assertNoneResetAbsent(t, td.Root, hostnode.CNIStateDir, none.ContainerdConfigPath)
@@ -262,13 +262,13 @@ func TestNoneResetRoutingPreservesContainerHostPrivatePaths(t *testing.T) {
 	if td.Present() {
 		t.Fatal("container footprints remain; test must exercise applied-state routing")
 	}
-	wrongMode := hostnode.Func("wrong-mode", func(context.Context) error {
-		t.Fatal("container applied state routed to none or nspawn")
-		return nil
-	})
 	containerTask := phases.Serial(log, td.Stop(), td.Destroy(), td.RemoveConfig())
 	for pass := 1; pass <= 2; pass++ {
-		if err := resetNodeFromState(log, store.Load, wrongMode, containerTask, wrongMode).Do(t.Context()); err != nil {
+		provider, err := discoverResetProvider(t.Context(), store.Load, log, nil)
+		if err != nil || provider.Mode() != isolation.ModeContainer {
+			t.Fatalf("partial reset provider=%v, error=%v", provider, err)
+		}
+		if err := containerTask.Do(t.Context()); err != nil {
 			t.Fatalf("pass %d: %v", pass, err)
 		}
 		for _, path := range paths {

@@ -118,7 +118,15 @@ func newLifecycle(log *slog.Logger, configPath string) (lifecycle, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("load persisted AKS Flex config %s: %w", configPath, err)
 	}
-	if err == nil && cfg.Bootstrap.Isolation != isolation.ModeNSpawn {
+	var mode isolation.Mode
+	if err == nil {
+		mode = cfg.Bootstrap.Isolation
+	}
+	provider, err := daemon.NewNodeProvider(mode)
+	if err != nil {
+		return nil, err
+	}
+	if provider.NSpawnRuntime() == nil {
 		return nil, nil
 	}
 

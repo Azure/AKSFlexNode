@@ -129,7 +129,7 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 		if err := node.Start(ctx, running, containerdChanged, kubeletChanged); err != nil {
 			return err
 		}
-		if err := npd.Start(log, cfg, resolved.NodeStart.Root(), resolved.NodeStart).Do(ctx); err != nil {
+		if err := npd.Start(log, cfg, resolved.NodeStart.Root(), resolved.NodeStart, isolation.ModeContainer).Do(ctx); err != nil {
 			return err
 		}
 		if err := syncContainerFilesystems(ctx, managedContainerNode{node}); err != nil {
@@ -141,8 +141,8 @@ func startContainerNode(cfg *config.Config, log *slog.Logger, slot string, gs *g
 	})
 }
 
-func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state *State) error {
-	startup, err := defaultContainerStartupStore().Load()
+func rewriteContainerHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Config, state *State, journal containerStartupReader) error {
+	startup, err := journal.Load()
 	if err != nil {
 		return err
 	}

@@ -73,12 +73,17 @@ func containerOperatorFixture(t *testing.T, fail string, failSave bool) (*contai
 	state := containerTestState("kube1", "old")
 	store := &noneTestStore{events: events, state: state, failSave: failSave}
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	op, err := newContainerNodeOperator(&nspawnNodeOperator{cfg: cfg, state: store, bootstrapDataRefresher: &fakeBootstrapDataRefresher{}}, state)
+	startup := containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
+	provider := containerTestProvider(t, startup)
+	operator, err := provider.NewOperator(t.Context(), cfg, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	op.startup = containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")}
-	op.activationLockPath = filepath.Join(t.TempDir(), "activation.lock")
+	op, ok := operator.(*containerNodeOperator)
+	if !ok {
+		t.Fatalf("operator = %T", operator)
+	}
+	op.bootstrapDataRefresher = &fakeBootstrapDataRefresher{}
 	op.newNode = func(p containerops.Params) containerNode {
 		return &fakeContainerNode{params: p, events: events, fail: fail}
 	}
@@ -238,9 +243,10 @@ func TestContainerSelectionAndEnvironment(t *testing.T) {
 			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: tc.configured, ExperimentalContainerIsolation: tc.optIn}}
 			state := containerTestState("kube1", "old")
 			state.Isolation = tc.applied
-			err := validateIsolationEnvironment(cfg, tc.containerized)
+			provider := mustNodeProvider(t, tc.configured)
+			err := provider.ValidateEnvironment(tc.containerized)
 			if err == nil {
-				_, err = newNodeOperator(t.Context(), cfg, &testStateStore{state: state})
+				_, err = provider.NewOperator(t.Context(), cfg, &testStateStore{state: state})
 			}
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("selection = %v", err)
@@ -252,7 +258,8 @@ func TestContainerSelectionAndEnvironment(t *testing.T) {
 func TestContainerHostRecipeAndHelper(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: "container", ExperimentalContainerIsolation: true}}
-	recipe := setupHost(cfg, discardLogger(), false).Name()
+	provider := containerTestProvider(t, activationFenceJournal(t, "absent"))
+	recipe := provider.SetupHost(cfg, discardLogger(), false).Name()
 	for _, required := range []string{"disable-containerd", "disable-kubelet", "remove-apt-hardening", "load-kernel-modules"} {
 		if !strings.Contains(recipe, required) {
 			t.Errorf("missing %s: %s", required, recipe)
@@ -265,7 +272,7 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	if node.Backend().HelperPath != defaultAgentUpgradePaths().BinaryPath {
 		t.Fatal("container helper is not the stable Flex executable")
 	}
-	unit, err := renderAgentServiceUnit("/agent", agentServiceOptionsFromConfig(cfg))
+	unit, err := renderAgentServiceUnit("/agent", agentServiceOptionsFor(cfg, provider))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +288,7 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 		log:            discardLogger(),
 		paths:          paths,
 		state:          &testStateStore{state: containerTestState("kube1", "42")},
-		startup:        containerStartupStore{path: filepath.Join(t.TempDir(), "startup.json")},
+		provider:       provider,
 		systemdDir:     dir,
 		recoveryScript: filepath.Join(t.TempDir(), "recovery.sh"),
 		inspectService: func(context.Context, *slog.Logger, string) (bool, error) { return false, nil },
@@ -289,8 +296,8 @@ func TestContainerHostRecipeAndHelper(t *testing.T) {
 	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err != nil {
 		t.Fatal(err)
 	}
-	if !service.serviceOptions.ContainerIsolation || service.serviceOptions.NoneIsolation {
-		t.Fatalf("activation did not derive container mode from applied state: %+v", service.serviceOptions)
+	if !slices.Equal(service.serviceOptions.WantedTargets, provider.WantedTargets()) {
+		t.Fatalf("activation did not retain container provider targets: %+v", service.serviceOptions)
 	}
 }
 
@@ -356,7 +363,7 @@ func TestContainerHubIntentDoesNotOperateNSpawn(t *testing.T) {
 			adapter, err := newHubMachineAdapter(func(string) (hubTransitionOperations, error) {
 				t.Fatal("container DT invoked nspawn operations")
 				return nil, nil
-			})
+			}, mustNodeProvider(t, isolation.ModeContainer))
 			if err != nil {
 				t.Fatal(err)
 			}

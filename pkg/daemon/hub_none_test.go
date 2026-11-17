@@ -21,7 +21,7 @@ func TestNoneHubIntentIsReportedWithoutNSpawnOperations(t *testing.T) {
 			adapter, err := newHubMachineAdapter(func(string) (hubTransitionOperations, error) {
 				t.Fatal("none node must not operate an nspawn worker")
 				return nil, nil
-			})
+			}, mustNodeProvider(t, "none"))
 			if err != nil {
 				t.Fatal(err)
 			}
