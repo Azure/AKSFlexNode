@@ -27,8 +27,7 @@ type discoveredWorker interface {
 // ResetPlan captures runtime ownership before cleanup removes its evidence.
 // The daemon runs Stop, cleans host components, then runs Finish.
 type ResetPlan interface {
-	// HasHostNativeState includes recovery artifacts without treating them as
-	// ownership of a native runtime. Components apply their own ownership checks.
+	// HasHostNativeState reports whether SDK discovery selected native teardown.
 	HasHostNativeState() bool
 	// Stop stops every discovered worker before any teardown runs.
 	Stop() phases.Task
@@ -37,38 +36,33 @@ type ResetPlan interface {
 }
 
 type resetPlan struct {
-	log       *slog.Logger
-	nspawn    resetWorker
-	none      resetWorker
-	shared    phases.Task
-	artifacts phases.Task
-	hostState bool
+	log    *slog.Logger
+	nspawn resetWorker
+	none   resetWorker
+	shared phases.Task
 }
 
-func discoverReset(log *slog.Logger, nspawn resetWorker, native discoveredWorker, shared, artifacts phases.Task, hostArtifacts bool) *resetPlan {
-	plan := &resetPlan{log: log, nspawn: nspawn, shared: shared, artifacts: artifacts, hostState: hostArtifacts}
+func discoverReset(log *slog.Logger, nspawn resetWorker, native discoveredWorker, shared phases.Task) *resetPlan {
+	plan := &resetPlan{log: log, nspawn: nspawn, shared: shared}
 	if native.Present() {
 		plan.none = native
-		plan.hostState = true
 	}
+
 	return plan
 }
 
 // PlanReset discovers all installed runtimes independently of applied state.
-func (NSpawn) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
+func (NSpawn) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
 
-func (noneRuntime) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
+func (noneRuntime) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
 
-func planReset(log *slog.Logger) (ResetPlan, error) {
-	hostArtifacts, err := NoneUpgradeArtifactsPresent()
-	if err != nil {
-		return nil, err
-	}
+func planReset(log *slog.Logger) ResetPlan {
 	native := &noneTeardown{
 		log: log,
 		sdk: &noneops.Teardown{Log: log},
 	}
-	return discoverReset(log, nspawnTeardown{log: log}, native, sharedReset(log), cleanupNoneUpgradeArtifacts(""), hostArtifacts), nil
+
+	return discoverReset(log, nspawnTeardown{log: log}, native, sharedReset(log))
 }
 
 func sharedReset(log *slog.Logger) phases.Task {
@@ -83,7 +77,7 @@ func sharedReset(log *slog.Logger) phases.Task {
 	)
 }
 
-func (p *resetPlan) HasHostNativeState() bool { return p.hostState }
+func (p *resetPlan) HasHostNativeState() bool { return p.none != nil }
 
 func (p *resetPlan) Stop() phases.Task {
 	tasks := []phases.Task{p.nspawn.Stop()}
@@ -97,8 +91,6 @@ func (p *resetPlan) Finish() phases.Task {
 	tasks := []phases.Task{p.nspawn.Destroy()}
 	if p.none != nil {
 		tasks = append(tasks, p.none.Destroy())
-	} else {
-		tasks = append(tasks, p.artifacts)
 	}
 	tasks = append(tasks, p.shared)
 	return phases.Serial(p.log, tasks...)
