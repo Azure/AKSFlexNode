@@ -26,7 +26,9 @@ func TestBootstrapOrdersHooksBeforeWorkerAndState(t *testing.T) {
 		NodeStart: &goalstates.NodeStart{},
 	}
 	log := slog.New(slog.DiscardHandler)
-	cfg := &config.Config{}
+	cfg := &config.Config{
+		Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNSpawn},
+	}
 	input := agentruntime.Inputs{
 		Config: cfg,
 		Node: agentruntime.Node{
@@ -50,6 +52,10 @@ func TestBootstrapOrdersHooksBeforeWorkerAndState(t *testing.T) {
 type bootstrapTestRuntime struct {
 	input  agentruntime.Inputs
 	events []string
+}
+
+func (*bootstrapTestRuntime) ValidateBootstrap(context.Context, *slog.Logger, bool) error {
+	return nil
 }
 
 func (*bootstrapTestRuntime) Worker(*slog.Logger, agentruntime.Node) (agentruntime.WorkerContext, error) {

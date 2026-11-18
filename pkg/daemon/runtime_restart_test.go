@@ -14,11 +14,13 @@ func TestRestartUsesAppliedMachineVersion(t *testing.T) {
 
 	worker := &fakeWorkerRuntime{
 		state: &State{
+			Isolation:                config.DefaultIsolationMode,
 			ActiveMachine:            goalstates.NSpawnMachineKube2,
 			AppliedKubernetesVersion: "1.34.0",
 		},
 	}
 	cfg := &config.Config{
+		Bootstrap:  config.BootstrapConfig{Isolation: config.DefaultIsolationMode},
 		Components: config.ComponentsConfig{Kubernetes: "1.35.0"},
 	}
 	var resolvedMachine, resolvedVersion string

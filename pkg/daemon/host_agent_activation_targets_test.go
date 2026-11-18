@@ -133,7 +133,7 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 		},
 		{
 			name:      "configured OCI and ARC without applied state",
-			data:      `{"bootstrap":{"isolation":"container"},"azure":{"arc":{"enabled":true}}}`,
+			data:      `{"bootstrap":{"isolation":"container","experimental":{"containerIsolation":true}},"azure":{"arc":{"enabled":true}}}`,
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 		},
@@ -402,7 +402,7 @@ func TestActivationConstructorUsesCanonicalPaths(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	service, _, err := newFlexDaemonActivationService(discardLogger(), func() string { return root }, "/unused/candidate")
+	service, _, err := newFlexDaemonActivationService(discardLogger(), root, func() string { return root }, "/unused/candidate")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -198,7 +198,7 @@ func bootstrapTasks(cfg *config.Config, log *slog.Logger, worker agentruntime.Ru
 	var tasks []phases.Task
 	if !reapply {
 		tasks = append(tasks, daemon.SetupHost(cfg, log))
-		if cfg.Bootstrap.Isolation == "" || cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
+		if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 			tasks = append(tasks, agentdeployment.EnsureNSpawnLifecycleUnits(log))
 		}
 	}

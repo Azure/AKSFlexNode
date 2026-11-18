@@ -14,13 +14,14 @@ import (
 
 // SnapshotCandidate makes compatibility probes and SDK activation consume the same
 // private input even if the caller replaces the original candidate after preflight.
-func SnapshotCandidate(path string) (string, func(), error) {
+func SnapshotCandidate(path, executionRoot string) (string, func(), error) {
 	candidate, err := resolveExecutable(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve activation candidate: %w", err)
 	}
 
-	dir, err := os.MkdirTemp("", "flex-activation-*")
+	// Keep the probe on the agent's execution filesystem, not a possibly noexec TMPDIR.
+	dir, err := os.MkdirTemp(executionRoot, "flex-activation-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create activation snapshot: %w", err)
 	}
