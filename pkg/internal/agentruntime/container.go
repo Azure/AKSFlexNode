@@ -125,6 +125,11 @@ func (r containerRuntime) Start(log *slog.Logger, input Inputs) phases.Task {
 		if err := node.Start(ctx, false, containerdChanged, kubeletChanged); err != nil {
 			return fmt.Errorf("start OCI worker: %w", err)
 		}
+
+		if err := nodestart.WaitForKubeletOnHost(log, gs.NodeStart, goalstates.SystemdUnitKubelet).Do(ctx); err != nil {
+			return fmt.Errorf("wait for OCI kubelet: %w", err)
+		}
+
 		return npd.Start(log, input.Config, gs.RootFS.Root(), gs.NodeStart, isolation.ModeContainer).Do(ctx)
 	})
 }

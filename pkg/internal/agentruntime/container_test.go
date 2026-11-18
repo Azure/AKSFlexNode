@@ -20,6 +20,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 func stageTestArchives(*slog.Logger, *goalstates.ContainerImageArchiveStaging) phases.Task {
@@ -151,70 +152,163 @@ func TestContainerStartPreflightAndRuntimeInstallation(t *testing.T) {
 func TestContainerFreshStartInstallsHelperBeforeActivation(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	layout := container.Layout{Base: filepath.Join(dir, "containers")}
-	runtimePath := filepath.Join(dir, "runc")
-	cgroupPath := filepath.Join(dir, "cgroup.controllers")
-	if err := os.WriteFile(cgroupPath, []byte("cpu"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var installed, helperSeen bool
-	worker := containerRuntime{
-		stageArchives: stageTestArchives,
-		newNode: func(params containerops.Params) *containerops.Node {
-			params.Layout = layout
-			params.SystemdDir = filepath.Join(dir, "systemd")
-			params.RuntimePath = runtimePath
-			params.ImageArchiveDir = filepath.Join(dir, "images")
-			params.Host = &container.HostFS{
-				CgroupControllers: cgroupPath,
-				SELinuxEnforce:    filepath.Join(dir, "absent"),
-			}
-			params.HostRoot = filepath.Join(dir, "host")
-			params.SetupNetwork = func(context.Context) error { return nil }
-			params.WaitLocalDNS = func(context.Context, *goalstates.NodeStart) error { return nil }
-			params.InstallRuntime = func(context.Context) error {
-				installed = true
-				return os.WriteFile(runtimePath, []byte("runtime"), 0o750)
-			}
-			params.InstallHelper = func(context.Context) error { return nil }
-			params.Unpack = func(_ context.Context, path string) error { return os.MkdirAll(path, 0o750) }
-			params.ProvisionRootfs = func(context.Context) error { return nil }
-			params.Run = func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
-				call := name + " " + strings.Join(args, " ")
-				if call == "systemctl --version" {
-					return "systemd 255", nil
-				}
-				if strings.Contains(call, "systemctl enable --now "+container.UnitName("kube1")) {
-					_, err := os.Stat(filepath.Join(layout.RootfsDir("kube1"), "usr/local/bin/aks-flex-node"))
-					helperSeen = err == nil
-				}
-				if strings.Contains(call, "systemctl show --property=SystemState") {
-					return "running", nil
-				}
-				return "", nil
-			}
-			node := containerops.New(params)
-			node.Backend().WritableCheck = func(...string) error { return nil }
-			return node
+	for _, tc := range []struct {
+		name     string
+		auth     string
+		inactive bool
+	}{
+		{
+			name: "active kubelet with bootstrap token",
+			auth: "bootstrap",
 		},
-	}
-	input := Inputs{
-		Config: &config.Config{
-			Bootstrap: config.BootstrapConfig{
-				OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
-			},
+		{
+			name: "active kubelet with exec credentials",
+			auth: "exec",
 		},
-		Node: Node{
-			Slot:      "kube1",
-			GoalState: hostnodetest.GoalState("kube1", false),
+		{
+			name:     "inactive kubelet with exec credentials",
+			auth:     "exec",
+			inactive: true,
 		},
-	}
-	if err := worker.Start(slog.New(slog.DiscardHandler), input).Do(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if !installed || !helperSeen {
-		t.Fatalf("runtime installed=%t helper present at activation=%t", installed, helperSeen)
+		{
+			name:     "inactive kubelet with embedded kubeconfig",
+			auth:     "embedded",
+			inactive: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			layout := container.Layout{Base: filepath.Join(dir, "containers")}
+			runtimePath := filepath.Join(dir, "runc")
+			cgroupPath := filepath.Join(dir, "cgroup.controllers")
+			kubeconfigPath := filepath.Join(dir, "host", goalstates.KubeletKubeconfigPath)
+			if err := os.WriteFile(cgroupPath, []byte("cpu"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			var installed, helperSeen, kubeconfigBeforeStart, bootstrapSeen, readinessSeen, readinessAfterBootstrap bool
+			worker := containerRuntime{
+				stageArchives: stageTestArchives,
+				newNode: func(params containerops.Params) *containerops.Node {
+					params.Layout = layout
+					params.SystemdDir = filepath.Join(dir, "systemd")
+					params.RuntimePath = runtimePath
+					params.ImageArchiveDir = filepath.Join(dir, "images")
+					params.Host = &container.HostFS{
+						CgroupControllers: cgroupPath,
+						SELinuxEnforce:    filepath.Join(dir, "absent"),
+					}
+					params.HostRoot = filepath.Join(dir, "host")
+					params.SetupNetwork = func(context.Context) error { return nil }
+					params.WaitLocalDNS = func(context.Context, *goalstates.NodeStart) error { return nil }
+					params.InstallRuntime = func(context.Context) error {
+						installed = true
+						return os.WriteFile(runtimePath, []byte("runtime"), 0o750)
+					}
+					params.InstallHelper = func(context.Context) error { return nil }
+					params.Unpack = func(_ context.Context, path string) error { return os.MkdirAll(path, 0o750) }
+					params.ProvisionRootfs = func(context.Context) error { return nil }
+					params.Run = func(_ context.Context, _ *slog.Logger, name string, args ...string) (string, error) {
+						call := name + " " + strings.Join(args, " ")
+						if call == "systemctl --version" {
+							return "systemd 255", nil
+						}
+
+						if strings.Contains(call, "systemctl enable --now "+container.UnitName("kube1")) {
+							_, err := os.Stat(filepath.Join(layout.RootfsDir("kube1"), "usr/local/bin/aks-flex-node"))
+							helperSeen = err == nil
+						}
+
+						if strings.Contains(call, "systemctl show --property=SystemState") {
+							return "running", nil
+						}
+
+						if call == runtimePath+" exec unbounded-kube1 systemctl enable --now "+goalstates.SystemdUnitKubelet {
+							info, err := os.Stat(kubeconfigPath)
+							kubeconfigBeforeStart = err == nil && info.Size() > 0
+							if tc.auth == "bootstrap" {
+								// Simulate TLS bootstrap completing after kubelet starts.
+								return "", os.WriteFile(kubeconfigPath, []byte("bootstrapped"), 0o600)
+							}
+						}
+
+						if call == runtimePath+" exec unbounded-kube1 test -s "+goalstates.KubeletKubeconfigPath {
+							info, err := os.Stat(kubeconfigPath)
+							bootstrapSeen = err == nil && info.Size() > 0
+							if !bootstrapSeen {
+								cancel()
+								return "", errors.New("kubeconfig missing or empty")
+							}
+						}
+
+						if call == runtimePath+" exec unbounded-kube1 systemctl is-active "+goalstates.SystemdUnitKubelet {
+							readinessSeen = true
+							readinessAfterBootstrap = bootstrapSeen
+							if tc.inactive {
+								// End the SDK poll only after its actual activity probe.
+								cancel()
+								return "inactive", errors.New("unit inactive")
+							}
+							return "active", nil
+						}
+
+						return "", nil
+					}
+
+					node := containerops.New(params)
+					node.Backend().WritableCheck = func(...string) error { return nil }
+					return node
+				},
+			}
+
+			gs := hostnodetest.GoalState("kube1", false)
+			switch tc.auth {
+			case "exec":
+				gs.NodeStart.Kubelet.BootstrapToken = ""
+				gs.NodeStart.Kubelet.ExecCredential = &clientcmdapi.ExecConfig{
+					APIVersion: "client.authentication.k8s.io/v1",
+					Command:    "/usr/local/bin/kubelogin",
+				}
+			case "embedded":
+				gs.NodeStart.Kubelet.BootstrapToken = ""
+				gs.NodeStart.Kubelet.KubeconfigData = []byte("kubeconfig")
+			}
+			input := Inputs{
+				Config: &config.Config{
+					Bootstrap: config.BootstrapConfig{
+						OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
+					},
+				},
+				Node: Node{
+					Slot:      "kube1",
+					GoalState: gs,
+				},
+			}
+
+			err := worker.Start(slog.New(slog.DiscardHandler), input).Do(ctx)
+			if tc.inactive {
+				if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "wait for OCI kubelet") {
+					t.Fatalf("inactive kubelet error = %v, want contextualized cancellation", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+
+			if !installed || !helperSeen {
+				t.Fatalf("runtime installed=%t helper present at activation=%t", installed, helperSeen)
+			}
+			if tc.auth != "bootstrap" && !kubeconfigBeforeStart {
+				t.Fatal("direct kubeconfig was not present before kubelet started")
+			}
+			if !bootstrapSeen || !readinessSeen || !readinessAfterBootstrap {
+				t.Fatalf("nonempty kubeconfig probed=%t kubelet activity probed=%t activity after bootstrap=%t", bootstrapSeen, readinessSeen, readinessAfterBootstrap)
+			}
+		})
 	}
 }
 
