@@ -75,6 +75,7 @@ func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *conf
 	if err != nil {
 		return nil, err
 	}
+
 	backend := node.Backend()
 	unpack := backend.Unpack
 	backend.Unpack = func(ctx context.Context, spec isolation.NodeSpec, dir string) error {
@@ -88,6 +89,7 @@ func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *conf
 
 		return containerArtifacts(ctx, log, cfg, gs)
 	}
+
 	return gs, nil
 }
 

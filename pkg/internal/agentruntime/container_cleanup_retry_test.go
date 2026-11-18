@@ -175,6 +175,7 @@ func TestContainerRetireAndStaleSlotCleanupRetry(t *testing.T) {
 			}
 
 			f.busy = nil
+
 			err := f.runtime().Start(log, cleanupInput(slot, other)).Do(t.Context())
 			if !errors.Is(err, f.unpackErr) || f.unmounts != 4 || f.unpacks != 1 {
 				t.Fatalf("retry error=%v unmounts=%d unpacks=%d", err, f.unmounts, f.unpacks)
@@ -307,6 +308,7 @@ func TestContainerUpgradeAbandonRetainsTraceWithCanceledContext(t *testing.T) {
 			t.Fatalf("SDK abandon cleanup lost its uncanceled context: %v", err)
 		}
 	}
+
 	err := f.runtime().Start(slog.New(slog.DiscardHandler), cleanupInput("kube2", "kube1")).Do(ctx)
 	if !errors.Is(err, f.unpackErr) || !errors.Is(err, f.busy) || f.unmounts != 1 {
 		t.Fatalf("abandon error=%v unmounts=%d", err, f.unmounts)
@@ -328,6 +330,7 @@ func TestContainerUpgradeRollbackRetainsTrace(t *testing.T) {
 	f.cleanupErr = errors.New("network cleanup failed")
 	input := cleanupInput("kube2", "kube1")
 	input.Config.Bootstrap.OfflineArtifacts.Source = "offline"
+
 	err := f.runtime().Start(slog.New(slog.DiscardHandler), input).Do(t.Context())
 	if !errors.Is(err, f.cleanupErr) || !errors.Is(err, f.busy) || !strings.Contains(err.Error(), "previous slot kube1 is left stopped") {
 		t.Fatalf("rollback error = %v", err)
@@ -344,6 +347,7 @@ func TestContainerResetRetriesFailedBPFFSCleanup(t *testing.T) {
 		if !teardown.Present() {
 			t.Fatal("fresh reset did not discover OCI")
 		}
+
 		err := containerTeardown(teardown).Do(t.Context())
 		if !errors.Is(err, f.busy) {
 			t.Fatalf("reset error = %v", err)

@@ -221,7 +221,9 @@ func newTestMachineOperationHandlers(worker *fakeWorkerRuntime) *machineOperatio
 		runtime: worker,
 		state:   worker,
 		cfg: &config.Config{
-			Bootstrap: config.BootstrapConfig{Isolation: config.DefaultIsolationMode},
+			Bootstrap: config.BootstrapConfig{
+				Isolation: config.DefaultIsolationMode,
+			},
 		},
 		resolve:     fakeResolveMachine,
 		uninstall:   worker.uninstall,
@@ -763,7 +765,9 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 				Runtime:        operator,
 				State:          operator,
 				Config: &config.Config{
-					Bootstrap: config.BootstrapConfig{Isolation: config.DefaultIsolationMode},
+					Bootstrap: config.BootstrapConfig{
+						Isolation: config.DefaultIsolationMode,
+					},
 				},
 				Resolve:      fakeResolveMachine,
 				Uninstall:    operator.uninstall,
