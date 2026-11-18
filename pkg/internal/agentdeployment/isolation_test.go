@@ -163,6 +163,7 @@ func TestSnapshotCandidateRejectsInvalidSourceAndCleansUp(t *testing.T) {
 				if err := os.Symlink(filepath.Join(dir, "missing"), link); err != nil {
 					t.Fatal(err)
 				}
+
 				return link
 			},
 		},
@@ -177,6 +178,7 @@ func TestSnapshotCandidateRejectsInvalidSourceAndCleansUp(t *testing.T) {
 				if err := os.WriteFile(path, []byte("candidate"), 0o644); err != nil {
 					t.Fatal(err)
 				}
+
 				return path
 			},
 		},
@@ -188,6 +190,7 @@ func TestSnapshotCandidateRejectsInvalidSourceAndCleansUp(t *testing.T) {
 				if err := os.Truncate(path, upgradeMaxBinaryBytes+1); err != nil {
 					t.Fatal(err)
 				}
+
 				return path
 			},
 		},
