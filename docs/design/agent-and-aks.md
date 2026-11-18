@@ -12,7 +12,7 @@ This document describes the current and intended interaction between the AKS res
 | Patch Machine status through direct ARM | Not implemented; the current client logs and skips the update. |
 | Repave after settings drift and Kubernetes Node deletion | Implemented. |
 | Automatically restore the previous nspawn side after a failed repave | Not implemented. |
-| Handle Unbounded `NodeReboot`, `AgentUpgrade`, and `AgentReset` operations | Implemented when the MachineOperation API is installed and handling isn't disabled. |
+| Handle Unbounded `NodeReboot`, `HostSoftReboot`, `AgentUpgrade`, and `AgentReset` operations | Implemented when the MachineOperation API is installed and handling isn't disabled. |
 | Handle ARM-backed MachineOperations | Not implemented. |
 | Delete the Kubernetes Node during reset | Not implemented by the agent; AKS RP owns Node cleanup after local reset. |
 
@@ -29,7 +29,8 @@ A bootstrap-token-only configuration remains available for standalone evaluation
 Lifecycle operations use these signals:
 
 - **Repave:** A changed Machine settings version supplies the new goal. After AKS or an operator deletes the Kubernetes `Node`, the agent applies that goal to the alternate nspawn side.
-- **Node restart:** An Unbounded `NodeReboot` MachineOperation restarts the active nspawn worker.
+- **Node restart:** An Unbounded `NodeReboot` MachineOperation restarts the active nspawn or OCI worker, or the native kubelet and containerd services, without changing the host OS boot ID.
+- **Host OS reboot:** An Unbounded `HostSoftReboot` MachineOperation requests a systemd reboot of the host in all supported deployments. The agent records `InProgress` and the target's host boot ID before requesting the reboot. On restart it reports `Complete`/`Succeeded` if the boot ID changed, or `Failed`/`RebootNotObserved` if it didn't; shutdown cancellation alone leaves the operation `InProgress`. Unfinished provider or BMC out-of-band host operations take priority and don't wait for this operation. The agent does not drain workloads or require a MachinaMachine custom resource.
 - **Agent upgrade:** An Unbounded `AgentUpgrade` MachineOperation downloads and activates a candidate agent with host-binary rollback on activation failure.
 - **Agent reset:** An Unbounded `AgentReset` MachineOperation removes local node runtime and then stops the daemon.
 - **Delete signal:** A `kubernetes.azure.com/flex-node-deleting=true:NoSchedule` taint combined with a missing Azure Machine triggers local reset and daemon shutdown.
@@ -397,7 +398,7 @@ Status behavior depends on the backend and operation type:
 
 - The in-cluster development endpoint accepts reconciliation status updates without changing the Machine ETag.
 - The direct ARM client's `PatchStatus` method currently logs that the update is skipped because the Machine status surface is read-only to the client.
-- The Unbounded MachineOperation reconciler updates `MachineOperation.status` for `NodeReboot`, `AgentUpgrade`, and `AgentReset` requests.
+- The Unbounded MachineOperation reconciler updates `MachineOperation.status` for `NodeReboot`, `HostSoftReboot`, `AgentUpgrade`, and `AgentReset` requests.
 - Kubernetes Node readiness and service state remain observable signals for operators and AKS.
 
 A future writable ARM status contract can use fields such as `provisioningState`, `observedSettingsVersion`, and `message`, but consumers must not depend on those agent-written ARM fields until the API and client implementation support them. After reset, AKS RP or the operator owns Kubernetes Node and Azure resource cleanup.

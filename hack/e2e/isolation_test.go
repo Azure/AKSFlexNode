@@ -594,12 +594,19 @@ func TestIsolationConfigCoherence(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte(tc.config+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			for _, name := range []string{"agent.json", "daemon.pem"} {
+				if err := os.WriteFile(filepath.Join(root, name), []byte("fixture-secret"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			runShellResult(t, []string{"SCRIPT=" + isolationScript(t), "ROOT=" + root}, `
 source "$SCRIPT"
 remote_exec() {
   local script
   script="$(</dev/stdin)"
   script="${script//\/etc\/aks-flex-node\/daemon-state.json/$ROOT\/state.json}"
+  script="${script//\/etc\/aks-flex-node\/config.json/$ROOT\/agent.json}"
+  script="${script//\/etc\/aks-flex-node\/daemon-credentials\/daemon-controller-current.pem/$ROOT\/daemon.pem}"
   script="${script//\/var\/lib\/kubelet\/config.yaml/$ROOT\/config.yaml}"
   bash -s <<<"$script"
 }
@@ -650,6 +657,11 @@ func TestIsolationStateHistoryUnchanged(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("maxPods: 58\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			for _, name := range []string{"agent.json", "daemon.pem"} {
+				if err := os.WriteFile(filepath.Join(root, name), []byte("fixture-secret"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			output := runShellResult(t, []string{
 				"SCRIPT=" + isolationScript(t),
@@ -661,6 +673,8 @@ remote_exec() {
   local script
   script="$(</dev/stdin)"
   script="${script//\/etc\/aks-flex-node\/daemon-state.json/$ROOT\/state.json}"
+  script="${script//\/etc\/aks-flex-node\/config.json/$ROOT\/agent.json}"
+  script="${script//\/etc\/aks-flex-node\/daemon-credentials\/daemon-controller-current.pem/$ROOT\/daemon.pem}"
   script="${script//\/var\/lib\/kubelet\/config.yaml/$ROOT\/config.yaml}"
   bash -s <<<"$script"
 }

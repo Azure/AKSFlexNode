@@ -108,6 +108,7 @@ validate_node_ip() { echo address; }
 smoke_test() { echo "workload:$2"; }
 _isolation_reapply_and_restart() { echo "restart:$3:$4"; }
 _isolation_host_reboot() { echo "reboot:$3"; }
+_host_soft_reboot() { echo "host-soft:$3"; }
 _isolation_repave() { echo "repave:$3"; }
 _isolation_assert_clean() { echo "clean:$2"; }
 isolation_all
@@ -116,7 +117,7 @@ isolation_all
 	for _, mode := range []string{"none", "container"} {
 		want = append(want,
 			"join:"+mode, "runtime:"+mode, "ready", "address", "workload:"+mode+"-join",
-			"restart:"+mode+":pre-repave", "reboot:"+mode, "repave:"+mode, "restart:"+mode+":post-repave",
+			"restart:"+mode+":pre-repave", "reboot:"+mode, "host-soft:"+mode, "repave:"+mode, "restart:"+mode+":post-repave",
 			"reset", "clean:"+mode, "absent", "join:"+mode, "runtime:"+mode, "ready",
 			"workload:"+mode+"-rejoin", "reset", "clean:"+mode, "absent",
 		)

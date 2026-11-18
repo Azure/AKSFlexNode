@@ -6,7 +6,8 @@ set -euo pipefail
 readonly _E2E_ISOLATION_LOADED=1
 
 _isolation_snapshot() {
-  remote_exec "$1" 'sudo bash -s' <<'REMOTE'
+  local vm_ip="$1" expected="${2:-}"
+  remote_exec "${vm_ip}" "sudo bash -s -- ${expected}" <<'REMOTE'
 set -euo pipefail
 probe() {
   local name="$1" output rc
@@ -26,11 +27,23 @@ probe() {
   return "${rc}"
 }
 state=/etc/aks-flex-node/daemon-state.json
-mode="$(probe isolation jq -er '.isolation' "${state}")"
+# Legacy nspawn state can omit isolation; none and OCI must identify their mode.
+if [[ "${1:-}" == nspawn ]]; then
+  mode="$(probe isolation jq -er '.isolation // "nspawn"' "${state}")"
+else
+  mode="$(probe isolation jq -er '.isolation' "${state}")"
+fi
 slot="$(probe activeMachine jq -er '.activeMachine' "${state}")"
 case "${slot}" in kube1|kube2) ;; *) echo 'snapshot check activeMachine: invalid slot' >&2; exit 1 ;; esac
 settings="$(probe appliedSettingsVersion jq -er '.appliedSettingsVersion' "${state}")"
 case "${mode}" in
+  nspawn)
+    probe machine-running machinectl show "${slot}" --property=State --value | grep -qx running
+    probe guest-kubelet timeout 20 systemd-run --machine="${slot}" --quiet --pipe --wait systemctl is-active --quiet kubelet.service </dev/null
+    probe guest-containerd timeout 20 systemd-run --machine="${slot}" --quiet --pipe --wait systemctl is-active --quiet containerd.service </dev/null
+    version="$(probe kubelet-version timeout 20 systemd-run --machine="${slot}" --quiet --pipe --wait /usr/local/bin/kubelet --version </dev/null)"
+    location="/var/lib/machines/${slot}"
+    ;;
   none)
     probe host-kubelet systemctl is-active --quiet unbounded-kubelet.service
     probe host-containerd systemctl is-active --quiet unbounded-containerd.service
@@ -133,7 +146,7 @@ _isolation_wait_runtime() {
   local stderr_file outcome=unattempted rc=0 desired_version="${E2E_KUBERNETES_VERSION#v}"
   stderr_file="$(mktemp)"
   while (( SECONDS < deadline )); do
-    if snapshot="$(_isolation_snapshot "${vm_ip}" 2>"${stderr_file}")"; then
+    if snapshot="$(_isolation_snapshot "${vm_ip}" "${expected}" 2>"${stderr_file}")"; then
       if [[ -z "${snapshot}" ]]; then
         outcome=empty
       else
@@ -172,36 +185,52 @@ _isolation_wait_runtime() {
 }
 
 _isolation_credentials() {
-  remote_exec "$1" 'sudo sha256sum /var/lib/kubelet/pki/kubelet-client-current.pem' | awk '{print $1}'
+  local vm_ip="$1" mode="${2:-}" slot="${3:-}"
+  if [[ "${mode}" == nspawn ]]; then
+    remote_exec "${vm_ip}" "sudo timeout 20 systemd-run --machine=${slot} --quiet --pipe --wait sha256sum /var/lib/kubelet/pki/kubelet-client-current.pem </dev/null" | awk '{print $1}'
+  else
+    remote_exec "${vm_ip}" 'sudo sha256sum /var/lib/kubelet/pki/kubelet-client-current.pem' | awk '{print $1}'
+  fi
 }
 
 _isolation_config_digests() {
-  remote_exec "$1" 'sudo bash -s' <<'REMOTE'
+  local vm_ip="$1" mode="${2:-}"
+  remote_exec "${vm_ip}" "sudo bash -s -- ${mode}" <<'REMOTE'
 set -euo pipefail
 state=/etc/aks-flex-node/daemon-state.json
 config=/var/lib/kubelet/config.yaml
-max_pods="$(jq -er '.nodeConfig.Kubelet.Configuration.maxPods | numbers' "${state}")"
-# Both modes use the host's shared kubelet configuration.
-if ! grep -Eq "^maxPods: ${max_pods}$" "${config}"; then
-  echo "Rendered kubelet maxPods differs from applied state (${max_pods})" >&2
-  exit 1
-fi
+agent_config_digest="$(sha256sum /etc/aks-flex-node/config.json | awk '{print $1}')"
+daemon_credential_digest="$(sha256sum /etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem | awk '{print $1}')"
 state_digest="$(jq -cS '.' "${state}" | sha256sum | awk '{print $1}')"
-config_digest="$(sha256sum "${config}" | awk '{print $1}')"
-printf '%s|%s\n' "${state_digest}" "${config_digest}"
+if [[ "${1:-}" == nspawn ]]; then
+  slot="$(jq -er '.activeMachine' "${state}")"
+  case "${slot}" in kube1|kube2) ;; *) exit 1 ;; esac
+  config_digest="$(timeout 20 systemd-run --machine="${slot}" --quiet --pipe --wait sha256sum "${config}" </dev/null | awk '{print $1}')"
+else
+  max_pods="$(jq -er '.nodeConfig.Kubelet.Configuration.maxPods | numbers' "${state}")"
+  # None and OCI use the host's shared kubelet configuration.
+  if ! grep -Eq "^maxPods: ${max_pods}$" "${config}"; then
+    echo "Rendered kubelet maxPods differs from applied state (${max_pods})" >&2
+    exit 1
+  fi
+  config_digest="$(sha256sum "${config}" | awk '{print $1}')"
+fi
+printf '%s|%s|%s|%s\n' "${state_digest}" "${config_digest}" "${agent_config_digest}" "${daemon_credential_digest}"
 REMOTE
 }
 
 _isolation_assert_unchanged() {
   local vm_ip="$1" vm_name="$2" snapshot="$3" uid="$4" credentials="$5" config="$6" phase="$7"
   local actual_snapshot actual_uid actual_credentials actual_config
-  actual_snapshot="$(_isolation_snapshot "${vm_ip}")" || return 1
+  local mode slot
+  IFS='|' read -r mode slot _ <<<"${snapshot}"
+  actual_snapshot="$(_isolation_snapshot "${vm_ip}" "${mode}")" || return 1
   actual_uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}')" || return 1
-  actual_credentials="$(_isolation_credentials "${vm_ip}")" || return 1
-  actual_config="$(_isolation_config_digests "${vm_ip}")" || return 1
+  actual_credentials="$(_isolation_credentials "${vm_ip}" "${mode}" "${slot}")" || return 1
+  actual_config="$(_isolation_config_digests "${vm_ip}" "${mode}")" || return 1
   if [[ "${actual_snapshot}" != "${snapshot}" || "${actual_uid}" != "${uid}" ||
     "${actual_credentials}" != "${credentials}" || "${actual_config}" != "${config}" ]]; then
-    log_error "${phase} changed worker state, Node UID, credentials, or kubelet configuration"
+    log_error "${phase} changed worker state, Node UID, credentials, or configuration"
     return 1
   fi
 }
@@ -310,6 +339,103 @@ _isolation_host_reboot() {
   return 1
 }
 
+# Observe systemd's agent invocation on the host boot, not inside the worker.
+_host_soft_reboot_observation() {
+  local E2E_SSH_OPTS="-o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 ${E2E_SSH_OPTS:-}"
+  remote_exec "$1" 'sudo bash -s' <<'REMOTE'
+set -euo pipefail
+boot="$(cat /proc/sys/kernel/random/boot_id)"
+started="$(awk '$1 == "btime" {print $2}' /proc/stat)"
+timeout -k 2 15 systemctl is-active --quiet aks-flex-node-agent.service
+invocation="$(timeout -k 2 15 systemctl show aks-flex-node-agent.service --property=InvocationID --value)"
+[[ -n "${boot}" && "${started}" =~ ^[0-9]+$ ]]
+[[ "${invocation}" =~ ^[0-9a-f]{32}$ && "${invocation}" != 00000000000000000000000000000000 ]]
+printf '%s|%s|%s\n' "${boot}" "${invocation}" "${started}"
+REMOTE
+}
+
+_host_soft_reboot() {
+  local vm_ip="$1" vm_name="$2" mode="$3" label="$4"
+  local snapshot observed_mode slot credentials config uid before boot invocation started operation after new_boot new_invocation new_started status completed_at
+  snapshot="$(_isolation_snapshot "${vm_ip}" "${mode}")"
+  IFS='|' read -r observed_mode slot _ <<<"${snapshot}"
+  if [[ "${observed_mode}" != "${mode}" ]]; then
+    log_error "HostSoftReboot worker isolation does not match ${mode}"
+    return 1
+  fi
+  credentials="$(_isolation_credentials "${vm_ip}" "${mode}" "${slot}")"
+  config="$(_isolation_config_digests "${vm_ip}" "${mode}")"
+  uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}')"
+  if [[ -z "${uid}" || -z "${credentials}" || -z "${config}" ]]; then
+    log_error "Missing Node UID, credentials, or configuration fingerprint"
+    return 1
+  fi
+  before="$(_host_soft_reboot_observation "${vm_ip}")"
+  IFS='|' read -r boot invocation started <<<"${before}"
+
+  operation="host-soft-${label}-$(date +%s)-${RANDOM}"
+  kubectl apply -f - <<EOF
+apiVersion: unbounded-cloud.io/v1alpha3
+kind: MachineOperation
+metadata:
+  name: ${operation}
+spec:
+  machineRef: ${vm_name}
+  operationKind: HostSoftReboot
+  ttlSecondsAfterFinished: 3600
+EOF
+
+  # SSH may disappear before the status is published; wait for a new boot
+  # before waiting for the restarted agent to publish its terminal result.
+  local deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
+  while (( SECONDS < deadline )); do
+    if after="$(_host_soft_reboot_observation "${vm_ip}" 2>/dev/null)"; then
+      IFS='|' read -r new_boot new_invocation new_started <<<"${after}"
+      if [[ -n "${new_boot}" && "${new_boot}" != "${boot}" && "${new_invocation}" != "${invocation}" ]]; then
+        break
+      fi
+    fi
+    sleep 5
+  done
+  if [[ -z "${new_boot:-}" || "${new_boot}" == "${boot}" || "${new_invocation}" == "${invocation}" ]]; then
+    log_error "HostSoftReboot did not produce a new host boot and agent invocation"
+    return 1
+  fi
+
+  # The shared wait helper prints the full operation on failure; status messages
+  # can contain arbitrary data, so keep only a bounded diagnostic here.
+  if ! _agent_upgrade_wait_phase "${operation}" Complete >/dev/null 2>&1; then
+    log_error "HostSoftReboot did not reach Complete after the new boot"
+    return 1
+  fi
+  status="$(kubectl get machineoperation "${operation}" --request-timeout=15s -o json)"
+  if ! jq -e --arg machine "${vm_name}" --arg boot "${boot}" '
+    .status.phase == "Complete"
+    and any(.status.targets[]?; .machineRef == $machine and .bootID == $boot)
+    and any(.status.conditions[]?; .type == "Completed" and .status == "True" and .reason == "Succeeded")
+  ' <<<"${status}" >/dev/null; then
+    log_error "HostSoftReboot result lacks the expected target boot ID or success condition"
+    return 1
+  fi
+  completed_at="$(jq -er '.status.completedAt' <<<"${status}")"
+  if ! completed_at="$(date -d "${completed_at}" +%s 2>/dev/null)" || (( completed_at < new_started )); then
+    log_error "HostSoftReboot completed before the new host boot"
+    return 1
+  fi
+  _isolation_wait_runtime "${vm_ip}" "${mode}"
+  validate_node_joined "${vm_name}"
+  _isolation_assert_unchanged "${vm_ip}" "${vm_name}" "${snapshot}" "${uid}" "${credentials}" "${config}" "HostSoftReboot"
+  smoke_test "${vm_name}" "${label}-host-soft-reboot"
+}
+
+host_soft_reboot_all() {
+  local mode
+  _agent_upgrade_ensure_api
+  for mode in msi token offline kubeadm arc; do
+    _host_soft_reboot "$(state_get "${mode}_vm_ip")" "$(state_get "${mode}_vm_name")" nspawn "${mode}"
+  done
+}
+
 _isolation_repave() {
   local vm_ip="$1" vm_name="$2" mode="$3" old_uid old_snapshot old_slot settings snapshot observed slot version applied uid ready
   old_uid="$(kubectl get node "${vm_name}" -o jsonpath='{.metadata.uid}')"
@@ -386,6 +512,7 @@ isolation_all() {
     smoke_test "${vm_name}" "${mode}-join"
     _isolation_reapply_and_restart "${vm_ip}" "${vm_name}" "${mode}" pre-repave
     _isolation_host_reboot "${vm_ip}" "${vm_name}" "${mode}"
+    _host_soft_reboot "${vm_ip}" "${vm_name}" "${mode}" "${mode}"
     _isolation_repave "${vm_ip}" "${vm_name}" "${mode}"
     _isolation_reapply_and_restart "${vm_ip}" "${vm_name}" "${mode}" post-repave
     node_unjoin_token
